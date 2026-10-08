@@ -265,7 +265,6 @@ def test_1589_keyless_batch_rejected_without_writes(game, monkeypatch, desk_kind
         assert int(state.turn) == turn
 
 
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     game, monkeypatch, tmp_path,
@@ -341,6 +340,12 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     assert 'target_dossier_id' not in payload
     assert payload.get('dossier_action_type') == 'policy'
     assert payload.get('target_id') == 'river-works'
+    # 第二次种 stalled 前清掉上一次夹具急务行（固定 idx/event_id），由用例自管。
+    db.conn.execute(
+        "DELETE FROM pending_decisions WHERE turn=? AND event_id=?",
+        (int(state.turn), 'plant:陕西告饥'),
+    )
+    db.conn.commit()
     stalled2, _ = _658_plant_stalled_deliberation(db, state, content, title='改草强推')
     did2 = int(stalled2['id'])
     name = _summonable_name(db, content)
@@ -354,6 +359,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     assert 'dossier_action_type' not in staged
     assert 'target_kind' not in staged
     assert 'target_id' not in staged
+
 
 def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""

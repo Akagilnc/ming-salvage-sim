@@ -199,8 +199,6 @@ def test_capture_manual_directive_drops_collective_and_institution_names(
     assert ids == ["毕自严"]
 
 
-
-
 def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
     """禁放松主键校验：纠错耗尽后真正不存在的人名仍在 capture seam 拒收。"""
     import ming_sim.cli_backend as cli_backend

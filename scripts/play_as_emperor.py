@@ -324,7 +324,7 @@ def run(
     prev_hint = ""            # 上一步命中的 prompt，用于检测卡同界面
     stuck_count = 0           # 同一界面连续重复次数
     STUCK_LIMIT = 6           # 连续卡同界面上限，超则升级退出路径
-    body_err: Optional[BaseException] = None
+    termination_failed = False
 
     try:
         while completed_periods < turns:
@@ -511,103 +511,14 @@ def run(
         body_err = exc
         raise
     finally:
-        # Pre-select ecological API only: pexpect.spawn.close(force=False)
-        # (ptyprocess docs: force=False never reaches SIGKILL).
-        # Official close closes the FD first, then soft-terminate; on soft-fail it
-        # raises before writing closed=True. There is no public detach API
-        # (dir(PtyProcess) / spawn.close source). Finish the same public fields
-        # successful close() would write — no fileobj re-close, no supervisor.
-        cleanup_err: Optional[BaseException] = None
-        try:
-            if child is not None and not child.closed:
-                child.close(force=False)
-        except BaseException as exc:
-            cleanup_err = exc
-            log(f"[soft cleanup failed: {exc}]")
-            child.child_fd = -1
-            child.closed = True
-            pty = getattr(child, "ptyproc", None)
-            if pty is not None:
-                pty.fd = -1
-                pty.closed = True
-        try:
-            log_file.close()
-        except Exception:
-            pass
-        if cleanup_err is not None:
-            if body_err is not None:
-                body_err.add_note(f"soft cleanup also failed: {cleanup_err!r}")
-            else:
-                raise cleanup_err
-
-    print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")
-    print("\n### 玩家(qwen) 侧 token：")
-    from ming_sim.token_stats import print_token_summary
-    print_token_summary()
-    return 0 if completed_periods >= turns else 1
-
-
-def main() -> None:
-    # 抓玩家(qwen) agent 的 token 用量。子进程 main.py(deepseek) 的 [TOKEN] 走它自己的 patch → log。
-    from ming_sim.token_stats import install_token_stats_patch
-    install_token_stats_patch()
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--goal", required=True, help="本局目标（写入崇祯 agent system prompt）")
-    parser.add_argument(
-        "--persona",
-        default="balanced",
-        choices=sorted(PERSONA_PRESETS.keys()),
-        help="崇祯测试玩家的性格预设",
-    )
-    parser.add_argument("--turns", type=int, default=10)
-    parser.add_argument("--log", default=f"scripts/runs/run_{int(time.time())}.log")
-    parser.add_argument("--db", default="data/ming_sim_test.db")
-    parser.add_argument("--agno-db", default="data/ming_sim_test_agno.db")
-    parser.add_argument(
-        "--base-url",
-        default=(os.environ.get("PLAYTEST_BASE_URL")
-                 or os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")),
-        help="LLM base URL（优先 PLAYTEST_BASE_URL → OPENAI_BASE_URL）",
-    )
-    parser.add_argument(
-        "--model",
-        default=(os.environ.get("PLAYTEST_MODEL")
-                 or os.environ.get("OPENAI_MODEL", "deepseek-v4-flash")),
-        help="LLM model（优先 PLAYTEST_MODEL → OPENAI_MODEL）",
-    )
-    parser.add_argument("--timeout", type=int, default=300, help="单步 CLI 超时（秒）")
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="续跑既有存档：不删 --db/--agno-db，从上次回合接着跑 --turns 个月。默认（不带此flag）清库重开。",
-    )
-    args = parser.parse_args()
-
-    api_key = (os.environ.get("PLAYTEST_API_KEY")
-               or os.environ.get("OPENAI_API_KEY", "")).strip()
-    if not api_key:
-        sys.exit("PLAYTEST_API_KEY / OPENAI_API_KEY 均未设置，请先 export 或 set -a; source .env; set +a。")
-
-    os.makedirs(os.path.dirname(args.log) or ".", exist_ok=True)
-    os.makedirs(os.path.dirname(args.db) or ".", exist_ok=True)
-
-    sys.exit(
-        run(
-            goal=args.goal,
-            persona=PERSONA_PRESETS[args.persona],
-            turns=args.turns,
-            log_path=args.log,
-            base_url=args.base_url,
-            model=args.model,
-            api_key=api_key,
-            db_path=args.db,
-            agno_db_path=args.agno_db,
-            timeout=args.timeout,
-            resume=args.resume,
-        )
-    )
-
-
-if __name__ == "__main__":
-    main()
+        # pexpect.terminate 返回 False = 未能终止；不得当成功返回。
+        # 日志关闭仍执行（资源收尾与失败呈现分立）。
+        if child.isalive():
+            stopped = child.terminate(force=False)
+            if not stopped:
+                termination_failed = True
+                log(
+                    "[收尾失败] pexpect.terminate(force=False) 返回 False，"
+                    f"child 仍存活={child.isalive()}"
+                )
+        log_file.close()

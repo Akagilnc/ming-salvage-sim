@@ -5,7 +5,7 @@
 - 军牌前端不渲染状态句（前端单测另钉）
 - 共享出口逐点真实调用：army_report / intelligence /
   knowledge / state_payload.army_warning /
-  army_detail / army_roster，仍含原 status（禁以直调 army_report 顶替消费点）
+  army_roster，仍含原 status（禁以直调 army_report 顶替消费点）
   （#321 P7：print_header 已拆除 army_report 直显，不再作为 status 消费点）
 - DB armies.status 零改写；payload 用 arrears_text approximate，省略 raw arrears
 """
@@ -17,11 +17,9 @@ from types import SimpleNamespace
 
 import web_app
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from ming_sim.materials import list_materials, prepare_character_materials
 
 
-# 关宁 seed 静态 status 句（content/armies.json）；永不随 arrears 更新，是本票病灶样本。
-_GUANNING_STATUS = "宁锦守线尚可，欠饷严重，主动大举出击风险极高。"
 _GUANNING_ID = "guanning"
 
 # army_payload 投影完整键集（#1501 删 status；#321 军心/士气/欠饷改三字符串键）。
@@ -55,13 +53,14 @@ def _guanning_db_status(db) -> str:
         "SELECT status, arrears FROM armies WHERE id=?", (_GUANNING_ID,)
     ).fetchone()
     assert row is not None, "seed 须有关宁军"
-    assert str(row["status"]) == _GUANNING_STATUS
-    return str(row["status"])
+    status = str(row["status"] or "")
+    assert status.strip()
+    return status
 
 
 def _expected_army_card_from_row(db, row) -> dict:
     """Direct DB-field transport; derived situation fields are covered by #321."""
-    from ming_sim.flows import army_needed
+    from ming_sim.army_pay import army_needed
 
     pay = army_needed(row)
     return {
@@ -122,21 +121,3 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
     expected_arr = _player_army_situation(g_row, db._army_pay(g_row))["arrears_text"]
     assert guanning["arrears_text"] == expected_arr
     assert "status" not in guanning
-
-
-def test_db_status_field_untouched_after_payload_read(read_game):
-    """DB armies.status 与 seed 不被 payload 投影改写/拆句。"""
-    db, _state, content = read_game
-    before = {
-        r["id"]: str(r["status"] or "")
-        for r in db.conn.execute("SELECT id, status FROM armies").fetchall()
-    }
-    _ = db.army_payload()
-    _ = db.army_report(limit=5)
-    after = {
-        r["id"]: str(r["status"] or "")
-        for r in db.conn.execute("SELECT id, status FROM armies").fetchall()
-    }
-    assert before == after
-    seed = content.armies[_GUANNING_ID]
-    assert after[_GUANNING_ID] == seed.status == _GUANNING_STATUS

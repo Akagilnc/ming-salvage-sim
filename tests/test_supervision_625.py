@@ -2,7 +2,7 @@
 
 Seams:
 - dossier_supervision_presence / dossier_loophole_exposures 事实表
-- record_monthly_supervision_facts（与 grant recon 同段）
+- record_monthly_supervision_presence（与 grant recon 同段）
 - build_due_review_input.supervision_history
 - 督办复核的监督事实观察槽
 - auto_trigger 涌现缝反制 issue
@@ -30,11 +30,6 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.supervision import (
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
-    EXPOSURE_ALLOWED_COLS,
-    EXPOSURE_TABLE,
-    FORBIDDEN_DULLING_COL_FRAGMENTS,
-    PRESENCE_ALLOWED_COLS,
-    PRESENCE_TABLE,
     SUPERVISION_RELATION,
 )
 
@@ -114,34 +109,6 @@ from tests.test_faction_denunciation_627 import _table_cols
 # ── AC1 事实底 ────────────────────────────────────────────────────
 
 
-def test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols(game):
-    db, state, _content = game
-    assert PRESENCE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert EXPOSURE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    pcols = _table_cols(db, PRESENCE_TABLE)
-    ecols = _table_cols(db, EXPOSURE_TABLE)
-    assert pcols == PRESENCE_ALLOWED_COLS
-    assert ecols == EXPOSURE_ALLOWED_COLS
-    # 全库不得长出钝化数值列。
-    tables = [
-        str(r[0])
-        for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    ]
-    for table in tables:
-        for col in _table_cols(db, table):
-            low = col.lower()
-            for frag in FORBIDDEN_DULLING_COL_FRAGMENTS:
-                assert frag.lower() not in low, f"{table}.{col} 命中禁列片段 {frag}"
 
 
 

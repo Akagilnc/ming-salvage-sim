@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 import threading
 import time
 import uuid
@@ -100,7 +99,7 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
             try:
                 _os.remove(_os.path.join(saves_dir, stale))
             except OSError:
-                pass
+                logger.exception("prune_auto_saves failed removing %s", stale)
 
 
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
@@ -373,19 +372,16 @@ def _appointment_intent_is_current_office_noop(
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
     归一到在册原始名，再查当前 office。"""
-    conn = getattr(db, "conn", None)
+    # #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
-    if conn is None or not clean_name or not desired:
+    if not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?",
-            (canonical,),
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?",
+        (canonical,),
+    ).fetchone()
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -394,9 +390,6 @@ def _appointment_intent_is_current_office_noop(
     desired_parts = {p for p in desired.split(",") if p}
     current_parts = {p for p in current.split(",") if p}
     return bool(desired_parts) and desired_parts.issubset(current_parts)
-
-
-
 
 
 def canonical_new_appointment_person_fields(
@@ -500,30 +493,6 @@ def apply_appointment(
 
 
 
-
-
-
-
-
-def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
-    """把落库失败的暂存动作翻成可给玩家看的失败状态。"""
-    kind = str(pa.get("kind") or "")
-    action = str(pa.get("action") or "")
-    noun = {
-        "secret_order": "密令",
-        "office": "任免",
-        "directive": "拟旨",
-    }.get(kind, "政务动作")
-    # #1765 ②：坏 payload 重放入口已删——系统层只报「未落库」这一件事，
-    # 不再承诺重试、也不按失败来源分类交代（0046 薄系统层）。
-    message = f"{noun}未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。"
-    return {
-        "id": int(pa.get("id") or 0),
-        "kind": kind,
-        "action": action,
-        "minister_name": str(pa.get("minister_name") or ""),
-        "message": message,
-    }
 
 
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
@@ -1137,7 +1106,7 @@ class GameSession:
         # （#1812：留下听着／今日就到这里吧 交普通场景与转译，不再代码旁路）
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
-        if audience_command_verdict and audience_command_verdict != CMD_NONE:
+        if audience_command_verdict == CMD_CLOSE_NIGHT:
             ctid = int(chat_turn_id or 0)
             if audience_command_verdict == CMD_CLOSE_NIGHT:
                 # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
@@ -1155,6 +1124,15 @@ class GameSession:
                 )
                 result.court_action = "court_break"
                 return result
+            close_night(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=getattr(self, "_write_gate", None),
+                write_queue=self._write_queue,
+            )
+            result.court_action = "court_break"
+            return result
 
         # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
         xuan_fragment = recognize_xuan_command(message_text)
@@ -1189,14 +1167,12 @@ class GameSession:
                     )
                     xuan_ctid = int(chat_turn_id or 0)
                     if xuan_ctid > 0:
+                        owns = connection_owns_transaction(self.db.conn)
                         self.db.conn.execute(
                             "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
                             (target.name, xuan_ctid),
                         )
-                        if (
-                            not bool(getattr(self.db.conn, "_commit_suspended", False))
-                            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
-                        ):
+                        if owns:
                             self.db.conn.commit()
                     if on_protagonist_changed is not None:
                         on_protagonist_changed()
@@ -2018,7 +1994,7 @@ class GameSession:
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。失败静默（自动存档不应阻断游戏）。"""
+        不碰用户手动存档。失败非致命（不阻断月链），但必须留异常真因（ADR 0005）。"""
         try:
             import os as _os
             saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
@@ -2036,6 +2012,7 @@ class GameSession:
             prune_auto_saves(saves_dir, campaign_id)
             return target
         except Exception:
+            logger.exception("auto_save failed tag=%s", tag)
             return None
 
     def close(self, *, write_gate_already_held: bool = False) -> None:

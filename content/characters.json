@@ -46,7 +46,7 @@
   "characters": [
     {
       "name": "韩爌",
-      "office": "前内阁首辅，罢居蒲州",
+      "office": "",
       "office_type": "内阁",
       "faction": "东林",
       "aliases": [
@@ -75,7 +75,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前内阁首辅，罢居蒲州"
     },
     {
       "name": "张瑞图",
@@ -309,7 +312,7 @@
     },
     {
       "name": "张缙彦",
-      "office": "清涧知县",
+      "office": "",
       "office_type": "地方",
       "faction": "皇党",
       "aliases": [
@@ -339,7 +342,8 @@
       "status": "offstage",
       "debut_year": 1631,
       "debut_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "status_reason": "清涧知县"
     },
     {
       "name": "杨嗣昌",
@@ -408,7 +412,7 @@
     },
     {
       "name": "钱龙锡",
-      "office": "前礼部尚书，罢居松江",
+      "office": "",
       "office_type": "礼部",
       "faction": "东林",
       "aliases": [
@@ -436,7 +440,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前礼部尚书，罢居松江"
     },
     {
       "name": "刘鸿训",
@@ -472,7 +479,7 @@
     },
     {
       "name": "钱谦益",
-      "office": "前礼部右侍郎，罢居常熟",
+      "office": "",
       "office_type": "礼部",
       "faction": "东林",
       "aliases": [
@@ -500,7 +507,10 @@
         "crime": "枚卜之争/钱柄之议中结党营私、植党排异;科场关节(钱千秋舞弊案)之讦——属轻度污点非血债,此刻无重罪可坐",
         "severity": "轻"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "dismissed",
+      "reason_code": "获罪削籍",
+      "status_reason": "前礼部右侍郎，罢居常熟"
     },
     {
       "name": "李标",
@@ -536,7 +546,7 @@
     },
     {
       "name": "孙承宗",
-      "office": "前蓟辽督师，罢居高阳",
+      "office": "",
       "office_type": "兵部",
       "faction": "东林",
       "aliases": [
@@ -566,7 +576,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前蓟辽督师，罢居高阳"
     },
     {
       "name": "崔呈秀",
@@ -636,7 +649,7 @@
     },
     {
       "name": "徐光启",
-      "office": "前礼部右少卿，罢居上海",
+      "office": "",
       "office_type": "工部",
       "faction": "西学",
       "aliases": [
@@ -665,11 +678,14 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前礼部右少卿，罢居上海"
     },
     {
       "name": "李之藻",
-      "office": "历局修历起复",
+      "office": "",
       "office_type": "礼部",
       "faction": "西学",
       "aliases": [
@@ -700,7 +716,8 @@
       "debut_year": 1629,
       "debut_month": 0,
       "location": "beizhili",
-      "power_id": "ming"
+      "power_id": "ming",
+      "status_reason": "历局修历起复"
     },
     {
       "name": "徐应秋",
@@ -737,7 +754,7 @@
     },
     {
       "name": "汤若望",
-      "office": "钦天监历局修历",
+      "office": "",
       "office_type": "礼部",
       "faction": "西学",
       "aliases": [
@@ -768,11 +785,12 @@
       "debut_year": 1630,
       "debut_month": 0,
       "location": "beizhili",
-      "power_id": "ming"
+      "power_id": "ming",
+      "status_reason": "钦天监历局修历"
     },
     {
       "name": "袁可立",
-      "office": "前登莱巡抚，罢居睢州",
+      "office": "",
       "office_type": "都察院",
       "faction": "东林",
       "aliases": [
@@ -799,7 +817,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "henan"
+      "location": "henan",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前登莱巡抚，罢居睢州"
     },
     {
       "name": "周延儒",
@@ -1164,7 +1185,7 @@
     },
     {
       "name": "袁崇焕",
-      "office": "前辽东巡抚，罢居东莞",
+      "office": "",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
@@ -1192,7 +1213,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "guangdong"
+      "location": "guangdong",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前辽东巡抚，罢居东莞"
     },
     {
       "name": "曹文诏",
@@ -1493,7 +1517,7 @@
     },
     {
       "name": "胡廷宴",
-      "office": "原三边总督，革职候勘",
+      "office": "",
       "office_type": "督抚",
       "faction": "中立",
       "aliases": [
@@ -2137,7 +2161,7 @@
     },
     {
       "name": "吴三桂",
-      "office": "辽东总兵吴襄子，武生",
+      "office": "",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
@@ -2168,11 +2192,12 @@
       "seed_guilt": {
         "crime": "无(引清入关是十余年后事,坚决不预判)",
         "severity": "无"
-      }
+      },
+      "status_reason": "辽东总兵吴襄子，武生"
     },
     {
       "name": "左良玉",
-      "office": "辽东军中下级武弁",
+      "office": "",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
@@ -2203,7 +2228,8 @@
       "seed_guilt": {
         "crime": "无(后期拥兵自重、剽掠地方军阀化是后事,存疑不预坐)",
         "severity": "无"
-      }
+      },
+      "status_reason": "辽东军中下级武弁"
     },
     {
       "name": "高迎祥",
@@ -2363,7 +2389,7 @@
     },
     {
       "name": "陈新甲",
-      "office": "兵部郎中（候用）",
+      "office": "",
       "office_type": "兵部",
       "faction": "军队",
       "aliases": [
@@ -2393,11 +2419,12 @@
       "seed_guilt": {
         "crime": "无(后任兵书因泄议和事被诛是后事)",
         "severity": "无"
-      }
+      },
+      "status_reason": "兵部郎中（候用）"
     },
     {
       "name": "傅宗龙",
-      "office": "兵部边务（候用）",
+      "office": "",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
@@ -2428,7 +2455,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "status_reason": "兵部边务（候用）"
     },
     {
       "name": "丁启睿",
@@ -3559,7 +3587,7 @@
     },
     {
       "name": "韩一良",
-      "office": "户科给事中",
+      "office": "",
       "office_type": "六科",
       "faction": "中立",
       "aliases": [
@@ -3586,7 +3614,8 @@
       "debut_month": 0,
       "power_id": "ming",
       "location": "beizhili",
-      "intrigue": 24
+      "intrigue": 24,
+      "status_reason": "户科给事中"
     },
     {
       "name": "朱术桂",

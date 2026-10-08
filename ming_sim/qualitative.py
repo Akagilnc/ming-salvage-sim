@@ -159,8 +159,6 @@ PROGRESS_BANDS = ("未见起色", "略有起色", "进展过半", "进展顺利"
 # Region resistance / military pressure — single vocabulary (db.region_report + #652 two_axis).
 GENTRY_RESISTANCE_BANDS = ("极弱", "偏弱", "中等", "偏强", "强")
 MILITARY_PRESSURE_BANDS = ("极低", "偏低", "中等", "偏高", "极高")
-DISASTER_SEVERITY_BANDS = ("轻微", "偏轻", "中等", "偏重", "极重")
-
 
 def public_support_band(value: object) -> str:
     """Present 民心 / region public_support without exposing the score."""
@@ -195,7 +193,6 @@ def gentry_resistance_band(value: object) -> str:
 def military_pressure_band(value: object) -> str:
     """Present region military_pressure / 流寇压力 without exposing the score."""
     return qualitative_band(value, MILITARY_PRESSURE_BANDS)
-
 
 
 def population_wan_kou_label(persons: object) -> str:

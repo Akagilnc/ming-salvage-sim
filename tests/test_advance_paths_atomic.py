@@ -51,8 +51,6 @@ def _recovery_session(db, state, content, monkeypatch):
 
 
 
-
-
 def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):
     """integrated cmr Gate2 codex correctness：event_triggers 是终态账，HITL 选择 upsert 冲突时
     只补 choice_json，**不得**把已有非 triggered 终态（avoided/expired/obsolete）翻成 triggered，
@@ -181,7 +179,6 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     with pytest.raises(ValueError):
         sess.resolve_turn()
     assert state.turn == turn  # 未推进，拟旨不孤儿
-    db.clear_resolve_context(turn)
 
 def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。

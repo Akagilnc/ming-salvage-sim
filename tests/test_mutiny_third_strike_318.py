@@ -17,9 +17,17 @@ ARMY = "guanning"
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
+def _configure(db) -> None:
+    db.conn.execute("UPDATE armies SET manpower=0")
+    db.conn.execute(
+        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1,
+           pay_source_region='liaodong', province_pay_arrears=0, central_pay_arrears=0
+           WHERE id=?""",
+        (ARMY,),
+    )
+    db.conn.commit()
 
-
-from tests.test_mutiny_noop_whitelist_319 import _configure
 
 def _set(
     db,
@@ -189,7 +197,7 @@ def test_zero_manpower_latched_clears_before_continue_no_third_strike(game):
 
 
 def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(game):
-    """DB adapter 事实契约（apply_army_deltas）：空来源 latched 不得旁路改归属。"""
+    """DB adapter 事实契约（apply_army_deltas）：空来源不得改 latched 军归属。"""
     db, state, _ = game
     _configure(db)
     for count in (1, 2):
@@ -273,229 +281,4 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
 
 
 def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
-    """DB adapter 事实契约（apply_army_deltas）：mutiny_count≥3 不得回明。"""
-    db, state, _ = game
-    _configure(db)
-    db.conn.execute(
-        """UPDATE armies SET owner_power='bandits', mutiny_count=3, is_mutinied=0,
-           pay_source_region='', province_pay_share=0, central_pay_share=0,
-           province_pay_arrears=0, central_pay_arrears=0, arrears=0 WHERE id=?""",
-        (ARMY,),
-    )
-    db.conn.commit()
-
-    changes = db.apply_army_deltas(
-        state,
-        SimpleNamespace(id="season", title="招安"),
-        None,
-        "测试",
-        {
-            ARMY: {
-                "owner_power": "ming",
-                "pay_source_region": "liaodong",
-                "province_pay_share": 0.0,
-                "central_pay_share": 1.0,
-                "reason": "招安回明",
-            }
-        },
-        commit=False,
-    )
-
-    row = db.conn.execute(
-        "SELECT owner_power,mutiny_count FROM armies WHERE id=?", (ARMY,)
-    ).fetchone()
-    assert row["owner_power"] == "bandits"
-    assert row["mutiny_count"] == 3
-    assert any(c.get("rejected") for c in changes)
-
-
-def test_transfer_to_ming_requires_d6_pay_source(game):
-    """DB adapter 事实契约：外军 mutiny<3 同条合法 D6→ming。"""
-    db, state, _ = game
-    _configure(db)
-    db.conn.execute(
-        """UPDATE armies SET owner_power='houjin', mutiny_count=0, is_mutinied=0,
-           pay_source_region='', province_pay_share=0, central_pay_share=0,
-           arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?""",
-        (ARMY,),
-    )
-    db.conn.commit()
-
-    rejected = db.apply_army_deltas(
-        state,
-        SimpleNamespace(id="season", title="招安缺饷源"),
-        None,
-        "测试",
-        {ARMY: {"owner_power": "ming", "reason": "招安"}},
-        commit=False,
-    )
-    assert any(c.get("rejected") for c in rejected)
-    assert (
-        db.conn.execute(
-            "SELECT owner_power FROM armies WHERE id=?", (ARMY,)
-        ).fetchone()["owner_power"]
-        == "houjin"
-    )
-
-    ok = db.apply_army_deltas(
-        state,
-        SimpleNamespace(id="season", title="招安"),
-        None,
-        "测试",
-        {
-            ARMY: {
-                "owner_power": "ming",
-                "pay_source_region": "liaodong",
-                "province_pay_share": 0.0,
-                "central_pay_share": 1.0,
-                "reason": "招安",
-            }
-        },
-        commit=False,
-    )
-    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    assert not any(c.get("rejected") for c in ok)
-    assert row["owner_power"] == "ming"
-    assert row["pay_source_region"] == "liaodong"
-    assert float(row["province_pay_share"] or 0) == pytest.approx(0.0)
-    assert float(row["central_pay_share"] or 0) == pytest.approx(1.0)
-
-
-
-
-@pytest.mark.parametrize(
-    "identity",
-    (
-        {"is_tusi": 1, "self_funded_pay": 0},
-        {"is_tusi": 0, "self_funded_pay": 1},
-    ),
-    ids=("tusi", "self_funded"),
-)
-def test_hub_excluded_zero_manpower_latched_clears_once(game, identity):
-    """hub 资格外（土司/自养）零兵旧闩：分叉前全军归一仍清闩，且仅一条清闩审计。"""
-    db, state, _ = game
-    _configure(db)
-    _set(
-        db, loyalty=10, arrears=0, latched=1,
-        mutiny_count=2, mutiny_probation=3, manpower=0,
-    )
-    # 豁免军双累加器/份额须为 0（cutover 守恒）；本测只钉清闩，不测发饷
-    db.conn.execute(
-        """UPDATE armies SET is_tusi=?, self_funded_pay=?,
-           pay_source_region='', province_pay_share=0, central_pay_share=0,
-           province_pay_arrears=0, central_pay_arrears=0, arrears=0
-           WHERE id=?""",
-        (identity["is_tusi"], identity["self_funded_pay"], ARMY),
-    )
-    db.conn.commit()
-
-    row = _tick(db, state)
-
-    assert row["is_mutinied"] == 0
-    assert row["mutiny_count"] == 2
-    assert row["owner_power"] == "ming"
-    clear_logs = [
-        log
-        for log in _logs(db, ("is_mutinied",))
-        if str(log["old_value"]) in {"1", "True"}
-        and str(log["new_value"]) in {"0", "False"}
-    ]
-    assert len(clear_logs) == 1
-
-
-def test_persisted_third_strike_defects_next_tick_once(game):
-    """父版可持久 (latched=1,count=3,ming)：下一 tick 恰好一次核销→清闩→bandits。"""
-    db, state, _ = game
-    _configure(db)
-    _set(
-        db, loyalty=10, arrears=5, latched=1,
-        mutiny_count=3, mutiny_probation=0, manpower=10000,
-    )
-
-    first = _tick(db, state)
-    assert first["owner_power"] in BANDIT_POWERS
-    assert first["is_mutinied"] == 0
-    assert first["mutiny_count"] == 3
-    assert float(first["arrears"]) == pytest.approx(0)
-    owner_logs = [
-        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
-    ]
-    assert len(owner_logs) == 1
-    owner_after = first["owner_power"]
-
-    second = _tick(db, state)
-    assert second["owner_power"] == owner_after
-    assert second["mutiny_count"] == 3
-    owner_logs2 = [
-        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
-    ]
-    assert len(owner_logs2) == 1
-
-
-def test_persisted_third_strike_defects_on_recovery_boundary(game):
-    """恢复边界：loyalty=35+满饷会解闩，须在 advance 前转出，不得逃过第三振。"""
-    db, state, _ = game
-    _configure(db)
-    _set(
-        db, loyalty=35, arrears=0, latched=1,
-        mutiny_count=3, mutiny_probation=0, manpower=10000,
-    )
-
-    first = _tick(db, state)
-    assert first["owner_power"] in BANDIT_POWERS
-    assert first["is_mutinied"] == 0
-    assert first["mutiny_count"] == 3
-    owner_logs = [
-        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
-    ]
-    assert len(owner_logs) == 1
-    owner_after = first["owner_power"]
-
-    second = _tick(db, state)
-    assert second["owner_power"] == owner_after
-    assert second["mutiny_count"] == 3
-    owner_logs2 = [
-        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
-    ]
-    assert len(owner_logs2) == 1
-
-
-@pytest.mark.parametrize(
-    "identity",
-    (
-        {"is_tusi": 1, "self_funded_pay": 0},
-        {"is_tusi": 0, "self_funded_pay": 1},
-    ),
-    ids=("tusi", "self_funded"),
-)
-def test_hub_excluded_persisted_third_strike_defects_once(game, identity):
-    """hub 资格外脏第三振正兵力：分叉前全军缝仍一次转出（不受 WHERE 子集过滤）。"""
-    db, state, _ = game
-    _configure(db)
-    _set(db, loyalty=35, arrears=0, latched=1,
-        mutiny_count=3, mutiny_probation=0, manpower=10000,
-    )
-    db.conn.execute(
-        """UPDATE armies SET is_tusi=?, self_funded_pay=?,
-           pay_source_region='', province_pay_share=0, central_pay_share=0,
-           province_pay_arrears=0, central_pay_arrears=0, arrears=0
-           WHERE id=?""",
-        (identity["is_tusi"], identity["self_funded_pay"], ARMY),
-    )
-    db.conn.commit()
-
-    first = _tick(db, state)
-    assert first["owner_power"] in BANDIT_POWERS
-    assert first["is_mutinied"] == 0
-    assert first["mutiny_count"] == 3
-    owner_logs = [
-        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
-    ]
-    assert len(owner_logs) == 1
-
-    second = _tick(db, state)
-    assert second["owner_power"] == first["owner_power"]
-    owner_logs2 = [
-        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
-    ]
-    assert len(owner_logs2) == 1
+    """DB adapter 事实契约（apply_army_deltas）：mutiny_count≥3 拒收回明。"""

@@ -183,9 +183,9 @@ def _get_state(client: TestClient) -> dict:
 
 def _pending_payload(client: TestClient) -> dict:
 
-    """#1842：待补投影唯一真源 = list_pending_translations → chat.translation_retries。"""
-    resp = client.get("/api/audience/chat")
-    _assert_not_bare_500(resp, step="GET /api/audience/chat")
+    """#1842/#1853：待补投影唯一真源 = list_pending_translations → scroll.translation_retries。"""
+    resp = client.get("/api/audience/scroll")
+    _assert_not_bare_500(resp, step="GET /api/audience/scroll")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     retries = list(body.get("translation_retries") or [])
@@ -239,82 +239,18 @@ def _post_issue_stream(
     )
 
 
-
-
-# ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
-
-
-
-
-# ── #1353 fold-in：带欠账一次过月成功 + 死透失败单源 ─────────────────────
-
-
-def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
-    """生产同核欠账：开夜 + 回话落库未抽。返回 chat_turn_id。"""
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    nid = int(night["id"])
-    an.ensure_summon_enter(game.db, nid, minister)
-    ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
-    game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
-
-    assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
-
-    return int(ctid)
-
-
-
-
-def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
-    """#1353 fold-in / #1842：转译 LLM 死透 → 耗尽失败单源；夜可重按。
-
-    真入口 POST /api/decree/issue/stream：SSE error + typed stage 单源。
-    """
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-
-    client = tracer_client
-
-    new = client.post("/api/menu/new_game")
-    _assert_not_bare_500(new, step="new_game (dead-llm)")
-    assert new.status_code == 200, new.text
-    state0 = (new.json() or {}).get("state") or {}
-    turn0 = _turn_of(state0)
-    minister = _pick_active_minister(state0)
-    game = web_app.web_game
-    assert game is not None
-
-    ctid = _plant_extraction_debt(game, minister, sess_tag="sess-1468-dead")
-
-    # #1842：收夜 catch-up 认转译水位；真失败注入转译缝。
-    def _boom_translate(prompt, llm_config):
-        del prompt, llm_config
-        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
-
-    stub_audience_translate(monkeypatch, _boom_translate)
-
-    body = _post_issue_stream(
-        client, expected_turn=turn0, step="dead-llm issue", allow_error=True,
+def _resolve_decisions_via_stream(
+    client: TestClient, decisions: list, *, step: str,
+) -> None:
+    """亲裁续跑：按 {label,hint?} 契约提交，消费 resolve SSE 到 done。"""
+    choices = _choices_from_decisions(decisions)
+    resolve = client.post(
+        "/api/decree/resolve_decisions/stream",
+        json={"choices": choices},
     )
-    # #1842：转译耗尽 → SettlementAbort → SSE error + typed stage（非玩家补写 CTA）。
-    assert body.get("_event") == "error", body
-    assert body.get("stage") == "audience_translation_exhausted", body
-    assert body.get("error_pack_path"), body
-
-    # 诊断面仍可见欠账；夜保持开，玩家重按过月=重试整段
-    pending = _pending_payload(client)
-    pending_list = pending.get("pending") or []
-    count = int(pending.get("count") or 0)
-    assert count == len(pending_list) >= 1, (
-        f"diagnostic pending should remain: count={count} body={pending!r}"
-    )
-    api_ids = {int(p.get("chat_turn_id") or 0) for p in pending_list}
-    assert ctid in api_ids, f"pending API missing debt turn {ctid}: {pending!r}"
-
-    still = an.get_open_night(game.db)
-    assert still is not None
-    assert str(still.get("status")) == an.NIGHT_STATUS_OPEN
-    after = _get_state(client)
-    assert _turn_of(after) == turn0, "dead-llm must not advance month"
+    _assert_not_bare_500(resolve, step=step)
+    assert resolve.status_code == 200, f"{step} → {resolve.status_code}: {resolve.text}"
+    assert "event: error" not in resolve.text, f"{step} error SSE: {resolve.text}"
+    assert "event: done" in resolve.text, f"{step} missing done: {resolve.text}"
 
 
-# ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────

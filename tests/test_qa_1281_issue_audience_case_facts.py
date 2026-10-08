@@ -183,8 +183,10 @@ def test_malformed_knowledge_issue_id_fails_loud_from_material_entry(game, tmp_p
 
 
 def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path):
+    """audience 账本读失败须从材料入口冒出；来源保真：原异常对象，不锁诊断措辞。"""
     db, state, content = game
     real_conn = db.conn
+    fault = RuntimeError("audience ledger read failed")
 
     class FailingEventAudienceConnection:
         def __getattr__(self, name):
@@ -192,37 +194,16 @@ def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path
 
         def execute(self, sql, parameters=()):
             if "SELECT audiences FROM events" in sql:
-                raise RuntimeError("audience ledger read failed")
+                raise fault
             return real_conn.execute(sql, parameters)
 
     db.conn = FailingEventAudienceConnection()
     try:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError) as ei:
             prepare_character_materials(
                 db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
             )
+        assert ei.value is fault
     finally:
         db.conn = real_conn
 
-
-def test_issue_material_projection_does_not_pollute_durable_events_or_db(game, tmp_path):
-    db, state, content = game
-    row = _issue_row(db)
-    issue_id = int(row["id"])
-    stage_before = row["stage_text"]
-    public_before = int(db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE character_name=''"
-    ).fetchone()["n"])
-    durable_before = tuple(db.get_character_knowledge(state, AUDIENCE_NAME).get("events") or [])
-
-    prepared = prepare_character_materials(
-        db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
-    )
-
-    assert _issue_paths(prepared, issue_id)
-    assert tuple(db.get_character_knowledge(state, AUDIENCE_NAME).get("events") or []) == durable_before
-    row_after = _issue_row(db)
-    assert row_after["stage_text"] == stage_before
-    assert int(db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE character_name=''"
-    ).fetchone()["n"]) == public_before

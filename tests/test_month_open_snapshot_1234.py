@@ -338,8 +338,6 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_game_write_gate", _null_cm)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     async def _consume():
         response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
@@ -399,8 +397,6 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     result = web_app.api_advance_without_edict()
     assert actions == ["resolve", "end_turn", "refresh"]
@@ -453,10 +449,6 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(
-        web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: []
-    )
 
     result = web_app.api_advance_without_edict()
 

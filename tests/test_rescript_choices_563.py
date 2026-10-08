@@ -3,9 +3,8 @@ import json
 import pytest
 
 import ming_sim.cli_backend as cli_backend
-import ming_sim.decree as decree_mod
 from tests.dossier_test_helpers import rejected_verdict
-
+from tests.rescript_test_helpers import sql_rescript_draft
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
     return db.create_decree_dossier(

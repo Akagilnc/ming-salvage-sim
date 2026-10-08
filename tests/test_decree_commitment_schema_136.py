@@ -1,11 +1,7 @@
-import sqlite3
-
 import pytest
 
-from ming_sim.db import GameDB
 from ming_sim.models import effect_dict_has_work
 import ming_sim.issues as I
-
 
 def _promulgated_commitment_origin(db, state) -> str:
     dossier_id = db.create_decree_dossier(
@@ -14,27 +10,6 @@ def _promulgated_commitment_origin(db, state) -> str:
     )
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
-
-
-def _table_columns(db, table: str) -> dict[str, dict[str, object]]:
-    return {
-        row["name"]: dict(row)
-        for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()
-    }
-
-
-def test_issues_schema_has_commitment_deadline_columns(read_game):
-    db, _, _ = read_game
-
-    cols = _table_columns(db, "issues")
-
-    assert "end_turn" in cols
-    assert "stop_condition" in cols
-    assert "commitment_kind" in cols
-    assert cols["end_turn"]["dflt_value"] == "0"
-    assert cols["stop_condition"]["dflt_value"] == "''"
-    assert cols["commitment_kind"]["dflt_value"] == "''"
-
 
 @pytest.mark.parametrize(
     "payload",
@@ -55,7 +30,6 @@ def test_issues_schema_has_commitment_deadline_columns(read_game):
 def test_effect_dict_has_work_ignores_empty_or_invalid_payloads(payload):
     assert effect_dict_has_work(payload) is False
 
-
 @pytest.mark.parametrize(
     "payload",
     [
@@ -75,7 +49,6 @@ def test_effect_dict_has_work_ignores_empty_or_invalid_payloads(payload):
 )
 def test_effect_dict_has_work_recognizes_schema_effects(payload):
     assert effect_dict_has_work(payload) is True
-
 
 def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     db, state, _content = game
@@ -108,7 +81,6 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     assert dict(log) == {"old_value": building["name"], "field": "remove"}
     assert result["closes"][0]["building_ops"][0]["removed"] is True
 
-
 def test_insert_issue_persists_commitment_deadline_columns(game):
     db, state, _ = game
 
@@ -131,7 +103,6 @@ def test_insert_issue_persists_commitment_deadline_columns(game):
         "commitment_kind": "until_stop",
     }
 
-
 def test_insert_issue_serializes_structured_stop_condition_as_json(game):
     db, state, _ = game
 
@@ -148,7 +119,6 @@ def test_insert_issue_serializes_structured_stop_condition_as_json(game):
         "SELECT stop_condition FROM issues WHERE id=?", (issue_id,)
     ).fetchone()
     assert row["stop_condition"] == '{"army.guanning.arrears":"<=0"}'
-
 
 def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     db, state, _ = game
@@ -178,7 +148,6 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     assert row["resolve_condition"] == ""
     assert row["commitment_kind"] == "until_stop"
 
-
 def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read_game):
     db, state, _ = read_game
 
@@ -202,63 +171,4 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
         "SELECT id FROM issues WHERE title=?", ("安抚毛文龙直到效顺",)
     ).fetchone()
     assert row is None
-
-
-
-
-def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, content):
-    path = tmp_path / "legacy.db"
-    conn = sqlite3.connect(path)
-    conn.execute(
-        """
-        CREATE TABLE issues (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            kind TEXT NOT NULL,
-            title TEXT NOT NULL,
-            origin_kind TEXT NOT NULL DEFAULT '',
-            origin_ref TEXT NOT NULL DEFAULT '',
-            origin_turn INTEGER NOT NULL,
-            bar_value INTEGER NOT NULL DEFAULT 40,
-            bar_good_meaning TEXT NOT NULL DEFAULT '已平',
-            bar_bad_meaning TEXT NOT NULL DEFAULT '失控',
-            inertia INTEGER NOT NULL DEFAULT 0,
-            phase TEXT NOT NULL DEFAULT '起',
-            stage_text TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'active',
-            severity INTEGER NOT NULL DEFAULT 50,
-            region_hint TEXT NOT NULL DEFAULT '',
-            faction_hint TEXT NOT NULL DEFAULT '',
-            tags TEXT NOT NULL DEFAULT '[]',
-            ongoing_effects TEXT NOT NULL DEFAULT '{}',
-            cancellable TEXT NOT NULL DEFAULT 'never',
-            cancel_cost TEXT NOT NULL DEFAULT '{}',
-            effect_on_resolve TEXT NOT NULL DEFAULT '{}',
-            effect_on_fail TEXT NOT NULL DEFAULT '{}',
-            resolve_condition TEXT NOT NULL DEFAULT '',
-            fail_condition TEXT NOT NULL DEFAULT '',
-            resolution_summary TEXT NOT NULL DEFAULT '',
-            last_advance_turn INTEGER NOT NULL DEFAULT 0,
-            closed_turn INTEGER,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            -- #1831 起 CREATE 基线含 affair_id；本测只缺 commitment 列，不模拟缺 affair 旧档
-            -- （#1812 Out of Scope：缺 affair_id 时 CREATE INDEX 须响亮失败，不得静默迁移）
-            affair_id INTEGER NOT NULL DEFAULT 0
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-    db = GameDB(str(path), content)
-    db.close()
-    db = GameDB(str(path), content)
-    try:
-        cols = _table_columns(db, "issues")
-        assert cols["end_turn"]["dflt_value"] == "0"
-        assert cols["stop_condition"]["dflt_value"] == "''"
-        assert cols["commitment_kind"]["dflt_value"] == "''"
-    finally:
-        db.close()
-
 

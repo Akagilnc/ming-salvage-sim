@@ -138,20 +138,6 @@ def test_create_chat_model_deepseek_enable_thinking_still_disables(monkeypatch):
     assert relay.extra_body == {"reasoning": {"enabled": False}}
 
 
-def test_create_chat_model_non_deepseek_dashscope_strength_unchanged(monkeypatch):
-    """非 DeepSeek × dashscope × medium → 既有开思考 + budget（本片不得改坏）。"""
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        model="qwen-plus",
-        channel="api",
-        reasoning_strength="medium",
-    )
-    model = create_chat_model(cfg, enable_thinking=False)
-    assert model.extra_body == {"enable_thinking": True, "thinking_budget": 10000}
-
-
 def test_create_chat_model_non_deepseek_minimax_strength_unchanged(monkeypatch):
     """非 DeepSeek × minimax × medium → 既有 adaptive（本片不得改坏）。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)

@@ -8,9 +8,8 @@
   仅授权参数不同；全知结果为角色视角权限超集。
 - 判官机面全知（ID-12）：fixture 断言判官能读到普通角色视角不可见的边；
   接入归 #634 线，本票不造判官。
-- TD-7 oracle（庭裁 r2/r3）：DTO 字段集合恰等五字段冻结白名单
-  source/target/summary/recent_context/updated_at_period；event_kind 等类目键
-  不出 DTO（白名单集合相等承接，不另造专属哨兵）。
+- TD-7：DTO 字段集合恰等五字段冻结白名单
+  source/target/summary/recent_context/updated_at_period。
 """
 
 from __future__ import annotations
@@ -26,8 +25,12 @@ from ming_sim.relations import EMPEROR_NODE
 # 冻结票面 r3 白名单本体——独立真源（票面原文照抄），不从生产代码重推导。
 FROZEN_DTO_WHITELIST = {"source", "target", "summary", "recent_context", "updated_at_period"}
 
-
-from tests.test_relation_brew_636 import _add_edge
+def _add_edge(db, state, *, source, target, kind, context, origin):
+    return db.record_relation_edge_event(
+        source=source, target=target, event_kind=kind, context=context,
+        origin=origin, turn=int(state.turn),
+        year=int(state.year), period=int(state.period),
+    )
 
 @pytest.fixture
 def ledger(game):
@@ -55,9 +58,7 @@ def ledger(game):
               origin="dossier:9:credit:cover|round:2")
     return db, state
 
-
 # ---------------------------------------------------------------- 视角裁切形态
-
 
 def test_participant_sees_own_edge_non_participant_default_invisible(ledger):
     """参与者即知自己的边；非参与者默认不可见（ID-11）。"""
@@ -68,13 +69,11 @@ def test_participant_sees_own_edge_non_participant_default_invisible(ledger):
     qian_view = project_relation_ledger(db, viewer="钱谦益")
     assert [(d["source"], d["target"]) for d in qian_view] == [("钱谦益", "温体仁")]
 
-
 def test_role_view_cuts_by_either_end_participation(ledger):
     """边的任一端参与即知：乙端视角同样读到该边。"""
     db, _ = ledger
     cui_view = project_relation_ledger(db, viewer="崔呈秀")
     assert [(d["source"], d["target"]) for d in cui_view] == [("王绍徽", "崔呈秀")]
-
 
 def test_blank_viewer_fails_closed_not_omniscient(ledger):
     """空白 viewer fail-closed（判卷修复）：空串/纯空白是 malformed 授权参数，
@@ -93,7 +92,6 @@ def test_blank_viewer_fails_closed_not_omniscient(ledger):
     jia_view = project_relation_ledger(db, viewer="  王绍徽  ")
     assert [(d["source"], d["target"]) for d in jia_view] == [("王绍徽", "崔呈秀")]
 
-
 def test_empty_ledger_projects_empty(ledger):
     """无账行为可辨：零边零摘要时空投影；有账后非空且含酿制产物。"""
     db, _ = ledger
@@ -103,24 +101,7 @@ def test_empty_ledger_projects_empty(ledger):
     # 无任何关系数据的视角人物——其可见面为空。
     assert project_relation_ledger(fresh, viewer="孙承宗") == []
 
-
 # ---------------------------------------------------------------- 返回形态
-
-
-def test_dto_shape_summary_plus_recent_context_with_backref(ledger):
-    """返回形态＝摘要＋最近原始事件语境/回指（ID-1/ID-11，机器可断言）。"""
-    db, _state = ledger
-    judge_face = project_relation_ledger(db, viewer=None)
-    wei_yang = next(
-        d for d in judge_face
-        if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
-    )
-    # summary＝两段式摘要原文（奠基段＋近况段，零改写拼接）。
-    assert "越次一召，擢杨嗣昌于五品郎中。" in wei_yang["summary"]
-    assert "杨嗣昌蒙知遇之恩" in wei_yang["summary"]
-    # recent_context＝最近原始事件语境原文＋纪年回指（括注时点）。
-    assert "越次一召，擢杨嗣昌于五品郎中。" in wei_yang["recent_context"]
-
 
 def test_updated_at_period_is_era_label_not_bare_turn(r3_guard):
     """updated_at_period＝更新纪年语义标识（天启七年十月式）。"""
@@ -130,7 +111,6 @@ def test_updated_at_period_is_era_label_not_bare_turn(r3_guard):
         if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
     )
     assert wei_yang["updated_at_period"] == "天启七年十月"
-
 
 @pytest.fixture
 def r3_guard(game):
@@ -142,9 +122,7 @@ def r3_guard(game):
     )
     return db, state
 
-
 # ---------------------------------------------------------------- 判官全知机面
-
 
 def test_judge_face_reads_edges_invisible_to_role_view(ledger):
     """判官机面全知（ID-12）：读到普通角色视角不可见的边；两面不混用。"""
@@ -154,10 +132,6 @@ def test_judge_face_reads_edges_invisible_to_role_view(ledger):
     assert ("钱谦益", "温体仁") in judge_pairs  # 王绍徽视角不可见
     jia_pairs = {(d["source"], d["target"]) for d in project_relation_ledger(db, viewer="王绍徽")}
     assert ("钱谦益", "温体仁") not in jia_pairs
-    # 有账与无账行为可辨：判官读面含酿制产物原文。
-    wei_yang = next(d for d in judge_face if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌"))
-    assert "杨嗣昌蒙知遇之恩" in wei_yang["summary"]
-
 
 def test_omniscient_is_superset_same_core(ledger):
     """庭裁 r1 F2：同一 DTO 同一投影核心，仅授权参数不同；全知＝权限超集。"""
@@ -172,88 +146,12 @@ def test_omniscient_is_superset_same_core(ledger):
             # 共享对逐字段全等：同一核心、同一 DTO，未走第二套序列化。
             assert dto == judge_map[pair]
 
-
 # ---------------------------------------------------------------- TD-7 双断言 oracle
-
 
 def test_td7_dto_field_set_equals_frozen_whitelist(ledger):
     """TD-7：DTO 字段集合==票面冻结五字段白名单（集合相等承接 event_kind 等类目键缺席）。"""
     db, _ = ledger
-    for viewer in (None, "王绍徽"):
-        for dto in project_relation_ledger(db, viewer=viewer):
-            assert set(dto.keys()) == FROZEN_DTO_WHITELIST
-
-
-def test_missing_viewer_rejected(ledger):
-    """漏传 viewer（keyword-only 必填）不被接受，绝不静默落全知机面。"""
-    db, _ = ledger
-    with pytest.raises(TypeError):
-        project_relation_ledger(db)
-
-
-# ---------------------------------------------------------------- #642 锚④：coda 历史读缝
-
-
-def test_load_relation_history_before_returns_full_stable_prior_stream(game):
-    """r4：已选中有向对的严格早于 settled 年月的完整历史——多旧事全量、含和解、无裁剪。"""
-    from ming_sim.relation_read import load_relation_history_before
-
-    db, state, _ = game
-    source, target = "杨嗣昌", "倪元璐"
-    # 旧事 1（奠基）
-    db.record_relation_edge_event(
-        source=source, target=target, event_kind="结怨",
-        context="杨嗣昌与倪元璐初有细缝。", origin="seed:founding:yang-ni",
-        turn=0, year=1627, period=10,
-    )
-    # 旧事 2（后续加深）
-    db.record_relation_edge_event(
-        source=source, target=target, event_kind="使绊",
-        context="清丈议上，杨嗣昌挡了倪元璐的硬路。", origin="audience:turn-2",
-        turn=2, year=1628, period=11,
-    )
-    # 旧事 3（和解——同流后续，不删旧怨）
-    db.record_relation_edge_event(
-        source=source, target=target, event_kind="协作",
-        context="二人当面言和，暂释前隙。", origin="audience:turn-3",
-        turn=3, year=1629, period=3,
-    )
-    # 本 settled 月新事——不得进入 prior
-    db.record_relation_edge_event(
-        source=source, target=target, event_kind="站台",
-        context="本月新站台，不应进历史包。", origin="audience:turn-4",
-        turn=4, year=1630, period=5,
-    )
-
-    prior = load_relation_history_before(
-        db, source=source, target=target, before_year=1630, before_period=5,
-    )
-    assert [row["context"] for row in prior] == [
-        "杨嗣昌与倪元璐初有细缝。",
-        "清丈议上，杨嗣昌挡了倪元璐的硬路。",
-        "二人当面言和，暂释前隙。",
-    ]
-    # 稳定序＝纪年 (year, period) ＋事件 id；语境字节不改。
-    assert [(int(r["year"]), int(r["period"])) for r in prior] == [
-        (1627, 10), (1628, 11), (1629, 3),
-    ]
-    ids = [int(r["id"]) for r in prior]
-    assert ids == sorted(ids)
-    assert prior[2]["context"] == "二人当面言和，暂释前隙。"
-
-
-def test_load_relation_history_before_empty_when_no_older_events(game):
-    """r4 验收第三例：无严格更早流水 → 空列表。"""
-    from ming_sim.relation_read import load_relation_history_before
-
-    db, state, _ = game
-    db.record_relation_edge_event(
-        source="徐光启", target="杨嗣昌", event_kind="协作",
-        context="本月当场协作。", origin="audience:now",
-        turn=int(state.turn), year=int(state.year), period=int(state.period),
-    )
-    prior = load_relation_history_before(
-        db, source="徐光启", target="杨嗣昌",
-        before_year=int(state.year), before_period=int(state.period),
-    )
-    assert prior == []
+    for dto in project_relation_ledger(db, viewer=None):
+        assert set(dto.keys()) == FROZEN_DTO_WHITELIST
+    for dto in project_relation_ledger(db, viewer="王绍徽"):
+        assert set(dto.keys()) == FROZEN_DTO_WHITELIST

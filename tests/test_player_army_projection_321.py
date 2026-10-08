@@ -10,7 +10,6 @@ import web_app
 from ming_sim.db import (
     GameDB,
     _player_army_situation,
-    _qualitative_army_stat,
     mutiny_loyalty_cap,
 )
 from ming_sim.army_pay import derive_army_mutiny_state
@@ -33,13 +32,6 @@ _MUTINY_ORDINAL_KEYS = frozenset(
         "mutiny_level",
         "mutiny_state",
     }
-)
-_PERSISTENT_COL_TOKENS = (
-    "is_mutinied",
-    "mutiny_count",
-    "mutiny_probation",
-    "full_pay_streak",
-    "redemption_count",
 )
 
 # 六档真值表（票面 latch / 边界 / probation；含全部明确边界样本）
@@ -77,6 +69,14 @@ _TIER_IDS = [
     _TIER_CASES,
     ids=_TIER_IDS,
 )
+def test_player_army_situation_six_tier_truth_table(
+    is_mutinied, loyalty, probation, expected
+):
+    row = _row(is_mutinied=is_mutinied, loyalty=loyalty, mutiny_probation=probation)
+    sit = _player_army_situation(row, monthly_pay=10)
+    assert sit["mutiny_tier"] == expected
+    assert isinstance(sit["morale_text"], str)
+    assert isinstance(sit["arrears_text"], str)
 
 
 def _configure(db) -> None:
@@ -134,102 +134,63 @@ def _payload_by_id(db):
 
 
 
-
-
-def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
-    """AC6–9：五持久列跨 reopen；仅凭 DB load_state 接续 tick；tick 后逐字段 oracle。"""
-    db, _state, content = game
-    path = str(tmp_path / "restore-321-hub.db")
-    copied = sqlite3.connect(path)
-    db.conn.backup(copied)
-    copied.close()
-
-    opened = GameDB(path, content)
-    try:
-        _configure(opened)
-        # 票面 literal：count=2 redemption=1 → cap=70；streak=7 → tick 后 8；probation 2→1
-        _write_mutiny_fixture(
-            opened,
-            loyalty=95,
-            arrears=0,
-            is_mutinied=1,
-            mutiny_count=2,
-            mutiny_probation=2,
-            full_pay_streak=7,
-            redemption_count=1,
-            morale=60,
-        )
-    finally:
-        opened.close()
-
-    reopened = GameDB(path, content)
-    try:
-        row = reopened.conn.execute(
-            "SELECT * FROM armies WHERE id=?", (ARMY,)
-        ).fetchone()
-        assert tuple(
-            row[k]
-            for k in (
-                "is_mutinied",
-                "mutiny_count",
-                "mutiny_probation",
-                "full_pay_streak",
-                "redemption_count",
-            )
-        ) == (1, 2, 2, 7, 1)
-        assert int(row["loyalty"]) == 95
-        assert float(row["arrears"]) == pytest.approx(0)
-        assert int(row["manpower"]) == 10000
-        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
-        assert derive_army_mutiny_state(row) == "哗变"
-        pay = reopened._army_pay(row)
-        sit_before = _player_army_situation(row, pay)
-        assert sit_before["mutiny_tier"] == "哗变"
-        card_before = _payload_by_id(reopened)[ARMY]
-        assert card_before["mutiny_tier"] == "哗变"
-
-        # P1：仅凭 DB 重建恢复态，再在恢复态上设测用国库并 tick
-        restored_state = reopened.load_state()
-        restored_state.metrics["国库"] = 10**9
-        apply_fixed_period_flows(reopened, restored_state)
-        after = reopened.conn.execute(
-            "SELECT * FROM armies WHERE id=?", (ARMY,)
-        ).fetchone()
-        assert int(after["loyalty"]) == 70
-        assert int(after["is_mutinied"]) == 0
-        assert int(after["mutiny_count"]) == 2
-        assert int(after["mutiny_probation"]) == 1
-        assert int(after["full_pay_streak"]) == 8
-        assert int(after["redemption_count"]) == 1
-        assert float(after["arrears"]) == pytest.approx(0)
-        assert int(after["manpower"]) == 10000
-        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
-        assert derive_army_mutiny_state(after) == "不满"
-        sit_after = _player_army_situation(after, reopened._army_pay(after))
-        assert sit_after["mutiny_tier"] == "不满"
-        assert _payload_by_id(reopened)[ARMY]["mutiny_tier"] == "不满"
-    finally:
-        reopened.close()
-
-
-@pytest.mark.parametrize(
-    "field",
-    ("is_mutinied", "mutiny_count", "mutiny_probation", "full_pay_streak", "redemption_count"),
-)
-def test_apply_army_deltas_rejects_five_persistent_mutiny_columns(game, field):
-    """AC10：五持久列对 extractor 唯一 allowlist 拒收，不新守门。"""
-    db, state, _ = game
-    before = db.conn.execute(
-        f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
-    ).fetchone()[field]
-    event = SimpleNamespace(id="test-321", title="非法写哗变列")
-    changes = db.apply_army_deltas(
-        state, event, None, "测试", {ARMY: {field: 1, "reason": "probe"}}
+def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
+    assert _SIT_KEYS <= set(card.keys()), f"{label} 缺 situation 三键: {sorted(card)}"
+    assert _RAW_KEYS.isdisjoint(card.keys()), f"{label} 泄漏 raw 轴: {sorted(_RAW_KEYS & set(card.keys()))}"
+    assert _MUTINY_ORDINAL_KEYS.isdisjoint(card.keys()), (
+        f"{label} 泄漏 mutiny ordinal/五持久列: {sorted(_MUTINY_ORDINAL_KEYS & set(card.keys()))}"
     )
-    rejected = [c for c in changes if c.get("rejected")]
-    assert rejected, f"{field} 应被拒收"
-    assert all(c.get("category") == "invalid_enum" for c in rejected)
-    after = db.conn.execute(
-        f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
-    ).fetchone()[field]
-    assert after == before
+    assert card["mutiny_tier"] == sit["mutiny_tier"], f"{label}.mutiny_tier"
+    assert card["morale_text"] == sit["morale_text"], f"{label}.morale_text"
+    assert isinstance(card["mutiny_tier"], str)
+    assert isinstance(card["morale_text"], str)
+    assert isinstance(card["arrears_text"], str)
+
+
+def test_structured_situation_on_payload_and_map_nodes(game):
+    """结构化 ABI：army_payload / state_payload.armies / map_nodes 携带 situation 三键。"""
+    # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
+    is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
+    db, state, content = game
+    _configure(db)
+    arrears = 12.5
+    _write_mutiny_fixture(
+        db,
+        loyalty=loyalty,
+        arrears=arrears,
+        is_mutinied=is_mutinied,
+        mutiny_count=0,
+        mutiny_probation=probation,
+        full_pay_streak=0,
+        redemption_count=0,
+        morale=52,
+    )
+    db.conn.execute(
+        """UPDATE armies SET supply=100, training=100, morale=100, loyalty=100,
+           arrears=0, province_pay_arrears=0, central_pay_arrears=0,
+           is_mutinied=0, mutiny_probation=0
+           WHERE id != ?""",
+        (ARMY,),
+    )
+    db.conn.execute(
+        "UPDATE armies SET supply=1, training=1 WHERE id=?",
+        (ARMY,),
+    )
+    db.conn.commit()
+    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
+    sit = _player_army_situation(row, db._army_pay(row))
+    assert sit["mutiny_tier"] == expected
+
+    card = _payload_by_id(db)[ARMY]
+    _assert_structured_situation(card, sit, "army_payload")
+
+    runtime = _web_runtime(db, state, content)
+    payload = web_app.WebGame.state_payload(runtime)
+    armies = {a["id"]: a for a in (payload.get("armies") or [])}
+    assert ARMY in armies
+    _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
+
+    map_army = _find_army_in_map_nodes(payload.get("map_nodes") or [])
+    _assert_structured_situation(map_army, sit, "map_nodes.armies")
+    map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
+    _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")

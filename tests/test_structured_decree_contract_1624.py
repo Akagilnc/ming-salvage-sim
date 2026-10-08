@@ -12,10 +12,13 @@ from ming_sim.structured_decree import (
     assemble_structured_decree,
 )
 from tests.directive_seed_helpers import seed_manual_draft
+from tests.rescript_test_helpers import sql_rescript_draft
+
 from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     _post_issue_stream,
     tracer_client,
 )
+
 
 # #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
 _OWNER_ROSTER = [
@@ -37,7 +40,6 @@ _OWNER_OPTION = {
     "participant_roster": [dict(item) for item in _OWNER_ROSTER],
 }
 
-
 def _owner_manual_backend_json() -> str:
     # 附件 r3 回显形态：LLM 误带执行面=immediate；assignment 不得透传落库。
     return json.dumps({
@@ -53,7 +55,6 @@ def _owner_manual_backend_json() -> str:
         "执行面": "immediate",
         "参与人": [dict(item) for item in _OWNER_ROSTER],
     }, ensure_ascii=False)
-
 
 def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
     """#1778 决定 3/5：主办＝旨意自带名单里的主办，逐字钉进案卷（不是职司表推出的人）。"""
@@ -73,7 +74,6 @@ def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
         assert db.conn.execute(
             "SELECT 1 FROM characters WHERE name=?", (name,),
         ).fetchone() is not None, f"参与人未建档：{name!r}"
-
 
 
 
@@ -144,10 +144,6 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     assert only_action["dossier_action_type"] == "policy"
 
 
-
-
-
-
 def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 大臣所拟名单。"""
     import ming_sim.cli_backend as cli_backend
@@ -187,11 +183,6 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     # assignment 不得跨动作透传执行面（#1624）；与 multi-aim military 同契：字段缺失或空。
     assert str(payload.get("execution_surface") or "").strip() == ""
     _assert_drafted_roster_nailed(game.db, matched[0])
-
-
-
-
-
 
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
@@ -289,7 +280,6 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
         conn=db.conn,
         regions_content=content.regions,
     )
-
 
 @pytest.mark.parametrize("mode", ["freeze_roster", "heal_first_only_reject"])
 def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):

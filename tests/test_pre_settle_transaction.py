@@ -213,11 +213,6 @@ def test_advance_without_edict_refused_after_settling(game):
 # cmr S4 r2 修复回归（F1 第三推进尾 / F2 HITL 相位耐崩+守门）
 # ---------------------------------------------------------------------------
 
-
-
-
-
-
 def test_pre_settle_guard_covers_awaiting_decision(game):
     """守门扩到 AWAITING_DECISION：该相位只可能在 pre_settle 已提交后出现（cmr S4 r2 F2b）。
 
@@ -318,7 +313,6 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     res = sess.resolve_turn()
     assert res.awaiting is True
     assert res.decisions
-    db.clear_resolve_context(state.turn)
 
 
 def test_guarded_early_return_does_not_consume_pending(game):

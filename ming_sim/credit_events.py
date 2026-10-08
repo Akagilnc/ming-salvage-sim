@@ -147,7 +147,7 @@ def write_credit_event(
         raise ValueError("信用事件缺少当事人")
     if kind not in _WRITE_KINDS:
         raise ValueError(f"非本片信用事件类目: {kind!r}")
-    if not context:
+    if not context.strip():
         raise ValueError("信用事件语境不能为空")
     if not origin:
         raise ValueError("信用事件 origin 不能为空")

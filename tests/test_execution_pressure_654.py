@@ -13,15 +13,12 @@ from ming_sim.execution_pressure import (
     resolve_dossier_region_ids,
 )
 
-
 @pytest.fixture
 def env(game):
     db, state, content = game
     return db, state, content
 
-
 # ── 词表 / scope 归一 ──────────────────────────────────────────────
-
 
 @pytest.mark.parametrize("raw,expected", [
     (None, "none"),
@@ -34,16 +31,12 @@ def env(game):
 def test_normalize_locality_scope(raw, expected):
     assert normalize_locality_scope(raw) == expected
 
-
 def test_normalize_locality_scope_rejects_unknown():
     with pytest.raises(ValueError):
         normalize_locality_scope("全省")
 
 
-
-
 # ── locality oracle 组合矩阵 ───────────────────────────────────────
-
 
 def test_national_policy_is_one_dossier_not_per_province(env):
     """#1778 决定 4：全国政令也是一份案卷，region_id 空——不按省拆。"""
@@ -59,7 +52,6 @@ def test_national_policy_is_one_dossier_not_per_province(env):
     )
     assert regions == [""]
 
-
 def test_special_decree_without_national_is_single_empty(env):
     db, _, content = env
     regions = resolve_dossier_region_ids(
@@ -73,7 +65,6 @@ def test_special_decree_without_national_is_single_empty(env):
     )
     assert regions == [""]
 
-
 def test_region_single_by_id(env):
     db, _, content = env
     assert resolve_dossier_region_ids(
@@ -85,7 +76,6 @@ def test_region_single_by_id(env):
         },
         regions_content=content.regions,
     ) == ["shaanxi"]
-
 
 def test_region_outside_province_set_yields_empty_locality(env):
     db, _, content = env
@@ -99,7 +89,6 @@ def test_region_outside_province_set_yields_empty_locality(env):
         },
         regions_content=content.regions,
     ) == [""]
-
 
 @pytest.mark.parametrize("payload", [
     {"target_kind": "region", "target_id": "shaanxi", "locality_scope": "national"},
@@ -115,7 +104,6 @@ def test_oracle_contradictions_fail_loud(env, payload):
             db.conn, payload=payload, regions_content=content.regions,
         )
 
-
 def test_region_zero_hit_fail_loud(env):
     db, _, content = env
     with pytest.raises(ValueError):
@@ -128,7 +116,6 @@ def test_region_zero_hit_fail_loud(env):
             },
             regions_content=content.regions,
         )
-
 
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
@@ -158,7 +145,6 @@ def test_region_id_column_and_composite_indexes(env):
 
 
 
-
 def test_create_decree_dossier_int_abi_single_row(env):
     db, state, _ = env
     did = db.create_decree_dossier(
@@ -172,39 +158,6 @@ def test_create_decree_dossier_int_abi_single_row(env):
     assert isinstance(did, int) and did > 0
     row = db.get_decree_dossier(did)
     assert row["region_id"] == ""
-
-
-
-
-def test_ensure_directive_dossier_returns_list(env):
-    db, state, _ = env
-    payload = {
-        "dossier_action_type": "policy",
-        "target_kind": "region",
-        "target_id": "henan",
-        "locality_scope": "single",
-        "assignee_id": "毕自严",
-        "mode": "ordinary",
-    }
-    cur = db.conn.execute(
-        """
-        INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, text, source, status,
-         notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            state.turn, state.year, state.period, None, "毕自严",
-            "河南清丈", "test", "draft", "",
-            json.dumps(payload, ensure_ascii=False),
-        ),
-    )
-    directive_id = int(cur.lastrowid)
-    db.conn.commit()
-    ids = db._ensure_directive_dossier(
-        state, directive_id, "河南清丈", payload, commit=True,
-    )
-    assert isinstance(ids, list) and len(ids) == 1 and ids[0] > 0
 
 
 def test_normalize_payload_locality_and_target_kind(env):
@@ -245,18 +198,7 @@ def test_normalize_payload_locality_and_target_kind(env):
             "mode": "ordinary",
         })
 
-
-def test_cli_backend_invalid_target_kind_fail_loud():
-    """r3-B.2：废除静默改 policy。"""
-    from ming_sim import cli_backend as cb
-    # 直接测归一辅助：若存在公开 helper 用它；否则测 extract 后机械段逻辑
-    # 生产路径：capture 合并处对非法 target_kind 抛错
-    with pytest.raises(ValueError):
-        cb._coerce_draft_target_kind("not_a_real_kind")
-
-
 # ── #654 断根 tracer（外部行为）────────────────────────────────────
-
 
 def _insert_directive(db, state, *, text: str, payload: dict, status: str = "draft") -> int:
     cur = db.conn.execute(
@@ -274,12 +216,6 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     )
     db.conn.commit()
     return int(cur.lastrowid)
-
-
-
-
-
-
 
 
 def test_path1_conversational_draft_bad_roster_marks_failed(env):
@@ -332,9 +268,7 @@ def test_path1_conversational_draft_bad_roster_marks_failed(env):
         (pa_id,),
     ).fetchone()["n"] == 0
 
-
 # ── 8×3 locality 矩阵（参数化）──────────────────────────────────
-
 
 @pytest.mark.parametrize(
     "target_kind,scope,expect",
@@ -398,7 +332,6 @@ def test_locality_matrix_8x3_and_unknown(env, target_kind, scope, expect):
     elif expect == "R1":
         assert regions == ["shaanxi"]
 
-
 def test_locality_fail_create_decree_dossiers_zero_rows(env):
     """fail 格走真实 bulk 入口：异常 + 零行。"""
     db, state, _ = env
@@ -418,22 +351,6 @@ def test_locality_fail_create_decree_dossiers_zero_rows(env):
         )
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
-
-
-def test_cli_target_kinds_accepts_canonical_eight():
-    """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。"""
-    from ming_sim import cli_backend as cb
-    assert TARGET_KINDS is EP_TARGET_KINDS
-    assert "dossier" in TARGET_KINDS
-    assert TARGET_KINDS == frozenset({
-        "policy", "character", "office", "army", "region", "issue", "account",
-        "dossier",
-    })
-    for kind in sorted(TARGET_KINDS):
-        assert cb._coerce_draft_target_kind(kind) == kind
-    with pytest.raises(ValueError):
-        cb._coerce_draft_target_kind("not_a_real_kind")
-
 
 def test_revoke_decree_523_producer_durable_oracle_chain(env):
     """#523 producer→durable→oracle：dossier 目标恰落一条 region_id='' 案卷。
@@ -545,14 +462,10 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
             "mode": "ordinary",
         })
 
-
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 
-
-def test_location_canonical_seed_and_write_seam(env, tmp_path):
-    """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud；在途保全。"""
-    import shutil
-    from ming_sim.db import GameDB
+def test_location_canonical_seed_and_write_seam(env):
+    """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud。"""
     from ming_sim.matching import canonical_region_id_exact
     from ming_sim.distance import DistanceMatrix
     from ming_sim.paths import bundled_path

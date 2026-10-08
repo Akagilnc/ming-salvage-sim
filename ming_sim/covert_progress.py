@@ -564,7 +564,6 @@ def contract_target_units(contract: Mapping[str, object]) -> float:
     return target
 
 
-
 def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[str, object]:
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
@@ -619,10 +618,6 @@ def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
         (str(minister_name or "").strip(),),
     ).fetchone()
     return row is not None
-
-
-
-
 
 
 def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
@@ -1433,6 +1428,7 @@ def apply_investigation_spoliation(
     经真实传话声明知情（knowledge_source）——未知情不替其毁证，知情也不强制毁证。
     'gone' 之后该事实永不可查——关案重开、另起新案都不恢复（真源在 (target, fact_key)）。
     """
+    owns = db.owns_transaction() if commit else False
     name = str(target or "").strip()
     key = str(fact_key or "").strip()
     if not name or not key:
@@ -1451,7 +1447,7 @@ def apply_investigation_spoliation(
         target_name=name, fact_key=key, turn=turn, effect=effect,
         origin_ref=origin_ref, commit=False,
     )
-    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+    if owns:
         db.conn.commit()
     return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
             "knowledge_source": str(knowledge_source or ""),
@@ -1704,6 +1700,7 @@ def apply_monthly_covert_actual_progress(
     才记已掌握；不再由执行态折固定增量、满统一阈自动坐实。执行态枚举对查案
     不再是必填（#1895 同批废旧查案的意愿底档），缺省只落事实投入。
     """
+    owns = db.owns_transaction() if commit else False
     orders = list(db.list_secret_orders(status="active"))
     by_sel = _selection_map(selections)
     applied: List[Dict[str, object]] = []
@@ -1792,7 +1789,7 @@ def apply_monthly_covert_actual_progress(
             "contract_kind": contract.get("kind"),
             "contract_axes": list(contract.get("axes") or []),
         })
-    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+    if owns:
         db.conn.commit()
     return applied
 
@@ -1965,6 +1962,7 @@ def settle_due_secret_orders(
     *,
     commit: bool = False,
 ) -> List[Dict[str, object]]:
+    owns = db.owns_transaction() if commit else False
     results: List[Dict[str, object]] = []
     for order in list_due_secret_orders_for_settlement(db, state):
         oid = int(order["id"])
@@ -2014,6 +2012,6 @@ def settle_due_secret_orders(
             "target_units": target,
             "delivered": bool(verdict["delivered"]),
         })
-    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+    if owns:
         db.conn.commit()
     return results

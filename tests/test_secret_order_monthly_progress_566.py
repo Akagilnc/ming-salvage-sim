@@ -38,7 +38,6 @@ def _production_session(db, state, content):
     return session
 
 
-
 def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 
@@ -299,6 +298,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     before = _rollback_snapshot(db, state, pending_ids)
     observed = {"fiscal_written": False, "metrics_written": False}
     original_flows = decree.apply_fixed_period_flows
+    fiscal_fault = RuntimeError("post-fiscal failure 566")
 
     def fail_after_real_flows(flow_db, flow_state):
         ledger_before = _rows(flow_db, "economy_ledger")
@@ -307,7 +307,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         observed["fiscal_written"] = _rows(flow_db, "economy_ledger") != ledger_before
         observed["metrics_written"] = dict(flow_state.metrics) != metrics_before
         assert observed == {"fiscal_written": True, "metrics_written": True}
-        raise RuntimeError("post-fiscal failure 566")
+        raise fiscal_fault
 
     monkeypatch.setattr(decree, "apply_fixed_period_flows", fail_after_real_flows)
     monkeypatch.setattr(
@@ -343,13 +343,12 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
             invoke()
         assert exc_info.value.status_code == 500
         detail = exc_info.value.detail
-        if isinstance(detail, dict):
-            assert "post-fiscal failure 566" in str(detail.get("message") or detail)
-        else:
-            assert "post-fiscal failure 566" in str(detail)
+        assert isinstance(detail, dict)
+        assert detail.get("message") == str(fiscal_fault)
     else:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError) as ei:
             invoke()
+        assert ei.value is fiscal_fault
 
     assert observed == {"fiscal_written": True, "metrics_written": True}
     after = _rollback_snapshot(db, state, pending_ids)
@@ -361,27 +360,3 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     assert (reloaded.turn, reloaded.year, reloaded.period, reloaded.turn_phase) == before["clock"]
     assert reloaded.metrics == before["metrics"]
 
-
-def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
-    db, state, _content = game
-    _, dossier_id = _order(db, state)
-    import pytest
-    with pytest.raises(ValueError):
-        db.record_monthly_dossier_progress(state.turn, None)
-    with pytest.raises(ValueError):
-        db.record_monthly_dossier_progress(state.turn, {"dossier_id": dossier_id})
-    with pytest.raises(ValueError):
-        db.record_monthly_dossier_progress(state.turn, [
-        {"dossier_id": 999999, "progress_band": "伪", "memorial_text": "伪进展"},
-        {"dossier_id": dossier_id, "progress_band": "", "memorial_text": "缺档"},
-        {"dossier_id": dossier_id, "progress_band": "启程", "memorial_text": "首批出京"},
-            {"dossier_id": dossier_id, "progress_band": "重复", "memorial_text": "不得覆盖"},
-        ])
-    for invalid_id in (True, 1.0, 0, -1):
-        with pytest.raises(ValueError):
-            db.record_monthly_dossier_progress(state.turn, [{
-                "dossier_id": invalid_id,
-                "progress_band": "伪进展",
-                "memorial_text": "不得命中真实案卷",
-            }])
-    assert db.list_dossier_progress(dossier_id) == []

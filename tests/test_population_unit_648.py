@@ -1,6 +1,6 @@
-"""#648（[#477 S1]）：人口单位「人」迁移＋流民第八阶级 seed。
+"""#648（[#477 S1]）：人口单位「人」＋流民第八阶级 seed。
 
-canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2：
+canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双口径已退役）：
 - F1：extractor class 写面只收 satisfaction/leverage，population 更新面删除；
 - F2：机面 TSV 裸人 / 玩家面 LLM 输入投影「约N万口」（正向 prompt，零删改）；
 - F3：流民冻结 seed 表（陕西15万/河南5万/内地其余省0；#659 辽东/东江边镇切片0；
@@ -17,7 +17,6 @@ import pytest
 from ming_sim.db import GameDB
 from ming_sim.issues import (
     apply_score_extraction,
-    auto_trigger_seed_issues,
     bind_content as issues_bind_content,
 )
 
@@ -44,8 +43,6 @@ def _displaced_rows(db: GameDB):
         "SELECT name, region_id, population, satisfaction, leverage, agenda "
         "FROM classes WHERE name='流民' ORDER BY region_id"
     ).fetchall()
-
-
 
 
 

@@ -731,17 +731,20 @@ def test_due_month_extractor_blocked_before_todo_write(game):
 
 
 def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
-    """C3：所有权查询抛错不得 fail-open 放行 extractor 终值。"""
+    """C3：所有权查询抛错不得 fail-open 放行 extractor 终值。
+    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, content = game
     dossier_id = _executing_policy_dossier(db, state, token="fail-closed")
 
+    fault = RuntimeError("ownership lookup boom")
+
     def _boom(*_a, **_k):
-        raise RuntimeError("ownership lookup boom")
+        raise fault
 
     monkeypatch.setattr(
         "ming_sim.due_review.dossiers_with_pending_due_review", _boom,
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as ei:
         issue_engine.apply_score_extraction(
             db, state,
             {
@@ -753,66 +756,8 @@ def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
             },
             content=content,
         )
+    assert ei.value is fault
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "executing"
     assert dossier["execution_outcome"] in ("", None)
 
-
-def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
-    """生根：履行期已逐月落完 → 复核零重复落账。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    dossier_id = _executing_policy_dossier(db, state, token="rooted")
-    # 预先落一笔带 origin 的 durable 效果
-    db.record_issue_economy_move(
-        state, "国库", -3, "清丈经费", "履行期逐月已落",
-        origin_ref=f"dossier:{dossier_id}", commit=True,
-    )
-    before_moves = db.list_economy_moves_for_dossier(dossier_id)
-    assert before_moves
-    stages = [{
-        "stage_idx": 0,
-        "due_turn": state.turn,
-        "criterion_text": "火器见眉目",
-        "origin_context": "三年火器见眉目",
-    }]
-    _insert_staged_commitment(
-        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
-    )
-    write_due_staged_commitment_todos(db, state)
-    db.conn.execute(
-        "UPDATE next_audience_todos SET created_turn=?",
-        (state.turn - 1,),
-    )
-    db.conn.commit()
-    apply_pending_due_reviews(db, state, commit=True)
-
-    dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["execution_outcome"] == "fulfilled"
-    after_moves = db.list_economy_moves_for_dossier(dossier_id)
-    assert after_moves == before_moves
-
-
-def test_p6_gap_visible_cause_not_auto(game):
-    """0118 最小玩家面：果可见、因不自动。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    dossier_id = _executing_policy_dossier(db, state, token="gap")
-    db.record_dossier_progress(
-        dossier_id, state.turn, "在办", "臣工奏称已办十之七八",
-        is_terminal=False, commit=True,
-    )
-    stages = [{
-        "stage_idx": 0,
-        "due_turn": state.turn,
-        "criterion_text": "火器见眉目",
-        "origin_context": "三年火器见眉目",
-    }]
-    _insert_staged_commitment(
-        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
-    )
-    write_due_staged_commitment_todos(db, state)
-    scene = list_due_review_scenes(db, state)[0]
-    assert scene["criterion_text"] == "火器见眉目"

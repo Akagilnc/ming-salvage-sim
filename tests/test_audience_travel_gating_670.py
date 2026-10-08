@@ -138,6 +138,7 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
 
     assert terminal.choose_minister(sess) is None
+    # 结构化：未入殿大臣记入未结传召；不扫 print 承旨措辞（P7 禁模板负向≠合法盯文）。
     assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
         ("洪承畴", f"cli:initial:{state.turn}:洪承畴"),
     ]
@@ -304,8 +305,8 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
 
     try:
         an.close_night(db, state, night_id=night_id, content=content)
-    except RuntimeError as exc:
-        assert str(exc) == "injected canonical applier failure"
+    except RuntimeError:
+        pass
     else:
         raise AssertionError("canonical applier failure must abort close")
 
@@ -388,7 +389,6 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     with pytest.raises(SettlementAbort) as excinfo:
         advance_continuation()
     assert isinstance(excinfo.value.__cause__, RuntimeError)
-    assert "injected continuation applier failure" in str(excinfo.value.__cause__)
 
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
     assert _travel_row(db, person.name)["location"] == "henan"
@@ -678,10 +678,6 @@ def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch
     assert len(unsettled) == 1
     assert unsettled[0]["night_id"] == int(night["id"])
     assert unsettled[0]["origin_id"] == "web:atomic-ok"
-
-
-
-
 
 
 

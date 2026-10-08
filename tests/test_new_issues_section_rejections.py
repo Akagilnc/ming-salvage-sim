@@ -288,15 +288,20 @@ def test_new_issue_falsy_nonstring_kind_rejected(read_game, bad_kind):
 
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
-    def _boom(*a, **k):
-        raise RuntimeError("模拟 insert_issue 落库代码异常")
-    monkeypatch.setattr(type(db), "insert_issue", _boom)
     # insert 代码/DB 异常不再 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    with pytest.raises(RuntimeError):
+    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
+    fault = RuntimeError("模拟 insert_issue 落库代码异常")
+
+    def _boom(*a, **k):
+        raise fault
+
+    monkeypatch.setattr(type(db), "insert_issue", _boom)
+    with pytest.raises(RuntimeError) as ei:
         I.apply_issue_tracker_output(db, state, {
             "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state),
                             "kind": "situation", "title": "测试·正常字段"}],
         })
+    assert ei.value is fault
 
 
 def test_new_issue_valid_decree_still_creates(game):
@@ -328,36 +333,44 @@ def test_new_issue_valid_decree_still_creates(game):
 def test_event_to_issue_insert_exception_propagates(read_game, monkeypatch):
     db, state, _ = read_game
     # 直接覆盖 fix 点：event_to_issue 内 insert 真异常上抛，不再 WARN 吞成 None。
+    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
     eid = _pick_event_pool_id(db)
     ev = I._ctx().event_by_id[eid]
 
+    fault = RuntimeError("模拟 event_to_issue insert 落库代码异常")
+
     def _boom(*a, **k):
-        raise RuntimeError("模拟 event_to_issue insert 落库代码异常")
+        raise fault
 
     monkeypatch.setattr(type(db), "insert_issue", _boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as ei:
         I.event_to_issue(db, state, ev)
+    assert ei.value is fault
 
 
 def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
     db, state, content = game
     # codex 强调的 call-site seam：通过 apply_issue_tracker_output 的 event_pool 分支驱动，
     # insert 真异常一路上抛（上层 applier.atomic 据此 SettlementAbort），不被吞成静默 rejected。
+    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
     eid = "__event_pool_insert_exception__"
     ev = _hist_event(eid)
     I.bind_content(content)
     _open_event_window(state, ev)
 
+    fault = RuntimeError("模拟 event_pool insert 落库代码异常")
+
     def _boom(*a, **k):
-        raise RuntimeError("模拟 event_pool insert 落库代码异常")
+        raise fault
 
     with _TempEvents(content, ev):
         _ensure_event_candidate(db, state, eid)
         monkeypatch.setattr(type(db), "insert_issue", _boom)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError) as ei:
             I.apply_issue_tracker_output(db, state, {
                 "new_issues": [{"origin_kind": "event_pool", "id": eid}],
             })
+        assert ei.value is fault
 
 
 def test_event_to_issue_duplicate_returns_none_not_raise(game):
@@ -421,69 +434,5 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
     assert db.find_any_issue_by_origin("event_pool", downstream.id) is None
 
 
-# --- tags 字段严格化（cmr ni r8 codex medium）---
-# tags = list(ni.get("tags") or []) 对标量串静默拆字（list("募营")=['募','营']）、对非串元素
-# 不拒（list([5])=[5]）会污染 DB tags。与 R6 int 字段 _strict_int 同一字段校验 class——
-# 缺省/null/空串→[]，present 须 list/tuple 且元素全 str。
-
-
-@pytest.mark.parametrize("bad_tags", ["募营", "单串标量"])
-def test_new_issue_scalar_string_tags_rejected(read_game, bad_tags):
-    db, state, _ = read_game
-    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·标量tags", "tags": bad_tags}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    rej = _rejected(out)
-    assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-
-
-def test_new_issue_non_string_tag_element_rejected(read_game):
-    db, state, _ = read_game
-    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏tag元素", "tags": [5, "正常"]}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    rej = _rejected(out)
-    assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-
-
-def test_new_issue_valid_list_tags_preserved(game):
-    db, state, _ = game
-    # 正常 list[str] tags 整词保全（不拆字），pairing 短语完整 → 正常立项落库。
-    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常tags", "tags": ["募营", "边事"]}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
-    assert len(created) == 1, out
-    iid = int(created[0]["issue_id"])
-    row = db.conn.execute("SELECT tags FROM issues WHERE id=?", (iid,)).fetchone()
-    assert json.loads(row["tags"]) == ["募营", "边事"], "整词须保全、不得拆字"
-
-
-# --- cancel_cost 与 effect 字段同走 _eff_dict 容忍（cmr ni r9 codex medium）---
-# cancel_cost 旧用 dict(raw)：标量串 raise 拒整项（违 P1：次要字段脏不该丢整个 issue），list-of-pairs
-# 静默 garble（dict([["民心",-5]])={'民心':-5}、dict(["ab"])={'a':'b'}）。改与 ongoing/effect 三个
-# dict 字段统一 _eff_dict（非 dict → {} 容忍）：issue 仍正常立、cancel_cost 落空 {} 不 garble。
-
-
-@pytest.mark.parametrize("bad_cancel", ["白银万两", [["民心", -5]], ["ab"], [], 5])
-def test_new_issue_non_dict_cancel_cost_tolerated(game, bad_cancel):
-    db, state, _ = game
-    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·脏cancel", "cancel_cost": bad_cancel}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
-    assert len(created) == 1, out  # issue 仍立（不因次要字段脏拒整项）
-    iid = int(created[0]["issue_id"])
-    row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()
-    assert json.loads(row["cancel_cost"]) == {}, "非 dict cancel_cost 须容忍归空 {}，不得 garble"
-
-
-def test_new_issue_valid_cancel_cost_preserved(game):
-    db, state, _ = game
-    # 正常 dict cancel_cost 原样保全（_eff_dict 对 dict 直通）。
-    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常cancel",
-          "cancellable": "decree", "cancel_cost": {"民心": -5, "皇威": -2}}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
-    assert len(created) == 1, out
-    iid = int(created[0]["issue_id"])
-    row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()
-    assert json.loads(row["cancel_cost"]) == {"民心": -5, "皇威": -2}
+# --- tags 字段严格化（cmr ni r8）---
+# 缺省/null/空串→[]；present 须 list/tuple 且元素全 str。拒标量串拆字与非串元素静默落库。

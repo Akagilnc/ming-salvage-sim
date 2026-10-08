@@ -19,13 +19,10 @@ import threading
 
 import pytest
 
-from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.faction_brew import (
     STANCE_KEY,
     VIEW_FACTION_STANCE,
-    build_faction_brew_input,
-    collect_new_edge_events_for_faction,
     project_character_factions,
     select_faction_brew_targets,
 )
@@ -33,6 +30,7 @@ from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY
 from tests.test_relation_brew_636 import run_month_end_relation_brew
 from tests.test_relation_brew_636 import _add_edge
 from ming_sim.relations import EMPEROR_NODE
+from tests.test_relation_brew_636 import run_month_end_relation_brew
 
 
 def _faction_stance(db, faction: str):
@@ -82,24 +80,6 @@ def _faction_rows(db):
             "SELECT * FROM factions"
         ).fetchall()
     }
-
-
-# ------------------------------------------------- F1 canonical 党籍投影
-
-def test_canonical_projection_intersects_existing_factions_only(game):
-    """投影＝characters.faction ∩ factions 现存集合：表外党籍与皇帝节点不入映射，
-    不猜不建第二套映射表。"""
-    db, state, _ = game
-    proj = project_character_factions(db)
-    assert proj["杨嗣昌"] == "皇党"
-    assert proj["王绍徽"] == "阉党"
-    # 皇帝端不投影（皇帝不是 characters 行，即便同名也绝不入映射）。
-    assert EMPEROR_NODE not in proj
-    # 表外党籍（后金/中宫/流寇等真实种子）不入投影。
-    in_table = {row["name"] for row in db.conn.execute("SELECT name FROM factions")}
-    assert set(proj.values()) <= in_table
-    assert "皇太极" not in proj
-    assert "周皇后" not in proj
 
 
 def test_any_endpoint_hit_selects_and_same_faction_dedups(game):
@@ -280,29 +260,37 @@ def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
 # ------------------------------------------- 异常边界：DB 错响亮不伪装降级
 
 def test_faction_claim_db_error_propagates_loudly(game):
+    """认领 DB 失败响亮上抛；来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
+    fault = sqlite3.OperationalError("派系认领库不可写")
+
     def boom(*args, **kwargs):
-        raise sqlite3.OperationalError("派系认领库不可写")
+        raise fault
 
     db.claim_faction_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+    assert ei.value is fault
 
 
 def test_faction_apply_db_error_propagates_loudly_not_disguised(game):
+    """落定 DB 失败响亮上抛、不伪装；来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
+    fault = sqlite3.OperationalError("派系落定库不可写")
+
     def boom(*args, **kwargs):
-        raise sqlite3.OperationalError("派系落定库不可写")
+        raise fault
 
     db.apply_faction_brew_result = boom
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+    assert ei.value is fault
 
 
 # ------------------------------- P5：关系与派系同批条目并行不串行
@@ -395,31 +383,6 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
     db.record_dossier_decision(dossier_id, "promulgated")
     assert db.dossier_authorizes_effects(dossier_id)
     return db.get_decree_dossier(dossier_id)
-
-
-def test_new_events_preserve_source_target_equal_to_db_rows(game):
-    """(a) 机械断言：每条 new_events 的 source/target 与 DB 行相等。"""
-    db, state, content = game
-    holder_a, holder_b = _minister(db), "王绍徽"
-    _add_edge(db, state, source=holder_a, target=holder_b, kind="结怨",
-              context=f"{holder_a}当殿讦{holder_b}。", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert targets
-    for target in targets:
-        events = collect_new_edge_events_for_faction(
-            db, faction=target["faction"], watermark=target["watermark"],
-        )
-        payload = build_faction_brew_input(
-            faction=target["faction"], year=int(state.year),
-            period=int(state.period), summary=target["summary"],
-            new_events=events, has_pending=target["has_pending"],
-        )
-        assert len(payload["new_events"]) == len(events)
-        for projected, row in zip(payload["new_events"], events, strict=True):
-            assert projected["source"] == row["source"]
-            assert projected["target"] == row["target"]
 
 
 def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):

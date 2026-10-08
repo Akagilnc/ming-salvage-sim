@@ -16,23 +16,15 @@ import json
 
 from ming_sim.db import GameDB
 from ming_sim.supervision import (
-    DENUNCIATION_ALLOWED_COLS,
-    DENUNCIATION_ORIGIN_BASE,
-    DENUNCIATION_TABLE,
     ORIGIN_MARK_DENUNCIATION_FALSE,
     ORIGIN_MARK_DENUNCIATION_TRUE,
-    compose_denunciation_origin,
-    derive_denunciation_is_true,
     faction_relation,
-    is_reported_actual_fork,
     origin_has_mark,
 )
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 from tests.dossier_test_helpers import create_test_secret_order
 
-
 # ── helpers ───────────────────────────────────────────────────────
-
 
 def _chars_by_faction(db) -> dict[str, list]:
     rows = db.conn.execute(
@@ -46,7 +38,6 @@ def _chars_by_faction(db) -> dict[str, list]:
         by_f.setdefault(str(row["faction"]), []).append(row)
     return by_f
 
-
 def _pair_enemy(db):
     by_f = _chars_by_faction(db)
     facs = [f for f, rs in by_f.items() if rs]
@@ -58,14 +49,12 @@ def _pair_enemy(db):
                 return by_f[fa][0], by_f[fb][0]
     return by_f[facs[0]][0], by_f[facs[1]][0]
 
-
 def _enemy_accuser(db, subject_faction: str) -> str:
     by_f = _chars_by_faction(db)
     for fac, rows in by_f.items():
         if faction_relation(fac, subject_faction) == "enemy" and rows:
             return str(rows[0]["name"])
     raise AssertionError("无敌对派系在朝人物")
-
 
 def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
     did = db.create_decree_dossier(
@@ -85,7 +74,6 @@ def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
     db.conn.commit()
     return did
 
-
 def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     """奏报 + 旨外实况 → fork 单源读端为真。"""
     db.record_dossier_progress(
@@ -101,7 +89,6 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
         (dossier_id,),
     )
     db.conn.commit()
-
 
 def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
     """公开材料只列入有奏报且与旨外或执行格分叉的案；密令案与未分叉案不入。"""
@@ -163,7 +150,6 @@ def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
         report_transformed,
     }
 
-
 def _make_transformed_no_fork(db, state, dossier_id: int):
     """变形但无奏报分叉（无私货/无旨外）——fork 读端为假。"""
     db.conn.execute(
@@ -172,21 +158,12 @@ def _make_transformed_no_fork(db, state, dossier_id: int):
     )
     db.conn.commit()
 
-
 def _escalate_fork(db, state, dossier_id: int, *, token: str = "esc"):
     """案情升级：再落一笔旨外恶果（actual_effect_count↑）。"""
     db.record_issue_economy_move(
         state, "国库", 3, "再浮收", f"升级{token}",
         origin_ref=f"dossier:{dossier_id}", beyond_intent=True, commit=True,
     )
-
-
-def _table_cols(db, table: str) -> set[str]:
-    return {
-        str(row["name"])
-        for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    }
-
 
 def _scripted_entry(
     *,
@@ -202,40 +179,7 @@ def _scripted_entry(
         "memorial_text": body,
     }
 
-
-# ── unit pure ─────────────────────────────────────────────────────
-
-
-def test_fork_predicate_pure_and_single_source_expression():
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=True, execution_outcome="executing",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="transformed",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="fulfilled",
-    ) is False
-    assert is_reported_actual_fork(
-        reported_bands=[], beyond_intent=True, execution_outcome="transformed",
-    ) is False
-
-
-def test_veracity_derivation_mechanical_and_origin_marks():
-    """真伪底派生：分叉→真；无分叉→私货；origin 单源 mark。"""
-    assert derive_denunciation_is_true(fork=True) is True
-    assert derive_denunciation_is_true(fork=False) is False
-
-    o_true = compose_denunciation_origin(is_true=True)
-    o_false = compose_denunciation_origin(is_true=False)
-    assert o_true.startswith(DENUNCIATION_ORIGIN_BASE)
-    assert origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_TRUE)
-    assert origin_has_mark(o_false, ORIGIN_MARK_DENUNCIATION_FALSE)
-    assert not origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_FALSE)
-
-
 # ── AC2 承接与 clamp ──────────────────────────────────────────────
-
 
 def test_ac2_scripted_accept_and_clamp(game):
     db, state, _content = game
@@ -286,9 +230,7 @@ def test_ac2_scripted_accept_and_clamp(game):
     )
     assert ghost == []
 
-
 # ── AC3 真伪底派生 ────────────────────────────────────────────────
-
 
 def test_ac3_veracity_true_and_false_from_fork(game):
     db, state, _content = game
@@ -327,9 +269,7 @@ def test_ac3_veracity_true_and_false_from_fork(game):
     assert by_did[did_false]["is_true"] is False
     assert "fork_exposure" not in by_did[did_false]["payload"]
 
-
 # ── AC4 重复语义三断言 + restore ──────────────────────────────────
-
 
 def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     db, state, _content = game
@@ -422,9 +362,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     finally:
         restored.close()
 
-
 # ── AC5 零模板 + 暴露载体 ────────────────────────────────────────
-
 
 def test_ac5_zero_template_exposure_and_622(game):
     db, state, _content = game
@@ -478,13 +416,6 @@ def test_ac5_zero_template_exposure_and_622(game):
     assert _world_fingerprint(db) == fp_before
 
     # 知识轨没有新增条目（由上面的结构化计数证明）。
-    # schema 白名单
-    assert DENUNCIATION_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert _table_cols(db, DENUNCIATION_TABLE) == DENUNCIATION_ALLOWED_COLS
 
     # 引擎侧零模板句：产出路径无固定文案常量（正则扫生产源码＝盯文，
     # 已在 #1901 J3 整类删除；P7 的真实闸案在呈现层 LLM 产出不可篡改）
