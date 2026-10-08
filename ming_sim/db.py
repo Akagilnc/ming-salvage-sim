@@ -67,7 +67,6 @@ from ming_sim.qualitative import (
 )
 from ming_sim.relations import (
     bind_origin_round,
-    credit_events_as_edges,
     normalize_evidence,
     validate_edge_kind,
 )
@@ -19623,10 +19622,6 @@ class GameDB:
         ).fetchone()
         return int(row["id"])
 
-    # Names kept as narrow aliases for callers that describe the same seam differently.
-    write_relation_edge_event = record_relation_edge_event
-    insert_relation_edge_event = record_relation_edge_event
-
     def get_relation_edge_events(
         self,
         *,
@@ -19664,10 +19659,6 @@ class GameDB:
             }
             for row in rows
         ]
-
-    def read_credit_events_as_edges(self, records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """0079 读侧契约适配；只返回边，不把 fixture 写入 0079 或本表。"""
-        return credit_events_as_edges(records)
 
     # ------------------------------------------------------------------
     # #636 关系摘要层 S5：两段式存储＋月末增量重酿腿的持久化接缝。

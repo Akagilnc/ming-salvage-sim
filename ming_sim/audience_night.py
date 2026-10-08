@@ -1966,9 +1966,9 @@ def _presence_delta(entry: Dict[str, Any]) -> Optional[str]:
     进=口令账 TAG_ENTER（宣入/常在员额，引擎确定性写）**或**抽取账 presence_effect='enter'；
     出=口令账 TAG_EXIT（令退）**或**抽取账 presence_effect='exit'。抽取账开放 tags 不驱动
     在场（机器承重态不解析自由文本，与 settle `check_dead=(effect==enter)` 对称）；传召在途
-    无在场效果。`present_names_at` / `audible_entries_for` / `persons_present_tonight` /
+    无在场效果。`present_names_at` / `audible_entries_for` /
     `dismiss` 同走此核，杜绝双真源（#507：抽取 presence_effect=exit 后 recap 仍含退后公开对话，
-    因旧 `_apply_presence` 只认 tags；command dismiss 的 TAG_EXIT 又漏于旧 `persons_present_tonight`）。
+    因旧 `_apply_presence` 只认 tags；command dismiss 的 TAG_EXIT 又曾漏于旧在场别名）。
     `_is_command_entry` 定义在下方，运行时解析。"""
     effect = str(entry.get("presence_effect") or "")
     if effect == PRESENCE_ENTER:
@@ -2161,18 +2161,6 @@ def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
         if _command_entry_has_tag_enter(entry):
             names.update(entry.get("person_names") or [])
     return names
-
-
-def persons_present_tonight(db: Any, night_id: int) -> set[str]:
-    """当前在场名单 = 夜末在场态（#501 AC2/AC9）。
-
-    与 `present_names_at` 共用单一在场步进 `_presence_delta`（ADR 0035 R2）——进=口令账
-    TAG_ENTER（宣入/常在员额）**或**抽取账 presence_effect='enter'；出=口令账 TAG_EXIT
-    （令退）**或**抽取账 presence_effect='exit'。抽取账开放 tags 不驱动在场（机器承重态不
-    解析自由文本，与 settle `check_dead=(effect==enter)` 对称）。派生只认已落账（list_ledger
-    只返回已 settle 的账），故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。
-    """
-    return present_names_at(db, int(night_id))
 
 
 def presence_roster(db: Any, night_id: int) -> List[Dict[str, Any]]:
