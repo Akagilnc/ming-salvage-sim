@@ -146,7 +146,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     # 案卷 due 直挂：title/criterion 已在 todo；无 issue 段表 → 末段
     if commitment_ref <= 0 and not meta.get("title"):
         meta = dict(meta)
-        meta["title"] = str(todo.get("criterion_text") or "")[:40]
+        meta["title"] = str(todo.get("criterion_text") or "")
     stages = meta["stages"]
     origin_ref = _todo_origin_ref(todo, str(meta.get("origin_ref") or ""))
     branch = resolve_due_review_branch(db, origin_ref)
@@ -226,7 +226,8 @@ def project_due_review_scene(
 ) -> Dict[str, object]:
     """复命场面投影（ID-13 用词，P4 定性、无数字面板）。"""
     inp = review_input if review_input is not None else build_due_review_input(db, todo)
-    origin = str(inp.get("origin_context") or todo.get("origin_context") or "").strip()
+    # P6 / ADR 0142：origin_context 是自由正文；投影原串，不把 strip 副本当原文。
+    origin = str(inp.get("origin_context") or todo.get("origin_context") or "")
     mid = bool(inp.get("mid_stage"))
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"

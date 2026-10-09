@@ -41,9 +41,10 @@ def parse_highlight_judge_output(raw: str) -> List[str]:
     for item in items:
         if not isinstance(item, str):
             continue
-        phrase = item.strip()
-        if phrase:
-            out.append(phrase)
+        # P6：短语是奏对原文片段；判空观察副本，清单保留原串。
+        if not item.strip():
+            continue
+        out.append(item)
     return out
 
 

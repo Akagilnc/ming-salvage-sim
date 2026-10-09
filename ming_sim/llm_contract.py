@@ -18,7 +18,8 @@ def abort_llm_contract(stage: str, message: str, raw: Optional[str] = None) -> N
 def require_non_empty_text(value: object, stage: str, field: str, raw: Optional[str] = None) -> str:
     if not isinstance(value, str) or not value.strip():
         abort_llm_contract(stage, f"{field} 必须是非空字符串", raw)
-    return value.strip()
+    # P6 / ADR 0142：判空后仍返回原串，不把 strip 副本当正文。
+    return value
 
 
 def require_int_range(value: object, stage: str, field: str, low: int, high: int,

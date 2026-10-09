@@ -96,8 +96,9 @@ def generate_ending_summary_for_tail(
             turn = int(row.get("turn") or 0)
             if turn > int(closed_state.turn):
                 continue
-            body = str(row.get("report") or row.get("body") or "").strip()
-            if not body:
+            # P6 / ADR 0142：邸报正文是自由文本；判空只观察副本，下传原串。
+            body = str(row.get("report") or row.get("body") or "")
+            if not body.strip():
                 continue
             # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
             loaded.append({
