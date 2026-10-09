@@ -1555,3 +1555,5 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     assert "personnel" in view
     assert "military" not in view
     assert "treasury" not in view
+
+

@@ -427,7 +427,7 @@ def restore_pay_order_override(
             " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
             " VALUES (?, ?, ?, 'override', ?, ?, 0)",
             (int(turn), key, old, origin,
-             (reason or "撤销 override 旨，形状退出格律")),
+             reason or "撤销 override 旨，形状退出格律"),
         )
         db.conn.execute("DELETE FROM fiscal_config WHERE key = ?", (key,))
         db.record_fiscal_config_change(

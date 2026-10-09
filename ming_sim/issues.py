@@ -13,6 +13,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
+from ming_sim.action_materialize import DecreeMaterializationValidationError
 from ming_sim.applier import atomic, connection_owns_transaction
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
@@ -44,7 +45,6 @@ from ming_sim.db import (
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,
     format_public_progress_disclosure,
-    terminal_report_facade,
 )
 from ming_sim.exceptions import OfficeAppointmentRejection, SettlementAbort
 from ming_sim.displaced_population import (
@@ -93,18 +93,14 @@ _content: Optional[GameContent] = None
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
 _FISCAL_LEVY_TARGET_ABS_TOL = 1e-9
 
-# SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
-_SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
-
-
 def _parse_sqlite_id(raw: object) -> int:
-    """解析将绑进 SQLite 的整型主键 id（secret_order / issue 等通用）：非整数/bool/float/超
-    SQLite 64-bit 范围 → 抛 ValueError（调用方拒为 invalid_enum）。避免绑定超界 int 抛
-    OverflowError 崩整月结算（#63.5 一坏项带走整批；cmr secret-order r2 / close-issues r1 codex）。"""
-    val = _strict_int(raw)  # bool/float/非数 → ValueError
-    if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
-        raise ValueError("id 超出 SQLite 64-bit 范围")
-    return val
+    """解析将绑进 SQLite 的整型主键 id：委托 ``strict_sqlite_id`` 单一范围权威。
+
+    非整数/bool/float/超 64-bit → ValueError（调用方拒为 invalid_enum）。避免绑定
+    超界 int 抛 OverflowError 崩整月结算（#63.5 / #1897 C1）。
+    """
+    from ming_sim.strict_types import strict_sqlite_id
+    return strict_sqlite_id(raw)
 
 
 _AUTHORITY_GRANT_OPS = frozenset({"授予", "grant"})
@@ -250,8 +246,18 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.get_decree_dossier(dossier_id)
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
-    # get_decree_dossier → _dossier_row 已保证 payload 为对象。
-    payload = row.get("payload") or {}
+    try:
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            from ming_sim.db import GameDB
+            payload = GameDB.parse_engine_payload_json(
+                row.get("payload_json"),
+                surface=f"issues.dossier#{dossier_id}.payload_json",
+            )
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
         return None
     return {**row, "payload": payload}
@@ -364,7 +370,7 @@ def _payload_owned_person_duplicate(
 
 
 def _issue_condition_text(raw: object) -> str:
-    """Free condition prose for transport/persist: preserve raw; emptiness on local copy."""
+    """普通叙事原文落库；判空只在调用方局部副本上 strip（#1897 E2）。"""
     if raw is None:
         return ""
     if isinstance(raw, str):
@@ -2023,17 +2029,19 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
         if not db.dossier_has_beyond_intent(did):
             continue
-        roster = GameDB._loads_stored_json_list(
-            row["participant_roster"], surface="decree_dossiers.participant_roster",
-        )
-        if not roster:
+        # 复用 get_decree_dossier 响亮读名册；腐坏不上扫跳过（#1897 E1/K2）。
+        dossier = db.get_decree_dossier(did)
+        if dossier is None:
+            continue
+        roster = dossier.get("participant_roster") or []
+        if not isinstance(roster, list) or not roster:
             continue
         participant_ids = [
             str(item.get("character_id") or "").strip()
             for item in roster if isinstance(item, dict) and str(item.get("character_id") or "").strip()
         ]
         if len(participant_ids) != len(roster) or not participant_ids:
-            continue
+            raise ValueError(f"案卷#{did} participant_roster 含无效成员")
         liability = project_execution_liability_parties(roster)
         responsible_ids = [
             str(item.get("character_id") or "").strip() for item in liability
@@ -2096,6 +2104,8 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
             ).fetchone():
                 continue
             candidate_id = f"impeachment_surge:{origin_ref}:{faction}"
+            decree_text = str(row["decree_text"] or "")
+            execution_note = str(row["execution_note"] or "")
             candidates.append({
                 "id": candidate_id,
                 "origin_kind": "impeachment_surge",
@@ -2112,8 +2122,9 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
                 "responsible_person_ids": responsible_ids,
                 "responsible_faction_ids": responsible_factions,
                 "dossier_id": did,
-                "decree_text": str(row["decree_text"] or ""),
-                "execution_note": str(row["execution_note"] or ""),
+                # #1897：案卷自由正文原样供料；仅空白也不得因 strip 改成空串。
+                "decree_text": decree_text,
+                "execution_note": execution_note,
                 "execution_outcome": str(row["execution_outcome"] or "").strip(),
                 "beyond_intent": True,
                 "reported_bands": list(fork_state.get("reported_bands") or []),
@@ -4601,7 +4612,7 @@ def apply_issue_tracker_output(
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
         resolve_text_for_shape = _issue_condition_text(ni.get("resolve_condition"))
-        if not resolve_text_for_shape and isinstance(stop_condition_raw, str):
+        if not resolve_text_for_shape.strip() and isinstance(stop_condition_raw, str):
             resolve_text_for_shape = stop_condition
         forbidden_resolve_commitment_shape = bool(
             _FORBIDDEN_COMMITMENT_RESOLVE_SHAPE.fullmatch(str(resolve_text_for_shape or "").strip())
@@ -4615,7 +4626,7 @@ def apply_issue_tracker_output(
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
-                    and bool(stop_condition.strip())
+                    and bool(str(stop_condition).strip())
                     and bool(origin_ref)
                     and not resolve_eff
                     and not fail_eff
@@ -5146,16 +5157,9 @@ def apply_issue_tracker_output(
             )
         )
         if deterministic_breach:
-            # #1894 / #1834 F37：0056 名声账不得抢先关原案卷；结案留给本月
-            # dossier_executions。与 revoke_decree / finalize_persist 同尺。
-            from ming_sim.breach_plea import apply_persist_revoke_tail
-            apply_persist_revoke_tail(
-                db, state,
-                target_dossier_id=int(linked_dossier["id"]),
-                reason=str(cn.get("narrative") or "撤回成命"),
-                apply_0056=True,
-                close_target=False,
-                commitment_ref=int(issue_id),
+            db.breach_decree_dossier(
+                state, int(linked_dossier["id"]),
+                reason=str(cn.get("narrative") or "撤回成命"), commit=False,
             )
         cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):
@@ -5546,9 +5550,10 @@ def _office_appointment_failure(
     kind: str = "",
     reason_suffix: str = "",
 ) -> Dict[str, object]:
-    """Map known appointment write failures to typed rejection categories.
+    """Map typed appointment domain failures to rejection categories.
 
     Category comes only from typed exception attributes — never from message text.
+    Callers must only pass already-classified domain faults (#1897 E1).
     """
     result: Dict[str, object] = {
         "name": name,
@@ -6221,6 +6226,8 @@ def _apply_person_changes(
                     ch.transit_distance_remaining = row["transit_distance_remaining"]
                     ch.transit_speed_factor = row["transit_speed_factor"]
                     ch.transit_start_turn = int(row["transit_start_turn"] or 0)
+                    # 对称 DB 侧回滚（上方 UPDATE 已还原全 7 字段）：内存也还原缘由/码，
+                    # 守三面同步（决定6），免前置步刷过内存缘由后此路回滚留脏值（PR#106 R2 gemini）。
                     ch.status_reason = str(row["status_reason"] or "")
                     ch.reason_code = str(row["reason_code"] or "")
 
@@ -6356,7 +6363,13 @@ def _apply_person_changes(
                         )
                         continue
                     if action_type == "pacification":
-                        payload = dossier.get("payload") or {}
+                        payload = dossier.get("payload")
+                        if not isinstance(payload, dict):
+                            from ming_sim.db import GameDB
+                            payload = GameDB.parse_engine_payload_json(
+                                dossier.get("payload_json"),
+                                surface="issues.pacification.payload_json",
+                            )
                         bound_target = str(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()
@@ -6565,10 +6578,7 @@ def _apply_dossier_participant_items(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
-        # Thin seam: LLM field shape here; authority write owns durable vs input
-        # split via PendingActionRefusal vs ValueError (F39 / ADR 0005).
-        from ming_sim.exceptions import PendingActionRefusal
-
+        # 本次声明字段错误 → 逐项拒收；已持久名册/读改写故障上抛（#1897 E1/K2）。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if dossier_id not in authority_set:
@@ -6582,10 +6592,23 @@ def _apply_dossier_participant_items(
                 raise ValueError("追加参与层级必须为主办/协办/知情")
             if not delegator_id:
                 raise ValueError("追加参与人必须注明委派人")
-            # Free prose role（职分文字）：preserve raw; emptiness on local copy (#1834 F21).
-            role_raw = str(item.get("role") or "")
-            role = role_raw if role_raw.strip() else ""
-        except (TypeError, ValueError, KeyError) as exc:
+            # 职分自由文字：原值运输；strip 只作局部判空，不改持久值（#1897 E2）。
+            role_raw = item.get("role")
+            if role_raw is None:
+                role = ""
+            elif not isinstance(role_raw, str):
+                raise ValueError(
+                    f"追加参与人职分须为原文，得 {type(role_raw).__name__}"
+                )
+            else:
+                role = role_raw
+            addition = {
+                "character_id": character_id,
+                "tier": tier,
+                "role": role,
+                "delegator_id": delegator_id,
+            }
+        except (TypeError, ValueError) as exc:
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
@@ -6593,37 +6616,33 @@ def _apply_dossier_participant_items(
             continue
         try:
             added = db.append_decree_dossier_participants(
-                dossier_id,
-                [{
-                    "character_id": character_id,
-                    "tier": tier,
-                    "role": role,
-                    "delegator_id": delegator_id,
-                }],
-                state=state, commit=False,
+                dossier_id, [addition], state=state, commit=False,
             )
-        except KeyError as exc:
+            if not added:
+                # Exact durable duplicate is the only no-write success case.
+                existing = db.get_decree_dossier(dossier_id) or {}
+                if not any(
+                    row.get("character_id") == character_id
+                    and row.get("tier") == tier
+                    and row.get("role") == role
+                    and row.get("delegator_id") == delegator_id
+                    for row in existing.get("participant_roster", [])
+                ):
+                    raise ValueError("参与人未实际加入案卷")
+            persisted = added[0] if added else {
+                "character_id": character_id, "tier": tier,
+            }
+            results.append({
+                "dossier_id": dossier_id,
+                "character_id": persisted["character_id"],
+                "tier": persisted["tier"],
+            })
+        except DecreeMaterializationValidationError as exc:
+            # 追加项领域拒收（名册无此人等）；已持久腐坏仍上抛 ValueError。
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
             })
-            continue
-        except PendingActionRefusal as exc:
-            results.append({
-                "rejected": True,
-                "category": str(exc.category or "invalid_participant_roster"),
-                "reason": str(exc), "item": item,
-            })
-            continue
-        # Durable ValueError/TypeError from append propagate (F39).
-        # Empty added = authority-recognized exact duplicate; no second confirmation read.
-        persisted = added[0] if added else {
-            "character_id": character_id, "tier": tier,
-        }
-        results.append({
-            "dossier_id": dossier_id,
-            "character_id": persisted["character_id"], "tier": persisted["tier"],
-        })
     return results
 
 
@@ -7489,17 +7508,9 @@ def _apply_score_extraction_body(
             )
             # #567 / #1900：核账事实留在 list_dossier_reconciliations 结构化账，
             # 不向 execution_note 模板增补或覆盖原文。
-            if outcome in {"degraded", "transformed"}:
-                prior = list(db.list_dossier_progress(int(dossier_id)))
-                band, memorial = terminal_report_facade(
-                    outcome, prior_reports=prior,
-                )
-                db.record_dossier_progress(
-                    dossier_id, state.turn, band, memorial,
-                    is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-                    commit=False,
-                )
+            # #1897：不造模板终值奏报；奏报只认真实表报/密奏入口。
+            # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
+            # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
             db.apply_execution_joint_liability(
                 state, dossier_id, outcome, reason=note, commit=False,
             )
@@ -8365,6 +8376,21 @@ def _apply_score_extraction_body(
             key=removed_key, reason=str(remove.get("reason") or ""),
         ))
 
+    commitment_economy_carriers: List[Dict[str, object]] = []
+    for item in issue_summary.get("new_issues") or []:
+        if not (
+            isinstance(item, dict)
+            and not item.get("rejected")
+            and str(item.get("commitment_kind") or "").strip()
+            and item.get("issue_id") is not None
+        ):
+            continue
+        row = db.conn.execute("SELECT ongoing_effects FROM issues WHERE id=?", (int(item["issue_id"]),)).fetchone()
+        if row is None:
+            continue
+        ongoing = loads_effect_dict(row["ongoing_effects"])
+        commitment_economy_carriers.extend(_monthly_economy_items(ongoing))
+
     # 6.5) fiscal_creates：推演凭空新立月固定收支项（税是其一种）。先于 fiscal_changes，
     #      使同{月}「新立关税 + 立即调率」可一气落地。
     applied_fiscal_creates: List[Dict[str, object]] = []
@@ -8421,6 +8447,31 @@ def _apply_score_extraction_body(
                 "reason": "该旧案暗渠摊派已奉旨禁绝", "item": create,
             })
             continue
+        # Dedup is a business rule, not an authorization gate.  It must only see
+        # a shape-valid, canonically authorized carrier; otherwise it can hide a
+        # missing/forged origin behind deduped_commitment_carrier.
+        if direction == "expense":
+            dedup_reason = _commitment_fiscal_create_duplicate_reason(
+                create, commitment_economy_carriers, db
+            )
+            if dedup_reason:
+                applied_fiscal_creates.append({
+                    "rejected": True, "reason": dedup_reason,
+                    "category": "deduped_commitment_carrier", "item": create,
+                })
+                continue
+            residual_account = _commitment_carrier_same_account_unmatched(
+                create, commitment_economy_carriers
+            )
+            if residual_account:
+                residual_display = (
+                    str(create.get("display") or "").strip()
+                    or (db._stem_of(key) or key) or "无名月支"
+                )
+                tlog(
+                    f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"
+                    f"但 fiscal_create「{residual_display}」未按科目名匹配上、照常落账——疑似异名漏匹，试玩留意。"
+                )
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or ""),
@@ -8603,12 +8654,21 @@ def _apply_score_extraction_body(
     ):
         db.conn.commit()
 
-    # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
+    # ADR0009 legacy aliases are canonicalized above and written only through
+    # the canonical person-change applier.  Keep response keys for compatibility,
+    # but do not retain a second set of direct writers here.
+    applied_appointments: List[Dict[str, object]] = []
+    applied_status_changes: List[Dict[str, object]] = []
+    applied_power_changes: List[Dict[str, object]] = []
+    applied_office_changes: List[Dict[str, object]] = []
+
+    # 11) secret_order_updates：推演写 active 密令本月实况到实况轨。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []
     for item in extracted.get("secret_order_updates") or []:
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id")
+        # P6 / #1897 零删改：sim_note 是 LLM 自由文本，判空在副本上做，存的仍是原文。
         sim_note = str(item.get("sim_note") or item.get("result") or "")
         disclosed = item.get("disclosed") is True
         if raw_id is None or not sim_note.strip():
@@ -8622,7 +8682,7 @@ def _apply_score_extraction_body(
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum", "reason": "order_id 非整数或超界"})
             continue
-        # 未知/非 active 密令的副作用写不进（_append_secret_order_line 静默返 False）→ 须显式拒收，
+        # 未知/非 active 密令的副作用写不进（update 对非 active 直接返回）→ 须显式拒收，
         # 否则未知 id 被无脑 append 成功 = 静默报「已应用」（cmr secret-order r1 codex，#14）。
         order = db.get_secret_order(real_id)
         if order is None:
@@ -8634,6 +8694,7 @@ def _apply_score_extraction_body(
                                           "category": "invalid_enum",
                                           "reason": f"密令当前 {order['status']}，非 active，不写推演副作用"})
             continue
+        # 领域拒收已在上方完成；执行区故障（含缺案卷）响亮上抛，不伪装拒收（#1897 F2）。
         db.update_secret_order_sim_note(
             real_id,
             sim_note,
@@ -8891,3 +8952,96 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
                 clear_gate=leg.clear_gate,
                 legacy_key=leg.key,
             )
+
+def _commitment_carrier_same_account_unmatched(
+    create: Dict[str, object],
+    commitment_economy: List[Dict[str, object]],
+) -> str:
+    """ADR0027 残留观测：同批、同账户、有 decree 承诺月支，却**未按科目名匹配上**的
+    fiscal_create —— 疑似异名漏匹（两模块给同一笔起不同名）。返回触发账户名供日志，
+    无则空串。**仅作试玩观测信号、不改落库行为**：该 fiscal_create 仍照常落账。"""
+    account = str(create.get("account") or "").strip()
+    if not account:
+        return ""
+    for item in commitment_economy:
+        if str(item.get("account") or "").strip() != account:
+            continue
+        try:
+            delta = _strict_int(item.get("delta"))
+        except (TypeError, ValueError):
+            continue
+        if delta < 0:
+            return account
+    return ""
+
+
+def _commitment_fiscal_create_duplicate_reason(
+    create: Dict[str, object],
+    commitment_economy: List[Dict[str, object]],
+    db: GameDB,
+) -> str:
+    account = str(create.get("account") or "").strip()
+    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
+    create_tokens = _recurring_funding_label_tokens(
+        display,
+        create.get("key"),
+        create.get("reason"),
+    )
+    if not account or not create_tokens:
+        return ""
+    for item in commitment_economy:
+        if str(item.get("account") or "").strip() != account:
+            continue
+        try:
+            delta = _strict_int(item.get("delta"))
+        except (TypeError, ValueError):
+            continue
+        if delta >= 0:
+            continue
+        item_tokens = _recurring_funding_label_tokens(
+            item.get("category"),
+            item.get("reason"),
+            item.get("purpose"),
+        )
+        if create_tokens & item_tokens:
+            return "同批已有承诺 issue ongoing_effects.economy 承载该经常性拨款，fiscal_create 已去重"
+    return ""
+
+
+def _recurring_funding_label_tokens(*values: object) -> set[str]:
+    tokens: set[str] = set()
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        key_stem = raw
+        if key_stem.endswith("_base") or key_stem.endswith("_rate"):
+            key_stem = key_stem.rsplit("_", 1)[0]
+        normalized = re.sub(r"[\s，。、“”‘’：:；;,.·_\-（）()\[\]【】]+", "", key_stem)
+        for word in (
+            "同批extractor误产的重复",
+            "同批误产的重复",
+            "每月",
+            "按月",
+            "月度",
+            "月支",
+            "拨给",
+            "拨付",
+            "拨银",
+            "拨",
+            "给",
+            "支给",
+            "支出",
+            "开支",
+            "费用",
+            "经费",
+            "月",
+            "万两",
+            "银两",
+            "银",
+        ):
+            normalized = normalized.replace(word, "")
+        if normalized:
+            tokens.add(normalized)
+    return tokens
+

@@ -217,21 +217,9 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
         content=content,
     )
 
-    deg = db.list_dossier_progress(degraded_id)
-    xf = db.list_dossier_progress(transformed_id)
-    assert len(deg) == 1 and deg[0]["is_terminal"] is True
-    assert deg[0]["origin"] == DOSSIER_REPORT_VERDICT
-    # #622：progress_band 定性中文，禁英文枚举；变形案 memorial 为承办人假象。
-    assert deg[0]["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
-    assert "变形" not in deg[0]["progress_band"]
-    assert deg[0]["memorial_text"]  # 非空定性陈词
-    assert len(xf) == 1 and xf[0]["origin"] == DOSSIER_REPORT_VERDICT
-    assert xf[0]["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
-    assert "变形" not in xf[0]["progress_band"]
+    # 结案不代角色新造终值奏报；角色事前未写的奏报轨保持空。
+    assert db.list_dossier_progress(degraded_id) == []
+    assert db.list_dossier_progress(transformed_id) == []
     assert db.list_dossier_progress(fulfilled_id) == []
     assert db.list_dossier_progress(failed_id) == []
 

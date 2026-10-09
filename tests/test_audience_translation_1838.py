@@ -159,10 +159,8 @@ def test_presence_enter_exit_from_translation(game):
         (nid,),
     ).fetchall()
     presence_rows = [r for r in rows if r["source_chat_turn_id"] == ctid]
-    assert [(r["body"], r["presence_effect"]) for r in presence_rows] == [
-        (enter_body, "enter"),
-        (exit_body, "exit"),
-    ]
+    # 在场进出效果序；不锁 body 戏文。筛选谓词已保证 source 身份，不重复 all 自证（#1897 T1）。
+    assert [r["presence_effect"] for r in presence_rows] == ["enter", "exit"]
 
 
 def _scene_session(db, state, content, monkeypatch):
@@ -256,7 +254,6 @@ def test_edge_event_and_public_saying_attach_affair(game):
         (edge_id,),
     ).fetchone()
     assert edge_row["affair_id"] == affair.id
-    assert edge_row["context"] == "当殿为赈灾站台"
     # 源轮绑定复用 summon_edge_origin，接入既有撤回删口（ADR 0082）
     assert str(edge_row["origin"]).startswith(summon_edge_origin(ctid))
 

@@ -515,24 +515,30 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         office_type = infer_office_type_from_office(
             row["office"], row["office_type"], llm_config, use_llm=False
         )
-        from ming_sim.db import GameDB
+        import json as _json
 
-        aliases = GameDB._loads_stored_json_list(
-            row["aliases"], surface="characters.aliases",
+        # aliases/personal_skills 持久字符串数组：腐坏响亮（#1897 E1）。
+        # seed_guilt 写口允许文字值，不在此按 JSON 对象硬解（判词 J966 明示排除）。
+        from ming_sim.db import _load_durable_str_list
+        aliases = _load_durable_str_list(
+            row["aliases"], surface=f"characters#{name}.aliases",
         )
-        personal_skills = GameDB._loads_stored_json_list(
-            row["personal_skills"], surface="characters.personal_skills",
+        personal_skills = _load_durable_str_list(
+            row["personal_skills"], surface=f"characters#{name}.personal_skills",
         )
-        seed_guilt = GameDB.parse_engine_payload_json(
-            row["seed_guilt"], surface="characters.seed_guilt",
-        )
+        try:
+            seed_guilt = _json.loads(row["seed_guilt"] or "{}")
+        except (TypeError, ValueError):
+            seed_guilt = {}
+        if not isinstance(seed_guilt, dict):
+            seed_guilt = {}
         characters[name] = Character(
             name=name,
             office=row["office"],
             office_type=office_type,
             faction=row["faction"],
-            aliases=[str(item) for item in aliases if str(item).strip()],
-            personal_skills=[str(item) for item in personal_skills if str(item).strip()],
+            aliases=list(aliases),
+            personal_skills=list(personal_skills),
             loyalty=int(row["loyalty"]),
             ability=int(row["ability"]),
             integrity=int(row["integrity"]),
@@ -1314,12 +1320,20 @@ class GameSession:
         ctid = int(chat_turn_id or 0)
         if ctid <= 0:
             return
+        # 说话人是源轮上已落的结构化身份。空串会把查访/进展闸当成殿上整场放行。
+        minister_name = ""
+        if hasattr(self.db, "conn"):
+            row = self.db.conn.execute(
+                "SELECT minister_name FROM chat_turns WHERE id=?", (ctid,),
+            ).fetchone()
+            if row is not None:
+                minister_name = str(row["minister_name"] or "")
         result.pending_audience_translation = {
             "emperor_message": emperor_message,
             "reply": reply,
             "night_id": int(night_id or 0),
             "chat_turn_id": ctid,
-            "minister_name": "",
+            "minister_name": minister_name,
         }
 
     def schedule_pending_scene_translation(
@@ -1505,16 +1519,18 @@ class GameSession:
             # 与同方法写回 Exception 分支同出口：错误包 + SettlementAbort。
             try:
                 bad_payload = self.db.read_directive_dossier_payload(row)
-            except ValueError as exc:
+            except ValueError as durable_exc:
+                # 已持久载荷损坏：系统故障，不得跳过进补交空 carry（#1897 E1）。
                 pack_path = write_error_pack(
-                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                    self.db, self.state, exc=durable_exc,
+                    extracted=None, resolve_ctx=None,
                 )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
                     turn=int(self.state.turn),
                     stage="directive_admission_resubmit",
                     error_pack_path=pack_path,
-                ) from exc
+                ) from durable_exc
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:
@@ -1563,15 +1579,14 @@ class GameSession:
         else:
             outcomes = [_llm_one(jobs[0])]
 
-        # DB 相串行：产物 ValueError 耗尽该旨；其它异常错误包中止整月。
+        # DB 相串行：仅既有领域契约异常耗尽；未识别异常错误包中止（#1897 E1）。
+        from ming_sim.action_materialize import is_declaration_domain_error
+
         next_carry: Dict[int, Dict[str, object]] = {}
         for job, new_payload, exc in outcomes:
             did = int(job["directive_id"])
             if exc is not None:
-                if isinstance(exc, ValueError):
-                    # 本轮重写自身的产物错（含名册 escalate 归一）：DB 载荷未动，
-                    # 光靠下一轮 ensure 重探只会拿回旧拒因——把本轮失败事实带过去，
-                    # 否则同一句话问三遍（0150-D5-b：告诉 LLM 事实）。
+                if is_declaration_domain_error(exc):
                     logger.warning(
                         "[1769] draft#%s admission resubmit product exhaust: %s",
                         did, exc,
@@ -1598,18 +1613,17 @@ class GameSession:
                     dossier_payload=new_payload,
                     replace_payload=True,
                 )
-            except ValueError as write_exc:
-                # 写回被拒也是产物错：本次产物 + 本次写回拒因带进下一次重写，
-                # 否则下一轮只能拿 DB 里的旧载荷/旧拒因重问同一遍。
-                logger.warning(
-                    "[1769] draft#%s admission resubmit write-back rejected: %s",
-                    did, write_exc,
-                )
-                next_carry[did] = {
-                    "bad_payload": dict(new_payload),
-                    "reason": str(write_exc),
-                }
             except Exception as write_exc:
+                if is_declaration_domain_error(write_exc):
+                    logger.warning(
+                        "[1769] draft#%s admission resubmit write-back rejected: %s",
+                        did, write_exc,
+                    )
+                    next_carry[did] = {
+                        "bad_payload": dict(new_payload),
+                        "reason": str(write_exc),
+                    }
+                    continue
                 pack_path = write_error_pack(
                     self.db, self.state, exc=write_exc,
                     extracted=None, resolve_ctx=None,
@@ -1757,9 +1771,9 @@ class GameSession:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
-                # Free prose decree_text: preserve raw; strip only emptiness.
+                # #1897：恢复原诏自由正文原样，禁 strip。
                 stored = str(ctx.get("decree_text") or "")
-                if stored.strip():
+                if stored:
                     self.last_decree = stored
                     decree = stored
         # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。
@@ -1946,9 +1960,8 @@ class GameSession:
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
         ctx = self.db.get_resolve_context(self.state.turn)
-        # #389 / #1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
-        # 标题不补绑。迁自旧 submit_decisions 的绑定步；scope 同旧
-        # list_pending_decisions 只收 kind='decision'，rescript_draft 行不动。
+        # #389/#1897/#1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
+        # 标题不补绑。scope 只收 kind='decision'，rescript_draft 行不动。
         if ctx is not None:
             from ming_sim.settlement_payload import bind_decisions_to_candidate_events
             decision_rows = [r for r in desk if str(r.get("kind") or "") == "decision"]
@@ -2076,11 +2089,11 @@ class GameSession:
             obj = _parse_rescript_json_strict(str(raw or ""))
             if not isinstance(obj, dict):
                 raise ValueError("deliberate LLM 意愿须为 object")
-            # Free prose deliberate title/body/stance: preserve raw; emptiness on copy (#1834 F16).
+            # #1897：deliberate 自由 title/body 原样；stance 为封闭枚举可归一。
             title = str(obj.get("title") or "")
             body = str(obj.get("body") or "")
-            stance = str(obj.get("stance") or "")
-            if not (title.strip() and body.strip() and stance.strip()):
+            stance = str(obj.get("stance") or "").strip()
+            if not (title.strip() and body.strip() and stance):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
             # shape 初检；身份合法性在 apply 事务内再核（整批零写）
             supporters = obj.get("supporter_ids", [])

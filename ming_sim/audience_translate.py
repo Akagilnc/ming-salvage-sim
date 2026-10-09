@@ -68,15 +68,17 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     sql += " ORDER BY id"
     rows = db.conn.execute(sql, tuple(params)).fetchall()
     out: List[str] = []
-    for row in rows:
-        from ming_sim.db import GameDB
+    from ming_sim.db import GameDB
 
+    for row in rows:
+        # 已持久 pending 载荷腐坏响亮，不静默成空摘要（#1897 E1 / ADR 0005）。
         payload = GameDB.parse_engine_payload_json(
-            row["payload_json"], surface="pending_actions.payload_json",
+            row["payload_json"],
+            surface="pending_actions.payload_json",
         )
-        # Free prose pending text → translation supply: preserve full bytes (#1834 F16).
+        # #1897：pending 摘要供料保留 payload 自由正文，禁 strip。
         text = str(payload.get("text") or row["action"] or "")
-        brief = text if text.strip() else str(row["kind"] or "")
+        brief = text if text else str(row["kind"] or "")
         approved = "已应允" if int(row["night_approved"] or 0) else "待应允"
         out.append(
             f"#{int(row['id'])} [{row['kind']}/{row['action']}] {approved} {brief}"
@@ -225,9 +227,12 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         for stage in stages:
             lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")
     for row in db.conn.execute(
-        "SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id"
+        "SELECT id, title, status FROM secret_orders ORDER BY id"
     ).fetchall():
-        lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
+        lines.append(
+            f"secret_order\t{int(row['id'])}\t{str(row['status'] or '')}\t"
+            f"{str(row['title'] or '')}"
+        )
     # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
     for row in db.conn.execute(
         "SELECT id, action_type, target_kind, target_id FROM decree_dossiers "
@@ -266,6 +271,13 @@ def build_c0_declaration_shape() -> str:
 
     # target_kind 表面唯一真源 = decree_vocabulary.TARGET_KINDS，禁手抄分叉。
     target_kind_hint = "|".join(sorted(TARGET_KINDS))
+    # covert_task 冻结契约定义同样只投影 covert_progress 的真源，禁在此另抄字段表
+    # （#1897：只写 "{}" 的形状让真实模型交不出可消费的契约）。
+    from ming_sim.covert_progress import describe_covert_task_contract
+    covert_contract_shape = describe_covert_task_contract()
+    # 案卷关联的合法类型闭集同样只投影 constants 真源，禁手抄分叉。
+    from ming_sim.constants import DOSSIER_LINK_TYPES
+    dossier_link_types = "|".join(sorted(DOSSIER_LINK_TYPES))
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
             {"event_id": "仅属某事件战果时填事件 id；未填即独立", **EMPTY_EXTRACTION},
@@ -301,15 +313,22 @@ def build_c0_declaration_shape() -> str:
         '      "revoke": {"target_kind": "dossier|issue（不填按 dossier）", '
         '"target_id": "所撤那道已发旨的案卷 id 或 issue id", '
         '"target_candidate": "续办所指候选 id（撤令一般留空）"},\n'
-        '      "secret_order": {"title": "密令标题", "content": "密令正文", '
-        '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
-        '"covert_task": {}},\n'
+        '      "secret_order": {"title": "密令标题", "content": "密令正文（原样，不删改）", '
+        '"assignee": "承办人名（名册人名，不得填场景）", "tags": [], "deadline_months": 0, '
+        '"excluded_names": [], "excluded_offices": [], '
+        '"dossier_links": [{"target_dossier_id": 旧案卷id, '
+        f'"relation_type": "{dossier_link_types}", "note": "关联说明（必填）"}}],\n'
+        '        "covert_task": '
+        + covert_contract_shape
+        + '},\n'
         '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
         '      "strategy_selection": {"target_id": "已选方案的政策目标 id", '
         '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）"},\n'
         '      "secret_order_update": {"order_id": "承办人现役密令 id", '
         '"title": "新标题（有则填）", "content": "完整新正文（必填）", '
         '"deadline_months": "期限月数（有则填）"},\n'
+        '      "secret_order_review": {"order_id": "承办人现役密令 id", '
+        '"claim": "核议陈词（原样）"},\n'
         '      "assignment": {"title": "独立事项名", "target_id": "事项 id", '        '"assignee": "承办人 id", "participant_roster": [], '
         '"target_candidate": "续办所指候选 id（新案留空）", '
         '"commitment_kind": "承诺类别（无承诺填无）", '
@@ -327,7 +346,8 @@ def build_c0_declaration_shape() -> str:
         '    {"action_id": 正整数, "form": "会签|当面站台|御笔手敕", '
         '"endorser_id": "人名（御笔手敕为空）"}\n'
         '  ],\n'
-        '  "inquiries": [{"attendant": "受命近侍", "query": "所查之事"}],\n'
+        '  "inquiries": [{"attendant": "受命近侍", "query": "所查之事", '
+        '"order_id": "目录里点名的密令 id（未点名则省略）"}],\n'
         '  "rushes": [{"target_kind": "commitment|secret_order", "target_id": 正整数, '
         '"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
         '  "travel_tones": [{"person_name": "人名", "tone": "常行|加急|星夜兼程"}],\n'
@@ -387,11 +407,11 @@ def build_audience_translate_prompt(
     产出契约 = C0 全 section（交办/应允/当场实况/文字事实/公开说法/在场/
     分段/边事件/主角/入册）。不解析自由散文——模型直接给结构化声明。
     """
+    # #1897：判空用局部 strip 副本；写入/供料块保留原文空白（含 grounding）。
     said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
-    # 目录原文零删改；判空只用局部归一，不把 strip 写回供料。
     grounding = str(target_grounding or "")
-    grounding_block = f"{grounding}\n" if grounding.strip() else ""
+    grounding_block = f"{grounding}\n" if grounding else ""
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
         "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
@@ -406,12 +426,14 @@ def build_audience_translate_prompt(
         "- 皇帝从本场大臣陈策中点选方案时，交办正文由转译明确给出，"
         "commission.strategy_selection 指向【本场已说的话】中对应陈策轮 chat_turn_id；"
         "无该源轮不得猜造。\n"
-        "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content、"
-        "承办人与已确定的 covert_task 冻结任务契约；无契约不得编造。"
+        "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content（原样）、"
+        "名册里的承办人 assignee 与上面写明的 covert_task 冻结任务契约；"
+        "契约字段不全或承办人只说到场景（无具名人）时不要勉强成条。"
         "covert_task 的字段随差务类型而异，按该类契约给全（含交付单位与对应身份字段）。"
         "查案类另可在 covert_task 里给 investigation_fact：本道密令的来源明确指向"
         "哪一条罪证就填那一条的标识，没指明就留空——留空不是错，引擎不会替来源挑一条。\n"
         "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"
+        "现役密令提交核议走 commission.secret_order_review（order_id 与 claim 原样）。\n"
         "- 皇帝明确撤回一道**已发出**的旨（撤回成命）走 commission.revoke，"
         "target_id 取那道旨的案卷 id；「撤回本场刚才的话」「撤回上一轮召对」"
         "不是撤令，不填 revoke（由既有撤回机制处理）。\n"
@@ -429,6 +451,9 @@ def build_audience_translate_prompt(
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
+        "- 皇帝交代近侍查某事 → inquiries；只有点名【权威目标目录】里某一条密令时才填该行精确 order_id，"
+        "未点名则省略 order_id，只记委派、不拉取密令月报；不得从查访散文猜测密令。"
+        "催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
         "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
         "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令，"
         "在该 commissions 项的 grant.escort.escortees 按 ADR 0053 参与人条目写押解人"

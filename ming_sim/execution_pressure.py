@@ -57,7 +57,11 @@ def normalize_locality_scope(raw: object) -> str:
     else:
         scope = text
     if scope not in LOCALITY_SCOPES:
-        raise ValueError(f"locality_scope 非法：{raw!r}")
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        raise DecreeMaterializationValidationError(
+            f"locality_scope 非法：{raw!r}",
+            failed_fields=("locality_scope",),
+        )
     return scope
 
 

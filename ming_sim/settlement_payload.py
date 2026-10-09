@@ -27,15 +27,16 @@ MAX_DECISIONS_PER_TURN = 5
 
 
 def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
-    """Bind normalized labels to stored options, rejecting ambiguous decisions."""
+    """Bind raw option labels to stored options; empty/duplicate labels rejected."""
     bound: Dict[str, Dict[str, object]] = {}
     if not isinstance(options, list):
         raise ValueError("decision options 须为 list")
     for option in options:
         if not isinstance(option, dict):
             continue
-        label = str(option.get("label") or "").strip()
-        if not label or label in bound:
+        # #1897：label 原样作键；判空用局部副本。
+        label = str(option.get("label") or "")
+        if not label.strip() or label in bound:
             raise ValueError(f"decision option label 为空或重复：{label!r}")
         bound[label] = option
     return bound
@@ -57,7 +58,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         if not isinstance(obj, dict):
             continue
-        # 展示字段保原文；判空与 bind 键归一只用局部 strip，不写回展示值。
+        # #1897：请旨自由字段原样；判空用局部副本，不把 strip 写回。
         title = str(obj.get("title") or "")
         raw_opts = obj.get("options")
         if not title.strip() or not isinstance(raw_opts, list):
@@ -158,13 +159,13 @@ def bind_decisions_to_candidate_events(
     decisions: List[Dict[str, object]],
     simulator_payload: object,
 ) -> List[Dict[str, object]]:
-    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389 / ADR 0115).
+    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389 / #1897 / ADR 0115).
 
     Binding is by structured identity only（绑定由构造保证，非由文本捞回）:
     - A simulator-echoed event_id is trusted ONLY if it belongs to this turn's
       candidate snapshot.
     - A missing id stays unbound; an off-snapshot id is stripped. Titles are
-      presentation and never used to invent or rescue an event_id (#1900 J20).
+      presentation and never used to invent or rescue an event_id (#1897 K2 / #1900 J20 / ADR0142).
     - Non-event HITL decisions keep no event_id. dossier: prefixes with full
       rescript capability fields are retained (#1490/#1492 A).
     """

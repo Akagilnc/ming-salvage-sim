@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { SituationDetailModal, SituationPanel, SituationRow } from "./situation";
+import { IssueGroup, SituationDetailModal, SituationPanel, SituationRow } from "./situation";
 import { StateModal } from "./stateModal";
 import type { GameState, Issue } from "../types";
 
@@ -31,6 +31,26 @@ function makeIssue(): Issue & { commitment_progress_text: string } {
   };
 }
 
+
+function makeCommitmentWithoutProgressText(): Issue {
+  const issue: Issue = { ...makeIssue() };
+  delete issue.commitment_progress_text;
+  return {
+    ...issue,
+    commitment_progress: { months_elapsed: 1 },
+  };
+}
+
+function makeOrdinaryIssueWithoutProgressText(): Issue {
+  const issue: Issue = { ...makeIssue() };
+  delete issue.commitment_progress;
+  delete issue.commitment_progress_text;
+  return {
+    ...issue,
+    tags: [],
+  };
+}
+
 function render(element: React.ReactNode) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -47,11 +67,32 @@ afterEach(() => {
 });
 
 describe("commitment progress display", () => {
+  it("shows commitment progress in the issue board", () => {
+    const cleanup = render(<IssueGroup title="待办" issues={[makeIssue()]} />);
+    expect(document.querySelector(".issue-commitment-progress")).not.toBeNull();
+    cleanup();
+  });
+
+  it("uses a styled fallback when a commitment has progress but no text", () => {
+    const cleanup = render(<IssueGroup title="待办" issues={[makeCommitmentWithoutProgressText()]} />);
+    const node = document.querySelector(".issue-commitment-progress");
+    expect(node).not.toBeNull();
+    // 固定 UI fallback（P7 界面话语，非 LLM 正文）；空格变异须报红（#1897 T1）。
+    expect(node!.textContent).toContain("未知进度");
+    cleanup();
+  });
+
+  it("does not show fallback progress for ordinary issues", () => {
+    const cleanup = render(<IssueGroup title="待办" issues={[makeOrdinaryIssueWithoutProgressText()]} />);
+    expect(document.querySelector(".issue-commitment-progress")).toBeNull();
+    cleanup();
+  });
+
   it("shows commitment progress in the situation detail", () => {
     const cleanup = render(
       <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
     );
-    expect(document.body.textContent).toContain(commitmentText);
+    expect(document.querySelector(".situation-detail .issue-commitment-progress")).not.toBeNull();
     cleanup();
   });
 
@@ -76,18 +117,26 @@ describe("commitment progress display", () => {
       );
     });
 
-    expect(document.body.textContent).toContain(commitmentText);
+    expect(document.querySelector(".situation-tip-float .issue-commitment-progress")).not.toBeNull();
     cleanup();
   });
 });
 
 describe("empty bar label presentation (#626)", () => {
-  it("detail modal renders supplied bar meanings", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
-    );
-    expect(document.body.textContent).toContain(makeIssue().bar_good_meaning);
-    expect(document.body.textContent).toContain(makeIssue().bar_bad_meaning);
+  function makeEmptyBarIssue(): Issue {
+    return {
+      ...makeIssue(),
+      bar_good_meaning: "",
+      bar_bad_meaning: "",
+      tags: [],
+    };
+  }
+
+  it("issue board progress ends stay blank rather than showing empty labels", () => {
+    const cleanup = render(<IssueGroup title="待办" issues={[makeEmptyBarIssue()]} />);
+    const ends = Array.from(document.querySelectorAll(".issue-progress > span"));
+    expect(ends).toHaveLength(2);
+    expect(ends.every((el) => (el.textContent || "").trim() === "")).toBe(true);
     cleanup();
   });
 });
@@ -150,6 +199,7 @@ describe("#1726 StateModal 奏疏收件箱", () => {
 
     const doc = document.querySelector(".state-document");
     expect(doc).toBeTruthy();
+    // 奏疏面不借局势布局；不以 issue.title 散文作负向哨兵（#1897 T1）。
     expect(doc!.querySelector(".situation-panel")).toBeNull();
     expect(doc!.querySelector(".situation-row")).toBeNull();
     expect(doc!.textContent).toContain("杨嗣昌");
@@ -172,7 +222,7 @@ describe("#1726 StateModal 奏疏收件箱", () => {
       <SituationPanel issues={[issue]} closedIssues={[]} hasLegacies={false} />
     );
     expect(document.querySelector(".situation-panel")).toBeTruthy();
-    expect(document.body.textContent).toContain(issue.title);
+    expect(document.querySelector(".situation-row")).not.toBeNull();
     cleanup();
   });
 });

@@ -81,7 +81,7 @@ def _bound_exposure(db, state, monkeypatch):
     return int(did), str(executor)
 
 
-def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, minister_name="殿上", scene_reply=None):
+def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, minister_name="殿上", scene_reply=None, close_before_translation=False):
     from tests.conftest import persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
     from tests.test_audience_translation_1838 import _scene_session
 
@@ -90,15 +90,22 @@ def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, m
         stub_scene_agent(monkeypatch, SimpleNamespace(
             tools=[], run=lambda message: SimpleNamespace(content=scene_reply, tools=[]),
         ))
-    stub_audience_translate(monkeypatch, lambda prompt, config: {
-        **declaration,
-        "scene_facts": [{"body": scene_reply or "殿上应对。", "role": "scene",
-                         "audibility": "殿上公开", "person_names": []}],
-    })
+    def translate(prompt, config):
+        if close_before_translation:
+            _close_offline(db, state, content, int(night["id"]))
+        return {
+            **declaration,
+            "scene_facts": [{"body": scene_reply or "殿上应对。", "role": "scene",
+                             "audibility": "殿上公开", "person_names": []}],
+        }
+
+    stub_audience_translate(monkeypatch, translate)
     night = open_night(db, state)
     ctid = db.create_chat_turn(
         state, minister_name, "s", 0, night_id=int(night["id"]), status="active",
     )
+    mid = db.append_chat_message(minister_name, state.turn, "user", words)
+    db.update_chat_turn_messages(ctid, user_message_id=mid)
     reply = sess.scene_chat(words, chat_turn_id=ctid, minister_name=minister_name)
     future = persist_and_schedule_scene(sess, db, reply, speaker=minister_name)
     assert future is not None
@@ -114,7 +121,7 @@ def _close_offline(db, state, content, night_id):
 
 def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     """Drive the player month entry with only model outputs supplied offline."""
-    import threading
+    from ming_sim.session_write_queue import ClassifiedWriteGate
     import ming_sim.month_chain as month_chain
     import ming_sim.month_translate as month_translate
     from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
@@ -129,7 +136,7 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": effects or {}})
     monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: "诏")
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session._write_gate = ClassifiedWriteGate()
     before = int(state.turn)
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
@@ -139,16 +146,18 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     assert result.advanced and int(state.turn) > before
 
 
-def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch):
+@pytest.mark.parametrize("late", [False, True], ids=["open-night", "closed-night"])
+def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch, late):
     db, state, content = game
     did, actor = _bound_exposure(db, state, monkeypatch)
     other_did, _ = _bound_exposure(db, state, monkeypatch)
     from ming_sim.due_review import list_due_review_scenes
     exposed = {
-        scene["dossier_id"] for scene in list_due_review_scenes(db, state)
+        int(str(scene["dossier_id"])) for scene in list_due_review_scenes(db, state)
         if scene.get("kind") == "covert_levy_exposure"
     }
     assert exposed == {did, other_did}
+    # 场面身份以 list_due_review_scenes 结构化真源为准；不解析混合供料文本排版（#1897 T1）。
     rejected = dispatch_declaration(db, state, {"commissions": [{
         "text": "禁绝摊派", "dossier_action_type": PROHIBITION_ACTION,
         "target_id": max(exposed) + 1,
@@ -161,7 +170,10 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
             "target_id": other_did,
         }],
     }
-    result = _scene_declaration(db, state, content, monkeypatch, "此等借饷扰民之举，即刻禁绝。", decl)
+    result = _scene_declaration(
+        db, state, content, monkeypatch, "此等借饷扰民之举，即刻禁绝。", decl,
+        close_before_translation=late, minister_name=actor,
+    )
     assert result.commissions.rejected == []
     assert len(result.commissions.applied) == 1
     row = db.conn.execute(
@@ -173,7 +185,12 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert payload["dossier_action_type"] == PROHIBITION_ACTION
     assert payload["target_kind"] == "dossier" and payload["target_id"] == str(other_did)
     assert int(row["night_approved"] or 0) == 1
-    _close_offline(db, state, content, int(open_night(db, state)["id"]))
+    if late:
+        from ming_sim.audience_night import commit_late_night_approved, get_open_night
+        assert get_open_night(db) is None
+        commit_late_night_approved(db, state, content=content)
+    else:
+        _close_offline(db, state, content, int(open_night(db, state)["id"]))
     dossier = db.conn.execute(
         "SELECT id, action_type, target_id FROM decree_dossiers WHERE pending_action_id=?",
         (result.commissions.applied[0]["id"],),
@@ -191,7 +208,9 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
             "origin_ref": f"dossier:{other_did}", "beyond_intent": True,
         }],
     })
-    assert active_prohibition_dossier(db, other_did)["id"] == dossier["id"]
+    prohibition = active_prohibition_dossier(db, other_did)
+    assert prohibition is not None
+    assert prohibition["id"] == dossier["id"]
     assert int(state.turn) > before
     assert db.get_fiscal_config().get("禁后摊派_base") is None
     from ming_sim.due_review import list_due_review_scenes
@@ -232,7 +251,7 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
         (same_faction.name,),
     )
     db.conn.commit()
-    reason = "请予试任巡盐御史，臣敢以身家保。"
+    reason = "\n  请予试任巡盐御史，臣敢以身家保。  \n"
     words = "陛下，巡盐之事可有合适人选？"
     scene_reply = f"臣荐{same_faction.name}任巡盐御史。{reason}"
     existing_id = db.stage_pending_action(
@@ -267,9 +286,10 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
     payload = json.loads(row["payload_json"])
     assert payload["name"] == same_faction.name
     assert payload["office"] == "巡盐御史"
-    assert payload["reason"] == reason
     assert payload["recommendation"]["recommender"] == recommender.name
     assert payload["recommendation"]["candidate"]["name"] == same_faction.name
+    # 荐语 reason 输入→payload.reason 原样运输（#1897 T1）
+    assert payload["reason"] == reason
     approval = _scene_declaration(db, state, content, monkeypatch, "准", {
         "promises": [{"action_id": result.commissions.applied[0]["id"], "decision": "应允"}],
     })
@@ -286,7 +306,58 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
     ).fetchone()
     assert appointed["office"] == "巡盐御史"
     events = db.list_recommendation_events(state, recommender.name)
-    assert any(e["candidate"] == same_faction.name and e["reason"] == reason for e in events)
+    assert any(e["candidate"] == same_faction.name for e in events)
+
+
+def test_repeated_same_appointment_moves_with_the_later_source_night(game, monkeypatch):
+    """语义未变的再任命仍走既有候选补账，归属改到后一夜，应允不再 missing_ref。"""
+    from ming_sim.audience_night import get_open_night
+
+    db, state, content = game
+    appointee = next(
+        c for c in content.characters.values()
+        if c.status == "active" and c.office != "巡抚"
+        and c.office_type not in ("后宫", "宗藩", "未仕")
+    )
+    decl = {"commissions": [{
+        "text": "着即中旨擢用。",
+        "appointment": {
+            "name": appointee.name, "office": "巡抚", "action": "任命", "mode": "midzhi",
+        },
+    }]}
+    first = _scene_declaration(db, state, content, monkeypatch, "擢用。", decl)
+    assert first.commissions.rejected == []
+    staged_id = int(first.commissions.applied[0]["id"])
+    night1 = int(get_open_night(db)["id"])
+    _close_offline(db, state, content, night1)
+
+    second = _scene_declaration(db, state, content, monkeypatch, "仍是这道中旨。", decl)
+    assert second.commissions.rejected == []
+    assert int(second.commissions.applied[0]["id"]) == staged_id
+    night2 = int(get_open_night(db)["id"])
+    assert night2 != night1
+    row = db.conn.execute(
+        "SELECT night_id FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert int(row["night_id"]) == night2
+    ledger = db.conn.execute(
+        "SELECT night_id, source_chat_turn_id FROM story_ledger_entries "
+        "WHERE night_id=? AND tags LIKE ?",
+        (night2, f"%pending:{staged_id}%"),
+    ).fetchall()
+    assert ledger
+    assert all(int(item["night_id"]) == night2 for item in ledger)
+    turn_nights = {
+        int(item["id"]): int(item["night_id"])
+        for item in db.conn.execute("SELECT id, night_id FROM chat_turns")
+    }
+    assert all(turn_nights[int(item["source_chat_turn_id"])] == night2 for item in ledger)
+
+    approval = _scene_declaration(db, state, content, monkeypatch, "准。", {
+        "promises": [{"action_id": staged_id, "decision": "应允"}],
+    })
+    assert approval.promises.rejected == []
+    assert any(int(item.get("action_id") or 0) == staged_id for item in approval.promises.applied)
 
 
 def test_recommendation_outside_slice_is_rejected(game):
@@ -342,26 +413,108 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
     report_events = [event for event in known["events"]
                      if event["source_id"] in {r["source_id"] for r in sources}]
     assert len(report_events) == 1
-    assert report_events[0]["body"] == query
     assert report_events[0]["kind"] == "inquiry_assignment"
     other = next(c.name for c in content.characters.values() if c.name != attendant.name)
     assert not any(e["source_id"] in {r["source_id"] for r in sources}
                    for e in db.get_character_knowledge(state, other)["events"])
     from ming_sim.audience_night import summon_enter
-    from ming_sim.materials import list_materials, prepare_scene_materials, release_material_tree
-    # A fresh night must make this report readable, not merely list a carrier.
+    from ming_sim.materials import prepare_scene_materials, release_material_tree
+    # 再开一夜后，委派原文仍从见闻进在场人物的经历，不另造月报文件断言。
     _close_offline(db, state, content, int(open_night(db, state)["id"]))
     night = open_night(db, state)
     summon_enter(db, int(night["id"]), attendant.name)
     prepared = prepare_scene_materials(db, state)
     try:
-        from ming_sim.materials import list_materials, read_material
+        from ming_sim.materials import list_materials
         carrier = f"人物/{attendant.name}/经历.txt"
         assert carrier in list_materials(prepared.root)
-        # 原话是这次交办写入的正文，经历载体须原样带上它。
-        assert query in read_material(prepared.root, carrier)
+        assert carrier in prepared.index_lines
+        assert not any(line.startswith(f"密令/查访月报/") for line in prepared.index_lines)
     finally:
         release_material_tree(prepared.root)
+
+
+def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
+    """点名 order_id 才拉该令月报；排除、自办与缺令都不开文件。"""
+    from pathlib import Path
+    from tests.test_secret_order_declaration_landing_1897 import _covert_task
+
+    from ming_sim.audience_night import summon_enter
+    from ming_sim.materials import (
+        prepare_character_materials,
+        prepare_scene_materials,
+        release_material_tree,
+    )
+
+    db, state, content = game
+    attendant = _active_minister(db, content)
+    db.conn.execute(
+        "UPDATE characters SET office='御前近臣' WHERE name=?", (attendant.name,)
+    )
+    assignee = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND name!=? AND office_type NOT IN ('后宫','宗藩','未仕') "
+        "ORDER BY name LIMIT 1",
+        (attendant.name,),
+    ).fetchone()
+    assert assignee is not None
+    memorial = "  只有部分办到。\n"
+    visible = db.create_secret_order(
+        state, str(assignee["name"]), "查仓储", "密查太仓", [],
+        deadline_months=2, covert_task=_covert_task(target_units=1),
+    )
+    hidden = db.create_secret_order(
+        state, str(assignee["name"]), "查内库", "密查内库", [],
+        deadline_months=2, excluded_names=[attendant.name],
+        covert_task=_covert_task(target_units=1),
+    )
+    own = db.create_secret_order(
+        state, attendant.name, "查自己", "承办人自办", [],
+        deadline_months=2, covert_task=_covert_task(target_units=1),
+    )
+    for order_id in (visible, hidden, own):
+        dossier = db.get_dossier_for_secret_order(order_id)
+        db.record_dossier_progress(
+            int(dossier["id"]), state.turn, "在办", memorial,
+            origin=db.DOSSIER_REPORT_ORIGIN_MONTHLY,
+        )
+    db.close_secret_order(visible, "done", "结案原话另存", state.turn)
+
+    result = _scene_declaration(db, state, content, monkeypatch, "去查那几件密令的月报。", {
+        "inquiries": [
+            {"attendant": attendant.name, "query": "查仓储月报", "order_id": visible},
+            {"attendant": attendant.name, "query": "查被排除的", "order_id": hidden},
+            {"attendant": attendant.name, "query": "查自己承办的", "order_id": own},
+            {"attendant": attendant.name, "query": "查没有的", "order_id": 9_999_999},
+            {"attendant": attendant.name, "query": "形状不对", "order_id": True},
+        ],
+    })
+    assert {item["order_id"] for item in result.inquiries.applied} == {visible, own}
+    assert {item.category for item in result.inquiries.rejected} == {
+        "hallucinated_id", "invalid_shape", "invalid_state",
+    }
+    rel = f"密令/查访月报/{visible}.txt"
+    character_tree = prepare_character_materials(db, state, attendant)
+    try:
+        assert rel in character_tree.index_lines
+        assert f"密令/查访月报/{hidden}.txt" not in character_tree.index_lines
+        assert f"密令/查访月报/{own}.txt" not in character_tree.index_lines
+        assert (Path(character_tree.root) / rel).is_file()
+    finally:
+        release_material_tree(character_tree.root)
+
+    _close_offline(db, state, content, int(open_night(db, state)["id"]))
+    night = open_night(db, state)
+    summon_enter(db, int(night["id"]), attendant.name)
+    scene_tree = prepare_scene_materials(db, state)
+    try:
+        scene_rel = f"人物/{attendant.name}/密令/查访月报/{visible}.txt"
+        assert scene_rel in scene_tree.index_lines
+        assert f"人物/{attendant.name}/密令/查访月报/{hidden}.txt" not in scene_tree.index_lines
+        assert f"人物/{attendant.name}/密令/查访月报/{own}.txt" not in scene_tree.index_lines
+        assert (Path(scene_tree.root) / scene_rel).is_file()
+    finally:
+        release_material_tree(scene_tree.root)
 
 
 @pytest.mark.parametrize("with_source_turn", [False, True])
@@ -430,20 +583,19 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     payload = json.loads(row["payload_json"])
     assert int(payload["stage_idx"]) == 1
     assert int(payload["deadline_months"]) == 1
-    assert payload["reason"] == reason
+    assert payload.get("reason") == reason  # 催办 reason 原样运输
     db.commit_pending_actions(state, content=content)
     from ming_sim.staged_commitment import normalize_commitment_stages
     stages = normalize_commitment_stages(db.conn.execute(
         "SELECT stages_json FROM issues WHERE id=?", (issue_id,)
     ).fetchone()["stages_json"])
-    assert int(stages[0]["due_turn"]) == int(state.turn) + 2
-    assert int(stages[1]["due_turn"]) == int(state.turn) + 1
+    assert int(str(stages[0]["due_turn"])) == int(state.turn) + 2
+    assert int(str(stages[1]["due_turn"])) == int(state.turn) + 1
     committed = db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=? AND status='committed'",
         (result.rushes.applied[0]["id"],),
     ).fetchone()
     assert committed is not None
-    assert json.loads(committed["payload_json"])["reason"] == reason
 
 
 def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeypatch):

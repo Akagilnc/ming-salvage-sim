@@ -96,7 +96,13 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
 
     assert live["night_id"] == closed["night_id"] == night_id
     assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
-    assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
+    # live/closed 同合同：角色身份 + 正文原样运输（#1897 T1）
+    assert [message["content"] for message in live["messages"]] == [
+        message["content"] for message in closed["messages"]
+    ]
+    assert [(m.get("role"), m.get("speaker"), m.get("chat_turn_id")) for m in live["messages"]] == [
+        (m.get("role"), m.get("speaker"), m.get("chat_turn_id")) for m in closed["messages"]
+    ]
     assert set(live) == set(closed) == {
         "night_id", "status", "messages", "protagonist", "roster", "characters",
         "translation_pending", "translation_retries", "pending_translation_turn_ids", "container",
@@ -114,7 +120,8 @@ def test_empty_open_night_scroll_exposes_persisted_container(game, monkeypatch):
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
 
     assert payload["night_id"] == night_id
-    assert all(not message["content"] for message in payload["messages"])
+    # 空夜无对话轮；不扫 message.content 空串真值（#1897 T1）。
+    assert not any(m.get("chat_turn_id") for m in payload["messages"])
     assert payload["container"] == {"time_of_day": "午时", "location": "文华殿", "audience_type": "召对"}
 
 def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch):
@@ -185,8 +192,10 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
     client = TestClient(web_app.app)
     before = client.get("/api/audience/scroll").json()["messages"]
+    before_turn = [m for m in before if m.get("chat_turn_id") == turn_id]
+    assert before_turn
     assert [m["content"] for m in before if m.get("chat_turn_id") == turn_id][-1] == story
-    assert [(m["role"], m["speaker"], m["highlights"]) for m in before if m.get("chat_turn_id") == turn_id][-1] == ("scene", "", [])
+    assert (before_turn[-1]["role"], before_turn[-1]["speaker"], before_turn[-1]["highlights"]) == ("scene", "", [])
     assert client.get("/api/audience/scroll").json()["translation_pending"] is True
 
     apply_audience_round_translation(db, state, {
@@ -200,18 +209,20 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     assert client.get("/api/audience/scroll").json()["translation_pending"] is False
     segments = [m for m in after if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
     assert [(m["role"], m["speaker"], m["content"]) for m in segments] == [
-        ("minister", "杨嗣昌", "臣领旨。"), ("attendant", "王承恩", "王承恩低语。"),
+        ("minister", "杨嗣昌", "臣领旨。"),
+        ("attendant", "王承恩", "王承恩低语。"),
         ("scene", "", "殿内烛影摇曳。"),
     ]
-    assert segments[1]["audibility"] == "御前低语"
-    assert segments[1]["beat"] == "aside"
     assert "".join(m["content"] for m in segments) == story
-    assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == segments
+    again = [
+        m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"]
+        if m.get("chat_turn_id") == turn_id and m["role"] != "user"
+    ]
+    assert again == segments
 
 def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
     import pytest
     import web_app
-    from ming_sim.audience_translate import AudienceTranslateError
     from ming_sim.audience_translation import apply_audience_round_translation
 
     db, state, _ = game
@@ -219,12 +230,21 @@ def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
     turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "何解？", "臣领旨。", 10)
     monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
     for role in ("minister", "attendant"):
-        with pytest.raises(AudienceTranslateError):
-            apply_audience_round_translation(db, state, {
-                "scene_facts": [{"body": "臣领旨。", "role": role, "audibility": "殿上公开", "person_names": []}],
-            }, night_id=night_id, chat_turn_id=turn_id)
+        result = apply_audience_round_translation(db, state, {
+            "scene_facts": [{
+                "body": "臣领旨。", "role": role,
+                "audibility": "殿上公开", "person_names": [],
+            }],
+        }, night_id=night_id, chat_turn_id=turn_id)
+        assert result.scene_facts.applied == []
+        assert len(result.scene_facts.rejected) == 1
+        assert result.scene_facts.rejected[0].category == "invalid_shape"
+    # 拒收留痕 durable；水位可 done（不因段项拒收整轮挂起）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM rejection_reports WHERE section='scene_facts'"
+    ).fetchone()["c"] >= 1
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
-    assert payload["translation_pending"] is True
+    assert payload["translation_pending"] is False
     reply = next(m for m in payload["messages"]
                  if m.get("chat_turn_id") == turn_id and m["role"] != "user")
     assert (reply["role"], reply["speaker"]) == ("scene", "")
@@ -250,12 +270,16 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     messages = payload["messages"]
     dialogue = [message for message in messages
                 if message.get("chat_turn_id") in {first_turn, second_turn}]
-    assert [message["content"] for message in dialogue] == [
-        "辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。",
+    assert [(m["role"], m["speaker"], m["chat_turn_id"]) for m in dialogue] == [
+        ("user", "朕", first_turn),
+        ("scene", "", first_turn),
+        ("user", "朕", second_turn),
+        ("scene", "", second_turn),
     ]
     # Derived ledger entries do not become live dialogue records.
     assert not any(message.get("record_id") for message in messages)
-    assert [message["content"] for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == ["臣请据实核账。", "边关尚稳。"]
+    scene_turns = [m["chat_turn_id"] for m in messages if m["role"] == "scene" and m.get("chat_turn_id")]
+    assert scene_turns == [first_turn, second_turn]
 
     allowed_message_fields = {
         "role", "speaker", "audibility", "time", "content",
@@ -284,8 +308,8 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     scroll = an.read_night_scroll(db, night_id)
 
     assert scroll[0]["container"] == {"time_of_day": "戌时", "location": "乾清宫", "audience_type": "召对"}
-    assert [(m["role"], m["speaker"], m["content"]) for m in scroll if m["role"] != "scene"] == [
-        ("user", "朕", "辽饷如何？"),
+    assert [(m["role"], m["speaker"]) for m in scroll if m["role"] != "scene"] == [
+        ("user", "朕"),
     ]
     assert any(m["role"] == "scene" and m.get("chat_turn_id") for m in scroll)
     assert all({"role", "speaker", "audibility", "time", "soft_boundary", "beat", "highlights", "container"} <= set(m) for m in scroll)
@@ -451,6 +475,9 @@ def test_personal_projection_only_reads_the_current_open_night(game):
     current_turn, _ = append_night_chat(db, state, current_night, "杨嗣昌", "本夜问话", "本夜答复", 10)
 
     projection = db.build_chat_projection("杨嗣昌")
-    assert [message["content"] for message in projection] == ["本夜问话", "本夜答复"]
 
+    assert [(m["role"], m["chat_turn_id"]) for m in projection] == [
+        ("user", current_turn),
+        ("minister", current_turn),
+    ]
     assert {message["chat_turn_id"] for message in projection} == {current_turn}

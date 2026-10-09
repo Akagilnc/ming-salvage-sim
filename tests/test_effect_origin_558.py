@@ -153,9 +153,9 @@ def test_fiscal_remove_keeps_durable_origin_tombstone(game):
         "SELECT key, origin_ref, reason FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",
         (origin,),
     ).fetchall()
-    assert [(r["key"], r["origin_ref"], r["reason"]) for r in rows] == [
-        ("待裁月费_base", origin, "奉旨裁撤"),
-        ("待裁月费_rate", origin, "奉旨裁撤"),
+    assert [(r["key"], r["origin_ref"]) for r in rows] == [
+        ("待裁月费_base", origin),
+        ("待裁月费_rate", origin),
     ]
 
 

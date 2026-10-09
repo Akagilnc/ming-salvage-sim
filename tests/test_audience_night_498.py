@@ -257,14 +257,19 @@ def test_cross_night_directive_reassigned_to_second_night(game):
     minister = _active_minister(db, content)
 
     n1 = an.open_night(db, state, location="乾清宫")
-    d_id = db.stage_directive_candidate(state.turn, minister, payload={**_POLICY_FIELDS, "text": "初稿：缓征辽饷", "actor": minister})
+    d_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={**_POLICY_FIELDS, "text": "初稿：缓征辽饷", "actor": minister},
+    )
     # 第一夜不应允 → 留 pending；收夜不提交
     an.close_night(db, state, night_id=n1["id"], content=content)
     assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "pending"
 
     n2 = an.open_night(db, state, location="文华殿")
-    # 显式 id 改草 → 归属须迁到第二夜、清 approval（现役 update 入口，非旧 upsert 覆盖）
-    same_id = db.update_directive_candidate(d_id, {**_POLICY_FIELDS, "text": "定稿：改折色", "actor": minister})
+    # 现役改草写口：update_directive_candidate 未持源夜时归属迁到当前开夜并清 approval
+    same_id = db.update_directive_candidate(
+        d_id, {**_POLICY_FIELDS, "text": "定稿：改折色", "actor": minister},
+    )
     assert same_id == d_id
     row = db.conn.execute("SELECT night_id, night_approved FROM pending_actions WHERE id=?", (d_id,)).fetchone()
     assert int(row["night_id"]) == n2["id"]

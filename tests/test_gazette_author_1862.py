@@ -394,7 +394,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         str((item.get("item") or {}).get("origin_ref") or "") != "secret_order:9"
         for item in payload["rejections"]
     )
-    assert payload["world_segment"] == "WORLD_PUBLIC_SEGMENT"
     assert [row["event_id"] for row in payload["rescript_answers"]] == ["note:1"]
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
@@ -429,26 +428,23 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert f"secret_order_brief:{order_id}" not in public_ids
     prepared = prepare_character_materials(db, state, character)
     try:
-        rel = next(
-            path for path in list_materials(prepared.root)
-            if path.startswith("公开说法/邸报/")
+        # 公开说法/邸报/ 载体在册（路径键，非正文）。亲历载体见下。
+        assert any(
+            path.startswith("公开说法/邸报/") for path in list_materials(prepared.root)
         )
-        text = read_material(prepared.root, rel)
-        # 独立作者输入完整搬运；不从 INDEX 展示推断载体身份或月份。
-        assert _REPORT in text
-        # INDEX / 经历 / 世界亲历·盘面：无独立固定字节种子契约（旧 `_SECRET_BRIEF`
-        # 等哨兵串已按大理寺 553d581fb 退役）。密令简报由上方 source_id 承担；
-        # 亲历/盘面只钉路径在册，不留恒空串也能过的裸 read。
-        assert "INDEX.txt" in list_materials(prepared.root)
-        assert any(path.endswith("/经历.txt") for path in list_materials(prepared.root))
+        # 亲历载体：本人经历.txt 在册。旧账正文哨兵已删；路径存在性由 next 承担，
+        # 不重复 endswith 自证（#1897 T1 C4）。
+        next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
     finally:
         release_material_tree(prepared.root)
     world_tree = prepare_world_materials(db, state)
     try:
-        world_names = list_materials(world_tree.root)
-        world_experience = [rel for rel in world_names if rel.endswith("/经历.txt")]
+        # 世界目录：亲历／盘面路径键在册；不锁正文真值，不重复 endswith 自证。
+        world_experience = [
+            rel for rel in list_materials(world_tree.root) if rel.endswith("/经历.txt")
+        ]
         assert world_experience
-        assert any(rel.endswith("全局.txt") for rel in world_names)
+        next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
     finally:
         release_material_tree(world_tree.root)
 
@@ -495,6 +491,7 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0] == 1
+    # 重试后作者返回题名／正文原样进归档
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT

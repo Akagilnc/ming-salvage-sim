@@ -455,9 +455,9 @@ def test_settlement_recovery_projects_month_call_failure(
     chain_again = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
-    assert recovery_again.get("message") == (
-        (chain_again.get("call_failure") or {}).get("message")
-    )
+    failure_again = chain_again.get("call_failure") or {}
+    assert failure_again.get("kind") == "model_exhausted"
+    assert failure_again.get("escape_armed") is False
     web_game.session.close()
 
 

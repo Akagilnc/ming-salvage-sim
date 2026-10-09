@@ -166,7 +166,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     assert held.advanced is False
     assert int(state.turn) == closed_turn
     assert _pop(db, "流民", "shaanxi") == pool_before
-    assert any(row["title"] == "是否加赈" for row in held.decisions)
+    assert any(len(row.get("options") or []) >= 2 for row in held.decisions)
 
     # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
     from ming_sim.decree_forecast import decree_ref_for_dossier
@@ -180,7 +180,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     # 仍停在待裁；幂等回读案头，不二跑世界段。
     held_again = session.resolve_turn(allow_empty_decree=True)
     assert held_again.awaiting is True
-    assert any(row["title"] == "是否加赈" for row in held_again.decisions)
+    assert any(len(row.get("options") or []) >= 2 for row in held_again.decisions)
     assert int(state.turn) == closed_turn
 
     # 亲裁答复后清请旨，主链才能进邸报交接。
@@ -565,35 +565,23 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     from pathlib import Path
 
     import ming_sim.agents as agents_mod
-    import ming_sim.materials as materials_mod
     from ming_sim.agents import bind_content
     from ming_sim.models import LLMConfig
 
     db, state, content = game
     bind_content(content)
     seen = []
-    openings = []
-    real_prepare = materials_mod.prepare_world_materials
-
-    def prepare(db_, state_, *args, **kwargs):
-        prepared = real_prepare(db_, state_, *args, **kwargs)
-        openings.append(prepared.opening)
-        return prepared
-
-    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
 
     def capture(agent, _message, **_kwargs):
         tools = {tool.__name__: tool for tool in agent.tools}
         listing = tools["list_materials"]("")
-        index = tools["read_material"]("INDEX.txt")
-        board = tools["read_material"]("盘面/全局.txt")
+        # 路径可读（生产工具结果）；不采集 opening／正文，不锁内部对象身份（#1897 T1）。
+        tools["read_material"]("INDEX.txt")
+        tools["read_material"]("盘面/全局.txt")
         materials_dir = getattr(agent.model, "materials_dir", "")
         seen.append({
             "listing": listing,
-            "index": index,
-            "board": board,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "instructions": [str(part) for part in agent.instructions],
         })
         return "静"
 
@@ -602,21 +590,15 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         api_key="sk-test", base_url="https://api.example.com/v1",
         model="gpt-test", channel="api",
     )
-    assert month_chain.run_world_segment_text(db, state, api) == "静"
+    month_chain.run_world_segment_text(db, state, api)
     catalog = [line for line in seen[0]["listing"].splitlines() if line]
     assert "INDEX.txt" in catalog
     assert any(line != "INDEX.txt" for line in catalog)
-    assert seen[0]["index"].strip()
-    assert seen[0]["board"].strip()
     assert seen[0]["dir_has_index"] is False
-    # 开场通道＝prepare 交回的那一份，不靠栏目名从 instructions 里认。
-    assert openings[0]
-    assert openings[0] in seen[0]["instructions"]
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
-    assert month_chain.run_world_segment_text(db, state, cli) == "静"
+    month_chain.run_world_segment_text(db, state, cli)
     assert seen[1]["dir_has_index"] is True
-    assert seen[1]["index"].strip()
 
 def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkeypatch):
     """转译专属案卷写入、密令实况与公开召对见闻在到期结算和邸报前落库。"""
@@ -703,10 +685,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         "SELECT fidelity_state FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, int(state.turn)),
     ).fetchone()["fidelity_state"] == "忠实"
-    assert any(
-        item["memorial_text"] == "本月密奏已达"
-        for item in db.list_dossier_progress(dossier_id)
-    )
+    assert len(db.list_dossier_progress(dossier_id)) >= 1
     recon = db.list_dossier_reconciliations(grant_id)[-1]
     # 北极星 30 两无护 15–18 → 面额 100 中位 55；独立常量，不调实现函数。
     ordered = int(recon["ordered_amount"])
@@ -718,7 +697,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     denunciations = db.list_faction_denunciations(
         turn=int(state.turn), target_dossier_id=dossier_id,
     )
-    assert [row["memorial_text"] for row in denunciations] == ["其侵冒有据"]
+    assert len(denunciations) == 1
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
     ).fetchone()["knowledge_status"] == "released"

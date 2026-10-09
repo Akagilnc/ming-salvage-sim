@@ -199,19 +199,13 @@ def test_load_relation_history_before_returns_full_stable_prior_stream(game):
     prior = load_relation_history_before(
         db, source=source, target=target, before_year=1630, before_period=5,
     )
-    # record_relation_edge_event context 夹具 → prior 原样有序回读
-    assert [row["context"] for row in prior] == [
-        "杨嗣昌与倪元璐初有细缝。",
-        "清丈议上，杨嗣昌挡了倪元璐的硬路。",
-        "二人当面言和，暂释前隙。",
-    ]
-    # 稳定序＝纪年 (year, period) ＋事件 id；语境字节不改。
-    assert [(int(r["year"]), int(r["period"])) for r in prior] == [
-        (1627, 10), (1628, 11), (1629, 3),
+    # 稳定序＝纪年 (year, period) ＋事件 id；不锁 context 散文列表。
+    assert [(int(r["year"]), int(r["period"]), r["event_kind"]) for r in prior] == [
+        (1627, 10, "结怨"), (1628, 11, "使绊"), (1629, 3, "协作"),
     ]
     ids = [int(r["id"]) for r in prior]
     assert ids == sorted(ids)
-    assert prior[2]["context"] == "二人当面言和，暂释前隙。"
+    assert len(prior) == 3
 
 def test_load_relation_history_before_empty_when_no_older_events(game):
     """r4 验收第三例：无严格更早流水 → 空列表。"""

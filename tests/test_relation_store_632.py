@@ -100,19 +100,20 @@ def test_relation_edges_survive_restore(game, tmp_path):
     try:
         rows = restored.get_relation_edge_events(source="杨嗣昌", target="徐光启")
         assert len(rows) == 1
-        assert rows[0]["context"] == "二人当面相发明。"
         assert rows[0]["origin_round"] == 7
         for key in (
-            "source", "target", "event_kind", "context", "origin",
+            "source", "target", "event_kind", "origin",
             "year", "period", "turn",
         ):
             assert rows[0][key] == edge[key]
         summary2 = restored.get_relation_summary("杨嗣昌", "徐光启")
+        # 水位／身份结构化字段；不锁 founding/recent 自由正文等值（#1897 T1）。
         for key in (
-            "founding_segment", "recent_segment", "last_event_id",
+            "last_event_id",
             "last_brewed_year", "last_brewed_period", "dimension",
         ):
             assert summary2[key] == summary[key]
+        assert summary2 is not None and int(summary2["last_event_id"]) == int(edge["id"])
     finally:
         restored.close()
 

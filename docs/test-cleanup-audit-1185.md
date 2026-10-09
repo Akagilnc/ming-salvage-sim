@@ -1148,16 +1148,17 @@
 
 ### `tests/test_decision_event_binding_389.py`
 
-- 规模：64 行 / 6 函数 / 6 节点 · 处置分布：`{'keep': 6}` · 主注：④ 绑定纯函数真源，单元可留
+- 规模：现行绑定闸 · 处置分布见下 · 主注：④ 显式 id 真源；**标题猜绑已退休**（#1897 K2／ADR0142，2026-10-05）
+- 历史过程：曾 keep「唯一标题补绑／重绑」案；现役代码已删 `title_to_ids`，下列为**现行**名称与处置（保留过程史，明确退休）。
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_missing_event_id_binds_from_unique_title` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_valid_echoed_event_id_is_trusted_unchanged` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_offsnapshot_echoed_event_id_does_not_win_over_snapshot` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_offsnapshot_id_with_no_title_match_is_unbound` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_ambiguous_title_remains_unbound` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_no_snapshot_returns_decisions_unchanged` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+| `test_missing_event_id_stays_unbound_without_title_guess`（原 `test_missing_event_id_binds_from_unique_title`） | 1 | **keep（负向闸）** | 缺 id 不解绑靠标题；锁定「不得标题猜绑」 |
+| `test_valid_echoed_event_id_is_trusted_unchanged` | 1 | **keep** | 显式 id 在快照内采信 |
+| `test_offsnapshot_echoed_event_id_is_unbound`（原标题重绑案已改） | 1 | **keep（负向闸）** | off-snapshot 解绑；不得按同标题重绑 |
+| `test_offsnapshot_id_with_unrelated_title_is_unbound`（原 `test_offsnapshot_id_with_no_title_match_is_unbound`） | 1 | **keep** | 非候选 id 不解绑污染终态账 |
+| ~~`test_ambiguous_title_remains_unbound`~~ | — | **退休删除** | 标题歧义分支随猜绑路径删除 |
+| `test_no_snapshot_returns_decisions_unchanged` | 1 | **keep** | 无快照不臆测 |
 
 ### `tests/test_decree_commitment_creation_136.py`
 

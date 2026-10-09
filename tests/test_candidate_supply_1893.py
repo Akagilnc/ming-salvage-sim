@@ -24,6 +24,7 @@ from ming_sim.materials import (
     candidate_supply,
     list_materials,
     prepare_world_materials,
+    read_material,
 )
 
 CANDIDATE_REL = _CANDIDATE_REL
@@ -59,6 +60,65 @@ def _drop_event(content, ev):
         content.events.remove(ev)
     if content.event_by_id.get(ev.id) is ev:
         content.event_by_id.pop(ev.id, None)
+
+
+def _read_candidates(db, state, *, exclude_dossier_ids=None):
+    """Structured candidate snapshot (same freeze prepare_world uses)."""
+    return candidate_supply(db, state, exclude_dossier_ids=exclude_dossier_ids)
+
+
+def _candidates_material_mentions(prepared, token: str) -> bool:
+    """Directory carrier is human-readable facts text, not JSON (#1834)."""
+    body = read_material(prepared.root, CANDIDATE_REL)
+    return str(token) in body
+
+
+# --- 供料侧：合格候选可达，资格门不合格 / 已有终态者不可达 ---
+
+
+def test_eligible_candidate_event_reaches_world_supply(game, tmp_path, content):
+    db, state, _ = game
+    ev = _open_window_event(content)
+    try:
+        prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+        assert CANDIDATE_REL in list_materials(prepared.root)
+        payload = _read_candidates(db, state)
+        assert ev.id in {item["id"] for item in payload["events"]}
+        item = next(i for i in payload["events"] if i["id"] == ev.id)
+        # 结构化事实：候选 id 入供且不代模型算战果；不锁 summary 自由正文。
+        assert item["id"] == ev.id
+        assert "effect_on_trigger" not in item
+        # 同一材料目录可自主取阅到该候选身份（人读正文，不锁措辞）。
+        assert _candidates_material_mentions(prepared, ev.id)
+    finally:
+        _drop_event(content, ev)
+
+
+def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, content):
+    """资格门不合格（窗口未开）与已有终态（已避过）者都不进候选目录。"""
+    db, state, _ = game
+    from ming_sim.models import Event
+
+    later = Event(
+        id="__issue_1893_future_event__", title="远年事件", kind="测试",
+        summary="窗口未开", urgency=50, severity=50, credibility=50,
+        interests=[], audiences=[], trigger_year=int(state.year) + 50,
+        trigger_month=1, open_window=False, trigger_gate={}, event_type="situation",
+    )
+    avoided = _open_window_event(content, "__issue_1893_avoided_event__")
+    content.events.append(later)
+    content.event_by_id[later.id] = later
+    try:
+        db.mark_event_avoided(state, avoided.id, reason="探针：前提已被化解")
+        prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m2")
+        ids = {item["id"] for item in _read_candidates(db, state)["events"]}
+        assert later.id not in ids
+        assert avoided.id not in ids
+        assert not _candidates_material_mentions(prepared, later.id)
+        assert not _candidates_material_mentions(prepared, avoided.id)
+    finally:
+        _drop_event(content, later)
+        _drop_event(content, avoided)
 
 
 def _secret_surge_world(db, state, owner):
@@ -160,7 +220,7 @@ def test_translate_request_carries_current_candidate_facts(game, content):
         request = captured["request"]
         facts = {item["id"]: item for item in request.candidates["events"]}
         assert ev.id in facts, "合格候选未随转译请求送到（供料→转译断链）"
-        assert facts[ev.id]["summary"] == ev.summary
+        assert facts[ev.id]["id"] == ev.id
         assert "impeachment_surge" in request.candidates
     finally:
         _drop_event(content, ev)

@@ -132,7 +132,10 @@ def test_883_audience_chat_path_does_not_leave_secret_in_shared_sources(game):
         (f"chat_message:{mid}",),
     ).fetchone()[0] == 0
 
-    oid = create_test_secret_order(db, state, assignee.name, "乙巳密查旁路", marker, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "乙巳密查旁路", marker, [],
+        origin_chat_message_id=mid,
+    )
     assert oid > 0
 
     status = db.conn.execute(
@@ -179,8 +182,9 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     other_public = "臣报：山东漕粮本月起运如常，无阻。"
     mid_other = db.append_chat_message(other.name, state.turn, "user", other_public)
 
-    oid = create_test_secret_order(db,
-        state, assignee.name, extracted_title, extracted_body, [],
+    oid = create_test_secret_order(
+        db, state, assignee.name, extracted_title, extracted_body, [],
+        origin_chat_message_id=mid_origin,
     )
     assert oid > 0
 
@@ -260,7 +264,10 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
         (f"chat_message:{mid_public}",),
     ).fetchone()[0] == 0
 
-    oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
+        origin_chat_message_id=mid_secret,
+    )
     assert oid > 0
 
 
@@ -329,7 +336,10 @@ def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):
     ).fetchone()["knowledge_status"] == "held"
     state.turn = int(state.turn) + 1
     db.save_state(state)
-    oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
+        origin_chat_message_id=mid,
+    )
     assert oid > 0
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
@@ -356,8 +366,9 @@ def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game)
     mid = db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
     state.turn = int(state.turn) + 1
     db.save_state(state)
-    oid = create_test_secret_order(db,
-        state, assignee.name, extracted_title, extracted_body, [],
+    oid = create_test_secret_order(
+        db, state, assignee.name, extracted_title, extracted_body, [],
+        origin_chat_message_id=mid,
     )
     assert oid > 0
 
@@ -461,7 +472,10 @@ def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game
     db.update_chat_turn_messages(
         secret_turn, user_message_id=mid_origin,
     )
-    oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
+        origin_chat_message_id=mid_origin,
+    )
     assert oid > 0
     mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
     db.update_chat_turn_messages(secret_turn, minister_message_id=mid_ack)
@@ -522,8 +536,9 @@ def test_976_withhold_does_not_yank_old_released_public_user(game):
     state.turn = int(state.turn) + 5
     db.save_state(state)
     mid_secret = db.append_chat_message(assignee.name, state.turn, "user", secret_origin)
-    oid = create_test_secret_order(db,
-        state, assignee.name, "密查国丈", "暗访国丈家产", [],
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", "暗访国丈家产", [],
+        origin_chat_message_id=mid_secret,
     )
     assert oid > 0
 
@@ -710,9 +725,10 @@ def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):
     extracted = "暗访国丈家产虚实"
 
     mid = db.append_chat_message(speaker.name, state.turn, "user", secret_text)
-    oid = create_test_secret_order(db,
-        state, assignee.name, "密查国丈", extracted, [],
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
         origin_minister_name=speaker.name,
+        origin_chat_message_id=mid,
     )
     assert oid > 0
 
@@ -751,7 +767,10 @@ def test_976_same_window_pure_public_user_survives_secret_classification(game):
     mid_pub = db.append_chat_message(assignee.name, state.turn, "user", public_q)
     mid_ans = db.append_chat_message(assignee.name, state.turn, "minister", public_a)
     mid_sec = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
-    oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
+        origin_chat_message_id=mid_sec,
+    )
     assert oid > 0
 
     pub_status = db.conn.execute(
@@ -1152,7 +1171,7 @@ def test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit(game
         state.turn, kind="secret_order", action="更新",
         minister_name=assignee.name, target_id=999999,
         payload={
-            "title": "暗查不存在案卷", "content": failed_marker,
+            "new_title": "暗查不存在案卷", "new_content": failed_marker,
             "origin_chat_message_id": mid_failed,
         },
     )
@@ -1200,7 +1219,10 @@ def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
     for mid in (mid_a_user, mid_a_min, mid_b_user, mid_b_min):
         assert _ks(db, mid) == "held"
 
-    oid_a = create_test_secret_order(db, state, a.name, "甲密查国丈", marker_a, [])
+    oid_a = create_test_secret_order(
+        db, state, a.name, "甲密查国丈", marker_a, [],
+        origin_chat_message_id=mid_a_user,
+    )
     assert oid_a > 0
 
     # create(A) 后 B 仍 held（不得 prematurely release 进共享）
@@ -1220,7 +1242,10 @@ def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
     pins_a = _json.loads(brief_a["origin_chat_message_ids"] or "[]")
     assert mid_a_user in pins_a
 
-    oid_b = create_test_secret_order(db, state, b.name, "乙密查阉党", marker_b, [])
+    oid_b = create_test_secret_order(
+        db, state, b.name, "乙密查阉党", marker_b, [],
+        origin_chat_message_id=mid_b_user,
+    )
     assert oid_b > 0
 
     assert _ks(db, mid_b_user) == "withheld"
@@ -1331,6 +1356,78 @@ def test_976_rt03_late_chat_after_create_same_turn(game):
     assert _shared_source_body(db, f"chat_message:{mid_even_later}") == later_line
 
 
+def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
+    """红队④ should：undo 含密令口谕 — secret_orders 与 secret_order_briefs 回滚一致。
+
+    真实 undo 删除密令父行后由 FK CASCADE 删除 brief；其它密令不受影响。
+    """
+    db, state, content = game
+    a, b = _active_ministers(db, content)[:2]
+    marker = "undo密令正文：密查火器局虚报-UNDO976"
+    public_early = "臣报：漕运无阻-先轮公开976"
+
+    ctid_early = db.create_chat_turn(state, b.name, "sess-early-976", 0)
+    snap0 = db.capture_chat_rollback_snapshot()
+    mid_b_pub = db.append_chat_message(b.name, state.turn, "minister", public_early)
+    db.update_chat_turn_messages(ctid_early, minister_message_id=mid_b_pub)
+    db.record_chat_turn_rollback_diffs(
+        ctid_early, snap0, db.capture_chat_rollback_snapshot(),
+    )
+    unrelated_oid = create_test_secret_order(db,
+        state, b.name, "巡查漕运", "未撤销密令正文-KEEP1026", [],
+    )
+
+    ctid = db.create_chat_turn(state, a.name, "sess-secret-undo-976", 0)
+    before = db.capture_chat_rollback_snapshot()
+    mid_u = db.append_chat_message(a.name, state.turn, "user", marker)
+    mid_m = db.append_chat_message(
+        a.name, state.turn, "minister", "臣领密旨，即查火器局。",
+    )
+    db.update_chat_turn_messages(ctid, user_message_id=mid_u, minister_message_id=mid_m)
+    oid = create_test_secret_order(
+        db, state, a.name, "密查火器局", marker, [],
+        origin_chat_message_id=mid_u,
+    )
+    after = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(ctid, before, after)
+
+    assert oid > 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
+    ).fetchone()[0] == 1
+    assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+    undone = db.undo_chat_turn(ctid)
+    assert undone is not None
+    assert int(undone.get("id") or 0) == ctid
+    assert db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["status"] == "undone"
+
+    order_left = db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE id=?", (oid,),
+    ).fetchone()[0]
+    brief_left = db.conn.execute(
+        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
+    ).fetchone()[0]
+    msg_u = db.conn.execute(
+        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_u,),
+    ).fetchone()[0]
+    msg_m = db.conn.execute(
+        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_m,),
+    ).fetchone()[0]
+    msg_b = db.conn.execute(
+        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_b_pub,),
+    ).fetchone()[0]
+
+    assert order_left == 0, f"secret_orders survived undo count={order_left}"
+    assert brief_left == 0, f"secret_order_briefs orphan after undo count={brief_left}"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (unrelated_oid,),
+    ).fetchone()[0] == 1, "未撤销密令的 brief 不应受级联影响"
+    assert msg_u == 0 and msg_m == 0
+    assert msg_b == 1, "early B public message wrongly deleted"
+
 
 @pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])
 def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollback_entry):
@@ -1398,7 +1495,10 @@ def test_976_rt05_save_restore_between_hold_and_release(game, tmp_path):
     )
     mid_pub = db.append_chat_message(b.name, state.turn, "minister", pending_public)
 
-    oid = create_test_secret_order(db, state, a.name, "密查驿递", marker, [])
+    oid = create_test_secret_order(
+        db, state, a.name, "密查驿递", marker, [],
+        origin_chat_message_id=mid_u,
+    )
     st_pre = {
         "u": _ks(db, mid_u),
         "ack": _ks(db, mid_ack),
@@ -1483,73 +1583,4 @@ def test_976_message_level_origin_persisted_on_brief(game):
     db.release_held_audience_knowledge()
     assert _ks(db, mid) == "withheld"
     assert _shared_source_count(db, mid) == 0
-
-def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
-    """红队④ should：undo 含密令口谕 — secret_orders 与 secret_order_briefs 回滚一致。
-
-    真实 undo 删除密令父行后由 FK CASCADE 删除 brief；其它密令不受影响。
-    """
-    db, state, content = game
-    a, b = _active_ministers(db, content)[:2]
-    marker = "undo密令正文：密查火器局虚报-UNDO976"
-    public_early = "臣报：漕运无阻-先轮公开976"
-
-    ctid_early = db.create_chat_turn(state, b.name, "sess-early-976", 0)
-    snap0 = db.capture_chat_rollback_snapshot()
-    mid_b_pub = db.append_chat_message(b.name, state.turn, "minister", public_early)
-    db.update_chat_turn_messages(ctid_early, minister_message_id=mid_b_pub)
-    db.record_chat_turn_rollback_diffs(
-        ctid_early, snap0, db.capture_chat_rollback_snapshot(),
-    )
-    unrelated_oid = create_test_secret_order(db,
-        state, b.name, "巡查漕运", "未撤销密令正文-KEEP1026", [],
-    )
-
-    ctid = db.create_chat_turn(state, a.name, "sess-secret-undo-976", 0)
-    before = db.capture_chat_rollback_snapshot()
-    mid_u = db.append_chat_message(a.name, state.turn, "user", marker)
-    mid_m = db.append_chat_message(
-        a.name, state.turn, "minister", "臣领密旨，即查火器局。",
-    )
-    db.update_chat_turn_messages(ctid, user_message_id=mid_u, minister_message_id=mid_m)
-    oid = create_test_secret_order(db, state, a.name, "密查火器局", marker, [])
-    after = db.capture_chat_rollback_snapshot()
-    db.record_chat_turn_rollback_diffs(ctid, before, after)
-
-    assert oid > 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
-    ).fetchone()[0] == 1
-    assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-
-    undone = db.undo_chat_turn(ctid)
-    assert undone is not None
-    assert int(undone.get("id") or 0) == ctid
-    assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()["status"] == "undone"
-
-    order_left = db.conn.execute(
-        "SELECT COUNT(*) FROM secret_orders WHERE id=?", (oid,),
-    ).fetchone()[0]
-    brief_left = db.conn.execute(
-        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
-    ).fetchone()[0]
-    msg_u = db.conn.execute(
-        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_u,),
-    ).fetchone()[0]
-    msg_m = db.conn.execute(
-        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_m,),
-    ).fetchone()[0]
-    msg_b = db.conn.execute(
-        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_b_pub,),
-    ).fetchone()[0]
-
-    assert order_left == 0, f"secret_orders survived undo count={order_left}"
-    assert brief_left == 0, f"secret_order_briefs orphan after undo count={brief_left}"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (unrelated_oid,),
-    ).fetchone()[0] == 1, "未撤销密令的 brief 不应受级联影响"
-    assert msg_u == 0 and msg_m == 0
-    assert msg_b == 1, "early B public message wrongly deleted"
 

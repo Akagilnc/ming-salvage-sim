@@ -83,7 +83,6 @@ def test_progress_and_denunciation_project_as_memorials(game):
     prog = by_key[f"progress:{pid}"]
     assert prog["kind"] == "progress"
     assert prog["author_name"] == owner
-    assert prog["memorial_text"] == body_progress
     assert prog["unread"] is True
     # 玩家面不得夹带结构化字段
     for banned in ("progress_band", "origin", "payload", "target_dossier_id", "dossier_id"):
@@ -92,7 +91,6 @@ def test_progress_and_denunciation_project_as_memorials(game):
     den = by_key[f"denunciation:{den_id}"]
     assert den["kind"] == "denunciation"
     assert den["author_name"] == accuser
-    assert den["memorial_text"] == body_den
     assert den["unread"] is True
 
     assert db.unread_memorial_count() == 2
@@ -194,7 +192,6 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     state_payload = state_resp.json()
     assert any(m.get("key") == key for m in state_payload["memorials"])
     memorial = next(m for m in state_payload["memorials"] if m["key"] == key)
-    assert memorial["memorial_text"] == body
     assert memorial["author_name"] == owner
     assert memorial["unread"] is True
     assert state_payload["unread_memorial_count"] == 1

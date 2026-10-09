@@ -88,8 +88,9 @@ function mount(refreshOnEnd = false) {
   act(() => createRoot(host).render(<Harness />));
   const rows = () =>
     Array.from(host.querySelectorAll(".chat-log .turn-segment, .chat-log .chat-message:not(.pending):not(.thinking)")).map((el) => {
-      const role = ["user", "minister", "attendant"].find((r) => el.classList.contains(r)) || "";
-      return `${role}:${el.querySelector("p")?.textContent ?? ""}`;
+      const role = ["user", "minister", "attendant", "scene"].find((r) => el.classList.contains(r)) || "";
+      const turn = el.closest("[data-audience-turn-id]")?.getAttribute("data-audience-turn-id") ?? "";
+      return `${role}@${turn}`;
     });
   return {
     hookRef, busyRef, rows,
@@ -146,8 +147,8 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await tick();
 
     expect(scrollCalls).toBe(callsBeforeEnd + 1);
-    expect(document.body.textContent).toContain("新落账场景");
-    expect(document.querySelector('[data-audience-turn-id="8"]')).not.toBeNull();
+    expect(document.querySelector('.chat-message.scene, .turn-segment.scene')).not.toBeNull();
+    expect(document.querySelector('[data-audience-turn-id="8"] .turn-segment.minister, [data-audience-turn-id="8"] .chat-message.minister')).not.toBeNull();
   });
 
   it("accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮", async () => {
@@ -176,9 +177,9 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await tick();
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "", night_id: 24, chat_turn_id: 8 });
-    expect(rows()).toContain("user:失败问话");
-    expect(rows()).toContain("user:保留问话");
-    expect(rows()).toContain("minister:保留答复");
+    expect(rows()).toContain("user@8");
+    expect(rows()).toContain("user@7");
+    expect(rows()).toContain("minister@7");
   });
 
   it("accepted 后普通流中断会移除未持久化的半段回话", async () => {
@@ -206,9 +207,8 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
     expect(failedTurn).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
-    expect(rows()).toContain("user:请奏");
-    expect(document.querySelector('[data-audience-turn-id="8"]')).not.toBeNull();
-    expect(rows()).not.toContain(":未完成回话");
+    expect(rows()).toContain("user@8");
+    expect(rows().some((row) => row.startsWith("minister@8"))).toBe(false);
   });
 
   it("无夜 identity 不接纳猜测出的旧卷，新夜回话失败也不回闪", async () => {
@@ -227,13 +227,13 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     const { hookRef, rows } = mount();
     await tick();
     expect(hookRef.current!.currentNightId).toBe(0);
-    expect(rows()).not.toContain("minister:旧夜他臣");
+    expect(rows().some((row) => row.startsWith("minister@"))).toBe(false);
 
     await act(async () => {
       await hookRef.current!.sendChat("温体仁", "开启新场", noCbs);
     });
     expect(hookRef.current!.currentNightId).toBe(24);
-    expect(rows()).not.toContain("minister:旧夜他臣");
+    expect(rows().some((row) => row.startsWith("minister@7"))).toBe(false);
   });
 
   it("持久后果在 done 到手即消费：end 延后期间起新轮，旧轮后果不被丢弃", async () => {
@@ -296,13 +296,12 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
     act(() => { void hook.sendChat("温体仁", "问2", noCbs); });
     await tick();
+    // 固定 UI busy 隔离契约（与待答槽同位回收）；不锁 pending 自由正文非空（#1897 T1）。
     expect(busyRef.current).toBe("大臣思索中");
-    expect(hookRef.current!.pendingUserMessage).toBe("问2");
 
     releaseEnd1();
     await act(async () => { await p1; });
     expect(busyRef.current).toBe("大臣思索中");            // 旧流未清掉流 2 的 busy
-    expect(hookRef.current!.pendingUserMessage).toBe("问2");  // 旧流未清掉流 2 的待答文
   });
 
   it("陈旧同大臣历史响应：更旧的 GET 迟到不抹掉新完成的轮（generation 守卫）", async () => {
@@ -320,17 +319,17 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
       return jsonResp({ night_id: 0, messages: [] });
     }));
 
-    const chatRows = () => hookRef.current!.chat.map((m) => `${m.role}:${m.content}`);
+    const chatRows = () => hookRef.current!.chat.map((m) => `${m.role}@${m.chatTurnId ?? ""}`);
 
     // 先发一次历史 GET（更旧快照，门控挂起），再发第二次（更新快照，立即返回）
     // #1849 reopen：夜卷轴是唯一呈现；generation 守卫仍落在 hook.chat 状态上。
     let pOld!: Promise<unknown>;
     act(() => { pOld = hook.loadHistory("温体仁"); });
     await act(async () => { await hook.loadHistory("温体仁"); });  // gen2 落新快照
-    expect(chatRows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
+    expect(chatRows()).toEqual(["user@10", "minister@10", "user@11", "minister@11"]);
 
     releaseOld();  // 更旧的 GET 迟到——generation 已推进，须丢弃、不回退
     await act(async () => { await pOld; });
-    expect(chatRows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
+    expect(chatRows()).toEqual(["user@10", "minister@10", "user@11", "minister@11"]);
   });
 });

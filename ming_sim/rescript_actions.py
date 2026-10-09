@@ -72,6 +72,39 @@ def _stable_json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, object]:
+    """CLI/probe 首选项投影唯一真源。
+
+    - 急务 ``rescript_draft``：首 option → ``follow_draft`` + ``draft_capability``
+    - 普通 decision：首 option 原样（补 decision_key）
+    """
+    options = decision.get("options") or []
+    first = options[0] if options else {}
+    if not isinstance(first, dict):
+        first = {"label": str(first or "")}
+    item = dict(first)
+    dk = str(decision.get("decision_key") or "").strip()
+    if not dk:
+        kind = str(decision.get("kind") or "decision").strip() or "decision"
+        turn = decision.get("source_turn", decision.get("turn"))
+        idx = decision.get("idx")
+        if turn is not None and idx is not None:
+            dk = f"{kind}:{int(turn)}:{int(idx)}"
+    if dk:
+        item.setdefault("decision_key", dk)
+    kind = str(decision.get("kind") or "").strip()
+    if kind == "rescript_draft":
+        item["action"] = "follow_draft"
+        cap = str(item.get("draft_capability") or "").strip()
+        if not cap:
+            # derive_draft_capability 为纯函数，缺字段回填默认后哈希，不上抛业务异常
+            cap = derive_draft_capability(item)
+        item["draft_capability"] = cap
+        if not str(item.get("label") or "").strip():
+            item["label"] = "依拟"
+    return item
+
+
 def canonical_choice(raw: object) -> Dict[str, object]:
     """确定性规范化 choice：键序固定、缺省填协议默认、decision_key/action/capability 必在。"""
     if not isinstance(raw, dict):
@@ -435,11 +468,12 @@ def validate_all(
             )
 
             event_id = str(row.get("event_id") or "")
-            label = str(req.get("label") or "").strip()
-            # Free prose decision note: preserve raw; strip only emptiness (#1834 F16).
+            # #1897 S1：选项身份与 bind_decision_options 同规——原样 label 命中；
+            # strip 只作判空局部副本，不改写请求身份、不另立兼容通道。
+            label = str(req.get("label") or "")
             note = str(req.get("note") or "")
             if (
-                not label
+                not label.strip()
                 and note.strip()
                 and (
                     event_id.startswith(_DECREE_QUESTION_PREFIX)
@@ -1203,8 +1237,15 @@ def apply_imperial_deliberation_push(
         raise ValueError(f"御笔强推目标案卷不存在：{did}")
     if str(row.get("status") or "") != "proposed":
         raise ValueError(f"御笔强推只接 proposed 案卷：{did}")
-    # get_decree_dossier → _dossier_row 已保证 payload 为对象。
-    payload = row.get("payload") or {}
+    payload = row.get("payload")
+    if not isinstance(payload, dict):
+        from ming_sim.db import GameDB
+        payload = GameDB.parse_engine_payload_json(
+            row.get("payload_json"),
+            surface=f"rescript.dossier#{did}.payload_json",
+        )
+    if not isinstance(payload, dict):
+        raise ValueError("廷议案卷 payload 非对象")
     if str(payload.get("deliberation_state") or "") != "stalled":
         raise ValueError(f"御笔强推只接 stalled 廷议：{did}")
     origin = f"dossier:{did}"

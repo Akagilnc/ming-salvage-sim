@@ -154,8 +154,14 @@ def stub_promulgation_verdicts(
 
 
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
-    # get_decree_dossier / list_decree_dossiers → _dossier_row 已保证 payload 为对象。
-    return dict(row.get("payload") or {})
+    payload = row.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    # 与 GameDB.parse_engine_payload_json 同一权威；腐坏响亮，不 catch-to-{}（#1897 E1）。
+    from ming_sim.db import GameDB
+    return GameDB.parse_engine_payload_json(
+        row.get("payload_json"), surface="decree.dossier.payload_json",
+    )
 
 
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
@@ -238,8 +244,9 @@ def build_promulgation_judge_context(
         "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
         "ORDER BY d.turn,d.dossier_id,d.id"
     ).fetchall():
+        from ming_sim.db import GameDB
         payload = GameDB.parse_engine_payload_json(
-            item["payload_json"], surface="decree_dossiers.payload_json",
+            item["payload_json"], surface="decree.history.payload_json",
         )
         mode = str(payload.get("mode") or "ordinary")
         rescript_action = str(item["rescript_action"] or "")
@@ -514,8 +521,13 @@ def validate_promulgation_verdicts(
         }
     proposed_modes: Dict[int, str] = {}
     for dossier in proposed_dossiers:
-        # list/get 权威投影已保证 payload 为对象；业务空 → {}。
-        payload = dossier.get("payload") or {}
+        payload = dossier.get("payload")
+        if not isinstance(payload, dict):
+            from ming_sim.db import GameDB
+            payload = GameDB.parse_engine_payload_json(
+                dossier.get("payload_json"),
+                surface="decree.proposed.payload_json",
+            )
         action_type = dossier.get("action_type")
         external_review = (
             dossier_action_policy(action_type, payload)["external_review"]
@@ -655,7 +667,13 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     """
     executing_work = False
     for row in db.list_decree_dossiers(status="executing"):
-        payload = row.get("payload") or {}
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            from ming_sim.db import GameDB
+            payload = GameDB.parse_engine_payload_json(
+                row.get("payload_json"),
+                surface="decree.executing.payload_json",
+            )
         # Non-terminal executing dossiers remain simulator continuation context.
         if dossier_action_policy(row.get("action_type"), payload)["execution_surface"] != "terminal":
             executing_work = True

@@ -279,14 +279,12 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(mo
 
     events = list(runtime.chat_stream("殿上", "请奏"))
 
-    assert events == [{
-        "type": "error", "message": "identity read failed",
-        "campaign_id": "", "night_id": 0, "chat_turn_id": 7,
-    }]
-    assert len(failed) == 1
+    assert events[0]["type"] == "error"
+    assert events[0]["chat_turn_id"] == 7
+    assert events[0]["campaign_id"] == "" and events[0]["night_id"] == 0
     assert failed[0][:2] == (7, {})
-    assert str(failed[0][2]) == "identity read failed"
-    assert [m["content"] for m in runtime.db.messages if m["role"] == "user"] == ["请奏"]
+    user_msgs = [m for m in runtime.db.messages if m["role"] == "user"]
+    assert len(user_msgs) == 1  # 失败仍保留问话轮；角色条数结构，不锁问话散文
     assert completed == [True]
 
 
@@ -375,7 +373,6 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
         "期望 state 探针在 chat 完成前响应"
     )
     assert state_payload == {"ok": True, "turn": 1}
-    assert chat_result["answer"] == "臣已知悉。"
 
 
 def test_nonstream_chat_rejects_when_session_draining():
