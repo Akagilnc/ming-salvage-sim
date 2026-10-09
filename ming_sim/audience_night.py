@@ -2149,66 +2149,6 @@ def _command_entry_has_tag_enter(entry: Dict[str, Any]) -> bool:
     return _is_command_entry(entry) and TAG_ENTER in (entry.get("tags") or [])
 
 
-def _night_direct_write_allowed_tables() -> frozenset:
-    allowed: set[str] = set()
-    for tables in NIGHT_DIRECT_WRITE_WHITELIST.values():
-        allowed |= set(tables)
-    return frozenset(allowed)
-
-
-def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
-    """审计一夜内对真实盘面的直写全部落在可枚举白名单内（ADR 0038 防坑不变式，#506 AC3）。
-
-    撤回逆转干净的前提 = 夜内对真实盘面的直写只落白名单（①密令落地；②转译声明的
-    当场实况——#1839 第四类，含原入册/边事件），其余结构化后果全走待确认暂存、收夜
-    才提交。经该夜各未撤/未失败轮的前像撤销日志（chat_turn_rollback_items 记录本轮
-    触碰过的业务表）核真：任一真实盘面表被直写、却不属白名单授权 → 越权夜内直写，
-    写错误包并响亮咬住（此类直写撤回逆转不净，是设计洞）。
-
-    返回观测到的白名单操作名集（合法夜用于确认授权项确经白名单落地）。
-    """
-    allowed = _night_direct_write_allowed_tables()
-    rows = db.conn.execute(
-        """
-        SELECT DISTINCT i.target_table
-        FROM chat_turn_rollback_items i
-        JOIN chat_turns t ON t.id = i.chat_turn_id
-        WHERE t.night_id = ? AND t.status NOT IN ('undone', 'failed', 'consumed')
-        """,
-        (int(night_id),),
-    ).fetchall()
-    observed_ops: set[str] = set()
-    violations: List[str] = []
-    for row in rows:
-        table = str(row["target_table"] if hasattr(row, "keys") else row[0])
-        if table not in _REAL_BOARD_TABLES:
-            continue  # 暂存/候选层非真实盘面直写，不审
-        if table not in allowed:
-            violations.append(table)
-            continue
-        for op, tables in NIGHT_DIRECT_WRITE_WHITELIST.items():
-            if table in tables:
-                observed_ops.add(op)
-    if violations:
-        tables_sorted = sorted(set(violations))
-        message = (
-            f"越权夜内直写：{('、'.join(tables_sorted))} 不在夜内直写白名单"
-            f"（授权表：{sorted(allowed)}）——须走待确认暂存或过设计审扩白名单。"
-        )
-        pack = write_audience_error_pack(
-            kind="unwhitelisted_night_write",
-            message=message,
-            detail={"night_id": int(night_id), "tables": tables_sorted},
-        )
-        raise AudienceNightError(
-            message,
-            code="unwhitelisted_night_write",
-            error_pack_path=pack,
-            detail={"night_id": int(night_id), "tables": tables_sorted},
-        )
-    return observed_ops
-
-
 def get_night_protagonist(db: Any, night_id: int) -> str:
     """读本夜当前御前主角；未声明则空串。"""
     row = db.conn.execute(

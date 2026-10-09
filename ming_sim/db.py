@@ -10688,7 +10688,6 @@ class GameDB:
                 ordered = 0
             if ordered <= 0:
                 continue
-            dossier_id = int(decoded["id"])
             basis = ordered
             if (
                 str(row["status"] or "") == "closed"
@@ -11144,8 +11143,10 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for row in rows:
+            den_id = int(row["id"])
             payload = self.parse_engine_payload_json(
-                row["payload_json"], surface="faction_denunciations.payload_json",
+                row["payload_json"],
+                surface=f"faction_denunciations#{den_id}.payload_json",
             )
             out.append({
                 "id": den_id,
@@ -16006,58 +16007,6 @@ class GameDB:
             raise ValueError("旨稿机械载荷不完整或非法，拒绝改草")
         return normalized
 
-    def clear_directive_needs_clarification(self, candidate_id: int) -> int:
-        """清某道 pending directive 的「待澄清」标（#502 L4）：皇帝下一句指明并准驳后，
-        含糊 episode 了结——被点名与其兄弟一并复位为普通 pending（未点名者重回「不回→默认同意」
-        通道）。返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(candidate_id),),
-        ).fetchone()
-        if row is None:
-            return 0
-        payload = self.parse_engine_payload_json(
-            row["payload_json"], surface="pending_actions.payload_json",
-        )
-        if "_needs_clarification" not in payload:
-            return int(candidate_id)
-        payload.pop("_needs_clarification", None)
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
-        )
-        self.conn.commit()
-        return int(candidate_id)
-
-    def flag_directive_needs_clarification(self, candidate_id: int) -> int:
-        """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
-        「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
-        返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(candidate_id),),
-        ).fetchone()
-        if row is None:
-            return 0
-        payload = dict(self.parse_engine_payload_json(
-            row["payload_json"], surface="pending_actions.payload_json",
-        ))
-        payload["_needs_clarification"] = True
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
-        )
-        self.conn.commit()
-        return int(candidate_id)
-
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
@@ -16111,8 +16060,6 @@ class GameDB:
         payload = self.parse_engine_payload_json(
             pa.get("payload_json"), surface="pending_actions.payload_json",
         )
-        if payload.get("_needs_clarification") and not allow_clarification:
-            return {"classification": "needs_clarification"}
         # 归一内真实查询／未分类故障原样上抛；仅 typed 领域拒收归 invalid
         # （与 _apply_pending_action / _commit_conversational_draft 同缝，#1897 E1）。
         from ming_sim.action_materialize import DecreeMaterializationValidationError

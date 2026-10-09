@@ -12,6 +12,7 @@ import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
+from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.executor_routing import duty_route_categories
 
 from ming_sim.action_clusters import (
@@ -1517,7 +1518,7 @@ def stage_assignment_candidate(
             "交办旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
         )
-    matter_id = tid_raw or matter_title
+    matter_id = tid or matter_title
     actor = str(minister_name or "").strip()
     if not actor:
         return 0
