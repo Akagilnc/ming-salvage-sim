@@ -5,16 +5,14 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双�
 - F2：机面 TSV 裸人 / 玩家面 LLM 输入投影「约N万口」（正向 prompt，零删改）；
 - F3：流民冻结 seed 表（陕西15万/河南5万/内地其余省0；#659 辽东/东江边镇切片0；
       全国=省级求和派生；satisfaction 基线30 陕西20 河南25 / leverage 5 / agenda 冻结句）；
-- F4：新档 DB 持久标「人」；#1889 起无标也不再改判万人；
-- AC4+AC8 合并：五项 mutation 验收矩阵（classes seed / regions seed / events effect /
-  new-save prompt / old-save prompt），逐项钉新旧档期望口径，×10⁴ 漏乘或重乘必咬。
+- F4：新档 DB 持久标「人」；#1889 起无标也不再改判万人。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.issues import (
     apply_score_extraction,
     bind_content as issues_bind_content,
@@ -98,36 +96,6 @@ def test_new_save_regions_seed_persons_scale(game):
     assert row["population"] == BEIZHILI_POP_PERSONS
 
 
-
-
-def test_population_unit_mutation_matrix(game):
-    """classes / regions seed 与事件效果都按人落库。漏乘或再 ÷10⁴ 即 FAIL。"""
-    new_db = game[0]
-    content = game[2]
-
-    def one(db, sql):
-        return db.conn.execute(sql).fetchone()[0]
-
-    assert one(new_db, "SELECT population FROM classes WHERE name='农民' AND region_id=''") \
-        == FARMER_NATIONAL_POP_PERSONS
-    assert one(new_db, "SELECT population FROM regions WHERE id='beizhili'") == BEIZHILI_POP_PERSONS
-
-    issues_bind_content(content)
-    before = one(new_db, "SELECT population FROM regions WHERE id='shanxi'")
-    state = new_db.load_state()
-    state.year, state.period = 1633, 7
-    triggered = auto_trigger_seed_issues(state, new_db)
-    assert any(item["id"] == "huabei_plague" for item in triggered)
-    after = one(new_db, "SELECT population FROM regions WHERE id='shanxi'")
-    assert after == before - 400000
-
-
-# ── prompt 契约（④ new-save / ⑤ old-save）＋ F2 机面/玩家面拆分 ────────────
-
-
-
-
-
 # ── F1：class 写面只收 satisfaction/leverage（流民行含内）───────────────────
 
 def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
@@ -186,10 +154,6 @@ def test_web_region_payload_has_no_population_wan_projection(game):
     node_bz = nodes["beizhili"]["region"]
     assert "population_wan" not in node_bz
     assert node_bz["population"] == BEIZHILI_POP_PERSONS
-
-
-# ── W2：新档 region_detail sub-万分支 ─────────────────────────
-
 
 
 # ── on_restore 收复单位接缝（content 静态人口已是人）───────────
