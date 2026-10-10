@@ -40,8 +40,8 @@ def _assert_write_path_free(runtime) -> None:
 
     t = threading.Thread(target=_try_serialized_write, daemon=True)
     t.start()
-    entered.wait()
-    t.join()
+    entered.wait(timeout=30)
+    t.join(timeout=30)
     assert entered.is_set() and not t.is_alive(), "serialized write path still blocked"
 
     queue = runtime._runtime_write_queue()
