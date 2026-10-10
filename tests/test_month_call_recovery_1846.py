@@ -441,7 +441,6 @@ def test_settlement_recovery_projects_month_call_failure(web_game, monkeypatch):
     assert recovery_again.get("message") == (
         (chain_again.get("call_failure") or {}).get("message")
     )
-    web_game.session.close()
 
 
 def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
