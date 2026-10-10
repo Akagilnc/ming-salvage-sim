@@ -1778,9 +1778,9 @@ def _presence_delta(entry: Dict[str, Any]) -> Optional[str]:
     进=口令账 TAG_ENTER（宣入/常在员额，引擎确定性写）**或**抽取账 presence_effect='enter'；
     出=口令账 TAG_EXIT（令退）**或**抽取账 presence_effect='exit'。抽取账开放 tags 不驱动
     在场（机器承重态不解析自由文本，与 settle `check_dead=(effect==enter)` 对称）；传召在途
-    无在场效果。`present_names_at` / `audible_entries_for` / `persons_present_tonight` /
+    无在场效果。`present_names_at` / `audible_entries_for` /
     `dismiss` 同走此核，杜绝双真源（#507：抽取 presence_effect=exit 后 recap 仍含退后公开对话，
-    因旧 `_apply_presence` 只认 tags；command dismiss 的 TAG_EXIT 又漏于旧 `persons_present_tonight`）。
+    因旧 `_apply_presence` 只认 tags）。
     `_is_command_entry` 定义在下方，运行时解析。"""
     effect = str(entry.get("presence_effect") or "")
     if effect == PRESENCE_ENTER:
@@ -1814,7 +1814,8 @@ def present_names_at(
     """确定性推导任一时刻在场名单：进出账累积到 at_seq（含）为止的净在场者。
 
     机器承重态只有在场/不在场；at_seq=None 取夜内末态。侍立/正对奏是叙事层次
-    非硬状态，不影响本推导。走单一在场模型 `_apply_presence`。"""
+    非硬状态，不影响本推导。走单一在场模型 `_apply_presence`。派生只认已落账（list_ledger
+    只返回已 settle 的账），故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。"""
     present: set[str] = set()
     for entry in list_ledger(db, night_id):
         # list_ledger 按时序键 COALESCE(order_key, seq) 排序：抽取账 order_key 可小于其自身
@@ -1948,18 +1949,6 @@ def _is_command_entry(entry: Dict[str, Any]) -> bool:
     只在口令账上机器承重——抽取账开放 tags 不得驱动机器态（ADR 0035：在场等机器承重态输入
     不解析自由文本；否则 LLM 写「入殿」旁路死账、写「收夜」旁路收夜账幂等）。"""
     return int(entry.get("source_chat_turn_id") or 0) == 0
-
-
-def persons_present_tonight(db: Any, night_id: int) -> set[str]:
-    """当前在场名单 = 夜末在场态（#501 AC2/AC9）。
-
-    与 `present_names_at` 共用单一在场步进 `_presence_delta`（ADR 0035 R2）——进=口令账
-    TAG_ENTER（宣入/常在员额）**或**抽取账 presence_effect='enter'；出=口令账 TAG_EXIT
-    （令退）**或**抽取账 presence_effect='exit'。抽取账开放 tags 不驱动在场（机器承重态不
-    解析自由文本，与 settle `check_dead=(effect==enter)` 对称）。派生只认已落账（list_ledger
-    只返回已 settle 的账），故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。
-    """
-    return present_names_at(db, int(night_id))
 
 
 def presence_roster(db: Any, night_id: int) -> List[Dict[str, Any]]:

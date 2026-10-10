@@ -1014,26 +1014,6 @@ def test_final_decree_edit_path_removed_no_bypass(game):
     assert db.get_dossier_for_directive(directive_id) is None
     assert len(db.list_directives(state)) == 1
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
-    from ming_sim.session import GameSession
-
-    db, state, _content = game
-    db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    called = []
-    session.resolve_turn = lambda **_k: called.append("resolve")
-
-    session.advance_without_decree()
-
-    assert called == ["resolve"]
-
-
 def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     game, monkeypatch, capsys,
 ):

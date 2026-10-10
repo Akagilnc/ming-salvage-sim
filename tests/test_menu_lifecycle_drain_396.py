@@ -434,7 +434,7 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
     wait_until(_queue_rejects_new_claims)
     assert runtime._mark_pending_write() is None
     # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
-    assert runtime._pending_writes_count <= 1
+    assert runtime._runtime_write_queue().inflight_count() <= 1
 
     runtime._write_gate.release()
 
@@ -472,7 +472,7 @@ def test_spawn_pending_write_thread_start_failure_releases_ownership():
     finally:
         web_app.threading.Thread = orig_thread
 
-    assert runtime._pending_writes_count == 0  # pending ownership 未泄漏
+    assert runtime._runtime_write_queue().inflight_count() == 0  # pending ownership 未泄漏
 
 
 # ── #396 Step5 R4: web_game is None 时 new_game 仍须切换库路径 ───────────

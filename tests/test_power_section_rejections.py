@@ -113,7 +113,7 @@ def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeyp
 
 
 def test_dirty_power_value_rejected_sibling_field_lands(game):
-    """白名单字段的脏值(null/"3成")= LLM 脏数据,逐项拒收——validate_delta_shape
+    """白名单字段的脏值(null/"3成")= LLM 脏数据,逐项拒收——sanitize_delta_shape
     只验容器、明文容忍 null 叶,裸 int(value) 会让一个脏值崩整月(cmr S1 r1,2/2)。
     同一势力的兄弟好字段照落。"""
     db, state, content = game

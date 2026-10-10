@@ -156,8 +156,7 @@ class TicketedWriteGate:
 
     Drop-in for `threading.Lock` at trailing-leg write sites (`with gate` / acquire).
     Orders only concurrent write turns (and open barriers) — peer legs keep LLM
-    parallel (P5). Does not complete the ticket — caller still complete()/vacate()
-    in finally.
+    parallel (P5). Does not complete the ticket — caller still complete() in finally.
     """
 
     def __init__(
@@ -301,7 +300,7 @@ class SessionWriteQueue:
             return out
 
     def complete(self, ticket: Optional[WriteTicket]) -> None:
-        """Release ticket slot (success or empty vacate). Idempotent."""
+        """Release ticket slot (success or failure release). Idempotent."""
         if ticket is None:
             return
         with self._cond:
@@ -324,10 +323,6 @@ class SessionWriteQueue:
             ticket._claims += 1
             self._by_key.setdefault(key, set()).add(ticket.seq)
             return ticket
-
-    def vacate(self, ticket: Optional[WriteTicket]) -> None:
-        """Empty release on fail/cancel — same as complete (order advances)."""
-        self.complete(ticket)
 
     def cancel(self, ticket: Optional[WriteTicket]) -> None:
         """Mark cancelled and vacate. In-flight legs must check ticket.cancelled."""

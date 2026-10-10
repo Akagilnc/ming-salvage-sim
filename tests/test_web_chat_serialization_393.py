@@ -272,10 +272,8 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 def test_identity_setup_failure_preserves_question_and_releases_pending_owner(monkeypatch):
     runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race(monkeypatch)
     failed = []
-    completed = []
     runtime.db.kv_get = lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed"))
     runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot, error: failed.append((turn_id, snapshot, error))
-    runtime._complete_pending_write = lambda ticket=None: completed.append(True)
 
     events = list(runtime.chat_stream("殿上", "请奏"))
 
@@ -285,7 +283,7 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(mo
     assert failed[0][:2] == (7, {})
     user_msgs = [m for m in runtime.db.messages if m["role"] == "user"]
     assert len(user_msgs) == 1  # 失败仍保留问话轮；角色条数结构，不锁问话散文
-    assert completed == [True]
+    assert runtime._runtime_write_queue().inflight_count() == 0  # 失败放行领票
 
 
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
@@ -394,4 +392,4 @@ def test_nonstream_chat_rejects_when_session_draining():
 
     events = list(runtime.chat_stream("殿上", "边饷如何？"))
     assert events and events[0].get("type") == "error"
-    assert runtime._pending_writes_count == 0
+    assert runtime._runtime_write_queue().inflight_count() == 0

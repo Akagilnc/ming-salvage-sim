@@ -54,8 +54,6 @@ from ming_sim.structured_decree import (
     validate_structured_decree_combination,
 )
 from ming_sim.participant_roster import (
-    BARE_INSTITUTION_PARTICIPANT_NAMES as _BARE_INSTITUTION_PARTICIPANT_NAMES,
-    NON_PERSON_PARTICIPANT_NAMES as _NON_PERSON_PARTICIPANT_NAMES,
     is_non_person_participant_name as _is_non_person_participant_name,
 )
 

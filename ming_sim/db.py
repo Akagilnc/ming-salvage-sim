@@ -33,7 +33,7 @@ from ming_sim.content import GameContent
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
-from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
+from ming_sim.matching import match_region_id_from_text
 from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection, PendingActionRefusal
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
@@ -3493,8 +3493,10 @@ class GameDB:
 
     def _is_seeded_military_pay_funnel(self, settle: Dict[str, Any]) -> bool:
         meta = settle.get("_meta")
-        if not isinstance(meta, dict):
+        if meta is None:
             return False
+        if not isinstance(meta, dict):
+            raise ValueError("settle._meta 持久坏态（非对象）")
         postures = meta.get("postures")
         return isinstance(postures, list) and "纯军饷漏斗" in postures
 
@@ -3649,11 +3651,13 @@ class GameDB:
             ).fetchone()
             if region is None or str(region["controlled_by"] or "") != "ming":
                 return False
-            # 持久财政 JSON 腐坏响亮上抛，不洗成「不完整」而跳过守恒（ADR 0005）。
+            # 持久财政 JSON / settle 坏态响亮上抛，不洗成「不完整」而跳过守恒（ADR 0005）。
             fiscal = _load_durable_json_object(region["fiscal"], surface="regions.fiscal")
             settle = fiscal.get("settle")
-            if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
+            if settle is None:
                 return False
+            if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
+                raise ValueError(f"region {region_id} settle.st 持久坏态")
         return True
 
     def assert_army_pay_source_container_conservation(self) -> None:
@@ -3806,9 +3810,12 @@ class GameDB:
                 f"army {army_id} pay_source_region 财政基座 JSON 损坏：{pay_source_region}"
             ) from exc
         settle = fiscal.get("settle")
+        if settle is None:
+            raise ValueError(f"army {army_id} pay_source_region 无 settle 基座：{pay_source_region}")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
-            raise ValueError(f"army {army_id} pay_source_region 无 settle st/p 基座：{pay_source_region}")
+            # 显式坏态（settle 存在但形状错）＝账本故障，非模型饷源拒收（ADR 0005 / J6-4）。
+            raise RuntimeError(f"army {army_id} pay_source_region settle st/p 坏态：{pay_source_region}")
 
     def transition_army_owner_power(
         self,
@@ -4259,8 +4266,10 @@ class GameDB:
 
     def _primary_source_army_pay_due(self, settle: Dict[str, Any]) -> Optional[float]:
         meta = settle.get("_meta")
-        if not isinstance(meta, dict):
+        if meta is None:
             return None
+        if not isinstance(meta, dict):
+            raise ValueError("settle._meta 持久坏态（非对象）")
         primary_source = meta.get("primary_source")
         if not isinstance(primary_source, dict):
             return None
@@ -4322,9 +4331,11 @@ class GameDB:
         for row in rows:
             fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
             settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            if settle is None:
+                continue
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                     or not isinstance(settle.get("p"), dict):
-                continue
+                raise ValueError(f"region {row['id']} settle st/p 持久坏态")
             pay_rows = self._derive_region_army_pay_due(str(row["id"]), settle)
             if pay_rows:
                 self._reconcile_region_army_pay_container(str(row["id"]), settle)
@@ -4343,9 +4354,11 @@ class GameDB:
             return
         fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         settle = fiscal.get("settle")
+        if settle is None:
+            return
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
-            return
+            raise ValueError(f"region {region_id} settle st/p 持久坏态")
         self._derive_region_army_pay_due(region_id, settle)
         self.conn.execute(
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -5821,7 +5834,7 @@ class GameDB:
                 old_value = row[field]
                 try:
                     # LLM 叶子值脏（null/"三成"/小数串）= 脏数据逐项拒，不崩整批
-                    # （validate_delta_shape 只验容器、容忍 null 叶——cmr S1 r1，
+                    # （sanitize_delta_shape 只验容器、容忍 null 叶——cmr S1 r1，
                     # 同 secret_order order_id 非整数先例）。float/bool 显式拒：
                     # int(3.7)→3 静默截断、True→1 拟真，都不是 prompt 要的整数
                     # delta（cmr S1 r2；bool 是 int 子类须先判）。
@@ -6965,7 +6978,7 @@ class GameDB:
         created: List[Dict[str, object]] = []
         for raw in new_armies:
             if not isinstance(raw, dict):
-                # 不再静默丢：留拒收记录（season 路本就被 validate_delta_shape 挡在
+                # 不再静默丢：留拒收记录（season 路本就被 sanitize_delta_shape 挡在
                 # S6;issue 路历史即静默,容忍不升级——issue_strict=False,cmr S2 r1）。
                 created.append({
                     "rejected": True, "category": "invalid_enum",
@@ -7063,7 +7076,7 @@ class GameDB:
             # 军费，经 ARMY_FIELD_ALIASES 已无该别名 → 当未知键忽略，不入库、不影响建军。
             # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
             # = 伪造军备（morale "高"→50、cannon "几门"→0）。None 视为缺省（LLM 习惯
-            # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。
+            # 用 null 表「无」,sanitize_delta_shape 亦容忍 null 叶）；其余非整拒该项。
             # 守门集从字段表派生（cmr S2 r2,2/2:硬列漏 equipment/mobility/loyalty）
             # ——ARMY_SCORE_FIELDS 全量已含 arrears;字段表变守门自动跟。
             _dirty_field = None
@@ -11193,10 +11206,6 @@ class GameDB:
 
         out.sort(key=lambda item: (int(item["turn"]), str(item["key"])), reverse=True)
         return out
-
-    def unread_memorial_count(self) -> int:
-        """未读奏报数（进度 + 检举）。"""
-        return sum(1 for row in self.list_player_memorials() if row.get("unread"))
 
     def build_faction_denunciation_facts(self, *, exclude_dossier_ids: Optional[Set[int]] = None) -> Dict[str, object]:
         """#627 供事实：派系恩怨/分叉/处境/个性——注入既有叙事 LLM 步。

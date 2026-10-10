@@ -1149,14 +1149,12 @@ class GameSession:
                     )
                     xuan_ctid = int(chat_turn_id or 0)
                     if xuan_ctid > 0:
+                        owns = connection_owns_transaction(self.db.conn)
                         self.db.conn.execute(
                             "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
                             (target.name, xuan_ctid),
                         )
-                        if (
-                            not bool(getattr(self.db.conn, "_commit_suspended", False))
-                            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
-                        ):
+                        if owns:
                             self.db.conn.commit()
                     if on_protagonist_changed is not None:
                         on_protagonist_changed()

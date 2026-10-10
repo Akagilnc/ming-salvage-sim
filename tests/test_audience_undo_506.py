@@ -110,7 +110,7 @@ def test_undo_erases_round_from_night_ledger_and_presence(game):
     )
     # 轮内：该轮抽取账在册、入殿账使其在场
     assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
-    assert m in an.persons_present_tonight(db, night_id)
+    assert m in an.present_names_at(db, night_id)
 
     ledger_before = [e for e in an.list_ledger(db, night_id)
                      if e["source_chat_turn_id"] != chat_id and m not in e["person_names"]]
@@ -124,7 +124,7 @@ def test_undo_erases_round_from_night_ledger_and_presence(game):
     # 与「该轮未发生」等价：夜内其余账（开夜/员额框架）一字不动
     assert [e["id"] for e in ledger_after] == [e["id"] for e in ledger_before]
     # 在场推导：该轮入殿的人像没登场过
-    assert m not in an.persons_present_tonight(db, night_id)
+    assert m not in an.present_names_at(db, night_id)
     # 对话轮不再计入夜（undone 不返回给「按夜取数」）
     assert chat_id not in {int(t["id"]) for t in an.list_chat_turns_for_night(db, night_id)}
 
@@ -172,7 +172,7 @@ def test_undo_removes_unlisted_person_registration(game):
     night_id, chat_id = _run_round(db, state, caller, writes=_register)
 
     assert db.get_character_status(newcomer)[0] == "active"
-    assert newcomer in an.persons_present_tonight(db, night_id)
+    assert newcomer in an.present_names_at(db, night_id)
 
     db.undo_chat_turn(chat_id)
 
@@ -184,7 +184,7 @@ def test_undo_removes_unlisted_person_registration(game):
         "SELECT 1 FROM character_offices WHERE character_name = ?", (newcomer,)
     ).fetchone() is None
     # 入殿账消失 → 在场推导里像没登场过
-    assert newcomer not in an.persons_present_tonight(db, night_id)
+    assert newcomer not in an.present_names_at(db, night_id)
 
 
 # ── AC6：kill+重开后撤回最近一轮仍完整逆转（撤销日志持久化）────────────────────
@@ -210,7 +210,7 @@ def test_undo_full_reversal_survives_kill_and_reopen(game):
         assert not any(
             e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db2, night_id)
         )
-        assert m not in an.persons_present_tonight(db2, night_id)
+        assert m not in an.present_names_at(db2, night_id)
     finally:
         db2.close()
 
@@ -456,7 +456,7 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
     m = _active_minister(db, content)
     an.open_night(db, state)
     night_id = int(an.get_open_night(db)["id"])
-    assert m not in an.persons_present_tonight(db, night_id)  # m 非常在员额
+    assert m not in an.present_names_at(db, night_id)  # m 非常在员额
     ledger_ids_before = {e["id"] for e in an.list_ledger(db, night_id)}
 
     orig_create = db.create_chat_turn
@@ -473,7 +473,7 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
 
     # atomic 回滚：账本零净增，无孤儿入殿账，在场未变
     assert {e["id"] for e in an.list_ledger(db, night_id)} == ledger_ids_before
-    assert m not in an.persons_present_tonight(db, night_id)
+    assert m not in an.present_names_at(db, night_id)
 
 
 def test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes(game):

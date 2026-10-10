@@ -182,20 +182,13 @@ def army_identity_aliases(army: Army) -> List[str]:
     return _unique_aliases(aliases)
 
 
-def army_aliases(army: Army) -> List[str]:
-    """模糊匹配候选：身份别名 + 驻地/战区/将领上下文（仅 prose matcher 用）。"""
-    aliases = list(army_identity_aliases(army))
-    aliases.extend([army.station, army.theater, army.commander, army.controller])
-    return _unique_aliases(aliases)
-
-
 def canonical_army_id_exact(
     raw: object, armies: Dict[str, Army],
 ) -> Optional[str]:
     """协饷等写缝专用：仅 compact 精确等值（id/军名/受控身份别名）。
 
     空串 → ''；未知非空 → None（调用方 fail-loud）。
-    禁止子串/模糊；不调用 match_army_id_from_text；不吃 theater 等上下文。
+    禁止子串/模糊；不吃 theater 等上下文。
     """
     if raw is None:
         return ""
@@ -212,27 +205,3 @@ def canonical_army_id_exact(
                 return army.id
     return None
 
-
-def match_army_id_from_text(text: str, armies: Dict[str, Army]) -> Optional[str]:
-    cleaned = compact_name(text)
-    if not cleaned:
-        return None
-    matches: List[Tuple[int, str]] = []
-    for army in armies.values():
-        score = 0
-        for alias in army_aliases(army):
-            alias_key = compact_name(alias)
-            if cleaned == alias_key:
-                score = max(score, 125)
-            elif alias_key and alias_key in cleaned:
-                score = max(score, 80 + len(alias_key))
-            elif cleaned in alias_key:
-                score = max(score, 45 + len(cleaned))
-        if score:
-            matches.append((score, army.id))
-    if not matches:
-        return None
-    matches.sort(reverse=True, key=lambda item: item[0])
-    if len(matches) == 1 or matches[0][0] >= matches[1][0] + 8:
-        return matches[0][1]
-    return None

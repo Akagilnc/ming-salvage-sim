@@ -140,9 +140,9 @@ def test_present_roster_reflects_command_dismissal(game):
     nid = int(night["id"])
     an.summon_enter(db, nid, "毕自严")
     an.summon_enter(db, nid, "徐光启")
-    assert {"毕自严", "徐光启"} <= an.persons_present_tonight(db, nid)  # 正向：宣入皆在场
+    assert {"毕自严", "徐光启"} <= an.present_names_at(db, nid)  # 正向：宣入皆在场
 
     an.dismiss_from_audience(db, "毕自严", night_id=nid)
-    present = an.persons_present_tonight(db, nid)
+    present = an.present_names_at(db, nid)
     assert "毕自严" not in present
     assert "徐光启" in present

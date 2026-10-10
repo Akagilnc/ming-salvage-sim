@@ -136,7 +136,7 @@ def test_fail_vacate_lets_barrier_through():
     q = SessionWriteQueue()
     t = q.claim(key=("extract", 9))
     assert t is not None
-    q.vacate(t)
+    q.complete(t)
     order: list[str] = []
     q.barrier(lambda: order.append("barrier") or None)
     assert order == ["barrier"]
@@ -324,7 +324,7 @@ def test_barrier_proceeds_after_worker_fail_vacate():
     def failing_worker() -> None:
         started.set()
         order.append("fail_vacate")
-        q.vacate(t)  # 失败空放行
+        q.complete(t)  # 失败空放行
 
     def run_barrier() -> None:
         started.wait()

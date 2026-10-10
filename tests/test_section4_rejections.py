@@ -569,7 +569,7 @@ def test_issue_path_still_strict_for_historically_fatal(read_game):
 
 def test_nondict_new_army_item_recorded_not_silent(read_game):
     """new_armies 非 dict 项不再静默 continue——留拒收记录(issue 路容忍不升级,
-    历史即静默;season 路本就被 validate_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""
+    历史即静默;season 路本就被 sanitize_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""
     db, state, _ = read_game
     created = db.create_armies_from_extraction(state, ["不是dict的项"], actor="测试")
     rej = [c for c in created if c.get("rejected")]

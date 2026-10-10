@@ -54,6 +54,7 @@ from ming_sim.displaced_population import (
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
     ISSUE_METRIC_LOCK_CAPS,
+    _SubstrateHubFixedFlowAbort,
     _apply_class_dict,
     _apply_economy_list,
     _apply_faction_dict,
@@ -72,7 +73,6 @@ from ming_sim.person_archive_contract import (
     resolve_person_transition,
 )
 from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS, normalize_person_changes
-from ming_sim.token_stats import tlog
 
 
 def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
@@ -1176,7 +1176,6 @@ def _fiscal_levy_land_denominator(
     meta: Dict[str, object],
     parsed_total_land: float,
     *,
-    denominator_complete: bool,
     region_id: str,
 ) -> float:
     if _SETTLE_META_LAND_DENOMINATOR_KEY in meta:
@@ -1184,9 +1183,7 @@ def _fiscal_levy_land_denominator(
             meta[_SETTLE_META_LAND_DENOMINATOR_KEY],
             ctx=f"{region_id}.settle._meta.{_SETTLE_META_LAND_DENOMINATOR_KEY}",
         )
-    if denominator_complete:
-        return parsed_total_land
-    return 0.0
+    return parsed_total_land
 
 
 def _fiscal_levy_share_seed(
@@ -1250,16 +1247,16 @@ def _apply_fiscal_levy_targets(
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
     region_entries: List[Dict[str, object]] = []
-    denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
         fiscal = GameDB.parse_engine_payload_json(
             row["fiscal"], surface=f"regions.fiscal:{region_id}",
         )
+        settle = fiscal.get("settle")
+        if settle is None:  # 合法无基座省：不入饷率分母
+            continue
+        # 显式持久坏态＝账本故障：真因上抛、本轮中止，不出列成「分母不全」后照常出成功（ADR 0005 / 0021 决定9）。
         try:
-            if "settle" not in fiscal:
-                continue
-            settle = fiscal.get("settle")
             if not isinstance(settle, dict):
                 raise ValueError(f"{region_id}.settle 非字典")
             p = settle.get("p")
@@ -1268,7 +1265,9 @@ def _apply_fiscal_levy_targets(
                 raise ValueError(f"{region_id}.settle.p 非字典")
             if not isinstance(st, dict):
                 raise ValueError(f"{region_id}.settle.st 非字典")
-            meta_raw = settle.get("_meta") or {}
+            meta_raw = settle.get("_meta")
+            if meta_raw is None:
+                meta_raw = {}
             if not isinstance(meta_raw, dict):
                 raise ValueError(f"{region_id}.settle._meta 非字典")
             meta = dict(meta_raw)
@@ -1277,9 +1276,9 @@ def _apply_fiscal_levy_targets(
             base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
             _validate_fiscal_levy_share_meta(meta, region_id)
         except ValueError as exc:
-            denominator_complete = False
-            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
-            continue
+            raise _SubstrateHubFixedFlowAbort(
+                f"[fiscal-levy] {region_id} settle 持久坏态，本{TURN_UNIT}饷率通道中止：{exc}"
+            ) from exc
         region_entries.append({
             "region_id": region_id,
             "fiscal": fiscal,
@@ -1305,7 +1304,6 @@ def _apply_fiscal_levy_targets(
         land_denominator = _fiscal_levy_land_denominator(
             meta,
             total_land,
-            denominator_complete=denominator_complete,
             region_id=region_id,
         )
         has_jiao_seed = _SETTLE_META_JIAO_SEED_KEY in meta
@@ -4190,7 +4188,7 @@ def apply_issue_tracker_output(
         if not isinstance(adv, dict):
             # 非 dict 项（advances:[null]/标量，_sanitize 不清列表项可达）：adv.get 抛 AttributeError
             # 崩整月——逐项拒收守门（同 close_issues 非 dict 守卫）。注：真实 settle 路
-            # validate_delta_shape 已前置 abort 非 dict list 项（结构畸形＝响亮失败防半落库），故此
+            # sanitize_delta_shape 已前置 abort 非 dict list 项（结构畸形＝响亮失败防半落库），故此
             # 守卫是 defense-in-depth——直接调 apply / 绕过 validate 时才生效（codex advances r2 P2：
             # 非 dict 主路径走 validate abort、非逐项拒收，是 validate 层「结构畸形前置 abort」vs
             # 「值脏逐项拒收」的两层分工；改 validate 让非 dict 亦逐项拒收＝跨所有 list 段的设计决策，
@@ -4318,7 +4316,7 @@ def apply_issue_tracker_output(
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
             # 非 dict 项（new_issues:[null]/标量）：ni.get 会抛 AttributeError。真实 settle 路
-            # validate_delta_shape 已在 apply 前拦非 dict list 项，此为 defense-in-depth（直接调
+            # sanitize_delta_shape 已在 apply 前拦非 dict list 项，此为 defense-in-depth（直接调
             # apply_issue_tracker_output / 绕过 validate 时生效）——逐项拒收，不让坏项带走整批
             # （ADR 0008 决定 1，同 close_issues 非 dict 守卫，cmr ni r1 Claude）。
             applied_new.append({
@@ -5507,11 +5505,6 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
     return cleaned, rejections
 
 
-def validate_delta_shape(extracted: dict) -> None:
-    """Validate unsplittable delta shape; split-capable bad items are ADR0015 rejections."""
-    sanitize_delta_shape(extracted)
-
-
 @contextmanager
 def _appointment_tenure_scope(db: GameDB, appointment_tenure: str):
     previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
@@ -6684,13 +6677,16 @@ def _apply_surcharge_decrees(
             row["fiscal"], surface=f"regions.fiscal:{region_id}",
         )
         settle = fiscal.get("settle")
-        if not (isinstance(settle, dict) and isinstance(settle.get("st"), dict)
-                and isinstance(settle.get("p"), dict)):
+        if settle is None:
             _reject(
                 "missing_ref",
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
             )
             continue
+        if not (isinstance(settle, dict) and isinstance(settle.get("st"), dict)
+                and isinstance(settle.get("p"), dict)):
+            # 显式持久坏态＝账本故障，不得记成模型 missing_ref 拒收（ADR 0005 / J6-4）。
+            raise RuntimeError(f"surcharge_decrees {region_id!r} settle st/p 持久坏态")
         if db.population_unit != POPULATION_UNIT_PERSONS:
             _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
             continue
@@ -6725,7 +6721,10 @@ def _apply_surcharge_decrees(
             continue
         # Free prose surcharge reason: preserve raw; no length gate/crop (#1834 F16).
         reason = str(item.get("reason") or "")
-        meta = dict(settle.get("_meta") or {})
+        meta_raw = settle.get("_meta")
+        if meta_raw is not None and not isinstance(meta_raw, dict):
+            raise RuntimeError(f"surcharge_decrees {region_id!r} settle._meta 持久坏态（非对象）")
+        meta = dict(meta_raw or {})
         old = max(0.0, float(meta.get(SETTLE_META_JIAPIAI_KEY, 0) or 0))
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
         meta[SETTLE_META_JIAPIAI_KEY] = new

@@ -2,7 +2,7 @@
 （fail_chat_turn）并释放写路径——否则留下 active 且无大臣回复的孤儿轮，后续召对/drain 永久卡住。
 
 #1185: observe public fail/error events + serial write-path availability (drain /
-_serialized_web_write), not private _write_gate.locked() / _pending_writes_count pins.
+_serialized_web_write), not private _write_gate.locked() / _runtime_write_queue() count pins.
 
 #1452: 非流式 chat/decree LLMUnavailable → 非 500 结构化；流式 RunErrorEvent → 结构化 SSE。
 #1465: 召对 API transport 统一重试（attempt 预算/分类/系统层终失败/独立空转）。

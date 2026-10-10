@@ -100,7 +100,6 @@ from ming_sim.session_write_queue import (
 from ming_sim.token_stats import tlog
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
-from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import (
     API_DEFAULT_TIMEOUT_SECONDS,
     Character,
@@ -1285,11 +1284,6 @@ class WebGame:
     def _complete_pending_write(self, ticket: Optional[WriteTicket] = None) -> None:
         """释放领票（成功/失败/空放行同形）。"""
         self._runtime_write_queue().complete(ticket)
-
-    @property
-    def _pending_writes_count(self) -> int:
-        """兼容只读：队列在途票据数（旧 counter 名，事实来源=队列）。"""
-        return int(self._runtime_write_queue().inflight_count())
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
@@ -2570,7 +2564,7 @@ class WebGame:
         """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。
 
         #1353 r7：无待补时不领票——空 catch-up 占票会与同 session 的 barrier/
-        `_pending_writes_count` 钉竞态（全量 xdist 下 residual ticket）。有待补才
+        `inflight_count()` 钉竞态（全量 xdist 下 residual ticket）。有待补才
         claim+spawn；key=("startup",) 与 turn/pending 区分。
         #1353 r10：预检 list_unextracted 短持 runtime gate（共享 conn 禁裸读）。
         # #1853 J8：启动预检与转译重试查询同属必备接口直调；禁缺接口当「无待补」。
