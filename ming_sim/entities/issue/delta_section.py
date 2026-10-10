@@ -112,7 +112,7 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
         apply_army_delta_with_cannon_transfer,
     )
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
-    from ming_sim.issues import apply_event_cascading_invalidations
+    from ming_sim.entities.issue.event_terminal import apply_event_cascading_invalidations
     from ming_sim.settlement.preflight import _strategic_event_outcome_label_or_error
 
     bucket: Dict[str, list] = {

@@ -502,11 +502,11 @@ def _dispatch_effects(
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
     accepted_event_ids: list[str] = []
+    from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
     from ming_sim.issues import (
         FISCAL_LEVY_EVENT_CATEGORY,
         _event_outcome_label,
         _merge_first_event_outcome,
-        apply_petition_event_outcome,
     )
     for item, event_id, clean in clean_items:
         if event_id in rejected_events:

@@ -1,13 +1,11 @@
 """Issue 系统的事件门闩求值与触发编排（L6）。落库业务实现已迁入 entities（ADR 0150 决定 8）：
 财政加派 ming_sim.entities.fiscal.levy、暗渠撤销 entities.fiscal.covert_neutralize、
-密令披露 entities.secret_order.disclosure、issue 写侧 entities.issue.records、开局 legacy entities.issue.legacy。
+密令披露 entities.secret_order.disclosure、issue 写侧 entities.issue.records、事件终态写侧 entities.issue.event_terminal、开局 legacy entities.issue.legacy。
 
 通过 bind_content() 注入 GameContent（取 EVENTS/SEED_EVENTS/EVENT_BY_ID）。
 """
 
 from __future__ import annotations
-
-from ming_sim.applier import Provenance
 
 import json
 import re
@@ -16,7 +14,6 @@ from typing import Dict, List, Optional
 from ming_sim.applier import (
     RejectionCollector,
     atomic,
-    connection_owns_transaction,
     mirror_rejections_after_commit,
 )
 from ming_sim.error_pack import rejections_jsonl_path
@@ -39,7 +36,6 @@ from ming_sim.settlement.preflight import _validate_strategic_foreign_node_outco
 
 import ming_sim.entities.issue.commitment_display as commitment_display
 import ming_sim.entities.issue.effects as issue_effects
-import ming_sim.entities.fiscal.levy as fiscal_levy
 import ming_sim.entities.issue.records as issue_records
 
 _content: Optional[GameContent] = None
@@ -298,58 +294,6 @@ def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[s
     return ""
 
 
-def apply_event_cascading_invalidations(
-    state: GameState,
-    db: GameDB,
-    *,
-    commit: bool = True,
-) -> List[Dict[str, object]]:
-    """Invalidate downstream historical events whose event-chain gates are now impossible.
-
-    Only frozen event terminal/outcome ledger facts are invalidation grounds.  Other
-    trigger_gate clauses (regions, locations, offices, etc.) remain soft gates and
-    are deliberately ignored here because they may flip later.
-    """
-    content = _ctx()
-    _validate_event_dependency_graph_acyclic(content, state)
-    should_commit = commit and db.owns_transaction()
-    terminalized: List[Dict[str, object]] = []
-    terminal_records = _event_terminal_records(db)
-
-    def run_cascade() -> None:
-        while True:
-            changed = False
-            for ev in [*content.events, *content.seed_events]:
-                if not getattr(ev, "id", "") or ev.id in terminal_records:
-                    continue
-                if not _event_dependency_ids(ev):
-                    continue
-                reason = _event_chain_impossible_reason(ev, terminal_records, state)
-                if not reason:
-                    continue
-                db.mark_event_obsolete(
-                    state,
-                    ev.id,
-                    reason=reason,
-                    source="event_chain_invalidated",
-                    commit=False,
-                )
-                row = db.find_active_issue_by_origin("event_pool", ev.id)
-                if row is not None:
-                    db.cancel_issue(state, int(row["id"]), narrative=f"事件链作废：{reason}", commit=False)
-                item: Dict[str, object] = {"id": ev.id, "title": ev.title, "terminal_state": "obsolete", "reason": reason}
-                terminalized.append(item)
-                terminal_records[ev.id] = {"terminal_state": "obsolete", "terminal_reason": reason}
-                changed = True
-            if not changed:
-                break
-
-    if should_commit:
-        with atomic(db):
-            run_cascade()
-    else:
-        run_cascade()
-    return terminalized
 
 
 def _spawned_event_refs(db: GameDB) -> set:
@@ -409,69 +353,6 @@ def _merge_first_event_outcome(
     return unowned
 
 
-def apply_petition_event_outcome(
-    state: GameState,
-    db: GameDB,
-    event_id: str,
-    raw_label: object,
-    *,
-    commit: bool = True,
-) -> Dict[str, object]:
-    """亲裁语义落账的**单一写口**：把转译出的结局标签置成事件终态（#1892 / ADR 0153:5）。
-
-    契约：
-
-    - **事件须在可呈窗口内**：三饷只有到点才上疏（issues._event_window_open），窗口外
-      的事项没有可供皇帝亲裁的既成事实，此时置定结局等于替皇帝凭空批一疏。窗口外
-      响亮拒绝，不静默放过。
-    - 标签只在事件自身声明的封闭集 ``terminal_reason_labels`` 内归一；归一不了就
-      :class:`SettlementAbort` 响亮失败（ADR 0014：绝不兜底写未支撑值），不猜、不兜。
-    - **留中不写终态**：raw_label 为空即「本疏已答而事件未终」，调用方不得以任何形式
-      把它塞进终局标签集——留中不是结局标签。
-    - 已落其它终态（expired/avoided/obsolete）的事件不被翻成 triggered；终态不可逆。
-
-    写口只此一处：批红链路不直接写 ``terminal_reason``，原始选项标签不得旁路代批。
-    """
-    eid = str(event_id or "").strip()
-    event = fiscal_levy._fiscal_levy_event_by_id(eid) if eid else None
-    if event is None:
-        raise SettlementAbort(
-            f"亲裁结局事件不存在：{eid}", turn=int(state.turn), stage="fiscal_levy_config",
-        )
-    if not _event_window_open(event, state):
-        raise SettlementAbort(
-            f"亲裁结局事件不在可呈窗口内：{eid}", turn=int(state.turn), stage="fiscal_levy_config",
-        )
-    raw = str(raw_label or "").strip()
-    if not raw:
-        # 留中：本疏已答，事件未终。不写终态，也不另开一条留中账。
-        # 已呈原文与原批语在 record_event_petition_answer 的 choice_json 里。
-        return {"id": eid, "settled": False, "terminal_state": "", "terminal_reason": ""}
-    existing = db.event_terminal_state(eid)
-    if existing == "triggered":
-        # 一事件一裁断（ADR 0115:3 first-wins）：结局已落定即不可翻。
-        return {
-            "id": eid, "settled": False, "terminal_state": "triggered",
-            "terminal_reason": _event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
-        }
-    if existing:
-        return {
-            "id": eid, "settled": False, "terminal_state": existing,
-            "terminal_reason": _event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
-        }
-    label = fiscal_levy._fiscal_levy_normalized_terminal_reason_or_abort(event, raw, state)
-    # 所有权必须在写入前看。sqlite 对 DML 隐式 BEGIN，写完后再看 in_transaction
-    # 永远为真，默认 commit=True 的独立调用就会报成功却不落盘。
-    owns_transaction = commit and connection_owns_transaction(db.conn)
-    db.mark_event_triggered(
-        state, eid, source="petition_verdict", terminal_reason=label, commit=False,
-    )
-    apply_event_cascading_invalidations(state, db, commit=False)
-    if owns_transaction:
-        db.conn.commit()
-    return {
-        "id": eid, "settled": True, "terminal_state": "triggered", "terminal_reason": label,
-    }
 
 
 def gather_fiscal_levy_petitions(state: GameState, db: GameDB) -> List[Event]:
@@ -980,59 +861,6 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     return candidates
 
 
-def apply_event_terminal_states(
-    state: GameState,
-    db: GameDB,
-    *,
-    commit: bool = True,
-) -> List[Dict[str, object]]:
-    """Persist deterministic event terminal states from the current board position."""
-    c = _ctx()
-    should_commit = commit and db.owns_transaction()
-    terminal_refs = _event_trigger_refs(db)
-    terminalized: List[Dict[str, object]] = []
-
-    def run_terminal_state_pass() -> None:
-        for ev in c.events:
-            if ev.id in terminal_refs or ev.trigger_year <= 0:
-                continue
-            if _event_window_expired(ev, state):
-                db.mark_event_expired(state, ev.id, commit=False)
-                terminal_refs.add(ev.id)
-                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
-                continue
-            dead_subjects = _dead_person_core_subjects(ev, db)
-            if dead_subjects:
-                reason = f"人物核心主体永久死亡：{', '.join(dead_subjects)}"
-                db.mark_event_obsolete(state, ev.id, reason=reason, commit=False)
-                terminal_refs.add(ev.id)
-                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "obsolete"})
-                continue
-            if not _event_window_open(ev, state):
-                continue
-            if not _gate_passed(ev.trigger_gate, state.metrics, db):
-                avoided_reason = _person_core_avoided_reason(ev, state, db)
-                if avoided_reason:
-                    db.mark_event_avoided(state, ev.id, reason=avoided_reason, commit=False)
-                    terminal_refs.add(ev.id)
-                    terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "avoided"})
-
-        for ev in c.seed_events:
-            if ev.id in terminal_refs:
-                continue
-            if _event_window_expired(ev, state):
-                db.mark_event_expired(state, ev.id, commit=False)
-                terminal_refs.add(ev.id)
-                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
-
-        terminalized.extend(apply_event_cascading_invalidations(state, db, commit=False))
-
-    if should_commit:
-        with atomic(db):
-            run_terminal_state_pass()
-    else:
-        run_terminal_state_pass()
-    return terminalized
 
 
 def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, object]]:
@@ -1043,95 +871,12 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
     放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
     collector = RejectionCollector()
     with atomic(db):
-        triggered = _auto_trigger_seed_issues_in_atomic(state, db, collector)
+        triggered = issue_records.auto_trigger_seed_issues_in_atomic(state, db, collector)
         collector.flush_to_db(db)
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return triggered
 
 
-def _auto_trigger_seed_issues_in_atomic(
-    state: GameState, db: GameDB, collector: RejectionCollector,
-) -> List[Dict[str, object]]:
-    """auto_trigger_seed_issues 的事务体；由外层函数或月链逐旨后消费点统一提交/回滚。"""
-    c = _ctx()
-    terminal_states = _event_terminal_states(db)
-    triggered: List[Dict[str, object]] = []
-    for ev in [*c.events, *c.seed_events]:
-        historical_event = any(ev is item for item in c.events)
-        if not ev.auto_trigger:
-            continue
-        terminal_state = terminal_states.get(ev.id)
-        # #1892：任何已落终态（已发/避过/过期/作废）都不再重发——结案后复发等于
-        # 同一世界事件被发两次，违「读已落终态不再重发」。
-        if terminal_state:
-            continue
-        if _event_window_expired(ev, state):
-            db.mark_event_expired(state, ev.id, commit=False)
-            terminal_states[ev.id] = "expired"
-            continue
-        # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
-        # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
-        if ev in c.seed_events and not ev.trigger_gate:
-            continue
-        if not _event_window_open(ev, state):
-            continue
-        if not _gate_passed(ev.trigger_gate, state.metrics, db):
-            continue
-        apply_trigger_effect = historical_event or (
-            ev.event_type != "situation" and not db.has_event_triggered(ev.id)
-        )
-        if apply_trigger_effect and ev.effect_on_trigger:
-            rejected = issue_effects._apply_issue_entities(
-                db,
-                state,
-                ev.effect_on_trigger,
-                f"事件#{ev.id}触发",
-                content=c,
-                source=Provenance.system_simulation,
-            )
-            for rejection in rejected:
-                rejection.item = {"event_id": ev.id, "effect": rejection.item}
-                collector.record("event_trigger", rejection, int(state.turn))
-        if ev.event_type != "situation":
-            # 非 situation（node/ending）不转 issue，仅记触发避免重复
-            if apply_trigger_effect:
-                db.mark_event_triggered(state, ev.id)
-                triggered.append({"id": ev.id, "title": ev.title, "kind": ev.event_type})
-            continue
-        issue_id = issue_records.event_to_issue(db, state, ev, commit=False)
-        created_issue = issue_id is not None
-        if historical_event and issue_id is None:
-            # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
-            # 核心事实，此处补落一次并记终态（#1892 终态与实况同落、只落一次）。
-            row = (
-                db.find_active_issue_by_origin("event_pool", ev.id)
-                if ev.trigger_gate
-                else db.find_any_issue_by_origin("event_pool", ev.id)
-            )
-            if row is None:
-                raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
-            issue_id = int(row["id"])
-            if not apply_trigger_effect and ev.effect_on_trigger:
-                rejected = issue_effects._apply_issue_entities(
-                    db,
-                    state,
-                    ev.effect_on_trigger,
-                    f"事件#{ev.id}触发",
-                    content=c,
-                    source=Provenance.system_simulation,
-                )
-                for rejection in rejected:
-                    rejection.item = {"event_id": ev.id, "effect": rejection.item}
-                    collector.record("event_trigger", rejection, int(state.turn))
-            db.mark_event_triggered(state, ev.id, commit=False)
-        elif historical_event:
-            db.mark_event_triggered(state, ev.id, commit=False)
-        if issue_id is not None:
-            triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
-            action = "硬立项" if created_issue else "补记"
-            print(f"[AUTO-TRIGGER] gate 达标{action} #{issue_id} {ev.title}（{ev.trigger_gate}）")
-    apply_event_cascading_invalidations(state, db, commit=False)
-    return triggered
 
 
 def _bar_ascii(value: int, width: int = 20) -> str:

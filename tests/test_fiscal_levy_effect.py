@@ -7,6 +7,7 @@ from ming_sim.decree import pre_settle
 from ming_sim.exceptions import SettlementAbort
 import ming_sim.entities.fiscal.levy as fiscal_levy
 from ming_sim.entities.fiscal.levy import apply_historical_fiscal_rates
+import ming_sim.entities.issue.event_terminal as event_terminal
 import ming_sim.issues as issues
 from ming_sim.models import Event
 
@@ -45,7 +46,7 @@ def _emperor_decides(db, state, *event_labels):
     """三饷结局只由皇帝亲裁落（#1892 退役 shadow 自动已准桩）。
 
     真实写口＝亲笔准驳经 #1815 单一语义写口
-    （:func:`ming_sim.issues.apply_petition_event_outcome`）置定事件终态；原始选项
+    （:func:`ming_sim.entities.issue.event_terminal.apply_petition_event_outcome`）置定事件终态；原始选项
     标签不得旁路代批，故此处不再调 record_event_decision_choice 让饷率通道代批。
     传 (event_id, label) 对，label 取事件自声明的封闭结局标签集。
 
@@ -60,7 +61,7 @@ def _emperor_decides(db, state, *event_labels):
         event = _fiscal_levy_event_by_id(event_id)
         if event is None or not _event_window_open(event, state):
             continue
-        issues.apply_petition_event_outcome(state, db, event_id, label)
+        event_terminal.apply_petition_event_outcome(state, db, event_id, label)
 
 
 def _settled_land_by_region(db):
@@ -722,7 +723,7 @@ def test_fiscal_levy_outcome_is_written_once_and_first_verdict_wins(game):
     before = _settle_payload(db, "shaanxi")
 
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已驳"))
-    repeat = issues.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "已准")
+    repeat = event_terminal.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "已准")
     apply_historical_fiscal_rates(state, db)
 
     assert repeat["terminal_reason"] == "已驳"
@@ -743,7 +744,7 @@ def test_fiscal_levy_outcome_label_outside_closed_set_aborts(game):
     db.save_state(state)
 
     with pytest.raises(SettlementAbort):
-        issues.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "留中")
+        event_terminal.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "留中")
     assert db.conn.execute(
         "SELECT 1 FROM event_triggers WHERE event_id=?",
         ("liao_levy_rise_1631",),
@@ -800,7 +801,7 @@ def test_fiscal_levy_pending_choice_waits_for_event_window(game):
     # 练饷 1639 才到点：1638 年它不在可呈窗口内，无从亲裁，语义写口响亮拒绝——
     # 旧 staged 路径会把这类答复暂存到窗口之后消费，等于替皇帝预批一疏。
     with pytest.raises(SettlementAbort):
-        issues.apply_petition_event_outcome(state, db, "lian_levy_start_1639", "已准")
+        event_terminal.apply_petition_event_outcome(state, db, "lian_levy_start_1639", "已准")
     apply_historical_fiscal_rates(state, db)
 
     assert db.conn.execute(
@@ -1026,7 +1027,7 @@ def test_jiao_stop_is_obsolete_when_start_was_rejected(game):
     db.save_state(state)
     db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已驳")
 
-    terminalized = issues.apply_event_terminal_states(state, db)
+    terminalized = event_terminal.apply_event_terminal_states(state, db)
 
     assert any(item["id"] == "jiao_levy_stop_1640" and item["terminal_state"] == "obsolete" for item in terminalized)
     row = db.conn.execute(
@@ -1237,7 +1238,7 @@ def test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event(game):
         ("lian_levy_start_1639",),
     ).fetchone()) == {"terminal_state": "triggered", "terminal_reason": "已准"}
 
-    terminalized = issues.apply_event_terminal_states(state, db)
+    terminalized = event_terminal.apply_event_terminal_states(state, db)
     assert all(item["id"] != "lian_levy_start_1639" for item in terminalized)
     assert db.conn.execute(
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
@@ -1271,7 +1272,7 @@ def test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it(ga
         ("liao_levy_rise_1631",),
     ).fetchone()) == {"terminal_state": "triggered", "terminal_reason": "已准"}
 
-    terminalized = issues.apply_event_terminal_states(state, db)
+    terminalized = event_terminal.apply_event_terminal_states(state, db)
     assert all(item["id"] != "liao_levy_rise_1631" for item in terminalized)
     assert db.conn.execute(
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
@@ -1683,7 +1684,7 @@ def test_independent_petition_outcome_commits_for_another_connection(game):
     state.period = 1
     db.save_state(state)
 
-    held = issues.apply_petition_event_outcome(
+    held = event_terminal.apply_petition_event_outcome(
         state, db, "liao_levy_rise_1631", "已准", commit=False,
     )
     assert held["settled"] is True
@@ -1698,7 +1699,7 @@ def test_independent_petition_outcome_commits_for_another_connection(game):
     assert absent is None or not str(absent[0] or "").strip()
     db.conn.rollback()
 
-    settled = issues.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "已准")
+    settled = event_terminal.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "已准")
     assert settled["settled"] is True
     assert settled["terminal_reason"] == "已准"
     other = sqlite3.connect(db.path)

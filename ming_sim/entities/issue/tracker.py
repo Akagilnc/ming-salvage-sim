@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from ming_sim.applier import Provenance, RejectedItem
 from ming_sim.settlement.outcome import IssueSectionResult
 from ming_sim.db import GameDB
+import ming_sim.entities.issue.event_terminal as event_terminal
 import ming_sim.entities.issue.records as issue_records
 from ming_sim.entities.metric.apply import declare_metric_pairs
 from ming_sim.strict_types import strict_int as _strict_int
@@ -317,7 +318,7 @@ def apply_issue_tracker_output(
                         source=source)
                     )
                 db.mark_event_triggered(state, ev.id, commit=False)
-                issues.apply_event_cascading_invalidations(state, db, commit=False)
+                event_terminal.apply_event_cascading_invalidations(state, db, commit=False)
                 consumed_event_ids.add(ev.id)
                 candidates_dirty = True
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")

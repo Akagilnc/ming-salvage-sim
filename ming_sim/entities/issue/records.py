@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ming_sim.issues as issues
+import ming_sim.entities.issue.effects as issue_effects
+import ming_sim.entities.issue.event_terminal as event_terminal
 
 import json
 import re
@@ -15,6 +17,7 @@ from ming_sim.constants import (
 from ming_sim.db import (
     GameDB,
 )
+from ming_sim.applier import Provenance, RejectionCollector
 from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.models import Event, GameState, effect_dict_has_work, loads_effect_dict
 from ming_sim.entities.character.normalize import normalize_person_changes
@@ -415,7 +418,7 @@ def event_to_issue(
         commit=False,
     )
     db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
-    issues.apply_event_cascading_invalidations(state, db, commit=False)
+    event_terminal.apply_event_cascading_invalidations(state, db, commit=False)
     if commit:
         db.conn.commit()
     return issue_id
@@ -447,3 +450,88 @@ def _compute_inertia(ni: Dict[str, object]) -> int:
             return max(-10, min(10, round(100 / em)))
     legacy = ni.get("inertia")
     return max(-10, min(10, _strict_int(0 if legacy is None else legacy)))
+
+
+def auto_trigger_seed_issues_in_atomic(
+    state: GameState, db: GameDB, collector: RejectionCollector,
+) -> List[Dict[str, object]]:
+    """auto_trigger_seed_issues 的事务体；由外层函数或月链逐旨后消费点统一提交/回滚。"""
+    c = issues._ctx()
+    terminal_states = issues._event_terminal_states(db)
+    triggered: List[Dict[str, object]] = []
+    for ev in [*c.events, *c.seed_events]:
+        historical_event = any(ev is item for item in c.events)
+        if not ev.auto_trigger:
+            continue
+        terminal_state = terminal_states.get(ev.id)
+        # #1892：任何已落终态（已发/避过/过期/作废）都不再重发——结案后复发等于
+        # 同一世界事件被发两次，违「读已落终态不再重发」。
+        if terminal_state:
+            continue
+        if issues._event_window_expired(ev, state):
+            db.mark_event_expired(state, ev.id, commit=False)
+            terminal_states[ev.id] = "expired"
+            continue
+        # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
+        # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
+        if ev in c.seed_events and not ev.trigger_gate:
+            continue
+        if not issues._event_window_open(ev, state):
+            continue
+        if not issues._gate_passed(ev.trigger_gate, state.metrics, db):
+            continue
+        apply_trigger_effect = historical_event or (
+            ev.event_type != "situation" and not db.has_event_triggered(ev.id)
+        )
+        if apply_trigger_effect and ev.effect_on_trigger:
+            rejected = issue_effects._apply_issue_entities(
+                db,
+                state,
+                ev.effect_on_trigger,
+                f"事件#{ev.id}触发",
+                content=c,
+                source=Provenance.system_simulation,
+            )
+            for rejection in rejected:
+                rejection.item = {"event_id": ev.id, "effect": rejection.item}
+                collector.record("event_trigger", rejection, int(state.turn))
+        if ev.event_type != "situation":
+            # 非 situation（node/ending）不转 issue，仅记触发避免重复
+            if apply_trigger_effect:
+                db.mark_event_triggered(state, ev.id)
+                triggered.append({"id": ev.id, "title": ev.title, "kind": ev.event_type})
+            continue
+        issue_id = event_to_issue(db, state, ev, commit=False)
+        created_issue = issue_id is not None
+        if historical_event and issue_id is None:
+            # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
+            # 核心事实，此处补落一次并记终态（#1892 终态与实况同落、只落一次）。
+            row = (
+                db.find_active_issue_by_origin("event_pool", ev.id)
+                if ev.trigger_gate
+                else db.find_any_issue_by_origin("event_pool", ev.id)
+            )
+            if row is None:
+                raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
+            issue_id = int(row["id"])
+            if not apply_trigger_effect and ev.effect_on_trigger:
+                rejected = issue_effects._apply_issue_entities(
+                    db,
+                    state,
+                    ev.effect_on_trigger,
+                    f"事件#{ev.id}触发",
+                    content=c,
+                    source=Provenance.system_simulation,
+                )
+                for rejection in rejected:
+                    rejection.item = {"event_id": ev.id, "effect": rejection.item}
+                    collector.record("event_trigger", rejection, int(state.turn))
+            db.mark_event_triggered(state, ev.id, commit=False)
+        elif historical_event:
+            db.mark_event_triggered(state, ev.id, commit=False)
+        if issue_id is not None:
+            triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
+            action = "硬立项" if created_issue else "补记"
+            print(f"[AUTO-TRIGGER] gate 达标{action} #{issue_id} {ev.title}（{ev.trigger_gate}）")
+    event_terminal.apply_event_cascading_invalidations(state, db, commit=False)
+    return triggered

@@ -15,6 +15,7 @@ from contextlib import contextmanager
 import pytest
 
 from ming_sim import issues
+import ming_sim.entities.issue.event_terminal as event_terminal
 import ming_sim.entities.issue.records as issue_records
 from ming_sim.models import Event
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -153,7 +154,7 @@ def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game
             ("__test_expiring_hist__",),
         ).fetchone() is None
 
-        terminalized = issues.apply_event_terminal_states(state, db)
+        terminalized = event_terminal.apply_event_terminal_states(state, db)
 
         assert {
             "id": "__test_expiring_hist__",
@@ -292,7 +293,7 @@ def test_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
             ("__test_expiring_seed__",),
         ).fetchone() is None
 
-        issues.apply_event_terminal_states(state, db)
+        event_terminal.apply_event_terminal_states(state, db)
 
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
@@ -358,7 +359,7 @@ def test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writi
             ("__test_expiring_auto_seed_candidate__",),
         ).fetchone() is None
 
-        issues.apply_event_terminal_states(state, db)
+        event_terminal.apply_event_terminal_states(state, db)
 
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
@@ -416,7 +417,7 @@ def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
         state.metrics["民心"] = 60
         db.conn.execute("BEGIN")
 
-        terminalized = issues.apply_event_terminal_states(state, db)
+        terminalized = event_terminal.apply_event_terminal_states(state, db)
 
         assert any(item["id"] == "__test_expiring_inside_outer_txn__" for item in terminalized)
         assert db.conn.in_transaction
@@ -1413,7 +1414,7 @@ def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
     cands = issues.gather_candidate_events(state, db)
 
     assert all(ev.id != "yuan_xialing" for ev in cands)
-    issues.apply_event_terminal_states(state, db)
+    event_terminal.apply_event_terminal_states(state, db)
     row = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
         ("yuan_xialing",),
@@ -1535,7 +1536,7 @@ def test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event(
     state.period = 8
     db.set_character_status(state, "祖大寿", "dead", reason="测试：大凌河前已阵亡")
 
-    terminalized = issues.apply_event_terminal_states(state, db)
+    terminalized = event_terminal.apply_event_terminal_states(state, db)
     cands = issues.gather_candidate_events(state, db)
 
     assert all(item["id"] != "dalingghe" for item in terminalized)
@@ -2835,7 +2836,7 @@ def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
     cands = issues.gather_candidate_events(state, db)
     assert all(ev.id != "mao_wenlong" for ev in cands)
 
-    issues.apply_event_terminal_states(state, db)
+    event_terminal.apply_event_terminal_states(state, db)
 
     out = apply_issue_tracker_output(
         db,

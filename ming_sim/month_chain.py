@@ -922,7 +922,8 @@ def _consume_event_gates_after_edicts(
     ``pre_settle`` 不再调用这两条判门。``event_gates_after_edicts_done`` 只防止
     同月恢复时再消费一次。
     """
-    from ming_sim.issues import apply_event_terminal_states, auto_trigger_seed_issues
+    from ming_sim.entities.issue.event_terminal import apply_event_terminal_states
+    from ming_sim.issues import auto_trigger_seed_issues
     from ming_sim.token_stats import tlog
 
     db, state = session.db, session.state
@@ -1635,7 +1636,7 @@ def _record_world_question_event_choices(
     的病根。写入走 :meth:`db.record_event_petition_answer`：**只记账，不置结局**。
 
     结局标签不在这儿落：亲笔准驳须经 #1815 单一语义写口
-    （:func:`ming_sim.issues.apply_petition_event_outcome`，由世界段续推的语义转译
+    （:func:`ming_sim.entities.issue.event_terminal.apply_petition_event_outcome`，由世界段续推的语义转译
     声明驱动）置定事件结局。把原始选项标签直接写成 terminal_reason 就是以标签旁路
     替代亲裁语义转译（ADR 0153:5），也是留中标签污染终局标签集的根因。
     """

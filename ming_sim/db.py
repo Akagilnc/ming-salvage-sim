@@ -17024,7 +17024,7 @@ class GameDB:
         - 落 ``choice_json`` 的 ``petition`` 段（呈疏原文、选项、皇帝 label/hint/note），
           供后续世界段据 :meth:`list_event_petition_records` 取回复呈（#1891 供料契约）。
         - ``terminal_state`` 恒留空、``terminal_reason`` 恒留空：亲笔准驳的**结局标签由
-          语义转译写口置定**（:func:`ming_sim.issues.apply_petition_event_outcome`），
+          语义转译写口置定**（:func:`ming_sim.entities.issue.event_terminal.apply_petition_event_outcome`），
           不由这里的原始选项标签旁路代批（ADR 0153:5、#1891 亲裁契约）。
         - 「留中」是本疏已答而事件未终：不写终态，事件仍留在请旨候选里等下次呈报。
 
