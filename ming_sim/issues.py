@@ -730,30 +730,42 @@ def _merged_mapping_effect(effect: Dict[str, object], *keys: str) -> Dict[str, o
     return merged
 
 
-def _persisted_member_list(effect: Dict[str, object], key: str) -> List[object]:
-    """持久 ongoing_effects 的列表键：缺省/null → []；非数组或成员非对象即响亮失败（ADR 0005）。"""
-    raw = effect.get(key)
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise ValueError(f"ongoing_effects.{key} 须为数组，得 {type(raw).__name__}")
-    for index, item in enumerate(raw):
-        if not isinstance(item, dict):
-            raise ValueError(f"ongoing_effects.{key}[{index}] 须为对象，得 {type(item).__name__}")
-    return raw
+_MONTHLY_MEMBER_KEYS = ("economy", "economy_moves", PERSON_CHANGE_KEY)
+
+
+def _ongoing_member_shape_error(effect: Dict[str, object]) -> Optional[str]:
+    """月度效果列表键（economy/economy_moves/人物变更）的形状：缺省/null 合法；非数组或成员非对象返回原因。"""
+    for key in _MONTHLY_MEMBER_KEYS:
+        raw = effect.get(key)
+        if raw is None:
+            continue
+        if not isinstance(raw, list):
+            return f"ongoing_effects.{key} 须为数组，得 {type(raw).__name__}"
+        for index, item in enumerate(raw):
+            if not isinstance(item, dict):
+                return f"ongoing_effects.{key}[{index}] 须为对象，得 {type(item).__name__}"
+    return None
+
+
+def _assert_persisted_monthly_members(effect: Dict[str, object]) -> None:
+    """持久 ongoing_effects 的成员形状坏即响亮失败（ADR 0005）；LLM 新项不走此处。"""
+    error = _ongoing_member_shape_error(effect)
+    if error is not None:
+        raise ValueError(error)
 
 
 def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]:
+    _assert_persisted_monthly_members(effect)
     return [
         item
         for key in ("economy", "economy_moves")
-        for item in _persisted_member_list(effect, key)
+        for item in (effect.get(key) or [])
     ]
 
 
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
     """Only the canonical 人物变更 stream; retired person_changes/character aliases stay closed."""
-    _persisted_member_list(effect, PERSON_CHANGE_KEY)
+    _assert_persisted_monthly_members(effect)
     return [
         item
         for item in normalize_person_changes(effect)
@@ -4513,6 +4525,15 @@ def apply_issue_tracker_output(
         ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
         resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
         fail_eff = _eff_dict(ni.get("effect_on_fail"))
+        # LLM 新项的月度列表形状坏：逐项拒收留痕（与 kind 预检同口径），不得让持久侧的响亮抛炸越过本项。
+        ongoing_shape_error = _ongoing_member_shape_error(ongoing_eff)
+        if ongoing_shape_error is not None:
+            applied_new.append({
+                "rejected": True, "category": "invalid_shape",
+                "reason": f"new_issue {ongoing_shape_error}",
+                "item": ni, "title": title,
+            })
+            continue
         semantic_ongoing_has_work = effect_dict_has_work(ongoing_eff)
         ongoing_has_work = _monthly_ongoing_effects_has_work(ongoing_eff)
         unsupported_ongoing_fields = _unsupported_monthly_ongoing_fields(ongoing_eff)

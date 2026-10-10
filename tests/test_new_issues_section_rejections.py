@@ -142,6 +142,21 @@ def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
     assert rej[0]["category"] == "invalid_enum"
 
 
+@pytest.mark.parametrize("bad_effects", [
+    {"人物变更": "垃圾串"},
+    {"人物变更": [1, 2]},
+    {"economy": [1, "x"]},
+])
+def test_new_issue_malformed_monthly_member_list_rejected_not_crash(read_game, bad_effects):
+    """LLM 新项的 ongoing 成员列表形状坏：逐项拒收留痕，不得裸抛越过本项崩整月落库（#1891 续修）。"""
+    db, state, _ = read_game
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·坏成员", "ongoing_effects": bad_effects}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_shape"
+
+
 @pytest.mark.parametrize("field,bad", [
     ("bar_value", "abc"),     # int() 抛
     ("severity", "高"),        # int() 抛

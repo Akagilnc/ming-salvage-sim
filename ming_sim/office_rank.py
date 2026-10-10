@@ -58,8 +58,11 @@ def canonical_office_title(office: object) -> str:
 
 
 def _iter_rank_rules(table: dict[str, Any]) -> list[dict[str, Any]]:
+    # 静态 offices.json 内容：成员坏即响亮（ADR 0005），不静默丢规则。
     rules = table.get("rank_rules") or []
-    return [rule for rule in rules if isinstance(rule, dict)]
+    if not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
+        raise ValueError("offices.json rank_rules 须为对象数组")
+    return list(rules)
 
 
 def _match_rank_rule(
