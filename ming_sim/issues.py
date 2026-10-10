@@ -246,21 +246,10 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.get_decree_dossier(dossier_id)
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
-    try:
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            from ming_sim.db import GameDB
-            payload = GameDB.parse_engine_payload_json(
-                row.get("payload_json"),
-                surface=f"issues.dossier#{dossier_id}.payload_json",
-            )
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict):
-        return None
+    payload = row["payload"]
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
         return None
-    return {**row, "payload": payload}
+    return row
 
 
 def _appointment_region_id(payload: Dict[str, object]) -> str:
@@ -1082,14 +1071,6 @@ def _fiscal_levy_base_transport(
     return max(0.0, seed_transport - liao_seed)
 
 
-def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> Optional[dict]:
-    if isinstance(raw_fiscal, dict):
-        return raw_fiscal
-    return GameDB.parse_engine_payload_json(
-        raw_fiscal, surface=f"regions.fiscal:{region_id}",
-    )
-
-
 def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
     return _ctx().event_by_id.get(event_id)
 
@@ -1272,10 +1253,9 @@ def _apply_fiscal_levy_targets(
     denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
-        fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
-        if fiscal is None:
-            denominator_complete = False
-            continue
+        fiscal = GameDB.parse_engine_payload_json(
+            row["fiscal"], surface=f"regions.fiscal:{region_id}",
+        )
         try:
             if "settle" not in fiscal:
                 continue
@@ -6363,13 +6343,7 @@ def _apply_person_changes(
                         )
                         continue
                     if action_type == "pacification":
-                        payload = dossier.get("payload")
-                        if not isinstance(payload, dict):
-                            from ming_sim.db import GameDB
-                            payload = GameDB.parse_engine_payload_json(
-                                dossier.get("payload_json"),
-                                surface="issues.pacification.payload_json",
-                            )
+                        payload = dossier["payload"]
                         bound_target = str(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()

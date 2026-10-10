@@ -468,7 +468,7 @@ def continue_decree_after_answers(
         db.staged_declarations.clear_questions(decree_ref)
         return
     # _dossier_row / get_decree_dossier 已保证 payload 为对象。
-    payload = dossier.get("payload") or {}
+    payload = dossier["payload"]
 
     def consume(result: Any) -> None:
         candidate = _ending_from_dispatch_result(result)
@@ -1102,8 +1102,7 @@ def _enrich_eligible_dossiers_for_supply(
                 row["due_turn"] = int(order.get("due_turn") or 0)
             else:
                 row["decree_text"] = str(dossier.get("decree_text") or "")
-            payload = dossier.get("payload")
-            row["payload"] = payload if isinstance(payload, dict) else {}
+            row["payload"] = dossier["payload"]
             row["status"] = str(dossier.get("status") or "")
             contract = read_covert_task_contract(dossier)
             if contract is not None:

@@ -65,7 +65,7 @@ def test_white_body_high_appointment_is_marked_but_regular_first_office_is_not(g
     from ming_sim.decree import build_promulgation_judge_context
 
     context = build_promulgation_judge_context(
-        db, state, [dict(db.conn.execute("SELECT * FROM decree_dossiers WHERE id=?", (high_id,)).fetchone())]
+        db, state, [db.get_decree_dossier(high_id)]
     )
     assert context["dossiers"][0]["break_rank"]["is_break_rank"] is True
 

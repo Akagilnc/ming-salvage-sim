@@ -651,20 +651,7 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
 def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[Dict[str, object]]:
     if not isinstance(dossier, Mapping):
         return None
-    payload = dossier.get("payload")
-    if not isinstance(payload, Mapping):
-        raw_json = dossier.get("payload_json")
-        if raw_json is None:
-            payload = None
-        else:
-            # 与 parse_engine 同权威：空串/腐坏响亮，不 catch-to-缺席（#1897 E1）。
-            from ming_sim.db import GameDB
-            loaded = GameDB.parse_engine_payload_json(
-                raw_json, surface="covert_task.dossier.payload_json",
-            )
-            payload = loaded
-    if not isinstance(payload, Mapping):
-        return None
+    payload = dossier["payload"]
     # CONTRACT_KEY 缺席 → None；present 坏值由 coerce 响亮。
     if CONTRACT_KEY not in payload:
         return None
@@ -799,8 +786,7 @@ def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
     dossier = db.get_decree_dossier(int(dossier_id))
     if dossier is None:
         return {}
-    payload = dossier.get("payload")
-    return dict(payload) if isinstance(payload, Mapping) else {}
+    return dict(dossier["payload"])
 
 
 def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
@@ -954,9 +940,7 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
         dossier = db.get_decree_dossier(did)
         if dossier is None:
             continue
-        payload = dossier.get("payload")
-        if not isinstance(payload, Mapping):
-            raise ValueError(f"案卷#{did} payload_json 非对象")
+        payload = dossier["payload"]
         for lane in _lanes_from_payload(payload):
             if lane.get("mastered"):
                 used.add(str(lane["fact_key"]))

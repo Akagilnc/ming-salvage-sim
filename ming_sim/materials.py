@@ -1935,7 +1935,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
             continue
         dossier_id = int(row["id"])
         # list_decree_dossiers_for_simulation → _dossier_row 已保证 payload 为对象。
-        payload = row.get("payload") or {}
+        payload = row["payload"]
         facts.append({
             "id": dossier_id,
             "status": status,

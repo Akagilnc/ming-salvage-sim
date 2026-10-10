@@ -79,7 +79,7 @@ def _as_settle_param_nonnegative_float(label: str, value: object) -> float:
     return amount
 
 
-def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True) -> Tuple[float, float]:
+def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]:
     """Salt and commerce taxes stay as central side-channel income under hub."""
     salt_total = 0.0
     commerce_total = 0.0
@@ -90,13 +90,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
         try:
             fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         except (TypeError, ValueError) as exc:
-            if not strict:
-                continue
             raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路") from exc
-        if not isinstance(fiscal, dict):
-            if not strict:
-                continue
-            raise ValueError(f"region {row['id']} fiscal 非字典，无法汇总盐商旁路")
         salt_total += _as_finite_nonnegative_float(
             f"region {row['id']} fiscal.salt_tax", fiscal.get("salt_tax", 0)
         )
@@ -390,11 +384,9 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
     ).fetchall()
     for row in rows:
-        try:
-            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
-        except (TypeError, ValueError):
-            continue
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        # 持久财政读取故障响亮上抛；不得出列成「无需求」后照常出成功预算（ADR 0005）。
+        fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+        settle = fiscal.get("settle")
         p = settle.get("p") if isinstance(settle, dict) else None
         if not isinstance(p, dict):
             continue

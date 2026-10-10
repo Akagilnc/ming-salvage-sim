@@ -154,14 +154,8 @@ def stub_promulgation_verdicts(
 
 
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
-    payload = row.get("payload")
-    if isinstance(payload, dict):
-        return payload
-    # 与 GameDB.parse_engine_payload_json 同一权威；腐坏响亮，不 catch-to-{}（#1897 E1）。
-    from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(
-        row.get("payload_json"), surface="decree.dossier.payload_json",
-    )
+    # 规范案卷行（get_decree_dossier／list_decree_dossiers）已解码 payload。
+    return row["payload"]  # type: ignore[return-value]
 
 
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
@@ -521,13 +515,7 @@ def validate_promulgation_verdicts(
         }
     proposed_modes: Dict[int, str] = {}
     for dossier in proposed_dossiers:
-        payload = dossier.get("payload")
-        if not isinstance(payload, dict):
-            from ming_sim.db import GameDB
-            payload = GameDB.parse_engine_payload_json(
-                dossier.get("payload_json"),
-                surface="decree.proposed.payload_json",
-            )
+        payload = dossier["payload"]
         action_type = dossier.get("action_type")
         external_review = (
             dossier_action_policy(action_type, payload)["external_review"]
@@ -667,13 +655,7 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     """
     executing_work = False
     for row in db.list_decree_dossiers(status="executing"):
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            from ming_sim.db import GameDB
-            payload = GameDB.parse_engine_payload_json(
-                row.get("payload_json"),
-                surface="decree.executing.payload_json",
-            )
+        payload = row["payload"]
         # Non-terminal executing dossiers remain simulator continuation context.
         if dossier_action_policy(row.get("action_type"), payload)["execution_surface"] != "terminal":
             executing_work = True
@@ -967,10 +949,8 @@ def prepare_resolve_front_half(
 
     from ming_sim.month_chain import transit_arrivals_from_payload
     ctx = db.get_resolve_context(int(state.turn))
-    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
-    if isinstance(payload, dict) and (
-        "transit_arrivals" in payload and payload.get("transit_arrivals") is not None
-    ):
+    payload = ctx["simulator_payload"] if ctx is not None else {}
+    if "transit_arrivals" in payload and payload.get("transit_arrivals") is not None:
         return transit_arrivals_from_payload(payload)
     return list(transit_arrivals_box)
 

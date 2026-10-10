@@ -3649,11 +3649,9 @@ class GameDB:
             ).fetchone()
             if region is None or str(region["controlled_by"] or "") != "ming":
                 return False
-            try:
-                fiscal = _load_durable_json_object(region["fiscal"], surface="regions.fiscal")
-            except (TypeError, ValueError):
-                return False
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            # 持久财政 JSON 腐坏响亮上抛，不洗成「不完整」而跳过守恒（ADR 0005）。
+            fiscal = _load_durable_json_object(region["fiscal"], surface="regions.fiscal")
+            settle = fiscal.get("settle")
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
                 return False
         return True
@@ -3801,11 +3799,13 @@ class GameDB:
             raise ValueError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
         try:
             fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"army {army_id} pay_source_region 财政基座 JSON 非法：{pay_source_region}"
+        except ValueError as exc:
+            # 持久财政基座损坏是账本故障，非模型饷源拒收：RuntimeError 不被调用方的
+            # 模型产物 (TypeError, ValueError) 边界吞成 invalid_enum（ADR 0005 / J6-4）。
+            raise RuntimeError(
+                f"army {army_id} pay_source_region 财政基座 JSON 损坏：{pay_source_region}"
             ) from exc
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        settle = fiscal.get("settle")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
             raise ValueError(f"army {army_id} pay_source_region 无 settle st/p 基座：{pay_source_region}")
@@ -4341,11 +4341,8 @@ class GameDB:
         ).fetchone()
         if row is None:
             return
-        try:
-            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
-        except (TypeError, ValueError):
-            return
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+        settle = fiscal.get("settle")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
             return
@@ -10357,7 +10354,7 @@ class GameDB:
                 is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
             )
         # get_decree_dossier 已响亮解析 payload；不平行宽容重读（#1897 E1/K2）。
-        payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
+        payload = dossier["payload"]
         if not self._dossier_has_execution_surface(dossier.get("action_type"), payload):
             raise ValueError("非执行面案卷不可挂奏报")
         return self._record_general_dossier_progress(
@@ -10638,9 +10635,7 @@ class GameDB:
             dossier = self.get_decree_dossier(dossier_id)
             if dossier is None:
                 raise ValueError(f"案卷不存在：{dossier_id}")
-            payload = dossier.get("payload") or {}
-            if not isinstance(payload, dict):
-                raise ValueError(f"案卷#{dossier_id} payload_json 非对象")
+            payload = dossier["payload"]
             policy = dossier_action_policy("grant_allocation", payload)
             if policy.get("execution_surface") != "in_transit":
                 continue
@@ -11579,9 +11574,7 @@ class GameDB:
         for todo in self.list_next_audience_todos(status="consumed"):
             if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
                 continue
-            payload = todo.get("payload_json") or {}
-            if not isinstance(payload, dict):
-                continue
+            payload = todo["payload_json"]
             if str(payload.get(PLEA_VERDICT_KEY) or "") != PLEA_VERDICT_PERSIST:
                 continue
             cid = int(todo.get("commitment_ref") or 0)
@@ -13543,11 +13536,7 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        payload = self.parse_engine_payload_json(
-            row.get("payload_json"),
-            surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
-        )
-        immediate = not self._dossier_has_execution_surface(row["action_type"], payload)
+        immediate = not self._dossier_has_execution_surface(row["action_type"], row["payload"])
         if row["status"] == "promulgated" and not immediate:
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
         if row["status"] == "executing" and not str(row.get("execution_outcome") or ""):
@@ -13597,13 +13586,7 @@ class GameDB:
             raise ValueError("executing 是非终态，必须以 close=False 记录")
         immediate = (
             row["status"] == "promulgated"
-            and not self._dossier_has_execution_surface(
-                row["action_type"],
-                self.parse_engine_payload_json(
-                    row.get("payload_json"),
-                    surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
-                ),
-            )
+            and not self._dossier_has_execution_surface(row["action_type"], row["payload"])
         )
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
@@ -13729,10 +13712,7 @@ class GameDB:
                 self._append_midzhi_stigma(
                     dossier_id, decision="promulgated", turn=state.turn, commit=False,
                 )
-            payload = self.parse_engine_payload_json(
-                row["payload_json"],
-                surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
-            )
+            payload = row["payload"]
             policy = dossier_action_policy(row["action_type"], payload)
             signal = row.get("execution_signal") or {}
             if (
@@ -15845,13 +15825,10 @@ class GameDB:
     ) -> Dict[str, object]:
         """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
         旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态/待澄清闸（#502 L5）。"""
-        if isinstance(existing_json, (dict, list)):
-            old = existing_json
-        else:
-            # 已持久候选 JSON 腐坏响亮，不洗成空底丢控制键（#1897 E1）。
-            old = GameDB.parse_engine_payload_json(
-                existing_json, surface="pending_actions.payload_json",
-            )
+        # 已持久候选 JSON 腐坏响亮，不洗成空底丢控制键（#1897 E1）。
+        old = GameDB.parse_engine_payload_json(
+            existing_json, surface="pending_actions.payload_json",
+        )
         merged: Dict[str, object] = dict(new_payload or {})
         for k, v in old.items():
             if str(k).startswith("_") and k not in merged:
@@ -15979,11 +15956,12 @@ class GameDB:
         # （与 _apply_pending_action / _commit_conversational_draft 同缝，#1897 E1）。
         from ming_sim.action_materialize import DecreeMaterializationValidationError
         try:
-            payload = self._normalize_directive_dossier_payload(
-                payload, content=content, current_turn=int(state.turn),
+            normalized = self._normalize_directive_dossier_payload(
+                dict(payload), content=content, current_turn=int(state.turn),
             )
         except DecreeMaterializationValidationError:
-            return {"classification": "invalid"}
+            return {"classification": "invalid", "payload": payload}
+        payload = normalized
         # 已持久正文：类型／空缺 schema 故障响亮，不记领域 invalid（#1897 E1）。
         text = _require_durable_prose(payload.get("text"), field="text")
         actor_raw = payload.get("actor", pa.get("minister_name") or "")
@@ -16073,17 +16051,12 @@ class GameDB:
                 if classification == "invalid":
                     cm = atomic(self) if owns_transaction else contextlib.nullcontext()
                     with cm:
-                        # 领域 invalid 前 JSON 已可解析；再读仍走响亮契约。
-                        inv_payload = self.parse_engine_payload_json(
-                            pa.get("payload_json"),
-                            surface="pending_actions.payload_json",
-                        )
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
                         self._record_pending_domain_rejection(
-                            rejection_collector, state, pa, inv_payload,
+                            rejection_collector, state, pa, prepared["payload"],
                             reason="拟旨暂存领域校验未通过",
                             category="invalid_shape",
                         )
@@ -16728,20 +16701,13 @@ class GameDB:
     ) -> set[int]:
         """返回批前盘面中确实不匹配的荐人快照案号；其他异常原样上抛。
 
-        已带 payload 的行直接用；否则走 get_decree_dossier 响亮读（#1897 E1/K2）。
+        dossiers 须为 canonical 案卷行（get_decree_dossier/list_decree_dossiers 已解码 payload）。
         """
         invalid = set()
         for row in dossiers:
             if str(row.get("action_type") or "") != "appointment":
                 continue
-            payload = row.get("payload")
-            if not isinstance(payload, dict):
-                dossier = self.get_decree_dossier(int(row["id"]))
-                if dossier is None:
-                    raise ValueError(f"案卷不存在：{row.get('id')}")
-                payload = dossier.get("payload") or {}
-            if not isinstance(payload, dict):
-                raise ValueError(f"案卷#{row.get('id')} payload_json 非对象")
+            payload = row["payload"]
             if payload.get("recommendation") is None:
                 continue
             minister = str(payload.get("_minister_name") or "")

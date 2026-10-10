@@ -1065,7 +1065,7 @@ def _dossier_is_revocable_decree(db: Any, dossier: Dict[str, Any]) -> bool:
     （pay_order.dossier_override_still_in_force），不全面放开 closed 案卷，也不
     反演旧账。
 
-    直接 dossier、initiative 回指、含糊候选三入口共用本资格。
+    直接 dossier、initiative 回指两入口共用本资格。
     """
     status = str(dossier.get("status") or "").strip()
     action = str(dossier.get("action_type") or "").strip()
@@ -1083,7 +1083,6 @@ def _parse_revoke_decree_target(
     db: Any, *,
     target_id: object = "",
     target_kind: object = "",
-    target_candidate: object = "",
 ) -> Optional[Dict[str, Any]]:
     """解析撤回成命目标：仅承诺/旨意（dossier/initiative）；须可走 0056。
 
@@ -1091,8 +1090,6 @@ def _parse_revoke_decree_target(
     - issue 仅 active initiative，且 origin_ref 回指可撤案卷（禁 standalone 免代价）
     - dossier 须已颁/执行中
     """
-    if str(target_candidate or "").strip() == "含糊":
-        return None
     raw = str(target_id or "").strip()
     if not raw:
         return None
@@ -1371,8 +1368,6 @@ def stage_revoke_decree_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    if str(target_candidate or "").strip() == "含糊":
-        return 0
     body = str(text or "")
     if not body.strip():
         return 0
@@ -1380,7 +1375,6 @@ def stage_revoke_decree_candidate(
         db,
         target_id=target_id,
         target_kind=target_kind,
-        target_candidate=target_candidate,
     )
     if resolved is None:
         return 0

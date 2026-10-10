@@ -1094,7 +1094,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
         if did is not None:
             drow = db.get_decree_dossier(int(did))
             if drow is not None and str(drow.get("executor_id") or "") == name:
-                payload = drow.get("payload") if isinstance(drow.get("payload"), dict) else {}
+                payload = drow["payload"]
                 expected = str(
                     payload.get("executor_office")
                     or payload.get("office")
