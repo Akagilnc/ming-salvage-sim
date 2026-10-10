@@ -216,25 +216,13 @@ def _stub_game(monkeypatch, db, content):
     monkeypatch.setattr(web_app, "web_game", stub)
 
 
-def test_vassal_prince_chat_rejected(game, monkeypatch):
-    """宗藩不仅被朝堂列表挡，/chat 端点（_require_active_minister）也须拒绝——否则可绕列表
-    按名经 API 直接召对（cmr R1 finding D）。即便 active+ming 也拒。"""
-    import pytest
-    from fastapi import HTTPException
-    db, state, content = game
-    name, _ch = _materialized_prince(db, state, content)
-    db.set_character_status(state, name, "active", "测试：在世")
-    assert db.get_character_status(name)[0] == "active"  # 物化后 setup 真生效：即便 active 也拒
-    _stub_game(monkeypatch, db, content)
-    with pytest.raises(HTTPException) as ei:
-        web_app._require_active_minister(name)
-    assert ei.value.status_code == 409
 
 
-def test_active_consort_chat_not_rejected(game, monkeypatch):
-    """后宫不在 _require_active_minister 的宗藩闸内——嫔妃 chat 复用本端点，active+ming 后宫
-    须能召对（finding D「别误伤后宫」反向锁）。"""
+def test_active_consort_chat_not_rejected(game):
+    """后宫不在宗藩闸内——嫔妃 chat 复用召对入口，active+ming 后宫须可召（finding D 反向锁）。
+    闸经现役公共入口 GameSession.can_summon（web 端点 _require_active_minister 的共用闸）断言。"""
     import pytest
+    from ming_sim.session import GameSession
     db, state, content = game
     consort = next(
         (n for n, c in content.characters.items()
@@ -243,13 +231,14 @@ def test_active_consort_chat_not_rejected(game, monkeypatch):
     )
     if consort is None:
         pytest.skip("基底盘面无大明后宫人物")
-    # 物化进 DB 后 set_character_status 才真生效（选中的 content 后宫未必在 probe.db 旧档，
-    # 缺行时 set 是 no-op、status 只靠缺行默认 active 兜——gemini R4）。物化使「active 后宫过闸」可证。
     db.add_character(state, content.characters[consort], source="测试物化")
     db.set_character_status(state, consort, "active", "测试：在位")
     assert db.get_character_status(consort)[0] == "active"
-    _stub_game(monkeypatch, db, content)
-    web_app._require_active_minister(consort)  # 不抛 = 通过（后宫未被宗藩闸误伤）
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.temporary_characters = {}
+    ok, _reason = sess.can_summon(content.characters[consort])
+    assert ok
 
 
 def test_zongfan_cannot_be_summoned_via_can_summon(game):
@@ -365,13 +354,11 @@ def test_list_ministers_uses_db_power_id(game):
 
 
 def test_find_existing_minister_uses_db_power_id(game):
-    """_find_existing_minister 是罢黜/任命去重/密令 canonical 的 ming-guard，须与 can_summon 同口径
-    （DB 权威，#125 R2 codex high）：招抚归明者(DB翻ming/content仍旧势力)可召就必须可查到（可罢/可任）；
-    外藩(皇太极 DB houjin)仍查不到，防误黜外藩的保护不丢。"""
-    from ming_sim.session import _find_existing_minister
+    """召见闸以 DB 权威 power_id 为准（#125 R2）：招抚归明者（DB ming、content 仍旧势力）可召；
+    外藩（DB houjin）不可召，防误黜外藩的保护不丢。经现役公共入口 GameSession.can_summon 断言。"""
     import pytest
+    from ming_sim.session import GameSession
     db, state, content = game
-    # 招抚归明者：DB 翻 ming、content 仍非 ming、active → 应被 _find_existing_minister 命中
     归明 = next((n for n, c in content.characters.items()
                 if getattr(c, "power_id", "ming") != "ming"
                 and c.office_type not in ("后宫", "宗藩", "未仕") and c.status != "candidate"), None)
@@ -380,10 +367,12 @@ def test_find_existing_minister_uses_db_power_id(game):
     db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
     db.conn.commit()
     db.set_character_status(state, 归明, "active", "测试：招抚归明")
-    assert _find_existing_minister(content, 归明, db) == 归明, "DB 已归明者却被内存值挡出 ming-guard（可召不可罢）"
-    # 外藩 active（DB houjin）仍查不到（防误黜皇太极）
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.temporary_characters = {}
+    assert sess.can_summon(content.characters[归明])[0], "DB 已归明者却被内存值挡出召见闸"
     enemy = _enemy_active_name(db, content)
-    assert _find_existing_minister(content, enemy, db) is None
+    assert not sess.can_summon(content.characters[enemy])[0]
 
 
 def test_db_resolve_power_id_authoritative(game):

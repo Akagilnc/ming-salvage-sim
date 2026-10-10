@@ -239,7 +239,7 @@ def test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch(
     ).fetchone()["loyalty"]
 
     db.conn.execute("BEGIN")
-    issues._apply_person_changes(
+    issues.apply_person_changes_only(
         db,
         state,
         [
@@ -277,7 +277,7 @@ def test_apply_person_changes_disposition_does_not_commit_inside_batch(game):
 
     try:
         db.conn.execute("BEGIN")
-        issues._apply_person_changes(
+        issues.apply_person_changes_only(
             db,
             state,
             [
@@ -2240,15 +2240,13 @@ def test_yizhu_sets_active_in_new_master_service(game):
 
 
 def test_reload_syncs_reason_code_status_reason_to_content(game):
-    """ADR 决定6 三面同步：回滚统一重载须把 DB 的 reason_code/status_reason 刷回
-    content.characters，否则内存对象缺 ADR 0009 新字段、三面不一致（读内存即拿空/报错）。"""
+    """ADR 决定6 三面同步：回滚统一重载（现役 reload_state_from_db）须把 DB 的 reason_code/
+    status_reason 刷回 content.characters，否则内存对象缺 ADR 0009 新字段。"""
+    from ming_sim.decree import reload_state_from_db
     db, state, content = game
-    from ming_sim.session import _sync_offices_from_db_impl
     name = active_ming_character(db, content)
     db.set_character_status(state, name, "dismissed", "忤逆案削籍", reason_code="获罪削籍")
-
-    _sync_offices_from_db_impl(content, db)
-
+    reload_state_from_db(db, state, content=content)
     ch = content.characters[name]
     assert getattr(ch, "reason_code", None) == "获罪削籍", "重载未同步 reason_code"
     assert getattr(ch, "status_reason", None) == "忤逆案削籍", "重载未同步 status_reason"
