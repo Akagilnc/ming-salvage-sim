@@ -7,18 +7,18 @@ Design contract:
   `TicketedWriteGate`) which orders only **write turns** among open tickets —
   not whole-leg completion — so peer trails do not serialize each other's LLM.
   The ticket is completed only after the leg finishes (success, fail, or
-  cancel → empty vacate).
+  cancel → empty release).
 - Month-advance is a barrier ticket: claimed after all already-issued tickets,
   so prior legs drain naturally before close/settle runs (`wait_prior` = full
   prior complete). Post-barrier claims wait on the open barrier via the write
-  seam (barrier key blocks write turns until barrier vacates).
+  seam (barrier key blocks write turns until barrier releases).
 - write_gate remains the exclusive write lock (CLI + Web share one session
   queue). Queue length / open tickets are the sole inflight fact source.
-- Cancel vacates without resurrecting work (ADR 0038 retract).
-- Barrier release waits only on worker/provider terminal vacate of prior
+- Cancel releases without resurrecting work (ADR 0038 retract).
+- Barrier release waits only on worker/provider terminal release of prior
   tickets (K10a: no elapsed forging of healthy legs into failure). True hang
   termination belongs to the provider/worker seam that owns the call; once
-  that seam reaches a terminal state the worker finally-vacates and the
+  that seam reaches a terminal state the worker finally-releases and the
   barrier proceeds into the existing error-pack / night-OPEN path.
 """
 
@@ -141,7 +141,7 @@ class WriteTicket:
 
 
 def _is_barrier_ticket(ticket: WriteTicket) -> bool:
-    """Barrier tickets block later write turns until they fully vacate."""
+    """Barrier tickets block later write turns until they fully release."""
     key = ticket.key
     if key == ("barrier",):
         return True
@@ -231,7 +231,7 @@ class SessionWriteQueue:
     def __init__(self) -> None:
         self._cond = threading.Condition()
         self._next_seq = 1
-        # seq -> ticket still open (not completed/vacated)
+        # seq -> ticket still open (not completed/released)
         self._open: dict[int, WriteTicket] = {}
         # key -> set of open seqs (for cancel-by-key / retract)
         self._by_key: dict[Hashable, set[int]] = {}
@@ -325,7 +325,7 @@ class SessionWriteQueue:
             return ticket
 
     def cancel(self, ticket: Optional[WriteTicket]) -> None:
-        """Mark cancelled and vacate. In-flight legs must check ticket.cancelled."""
+        """Mark cancelled and release. In-flight legs must check ticket.cancelled."""
         if ticket is None:
             return
         with self._cond:
@@ -333,7 +333,7 @@ class SessionWriteQueue:
             self._finish_locked(ticket)
 
     def cancel_key(self, key: Hashable) -> int:
-        """Cancel all open tickets tagged with key. Returns how many vacated."""
+        """Cancel all open tickets tagged with key. Returns how many released."""
         with self._cond:
             seqs = list(self._by_key.get(key, ()))
             n = 0
@@ -380,7 +380,7 @@ class SessionWriteQueue:
 
         A later ticket may enter its DB critical section while an earlier peer
         leg is still in LLM (ticket open but not awaiting/in write). Open
-        barrier tickets always block later write turns until they vacate, so
+        barrier tickets always block later write turns until they release, so
         post-barrier claims cannot cross the barrier body.
         """
         with self._cond:

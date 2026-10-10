@@ -131,7 +131,7 @@ def test_barrier_waits_multiple_prior_tickets():
     assert set(order[:2]) == {"a", "b"}
 
 
-def test_fail_vacate_lets_barrier_through():
+def test_fail_release_lets_barrier_through():
     """失败钉：腿失败票据空放行，屏障不卡死。"""
     q = SessionWriteQueue()
     t = q.claim(key=("extract", 9))
@@ -190,7 +190,7 @@ def test_post_barrier_claim_run_waits_for_barrier():
     assert q.inflight_count() == 0
 
 
-def test_cancel_key_vacates_and_blocks_run():
+def test_cancel_key_releases_and_blocks_run():
     """撤回钉：按 key 取消在飞票据；run 见取消不写库。"""
     q = SessionWriteQueue()
     t = q.claim(key=("turn", 42))
@@ -312,7 +312,7 @@ def test_barrier_waits_healthy_slow_worker_terminal():
     assert q.inflight_count() == 0
 
 
-def test_barrier_proceeds_after_worker_fail_vacate():
+def test_barrier_proceeds_after_worker_fail_release():
     """可控失败终态：工人 vacate 后屏障放行（无 elapsed 伪失败）。"""
     q = SessionWriteQueue()
     t = q.claim(key=("turn", 2))
