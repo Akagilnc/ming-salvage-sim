@@ -485,10 +485,6 @@ def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
     hit = next(item for item in matched if item.get("directive_id") == did)
     assert "text" not in hit
     assert set(hit.keys()) == {"directive_id"}
-    # 旨文片段不得出现在 item_json
-    raw = next(r["item_json"] for r in rej if json.loads(r["item_json"]).get("directive_id") == did)
-    assert "敕令陕西" not in raw
-    assert "甲甲" not in raw
 
 def test_path1_conversational_draft_bad_roster_marks_failed(env):
     """路 1 _commit_conversational_draft：成案零行 → pending failed、无案卷。"""

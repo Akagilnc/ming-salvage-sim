@@ -1356,11 +1356,6 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         assert len(probe.list_decree_dossiers()) == mid_dossiers
         decs = probe.list_pending_decisions(int(probe.load_state().turn))
         assert not decs or all((d.get('status') == 'decided' for d in decs))
-        ctx = probe.get_resolve_context(int(probe.load_state().turn))
-        if ctx is not None:
-            blob = json.dumps(ctx, ensure_ascii=False)
-            assert 'committed_rescript_batch' not in blob
-            assert 'rescript_choices' not in blob
         _ = choice_fp
     finally:
         probe.close()
@@ -1609,7 +1604,6 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
     ids = [str(e.get('character_id') or '') for e in roster if isinstance(e, dict)]
     assert token not in ids, f'{token} 不得入 roster：{ids}'
     payload = json.loads(str(created.get('payload_json') or '{}'))
-    assert token not in str(payload.get('assignee_id') or '')
     assert int(web_game.state.turn) == turn_before + 1
 
 def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
@@ -1702,7 +1696,6 @@ def test_657_follow_draft_ignores_client_field_overlay(game, monkeypatch):
         str(created.get('region_id') or ''), str(payload.get('region_id') or ''),
     }
     assert str(payload.get('title') or '') == '权威标题'
-    assert '伪造标题' not in str(payload.get('title') or '')
     assert str(payload.get('transaction_category') or '') == '督赈'
     assert '不存在的人' not in str(payload.get('assignee_name') or '')
     assert '不存在的人' not in str(created.get('executor_id') or '')

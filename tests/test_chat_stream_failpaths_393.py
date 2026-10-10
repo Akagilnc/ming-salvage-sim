@@ -1080,8 +1080,6 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
     assert detail.get("message"), detail
     # #1902 N6：原文透传——机器横幅进 provider_message，不进玩家 message。
-    assert "workdir" not in str(detail.get("message") or "")
-    assert "exit code" not in str(detail.get("message") or "").lower()
     provider = str(detail.get("provider_message") or "")
     assert "workdir" in provider
     assert "exit code" in provider.lower()

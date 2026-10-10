@@ -36,9 +36,9 @@ describe("#1852 SettlementGazettePanel", () => {
     );
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
     expect(host.querySelector('[role="dialog"]')).toBeNull();
-    // #1902 L2：本面结构可达；不锁生成邸报/递话正文片段。
-    expect(host.querySelector("pre.memorial-text")).not.toBeNull();
-    expect(host.querySelector("[data-testid=gazette-attendant]")).not.toBeNull();
+    // 原文无损运输：邸报与递话原值原样呈现（不改写、不裁剪、不加占位）。
+    expect(host.querySelector("pre.memorial-text")?.textContent).toBe("十月邸报\n一、边报");
+    expect(host.querySelector("[data-testid=gazette-attendant] .gazette-attendant-text")?.textContent).toBe("奴婢呈报。");
 
     const btn = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("朕知道了"),

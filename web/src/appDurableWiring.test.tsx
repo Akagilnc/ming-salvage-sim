@@ -915,8 +915,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
-    // #1902 L2：本面落位以面板可达为契约，不锁 SSE/状态口邸报正文。
-    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
+    // 原文无损运输：SSE done 的邸报原值原样呈于当次面板（唯一真实 App 消费者案）。
+    expect(host.querySelector("[data-testid=settlement-gazette-panel] pre.memorial-text")?.textContent).toBe("十月邸报·本面");
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
 
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>

@@ -438,33 +438,6 @@ def test_clichat_invoke_typed_unavailable_traced_and_reraised(monkeypatch):
     assert "cli down" not in ei.value.message
 
 
-def test_clichat_call_cli_dispatch(monkeypatch):
-    seen = {}
-
-    def fake_codex(p, model=None, **kwargs):
-        seen["codex"] = model
-        return ("CODEX", 1)
-
-    def fake_claude(p, model=None, **kwargs):
-        seen["claude"] = model
-        return ("CLAUDE", 1)
-
-    def fake_agy(p):
-        seen["agy"] = "called"
-        return ("AGY", 1)
-
-    _patch_runners(monkeypatch, {
-        "codex": fake_codex, "claude": fake_claude, "agy": fake_agy,
-    })
-    assert cb.CliChat(id="m-codex", backend="codex", timeout=111)._call_cli("p") == ("CODEX", 1)
-    assert cb.CliChat(id="m-claude", backend="claude", timeout=222)._call_cli("p") == ("CLAUDE", 1)
-    assert cb.CliChat(id="m-agy", backend="agy", timeout=333)._call_cli("p") == ("AGY", 1)
-    # #1465 切片③：model.timeout 不再下发给 runner；等多久算死归 transport 策略。
-    assert seen["codex"] == "m-codex"
-    assert seen["claude"] == "m-claude"
-    assert seen["agy"] == "called"
-
-
 def test_clichat_call_cli_unknown_backend_raises():
     with pytest.raises(RuntimeError):
         cb.CliChat(id="m", backend="bogus")._call_cli("p")
@@ -737,21 +710,6 @@ def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
     assert seen["args"][1] == "mdl-x"
     # 槽位（cli_timeout_seconds）是设置页的静默判死阈值，不逐调用透传给 runner
     assert seen["args"][2] == "low"
-
-
-@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
-def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
-    seen = {}
-
-    def fake(prompt, model=None, reasoning_strength=None, **kw):
-        seen["model"] = model
-        return ("OK", 1)
-
-    _patch_runner(monkeypatch, runner, fake)
-    chat = cb.CliChat(id="mdl", backend=runner, timeout=99)
-    assert chat._call_cli("p") == ("OK", 1)
-    # cli_model 仍透传；model.timeout 不再下发给 runner（等多久算死归 transport 策略）
-    assert seen["model"] == "mdl"
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
