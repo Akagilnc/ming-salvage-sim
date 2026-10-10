@@ -443,12 +443,12 @@ def test_commit_failure_in_conn_context_rolls_back(game, monkeypatch):
     db.conn.execute("DELETE FROM kv_store WHERE key='s1r2_cf'")
     db.conn.commit()
 
-    from ming_sim.applier import _SuspendableConnection
-    real_commit = _SuspendableConnection.commit
+    conn_cls = type(db.conn)  # 公共连接对象自身的类（不引私有符号）
+    real_commit = conn_cls.commit
     def failing_commit(self):
-        monkeypatch.setattr(_SuspendableConnection, "commit", real_commit)
+        monkeypatch.setattr(conn_cls, "commit", real_commit)
         raise sqlite3.OperationalError("simulated commit failure")
-    monkeypatch.setattr(_SuspendableConnection, "commit", failing_commit)
+    monkeypatch.setattr(conn_cls, "commit", failing_commit)
 
     with pytest.raises(sqlite3.OperationalError):
         with db.conn:

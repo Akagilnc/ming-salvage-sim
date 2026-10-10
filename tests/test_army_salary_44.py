@@ -123,48 +123,66 @@ def test_manpower_true_noop_no_log(game):
     assert after == before, "真 no-op(delta==0)不留痕"
 
 def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
-    # A salaried army with source debt participates in pooled repayment.
-    from ming_sim.army_pay import _auto_pay_arrears_by_priority
+    """受饷军带源欠饷经公共路径（commitment 池：stop_condition 指向该军欠饷）进得了受饷分发。"""
+    import json
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    # 只留这一支有欠饷，孤立验证「它是否进得了受饷分发」
     db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     db.conn.execute("UPDATE armies SET salary_rate=1.5, arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
-    spent = _auto_pay_arrears_by_priority(db, state, "国库", 5, "补饷", "诏拨补饷")
-    assert spent > 0, "兜底拨饷应能花到该军"
+    db.insert_issue(
+        state, kind="initiative", title="池内补饷承诺", origin_kind="decree",
+        origin_ref="decree:turn-44:pool", bar_value=0, inertia=0,
+        ongoing_effects={"economy": [{"account": "国库", "delta": -5, "reason": "诏拨补饷", "purpose": "补饷"}]},
+        stop_condition=json.dumps({f"army.{aid}.arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+    before = db.conn.execute("SELECT arrears FROM armies WHERE id=?", (aid,)).fetchone()[0]
+    apply_situation_monthly_drift(db, state)
+    after = db.conn.execute("SELECT arrears FROM armies WHERE id=?", (aid,)).fetchone()[0]
+    assert after < before, "兜底拨饷应能花到该军"
 
 def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
-    # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。
-    from ming_sim.army_pay import _auto_pay_arrears_by_priority
+    """#287 PR R2：空 scope 是「不允许任何军」，不能回落全局池。经公共 commitment 路径：
+    门中无有效军 id（仅空白）→ 池范围为空 → 不得拨饷给任何军。"""
+    import json
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
     db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
-    spent = _auto_pay_arrears_by_priority(
-        db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
+    db.insert_issue(
+        state, kind="initiative", title="空范围补饷承诺", origin_kind="decree",
+        origin_ref="decree:turn-44:empty", bar_value=0, inertia=0,
+        ongoing_effects={"economy": [{"account": "国库", "delta": -5, "reason": "空范围补饷", "purpose": "补饷"}]},
+        stop_condition=json.dumps({"army. .arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
     )
-    row = _army_row(db, aid)
-    assert spent == 0, "allowed_army_ids=[] 应明确支付 0，不得回落全军池"
-    assert row["arrears"] == pytest.approx(10)
+    apply_situation_monthly_drift(db, state)
+    assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (aid,)).fetchone()[0] == pytest.approx(10)
 
 def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
-    from ming_sim.army_pay import _auto_pay_arrears_by_priority
+    """门中军 id 带空白仍须归一后命中该军（经公共 commitment 路径）。"""
+    import json
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
     db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
-
-    spent = _auto_pay_arrears_by_priority(
-        db, state, "国库", 5, "补饷", "空白范围补饷", allowed_army_ids=[f" {aid} "]
+    db.insert_issue(
+        state, kind="initiative", title="空白范围补饷承诺", origin_kind="decree",
+        origin_ref="decree:turn-44:strip", bar_value=0, inertia=0,
+        ongoing_effects={"economy": [{"account": "国库", "delta": -5, "reason": "空白范围补饷", "purpose": "补饷"}]},
+        stop_condition=json.dumps({f"army. {aid} .arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
     )
-    row = _army_row(db, aid)
-    assert spent > 0
-    assert row["arrears"] < 10
+    apply_situation_monthly_drift(db, state)
+    assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (aid,)).fetchone()[0] < 10
 
 

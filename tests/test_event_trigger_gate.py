@@ -14,6 +14,19 @@ import pytest
 from ming_sim import issues
 from ming_sim.models import Event
 
+
+def _gather_with_gate(db, state, content, gate):
+    """把带给定 trigger_gate 的 seed 事件挂进内容，经公共 gather_candidate_events 求值（用后撤出）。"""
+    from ming_sim import issues
+    issues.bind_content(content)
+    ev = _hist_event("__gate_negative__", gate)
+    ev.auto_trigger = False
+    content.seed_events.append(ev)
+    try:
+        return issues.gather_candidate_events(state, db)
+    finally:
+        content.seed_events.remove(ev)
+
 def _promulgated_dossier(db, state, decree_text):
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text=decree_text,
@@ -542,14 +555,12 @@ def test_load_event_rejects_month_out_of_range(monkeypatch, field, value):
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
 
-def test_typo_field_gate_raises_clear_not_operationalerror(read_game):
-    """gate 引用 typo'd 字段（DB 无此列）→ 求值期 SELECT 抛 OperationalError，被 fail-loud
-    成清晰 ValueError（含 key + 'DB 无此列'），不留 cryptic 崩（#12 Q3）。"""
+def test_typo_field_gate_raises_clear_not_operationalerror(game):
+    """region 字段 typo（DB 无此列）→ 清晰 ValueError，不留 OperationalError。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
     import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
+    db, state, content = game
     with pytest.raises(ValueError):
-        _gate_passed({"region.huguang.grane_security": ">=1"}, state.metrics, db)  # grain_security typo
+        _gather_with_gate(db, state, content, {'region.huguang.grane_security': '>=1'})
 
 def test_gate_cond_numeric_neq_rejected_text_neq_ok():
     """cmr r1（Claude+codex concur）：'!=5' 数值 not-equal load 不许（runtime 数值分支无 !=、
@@ -569,14 +580,12 @@ def test_gate_key_rejects_empty_segments():
     assert gate_key_form_error("region.shaanxi|.unrest")  # | 含空成员
     assert gate_key_form_error("region.shaanxi.unrest") == ""  # 正常仍放行
 
-def test_typo_field_text_gate_raises_clear(read_game):
-    """cmr r1（Claude）：文本相等 gate 引用 typo'd 字段 → text-branch（_eval_gate_key_str）的
-    OperationalError 也被 fail-loud 成清晰 ValueError（覆盖文本分支 wrap）。"""
+def test_typo_field_text_gate_raises_clear(game):
+    """文本相等 gate 字段 typo → 清晰 ValueError（文本分支）。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
     import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
+    db, state, content = game
     with pytest.raises(ValueError):
-        _gate_passed({"region.huguang.controled_by": "==ming"}, state.metrics, db)  # controlled_by typo
+        _gather_with_gate(db, state, content, {'region.huguang.controled_by': '==ming'})
 
 def test_gate_key_rejects_empty_class_name():
     """cmr r2（Claude+codex concur）：class.<名>@<region> 的类名为空（@ 前）→ fail-loud
@@ -624,51 +633,40 @@ def test_gate_key_rejects_empty_region_after_at():
     assert gate_key_form_error("class.士绅.satisfaction") == ""     # national（无 @）放行
     assert gate_key_form_error("class.士绅@nanzhili.satisfaction") == ""  # regional 正常放行
 
-def test_numeric_cond_on_text_field_raises_clear(read_game):
-    """#159：数值比较 cond 配文本字段（如 region.x.controlled_by >=1）→ runtime int(str) ValueError
-    被 fail-loud 成清晰 ValueError（数值不可比文本字段），不静默回 None 当条件不满足（Q3）。"""
+def test_numeric_cond_on_text_field_raises_clear(game):
+    """数值比较 cond 配文本字段 → 清晰 ValueError。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
     import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-    # controlled_by 是文本字段（'ming'/'houjin'），对它做数值比较 → fail-loud
+    db, state, content = game
     with pytest.raises(ValueError):
-        _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
+        _gather_with_gate(db, state, content, {'region.huguang.controlled_by': '>=1'})
 
-def test_character_gate_rejects_malformed_field_before_sql(read_game):
-    """trigger_gate 字段名必须先过白名单，不能把畸形字段拼进 SQL。"""
+def test_character_gate_rejects_malformed_field_before_sql(game):
+    """畸形字段名先过白名单，不拼进 SQL。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
     import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, _content = read_game
-
+    db, state, content = game
     with pytest.raises(ValueError):
-        _gate_passed({"character.毛文龙.loyalty;DROP": ">=1"}, state.metrics, db)
+        _gather_with_gate(db, state, content, {'character.毛文龙.loyalty;DROP': '>=1'})
 
-def test_character_numeric_field_text_gate_raises_clear(read_game):
-    """character 数值字段走文本比较时必须 fail-loud，不能 str(loyalty) 后静默 False。"""
+def test_character_numeric_field_text_gate_raises_clear(game):
+    """人物数值字段走文本比较 → 清晰 ValueError。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
     import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, _content = read_game
-
+    db, state, content = game
     with pytest.raises(ValueError):
-        _gate_passed({"character.毛文龙.loyalty": "==active"}, state.metrics, db)
+        _gather_with_gate(db, state, content, {'character.毛文龙.loyalty': '==active'})
 
-def test_character_typo_field_gate_raises_clear(read_game):
-    """character gate 字段名 typo（DB 无此列）沿用清晰 ValueError（#201）。"""
+def test_character_typo_field_gate_raises_clear(game):
+    """人物字段名 typo → 清晰 ValueError（#201）。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
     import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-
+    db, state, content = game
     with pytest.raises(ValueError):
-        _gate_passed({"character.毛文龙.loyality": ">=1"}, state.metrics, db)
+        _gather_with_gate(db, state, content, {'character.毛文龙.loyality': '>=1'})
 
-def test_character_text_typo_field_gate_raises_clear(read_game):
-    """character 文本 gate 字段名 typo 也必须 fail-loud（#201 cmr P2）。"""
+def test_character_text_typo_field_gate_raises_clear(game):
+    """人物文本 gate 字段 typo → 清晰 ValueError（#201）。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
     import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-
+    db, state, content = game
     with pytest.raises(ValueError):
-        _gate_passed({"character.毛文龙.locaiton": "==liaodong"}, state.metrics, db)
+        _gather_with_gate(db, state, content, {'character.毛文龙.locaiton': '==liaodong'})
 
 def test_character_text_gate_key_passes_content_validation():
     """load-time 文本 gate 校验接受 character 的文本字段（#201）。"""
