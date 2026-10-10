@@ -22,6 +22,7 @@ from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from tests.month_chain_helpers import make_light_session
+from tests.recommendation_rows import recommendation_events
 
 
 def _hong(db, content) -> str:
@@ -305,7 +306,7 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
         "SELECT office FROM characters WHERE name=?", (same_faction.name,),
     ).fetchone()
     assert appointed["office"] == "巡盐御史"
-    events = db.list_recommendation_events(state, recommender.name)
+    events = recommendation_events(db, state, recommender.name)
     assert any(e["candidate"] == same_faction.name for e in events)
 
 

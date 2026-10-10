@@ -33,6 +33,15 @@ from ming_sim.audience_translation import (
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 
+def _link_rejections(db, pending_action_id):
+    """待确认动作的案卷挂接拒收行（读端直查；单读口已退休）。"""
+    rows = db.conn.execute(
+        "SELECT * FROM decree_dossier_link_rejections WHERE pending_action_id=? ORDER BY id",
+        (int(pending_action_id),),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _minister(db) -> str:
     row = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' "
@@ -772,7 +781,7 @@ def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_cas
     assert statuses == ["failed", "committed"]
     assert len(_rejection_rows(db, state.turn, "promises")) == 1
     if "dossier_links" in bad:
-        assert len(db.list_dossier_link_rejections(pending_action_id=ids[0])) == 1
+        assert len(_link_rejections(db, ids[0])) == 1
     ctid = db.conn.execute("SELECT MAX(id) FROM chat_turns").fetchone()[0]
     assert db.get_story_extract_status(ctid) == "done"
 

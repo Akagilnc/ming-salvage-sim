@@ -235,11 +235,3 @@ def record_recommendation_edges(db: Any, state: Any, recommender: str,
     return grace, zhiyu
 
 
-def list_recommendation_events(db: Any, state: Any, recommender: str | None = None) -> List[Dict[str, object]]:
-    sql = "SELECT * FROM recommendation_events WHERE turn <= ?"
-    params: list[object] = [int(state.turn)]
-    if recommender:
-        sql += " AND recommender=?"
-        params.append(recommender)
-    sql += " ORDER BY turn, id"
-    return [dict(row) for row in db.conn.execute(sql, params).fetchall()]

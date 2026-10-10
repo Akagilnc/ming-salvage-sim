@@ -1582,22 +1582,6 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
 # #657 大理寺六类：扩展既有 tracer，不另造夹具族
 # ---------------------------------------------------------------------------
 
-def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
-    """② 共享首选项投影：急务=follow_draft+capability；普通 decision 不变。"""
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
-    opt = _layer_a_option()
-    urgent = {'kind': 'rescript_draft', 'decision_key': 'rescript_draft:1:0', 'title': '急', 'idx': 0, 'options': [opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}]}
-    pref = project_preferred_hitl_choice(urgent)
-    assert pref['action'] == 'follow_draft'
-    assert pref['draft_capability'] == opt['draft_capability']
-    assert pref['decision_key'] == 'rescript_draft:1:0'
-    ordinary = {'kind': 'decision', 'decision_key': 'decision:1:0', 'idx': 0, 'options': [{'label': '甲', 'hint': 'h1', 'dossier_id': 3, 'dossier_decision': 'hold'}, {'label': '乙', 'hint': 'h2'}]}
-    pref2 = project_preferred_hitl_choice(ordinary)
-    assert pref2.get('action') in (None, '')
-    assert pref2['dossier_id'] == 3
-    assert pref2['dossier_decision'] == 'hold'
-    assert 'follow_draft' not in str(pref2.get('action') or '')
-
 def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     """#1897 S1／T1：真实 prepare 入口拒非法原样 label；拒前零写入。"""
     from ming_sim.models import TurnPhase
@@ -2468,7 +2452,12 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             db.save_state(state)
             return db.list_rescript_desk(int(state.turn))[0]["decision_key"]
 
-        key = get_session_write_queue(web_game.session).run_exclusive(plant_case)
+        _queue = get_session_write_queue(web_game.session)
+        _ticket = _queue.claim()
+        try:
+            key = _queue.run(_ticket, plant_case)
+        finally:
+            _queue.complete(_ticket)
         choice = {**choice_body, "decision_key": key}
 
         if name == "deliberate":

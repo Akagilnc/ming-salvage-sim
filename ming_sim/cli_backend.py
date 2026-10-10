@@ -2560,11 +2560,6 @@ def extract_draft_intent(
 
     _candidates = [c for c in (existing_candidates or []) if c]
     _by_id = {int(c["id"]): c for c in _candidates}
-    supplement_hint = (
-        "本回合已有草案暂存；如果皇帝是在补充/修改/扩充当前草稿"
-        "（如「再补一条」「加上」「改成」「把…去掉」等），也归拟旨。\n"
-        if (has_pending_draft or _candidates) else ""
-    )
     # 补充模式（has_pending_draft + existing_draft_text）：注入现有草案，要求 LLM 输出合并草案。
     # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
     # 既有草案原文过手：strip 只判空，不改运输值（#1897 E2 / P6）。
@@ -2604,30 +2599,6 @@ def extract_draft_intent(
         '  "目标案卷ID": null' + (
             "," if (_candidates or _supplement_mode) else ""
         ) + '        // 御笔强推议而不决廷议时填该案卷整数 ID；非此意图留 null\n'
-    )
-    # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
-    target_schema_line = (
-        '  "目标草案": "新"' + (
-            "," if _supplement_mode else ""
-        ) + '       // 明确另拟独立一道=「新」；补充/修改现有某一道=填该道方括号编号；'
-        '想改/补但没指明是哪道=「含糊」\n'
-        if _candidates else ""
-    )
-    merge_schema_line = (
-        '  "合并草案": ""   // 仅拟旨时必填：把现有草案与本轮新增/修改指令合并成完整草案；无拟旨意图时留空\n'
-        if _supplement_mode else ""
-    )
-    draft_context = (
-        f"【现有草案】{_existing_draft_text}\n"
-        if _existing_draft_text.strip() else ""
-    )
-    # 候选原文过手不截断（#1897 E2 / 原话运输）。
-    candidates_context = (
-        "【现有候选】\n" + "\n".join(
-            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')}"
-            for c in _candidates
-        ) + "\n"
-        if _candidates else ""
     )
     prompt = (
         "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话，判断皇帝**本轮**"
@@ -3235,74 +3206,6 @@ def _loads_lenient(
         except (ValueError, TypeError):
             return None
     return obj if isinstance(obj, accepted_types) else None
-
-
-def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:
-    """国策(initiative)立项后 agy 一贯不填效果字段（实测 0/4）。这里聚焦补全：
-    按国策标题/现状生成 解决效果(完成回报)/持续效果(月度成本)/失败效果。
-    纯数值设计任务（不扮演），与月末 extractor 同款可靠。返回英文 key 的三个 dict。"""
-    prompt = (
-        "你是历史模拟游戏(明末崇祯)的数值结算设计器，不扮演、不写圣旨。"
-        "给下面这条「国策」设计它**办成时**的实质后果，按国策性质选对的产出类型，"
-        "只输出一个 JSON（英文结构 key），不要代码围栏、不要别的字：\n"
-        "{\n"
-        '  "effect_on_resolve": {\n'
-        '    "metrics": {"民心": int, "皇威": int, "国库": int},   // 抽象国势回报，按需，可省\n'
-        '    "buildings": [{"action":"create","region_id":"省拼音码","name":"","category":"财政/军事/民生/科技/交通/内廷","output_metric":"国库/内库/民心/皇威/","output_amount":int}],\n'
-        '    "new_armies": [{"id":"英文小写id","name":"军名","owner_power":"ming","manpower":兵额(整数,如18000),"pay_source_region":"饷源省region_id如shaanxi","province_pay_share":省份额0到1,"central_pay_share":中央份额0到1,"commander":"主将姓名或空","station":"驻地中文","station_region":"实际驻地region_id如shaanxi","troop_type":"步/骑/水/车营","火器":0到100整数(火器局/神机营/火器新军给高),"随军大炮":0到12整数门数(炮营/红夷炮新军给几门)}],   // 明军必须给饷源省+省/中央份额(和=1)；station_region=实际驻地id（≠饷源）；月饷总额由引擎按 manpower 派生，勿列饷额\n'
-        '    "army_delta": {"既有军id":{"manpower":增兵整数,"火器":增量,"随军大炮":门数增量,"reason":""}},\n'
-        '    "人物变更": [{"name":"必须是确切人名","动作":"处置","status":"dead/exiled/imprisoned/dismissed/retired","reason":""}]\n'
-        "  },\n"
-        '  "ongoing_effects": {"economy": [{"account":"国库/内库","delta":负数月度开销,"category":"","reason":""}]},\n'
-        '  "effect_on_fail": {"metrics": {"民心": 负int}}\n'
-        "}\n"
-        "【按国策性质选类型，不要全用 metrics 凑数】：\n"
-        "- 营建/办厂/设局/筑堡/设仓/建坞/立学 → buildings.create（科技/军事厂局让推演认军备能力，别只给民心）\n"
-        "- 练兵/募营/建新军 → new_armies（给合理兵额/主将/驻地 station + station_region；owner_power=\"ming\" 的普通明军必须给 pay_source_region + province_pay_share + central_pay_share，份额和=1；月饷总额由引擎按 manpower 派生）\n"
-        "- 给既有军扩编/补员 → army_delta\n"
-        "- 暗杀/处决/罢黜/流放/下狱某个**确切人物**(含敌酋如皇太极) → 人物变更(name 必须确切、动作=处置、status 取白名单)\n"
-        "- 整顿提威/安民/财政新政 → metrics / economy\n"
-        "规则：① 数值朴素(个位到一二十/兵额按史实体量)；② 只有确需周期烧钱的实体才给 ongoing_effects.economy(负)，否则 {}；"
-        "③ 不相关的类型留空，别硬塞；④ region_id 拼音码：京师=beizhili 陕西=shaanxi 辽东=liaodong 山东=shandong "
-        "河南=henan 南直隶=nanzhili 浙江=zhejiang 福建=fujian 广东=guangdong 湖广=huguang 四川=sichuan 山西=shanxi 江西=jiangxi 云南=yunnan，不确定 beizhili。\n\n"
-        "【国策】" + (title or "") + "\n【现状】" + (stage or "（无）") + "\n"
-    )
-    raw = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="issue_enrich")
-    except Exception as exc:  # 补全失败不阻断结算（trace 已在咽喉记下，含 error）
-        _log(f"国策效果补全失败：{exc}")
-    obj = _loads_lenient(raw) or {}
-    try:
-        from ming_sim.simulation import _canonical_item_fields
-        norm = _canonical_item_fields(obj) if obj else {}
-    except Exception:
-        norm = obj
-    # isinstance 守门：norm 或其子段被 LLM 给成非 dict 时归 {}，不让 dict("乱填") 抛错
-    # 越过上层 floor、把空壳国策放进库（CMR codexB）。
-    def _d(v):
-        return v if isinstance(v, dict) else {}
-    norm = _d(norm)
-    resolve = _d(norm.get("effect_on_resolve"))
-    # 建筑 create 缺 region_id 兜底，免得静默落不了地。
-    # isinstance 守卫：LLM 可能把 buildings 给成真值非 list（true/数字/字符串），`or []` 兜不住
-    # （字符串还会逐字符迭代），`for b in 它` 抛 TypeError 崩回合（#117）——同文件 tags 的 list 守卫风格。
-    _bld = resolve.get("buildings")
-    if not isinstance(_bld, list):
-        # 非 list 脏值（true/数字/字符串）：不仅跳迭代，还在源头把 resolve 里重置成 []，免脏值落库
-        # （PR#127 gemini：源头清洗，下游虽有守卫但不该存非规范值）。键不存在则不引入。
-        _bld = []
-        if "buildings" in resolve:
-            resolve["buildings"] = _bld
-    for b in _bld:
-        if isinstance(b, dict) and str(b.get("action") or "").lower() == "create" and not b.get("region_id"):
-            b["region_id"] = "beizhili"
-
-    return {
-        "effect_on_resolve": resolve,
-        "ongoing_effects": _d(norm.get("ongoing_effects")),
-        "effect_on_fail": _d(norm.get("effect_on_fail")),
-    }
 
 
 def _fake_completion(text: str, model_id: str) -> ChatCompletion:

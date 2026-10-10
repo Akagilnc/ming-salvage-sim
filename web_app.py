@@ -5080,16 +5080,6 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/map")
-async def api_map() -> Dict[str, Any]:
-    return {"nodes": get_game().map_nodes()}
-
-
-@app.get("/api/buildings")
-async def api_buildings(region_id: str = "") -> Dict[str, Any]:
-    return {"buildings": get_game().db.building_payload(region_id)}
-
-
 @app.post("/api/favorites/{minister_name}")
 async def api_add_favorite(minister_name: str) -> Dict[str, Any]:
     game = get_game()

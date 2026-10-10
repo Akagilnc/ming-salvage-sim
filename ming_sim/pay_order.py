@@ -457,27 +457,6 @@ def restore_pay_order_override(
     return written
 
 
-def revoke_pay_order_decree(
-    db: Any,
-    *,
-    turn: int,
-    keys: List[str],
-    origin_ref: str,
-    reason: str = "",
-    commit: bool = True,
-) -> List[Dict[str, Any]]:
-    """撤销旨＝写回默认值的新 config change（r2：old/new provenance 链即审计账）。
-    到期路径（until_turn）不删键，读取端按 turn 判退出；撤销把值钉回默认基准。"""
-    entries = [
-        {"key": key, "value": _default_of(key)}
-        for key in keys
-    ]
-    return materialize_pay_order_decree(
-        db, turn=turn, entries=entries, origin_ref=origin_ref,
-        reason=reason or "撤销 override 旨，恢复祖制默认序/系数", commit=commit,
-    )
-
-
 def dossier_override_still_in_force(db: Any, dossier_id: int) -> bool:
     """该偿还序案卷是否仍有**在位** override 键（#1894 撤令准入的物理判据）。
 

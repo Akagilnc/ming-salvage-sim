@@ -3,7 +3,7 @@
 两件事：
 1. 种子——已 seed 的明控省 fiscal JSON 内嵌 settle 基座（开账 st + 月参 p），必须能被
    settle_tick 接受（=有效基座）；陕西作为 #266 史实量级 shadow seed 的基线样例。
-2. 桥——`GameDB.settle_province_tick(region_id, actions)` 读 settle.st/p → 跑 settle_tick →
+2. 桥——`GameDB.settle_ming_province_substrate_ticks`（单省公开口已退休，测试经 `_settle_tick` 调共用核）读 settle.st/p → 跑 settle_tick →
    写回 new_st。**港口锁**：坏输入/守恒破 raise 时 FAIL tick 绝不落库（毒态不钉存档）。
 
 陕西种子 = 低省库 + 正赋5.0563/月 + 辽饷2.1969011325/月 + 逋赋0.45 + 边镇 Due；
@@ -30,6 +30,15 @@ from ming_sim.army_pay import army_needed
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.models import TurnPhase
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
+
+def _settle_tick(db, region_id, actions=None):
+    """单省推进：读该省 fiscal 后经共用核落账，只动该省（单省公开口已退休，不走批量桥以免连带他省）。"""
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", (region_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
+    fiscal = json.loads(str(row["fiscal"] or "{}"))
+    return db._settle_province_tick_from_fiscal(region_id, fiscal, list(actions or []))
+
 
 @pytest.fixture
 def fresh_db(tmp_path):
@@ -553,7 +562,7 @@ def test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source(
         },
     )
 
-    result = fresh_db.settle_province_tick("shaanxi")
+    result = _settle_tick(fresh_db, "shaanxi")
 
     mixed = fresh_db.conn.execute(
         "SELECT * FROM armies WHERE id = 'shaanxi_army'"
@@ -1895,7 +1904,7 @@ def test_zero_due_province_army_morale_short_circuits(fresh_db):
     )
     fresh_db.conn.commit()
 
-    fresh_db.settle_province_tick("fujian")
+    _settle_tick(fresh_db, "fujian")
 
     row = fresh_db.conn.execute(
         """
@@ -1952,7 +1961,7 @@ def test_tusi_self_funded_army_skips_pay_morale_channel(fresh_db):
     )
     fresh_db.conn.commit()
 
-    fresh_db.settle_province_tick("shaanxi")
+    _settle_tick(fresh_db, "shaanxi")
 
     row = fresh_db.conn.execute(
         "SELECT morale, arrears FROM armies WHERE id = 'southwest_tusi'"
@@ -3257,7 +3266,7 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
 def test_south_southwest_settle_tick_golden_and_bridge_persist(fresh_db, region_id, expected):
     settle = _read_settle(fresh_db, region_id)
     pure = settle_tick(settle["st"], settle["p"], [])
-    bridged = fresh_db.settle_province_tick(region_id, [])
+    bridged = _settle_tick(fresh_db, region_id, [])
     fresh_db.conn.commit()
     after = _read_settle(fresh_db, region_id)["st"]
 
@@ -3386,7 +3395,7 @@ def test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile(fres
 
     assert settle["p"]["Due"]["军饷"] == pytest.approx(expected_due)
 
-    fresh_db.settle_province_tick("liaodong", [])
+    _settle_tick(fresh_db, "liaodong", [])
     fresh_db.conn.commit()
 
     after = _read_settle(fresh_db, "liaodong")
@@ -3441,7 +3450,7 @@ def test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows(fr
     row_opening_arrears = _province_pay_arrears(fresh_db, "liaodong")
     standalone_due = before["p"]["Due"]["军饷"] - row_due
 
-    result = fresh_db.settle_province_tick("liaodong", [])
+    result = _settle_tick(fresh_db, "liaodong", [])
     fresh_db.conn.commit()
 
     new_debt = result.breakdown["NewDebt"]["军饷欠"]
@@ -3623,7 +3632,7 @@ def test_henan_royal_grants_make_zonglu_due_heavy(fresh_db):
 
 @pytest.mark.parametrize("region_id,expect", ZHONGYUAN_JINGSHI_GOLDEN.items())
 def test_zhongyuan_jingshi_settle_province_tick_golden(region_id, expect, fresh_db):
-    res = fresh_db.settle_province_tick(region_id, [])
+    res = _settle_tick(fresh_db, region_id, [])
     fresh_db.conn.commit()
     after = _read_settle(fresh_db, region_id)["st"]
 
@@ -3642,7 +3651,7 @@ def test_zhongyuan_jingshi_settle_province_tick_golden(region_id, expect, fresh_
         assert abs(after[key] - value) < 1e-6, f"{region_id} {key}: 落库 {after[key]} ≠ new_st {value}"
 
 def test_settle_province_tick_persists_shaanxi_historical_shadow_golden(fresh_db):
-    res = fresh_db.settle_province_tick("shaanxi", [])
+    res = _settle_tick(fresh_db, "shaanxi", [])
     fresh_db.conn.commit()
     after = _read_settle(fresh_db)["st"]
     assert after["C_地方截留"] == pytest.approx(0.7181, abs=1e-3)
@@ -3672,7 +3681,7 @@ def test_settle_province_tick_persists_border_remainder_golden(fresh_db):
         },
     }
     for region_id, want in expected.items():
-        res = fresh_db.settle_province_tick(region_id, [])
+        res = _settle_tick(fresh_db, region_id, [])
         after = _read_settle(fresh_db, region_id)["st"]
         for k, v in want.items():
             assert after[k] == pytest.approx(v, abs=1e-3), \
@@ -3699,7 +3708,7 @@ def test_settle_province_tick_qingzhang_action(fresh_db):
     )
     fresh_db.conn.commit()
     # 带 action 的桥：清丈挖隐田 300 → 万历见额官民田 +300、隐田 -300（土地守恒）
-    fresh_db.settle_province_tick("shaanxi", [{"type": "清丈", "cost": 2, "挖隐田": 300}])
+    _settle_tick(fresh_db, "shaanxi", [{"type": "清丈", "cost": 2, "挖隐田": 300}])
     fresh_db.conn.commit()
     after = _read_settle(fresh_db)["st"]
     assert abs(after["官民田"] - 3229.20151) < 1e-3, f"官民田 {after['官民田']} ≠ 3229.20151"
@@ -3717,13 +3726,13 @@ def test_settle_province_tick_port_lock_no_persist_on_raise(fresh_db):
     fresh_db.conn.commit()
     st_before = _read_settle(fresh_db)["st"]
     with pytest.raises(ValueError):
-        fresh_db.settle_province_tick("shaanxi", [])
+        _settle_tick(fresh_db, "shaanxi", [])
     st_after = _read_settle(fresh_db)["st"]
     assert st_after == st_before, "港口锁破：FAIL tick 改了 DB"
 
 def test_settle_province_tick_unknown_region_raises(fresh_db):
     with pytest.raises(ValueError):
-        fresh_db.settle_province_tick("atlantis", [])
+        _settle_tick(fresh_db, "atlantis", [])
 
 def test_settle_province_tick_nondict_fiscal_raises(fresh_db):
     # cmr R3（gemini）：fiscal JSON 非 dict（如 "[]"）→ ValueError（可被隔离捕获），
@@ -3731,7 +3740,7 @@ def test_settle_province_tick_nondict_fiscal_raises(fresh_db):
     fresh_db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
     fresh_db.conn.commit()
     with pytest.raises(ValueError):
-        fresh_db.settle_province_tick("shaanxi", [])
+        _settle_tick(fresh_db, "shaanxi", [])
 
 # ── slice3：接入月末固定财政相位（shadow，不驱动国库；fail-loud 但隔离）──
 
@@ -4317,7 +4326,7 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     )
     fresh_db.conn.commit()
 
-    fresh_db.settle_province_tick("fujian")
+    _settle_tick(fresh_db, "fujian")
 
     row = fresh_db.conn.execute(
         """

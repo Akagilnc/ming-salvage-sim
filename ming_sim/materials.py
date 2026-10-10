@@ -150,7 +150,6 @@ def _materials_invocation_dir(db: Any, state: Any) -> Path:
     from ming_sim.audience_night import get_open_night
 
 
-    db_path = Path(str(db.path)).resolve()
     night = get_open_night(db)
     key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
     return (
@@ -224,34 +223,6 @@ def release_material_tree(root: Optional[Path | str]) -> None:
                 primary = exc
     if primary is not None:
         raise primary
-
-
-def release_previous_material_tree(
-    old_root: Optional[Path | str],
-    new_root: Optional[Path | str],
-) -> None:
-    """After a live root handoff: best-effort release of the previous tree.
-
-    The new root is already installed. Cleanup failure is logged with the real
-    exception and must not revoke the new root or interrupt the caller
-    (audience handoff). close/teardown paths call :func:`release_material_tree`
-    directly and re-raise after other resources are released.
-    """
-    import logging
-
-    if old_root is None:
-        return
-    old = str(old_root or "").strip()
-    new = str(new_root or "").strip()
-    if not old or old == new:
-        return
-    try:
-        release_material_tree(old)
-    except BaseException:
-        logging.getLogger(__name__).exception(
-            "previous materials tree cleanup failed; live root retained: %s",
-            new or "(none)",
-        )
 
 
 def _publish_material_tree(
@@ -612,31 +583,6 @@ def _character_affair_lines(
             continue
         seen.add(dir_key)
         lines.append((dir_key, title, directory_text, opening_text, is_handling))
-    return lines
-
-
-def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
-    """Material matters are exactly the already-authorized knowledge projection."""
-    lines: list[dict[str, object]] = []
-    for issue in knowledge.get("issues") or []:
-        issue_id = int(issue.get("id") or 0)
-        title = str(issue.get("title") or "")
-        if issue_id <= 0 or not title.strip():
-            continue
-        stage = str(issue.get("stage_text") or "")
-        resolve = str(issue.get("resolve_condition") or "")
-        fail = str(issue.get("fail_condition") or "")
-        lines.append({
-            "id": issue_id,
-            "affair_id": int(issue.get("affair_id") or 0),
-            "title": title,
-            "situation": stage if stage else "见目录。",
-            "resolve_condition": resolve,
-            "fail_condition": fail,
-            "source_id": str(issue.get("source_id") or f"issue:{issue_id}"),
-            "audience_names": tuple(issue.get("audience_names") or ()),
-            "participant_roster": issue.get("participant_roster") or "[]",
-        })
     return lines
 
 
