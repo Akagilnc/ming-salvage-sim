@@ -249,12 +249,6 @@ def list_due_grant_report_dossiers_for_scan(
     for row in rows:
         if str(row["execution_outcome"] or "").strip():
             continue
-        from ming_sim.db import GameDB
-
-        payload = GameDB.parse_engine_payload_json(
-            row["payload_json"], surface="decree_dossiers.payload_json",
-        )
-        # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
         dossier = db.get_decree_dossier(did)
         if dossier is None:

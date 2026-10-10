@@ -1266,7 +1266,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     ).fetchall()
     projected: List[Dict[str, Any]] = []
     for row in rows:
-        # Story-ledger list columns: reuse _json_list → _loads_stored_json_list (F39).
+        # Story-ledger list columns: reuse _json_list → _load_durable_str_list (F39).
         # Wrong object shape must not become empty unsettled-summon facts.
         tags = _json_list(row["tags"])
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:

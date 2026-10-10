@@ -32,12 +32,15 @@ from ming_sim.models import TurnPhase
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
 
 def _settle_tick(db, region_id, actions=None):
-    """单省推进：读该省 fiscal 后经共用核落账，只动该省（单省公开口已退休，不走批量桥以免连带他省）。"""
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", (region_id,)).fetchone()
-    if row is None:
-        raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
-    fiscal = json.loads(str(row["fiscal"] or "{}"))
-    return db._settle_province_tick_from_fiscal(region_id, fiscal, list(actions or []))
+    """经现役批量桥推进（一次推进全部明控 settle 省）并取该省结果；outcome.error 原样上抛。"""
+    outcomes = db.settle_ming_province_substrate_ticks({region_id: list(actions or [])})
+    mine = [o for o in outcomes if o.region_id == region_id]
+    if not mine:
+        raise ValueError(f"region {region_id!r} 非明控 settle 省，批量桥不出列")
+    outcome = mine[0]
+    if outcome.error is not None:
+        raise outcome.error
+    return outcome.result
 
 
 @pytest.fixture
@@ -54,13 +57,12 @@ def fresh_db(tmp_path):
     finally:
         db.conn.close()
 
-def _read_settle(db, region_id="shaanxi"):
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", (region_id,)).fetchone()
-    return json.loads(str(row["fiscal"] or "{}")).get("settle")
-
 def _read_fiscal(db, region_id):
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", (region_id,)).fetchone()
     return json.loads(str(row["fiscal"] or "{}"))
+
+def _read_settle(db, region_id="shaanxi"):
+    return _read_fiscal(db, region_id).get("settle")
 
 def _content_settle(region_id):
     return content_mod.load_region_content()[region_id].fiscal["settle"]
@@ -3680,8 +3682,11 @@ def test_settle_province_tick_persists_border_remainder_golden(fresh_db):
             "军饷欠": 34,
         },
     }
+    # 现役批量桥一次推进全部明控 settle 省；逐省各调一次会重复推进，不得分次调用。
+    results = {o.region_id: o for o in fresh_db.settle_ming_province_substrate_ticks()}
     for region_id, want in expected.items():
-        res = _settle_tick(fresh_db, region_id, [])
+        assert results[region_id].error is None, results[region_id].error
+        res = results[region_id].result
         after = _read_settle(fresh_db, region_id)["st"]
         for k, v in want.items():
             assert after[k] == pytest.approx(v, abs=1e-3), \

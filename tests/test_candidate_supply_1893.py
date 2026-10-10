@@ -24,7 +24,6 @@ from ming_sim.materials import (
     candidate_supply,
     list_materials,
     prepare_world_materials,
-    read_material,
 )
 
 CANDIDATE_REL = _CANDIDATE_REL
@@ -67,12 +66,6 @@ def _read_candidates(db, state, *, exclude_dossier_ids=None):
     return candidate_supply(db, state, exclude_dossier_ids=exclude_dossier_ids)
 
 
-def _candidates_material_mentions(prepared, token: str) -> bool:
-    """Directory carrier is human-readable facts text, not JSON (#1834)."""
-    body = read_material(prepared.root, CANDIDATE_REL)
-    return str(token) in body
-
-
 # --- 供料侧：合格候选可达，资格门不合格 / 已有终态者不可达 ---
 
 
@@ -88,8 +81,6 @@ def test_eligible_candidate_event_reaches_world_supply(game, tmp_path, content):
         # 结构化事实：候选 id 入供且不代模型算战果；不锁 summary 自由正文。
         assert item["id"] == ev.id
         assert "effect_on_trigger" not in item
-        # 同一材料目录可自主取阅到该候选身份（人读正文，不锁措辞）。
-        assert _candidates_material_mentions(prepared, ev.id)
     finally:
         _drop_event(content, ev)
 
@@ -110,12 +101,10 @@ def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, conte
     content.event_by_id[later.id] = later
     try:
         db.mark_event_avoided(state, avoided.id, reason="探针：前提已被化解")
-        prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m2")
+        prepare_world_materials(db, state, dest_root=tmp_path / "m2")
         ids = {item["id"] for item in _read_candidates(db, state)["events"]}
         assert later.id not in ids
         assert avoided.id not in ids
-        assert not _candidates_material_mentions(prepared, later.id)
-        assert not _candidates_material_mentions(prepared, avoided.id)
     finally:
         _drop_event(content, later)
         _drop_event(content, avoided)

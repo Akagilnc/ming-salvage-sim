@@ -11,6 +11,7 @@ import threading
 
 from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
+from tests.readback_helpers import active_character_name as _active_name
 
 
 def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
@@ -30,12 +31,6 @@ def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
     )
     db.conn.commit()
     return did
-
-
-def _active_name(db) -> str:
-    return db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"]
 
 
 def test_new_game_memorial_inbox_empty(game):

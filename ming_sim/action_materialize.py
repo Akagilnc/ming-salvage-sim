@@ -289,17 +289,12 @@ def stage_punishment_candidate(
             return 0
         if disposition not in issue_dispositions_allowed():
             return 0
-        try:
-            roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (TypeError, ValueError) as exc:
-            # 已持久 target_roster 腐坏是内部故障，不得洗成声明 invalid_state（#1897 E1）。
-            raise ValueError(
-                f"弹劾潮#{linked_issue_id} target_roster 腐坏"
-            ) from exc
-        if not isinstance(roster, list):
-            raise ValueError(
-                f"弹劾潮#{linked_issue_id} target_roster 须为列表"
-            )
+        # 已持久 target_roster 腐坏是内部故障，不得洗成声明 invalid_state（#1897 E1）。
+        from ming_sim.db import _load_durable_json_list
+
+        roster = _load_durable_json_list(
+            issue["target_roster"], surface=f"弹劾潮#{linked_issue_id}.target_roster",
+        )
         if not roster:
             return 0
         if disposition == "办人":

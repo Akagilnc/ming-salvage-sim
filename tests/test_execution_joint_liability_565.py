@@ -6,6 +6,7 @@ import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.strict_types import validate_affected_parties
+from tests.readback_helpers import faction_satisfaction as _sat
 
 
 def _roster():
@@ -48,12 +49,6 @@ def _sat_events(db, dossier_id):
         row for row in _cost_events(db, dossier_id)
         if row["cost_kind"] == "satisfaction"
     ]
-
-
-def _sat(db, faction):
-    return db.conn.execute(
-        "SELECT satisfaction FROM factions WHERE name=?", (faction,),
-    ).fetchone()[0]
 
 
 def _close_via_adapter(db, state, content, dossier_id, outcome, note="办理走样", **extra):

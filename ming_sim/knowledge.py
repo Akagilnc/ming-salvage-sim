@@ -698,17 +698,13 @@ def build_character_knowledge(
         if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         else:
-            try:
-                target_roster = json.loads(str(issue["target_roster"] or "[]"))
-            except (TypeError, ValueError) as exc:
-                # 已持久 target_roster 腐坏响亮，不洗成空名单改准入（#1897 E1）。
-                raise ValueError(
-                    f"弹劾潮#{int(issue['id'])} target_roster 腐坏"
-                ) from exc
-            if not isinstance(target_roster, list):
-                raise ValueError(
-                    f"弹劾潮#{int(issue['id'])} target_roster 须为列表"
-                )
+            # 已持久 target_roster 腐坏响亮，不洗成空名单改准入（#1897 E1）。
+            from ming_sim.db import _load_durable_json_list
+
+            target_roster = _load_durable_json_list(
+                issue["target_roster"],
+                surface=f"弹劾潮#{int(issue['id'])}.target_roster",
+            )
             target_roster = [
                 str(target).strip() for target in target_roster if str(target).strip()
             ]

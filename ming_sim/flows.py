@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import math
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
@@ -20,7 +19,7 @@ from ming_sim.army_pay import (
 )
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import TURN_UNIT
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, _load_durable_json_object
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import GameState
@@ -89,7 +88,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
     ).fetchall()
     for row in rows:
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         except (TypeError, ValueError) as exc:
             if not strict:
                 continue
@@ -118,7 +117,7 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     for row in rows:
         region_id = str(row["id"])
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         except (TypeError, ValueError) as exc:
             raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运") from exc
         if not isinstance(fiscal, dict):
@@ -392,7 +391,7 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
     ).fetchall()
     for row in rows:
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         except (TypeError, ValueError):
             continue
         settle = fiscal.get("settle") if isinstance(fiscal, dict) else None

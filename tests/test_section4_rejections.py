@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
+from tests.readback_helpers import non_ming_power_id as _valid_power_id
 
 def run_settle(db, state, content, extracted, **kwargs):
     """These rejection tests model canonical spontaneous extractor envelopes."""
@@ -272,12 +273,6 @@ def test_dirty_army_value_rejected_sibling_lands(game, bad_value):
     assert after != before  # 兄弟好字段照落
 
 # ---- new_armies：建军脏项 ----
-
-def _valid_power_id(db):
-    row = db.conn.execute(
-        "SELECT id FROM powers WHERE id != 'ming' LIMIT 1").fetchone()
-    assert row is not None
-    return row[0]
 
 def test_unknown_owner_power_army_rejected_good_builds(game):
     """new_armies owner_power 不在 powers 表 → 原 raise ValueError 崩整月,改为逐项

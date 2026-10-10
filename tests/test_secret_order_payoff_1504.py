@@ -227,6 +227,7 @@ def test_confirm_persists_task_specific_contract_absent_before(game):
     assert contract["axes"] == ["既得利益"]
     assert contract["delivery"]["unit"] == "万两"
     assert contract["delivery"]["target_units"] == 3.0
+    assert contract["delivery"]["account"] == "内库"
     catch_id = _issue(
         db, state, name, "缉获私贩", "拿人犯",
         months=2, target=2, kind="缉获人犯", unit="人犯",
@@ -909,17 +910,6 @@ def test_reaction_declarations_need_real_knowledge_across_months(game):
     payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
     acts = payload.get(INVESTIGATION_ACTS_KEY, [])
     assert acts[-1]["suppression"]["form"] == "托人斡旋"
-
-def test_non_investigation_contract_keeps_its_delivery_account(game):
-    """筹饷密令仍按自己的交付单位与账户成约。"""
-    del game
-    contract = build_covert_task_contract(covert_task={
-        "kind": "筹饷", "axes": ["实务事功"], "direction": 1,
-        "delivery": {"unit": "万两", "target_units": 30.0, "effect_sign": -1,
-                     "purpose": "其它", "category": "密令差务", "account": "内库"},
-    })
-    assert contract["delivery"]["unit"] == "万两"
-    assert contract["delivery"]["account"] == "内库"
 
 def test_case_opening_source_clue_assists_its_fact(game):
     """#1896 R6：开案这条来源自身就是真实线索，与汇案来源同一条接线。

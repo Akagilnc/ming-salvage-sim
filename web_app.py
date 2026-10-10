@@ -45,7 +45,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
-from ming_sim.db import GameDB
+from ming_sim.db import _load_durable_json_list
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
@@ -814,10 +814,10 @@ class WebGame:
             for name, msgs in self.db.load_all_chat_history().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
             _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-            from ming_sim.db import GameDB
+            from ming_sim.db import _load_durable_json_list
             _fav_raw = self.db.kv_get("favorites")
             self.favorites: set = (
-                set(GameDB._loads_stored_json_list(_fav_raw, surface="kv.favorites"))
+                set(_load_durable_json_list(_fav_raw, surface="kv.favorites"))
                 if _fav_raw else set(_DEFAULT_FAVORITES)
             )
             if not _fav_raw:
@@ -1036,9 +1036,9 @@ class WebGame:
                 chat_history.setdefault(name, []).extend(msgs)
             default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
             fav_raw = candidate.db.kv_get("favorites")
-            from ming_sim.db import GameDB
+            from ming_sim.db import _load_durable_json_list
             favorites = (
-                set(GameDB._loads_stored_json_list(fav_raw, surface="kv.favorites"))
+                set(_load_durable_json_list(fav_raw, surface="kv.favorites"))
                 if fav_raw else set(default_favorites)
             )
             if not fav_raw:
@@ -1537,7 +1537,7 @@ class WebGame:
                 "phase": row["phase"],
                 "stage_text": row["stage_text"],
                 "severity": int(row["severity"]),
-                "tags": list(GameDB._loads_stored_json_list(
+                "tags": list(_load_durable_json_list(
                     row["tags"], surface="issues.tags",
                 )),
                 "inertia": int(row["inertia"] or 0),

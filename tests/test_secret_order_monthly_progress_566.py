@@ -4,12 +4,7 @@ import threading
 
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
-
-
-def _actor(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
+from tests.readback_helpers import active_character_name as _actor
 
 
 def _order(db, state, title="护行辽饷", tags=None, deadline=4):

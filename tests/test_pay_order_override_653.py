@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import math
 
 import pytest
@@ -26,12 +25,15 @@ from ming_sim.pay_order import (
 
 
 def _settle_tick(db, region_id, actions=None):
-    """单省推进：读该省 fiscal 后经共用核落账，只动该省（单省公开口已退休，不走批量桥以免连带他省）。"""
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", (region_id,)).fetchone()
-    if row is None:
-        raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
-    fiscal = json.loads(str(row["fiscal"] or "{}"))
-    return db._settle_province_tick_from_fiscal(region_id, fiscal, list(actions or []))
+    """经现役批量桥推进（一次推进全部明控 settle 省）并取该省结果；outcome.error 原样上抛。"""
+    outcomes = db.settle_ming_province_substrate_ticks({region_id: list(actions or [])})
+    mine = [o for o in outcomes if o.region_id == region_id]
+    if not mine:
+        raise ValueError(f"region {region_id!r} 非明控 settle 省，批量桥不出列")
+    outcome = mine[0]
+    if outcome.error is not None:
+        raise outcome.error
+    return outcome.result
 
 
 def _override_dossier(db, state, entries, *, text="偿还序/折发旨") -> int:
@@ -997,7 +999,7 @@ def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
     assert expect_flows, "盘面应至少产生一笔非零官俸/宗禄欠流量"
     rows = db.conn.execute(
         "SELECT field, delta, turn, region_id, actor, origin_ref FROM region_logs "
-        "WHERE field LIKE 'settle_%' ORDER BY id"
+        "WHERE field LIKE 'settle_%' AND region_id = 'shaanxi' ORDER BY id"
     ).fetchall()
     assert {(r["field"], float(r["delta"])) for r in rows} == expect_flows
     assert all(r["turn"] == state.turn and r["region_id"] == "shaanxi" for r in rows)
@@ -1011,7 +1013,7 @@ def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
     try:
         rows2 = db2.conn.execute(
             "SELECT field, delta, turn, region_id, actor, origin_ref FROM region_logs "
-            "WHERE field LIKE 'settle_%' ORDER BY id"
+            "WHERE field LIKE 'settle_%' AND region_id = 'shaanxi' ORDER BY id"
         ).fetchall()
         assert {(r["field"], float(r["delta"])) for r in rows2} == expect_flows
     finally:

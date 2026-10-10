@@ -9,11 +9,7 @@ import pytest
 from tests.conftest import with_monthly_reports
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.dossier_test_helpers import create_test_secret_order
-
-def _actor(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
+from tests.readback_helpers import active_character_name as _actor
 
 def _people(db, count):
     rows = db.conn.execute(

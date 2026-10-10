@@ -6,13 +6,7 @@ from ming_sim.db import GameDB
 from ming_sim import issues as issue_engine
 import ming_sim.decree as decree_mod
 from ming_sim.relations import EMPEROR_NODE
-
-
-def _minister(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
+from tests.readback_helpers import ming_character_name as _minister
 
 
 def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):

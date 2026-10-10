@@ -22,6 +22,7 @@ from ming_sim.applier import Provenance
 from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
+from tests.readback_helpers import active_character_name as _actor
 
 
 ORDERED = 30  # 北极星三路各三十万两量级（引擎以「两」为单位的整数面值）
@@ -44,12 +45,6 @@ def _recon_rejections(db):
         "SELECT section, category, source, reason, item_json "
         "FROM rejection_reports ORDER BY id"
     ).fetchall())
-
-
-def _actor(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
 
 
 def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_id="shaanxi",

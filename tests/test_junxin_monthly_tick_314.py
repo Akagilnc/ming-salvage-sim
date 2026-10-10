@@ -17,6 +17,7 @@ import pytest
 
 from ming_sim.army_pay import army_loyalty_tick_delta
 from ming_sim.flows import apply_fixed_period_flows
+from tests.readback_helpers import army_loyalty as _loyalty_of
 
 KEG = "guanning"    # 火药桶/主测军（content 军，needed 可控）
 ELITE = "jingying"  # 精锐对照军
@@ -41,11 +42,6 @@ def _setup_army(db, aid, *, loyalty=50, arrears=0.0, manpower=10000,
         """,
         (owner_power, is_tusi, manpower, salary_rate, loyalty, arrears, aid),
     )
-
-
-def _loyalty_of(db, aid):
-    return int(db.conn.execute(
-        "SELECT loyalty FROM armies WHERE id=?", (aid,)).fetchone()["loyalty"])
 
 
 def _run_months(db, state, months, *, fund_fully=True):

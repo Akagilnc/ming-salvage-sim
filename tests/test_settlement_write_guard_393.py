@@ -248,7 +248,7 @@ def test_direct_db_write_refused_when_gate_held(monkeypatch, name, call):
 
 
 def test_serialized_web_write_cm_contract():
-    """集中守门 CM 的契约：相位拒 / 非阻塞抢锁拒 / 正常进出且释放锁 / 体内抛异常也释放锁。"""
+    """集中守门 CM 的负向契约：相位拒 / 非阻塞抢锁拒 / 体内抛异常也释放锁（正向进出由真实写入口案承接）。"""
     # 相位拒
     for phase in FRONT_HALF_DONE_PHASES:
         g = _FakeGame(phase)
@@ -257,11 +257,6 @@ def test_serialized_web_write_cm_contract():
                 pass
         assert ei.value.status_code == 409
         assert not g._write_gate.locked(), "相位拒不应留下持锁"
-    # 正常相位 + 锁空：进得去、出来后锁已释放
-    g = _FakeGame(TurnPhase.SUMMONING.value)
-    with web_app._serialized_web_write(g):
-        assert g._write_gate.locked(), "CM 体内应持锁"
-    assert not g._write_gate.locked(), "CM 退出应释放锁"
     # 锁被他人持有 → 非阻塞 409
     g2 = _FakeGame(TurnPhase.SUMMONING.value)
     g2._write_gate.acquire()
