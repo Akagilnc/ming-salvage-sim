@@ -76,7 +76,9 @@ def _payload_dict(candidate: Dict[str, Any]) -> Dict[str, Any]:
     if raw in (None, ""):
         return {}
     loaded = json.loads(str(raw))
-    return loaded if isinstance(loaded, dict) else {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"案卷 payload_json 须为对象，得 {type(loaded).__name__}")
+    return loaded
 
 
 def _this_decree_fact(

@@ -10,6 +10,8 @@ from __future__ import annotations
 import copy
 import math
 
+from tests.conftest import settle_region_tick
+
 import pytest
 
 from ming_sim.fiscal_tick import settle_tick
@@ -293,7 +295,7 @@ def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
     ])
     db.apply_dossier_promulgation(state, d21, "promulgated")   # 判后物化缝（带期限）
     # 当回合仍在位：override 生效（结果偏离基线）
-    active = db.settle_province_tick("shaanxi")
+    active = settle_region_tick(db, "shaanxi")
     assert active.breakdown["haircut_宗禄"] > 0
 
     # 届满月：turn > until → 全部回落默认，与同输入无旨基线逐字节一致
@@ -302,7 +304,7 @@ def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
     expected_default = settle_tick(
         copy.deepcopy(cur["st"]), copy.deepcopy(cur["p"]), [],
     )
-    expired = db.settle_province_tick("shaanxi")
+    expired = settle_region_tick(db, "shaanxi")
     assert expired.new_st == expected_default.new_st
     assert expired.breakdown == expected_default.breakdown
     # 键与 provenance 保留不删
@@ -508,7 +510,7 @@ def test_bridge_applies_due_order_and_haircut_end_to_end(game):
     ])
     # 全生命周期：顺颁判决 → 判后物化（ADR 0055 缝）→ 结算读端
     db.apply_dossier_promulgation(state, did, "promulgated")
-    res = db.settle_province_tick("shaanxi")
+    res = settle_region_tick(db, "shaanxi")
     assert res.breakdown["实付分账"]["官俸"] > 0          # 官俸优先足付
     assert res.breakdown["NewDebt"]["军饷欠"] > 0         # 边饷居末积欠
     assert res.breakdown["haircut_军饷"] > 0              # 折发免除额入分解
@@ -705,7 +707,7 @@ def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
     db, state, _content = game
     turn = db._current_settle_turn()
     # 本月结算先按旧序完成（fixed flow 已结束的等价断言：旧序结果在案）
-    before = db.settle_province_tick("shaanxi")
+    before = settle_region_tick(db, "shaanxi")
     assert before.breakdown["实付分账"]["军饷"] > 0
 
     entries = [{"key": "due_priority_军饷@shaanxi", "value": 40}]
@@ -720,7 +722,7 @@ def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
     # 案卷顺颁即终局（无执行判定面）
     assert db.get_decree_dossier(did)["status"] == "closed"
     # 下一次结算读取新序（同 turn 重算即读新旨＝读端按当前在位键解析）
-    after = db.settle_province_tick("shaanxi")
+    after = settle_region_tick(db, "shaanxi")
     assert after.breakdown["实付分账"]["军饷"] < before.breakdown["实付分账"]["军饷"]
 
 def test_lifecycle_rejected_decree_zero_config_write(game):
@@ -1023,7 +1025,7 @@ def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
 
     db, state, content = game
     _pin_shortfall_board(db, "shaanxi")
-    result = db.settle_province_tick("shaanxi")
+    result = settle_region_tick(db, "shaanxi")
     db.conn.commit()
 
     # 桥同事务落痕：行集＝breakdown 两科目非零流量（零流量不写行）；本盘面
@@ -1035,9 +1037,10 @@ def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
         for claim in ("官俸欠", "宗禄欠") if abs(float(source[claim])) > 1e-9
     }
     assert expect_flows, "盘面应至少产生一笔非零官俸/宗禄欠流量"
+    # 批量生产桥会同推进其余明省（各自留痕）；本测试只核 shaanxi 的留痕。
     rows = db.conn.execute(
         "SELECT field, delta, turn, region_id, actor, origin_ref FROM region_logs "
-        "WHERE field LIKE 'settle_%' ORDER BY id"
+        "WHERE field LIKE 'settle_%' AND region_id='shaanxi' ORDER BY id"
     ).fetchall()
     assert {(r["field"], float(r["delta"])) for r in rows} == expect_flows
     assert all(r["turn"] == state.turn and r["region_id"] == "shaanxi" for r in rows)
@@ -1051,7 +1054,7 @@ def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
     try:
         rows2 = db2.conn.execute(
             "SELECT field, delta, turn, region_id, actor, origin_ref FROM region_logs "
-            "WHERE field LIKE 'settle_%' ORDER BY id"
+            "WHERE field LIKE 'settle_%' AND region_id='shaanxi' ORDER BY id"
         ).fetchall()
         assert {(r["field"], float(r["delta"])) for r in rows2} == expect_flows
     finally:

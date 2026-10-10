@@ -524,24 +524,27 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         office_type = infer_office_type_from_office(
             row["office"], row["office_type"], llm_config, use_llm=False
         )
-        from ming_sim.models import loads_persistent_json_list, loads_persistent_json_object
+        from ming_sim.models import loads_persistent_json_object, loads_persistent_name_list
 
-        aliases = loads_persistent_json_list(
-            row["aliases"], surface="characters.aliases",
-        )
-        personal_skills = loads_persistent_json_list(
+        aliases = loads_persistent_name_list(row["aliases"], surface="characters.aliases")
+        personal_skills = loads_persistent_name_list(
             row["personal_skills"], surface="characters.personal_skills",
         )
         seed_guilt = loads_persistent_json_object(
             row["seed_guilt"], surface="characters.seed_guilt",
         )
+        for guilt_key, guilt_value in seed_guilt.items():
+            if not isinstance(guilt_value, str):
+                raise ValueError(
+                    f"characters.seed_guilt[{guilt_key!r}] 须为字符串，得 {type(guilt_value).__name__}"
+                )
         characters[name] = Character(
             name=name,
             office=row["office"],
             office_type=office_type,
             faction=row["faction"],
-            aliases=[str(item) for item in aliases if str(item).strip()],
-            personal_skills=[str(item) for item in personal_skills if str(item).strip()],
+            aliases=aliases,
+            personal_skills=personal_skills,
             loyalty=int(row["loyalty"]),
             ability=int(row["ability"]),
             integrity=int(row["integrity"]),
@@ -565,7 +568,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             summary=row["summary"],
             identity=int(row["identity"]),
             intrigue=int(row["intrigue"]),
-            seed_guilt={str(key): str(value) for key, value in seed_guilt.items()},
+            seed_guilt=dict(seed_guilt),
             # 任所 thrives only on character_offices; restore into Character for
             # runtime projection (materials scope / travel gate / seat identity).
             office_region=str(row["office_region"] or "").strip(),

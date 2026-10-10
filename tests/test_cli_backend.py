@@ -23,21 +23,6 @@ def _cli_codex_cfg() -> LLMConfig:
         channel="cli", cli_runner="codex", cli_model="gpt-5.5",
     )
 
-def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
-    from ming_sim.db import canonical_secret_order_exclusions
-
-    content = game[2]
-    character = next(
-        ch for ch in content.characters.values() if getattr(ch, "aliases", None)
-    )
-    alias = character.aliases[0]
-    office = character.office_type
-    people, offices = canonical_secret_order_exclusions(
-        content, [alias], [office], "勿使玩家散文成为第二输入源",
-    )
-    assert people == [character.name]
-    assert offices == [office]
-
 # ── enrich_initiative_effects ──
 
 def test_enrich_army_parsed_and_normalized(monkeypatch):
@@ -218,14 +203,16 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     assert seen["runner"] == "codex" and seen["json_events"] is True
 
 
-def test_codex_final_text_handles_item_completed_shape():
-    assert cb._codex_final_text(
-        {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}
-    ) == "BODY"
-    assert cb._codex_final_text(
-        {"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}}
-    ) == ""
-    assert cb._codex_final_text({"type": "agent_message", "message": "TOP"}) == "TOP"
+@pytest.mark.parametrize("events,expected", [
+    ([{"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}], "BODY"),
+    ([{"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}},
+      {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}], "BODY"),
+    ([{"type": "agent_message", "message": "TOP"}], "TOP"),
+])
+def test_codex_json_stream_final_text_excludes_reasoning(monkeypatch, events, expected):
+    """codex --json 真入口：子进程边界替身吐事件行，正文只取 agent_message，reasoning 不入正文。"""
+    _capture_run(monkeypatch, _P(stdout="\n".join(json.dumps(e) for e in events) + "\n"))
+    assert "".join(cb._iter_cli_runner_text("codex", "PROMPT", json_events=True)) == expected
 
 
 @pytest.mark.parametrize(

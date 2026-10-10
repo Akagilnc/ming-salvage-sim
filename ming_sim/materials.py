@@ -9,7 +9,7 @@ live agent session.
 
 from __future__ import annotations
 
-from ming_sim.models import loads_persistent_json_list
+from ming_sim.models import loads_persistent_name_list
 
 import hashlib
 import json
@@ -142,17 +142,6 @@ def _resolve_inside(root: Path, rel: str) -> Path:
     except ValueError as exc:
         raise ValueError("材料路径越出目录") from exc
     return candidate
-
-
-def _materials_invocation_dir(db: Any, state: Any) -> Path:
-    from ming_sim.audience_night import get_open_night
-
-
-    night = get_open_night(db)
-    key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    return (
-        _materials_campaign_dir(db) / key / uuid.uuid4().hex
-    )
 
 
 class MaterialsRoot:
@@ -1748,8 +1737,7 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
 
 
 def _json_list_field(raw: object) -> list[str]:
-    value = loads_persistent_json_list(raw, surface="materials.json_list")
-    return [str(item) for item in value if str(item).strip()]
+    return loads_persistent_name_list(raw, surface="materials.json_list")
 
 
 def _character_projection_from_db_row(row: Any) -> Any:

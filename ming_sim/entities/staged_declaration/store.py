@@ -188,8 +188,9 @@ class StagedDeclarationStore:
             if not raw:
                 continue
             parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                questions.extend(parsed)
+            if not isinstance(parsed, list):
+                raise ValueError(f"staged_declaration.questions_json 须为数组，得 {type(parsed).__name__}")
+            questions.extend(parsed)
         return questions
 
     def forecast_text_for(self, decree_ref: str) -> str:
@@ -251,12 +252,16 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
     verdict = _load_optional_json(row, "verdict_json")
     questions = _load_optional_json(row, "questions_json")
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
+    if verdict is not None and not isinstance(verdict, dict):
+        raise ValueError(f"staged_declaration.verdict_json 须为对象，得 {type(verdict).__name__}")
+    if questions is not None and not isinstance(questions, list):
+        raise ValueError(f"staged_declaration.questions_json 须为数组，得 {type(questions).__name__}")
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=str(row["decree_ref"]),
         declaration=json.loads(row["declaration_json"] or "{}"),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
         visible_refs=json.loads(row["visible_refs_json"] or "{}"),
-        verdict=verdict if isinstance(verdict, dict) else None,
-        questions=questions if isinstance(questions, list) else None,
+        verdict=verdict,
+        questions=questions,
         forecast_text=None if forecast_text is None else str(forecast_text),
     )

@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from ming_sim.models import loads_persistent_json_list
+from ming_sim.models import loads_persistent_name_list
 
 import contextlib
 import json
@@ -202,16 +202,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _json_list(value: Any) -> List[Any]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        return loads_persistent_json_list(value, surface="audience_night.json_list")
-    return []
-
-
 def _row_dict(row: Any) -> Dict[str, Any]:
     if row is None:
         return {}
@@ -370,10 +360,10 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "night_id": int(raw["night_id"]),
             "seq": int(raw["seq"]),
             "order_key": None if ok is None else float(ok),
-            "person_names": [str(n) for n in _json_list(raw.get("person_names"))],
+            "person_names": loads_persistent_name_list(raw.get("person_names"), surface="story_ledger_entries.person_names"),
             "audibility": str(raw.get("audibility") or AUDIBILITY_PUBLIC),
             "body": str(raw.get("body") or ""),
-            "tags": [str(t) for t in _json_list(raw.get("tags"))],
+            "tags": loads_persistent_name_list(raw.get("tags"), surface="story_ledger_entries.tags"),
             "source_chat_turn_id": int(raw.get("source_chat_turn_id") or 0),
             "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
             "origin_ref": str(raw.get("origin_ref") or ""),
@@ -1262,7 +1252,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     ).fetchall()
     projected: List[Dict[str, Any]] = []
     for row in rows:
-        tags = json.loads(row["tags"] or "[]")
+        tags = loads_persistent_name_list(row["tags"], surface="story_ledger_entries.tags")
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:
             continue
         origin = next(
@@ -1270,7 +1260,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
              if str(tag).startswith(_SUMMON_ORIGIN_PREFIX)),
             "",
         )
-        names = json.loads(row["person_names"] or "[]")
+        names = loads_persistent_name_list(row["person_names"], surface="story_ledger_entries.person_names")
         if not origin or not names:
             continue
         person_name = str(names[0])
@@ -1370,7 +1360,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         ).fetchone()
         if row is None:
             continue
-        tags = json.loads(row["tags"] or "[]")
+        tags = loads_persistent_name_list(row["tags"], surface="story_ledger_entries.tags")
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
@@ -1531,7 +1521,7 @@ def update_summon_travel_tone(
     ).fetchone()
     if row is None:
         raise KeyError(f"传召账不存在：{entry_id}")
-    tags = [str(t) for t in json.loads(row["tags"] or "[]")]
+    tags = loads_persistent_name_list(row["tags"], surface="story_ledger_entries.tags")
     tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
     tags.append(_travel_tone_tag(tone))
     db.conn.execute(
@@ -1972,34 +1962,6 @@ def reproject_night_protagonist(db: Any, night_id: int) -> str:
 SCENE_RECAP_HEADER = "【殿上先前所闻】"
 
 
-def audience_scene_recap(
-    db: Any, person_name: str, *, night_id: Optional[int] = None,
-) -> str:
-    """连场组装：某人在场时段所闻的殿上公开对话，渲染为可读回顾块（#507 presence-aware）。
-
-    宣下一个不断场、前一位留殿侧侍立时，对话流按在场名单送入组装：侍立者补话可引用
-    其在场时段殿上公开对话（AC2 区间取数）。未在场者 / 无开夜 / 区间无公开对话 →
-    空串（AC3 负向：未在场者的组装输入不含殿内对话）。区间与可闻性判据复用
-    audible_entries_for（御前低语不流入、入殿前不闻），不另立第二套在场/可闻性真源。"""
-    name = str(person_name or "").strip()
-    if not name:
-        return ""
-    nid = night_id
-    if nid is None:
-        open_n = get_open_night(db)
-        if open_n is None:
-            return ""
-        nid = int(open_n["id"])
-    bodies: List[str] = []
-    for entry in audible_entries_for(db, int(nid), name):
-        body = str(entry.get("body") or "").strip()
-        if body:
-            bodies.append(body)
-    if not bodies:
-        return ""
-    return SCENE_RECAP_HEADER + "\n" + "\n".join(bodies)
-
-
 def _is_command_entry(entry: Dict[str, Any]) -> bool:
     """口令/框架账（发起/进出/收夜/常在员额）由引擎侧确定性写入、`source_chat_turn_id==0`；
     抽取账（`>0`）的 tags 是 LLM 开放叙事标签。引擎口令常量标（TAG_ENTER/TAG_EXIT…）
@@ -2067,8 +2029,8 @@ def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
         "body": str(raw.get("body") or ""),
         "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
         "origin_ref": str(raw.get("origin_ref") or ""),
-        "tags": [str(t) for t in _json_list(raw.get("tags"))],
-        "person_names": [str(n) for n in _json_list(raw.get("person_names"))],
+        "tags": loads_persistent_name_list(raw.get("tags"), surface="story_ledger_entries.tags"),
+        "person_names": loads_persistent_name_list(raw.get("person_names"), surface="story_ledger_entries.person_names"),
     }
 
 

@@ -1061,8 +1061,10 @@ def _attach_commission_escort(
     from ming_sim.db import GameDB
 
     existing = payload.get("participant_roster")
+    if existing is not None and not isinstance(existing, list):
+        raise ValueError(f"payload.participant_roster 须为数组，得 {type(existing).__name__}")
     payload["participant_roster"] = GameDB.merge_participant_roster_entries(
-        existing if isinstance(existing, list) else [],
+        existing or [],
         roster,
     )
     record: Dict[str, Any] = {
@@ -1102,10 +1104,12 @@ def _attach_commission_staging_fields(
         from ming_sim.db import GameDB
 
         existing = payload.get("participant_roster")
+        if existing is not None and not isinstance(existing, list):
+            raise ValueError(f"payload.participant_roster 须为数组，得 {type(existing).__name__}")
         # 新交办名单走既有严格参与人语义（ADR 0053／#1900 J19）：
         # 拒字符串兼容与缺档猜「知情」；完整条目 equality 合并不变。
         payload["participant_roster"] = GameDB.merge_participant_roster_entries(
-            existing if isinstance(existing, list) else [],
+            existing or [],
             roster,
         )
     elif lead and not isinstance(payload.get("participant_roster"), list):

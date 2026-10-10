@@ -34,6 +34,15 @@ from ming_sim.month_chain import build_secret_orders_supply_feed
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_score_extraction
 
+def _actual_progress_rows(db, dossier_id):
+    """#1504 实绩轨：读持久表按 turn,id 排序的全部行（断言持久状态，不经生产只读口）。"""
+    rows = db.conn.execute(
+        "SELECT * FROM dossier_actual_progress WHERE dossier_id=? ORDER BY turn, id",
+        (int(dossier_id),),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
     if investigation_target:
         sign = 1 if effect_sign is None else int(effect_sign)
@@ -313,7 +322,7 @@ def test_actual_progress_container_separate_from_reported_rail(game):
         did, state.turn, "在办", "臣称已有端绪", is_terminal=False,
     )
 
-    actual = db.list_dossier_actual_progress(did)
+    actual = _actual_progress_rows(db, did)
     reported = db.list_dossier_progress(did)
     assert len(actual) == 1
     assert actual[0]["units"] == 1.0
@@ -469,7 +478,7 @@ def test_offstage_minister_no_progress_no_world_effects(game, off_status):
     row = next(r for r in out if r["order_id"] == oid)
     assert row.get("skipped") is True
     assert db.sum_dossier_actual_progress_units(did) == 0.0
-    assert db.list_dossier_actual_progress(did) == []
+    assert _actual_progress_rows(db, did) == []
     assert int(state.metrics.get("内库", 0)) == before_neiku
 
 def test_missing_minister_row_no_progress(game):
@@ -507,14 +516,14 @@ def test_mid_month_restore_preserves_actual_progress(game):
         selections=[{"order_id": oid, "fidelity": "忠实"}],
         commit=True,
     )
-    before = db.list_dossier_actual_progress(did)
+    before = _actual_progress_rows(db, did)
     assert len(before) == 1 and before[0]["units"] == 1.0
 
     path = db.path
     db.close()
     db2 = type(db)(path, content)
     try:
-        restored = db2.list_dossier_actual_progress(did)
+        restored = _actual_progress_rows(db2, did)
         assert len(restored) == 1
         assert restored[0]["units"] == 1.0
         assert restored[0]["fidelity_state"] == "忠实"
@@ -572,7 +581,7 @@ def test_monthly_actual_progress_preserves_selected_fidelity_in_sqlite(game):
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row["fidelity"] == "忠实"
-    persisted = db.list_dossier_actual_progress(row["dossier_id"])
+    persisted = _actual_progress_rows(db, row["dossier_id"])
     assert persisted[-1]["fidelity_state"] == "忠实"
 
 def test_monthly_actual_does_not_invent_generic_world_package(game):
@@ -1473,7 +1482,7 @@ def test_4a_declaration_lands_actions_and_spoliation_through_month_chain(game):
     assert [(row["fact_key"], row["effect"]) for row in spoiled] == [(str(edge_id), "harder")]
     assert str(edge_id) in live_investigation_fact_keys(db, target)
     assert target in live_investigation_fact_keys(db, target)
-    rows = db.list_dossier_actual_progress(did)
+    rows = _actual_progress_rows(db, did)
     assert len(rows) == 1
     assert rows[-1]["units"] == investigation_lane_actual_units(db, did)
 
@@ -1862,7 +1871,7 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
         assert row["rejected"] is True
         assert row["invalid"] is True
         assert row["category"] == "invalid_enum"
-        assert db.list_dossier_actual_progress(did) == []
+        assert _actual_progress_rows(db, did) == []
         assert _lanes(db, oid)[key]["effort"] == 0.0
 
     # 合法零投入：显式 0 → 正常落账、无查获
@@ -1872,7 +1881,7 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
     row = next(r for r in out if r["order_id"] == oid)
     assert "rejected" not in row
     assert row["units"] == 0.0
-    assert len(db.list_dossier_actual_progress(did)) == 1
+    assert len(_actual_progress_rows(db, did)) == 1
 
 @pytest.mark.parametrize("bad", [{}, {"effort": "尽力"}, {"fidelity": "忠实"}])
 def test_invalid_declaration_stops_month_chain_and_marks_invalid(game, bad):
@@ -1906,7 +1915,7 @@ def test_invalid_declaration_stops_month_chain_and_marks_invalid(game, bad):
     assert chain.get("secret_orders_supply_invalid") is True
     assert (chain.get("call_failure") or {}).get("step") == "secret_orders_supply"
     # 本段不留半截实况行、不改实证
-    assert db.list_dossier_actual_progress(did) == []
+    assert _actual_progress_rows(db, did) == []
     assert _lanes(db, oid)[key]["effort"] == 0.0
     assert investigation_lane_actual_units(db, did) == 0.0
 
@@ -2670,7 +2679,7 @@ def test_n_month_deadline_yields_exactly_n_ticks(game):
         assert row.get("units") == 0.5
         ticks += 1
     assert ticks == n
-    assert len(db.list_dossier_actual_progress(did)) == n
+    assert len(_actual_progress_rows(db, did)) == n
     assert db.sum_dossier_actual_progress_units(did) == pytest.approx(0.5 * n)
     due = int(db.conn.execute(
         "SELECT due_turn FROM secret_orders WHERE id=?", (oid,)

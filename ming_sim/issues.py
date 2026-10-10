@@ -67,6 +67,7 @@ from ming_sim.models import (
     loads_effect_dict,
     loads_persistent_json_list,
     loads_persistent_json_object,
+    require_persistent_string_list,
 )
 
 from ming_sim.participant_roster import project_execution_liability_parties
@@ -508,7 +509,10 @@ def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     keys = row.keys() if hasattr(row, "keys") else []
     raw = row["stop_condition"] if "stop_condition" in keys else ""
     gate = loads_persistent_json_object(raw, surface="issues.stop_condition")
-    return {str(k): str(v) for k, v in gate.items()} if gate else {}
+    for key, cond in gate.items():
+        if not isinstance(cond, str):
+            raise ValueError(f"issues.stop_condition[{key!r}] 须为字符串，得 {type(cond).__name__}")
+    return dict(gate)
 
 
 def _commitment_remaining_from_gate(
@@ -556,12 +560,13 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
         payload = loads_persistent_json_object(
             row["metric_delta"], surface="issue_advances.metric_delta",
         )
-        progress = payload.get("commitment_progress") if isinstance(payload, dict) else None
-        if isinstance(progress, dict):
-            try:
-                return int(progress.get("paid_total") or 0)
-            except (TypeError, ValueError):
-                return 0
+        progress = payload.get("commitment_progress")
+        if progress is None:
+            continue
+        if not isinstance(progress, dict):
+            raise ValueError(f"commitment_progress 须为对象，得 {type(progress).__name__}")
+        paid = progress.get("paid_total")
+        return 0 if paid is None else int(paid)
     return 0
 
 
@@ -1255,11 +1260,9 @@ def _validate_fiscal_levy_share_meta(meta: Dict[str, object], region_id: str) ->
 
 
 def _fiscal_levy_mark_provisional(meta: Dict[str, object]) -> None:
-    raw = meta.get("provisional", [])
-    if isinstance(raw, list):
-        provisional = [str(item) for item in raw]
-    else:
-        provisional = []
+    provisional = require_persistent_string_list(
+        meta.get("provisional"), surface="fiscal_levy.settle_meta", field="provisional",
+    )
     seen = set(provisional)
     for key in sorted(_FISCAL_LEVY_PROVISIONAL_KEYS):
         if key not in seen:
@@ -6580,8 +6583,8 @@ def _apply_surcharge_decrees(
         if str(row["controlled_by"] or "") != "ming":
             _reject("missing_ref", f"surcharge_decrees 非明省不可加派：{region_id!r}")
             continue
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        fiscal = loads_persistent_json_object(row["fiscal"], surface=f"regions[{region_id}].fiscal")
+        settle = fiscal.get("settle")
         if not (isinstance(settle, dict) and isinstance(settle.get("st"), dict)
                 and isinstance(settle.get("p"), dict)):
             _reject(

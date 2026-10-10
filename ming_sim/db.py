@@ -2596,7 +2596,8 @@ class GameDB:
         touched = 0
         for row in self.conn.execute("SELECT id, fiscal FROM regions").fetchall():
             fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
-            old = int(fiscal.get(field, 0) or 0)
+            raw_old = fiscal.get(field)
+            old = 0 if raw_old is None else int(raw_old)
             if old <= 0:
                 continue
             new = max(0, round(old * ratio))
@@ -2611,30 +2612,6 @@ class GameDB:
         if touched and commit:
             self.conn.commit()
         return touched
-
-    def settle_province_tick(
-        self, region_id: str, actions: Optional[List[Dict[str, Any]]] = None
-    ):
-        """省级月度财政 settle_tick 的 DB 桥（#66 slice2）：读 regions.fiscal['settle'] 的
-        开账 st + 月参 p → 跑 settle_tick → 写回 new_st。返回 FiscalTickResult。
-
-        **港口锁**（fiscal_tick.py §港口锁 / ADR 0008）：settle_tick 对坏输入(ValueError)/
-        守恒破(FiscalConservationError) 一律 raise，异常在下方 UPDATE **之前**抛出 → FAIL
-        tick 绝不持久化（毒态不钉进存档）。本方法只写 conn、不自带 commit——提交交调用方
-        事务边界（slice3 的 applier.atomic 全有或全无）控制；异常上抛由其回滚。
-
-        settle_tick 纯读 st（不就地改），故无需深拷贝；new_st 是全新 dict，覆盖回 settle.st。
-        官民田/隐田（清丈重分类）只写进 settle.st，不同步顶层 registered_land/hidden_land。
-        """
-        row = self.conn.execute(
-            "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
-        ).fetchone()
-        if row is None:
-            raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
-        fiscal = loads_persistent_json_object(
-            row["fiscal"], surface=f"regions[{region_id}].fiscal",
-        )
-        return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
     def _current_settle_turn(self) -> int:
         """#653 override 期限判定用的当前绝对 turn（game_state 单行真源；无行=0＝永不到期）。"""
@@ -3271,18 +3248,6 @@ class GameDB:
         # #9/#1843：仅新档 fresh 校准；老档反推已退役。
         self._calibrate_faction_offsets(is_fresh_factions_seed)
         self.conn.commit()
-
-    def list_office_vacancies(self) -> List[Dict[str, object]]:
-        """Return the static督抚职位 view with current holders from characters."""
-        rows = self.conn.execute(
-            """
-            SELECT office_title, office_type, region_id, jurisdiction,
-                   holder_name, holder_office, holder_status
-            FROM office_vacancies
-            ORDER BY sort_order, office_title
-            """
-        ).fetchall()
-        return [dict(row) for row in rows]
 
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
         """Fresh-save army pay-source spine for #287 S1."""
@@ -7371,7 +7336,7 @@ class GameDB:
         data = loads_persistent_json_list(raw, surface="chat_messages.highlights_json")
         out: List[str] = []
         for index, item in enumerate(data):
-            if item is None or item == "":
+            if item == "":
                 continue
             if not isinstance(item, str):
                 raise ValueError(
@@ -7522,7 +7487,9 @@ class GameDB:
         if not raw:
             return {}
         data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            raise ValueError(f"回滚快照须为对象，得 {type(data).__name__}")
+        return data
 
     def _table_exists(self, table: str) -> bool:
         row = self.conn.execute(
@@ -8875,7 +8842,7 @@ class GameDB:
         if not rows:
             return []
 
-        from ming_sim.audience_night import _json_list, night_archive_metadata
+        from ming_sim.audience_night import night_archive_metadata
 
         night_ids = [int(row["id"]) for row in rows]
         placeholders = ",".join("?" for _ in night_ids)
@@ -8896,8 +8863,8 @@ class GameDB:
         turns_by_night: Dict[int, List[Dict[str, Any]]] = {night_id: [] for night_id in night_ids}
         for row in ledger_rows:
             ledgers_by_night[int(row["night_id"])].append({
-                "person_names": [str(name) for name in _json_list(row["person_names"])],
-                "tags": [str(tag) for tag in _json_list(row["tags"])],
+                "person_names": loads_persistent_name_list(row["person_names"], surface="story_ledger_entries.person_names"),
+                "tags": loads_persistent_name_list(row["tags"], surface="story_ledger_entries.tags"),
                 "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
             })
         for row in turn_rows:
@@ -12252,25 +12219,14 @@ class GameDB:
             # 不捕 KeyError：既存结构／代码故障不得冒充输入拒收。
             raise RosterInputError(str(exc)) from exc
         if added:
-            archive_keys: set[str] = set()
             raw_keys_row = self.conn.execute(
                 "SELECT office_archive_keys FROM decree_dossiers WHERE id=?",
                 (int(dossier_id),),
             ).fetchone()
-            raw_keys = (
-                raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None
-            ) or "[]"
-            try:
-                parsed_keys = json.loads(raw_keys)
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"office_archive_keys JSON 解析失败：dossier {int(dossier_id)}"
-                ) from exc
-            if not isinstance(parsed_keys, list):
-                raise ValueError(
-                    f"office_archive_keys 须为 JSON 数组：dossier {int(dossier_id)}"
-                )
-            archive_keys = {str(item) for item in parsed_keys}
+            archive_keys = set(loads_persistent_name_list(
+                raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None,
+                surface=f"decree_dossiers[{int(dossier_id)}].office_archive_keys",
+            ))
             if str(row["action_type"] or "") != "secret_order":
                 for item in added:
                     if str(item.get("tier") or "") != "主办":
@@ -14866,9 +14822,10 @@ class GameDB:
             "SELECT 1 FROM chat_turns WHERE id=?", (source_cid,),
         ).fetchone() is None:
             raise ValueError("背书来源对话轮不存在")
-        items = list(payload.get("endorsements") or [])
-        if not isinstance(items, list):
-            items = []
+        raw_endorsements = payload.get("endorsements")
+        if raw_endorsements is not None and not isinstance(raw_endorsements, list):
+            raise ValueError(f"endorsements 须为数组，得 {type(raw_endorsements).__name__}")
+        items = list(raw_endorsements or [])
         # 同轮同形同人去重（INSERT OR IGNORE 同语义）。
         key = (form, endorser_id, imperial, source_cid)
         kept = []
@@ -14902,7 +14859,9 @@ class GameDB:
         """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
         owns = self.owns_transaction() if commit else False
         raw_items = payload.get("endorsements") if isinstance(payload, Mapping) else None
-        if not isinstance(raw_items, list) or not raw_items:
+        if raw_items is not None and not isinstance(raw_items, list):
+            raise ValueError(f"endorsements 须为数组，得 {type(raw_items).__name__}")
+        if not raw_items:
             return []
         new_ids: List[int] = []
         for raw in raw_items:
@@ -15287,33 +15246,6 @@ class GameDB:
         if requested and normalized.get("dossier_action_type") != requested:
             raise ValueError("旨稿机械载荷不完整或非法，拒绝改草")
         return normalized
-
-    def clear_directive_needs_clarification(self, candidate_id: int) -> int:
-        """清某道 pending directive 的「待澄清」标（#502 L4）：皇帝下一句指明并准驳后，
-        含糊 episode 了结——被点名与其兄弟一并复位为普通 pending（未点名者重回「不回→默认同意」
-        通道）。返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(candidate_id),),
-        ).fetchone()
-        if row is None:
-            return 0
-        payload = self.parse_engine_payload_json(
-            row["payload_json"], surface="pending_actions.payload_json",
-        )
-        if "_needs_clarification" not in payload:
-            return int(candidate_id)
-        payload.pop("_needs_clarification", None)
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
-        )
-        self.conn.commit()
-        return int(candidate_id)
 
     def flag_directive_needs_clarification(self, candidate_id: int) -> int:
         """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
@@ -16238,57 +16170,6 @@ class GameDB:
         if owns_transaction:
             self.conn.commit()
         return int(cur.rowcount or 0)
-
-    def drop_pending_actions_for_minister(
-        self, turn: int, minister_name: str, kind_filter_exclude: Optional[str] = None,
-        action_ids: Optional[Iterable[int]] = None,
-    ) -> int:
-        """对话确认皇帝拒绝:丢弃该召对对象本回合尚未落库的暂存动作(删 pending 行)。
-        返回删除条数。只动该大臣、只动 pending(已 committed 不动)。
-        action_ids 非空=进一步只删指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）。
-        kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
-        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。
-        仍 inactive 的 office:<id> 传召 origin 随 pending 同步清（#672 颁前拒绝）。"""
-        owns_transaction = self.owns_transaction()
-        params: List[object] = [int(turn), str(minister_name)]
-        where = "turn=? AND minister_name=? AND status='pending'"
-        if action_ids is not None:
-            allowed_ids = [int(action_id) for action_id in action_ids]
-            if not allowed_ids:
-                return 0
-            placeholders = ",".join("?" for _ in allowed_ids)
-            where += f" AND id IN ({placeholders})"
-            params.extend(allowed_ids)
-        if kind_filter_exclude is not None:
-            where += " AND kind<>?"
-            params.append(str(kind_filter_exclude))
-        office_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='office'",
-                tuple(params),
-            ).fetchall()
-        ]
-        directive_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='directive'",
-                tuple(params),
-            ).fetchall()
-        ]
-        for pending_id in directive_ids:
-            self._discard_deleted_directive_forecast(pending_id)
-        cur = self.conn.execute(
-            f"DELETE FROM pending_actions WHERE {where}",
-            tuple(params),
-        )
-        if office_ids:
-            from ming_sim.audience_night import discard_inactive_office_summon
-            for pending_id in office_ids:
-                discard_inactive_office_summon(self, pending_id)
-        if owns_transaction:
-            self.conn.commit()
-        return cur.rowcount
 
     def discard_failed_secret_order_intents(self) -> int:
         """过回合前丢弃既有 failed secret-order intents（CONTEXT：未处理失败下达在过回合丢弃）。
@@ -18039,14 +17920,6 @@ class GameDB:
         }
 
 
-    def list_dossier_actual_progress(self, dossier_id: int) -> List[Dict[str, object]]:
-        """Read the #1504 actual-progress rail for one dossier (pair of record/sum)."""
-        rows = self.conn.execute(
-            "SELECT * FROM dossier_actual_progress WHERE dossier_id=? ORDER BY turn, id",
-            (int(dossier_id),),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
     def sum_dossier_actual_progress_units(self, dossier_id: int) -> float:
         row = self.conn.execute(
             "SELECT COALESCE(SUM(units), 0) AS total FROM dossier_actual_progress WHERE dossier_id=?",
@@ -18533,11 +18406,6 @@ class GameDB:
             str(record.get("body") or record.get("content") or ""),
             source_id or str(record.get("source_id") or ""), excluded_names, commit=commit,
         )
-
-    @staticmethod
-    def _is_audience_chat_shared_channel(kind: str = "", source_id: str = "") -> bool:
-        """召对 chat → shared-ledger channel (#883/#976)."""
-        return str(kind or "") == "audience" or str(source_id or "").startswith("chat_message:")
 
     def _delete_shared_knowledge_source_ids(
         self, source_ids: Iterable[str], *, commit: bool = True,

@@ -728,34 +728,39 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
     raw = payload.get(FACT_LANES_KEY)
     lanes: List[Dict[str, object]] = []
     seen: set[str] = set()
-    if isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, Mapping):
-                continue
-            key = str(item.get("fact_key") or "").strip()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            try:
-                effort = float(item.get("effort") or 0.0)
-            except (TypeError, ValueError):
-                effort = 0.0
-            try:
-                difficulty = float(item.get("difficulty") or 0.0)
-            except (TypeError, ValueError):
-                difficulty = 0.0
-            try:
-                months = int(item.get("months") or 0)
-            except (TypeError, ValueError):
-                months = 0
-            lanes.append({
-                "fact_key": key,
-                "effort": max(0.0, effort),
-                "difficulty": max(0.0, difficulty),
-                "months": max(0, months),
-                "mastered": bool(item.get("mastered")),
-            })
+    if raw is None:
+        return lanes
+    if not isinstance(raw, list):
+        raise ValueError(f"{FACT_LANES_KEY} 须为数组，得 {type(raw).__name__}")
+    for index, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"{FACT_LANES_KEY}[{index}] 须为对象，得 {type(item).__name__}")
+        key_raw = item.get("fact_key")
+        if not isinstance(key_raw, str) or not key_raw.strip():
+            raise ValueError(f"{FACT_LANES_KEY}[{index}].fact_key 须为非空字符串：{key_raw!r}")
+        key = key_raw.strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        lanes.append({
+            "fact_key": key,
+            "effort": max(0.0, _lane_number(item, "effort", float, index)),
+            "difficulty": max(0.0, _lane_number(item, "difficulty", float, index)),
+            "months": max(0, _lane_number(item, "months", int, index)),
+            "mastered": bool(item.get("mastered")),
+        })
     return lanes
+
+
+def _lane_number(item: Mapping[str, object], field: str, cast: type, index: int) -> float | int:
+    """fact_lanes 数值成员读口：缺省（None）为 0，坏值响亮失败，不回零。"""
+    value = item.get(field)
+    if value is None:
+        return cast(0)
+    try:
+        return cast(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{FACT_LANES_KEY}[{index}].{field} 非{cast.__name__}：{value!r}") from exc
 
 
 def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
@@ -809,7 +814,9 @@ def _append_investigation_log(
     """
     payload = _dossier_payload_map(db, dossier_id)
     raw = payload.get(key)
-    items = list(raw) if isinstance(raw, list) else []
+    if raw is not None and not isinstance(raw, list):
+        raise ValueError(f"{key} 须为数组，得 {type(raw).__name__}")
+    items = list(raw or [])
     items.append(dict(entry))
     payload[key] = items
     db.update_decree_dossier_payload(int(dossier_id), payload)
@@ -1032,8 +1039,10 @@ def record_investigation_source_clue(
         return  # 无指针的开案不是一条来源线索，不造
     payload = _dossier_payload_map(db, int(dossier_id))
     clues = payload.get(INVESTIGATION_CLUES_KEY)
-    if not isinstance(clues, list):
+    if clues is None:
         clues = []
+    elif not isinstance(clues, list):
+        raise ValueError(f"{INVESTIGATION_CLUES_KEY} 须为数组，得 {type(clues).__name__}")
     clues.append({
         "pending_action_id": 0,
         "origin_chat_message_ids": [],
@@ -1490,8 +1499,10 @@ def merge_investigation_confirmation(
     payload = _dossier_payload_map(db, did)
     turn = int(getattr(state, "turn", 0) or 0)
     sources = payload.get(INVESTIGATION_PROVENANCE_KEY)
-    if not isinstance(sources, list):
+    if sources is None:
         sources = []
+    elif not isinstance(sources, list):
+        raise ValueError(f"{INVESTIGATION_PROVENANCE_KEY} 须为数组，得 {type(sources).__name__}")
     sources.append({
         "pending_action_id": int(pending_action_id or 0),
         "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
@@ -1501,8 +1512,10 @@ def merge_investigation_confirmation(
     key = str(fact_key or "").strip()
     if key:
         clues = payload.get(INVESTIGATION_CLUES_KEY)
-        if not isinstance(clues, list):
+        if clues is None:
             clues = []
+        elif not isinstance(clues, list):
+            raise ValueError(f"{INVESTIGATION_CLUES_KEY} 须为数组，得 {type(clues).__name__}")
         clues.append({
             "pending_action_id": int(pending_action_id or 0),
             "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],

@@ -35,6 +35,21 @@ def clear_resolve_rows(db, turn):
     db.conn.commit()
 
 
+def settle_region_tick(db, region_id, actions=None):
+    """单省月度 settle：经生产批量桥 settle_ming_province_substrate_ticks 取本省结果；错误 fail-loud。"""
+    if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (region_id,)).fetchone() is None:
+        raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
+    outcomes = db.settle_ming_province_substrate_ticks(
+        {region_id: actions} if actions else None,
+    )
+    for outcome in outcomes:
+        if outcome.region_id == region_id:
+            if outcome.error is not None:
+                raise outcome.error
+            return outcome.result
+    raise ValueError(f"region {region_id!r} 无 settle 财政基座")
+
+
 @pytest.fixture(scope="session")
 def content() -> GameContent:
     c = GameContent.load()
