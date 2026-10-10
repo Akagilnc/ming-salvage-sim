@@ -509,7 +509,7 @@ def run_player_month_chain(
 
     try:
         if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
-            chain["cheat_directive"] = str(cheat_directive).strip()
+            chain["cheat_directive"] = str(cheat_directive)
             _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     except Exception as exc:
@@ -1008,7 +1008,7 @@ def _apply_deferred_disclosures(
     db: Any, state: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
 ) -> None:
     pending = chain.get("pending_disclosures") or []
-    from ming_sim.issues import record_secret_order_disclosure
+    from ming_sim.entities.secret_order.disclosure import record_secret_order_disclosure
     with atomic(db):
         for item in pending:
             order_id = int(item["order_id"])
@@ -1388,7 +1388,7 @@ def _run_month_drift(
     if chain.get("inertia_done") or not chain.get("world_committed"):
         return
     from ming_sim.situation_drift import apply_situation_monthly_drift
-    from ming_sim.issues import clear_gated_legacies
+    from ming_sim.entities.issue.legacy import clear_gated_legacies
     from ming_sim.due_review import apply_pending_due_reviews
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     from ming_sim.breach_plea import expire_breach_pleas_on_due, scan_and_write_breach_pleas

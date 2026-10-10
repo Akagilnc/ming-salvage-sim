@@ -121,7 +121,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Any) ->
         stopped = prohibition is not None
         if prohibition is not None:
             # The canonical prohibition owns the durable, idempotent rollback receipt.
-            from ming_sim.issues import neutralize_covert_fiscal_effects
+            from ming_sim.entities.fiscal.covert_neutralize import neutralize_covert_fiscal_effects
             neutralize_covert_fiscal_effects(
                 db, state, exposed_dossier_id=did,
                 prohibition_dossier_id=int(prohibition["id"]),

@@ -7140,9 +7140,8 @@ class GameDB:
         for item in list(phrases or []):
             if not isinstance(item, str):
                 continue
-            phrase = item.strip()
-            if phrase:
-                clean.append(phrase)
+            if item.strip():
+                clean.append(item)
         payload = json.dumps(clean, ensure_ascii=False)
         self.conn.execute(
             "UPDATE chat_messages SET highlights_json = ? WHERE id = ?",
@@ -14092,7 +14091,7 @@ class GameDB:
         Returns True when initiative landed and caller should continue to the
         shared executing/terminal transition.
         """
-        from ming_sim.issues import _normalize_commitment_kind
+        from ming_sim.entities.issue.records import _normalize_commitment_kind
         from ming_sim.settlement import SettlementContext, settle_delta
 
         from ming_sim.participant_roster import resolve_dossier_owner_name
@@ -17613,7 +17612,7 @@ class GameDB:
         commit: bool = True,
     ) -> int:
         """结案产生持续修正符。start_month=当前绝对月，duration_months=-1 为永久。
-        clear_gate 非空时：靠程序按 _gate_passed 判定消除（见 issues.clear_gated_legacies），与时长无关。"""
+        clear_gate 非空时：靠程序按 _gate_passed 判定消除（见 ming_sim.entities.issue.legacy.clear_gated_legacies），与时长无关。"""
         start_month = int(state.year) * 12 + int(state.period)
         cur = self.conn.execute(
             """INSERT INTO legacies

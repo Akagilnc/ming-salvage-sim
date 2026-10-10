@@ -22,6 +22,7 @@ import pytest
 from fastapi import HTTPException
 
 import ming_sim.issues as issues_mod
+import ming_sim.entities.issue.legacy as issue_legacy
 import web_app
 from ming_sim import audience_night as an
 from tests.conftest import open_hall_turn
@@ -49,7 +50,7 @@ def _open_db(path, content, *, first: bool):
     if first:
         db.seed_static_data()
         state = db.load_state()
-        issues_mod.sync_opening_legacies(db, state)
+        issue_legacy.sync_opening_legacies(db, state)
     else:
         state = db.load_state()
     return db, state

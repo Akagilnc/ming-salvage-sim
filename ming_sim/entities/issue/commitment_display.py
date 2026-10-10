@@ -17,7 +17,7 @@ def commitment_progress_payload(
     paid_this_month: int = 0,
     include_current_month: bool = False,
 ) -> Optional[Dict[str, object]]:
-    from ming_sim.issues import (
+    from ming_sim.entities.issue.records import (
         _commitment_gate_references_arrears,
         _commitment_remaining_from_gate,
         _commitment_stop_gate,
@@ -60,7 +60,7 @@ def _commitment_arrears_remaining_text(amount: object) -> str:
 
 
 def commitment_display_text(progress: Dict[str, object], row: sqlite3.Row) -> str:
-    from ming_sim.issues import (
+    from ming_sim.entities.issue.records import (
         _commitment_gate_references_arrears,
         _commitment_stop_gate,
         _monthly_ongoing_effects_has_work,
@@ -109,7 +109,7 @@ def commitment_timed_bar_value(progress: Dict[str, object], row: sqlite3.Row) ->
     Returns None for bar-driven (stop_gate), arrears, or passive (no ongoing effects) commitments.
     When non-None, bar = wall-clock months_elapsed / (end_turn - origin_turn) * 100, clamped 0-100.
     """
-    from ming_sim.issues import (
+    from ming_sim.entities.issue.records import (
         _commitment_stop_gate,
         _monthly_ongoing_effects_has_work,
     )

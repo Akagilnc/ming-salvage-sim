@@ -279,7 +279,6 @@ def compute_budget_lines(
     hub_income_lines, hub_expense_lines = _substrate_hub_budget_income_lines(
         db, state, project_missing=project_substrate_hub
     )
-    nk_huang = 0
     # #1366 军饷预算只陈列结算前拟拨事实：京运补与中央份额分开，
     # 均不受当月国库能力或未来转运损耗影响。
     rows = db.conn.execute(
@@ -319,10 +318,10 @@ def compute_budget_lines(
     budget["国库"]["income"].extend(hub_income_lines)
     budget["国库"]["expense"].extend(army_pay_lines)
     budget["国库"]["expense"].extend(hub_expense_lines)
-    # 皇庄＝fiscal_config 基准（开局校准月额）；没收藩田增量开局 0。
+    # 皇庄＝fiscal_config 基准（开局校准月额）。
     huang_base = round(int(cfg.get("皇庄_base", 20)) * cfg.get("皇庄_rate", 100) / 100)
     budget["内库"]["income"].append(
-        {"name": "皇庄", "amount": int(huang_base + nk_huang), "note": "皇庄月地租（基准+没收藩田增量）"}
+        {"name": "皇庄", "amount": int(huang_base), "note": "皇庄月地租（fiscal_config 基准）"}
     )
     for item in db.iter_budget_items():
         base_key = str(item["key"])

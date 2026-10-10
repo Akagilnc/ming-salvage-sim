@@ -25,14 +25,14 @@ from ming_sim.entities.economy.apply import _apply_economy_list
 from ming_sim.entities.metric.apply import ISSUE_METRIC_KEYS
 from ming_sim.flows import ISSUE_METRIC_LOCK_CAPS
 from ming_sim.strict_types import strict_int as _strict_int
-from ming_sim.issues import (
+from ming_sim.entities.issue.records import (
     _canonical_issue_origin,
     _commitment_arrears_gate_army_ids,
     _commitment_gate_references_arrears,
     _commitment_stop_gate,
-    _gate_passed,
     _monthly_ongoing_effects_has_work,
 )
+from ming_sim.issues import _gate_passed
 import ming_sim.entities.issue.commitment_display as commitment_display
 import ming_sim.entities.issue.effects as issue_effects
 from ming_sim.models import GameState, loads_effect_dict

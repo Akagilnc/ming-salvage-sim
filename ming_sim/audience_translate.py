@@ -385,7 +385,7 @@ def build_audience_translate_prompt(
     """
     said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
-    grounding = str(target_grounding or "").strip()
+    grounding = str(target_grounding or "")
     grounding_block = f"{grounding}\n" if grounding else ""
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"

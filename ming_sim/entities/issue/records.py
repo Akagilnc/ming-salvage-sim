@@ -1,0 +1,449 @@
+"""issue 立项/推进/承诺结算的写侧实现：由 issues.py 清算迁入（ADR 0150 决定 8）。"""
+
+from __future__ import annotations
+
+import ming_sim.issues as issues
+
+import json
+import re
+import sqlite3
+from typing import Dict, List, Optional
+
+from ming_sim.constants import (
+    GATE_TABLES,
+)
+from ming_sim.db import (
+    GameDB,
+)
+from ming_sim.strict_types import strict_int as _strict_int
+from ming_sim.models import Event, GameState, effect_dict_has_work, loads_effect_dict
+from ming_sim.entities.character.normalize import normalize_person_changes
+
+
+COMMITMENT_KIND_UNTIL_STOP = "until_stop"
+
+
+def _issue_condition_text(raw: object) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, (dict, list)):
+        return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
+    return str(raw)
+
+
+def _normalize_commitment_kind(raw: object) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {
+        COMMITMENT_KIND_UNTIL_STOP,
+        "until_condition",
+        "recurring_until",
+        "commitment",
+    }:
+        return COMMITMENT_KIND_UNTIL_STOP
+    return ""
+
+
+def _validate_commitment_stop_condition(
+    raw: object, state: GameState, db: GameDB
+) -> str:
+    from ming_sim.exceptions import DeclarationDataError
+
+    if not isinstance(raw, dict) or not raw:
+        raise DeclarationDataError("stop_condition 须为非空 dict")
+    for key, cond in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            raise DeclarationDataError(f"stop_condition key 非法：{key!r}")
+        key = key.strip()
+        if "." not in key or key.split(".", 1)[0] not in GATE_TABLES:
+            raise DeclarationDataError(f"stop_condition key 须带表前缀：{key!r}")
+        if not isinstance(cond, str) or not cond.strip():
+            raise DeclarationDataError(
+                f"stop_condition value 须把比较算符写在字符串 value 内：{cond!r}"
+            )
+        cond_text = cond.strip()
+        sm = re.match(r"^(==|!=|in=)\s*(.+)$", cond_text)
+        if sm and (
+            sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())
+        ):
+            if issues._eval_gate_key_str(key, db) is None:
+                raise DeclarationDataError(f"stop_condition key 无法寻址：{key!r}")
+            continue
+        if not re.match(r"^(>=|<=|>|<|==)\s*-?\d+$", cond_text):
+            raise DeclarationDataError(f"stop_condition value 非法：{cond!r}")
+        if issues._eval_gate_key(key, state.metrics, db) is None:
+            raise DeclarationDataError(f"stop_condition key 无法寻址：{key!r}")
+    return _issue_condition_text(raw)
+
+
+def _canonical_issue_origin(db: GameDB, row: sqlite3.Row) -> str:
+    """Resolve and authorize one parent issue origin before applying its children.
+
+    Propagate a stored origin_ref when it already authorizes (dossier:/affair:/
+    盘面自发). Otherwise follow the issue's affair pointer — ADR 0154: consequences
+    without a dossier point at the affair directly. Only true board-spontaneous
+    when neither parent is available. No dossier-only rewrite bridge.
+    """
+    stored_ref = str(row["origin_ref"] or "").strip()
+    if stored_ref and db.effect_origin_rejection(stored_ref) is None:
+        return stored_ref
+    affair_id = int(row["affair_id"] or 0)
+    if affair_id:
+        origin_ref = db.affairs.origin_ref(affair_id)
+    else:
+        origin_ref = "盘面自发"
+    rejection = db.effect_origin_rejection(origin_ref)
+    if rejection:
+        raise ValueError(
+            f"issue #{row['id']} canonical origin 非法：{rejection['reason']}"
+        )
+    return origin_ref
+
+
+def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
+    raw = row["stop_condition"] or ""
+    if not raw:
+        return {}
+    gate = json.loads(str(raw))
+    if not isinstance(gate, dict):
+        raise ValueError("持久化停止条件须为对象")
+    return gate
+
+
+def _commitment_remaining_from_gate(
+    gate: Dict[str, str],
+    state: GameState,
+    db: GameDB,
+) -> Optional[float]:
+    remaining = 0.0
+    found = False
+    for key, cond in gate.items():
+        cond_text = str(cond or "").strip()
+        m = re.match(r"^(>=|<=|>|<|==)\s*(-?\d+)$", cond_text)
+        if not m:
+            continue
+        val = issues._eval_gate_key(str(key), state.metrics, db)
+        if val is None:
+            continue
+        try:
+            val_num = float(val)
+        except (TypeError, ValueError):
+            continue
+        op, target = m.group(1), int(m.group(2))
+        if op == "<=":
+            need = max(0.0, val_num - target)
+        elif op == "<":
+            need = 0.0 if val_num < target else float(int(val_num - target) + 1)
+        elif op == ">=":
+            need = max(0.0, target - val_num)
+        elif op == ">":
+            need = 0.0 if val_num > target else float(int(target - val_num) + 1)
+        else:
+            need = abs(val_num - target)
+        remaining += need
+        found = True
+    return remaining if found else None
+
+
+def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
+    rows = db.conn.execute(
+        "SELECT metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC",
+        (issue_id,),
+    ).fetchall()
+    for row in rows:
+        payload = json.loads(str(row["metric_delta"] or "{}"))
+        if not isinstance(payload, dict):
+            raise ValueError("持久化局势推进后果须为对象")
+        progress = payload.get("commitment_progress")
+        if progress is not None:
+            if not isinstance(progress, dict):
+                raise ValueError("持久化承诺推进须为对象")
+            raw_total = progress.get("paid_total", 0)
+            return _strict_int(0 if raw_total is None else raw_total)
+    return 0
+
+
+def _commitment_gate_references_arrears(row: sqlite3.Row) -> bool:
+    return any(".arrears" in str(key) for key in _commitment_stop_gate(row))
+
+
+def _commitment_arrears_gate_army_ids(row: sqlite3.Row) -> List[str]:
+    ids: List[str] = []
+    for key in _commitment_stop_gate(row):
+        text = str(key)
+        match = re.fullmatch(r"army\.([^.]+)\.arrears(?:\.sum)?", text)
+        if not match:
+            continue
+        for army_id in match.group(1).split("|"):
+            army_id = army_id.strip()
+            if army_id and army_id not in ids:
+                ids.append(army_id)
+    return ids
+
+
+def _monthly_person_rating_changes(
+    effect: Dict[str, object],
+) -> List[Dict[str, object]]:
+    raw_changes: List[Dict[str, object]] = []
+    for key in ("人物变更",):
+        raw = effect.get(key)
+        if isinstance(raw, list):
+            raw_changes.extend(item for item in raw if isinstance(item, dict))
+    changes = [
+        item
+        for item in normalize_person_changes({"人物变更": raw_changes})
+        if isinstance(item, dict)
+        and str(item.get("动作") or "").strip() == "评定"
+        and not isinstance(item.get("loyalty"), bool)
+        and isinstance(item.get("loyalty"), int)
+        and int(item.get("loyalty") or 0) != 0
+    ]
+    return changes
+
+
+def _invalid_monthly_person_rating_reason(effect: Dict[str, object]) -> str:
+    for key in ("人物变更",):
+        raw = effect.get(key)
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("人物") or "").strip()
+            action = str(item.get("动作") or item.get("action") or "").strip()
+            if not name or action != "评定":
+                continue
+            loyalty = item.get("loyalty")
+            if (
+                isinstance(loyalty, bool)
+                or not isinstance(loyalty, int)
+                or loyalty == 0
+            ):
+                return f"{key}.评定 loyalty 须为非零整数增量"
+    return ""
+
+
+def _person_change_has_unsupported_monthly_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("人物") or "").strip()
+        action = str(item.get("动作") or item.get("action") or "").strip()
+        if name and action and action != "评定":
+            return True
+    return False
+
+
+def _unsupported_monthly_ongoing_fields(effect: Dict[str, object]) -> List[str]:
+    unsupported: List[str] = []
+    for key in (
+        "buildings",
+        "new_armies",
+        "power_renames",
+        "legacy",
+    ):
+        if effect_dict_has_work({key: effect.get(key)}):
+            unsupported.append(key)
+    for key in ("人物变更",):
+        if _person_change_has_unsupported_monthly_work(effect.get(key)):
+            unsupported.append(f"{key}(月度仅支持评定)")
+    return unsupported
+
+
+def _monthly_ongoing_effects_has_work(raw: object) -> bool:
+    effect = loads_effect_dict(raw)
+    if not effect:
+        return False
+    checks = (
+        effect_dict_has_work({"metrics": effect.get("metrics")}),
+        effect_dict_has_work({"economy": effect.get("economy")}),
+        effect_dict_has_work({"factions": effect.get("factions")}),
+        effect_dict_has_work({"class_delta": effect.get("class_delta")}),
+        effect_dict_has_work({"region_delta": effect.get("region_delta")}),
+        effect_dict_has_work({"army_delta": effect.get("army_delta")}),
+        effect_dict_has_work({"power_updates": effect.get("power_updates")}),
+        bool(_monthly_person_rating_changes(effect)),
+    )
+    return any(checks)
+
+
+def _ack_due_commitment_issue(
+    db: GameDB,
+    state: GameState,
+    row: sqlite3.Row,
+    *,
+    narrative: str = "",
+    commit: bool = True,
+) -> sqlite3.Row:
+    issue_id = int(row["id"])
+    from_value = int(row["bar_value"])
+    summary = narrative or "到期待裁承诺已由皇帝裁决确认。"
+    db.conn.execute(
+        """
+        UPDATE issues SET status='dropped', resolution_summary=?,
+                          closed_turn=?, last_advance_turn=?,
+                          updated_at=CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (summary, state.turn, state.turn, issue_id),
+    )
+    db.conn.execute(
+        """
+        INSERT INTO issue_advances (
+            issue_id, turn, trigger_kind, delta_bar,
+            from_value, to_value, narrative, metric_delta
+        ) VALUES (?, ?, 'commitment_ack', 0, ?, ?, ?, '{}')
+        """,
+        (issue_id, state.turn, from_value, from_value, summary),
+    )
+    if commit:
+        db.conn.commit()
+    return db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+
+
+def event_to_issue(
+    db: GameDB, state: GameState, ev: Event, *, commit: bool = True
+) -> Optional[int]:
+    """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。供推演判定触发后调用。
+
+    去重分两类：
+    - 无 trigger_gate（开局局势）：查任意状态同源 issue，立过则永不重立。
+    - 有 trigger_gate（条件触发危机）：只查 active 同源 issue，结案/撤销后 gate 再达标可重新触发。
+    """
+    if ev.trigger_gate:
+        if db.find_active_issue_by_origin("event_pool", ev.id) is not None:
+            return None
+    else:
+        if db.find_any_issue_by_origin("event_pool", ev.id) is not None:
+            return None
+    # 初值由 severity 推一个偏中性的 bar
+    bar = max(20, min(60, 50 - int(ev.severity / 5)))
+    # 默认 ongoing + inertia 五档（+10/+5/0/-5/-10），按 kind 取
+    ongoing: Dict[str, object] = {}
+    inertia = -5
+    # 终结一锤子永久数值：达成（bar→100）落 effect_on_resolve，崩坏（bar→0 或 LLM 判失败）落
+    # effect_on_fail。与 ongoing 过程效果区分——过程是每月漂移，终结是定局后的永久民心/皇威增减。
+    polarity = (
+        "neg"  # neg=负面危机（平息回血/崩坏重创）；pos=正面机遇（把握加成/错失轻微）
+    )
+    # 5 个原 metric（边防/民变/党争/执行/瞒报）已废除，ongoing_effects 按 kind 改用
+    # 民心/皇威 或留空让 LLM 在推进时自定。结构性影响由 region/army/external/class delta 承担。
+    if ev.kind in ("天灾", "灾情", "饥荒"):
+        ongoing = {
+            "metrics": {"民心": -2},
+            "economy": [
+                {
+                    "account": "国库",
+                    "delta": -8,
+                    "category": "赈济损耗",
+                    "reason": ev.title,
+                }
+            ],
+        }
+        inertia = -10
+    elif ev.kind in ("人祸", "兵变", "流寇", "民变", "抗税"):
+        ongoing = {"metrics": {"民心": -2}}
+        inertia = -10
+    elif ev.kind in ("外族", "边事"):
+        ongoing = {"metrics": {"皇威": -1}}
+        inertia = -5
+    elif ev.kind in ("党争", "朝议"):
+        ongoing = {}
+        inertia = -5
+    elif ev.kind in ("丰收", "祥瑞", "民和"):
+        ongoing = {"metrics": {"民心": 2}}
+        inertia = +10
+        polarity = "pos"
+    elif ev.kind in ("友邦", "归附", "盟约"):
+        ongoing = {"metrics": {"皇威": 1}}
+        inertia = +5
+        polarity = "pos"
+    elif ev.kind in ("良策", "试点", "献宝", "科技"):
+        inertia = +5
+        polarity = "pos"
+    elif ev.kind in ("战机", "敌乱"):
+        ongoing = {"metrics": {"皇威": 1}}
+        inertia = +10
+        polarity = "pos"
+    # 终结效果真源在 situation_drift（#1901 局势漂移腿）；此处直接取，不另造转接壳。
+    from ming_sim.situation_drift import situation_terminal_effects
+
+    effect_resolve, effect_fail = situation_terminal_effects(
+        ev.kind, int(ev.severity), polarity
+    )
+    # 精调字段优先：合并自 opening_crises 的手调危机带 bar/ongoing/effect/meaning，直接用其值；
+    # 缺省（0/空）则用上面按 severity/kind 推导的默认。
+    if ev.bar_value:
+        bar = ev.bar_value
+    if ev.ongoing_effects:
+        ongoing = ev.ongoing_effects
+    if ev.issue_inertia:
+        inertia = ev.issue_inertia
+    if ev.effect_on_resolve:
+        effect_resolve = ev.effect_on_resolve
+    if ev.effect_on_fail:
+        effect_fail = ev.effect_on_fail
+    # insert 的代码/DB 真异常上抛（ADR 0008 决定1 / ADR 0005 fail-loud），与 decree 路径
+    # （apply_issue_tracker_output 的 new_issues 段）一致；旧 `except Exception: WARN; return None`
+    # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
+    # （cmr ni r7 codex high）。两种 None 来源已在上方分开：幂等去重经 find_*_by_origin 在此 try
+    # 之外 early-return None（正常跳过），故此处无需也不应再兜真异常。
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title=ev.title,
+        origin_kind="event_pool",
+        origin_ref=ev.id,
+        bar_value=bar,
+        bar_good_meaning=ev.bar_good_meaning or "已平",
+        bar_bad_meaning=ev.bar_bad_meaning or "失控",
+        inertia=inertia,
+        stage_text=ev.stage_text or ev.summary,
+        severity=int(ev.severity),
+        region_hint=ev.region_hint,
+        faction_hint=",".join(ev.interests[:2]),
+        tags=ev.issue_tags or [ev.kind],
+        ongoing_effects=ongoing,
+        cancellable="never",
+        effect_on_resolve=effect_resolve,
+        effect_on_fail=effect_fail,
+        resolve_condition=ev.resolve_condition,
+        fail_condition=ev.fail_condition,
+        commit=False,
+    )
+    db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
+    issues.apply_event_cascading_invalidations(state, db, commit=False)
+    if commit:
+        db.conn.commit()
+    return issue_id
+
+
+def _normalize_cancellable(raw: object) -> str:
+    """LLM 偶发臆造 cancellable 值（by_policy 之类），归一到合法白名单。"""
+    val = str(raw or "").strip().lower()
+    if val in ("decree", "never", "by_progress"):
+        return val
+    # 常见臆造映射
+    if val in ("by_policy", "policy"):
+        return "decree"
+    if val in ("none", "no", "false"):
+        return "never"
+    if val in ("yes", "true", "auto"):
+        return "by_progress"
+    return "by_progress"  # 默认
+
+
+def _compute_inertia(ni: Dict[str, object]) -> int:
+    """从 expected_months 算 inertia；兼容旧 inertia 直接填的写法。整数字段用 _strict_int 严格转换
+    （拒 bool/float/非数/inf/nan，与 new_issues 其它整数字段一致，cmr ni r6 codex）——脏值抛
+    ValueError/OverflowError，由唯一调用方 apply_issue_tracker_output 的预校验 try 拒整项。"""
+    em_raw = ni.get("expected_months")
+    if em_raw is not None:
+        em = _strict_int(em_raw)  # bool/float（含 inf/nan）/非数 → ValueError
+        if em != 0:
+            return max(-10, min(10, round(100 / em)))
+    legacy = ni.get("inertia")
+    return max(-10, min(10, _strict_int(0 if legacy is None else legacy)))

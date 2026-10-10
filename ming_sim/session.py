@@ -56,7 +56,7 @@ from ming_sim.decree import (
     write_decree_with_agno,
 )
 from ming_sim.issues import bind_content as _bind_issues
-from ming_sim.issues import sync_opening_legacies
+from ming_sim.entities.issue.legacy import sync_opening_legacies
 from ming_sim.audience_night import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
@@ -2062,8 +2062,8 @@ class GameSession:
                 raise ValueError("deliberate LLM 意愿须为 object")
             title = str(obj.get("title") or "")
             body = str(obj.get("body") or "")
-            stance = str(obj.get("stance") or "").strip()
-            if not (title.strip() and body.strip() and stance):
+            stance = str(obj.get("stance") or "")
+            if not (title.strip() and body.strip() and stance.strip()):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
             # shape 初检；身份合法性在 apply 事务内再核（整批零写）
             supporters = obj.get("supporter_ids", [])

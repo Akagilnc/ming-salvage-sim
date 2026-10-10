@@ -299,10 +299,9 @@ def _append_this_decree_escort_grounding(
         f"dossier\t{token}\t{kind}:{target_id}\t本旨"
         + ("\t自带押解" if declared else "")
     )
-    body = grounding.rstrip("\n")
-    if not body:
+    if not grounding.strip():
         return extra + "\n"
-    return body + "\n" + extra + "\n"
+    return grounding + "\n" + extra + "\n"
 
 
 def _frozen_effect_refs(
@@ -362,7 +361,7 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
                 transport_policy=audience_transport_policy(),
             )
         else:
-            raw = decree.stub_promulgation_verdicts([candidate], session.state)
+            raw = decree.stub_promulgation_verdicts([candidate])
         verdicts = decree.validate_promulgation_verdicts(
             raw, [candidate], session.db, prepared_context=snapshot["context"],
         )

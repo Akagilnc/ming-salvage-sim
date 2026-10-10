@@ -40,7 +40,7 @@ def apply_dossier_participant_items(
             character_id = str(item.get("character_id") or "").strip()
             delegator_id = str(item.get("delegator_id") or "").strip()
             tier = str(item.get("tier") or "").strip()
-            role = str(item.get("role") or "").strip()
+            role = str(item.get("role") or "")
             if not character_id:
                 raise ValueError("追加参与人物不能为空")
             if tier not in {"主办", "协办", "知情"}:

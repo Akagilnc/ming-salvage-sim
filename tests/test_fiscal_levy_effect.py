@@ -5,7 +5,8 @@ import pytest
 
 from ming_sim.decree import pre_settle
 from ming_sim.exceptions import SettlementAbort
-from ming_sim.issues import apply_historical_fiscal_rates
+import ming_sim.entities.fiscal.levy as fiscal_levy
+from ming_sim.entities.fiscal.levy import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 from ming_sim.models import Event
 
@@ -52,7 +53,8 @@ def _emperor_decides(db, state, *event_labels):
     结局（旧 staged 路径把这类行暂存到 window 之后才消费，等于替皇帝预批一疏）。
     跳过而非兜底写账，测试据此按年断言哪几项在征。
     """
-    from ming_sim.issues import _event_window_open, _fiscal_levy_event_by_id
+    from ming_sim.entities.fiscal.levy import _fiscal_levy_event_by_id
+    from ming_sim.issues import _event_window_open
 
     for event_id, label in event_labels:
         event = _fiscal_levy_event_by_id(event_id)
@@ -280,7 +282,7 @@ def test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已准"))
     before_huguang = _settle_payload(db, "huguang")["p"]["三饷应征"]
     msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    monkeypatch.setattr(fiscal_levy, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute("UPDATE regions SET fiscal = ? WHERE id = ?", ("{bad", "shaanxi"))
     db.conn.commit()
 
@@ -312,7 +314,7 @@ def test_fiscal_levy_skips_bad_settle_shape_without_blocking_other_regions(
     else:
         fiscal["settle"]["st"]["官民田"] = []
     msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    monkeypatch.setattr(fiscal_levy, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
@@ -387,7 +389,7 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, mo
     )
     fiscal["settle"]["st"]["官民田"] = []
     msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    monkeypatch.setattr(fiscal_levy, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
@@ -441,7 +443,7 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
         fiscal["settle"]["st"] = []
     else:
         fiscal["settle"] = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: None)
+    monkeypatch.setattr(fiscal_levy, "tlog", lambda msg: None)
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
@@ -490,7 +492,7 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     fiscal = json.loads(original_shaanxi_fiscal)
     fiscal["settle"].setdefault("_meta", {})[bad_meta_key] = []
     msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    monkeypatch.setattr(fiscal_levy, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),

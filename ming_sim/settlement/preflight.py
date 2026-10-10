@@ -717,10 +717,10 @@ def _preflight_declared_event_groups(
     rejected: dict[str, str] = {}
     pseudo_event = Event(id="season", title="月末整体推演", kind="月末", summary="",
                          urgency=0, severity=0, credibility=100, interests=[], audiences=[])
+    from ming_sim.entities.fiscal.levy import _fiscal_levy_normalized_terminal_reason_or_abort
     from ming_sim.issues import (
         FISCAL_LEVY_EVENT_CATEGORY,
         _event_outcome_label,
-        _fiscal_levy_normalized_terminal_reason_or_abort,
         _merge_first_event_outcome,
         petition_outcome_is_admissible,
     )

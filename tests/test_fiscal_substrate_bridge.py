@@ -29,7 +29,7 @@ from ming_sim.db import GameDB
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.fiscal_tick import settle_tick
 from ming_sim.army_pay import army_needed
-from ming_sim.issues import sync_opening_legacies
+from ming_sim.entities.issue.legacy import sync_opening_legacies
 from ming_sim.models import TurnPhase
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
 

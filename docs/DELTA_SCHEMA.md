@@ -1,6 +1,6 @@
 # Delta Schema
 
-**真相源**：`ming_sim/simulation.py`（`DECLARATION_EFFECT_FIELDS`、`ITEM_FIELD_ALIASES`、`_canonical_item_fields`、`read_beyond_intent_raw`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
+**真相源**：`ming_sim/simulation.py`（`DECLARATION_EFFECT_FIELDS`、`ITEM_FIELD_ALIASES`、`_canonical_item_fields`、`read_beyond_intent_raw`）+ `ming_sim/entities/fiscal/delta_section.py` / `ming_sim/entities/issue/delta_section.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
 用途：过月逐段声明由 `declaration_dispatch` 交 `settlement.settle_delta` 落库；下文记录效果字段约束。**分层校验（ADR 0015 r4 终态）**：顶层非 dict（连 section 都拆不出）才整份重产；未知顶层 key＝可拆 section → 按段拒收留痕，其余 section 照落，**不整份退**；已知 section 内值/项不合法逐项拒收留痕。必须查表，不要凭"我以为"。
 产出前自查顶层字段集（与 `DECLARATION_EFFECT_FIELDS` 对齐）：未知 key 不再响亮中止，但会被整段拒收留痕、白产一段——别指望守门人帮忙猜拼写。

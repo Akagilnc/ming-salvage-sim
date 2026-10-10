@@ -43,7 +43,8 @@ def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
     只列事件账里已有请旨答复、终态仍空的事项。到期但尚未上疏的事项不在此列，
     转译器不得把它们写成已批。不声明结局即留中，引擎不写终态。只供事实，不代模型判断。
     """
-    from ming_sim.issues import _fiscal_levy_event_by_id, petition_outcome_is_admissible
+    from ming_sim.entities.fiscal.levy import _fiscal_levy_event_by_id
+    from ming_sim.issues import petition_outcome_is_admissible
 
     out: list[dict[str, object]] = []
     for row in db.list_event_petition_records():
@@ -108,7 +109,7 @@ MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
 
 def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
     """一段一份 C0 声明；不套召对轮次语义，也不按 section 拆多次调用。"""
-    grounding = str(request.target_grounding or "").strip()
+    grounding = str(request.target_grounding or "")
     grounding_block = f"{grounding}\n" if grounding else ""
     candidates = request.candidates
     return (

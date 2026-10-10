@@ -2561,7 +2561,6 @@ class WebGame:
         self,
         *,
         pending_ticket: Optional[WriteTicket] = None,
-        owns_pending: bool = False,
     ) -> None:
         """重开补跑（ADR 0036 / #1842）：已持久化回话但转译未承接 → 补跑转译，不回滚对话。
 
@@ -2569,7 +2568,6 @@ class WebGame:
         **永不进启动致命路径**。在后台线程跑，不阻塞存档加载。写经已领票据 seam（禁裸 gate）。
         #1353：spawn 路票据由 spawner finally 归还；本函数不归还交接票（complete 幂等保直接调用钉）。
         """
-        del owns_pending
         try:
             if pending_ticket is None:
                 return

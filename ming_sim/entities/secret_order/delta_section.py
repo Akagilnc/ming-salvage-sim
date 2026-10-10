@@ -18,7 +18,7 @@ from ming_sim.applier import SectionResult
 
 def apply(run):
     from ming_sim.strict_types import _parse_sqlite_id
-    from ming_sim.issues import record_secret_order_disclosure
+    from ming_sim.entities.secret_order.disclosure import record_secret_order_disclosure
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []

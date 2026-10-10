@@ -1787,8 +1787,8 @@ def build_participant_correction_feedback(
         f"请改正为名册中陛下所指之人的正确规范名（须仍是同一人）；"
         f"不得擅自除去或另换他人。\n"
     )
-    facts = str(roster_facts or "").strip()
-    if facts:
+    facts = str(roster_facts or "")
+    if facts.strip():
         block += facts if facts.endswith("\n") else facts + "\n"
     return block
 
@@ -1847,8 +1847,8 @@ def compose_unknown_participant_inworld_report(
     """
     cleaned = _normalize_unknown_participant_names(names)
     if voice == "minister":
-        role = str(speaker_role or "").strip()
-        if not role:
+        role = str(speaker_role or "")
+        if not role.strip():
             name = str(speaker_name or "").strip()
             role = f"大臣{name}" if name else "大臣"
     else:

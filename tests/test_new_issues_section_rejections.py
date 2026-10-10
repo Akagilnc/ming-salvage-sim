@@ -14,6 +14,7 @@ import json
 import pytest
 
 import ming_sim.issues as I
+import ming_sim.entities.issue.records as issue_records
 from ming_sim.models import Event
 
 
@@ -323,7 +324,7 @@ def test_event_to_issue_insert_exception_propagates(read_game, monkeypatch):
 
     monkeypatch.setattr(type(db), "insert_issue", _boom)
     with pytest.raises(RuntimeError):
-        I.event_to_issue(db, state, ev)
+        issue_records.event_to_issue(db, state, ev)
 
 
 def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
@@ -353,9 +354,9 @@ def test_event_to_issue_duplicate_returns_none_not_raise(game):
     # try 外的去重 early-return None（正常跳过），绝不抛、不重立（否则 fix 错把幂等当真异常）。
     eid = _pick_event_pool_id(db)
     ev = I._ctx().event_by_id[eid]
-    first = I.event_to_issue(db, state, ev)
+    first = issue_records.event_to_issue(db, state, ev)
     assert first is not None, "首次触发应立项"
-    again = I.event_to_issue(db, state, ev)
+    again = issue_records.event_to_issue(db, state, ev)
     assert again is None, "同源事件重复触发应幂等返回 None，不抛不重立"
 
 

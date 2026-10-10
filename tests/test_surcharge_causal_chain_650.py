@@ -20,7 +20,7 @@ from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.exceptions import SettlementAbort
-from ming_sim.issues import apply_historical_fiscal_rates
+from ming_sim.entities.fiscal.levy import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view

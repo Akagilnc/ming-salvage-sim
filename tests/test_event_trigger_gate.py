@@ -15,6 +15,7 @@ from contextlib import contextmanager
 import pytest
 
 from ming_sim import issues
+import ming_sim.entities.issue.records as issue_records
 from ming_sim.models import Event
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
@@ -741,7 +742,7 @@ def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, mon
         calls.append((ev_arg.id, commit))
         return 999
 
-    monkeypatch.setattr(issues, "event_to_issue", fake_event_to_issue)
+    monkeypatch.setattr(issue_records, "event_to_issue", fake_event_to_issue)
     content.events.append(ev)
     try:
         triggered = issues.auto_trigger_seed_issues(state, db)

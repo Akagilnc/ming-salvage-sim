@@ -16,6 +16,7 @@ import pytest
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content as ctx_bind
 import ming_sim.issues as issues_mod
+import ming_sim.entities.issue.legacy as issue_legacy
 from ming_sim.db import GameDB
 
 # 全新库 load_state 只 seed 危机/账本/开局公共见闻，不 seed powers/完整军政盘面（那些另处加载）。
@@ -37,7 +38,7 @@ def _seed_opening_db(path: str, content) -> None:
     try:
         db.seed_static_data()
         state = db.load_state()
-        issues_mod.sync_opening_legacies(db, state)
+        issue_legacy.sync_opening_legacies(db, state)
     finally:
         db.close()
 

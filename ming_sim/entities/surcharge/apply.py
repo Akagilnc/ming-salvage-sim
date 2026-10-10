@@ -25,7 +25,7 @@ def _apply_surcharge_decrees(
     canonical 段形＝list，每项 {region_id, monthly_amount, reason?, origin_ref}：
     monthly_amount 为月额增量（万两/月，带符号——正＝加派累加，负＝停征/蠲免），
     落在 regions.fiscal.settle._meta「加派基线」上（与 #649 饷率 seed 同址，
-    钳制 ≥0）。钱面由 _apply_fiscal_levy_targets 把
+    钳制 ≥0）。钱面由 ming_sim.entities.fiscal.levy._apply_fiscal_levy_targets 把
     基线折入三饷应征/起运定额（明选有明账，公开代价＝真征收）；民面由
     _apply_levy_driven_transfers 按账机械入池。无旨不入账：段空＝账不动。
 

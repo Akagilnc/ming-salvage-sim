@@ -65,7 +65,8 @@ export function useEdictActions({
 
   const saveDirective = async (directive: Directive) => {
     if (!editingDirectiveText.trim()) return;
-    const text = editingDirectiveText.trim();
+    // 旨文是自由正文：判空观察副本，提交与卡片传原串。
+    const text = editingDirectiveText;
     const ownership = ownershipRef.current;
     const localKey = `save-${directive.id}-${++localSeq.current}`;
     beginCardRequest({

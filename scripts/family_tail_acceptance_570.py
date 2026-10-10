@@ -223,8 +223,9 @@ def _first_month_gazette_via_production_settle(
     """
     db = session.db
     closed_turn = int(session.state.turn)
-    existing = str(db.get_turn_report(closed_turn) or "").strip()
-    if existing:
+    # 邸报是自由正文：判空观察副本，返回原串。
+    existing = str(db.get_turn_report(closed_turn) or "")
+    if existing.strip():
         return existing
 
     try:
