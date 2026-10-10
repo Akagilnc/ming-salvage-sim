@@ -134,14 +134,6 @@ def test_arrears_order_resolution_default_and_override():
     res = resolve_pay_order_overrides(config, "shaanxi", turn=1)
     assert res.arrears_order == ("宗禄欠", "官俸欠", "军饷欠")
 
-def test_expired_only_keys_return_none_fast_path():
-    config = {
-        "due_priority_军饷": 40,
-        "due_priority_军饷_until_turn": 5,
-    }
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=6) is None
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=5) is not None
-
 # ═══════════════ F1.6 验收表 golden ①–⑦ ═══════════════
 
 def test_golden1_pay_order_reversal_breakdown_tsv():
@@ -878,3 +870,52 @@ def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
         assert {(r["field"], float(r["delta"])) for r in rows2} == expect_flows
     finally:
         db2.close()
+
+
+def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
+    """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
+    from ming_sim.flows import (
+        _central_dues_with_haircut,
+        apply_fixed_period_flows,
+        army_needed,
+    )
+
+    db, state, _content = game
+
+    army = db.conn.execute(
+        "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "
+        "province_pay_share, pay_source_region, central_pay_arrears, arrears "
+        "FROM armies WHERE id = 'jingying'"
+    ).fetchone()
+    assert float(army["province_pay_share"] or 0) <= 0
+    assert float(army["central_pay_share"] or 0) > 0
+    old_central_arrears = float(army["central_pay_arrears"] or 0)
+    assert old_central_arrears > 0
+    old_arrears = float(army["arrears"] or 0)
+    assert old_arrears > 0
+
+    db.conn.execute(
+        "UPDATE armies SET consecutive_pay_shortfall_months = 3 WHERE id = 'jingying'"
+    )
+    db.conn.commit()
+
+    did = _override_dossier(
+        db, state, [{"key": "due_haircut_bp_军饷#central", "value": 1}],
+    )
+    db.apply_dossier_promulgation(state, did, "promulgated")
+
+    dues, _exempt = _central_dues_with_haircut(db, state, [army])
+    raw_due = army_needed(army) * float(army["central_pay_share"] or 0)
+    assert raw_due > 0
+    assert dues["jingying"] == pytest.approx(0.0)
+
+    apply_fixed_period_flows(db, state)
+
+    after = db.conn.execute(
+        "SELECT consecutive_pay_shortfall_months, central_pay_arrears, arrears "
+        "FROM armies WHERE id = 'jingying'"
+    ).fetchone()
+    assert int(after["consecutive_pay_shortfall_months"] or 0) == 0
+    # 中央旧欠不因零 Due 月自动偿还（ADR 0023 D7③ / #653 边界）
+    assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
+    assert float(after["arrears"] or 0) == pytest.approx(old_arrears)

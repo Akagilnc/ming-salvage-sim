@@ -140,8 +140,8 @@ export function useChatActions({
 
   const sendChat = async (targetMinisterName: string, text = input) => {
     if (busy) return;
-    const message = text.trim();
-    if (!message) {
+    const message = text;
+    if (!message.trim()) {
       setComposerHint("请先问话或点一个奏对题目");
       return;
     }

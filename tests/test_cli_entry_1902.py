@@ -611,3 +611,33 @@ def test_run_cli_falls_back_to_entry_args_when_profile_empty(tmp_path, monkeypat
     assert cfg.base_url == "https://env.example/v1"
     assert cfg.model == "env-model"
     assert cfg.api_key == "sk-env"
+
+
+def test_save_name_guard_rejects_traversal_in_both_entries(game, monkeypatch):
+    """存档名清洗真源一份：穿越名在 CLI 与 Web 两端都拒（#1902 F2）。"""
+    import pytest as _pytest
+    from fastapi import HTTPException
+
+    import web_app
+    from ming_sim.paths import UnsafeSaveNameError
+    from tests.month_chain_helpers import make_light_session
+
+    db, state, content = game
+    session = make_light_session(db, state, content)
+    tmp_user_data(monkeypatch)
+
+    for bad in ("../../etc/passwd", ".hidden", "   "):
+        with _pytest.raises(UnsafeSaveNameError):
+            session.save_to(bad)
+        with _pytest.raises(HTTPException) as exc:
+            web_app._safe_save_name(bad)
+        assert exc.value.status_code == 400
+
+
+def tmp_user_data(monkeypatch) -> str:
+    """把 user data 指向本轮私有目录（存档落这里，不碰真实 data/）。"""
+    import tempfile
+
+    path = tempfile.mkdtemp(prefix="ming-cli-saves-")
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", path)
+    return path

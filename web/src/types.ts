@@ -563,6 +563,8 @@ export type LLMConfigInfo = {
   reasoning_strengths?: ReasoningStrengthChoice[];
   /** Backend capability list from cli_backend.CLI_REASONING_STRENGTH_RUNNERS (#1271). */
   cli_reasoning_runners?: string[];
+  /** Backend list cli_backend.CLI_REASONING_FLOOR_RUNNERS: off 档实取低（#1271）。 */
+  cli_reasoning_floor_runners?: string[];
   has_api_key: boolean;
   cli_runner?: string;
   cli_model?: string;
@@ -752,6 +754,7 @@ export type MenuStatus = {
     reasoning_strengths?: ReasoningStrengthChoice[];
     /** Backend capability list from cli_backend.CLI_REASONING_STRENGTH_RUNNERS (#1271). */
     cli_reasoning_runners?: string[];
+    cli_reasoning_floor_runners?: string[];
     /** #1794：API 通道附加请求头表（名→值）；空表＝现状。 */
     default_headers?: Record<string, string>;
   };

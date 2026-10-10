@@ -110,6 +110,8 @@ _PI_THINKING_BY_STRENGTH = {
 # 表同缝。有传输表 = 支持；kimi/cursor 无独立档位旗，不入此集（另票/庭裁）。
 # 导出 frozenset——llm_config 谓词与 web payload 均消费此名，禁第二处手写名单。
 CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude", "grok", "pi"})
+# off 档在传输表中实取 low 的 runner（#1271 界面「最低=低」提示的唯一后端源）。
+CLI_REASONING_FLOOR_RUNNERS = frozenset({"codex", "grok"})
 
 
 def cli_runner_choices() -> List[Dict[str, str]]:

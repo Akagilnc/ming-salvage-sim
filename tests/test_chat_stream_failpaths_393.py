@@ -1085,3 +1085,63 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     provider = str(detail.get("provider_message") or "")
     assert "workdir" in provider
     assert "exit code" in provider.lower()
+
+
+class _DoubleFailDB:
+    """prologue fails AND cleanup (fail_chat_turn) also fails — tests that
+    write path + pending ownership are still released (R3 self-check)."""
+
+    def __init__(self):
+        self.conn = open_audience_night_conn()
+
+    def create_chat_turn(self, *a, **k):
+        return 7
+
+    def capture_chat_rollback_snapshot(self):
+        return {}
+
+    def record_chat_turn_rollback_diffs(self, *a, **k):
+        return None
+
+    def append_chat_message(self, *a, **k):
+        raise RuntimeError("DB 写盘失败（模拟 prologue 崩溃）")
+
+    def update_chat_turn_messages(self, *a, **k):
+        return None
+
+    def fail_chat_turn(self, chat_turn_id):
+        raise RuntimeError("fail_chat_turn 也崩了（DB 已坏）")
+
+    def load_all_chat_history(self):
+        return {}
+
+    def get_last_active_chat_turn(self, *a, **k):
+        return None
+
+    def list_in_flight_chat_turns(self, *a, **k):
+        return []
+
+    def agno_runs_length(self, *a, **k):
+        return 0
+
+    def kv_get(self, key, default=None):
+        return default
+
+    def restore_interrupted_after_failed_retry(self, *a, **k):
+        return []
+
+    def set_chat_turn_error_pack(self, *a, **k):
+        return None
+
+
+def test_prologue_cleanup_failure_still_releases_gate_and_counter():
+    """R3 self-check: prologue 崩 → _fail_chat_turn_and_reload 自身也崩（DB 已坏）→
+    写路径与 pending ownership 仍须释放，否则 drain 永久挂起、所有写入被永久挡。"""
+    db = _DoubleFailDB()
+    runtime, minister = _base_runtime(db)
+
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
+    with pytest.raises(RuntimeError):
+        next(gen)
+
+    _assert_write_path_free(runtime)

@@ -922,3 +922,11 @@ def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
     captured = _capture_run(monkeypatch)
     cb._dispatch_cli_runner("codex", "p")
     assert captured["cmd"][0] == cb.os.path.abspath("./bin/codex")
+
+
+def test_run_agy_exit_zero_prose_is_not_connection_error(monkeypatch):
+    """#1902 T2：退出码 0 的自由词面不得判连接错误（ADR 0142）；宿主缺口如实当正文。"""
+    state = _agy_popen(monkeypatch, [("Authentication required", 0)])
+    out, attempts = cb._dispatch_cli_runner("agy", "p")
+    assert out == "Authentication required" and attempts == 1
+    assert state["agy"] == 1

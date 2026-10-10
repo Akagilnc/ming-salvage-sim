@@ -19,7 +19,6 @@ from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
     project_breach_plea_scene,
 )
-from ming_sim.decree_vocabulary import terminal_report_facade
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -470,18 +469,7 @@ def _apply_dossier_verdict(
         int(dossier_id), outcome, note, int(state.turn),
         close=close, commit=False,
     )
-    if is_terminal and outcome in {"degraded", "transformed"}:
-        # #622：奏报轨载承办人假象；progress_band 定性中文；判官真值只在执行格。
-        # 进度写失败不得静默：执行格可能已落，分叉态须响亮（P1 / ADR 0005）
-        prior = list(db.list_dossier_progress(int(dossier_id)))
-        band, memorial = terminal_report_facade(outcome, prior_reports=prior)
-        db.record_dossier_progress(
-            int(dossier_id), int(state.turn), band, memorial,
-            is_terminal=True,
-            origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-            commit=False,
-        )
-    elif not is_terminal:
+    if not is_terminal:
         # 中段过程奏报：非终值
         db.record_dossier_progress(
             int(dossier_id), int(state.turn), "在办", note,

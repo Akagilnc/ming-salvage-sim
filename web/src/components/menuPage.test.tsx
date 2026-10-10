@@ -301,6 +301,16 @@ describe("MenuPage subtitle", () => {
   });
 });
 
+const CLI_RUNNERS = [
+  { value: "agy", label: "agy（Gemini）" },
+  { value: "codex", label: "codex" },
+  { value: "claude", label: "claude" },
+  { value: "cursor", label: "cursor" },
+  { value: "kimi", label: "kimi" },
+  { value: "grok", label: "grok" },
+  { value: "pi", label: "pi" },
+];
+
 describe("ApiSettingsModal reasoning strength", () => {
   it("disables reasoning strength for unsupported CLI runners", () => {
     const cleanup = render(
@@ -373,6 +383,8 @@ describe("ApiSettingsModal reasoning strength", () => {
             model: "",
             has_api_key: false,
             cli_runner: "codex",
+            cli_runners: CLI_RUNNERS,
+            cli_reasoning_floor_runners: ["codex", "grok"],
             cli_model: "gpt-5.5",
             cli_model_saved: "gpt-5.5",
             cli_model_choices: { codex: [{ value: "gpt-5.5", label: "gpt-5.5" }] },
@@ -440,6 +452,8 @@ describe("ApiSettingsModal reasoning strength", () => {
             cli_reasoning_strength: "high",
             reasoning_supported: true,
             cli_reasoning_runners: ["codex", "claude", "grok"],
+            cli_reasoning_floor_runners: ["codex", "grok"],
+            cli_runners: CLI_RUNNERS,
             reasoning_strengths: [
               { value: "", label: "默认" },
               { value: "off", label: "关" },

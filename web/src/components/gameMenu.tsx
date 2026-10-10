@@ -429,7 +429,9 @@ export function LLMConfigTab() {
   ];
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
-  const visibleReasoningChoices = visibleReasoningStrengthChoices(reasoningChoices, channel, cliRunner);
+  const visibleReasoningChoices = visibleReasoningStrengthChoices(
+    reasoningChoices, channel, cliRunner, info?.cli_reasoning_floor_runners,
+  );
 
   React.useEffect(() => {
     api<LLMConfigInfo>("/api/llm/config")

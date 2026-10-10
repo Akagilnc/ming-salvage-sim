@@ -171,3 +171,37 @@ def test_manpower_true_noop_no_log(game):
     after = db.conn.execute(
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
     assert after == before, "真 no-op(delta==0)不留痕"
+
+
+def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
+    # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
+    db.conn.commit()
+    spent = _auto_pay_arrears_by_priority(
+        db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
+    )
+    row = _army_row(db, aid)
+    assert spent == 0, "allowed_army_ids=[] 应明确支付 0，不得回落全军池"
+    assert row["arrears"] == pytest.approx(10)
+
+
+def test_non_finite_salary_rate_anchored_not_crash():
+    """#44 ship-pre 线上 gemini high + coderabbit inf 探针：非有限 salary_rate（inf/-inf/nan）
+    须落锚点、不得崩。inf>0 为真会漏过 coerce、经 army_needed 的 ceil(manpower×inf/10000) 抛
+    OverflowError 崩整月结算。两道防线：_coerce_new_salary_rate（建军入口）+ army_needed（结算咽喉）。"""
+    from ming_sim.db import _coerce_new_salary_rate
+    from ming_sim.army_pay import army_needed
+
+    assert _coerce_new_salary_rate(float("inf")) == 1.5, "inf→锚点"
+    assert _coerce_new_salary_rate(float("-inf")) == 1.5, "-inf→锚点"
+    assert _coerce_new_salary_rate(float("nan")) == 1.5, "nan→锚点"
+    # army_needed 咽喉对非有限 rate 防御性归锚点、不抛 OverflowError。
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        row = {"owner_power": "ming", "manpower": 5000, "salary_rate": bad}
+        needed = army_needed(row)
+        assert needed == math.ceil(5000 * 1.5 / 10000), f"非有限 rate({bad}) 应锚点应发，得 {needed}"

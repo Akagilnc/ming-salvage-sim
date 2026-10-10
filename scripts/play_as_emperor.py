@@ -219,9 +219,10 @@ def parse_emperor_output(raw: str) -> tuple[str, str]:
         raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw[:200]}")
     obj = json.loads(obj_match.group(0))
     reasoning = str(obj.get("reasoning", "")).strip()
-    input_text = str(obj.get("input", "")).strip()
-    if "\n" in input_text:
-        input_text = input_text.splitlines()[0]
+    input_text = str(obj.get("input", ""))
+    if "\n" in input_text or "\r" in input_text:
+        # CLI 单行入口无法无损运输多行正文：报错，不静默取首行。
+        raise ValueError(f"崇祯 agent 输入含换行，CLI 单行入口无法无损运输: {input_text!r}")
     return reasoning, input_text
 
 
@@ -465,12 +466,6 @@ def run(
                 log(f"[崇祯 agent 出错: {exc}]")
                 child.sendline("exit")
                 break
-
-            # 超长单行输入(尤其『指令内容：』界面 agent 整篇诏书)会卡死 CLI/pexpect → 截断。
-            # 诏书细节由 LLM 拟诏/结算补全，这里只需一句能立项的指令文本。
-            if len(action) > 200:
-                log(f"[输入截断 step {step}：{len(action)} 字 → 200 字，防 CLI 卡]")
-                action = action[:200]
 
             log(f"[崇祯] reasoning: {reasoning}")
             log(f"[崇祯] input: {action!r}")

@@ -138,7 +138,7 @@ def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game
     assert db.list_dossier_progress(short)
 
 
-def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
+def test_only_an_existing_monthly_chain_closes_without_fabricated_report(game):
     db, state, content = game
     eligible_id, eligible = _order(db, state)
     ordinary_id, ordinary = _order(db, state, title="保护堤岸", tags=["河工"])
@@ -153,11 +153,12 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
     db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
     db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
 
-    assert db.list_dossier_progress(eligible)[-1]["is_terminal"] is True
+    # 结案不由代码替承办人编造奏报：终奏只来自模型月报
+    assert not any(r["is_terminal"] for r in db.list_dossier_progress(eligible))
     assert db.list_dossier_progress(ordinary)
 
 
-def test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail(game):
+def test_character_terminal_status_closes_secret_orders_without_fabricated_report(game):
     db, state, content = game
     assignee = _actor(db)
     chained_id, chained_dossier = _order(db, state, title="护行辽饷")
@@ -194,9 +195,7 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     assert "途中病故" in orders[chained_id]["result"]
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
-    terminal = db.list_dossier_progress(chained_dossier)[-1]
-    assert terminal["is_terminal"] is True
-    assert "途中病故" in terminal["memorial_text"]
+    assert not any(r["is_terminal"] for r in db.list_dossier_progress(chained_dossier))
     assert db.list_dossier_progress(unchained_dossier)
 
 

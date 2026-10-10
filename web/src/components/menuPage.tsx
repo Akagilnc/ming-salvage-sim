@@ -201,6 +201,7 @@ export function ApiSettingsModal({
     reasoning_supported?: boolean;
     reasoning_strengths?: ReasoningStrengthChoice[];
     cli_reasoning_runners?: string[];
+    cli_reasoning_floor_runners?: string[];
     channel?: "api" | "cli";
     cli_runner?: string;
     cli_model?: string;
@@ -274,7 +275,9 @@ export function ApiSettingsModal({
   });
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
-  const visibleReasoningChoices = visibleReasoningStrengthChoices(reasoningChoices, channel, cliRunner);
+  const visibleReasoningChoices = visibleReasoningStrengthChoices(
+    reasoningChoices, channel, cliRunner, initial?.cli_reasoning_floor_runners,
+  );
 
   const onSave = async () => {
     setBusy(true);

@@ -804,3 +804,29 @@ def test_657_rescript_summon_atomic_on_enter_failure(game, monkeypatch):
         "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
         (f"rescript-summon:{origin}",),
     ).fetchone()["c"] == 0
+
+
+class _KeyErrorAfterCasRetrySession(_RetrySession):
+    """#1902 T4：CAS 已赢后 scene/snapshot 抛 KeyError（LookupError 子类）不得当 CAS 未赢。"""
+
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        raise KeyError("scene ledger missing row")
+
+
+def test_retry_keyerror_after_cas_won_fails_closed_not_cas_bypass(restore_env):
+    """CAS 已赢后 KeyError 走 fail 收口翻回 interrupted，不得绕过 fail 当 409 CAS。"""
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    ct = _start_generating_turn(db, state, minister, "剿抚孰先？")
+    db.reconcile_interrupted_chat_turns()
+    rt = _retry_runtime(db, state, minister)
+    rt.session = _KeyErrorAfterCasRetrySession(db, state, minister)
+    with pytest.raises(KeyError, match="scene ledger missing row"):
+        rt.retry_interrupted_reply(minister, ct)
+    row = db.conn.execute(
+        "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "interrupted"
+    assert not row["minister_message_id"]

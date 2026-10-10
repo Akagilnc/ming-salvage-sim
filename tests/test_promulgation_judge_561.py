@@ -529,3 +529,135 @@ def test_review_exempt_actions_auto_promulgate_without_judge_contract_abort(
     assert product["verdict"] == {"dossier_id": dossier_id, "decision": "promulgated"}
     assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
     assert db.list_decree_dossier_decisions(dossier_id) == []
+
+
+def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
+    """Rejected authority_edge must pick withdrawn/hold, never options[0] force."""
+    from scripts.promulgation_gate_561 import _choose_rescripts
+
+    db, state, _content = game
+    hostile = _dossier(db, state, "敌对清丈")
+    vital = _dossier(db, state, "命门中旨", mode="midzhi")
+    appointment = db.create_decree_dossier(
+        state, action_type="appointment", decree_text="调任",
+        target_kind="character", target_id="许誉卿", payload={"任别": "真除"},
+    )
+    authority_edge = _dossier(db, state, "越一级特授")
+    ordinary_opts = [
+        {"label": "强颁", "dossier_id": authority_edge,
+         "dossier_decision": "force_promulgated"},
+        {"label": "收回", "dossier_id": authority_edge,
+         "dossier_decision": "withdrawn"},
+        {"label": "留中", "dossier_id": authority_edge,
+         "dossier_decision": "hold"},
+    ]
+    decisions = [
+        {"event_id": f"dossier:{hostile}", "title": "批红", "context": "h",
+         "options": [
+             {"label": "强颁", "dossier_id": hostile,
+              "dossier_decision": "force_promulgated"},
+             {"label": "收回", "dossier_id": hostile,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": hostile,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{vital}", "title": "批红", "context": "v",
+         "options": [
+             {"label": "收回", "dossier_id": vital,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": vital,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{appointment}", "title": "批红", "context": "a",
+         "options": [
+             {"label": "强颁", "dossier_id": appointment,
+              "dossier_decision": "force_promulgated"},
+             {"label": "收回", "dossier_id": appointment,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": appointment,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{authority_edge}", "title": "批红", "context": "e",
+         "options": ordinary_opts},
+    ]
+    db.save_pending_decisions(state.turn, decisions)
+    chosen = _choose_rescripts(
+        db, state.turn, hostile, vital, appointment,
+    )
+    by_event = {row["event_id"]: row["choice"] for row in chosen}
+    assert by_event[f"dossier:{hostile}"]["dossier_decision"] == "hold"
+    assert by_event[f"dossier:{vital}"]["dossier_decision"] == "withdrawn"
+    assert by_event[f"dossier:{appointment}"]["dossier_decision"] == "withdrawn"
+    assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] in {
+        "withdrawn", "hold",
+    }
+    assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] != (
+        "force_promulgated"
+    )
+
+
+def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(game):
+    from scripts.promulgation_gate_561 import _prepare_reconsideration_facts
+
+    db, state, _content = game
+    dossier_id = _dossier(db, state, "不经部议，清丈天下田亩并追夺士绅隐田")
+    first = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+    original_factions = {row["name"]: row for row in first["factions"]}
+
+    second = _prepare_reconsideration_facts(db, state, dossier_id, first)
+
+    assert [row["name"] for row in second["gatekeepers"]] == ["黄立极", "王体乾"]
+    assert db.conn.execute(
+        "SELECT status FROM characters WHERE name='许誉卿'"
+    ).fetchone()["status"] == "dismissed"
+    second_factions = {row["name"]: row for row in second["factions"]}
+    assert second_factions["东林"] == {
+        "name": "东林", "leverage": power_band(5),
+        "agenda": "失去许誉卿封驳支点，转入复议",
+    }
+    assert {
+        name: facts for name, facts in second_factions.items() if name != "东林"
+    } == {
+        name: facts for name, facts in original_factions.items() if name != "东林"
+    }
+    auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    assert auth_ids and all(item.isdigit() for item in auth_ids)
+    authority = db.get_authority(int(auth_ids[0]))
+    assert authority["dossier_id"] != dossier_id
+    assert db.dossier_authorizes_effects(int(authority["dossier_id"]))
+    assert second["dossiers"][0]["held_authorities"]
+    assert second["dossiers"][0]["held_authorities"][0]["privilege"] == "便宜行事"
+    assert second["imperial_authority_band"] == "强盛"
+
+
+def test_appointment_rejection_check_requires_faction_gate_structure():
+    """Appointment reject must prove 东林/许誉卿/blocked_layer, not mere rejected."""
+    from scripts.promulgation_gate_561 import _appointment_rejection_proves_faction_gate
+
+    ok = {
+        "dossier_id": 4,
+        "decision": "rejected",
+        "blocked_layer": "six_offices",
+        "gatekeeper_id": "许誉卿",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "reason": "调任把关人撞东林逆鳞",
+    }
+    assert _appointment_rejection_proves_faction_gate(ok) is True
+    # Rejected for other reasons / missing structure must fail the causal check.
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "decision": "promulgated"}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "gatekeeper_id": "崔呈秀"}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "primary_opponents": [{"kind": "faction", "key": "阉党"}]}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "blocked_layer": ""}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {"dossier_id": 4, "decision": "rejected"}
+    ) is False

@@ -14,6 +14,16 @@ import {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const CLI_RUNNERS = [
+  { value: "agy", label: "agy（Gemini）" },
+  { value: "codex", label: "codex" },
+  { value: "claude", label: "claude" },
+  { value: "cursor", label: "cursor" },
+  { value: "kimi", label: "kimi" },
+  { value: "grok", label: "grok" },
+  { value: "pi", label: "pi" },
+];
+
 const BASE_LLM_RESPONSE = {
   channel: "api" as const,
   base_url: "https://api.example.com/v1",
@@ -35,6 +45,8 @@ const BASE_LLM_RESPONSE = {
   advanced_thinking_level: "",
   has_api_key: true,
   cli_runner: "agy",
+  cli_runners: CLI_RUNNERS,
+  cli_reasoning_floor_runners: ["codex", "grok"],
   cli_model: "",
   cli_timeout_seconds: 300,
   persisted: {
@@ -186,6 +198,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
       reasoning_strength: "high",
       reasoning_supported: true,
       cli_reasoning_runners: ["codex", "claude", "grok"],
+      cli_reasoning_floor_runners: ["codex", "grok"],
       persisted: {
         ...BASE_LLM_RESPONSE.persisted,
         channel: "cli",

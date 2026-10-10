@@ -199,7 +199,7 @@ def test_origin_namespace_minimum_closed_set_and_open_append(game):
         )
 
 
-def test_production_terminal_sidepath_records_degraded_transformed_only(game):
+def test_terminal_verdict_records_execution_cell_without_fabricated_report(game):
     db, state, content = game
     degraded_id = _executing_assignment(db, state, target="deg-619")
     transformed_id = _executing_assignment(db, state, text="变形案", target="xf-619")
@@ -217,21 +217,11 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
         content=content,
     )
 
-    deg = db.list_dossier_progress(degraded_id)
-    xf = db.list_dossier_progress(transformed_id)
-    assert len(deg) == 1 and deg[0]["is_terminal"] is True
-    assert deg[0]["origin"] == DOSSIER_REPORT_VERDICT
-    # #622：progress_band 定性中文，禁英文枚举；变形案 memorial 为承办人假象。
-    assert deg[0]["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
-    assert deg[0]["memorial_text"]  # 非空定性陈词
-    assert len(xf) == 1 and xf[0]["origin"] == DOSSIER_REPORT_VERDICT
-    assert xf[0]["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
-    assert db.list_dossier_progress(fulfilled_id) == []
-    assert db.list_dossier_progress(failed_id) == []
+    # 终值只落执行格，不由代码替承办人编造奏报（P6/P7）。
+    assert db.get_decree_dossier(degraded_id)["execution_outcome"] == "degraded"
+    assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
+    for dossier_id in (degraded_id, transformed_id, fulfilled_id, failed_id):
+        assert db.list_dossier_progress(dossier_id) == []
 
     # Execution-slot / joint-liability semantics untouched: outcomes still land.
     assert db.get_decree_dossier(degraded_id)["execution_outcome"] == "degraded"
