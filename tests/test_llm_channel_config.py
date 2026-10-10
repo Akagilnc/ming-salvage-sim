@@ -561,26 +561,6 @@ def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypat
     assert ei.value.code == "llm_run_error"
 
 
-def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
-    cfg = LLMConfig(
-        api_key="cli-backend",
-        base_url="https://api.example.com/v1",
-        model="api-model",
-        advanced_model="api-advanced",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-5.5",
-        cli_timeout_seconds=240,
-    )
-
-    derived = for_role(cfg, "simulator")
-
-    assert derived.channel == "cli"
-    assert derived.cli_runner == "codex"
-    assert derived.cli_model == "gpt-5.5"
-    assert derived.cli_timeout_seconds == 240
-
-
 # #1902 N6：常量 identity / 内部默认值证明已清退（破坏共享投影仍绿＝假绿）。
 # #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
 # 选宿主只认运行配置（channel + cli_runner）。

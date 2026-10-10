@@ -927,7 +927,7 @@ def _dispatch_cli_runner(
     materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
     """runner 名 → 该 runner 的单次调用入口。全仓唯一一处 runner 分派点
-    （env 分派 / config 分派 / CliChat 分派共用，禁再复制第二份）。"""
+    （config 分派与 CliChat 分派共用，禁再复制第二份）。"""
     if not is_supported_cli_runner(runner):
         raise RuntimeError(f"未知 CLI backend：{runner}")
     extra = {"materials_dir": materials_dir} if materials_dir else {}
@@ -938,14 +938,8 @@ def _dispatch_cli_runner(
     )
 
 
-#: 无 llm_config 的直调路径（探针/闸脚本 enrich、secret 等）的历史默认 runner。
-#: #1902：宿主只由运行配置选，这条只是「没配置时用哪个」的兜底常量，不再读环境变量。
+#: channel=cli 但未声明 runner 时的兜底 runner（宿主只由运行配置选；无 env 分派）。
 _DEFAULT_RUNNER = "agy"
-
-
-def _run_backend(prompt: str) -> Tuple[str, int]:
-    """无运行配置时的直调默认路（#1902：不再按 MING_SIM_LLM_BACKEND 分派）。"""
-    return _dispatch_cli_runner(_DEFAULT_RUNNER, prompt)
 
 
 def _llm_channel(llm_config: Any = None) -> str:
@@ -972,9 +966,9 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, str]]:
 def _run_backend_for_config(
     prompt: str, llm_config: Any = None, tag: str = "", *, policy=None,
 ) -> Tuple[str, int]:
-    """runtime CLI 配置优先；无显式 CLI channel 时走默认 runner 直调（不读 env 选宿主）。
+    """仅 channel=cli 可入；空/api 通道不得落到任何默认 runner（与 create_chat_model 同一通道解释）。
 
-    直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
+    直接编程路径（职官分类/国策补全/连通性 verify）的 CLI 咽喉：
     每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
     （agno 游戏路径走 CliChat.invoke 自有 trace，与此咽喉不重叠。）
     tag 只记调用方显式传入的值；空则空，不从 prompt 正文推断。
@@ -983,19 +977,17 @@ def _run_backend_for_config(
     在此包一次 run_with_transport，operation 调单次子进程；runner 内禁私有重试。"""
     from ming_sim.llm_transport import resolve_transport_policy, run_with_transport
 
-    if _llm_channel(llm_config) == "api":
-        raise RuntimeError("显式 API channel 未启用本地 CLI backend")
     parts = _cli_config_parts(llm_config)
-    model_id = (parts[1] if parts else "") or _backend_label(llm_config)
+    if parts is None:
+        raise RuntimeError("非 cli 通道未启用本地 CLI backend")
+    runner, model, reasoning_strength = parts
+    model_id = model or runner
     t0 = time.monotonic()
     text, attempts, error = "", 0, None
 
     def _one_call() -> str:
         # 无 Exception→typed 宽包装：命令构造等代码故障原样上浮；
         # 已确证宿主 I/O／退出失败只在 _iter_cli_runner_text 等接缝翻 typed。
-        if parts is None:
-            return _run_backend(prompt)[0]
-        runner, model, reasoning_strength = parts
         return _dispatch_cli_runner(
             runner, prompt,
             model=model or None,
@@ -1021,7 +1013,7 @@ def _run_backend_for_config(
         _trace({
             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "seq": -1, "tag": tag,
-            "backend": _backend_label(llm_config), "model_id": model_id,
+            "backend": runner, "model_id": model_id,
             "dur_s": round(time.monotonic() - t0, 1), "attempts": attempts,
             "wants_json": False,
             "prompt_chars": len(prompt), "resp_chars": len(text),
@@ -1084,21 +1076,10 @@ def _run_api_for_config(
 def _run_json_extractor_for_config(
     prompt: str, llm_config: Any = None, tag: str = "", *, policy=None,
 ) -> Tuple[str, int]:
-    if _llm_channel(llm_config) == "api":
-        return _run_api_for_config(prompt, llm_config, tag=tag, policy=policy)
-    return _run_backend_for_config(prompt, llm_config, tag=tag, policy=policy)
-
-
-def _backend_label(llm_config: Any = None) -> str:
-    if _llm_channel(llm_config) == "api":
-        return "api"
-    try:
-        parts = _cli_config_parts(llm_config)
-    except RuntimeError:
-        parts = None  # 不支持的 runner：trace 标签回落，不让构造崩
-    if parts is not None:
-        return parts[0] or _DEFAULT_RUNNER
-    return _DEFAULT_RUNNER
+    if _llm_channel(llm_config) == "cli":
+        return _run_backend_for_config(prompt, llm_config, tag=tag, policy=policy)
+    # 空 channel 与 api 同走 API 路径（create_chat_model／cli_backend_active 的现役解释）。
+    return _run_api_for_config(prompt, llm_config, tag=tag, policy=policy)
 
 
 def describe_effective_model(llm_config: Any = None) -> str:

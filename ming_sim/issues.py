@@ -786,7 +786,9 @@ def _commitment_fiscal_create_duplicate_reason(
     db: GameDB,
 ) -> str:
     account = str(create.get("account") or "").strip()
-    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
+    display = str(create.get("display") or "")
+    if not display.strip():
+        display = db._stem_of(str(create.get("key") or "")) or str(create.get("key") or "")
     create_tokens = _recurring_funding_label_tokens(
         display,
         create.get("key"),
@@ -2846,7 +2848,7 @@ def _pending_person_changes_block_event_gate(
             if transition.startswith("reject:"):
                 continue
             overlay(name, "status", status)
-            overlay(name, "status_reason", reason_text[:200])
+            overlay(name, "status_reason", reason_text)
             overlay(name, "reason_code", reason_code if reason_code else "")
             overlay(name, "office", "")
             overlay(name, "transit_to", "")
@@ -2886,7 +2888,7 @@ def _pending_person_changes_block_event_gate(
                 continue
             overlay(name, "power_id", new_power)
             overlay(name, "status", "active")
-            overlay(name, "status_reason", str(item.get("reason") or "")[:200])
+            overlay(name, "status_reason", str(item.get("reason") or ""))
             overlay(name, "reason_code", "")
             overlay(name, "office", new_title)
             overlay(name, "office_type", "身名分")
@@ -2919,7 +2921,7 @@ def _pending_person_changes_block_event_gate(
             if cur_status == "active":
                 overlay(name, "status_reason", "")
             else:
-                overlay(name, "status_reason", str(item.get("reason") or "")[:200] or "诏书任命")
+                overlay(name, "status_reason", str(item.get("reason") or "") or "诏书任命")
             overlay(name, "reason_code", "")
             overlay(name, "office", normalized_office)
             # 显式名分透传（#1059 codex 同族）：事件闸预览的 overlay 须与真实 apply 一致，
@@ -3090,7 +3092,9 @@ def _spawn_legacy_from_effect(
     legacy = effect.get("legacy")
     if not isinstance(legacy, dict):
         return None
-    name = str(legacy.get("name") or "").strip() or f"{issue_title}遗留"
+    name = str(legacy.get("name") or "")
+    if not name.strip():
+        name = f"{issue_title}遗留"
     dur_key = str(legacy.get("duration") or "2年").strip()
     duration = _LEGACY_DURATION_MONTHS.get(dur_key)
     if duration is None:
@@ -5715,14 +5719,14 @@ def apply_office_appointment(
                     state,
                     name,
                     "active",
-                    reason[:200] or "诏书任命",
+                    reason or "诏书任命",
                     content=content,
                     commit=commit,
                 )
             with _appointment_tenure_scope(db, appointment_tenure):
                 db.set_character_office(
                     name, new_office, new_office_type,
-                    source=reason[:60] or "诏书调任", llm_config=llm_config,
+                    source=reason or "诏书调任", llm_config=llm_config,
                     commit=commit,
                     region_id=seat,
                 )
@@ -8450,7 +8454,9 @@ def _apply_score_extraction_body(
             init_value = init_raw
         # display 缺省=归一 stem（与落库同源——raw key 去 _base 会把「关税_rate」
         # 显示成「关税_rate」,cmr S3 r11;DELTA_SCHEMA 契约「缺省=key 去后缀」）。
-        display = str(create.get("display") or "").strip() or (db._stem_of(key) or key)
+        display = str(create.get("display") or "")
+        if not display.strip():
+            display = db._stem_of(key) or key
         origin_ref = str(create.get("origin_ref") or "").strip()
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
@@ -8492,7 +8498,7 @@ def _apply_score_extraction_body(
                 )
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
-            note=str(create.get("reason") or "")[:120],
+            note=str(create.get("reason") or ""),
             origin_ref=origin_ref,
             turn=state.turn,
             beyond_intent=create.get("beyond_intent"),

@@ -75,6 +75,9 @@ from ming_sim.token_stats import tlog
 
 logger = logging.getLogger(__name__)
 
+# 结构化 id 字段入库前归一（trim）；其余 TEXT 字段（灾情/状况/番号等）原值入库。
+_STRUCTURED_ID_FIELDS = frozenset({"controlled_by", "station_region", "owner_power"})
+
 # ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
 # 同刻度）。#1843：双单位/save_meta 标已退役，读口恒为「人」。
 POPULATION_UNIT_PERSONS = "人"
@@ -2486,8 +2489,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "(turn, key, value, kind, origin_ref, reason, beyond_intent) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                (int(turn), base_key, max(0, init_value), "base", origin_ref, note[:240], beyond_flag),
-                (int(turn), rate_key, 100, "rate", origin_ref, note[:240], beyond_flag),
+                (int(turn), base_key, max(0, init_value), "base", origin_ref, note, beyond_flag),
+                (int(turn), rate_key, 100, "rate", origin_ref, note, beyond_flag),
             ],
         )
         if commit:
@@ -2787,7 +2790,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)
                SELECT ?, key, value, kind, ?, ?, ? FROM fiscal_config
                WHERE key IN (?, ?)""",
-            (int(turn), origin_ref, reason[:240], beyond_flag, base_key, rate_key),
+            (int(turn), origin_ref, reason, beyond_flag, base_key, rate_key),
         )
         self.conn.execute(
             "DELETE FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
@@ -4675,18 +4678,18 @@ CREATE TABLE IF NOT EXISTS authority_records (
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, "
                 "status_changed_turn=?, office='', reason_code=? WHERE name=?",
-                (status, reason[:200], state.turn, reason_code_value, name),
+                (status, reason, state.turn, reason_code_value, name),
             )
             self.set_character_transit(name, content=content, commit=False)
         else:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
-                (status, reason[:200], state.turn, reason_code_value, name),
+                (status, reason, state.turn, reason_code_value, name),
             )
         if content is not None and name in content.characters:
             character = content.characters[name]
             character.status = status
-            character.status_reason = reason[:200]
+            character.status_reason = reason
             character.reason_code = reason_code_value
             if ousted:
                 character.office = ""
@@ -4821,8 +4824,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 state.period,
                 person_name,
                 action,
-                str(payload_summary or "")[:200],
-                str(derived_from or "")[:120],
+                str(payload_summary or ""),
+                str(derived_from or ""),
                 normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
                 str(source or "")[:80],
                 str(origin_ref or ""),
@@ -4885,7 +4888,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 continue
             name = str(raw.get("name") or raw.get("姓名") or "").strip()
             new_power = str(raw.get("new_power") or raw.get("新势力") or "").strip()
-            reason = str(raw.get("reason") or raw.get("原因") or "")[:120]
+            reason = str(raw.get("reason") or raw.get("原因") or "")
             if not name or not new_power:
                 applied.append({
                     "rejected": True, "category": "invalid_enum",
@@ -5669,11 +5672,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 for k, v in raw_changes.items():
                     mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
                     if mapped == _canon and str(v or "").strip():
-                        reason = str(v).strip()
+                        reason = str(v)
                         break
                 if reason:
                     break
-            reason = (reason or "势力推演")[:120]
+            reason = reason or "势力推演"
             for raw_field, value in raw_changes.items():
                 field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "last_action", "origin_ref"):
@@ -5773,8 +5776,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
         Used for dynastic/name changes such as houjin 后金 -> 大清.
         """
         power_id = str(power_id or "").strip()
-        new_name = str(new_name or "").strip()
-        if not power_id or not new_name:
+        new_name = str(new_name or "")
+        if not power_id or not new_name.strip():
             return None
         row = self.conn.execute("SELECT * FROM powers WHERE id = ?", (power_id,)).fetchone()
         if row is None:
@@ -5787,8 +5790,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
             if alias and alias not in merged_aliases:
                 merged_aliases.append(alias)
         new_aliases = "，".join(merged_aliases)
-        new_status = str(status or row["status"] or "")[:200]
-        new_last_action = str(last_action or reason or row["last_action"] or "")[:200]
+        new_status = str(status or row["status"] or "")
+        new_last_action = str(last_action or reason or row["last_action"] or "")
         if old_name == new_name and old_aliases == new_aliases and row["status"] == new_status and row["last_action"] == new_last_action:
             return None
         self.conn.execute(
@@ -5805,7 +5808,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             (turn, year, period, power_id, old_name, new_name, old_aliases, new_aliases, reason)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason[:200]),
+            (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason),
         )
         if commit:
             self.conn.commit()
@@ -5951,7 +5954,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     "issue_strict": False,
                 })
                 continue
-            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title)
             for raw_field, value in raw_changes.items():
                 field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
@@ -6140,7 +6143,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     stored_new = new_value
                     log_delta = actual_delta
                 else:  # REGION_TEXT_FIELDS
-                    text_value = str(value).strip()[:160]
+                    text_value = str(value).strip()
                     if field == "controlled_by":
                         if (
                             value is None
@@ -6169,7 +6172,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
                             changes.append({"region": row["name"], "field": field, **origin_error,
                                             "item": {"region_id": region_id, "field": field, "value": value}})
                             continue
-                    stored_new = text_value
+                    # 结构化 id 字段归一后入库；自由文本（灾情/状况）原值入库，trim 只供判空比对。
+                    stored_new = text_value if field in _STRUCTURED_ID_FIELDS else str(value)
                     log_delta = None
                 if require_origin and field not in REGION_TEXT_FIELDS:
                     origin_error = self.effect_origin_rejection(origin_ref)
@@ -6478,7 +6482,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     "item": {"army_id": army_id, "changes": raw_changes},
                 })
                 continue
-            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title)
             # owner_power / 饷源字段唯一写口＝_apply_army_pay_source_delta →
             # transition_army_owner_power；主环对 _ARMY_PAY_SOURCE_DELTA_FIELDS 直接跳过。
             self._apply_army_pay_source_delta(
@@ -6744,7 +6748,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     stored_new = new_value
                     log_delta = actual_delta
                 elif field in ARMY_TEXT_FIELDS:
-                    text_value = str(value).strip()[:160]
+                    text_value = str(value).strip()
                     if not text_value or text_value == str(old_value):
                         continue
                     # #659：station_region 非空须为已入库 regions.id；禁止从 station 文本反推。
@@ -6764,7 +6768,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                                 },
                             })
                             continue
-                    stored_new = text_value
+                    stored_new = text_value if field in _STRUCTURED_ID_FIELDS else str(value)
                     log_delta = None
                 else:
                     # field 已过 _ARMY_VALID_SET 校验，能落到此处=合法字段未被任一
@@ -6865,7 +6869,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     "item": raw,
                 })
                 continue
-            name = str(item.get("name") or aid).strip()
+            name = str(item.get("name") or aid)
             # 查重：同 id 或 同 name → 转 manpower 扩军增量
             existing = self.conn.execute(
                 "SELECT id, name FROM armies WHERE id = ? OR name = ?", (aid, name)
@@ -6894,7 +6898,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     continue
                 if delta == 0:
                     continue
-                reason = str(item.get("reason") or item.get("status") or "扩军")[:80]
+                reason = str(item.get("reason") or item.get("status") or "扩军")
                 pseudo_event = type("E", (), {"id": "season", "title": reason})()
                 merge_results = self.apply_army_deltas(
                     state,
@@ -7086,7 +7090,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             self._reconcile_army_pay_source_region_container(pay_source_region)
             self._reconcile_central_army_pay_arrears_container()
             self.assert_army_pay_source_container_conservation()
-            reason = str(item.get("reason") or item.get("status") or "新立军队")[:80]
+            reason = str(item.get("reason") or item.get("status") or "新立军队")
             self.conn.execute(
                 """
                 INSERT INTO army_logs
@@ -7152,7 +7156,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             (
                 building_id,
                 region_id,
-                name.strip()[:60] or "无名建筑",
+                name if name.strip() else "无名建筑",
                 category,
                 max(1, min(5, int(level))),
                 max(0, min(100, int(condition))),
@@ -7160,7 +7164,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 max(0, min(100, int(risk))),
                 output_metric,
                 max(0, int(output_amount)),
-                status.strip()[:160] or "新立，尚在筹建。",
+                status if status.strip() else "新立，尚在筹建。",
                 origin,
                 state.turn,
             ),
@@ -7171,7 +7175,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
             VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
             """,
-            (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑", origin_ref),
+            (state.turn, state.year, state.period, building_id, name, "诏书新立建筑", origin_ref),
         )
         if commit:
             self.conn.commit()
@@ -7196,7 +7200,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             VALUES (?, ?, ?, ?, 'remove', ?, '', NULL, ?, '档房', ?)
             """,
             (state.turn, state.year, state.period, building_id,
-             str(row["name"]), (reason or "建筑废止").strip()[:80], origin_ref),
+             str(row["name"]), reason or "建筑废止", origin_ref),
         )
         self.conn.execute("DELETE FROM buildings WHERE id = ?", (building_id,))
         if commit:
@@ -7221,7 +7225,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             if row is None:
                 print(f"[WARN] building_delta 引用未入库建筑 '{building_id}' → 跳过")
                 continue
-            reason = str(raw_changes.get("reason") or event.title).strip()[:80]
+            reason = str(raw_changes.get("reason") or event.title)
             for field, value in raw_changes.items():
                 if field == "reason":
                     continue
@@ -7260,10 +7264,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     stored_new = text_value
                     log_delta = None
                 elif field in BUILDING_TEXT_FIELDS:
-                    text_value = str(value).strip()[:160]
+                    text_value = str(value).strip()
                     if not text_value or text_value == str(old_value):
                         continue
-                    stored_new = text_value
+                    stored_new = str(value)
                     log_delta = None
                 else:
                     print(f"[WARN] building_delta 未处理字段 '{field}' → 跳过")
@@ -7482,9 +7486,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
         for item in list(phrases or []):
             if not isinstance(item, str):
                 continue
-            phrase = item.strip()
-            if phrase:
-                clean.append(phrase)
+            if item.strip():
+                clean.append(item)
         payload = json.dumps(clean, ensure_ascii=False)
         self.conn.execute(
             "UPDATE chat_messages SET highlights_json = ? WHERE id = ?",
@@ -7512,7 +7515,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         out: List[str] = []
         for item in data:
             if isinstance(item, str) and item.strip():
-                out.append(item.strip())
+                out.append(item)
         return out
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
@@ -11685,7 +11688,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "expense",
             display,
             int(amount),
-            note=str(payload.get("reason") or text or display)[:240],
+            note=str(payload.get("reason") or text or display),
             origin_ref=f"dossier:{int(dossier_id)}",
             turn=int(state.turn),
             beyond_intent=0,
@@ -14166,7 +14169,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             id="military_order", title="军令调遣", kind="圣旨", summary="",
             urgency=0, severity=0, credibility=100, interests=[], audiences=[],
         )
-        delta: Dict[str, object] = {"reason": reason[:80]}
+        delta: Dict[str, object] = {"reason": reason}
         if dest:
             delta["station"] = dest
         if dest_region:
@@ -16478,7 +16481,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
         office = str(payload.get("office") or "")
         if pa["action"] == "任命":
             # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
-            reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
+            reason = str(payload.get("reason") or "奉旨任免")
+            if not reason.strip():
+                reason = "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
             try:
                 appointment_tenure = appointment_tenure_from(payload)
@@ -17489,7 +17494,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments(fill_triggered_reason=True)}
             """,
-            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
+            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")),
         )
         if commit:
             self.conn.commit()
@@ -17512,7 +17517,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+            (event_id, state.turn, state.year, state.period, source, reason),
         )
         if commit:
             self.conn.commit()
@@ -17535,7 +17540,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+            (event_id, state.turn, state.year, state.period, source, reason),
         )
         if commit:
             self.conn.commit()
@@ -17675,7 +17680,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             return
         self._ensure_event_parent(eid)
         payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
-        label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
+        label = str((choice or {}).get("label") or "") if isinstance(choice, dict) else ""
         self.conn.execute(
             """
             INSERT INTO event_triggers
@@ -18212,7 +18217,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 start_month, duration_months, status, clear_gate, legacy_key)
                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
             (
-                str(name)[:60], source_issue_id,
+                str(name), source_issue_id,
                 json.dumps(modifiers, ensure_ascii=False),
                 str(narrative_hint),
                 start_month, int(duration_months),
@@ -18445,7 +18450,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                (turn, key, old_value, new_value, delta, origin_ref, reason, beyond_intent)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (int(turn), key, int(old_value), int(new_value),
-             int(new_value) - int(old_value), origin_ref, reason[:240], beyond_flag),
+             int(new_value) - int(old_value), origin_ref, reason, beyond_flag),
         )
 
     def list_fiscal_effects_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:

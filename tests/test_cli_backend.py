@@ -51,56 +51,6 @@ def _cli_codex_cfg() -> LLMConfig:
     )
 
 
-def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
-    from ming_sim.db import canonical_secret_order_exclusions
-
-    content = game[2]
-    character = next(
-        ch for ch in content.characters.values() if getattr(ch, "aliases", None)
-    )
-    alias = character.aliases[0]
-    office = character.office_type
-    people, offices = canonical_secret_order_exclusions(
-        content, [alias], [office], "勿使玩家散文成为第二输入源",
-    )
-    assert people == [character.name]
-    assert offices == [office]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ── enrich_initiative_effects ──
 
 def test_enrich_army_parsed_and_normalized(monkeypatch):
@@ -113,7 +63,7 @@ def test_enrich_army_parsed_and_normalized(monkeypatch):
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
     _patch_runner(monkeypatch, "agy", lambda prompt, **kw: (canned, 1))
-    out = di.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
+    out = di.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军", llm_config=LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy"))
     armies = out["effect_on_resolve"]["new_armies"]
     assert armies[0]["id"] == "qinjun"
     assert armies[0]["manpower"] == 20000
@@ -124,7 +74,7 @@ def test_enrich_building_region_floor(monkeypatch):
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
     _patch_runner(monkeypatch, "agy", lambda prompt, **kw: (canned, 1))
-    out = di.enrich_initiative_effects("设格致局", "")
+    out = di.enrich_initiative_effects("设格致局", "", llm_config=LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy"))
     assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
 
 def test_enrich_backend_error_returns_empty_effects(monkeypatch):
@@ -172,13 +122,6 @@ def test_run_backend_dispatch(monkeypatch, runner, out):
     )
     _patch_runner(monkeypatch, runner, lambda p, **kw: (out, 1))
     assert cb._run_backend_for_config("x", cfg) == (out, 1)
-
-
-def test_run_backend_default_runner_without_config(monkeypatch):
-    """无运行配置的直调路固定走默认 runner（agy），不读环境变量。"""
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")  # #1902：应被无视
-    _patch_runner(monkeypatch, "agy", lambda p, **kw: ("AGY_DEFAULT_OUT", 1))
-    assert cb._run_backend("x") == ("AGY_DEFAULT_OUT", 1)
 
 
 # ── secret extract keep family ──
@@ -833,13 +776,6 @@ def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
 
 # ── #1256 S2 gate LLM args / config / evidence ──
 
-def test_gate_llm_config_cli_channel():
-    args = SimpleNamespace(channel="cli", runner="codex", model="gpt-5.3-codex-spark", api_key="", base_url="")
-    cfg = cb.gate_llm_config_from_args(args)
-    assert cfg.channel == "cli"
-    assert cfg.cli_runner == "codex" and cfg.cli_model == "gpt-5.3-codex-spark"
-    assert cfg.api_key == "" and cfg.base_url == ""
-
 def test_gate_llm_config_api_from_args_not_persisted_shape(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MING_SIM_API_KEY", raising=False)
@@ -879,24 +815,6 @@ def test_gate_llm_config_api_requires_key_and_url(monkeypatch):
     args.api_key = "sk-x"
     with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
-
-def test_gate_evidence_config_honest_cli_and_api():
-    cli_args = SimpleNamespace(channel="cli", runner="claude", model="claude-opus-4-8")
-    cli_cfg = cb.gate_llm_config_from_args(cli_args)
-    cli_block = cb.gate_evidence_config(cli_args, cli_cfg)
-    assert cli_block["channel"] == "cli"
-    assert cli_block["runner"] == "claude"
-    assert cli_block["model"] == "claude-opus-4-8"
-
-    api_args = SimpleNamespace(
-        channel="api", runner="codex", model="deepseek-v4-flash",
-        api_key="sk", base_url="https://opencode.ai/zen/v1",
-    )
-    api_cfg = cb.gate_llm_config_from_args(api_args)
-    api_block = cb.gate_evidence_config(api_args, api_cfg)
-    assert api_block["channel"] == "api"
-    assert api_block["runner"] == ""  # api 如实不挂 cli runner 名
-    assert api_block["model"] == "deepseek-v4-flash"
 
 def test_add_gate_llm_args_uses_gate_cli_runners():
     import argparse

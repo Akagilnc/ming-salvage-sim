@@ -17,13 +17,15 @@ from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tupl
 EFFECT_NOOP = "noop"
 EFFECT_MATERIALIZE = "materialize"
 
+# 身份键字段：入库前首尾归一以便匹配；其余 LLM 文本字段原值运输。
+_IDENTITY_KEY_FIELDS = frozenset({"name", "target_id", "target_candidate", "station_region"})
+
 @dataclass(frozen=True)
 class FieldSpec:
     name: str
     zh: str
     allowed: Optional[FrozenSet[str]] = None
     default: Any = ""
-    max_len: Optional[int] = None
     as_int: bool = False
     int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
@@ -340,11 +342,9 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if isinstance(raw, (dict, list, tuple)):
                 s = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
             else:
-                # Canonical generated body is transport, not user-entered metadata:
-                # preserve the extractor's bytes (including edge whitespace).
-                s = str(raw or "") if name == "new_content" else str(raw or "").strip()
-            if spec.max_len is not None:
-                s = s[: spec.max_len]
+                # LLM 文本原值运输（P6）：不裁剪、不 trim；仅身份键（人名/目标编号/驻地省）
+                # 首尾归一供匹配入库。
+                s = str(raw or "").strip() if name in _IDENTITY_KEY_FIELDS else str(raw or "")
             out[name] = s
     if "draft_text" in obj:
         out["draft_text"] = obj.get("draft_text")

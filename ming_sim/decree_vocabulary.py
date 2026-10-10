@@ -350,7 +350,7 @@ def render_referenceable_dossier_brief(candidates) -> str:
             continue
         title = str(
             row.get("secret_title") or row.get("decree_text") or row.get("action_type") or ""
-        ).strip()
+        )
         status_cn = qualitative_dossier_status(row.get("status"))
         decision_cn = qualitative_promulgation_slot(row)
         outcome_cn = qualitative_dossier_outcome(

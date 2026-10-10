@@ -34,7 +34,7 @@ def test_api_channel_unknown_office_does_not_use_backend_env(monkeypatch):
     dbmod._OFFICE_TYPE_LLM_CACHE.clear()
     called = []
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(cb, "_run_backend", lambda prompt: called.append(prompt) or ("边镇", 1))
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda prompt, *a, **k: called.append(prompt) or ("边镇", 1))
     cfg = LLMConfig(
         api_key="sk-test",
         base_url="https://api.example.com/v1",
@@ -94,7 +94,7 @@ def test_api_channel_unknown_office_ignores_cli_derived_cache(monkeypatch):
 
     called = []
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(cb, "_run_backend", lambda prompt: called.append(prompt) or ("边镇", 1))
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda prompt, *a, **k: called.append(prompt) or ("边镇", 1))
     api_cfg = LLMConfig(
         api_key="sk-test",
         base_url="https://api.example.com/v1",
