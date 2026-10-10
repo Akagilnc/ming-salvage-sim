@@ -70,7 +70,6 @@ def _cli_minister_session(game, *, scene_chat):
     sess.state = state
     sess.content = content
     sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
     sess.scene_chat = scene_chat  # type: ignore[method-assign]
     sess.schedule_pending_scene_translation = (  # type: ignore[method-assign]
         lambda result: _cli_schedule_pending_noop(sess, result)

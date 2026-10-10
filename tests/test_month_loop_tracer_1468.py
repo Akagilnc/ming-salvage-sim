@@ -375,40 +375,6 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 # ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
 
 
-def _setup_open_night_participant(tracer_client, *, kind: str):
-    """new_game + 开夜 + 参与者。kind=offsite|temporary。
-
-    返回 (client, game, participant, night_id)。
-    """
-    client = tracer_client
-    new = client.post("/api/menu/new_game")
-    _assert_not_bare_500(new, step="#1716 new_game")
-    assert new.status_code == 200, new.text
-
-    game = web_app.web_game
-    assert game is not None
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-
-    if kind == "temporary":
-        participant = "临时行人甲"
-        # 公开门放行 temporary；stream admission 不得因 can_summon reason 阻断收夜。
-        temp = game.session._temporary_character(participant)
-        assert participant in game.session.temporary_characters
-        assert temp.name == participant
-    else:
-        assert kind == "offsite", kind
-        participant = "洪承畴"
-        assert participant in game.content.characters, participant
-        game.db.conn.execute(
-            "UPDATE characters SET location=?, transit_to='' WHERE name=?",
-            ("shaanxi", participant),
-        )
-        game.db.conn.commit()
-
-    return client, game, participant, night_id
-
-
 def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) -> None:
     """外部可见契约：court_break、夜关闭、参与者无殿上 presence/entrance 账。"""
     assert body.get("court_action") == "court_break", body

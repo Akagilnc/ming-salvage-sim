@@ -98,7 +98,7 @@ def _cli_session(db, state, content):
         return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
 
     return SimpleNamespace(
-        db=db, state=state, content=content, temporary_characters=set(),
+        db=db, state=state, content=content,
         chat=chat, scene_chat=scene_chat,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
@@ -185,7 +185,6 @@ def _session_double(db, state, content, registry):
     sess.content = content
     sess.registry = registry
     sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
     sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     return sess
 

@@ -146,7 +146,6 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
     session.llm_config = LLMConfig(
         api_key="sk-test", base_url="https://example.invalid", model="test",
     )
-    session.temporary_characters = {}
     session.agno_db = None
     session._write_gate = threading.Lock()
     chat_turn_id = int(db.create_chat_turn(

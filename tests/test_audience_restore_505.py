@@ -226,7 +226,6 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
 class _RetrySession:
     """最小真路径替身：chat 复用被指定 chat_turn，落回话由 WebGame._chat_payload 走真实 db。"""
 
-    temporary_characters: set = set()
 
     def __init__(self, db, state, minister):
         self.db = db

@@ -132,7 +132,6 @@ def _sess(db, state, content, monkeypatch, translate_fn):
     sess.llm_config = LLMConfig(
         api_key="test", base_url="https://example.invalid/v1", model="test-model",
     )
-    sess.temporary_characters = {}
     sess.agno_db = None
     sess._write_gate = get_session_write_queue(sess).write_gate
     # 断言失败时预推仍在跑；登记后夹具在关库前先排空，任务不越过清理边界。

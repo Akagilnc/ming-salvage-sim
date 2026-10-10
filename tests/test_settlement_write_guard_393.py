@@ -73,7 +73,6 @@ class _FakeGame:
         self.content = SimpleNamespace(characters={"某秀女": consort, "某大臣": minister})
         self.session = SimpleNamespace(
             content=self.content, state=self.state, db=self.db,
-            temporary_characters=set(),
             registry=SimpleNamespace(refresh=lambda *a, **k: None, register=lambda *a, **k: None),
             await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
         )

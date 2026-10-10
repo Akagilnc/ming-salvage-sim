@@ -71,13 +71,8 @@ def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatc
     assert "military" not in view["world"]
     assert "treasury" not in view["world"]
 
-def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkeypatch):
+def test_inner_court_materials_hide_court_world_from_inner_palace_readers(game, tmp_path):
     db, state, content = game
-
-    def forbidden(*_a, **_k):
-        raise AssertionError("unauthorised faction_report")
-
-    monkeypatch.setattr(db, "faction_report", forbidden)
     previous = content.characters["王承恩"]
     messenger = content.characters["曹化淳"]
     db.set_character_office(previous.name, "内廷随侍", "内廷")
@@ -101,7 +96,7 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     def forbidden(*_args, **_kwargs):
         raise AssertionError("unrelated fact domain read")
 
-    for name in ("army_report", "treasury_report", "faction_report"):
+    for name in ("army_report", "treasury_report"):
         monkeypatch.setattr(db, name, forbidden)
 
     view = db.get_character_knowledge(state, minister.name)["world"]

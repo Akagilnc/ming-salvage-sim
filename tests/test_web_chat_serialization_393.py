@@ -47,7 +47,6 @@ class _SecretOrderAgent:
 
 
 class _FakeSession(HallAdmissionSessionMixin):
-    temporary_characters = set()
 
     def __init__(self, character, agent: _FakeAgent, state, db):
         self.state = state

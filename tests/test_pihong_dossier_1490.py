@@ -1761,7 +1761,6 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     sess.agno_db = None
     sess.registry = None
     sess.last_decree = '诏'
-    sess.temporary_characters = {}
 
     def _bad_revise_text(*_a, **_k):
         return json.dumps({'items': [{'title': 't', 'context': 'c', 'options': [opt]}]}, ensure_ascii=False)
@@ -2113,7 +2112,6 @@ def _658_session(db, state, content, *, agent=None):
     sess.state = state
     sess.content = content
     sess.llm_config = SimpleNamespace(channel='api')
-    sess.temporary_characters = set()
     sess._refuse_if_settling = lambda: None
     sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     if agent is not None:

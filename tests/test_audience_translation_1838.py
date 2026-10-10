@@ -193,7 +193,6 @@ def _scene_session(db, state, content, monkeypatch):
     sess.content = content
     sess.registry = None
     sess.llm_config = SimpleNamespace(channel="")
-    sess.temporary_characters = {}
     sess.agno_db = None
     sess._write_gate = get_session_write_queue(sess).write_gate
     # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。

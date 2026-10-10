@@ -126,7 +126,6 @@ def _base_runtime(db, monkeypatch):
         lambda _db, *a, **k: dict(_fake_night),
     )
     sess = install_hall_admission(SimpleNamespace(
-        temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
         state=state,
         db=db,
