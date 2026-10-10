@@ -69,6 +69,12 @@ def _parse_payload(raw: object) -> Dict[str, object]:
     )
 
 
+def _payload_int(payload: Dict[str, object], key: str, default: int = 0) -> int:
+    """外层字段整数成员：缺省（None）取默认，坏值响亮失败，不回零。"""
+    value = payload.get(key)
+    return default if value is None else int(value)
+
+
 def collect_urge_history(
     db: Any,
     *,
@@ -95,11 +101,11 @@ def collect_urge_history(
             "turn": int(row["turn"] or 0),
             "kind": str(row["kind"] or ""),
             "target_id": int(row["target_id"] or 0),
-            "old_due": int(payload.get("old_due") or 0),
-            "new_due": int(payload.get("new_due") or 0),
-            "deadline_months": int(payload.get("deadline_months") or 0),
-            "tightness": int(payload.get("tightness") or 0),
-            "stage_idx": int(payload.get("stage_idx") or 0),
+            "old_due": _payload_int(payload, "old_due"),
+            "new_due": _payload_int(payload, "new_due"),
+            "deadline_months": _payload_int(payload, "deadline_months"),
+            "tightness": _payload_int(payload, "tightness"),
+            "stage_idx": _payload_int(payload, "stage_idx"),
             "reason": str(payload.get("reason") or ""),
             "source": "commitment",
         })
@@ -131,14 +137,14 @@ def collect_urge_history(
                     "turn": int(row["turn"] or 0),
                     "kind": str(row["kind"] or ""),
                     "target_id": int(row["target_id"] or 0),
-                    "old_due": int(payload.get("old_due") or 0),
-                    "new_due": int(payload.get("new_due") or 0),
+                    "old_due": _payload_int(payload, "old_due"),
+                    "new_due": _payload_int(payload, "new_due"),
                     "deadline_months": int(
                         payload.get("deadline_months")
                         if payload.get("deadline_months") is not None
                         else 1
                     ),
-                    "tightness": int(payload.get("tightness") or 0),
+                    "tightness": _payload_int(payload, "tightness"),
                     "stage_idx": -1,
                     "reason": str(payload.get("reason") or ""),
                     "source": "secret_order",

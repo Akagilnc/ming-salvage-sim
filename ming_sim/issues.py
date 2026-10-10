@@ -2564,17 +2564,27 @@ def _format_issue_ongoing(ongoing_raw: str) -> str:
     # isinstance 守卫：eff 读自已存 JSON（源自 enrich/extractor，未必清洗），metrics/economy 可能
     # 是真值非 dict/list（`or {}`/`or []` 兜不住）→ .items()/迭代 抛错。本函数是展示用 brief，守住免崩（#117 同类）。
     _m = eff.get("metrics")
-    metrics = _m if isinstance(_m, dict) else {}
-    for key, val in metrics.items():
-        if isinstance(val, (int, float)) and val:
+    if _m is not None and not isinstance(_m, dict):
+        raise ValueError(f"ongoing_effects.metrics 须为对象，得 {type(_m).__name__}")
+    for key, val in (_m or {}).items():
+        if not isinstance(val, (int, float)) or isinstance(val, bool):
+            raise ValueError(f"ongoing_effects.metrics[{key!r}] 须为数值，得 {type(val).__name__}")
+        if val:
             parts.append(f"{key}{'+' if val > 0 else ''}{int(val)}")
     _eco = eff.get("economy")
-    for econ in (_eco if isinstance(_eco, list) else []):
-        if isinstance(econ, dict):
-            delta = econ.get("delta")
+    if _eco is not None and not isinstance(_eco, list):
+        raise ValueError(f"ongoing_effects.economy 须为数组，得 {type(_eco).__name__}")
+    for econ in (_eco or []):
+        if not isinstance(econ, dict):
+            raise ValueError(f"ongoing_effects.economy 成员须为对象，得 {type(econ).__name__}")
+        delta = econ.get("delta")
+        if not isinstance(delta, (int, float)) or isinstance(delta, bool):
+            raise ValueError(f"ongoing_effects.economy.delta 须为数值，得 {type(delta).__name__}")
+        if delta:
             acc = econ.get("account")
-            if isinstance(delta, (int, float)) and delta and acc:
-                parts.append(f"{acc}{'+' if delta > 0 else ''}{int(delta)}万")
+            if not isinstance(acc, str) or not acc:
+                raise ValueError(f"ongoing_effects.economy.account 须为非空字符串，得 {acc!r}")
+            parts.append(f"{acc}{'+' if delta > 0 else ''}{int(delta)}万")
     return "、".join(parts)
 
 
@@ -6623,7 +6633,7 @@ def _apply_surcharge_decrees(
             continue
         reason = str(item.get("reason") or "")
         meta = dict(settle.get("_meta") or {})
-        old = max(0.0, float(meta.get(SETTLE_META_JIAPIAI_KEY, 0) or 0))
+        old = max(0.0, float(meta.get(SETTLE_META_JIAPIAI_KEY, 0)))
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
         meta[SETTLE_META_JIAPIAI_KEY] = new
         settle["_meta"] = meta

@@ -3377,7 +3377,7 @@ class GameDB:
                 continue
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
                 raise ValueError(f"region {row['id']} settle.st 非法，无法校验军饷容器守恒")
-            total += float(settle["st"].get("军饷欠", 0) or 0.0)
+            total += float(settle["st"].get("军饷欠", 0.0))
         return total
 
     def _has_complete_province_pay_containers(self) -> bool:
@@ -14831,7 +14831,7 @@ class GameDB:
         kept = []
         for raw in items:
             if not isinstance(raw, Mapping):
-                continue
+                raise ValueError(f"endorsements 成员须为对象，得 {type(raw).__name__}")
             k = (
                 str(raw.get("form") or "").strip(),
                 str(raw.get("endorser_id") or "").strip(),
@@ -18469,10 +18469,7 @@ class GameDB:
                 raw, field="secret_order_briefs.origin_chat_message_ids",
             )
             for item in parsed:
-                try:
-                    mid = int(item)
-                except (TypeError, ValueError):
-                    continue
+                mid = int(item)
                 if mid > 0:
                     out[mid] = True
         for row in pending_rows:

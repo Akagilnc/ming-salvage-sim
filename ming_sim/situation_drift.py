@@ -466,8 +466,10 @@ def apply_situation_monthly_drift(
             # metrics. Commitment issues represent a concrete monthly promise;
             # do not let the ordinary issue health discount erase it into a no-op.
             metric_scale = 1.0 if is_commitment else scale
-            _om = ongoing.get("metrics")  # #117 同类：stored ongoing 的 metrics 真值非 dict 守卫
-            for k, v in (_om if isinstance(_om, dict) else {}).items():
+            _om = ongoing.get("metrics")
+            if _om is not None and not isinstance(_om, dict):
+                raise ValueError(f"ongoing_effects.metrics 须为对象，得 {type(_om).__name__}")
+            for k, v in (_om or {}).items():
                 if k not in ISSUE_METRIC_KEYS:
                     continue
                 # 持久 ongoing_effects.metrics 的数值腐坏必须响亮失败交外层事务回滚；

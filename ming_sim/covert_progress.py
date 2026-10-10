@@ -1099,8 +1099,7 @@ def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:
 
 def investigation_clue_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
     """案卷已并入的真实线索（各源汇案），含是否已被本月核算消费。"""
-    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_CLUES_KEY)
-    return [dict(x) for x in raw if isinstance(x, Mapping)] if isinstance(raw, list) else []
+    return _mapping_members(_dossier_payload_map(db, dossier_id).get(INVESTIGATION_CLUES_KEY), INVESTIGATION_CLUES_KEY)
 
 
 def _route_pointerless_clue(lanes: List[Dict[str, object]], target: str) -> str:
@@ -1378,13 +1377,24 @@ def _investigation_tips(db: Any, dossier_id: int, target: str) -> List[Dict[str,
     ]
 
 
+def _mapping_members(raw: object, key: str) -> List[Dict[str, object]]:
+    """持久对象列表读口：缺省（None）为空；非列表或非对象成员响亮失败，不静默丢弃。"""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{key} 须为数组，得 {type(raw).__name__}")
+    out: List[Dict[str, object]] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"{key}[{index}] 须为对象，得 {type(item).__name__}")
+        out.append(dict(item))
+    return out
+
+
 def _tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
     if not int(dossier_id or 0):
         return []
-    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_TIPS_KEY)
-    if not isinstance(raw, list):
-        return []
-    return [dict(x) for x in raw if isinstance(x, Mapping)]
+    return _mapping_members(_dossier_payload_map(db, dossier_id).get(INVESTIGATION_TIPS_KEY), INVESTIGATION_TIPS_KEY)
 
 
 def investigation_tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
@@ -1396,10 +1406,7 @@ def investigation_action_records(db: Any, dossier_id: int) -> List[Dict[str, obj
     """4a 供料读口：本案已落账的人物真实行动声明（查法／压案）。"""
     if not int(dossier_id or 0):
         return []
-    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_ACTS_KEY)
-    if not isinstance(raw, list):
-        return []
-    return [dict(x) for x in raw if isinstance(x, Mapping)]
+    return _mapping_members(_dossier_payload_map(db, dossier_id).get(INVESTIGATION_ACTS_KEY), INVESTIGATION_ACTS_KEY)
 
 
 def apply_investigation_spoliation(

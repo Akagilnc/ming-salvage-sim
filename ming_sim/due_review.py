@@ -235,6 +235,16 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     }
 
 
+def _payload_container(payload: Dict[str, object], key: str, kind: type) -> Any:
+    """持久 payload 容器成员：缺省（None）为空容器；类型不符响亮失败，不回空。"""
+    value = payload.get(key)
+    if value is None:
+        return kind()
+    if not isinstance(value, kind):
+        raise ValueError(f"payload.{key} 须为 {kind.__name__}，得 {type(value).__name__}")
+    return kind(value)
+
+
 def project_due_review_scene(
     db: Any,
     todo: Dict[str, object],
@@ -277,8 +287,8 @@ def project_due_review_scene(
         "branch": str(inp.get("branch") or "no_dossier"),
         "dossier_id": inp.get("dossier_id"),
         "executor_id": str((inp.get("dossier") or {}).get("executor_id") or ""),
-        "channels": list(payload.get("channels") or []),
-        "fork": dict(payload.get("fork") or {}),
+        "channels": _payload_container(payload, "channels", list),
+        "fork": _payload_container(payload, "fork", dict),
         "army_pay_fact": inp.get("army_pay_fact"),
         "decision": str(payload.get("decision") or ""),
         "shortfall_reopened": reopened,
