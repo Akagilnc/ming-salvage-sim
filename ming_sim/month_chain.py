@@ -193,7 +193,14 @@ def _pin_world_question_identities(
         item for item in levy_petitions
         if isinstance(item, dict) and str(item.get("event_id") or "")
     ]
-    ordinary = [dict(question) for question in questions if isinstance(question, dict)]
+    # 世界段 questions 是请旨数组，成员坏即整段载荷坏：显式响亮失败，不静默丢请旨。
+    for index, question in enumerate(questions):
+        if not isinstance(question, dict):
+            raise SettlementAbort(
+                f"世界段请旨成员须为对象：questions[{index}] 得 {type(question).__name__}",
+                turn=int(turn), stage="world_bind",
+            )
+    ordinary = [dict(question) for question in questions]
     # 先读块：显式坏载荷在这里失败，不能因为名单为空或无人应呈就被当成没写块。
     blocks = _levy_handoff_blocks(world_text, turn)
     if not roster:

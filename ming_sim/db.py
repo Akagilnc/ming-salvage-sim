@@ -530,6 +530,22 @@ def directive_payload_admits_structured_write(payload: Mapping[str, object]) -> 
     """旨意可落库：普通 triad，或 #658 御笔强推 typed target（互斥）。"""
     return classify_directive_structured_kind(payload) != "empty"
 
+def _staged_str_list(raw: object) -> Optional[List[str]]:
+    """暂存载荷的名单键：缺省/null → []；非数组，或成员为 null／对象／数组／布尔即返 None（形状坏）。"""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return None
+    out: List[str] = []
+    for item in raw:
+        if item is None or isinstance(item, (dict, list, bool)):
+            return None
+        text = str(item).strip()
+        if text:
+            out.append(text)
+    return out
+
+
 def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
     """解析密令期限；显式 0 是合法值，不能被缺省兜底吞掉。"""
     if raw is None:
@@ -15493,13 +15509,13 @@ class GameDB:
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
                 if not title.strip() or not content_text.strip() or not assignee:
                     return False
-                tags_raw = payload.get("tags") or []
-                tags = [str(t) for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
+                tags = _staged_str_list(payload.get("tags"))
+                excluded = _staged_str_list(payload.get("excluded_names"))
+                excluded_offices = _staged_str_list(payload.get("excluded_offices"))
+                if tags is None or excluded is None or excluded_offices is None:
+                    # 暂存载荷的名单形状坏：不落、返 False（标 failed，不静默归空或 str(None) 洗白）。
+                    return False
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
-                excluded = payload.get("excluded_names") or []
-                excluded = [str(t).strip() for t in excluded if str(t).strip()] if isinstance(excluded, list) else []
-                excluded_offices = payload.get("excluded_offices") or []
-                excluded_offices = [str(t).strip() for t in excluded_offices if str(t).strip()] if isinstance(excluded_offices, list) else []
                 # pa["minister_name"] = audience speaker who captured the oral
                 # decree; may differ from final assignee (跨人承办).
                 # Stage-time pin: do not re-guess max(held) after confirm utterance.

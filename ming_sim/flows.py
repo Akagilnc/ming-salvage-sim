@@ -617,8 +617,16 @@ def _apply_economy_list(
     # isinstance 守卫：issue-effect 的 economy（来自 enrich，未经 schema 清洗）可能被 LLM 给成真值
     # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117
     # 同 bug 类，与 _apply_issue_buildings 的 list 守卫一致）。此处是 economy 应用 choke，护全部调用点。
+    # LLM 输入侧（issue 效果）：非数组／成员非对象不静默跳过，逐项拒收留痕（ADR 0008 决定1）。
+    if economy is not None and not isinstance(economy, list):
+        applied.append({"account": "", "rejected": True, "category": "invalid_shape",
+                        "reason": f"economy 须为数组，得 {type(economy).__name__}",
+                        "item": {"raw_value": economy}})
     for move in (economy if isinstance(economy, list) else []):
-        if not isinstance(move, dict):  # list 内混非 dict 项（[1,"x"]）也守，免 move.get 抛 AttributeError（#117 codex）
+        if not isinstance(move, dict):
+            applied.append({"account": "", "rejected": True, "category": "invalid_shape",
+                            "reason": f"economy 成员须为对象，得 {type(move).__name__}",
+                            "item": {"raw_value": move}})
             continue
         # 先解析 delta：None/"" = 缺额 → 0 no-op；bool/float/坏串 → bad_delta（_strict_int 拒
         # bool/float，与 faction/region/army 同约）。no-op（可解析的 0/缺额）行无钱动 → 静默跳，
