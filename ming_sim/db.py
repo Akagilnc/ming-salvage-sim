@@ -37,6 +37,7 @@ from ming_sim.exceptions import (
     LLMContractError,
     OfficeAppointmentRejection,
     PendingActionRefusal,
+    RevokeOriginUnresolved,
     RosterInputError,
 )
 from ming_sim.intelligence import OFFICE_SLOTS
@@ -424,10 +425,7 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
 
     derived = derive_army_mutiny_state(row)
     if derived == "正常":
-        try:
-            loyalty = int(row["loyalty"] or 0)
-        except (TypeError, ValueError):
-            loyalty = 0
+        loyalty = int(row["loyalty"] or 0)
         if loyalty >= 80:
             mutiny_tier = "死忠"
         elif loyalty >= 70:
@@ -3667,31 +3665,37 @@ class GameDB:
             return changes
 
         old_source = str(row["pay_source_region"] or "")
+        # 持久行的饷源列是存档真源（NOT NULL DEFAULT 0）：坏值在 try 之外上抛，
+        # 不并入模型条目的 invalid_enum 拒收（ADR0005 / 0008）。
+        row_region = str(row["pay_source_region"] or "").strip()
+        row_province_share = _coerce_pay_source_float(row["province_pay_share"])
+        row_central_share = _coerce_pay_source_float(row["central_pay_share"])
+        row_is_tusi = bool(row["is_tusi"])
+        row_self_funded = bool(row["self_funded_pay"])
+        row_province_arrears = float(row["province_pay_arrears"] or 0)
+        row_central_arrears = float(row["central_pay_arrears"] or 0)
+        row_total_arrears = float(row["arrears"] or 0)
         try:
-            if pay_source_region is _SENTINEL:
-                pay_source_region_val = str(row["pay_source_region"] or "").strip()
-            else:
-                pay_source_region_val = str(pay_source_region or "").strip()
-            if province_pay_share is _SENTINEL:
-                province_share = _coerce_pay_source_float(row["province_pay_share"])
-            else:
-                province_share = _coerce_pay_source_float(province_pay_share)
-            if central_pay_share is _SENTINEL:
-                central_share = _coerce_pay_source_float(row["central_pay_share"])
-            else:
-                central_share = _coerce_pay_source_float(central_pay_share)
-            if is_tusi is _SENTINEL:
-                is_tusi_val = bool(row["is_tusi"])
-            else:
-                is_tusi_val = _coerce_bool_flag(is_tusi)
-            if self_funded_pay is _SENTINEL:
-                self_funded_val = bool(row["self_funded_pay"])
-            else:
-                self_funded_val = _coerce_bool_flag(self_funded_pay)
-
-            province_arrears = float(row["province_pay_arrears"] or 0)
-            central_arrears = float(row["central_pay_arrears"] or 0)
-            total_arrears = float(row["arrears"] or 0)
+            pay_source_region_val = (
+                row_region if pay_source_region is _SENTINEL
+                else str(pay_source_region or "").strip()
+            )
+            province_share = (
+                row_province_share if province_pay_share is _SENTINEL
+                else _coerce_pay_source_float(province_pay_share)
+            )
+            central_share = (
+                row_central_share if central_pay_share is _SENTINEL
+                else _coerce_pay_source_float(central_pay_share)
+            )
+            is_tusi_val = row_is_tusi if is_tusi is _SENTINEL else _coerce_bool_flag(is_tusi)
+            self_funded_val = (
+                row_self_funded if self_funded_pay is _SENTINEL
+                else _coerce_bool_flag(self_funded_pay)
+            )
+            province_arrears = row_province_arrears
+            central_arrears = row_central_arrears
+            total_arrears = row_total_arrears
             total_arrears = max(total_arrears, province_arrears + central_arrears)
 
             exempt = owner_power != "ming" or is_tusi_val or self_funded_val
@@ -3878,23 +3882,32 @@ class GameDB:
         old_source = str(row["pay_source_region"] or "")
         owner_power = str(row["owner_power"] or "").strip()
         pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
+        # 持久行的饷源列是存档真源：坏值在 try 之外上抛，不并入模型条目拒收。
+        row_province_share = _coerce_pay_source_float(row["province_pay_share"])
+        row_central_share = _coerce_pay_source_float(row["central_pay_share"])
+        row_is_tusi = bool(row["is_tusi"])
+        row_self_funded = bool(row["self_funded_pay"])
+        row_province_arrears = float(row["province_pay_arrears"] or 0)
+        row_central_arrears = float(row["central_pay_arrears"] or 0)
         try:
-            province_share = _coerce_pay_source_float(
-                normalized.get("province_pay_share", row["province_pay_share"])
+            province_share = (
+                _coerce_pay_source_float(normalized["province_pay_share"])
+                if "province_pay_share" in normalized else row_province_share
             )
-            central_share = _coerce_pay_source_float(
-                normalized.get("central_pay_share", row["central_pay_share"])
+            central_share = (
+                _coerce_pay_source_float(normalized["central_pay_share"])
+                if "central_pay_share" in normalized else row_central_share
             )
             is_tusi = (
                 _coerce_bool_flag(normalized["is_tusi"])
-                if "is_tusi" in normalized else bool(row["is_tusi"])
+                if "is_tusi" in normalized else row_is_tusi
             )
             self_funded = (
                 _coerce_bool_flag(normalized["self_funded_pay"])
-                if "self_funded_pay" in normalized else bool(row["self_funded_pay"])
+                if "self_funded_pay" in normalized else row_self_funded
             )
-            province_arrears = float(row["province_pay_arrears"] or 0)
-            central_arrears = float(row["central_pay_arrears"] or 0)
+            province_arrears = row_province_arrears
+            central_arrears = row_central_arrears
             exempt = owner_power != "ming" or is_tusi or self_funded
             exempt_by_ming_flag = (
                 owner_power == "ming"
@@ -5424,10 +5437,12 @@ class GameDB:
         if value.startswith("dossier:"):
             try:
                 dossier_id = int(value.split(":", 1)[1])
-                valid = dossier_id > 0 and self.get_decree_dossier(dossier_id) is not None \
-                    and self.dossier_authorizes_effects(dossier_id)
-            except (OverflowError, TypeError, ValueError):
-                valid = False
+            except ValueError:
+                dossier_id = 0
+            # 模型给的 id 越出 SQLite INTEGER 即为拒收；已存案卷的读口故障不在此洗成拒收。
+            valid = 0 < dossier_id <= 0x7FFFFFFFFFFFFFFF \
+                and self.get_decree_dossier(dossier_id) is not None \
+                and self.dossier_authorizes_effects(dossier_id)
         elif value.startswith("affair:"):
             try:
                 from ming_sim.entities.affair.store import (
@@ -7309,10 +7324,7 @@ class GameDB:
             (previous_turn,),
         ).fetchone()
         if row is not None and (row["report"] or ""):
-            try:
-                return reign_period_label(int(row["year"]), int(row["period"]))
-            except (TypeError, ValueError):
-                return ""
+            return reign_period_label(int(row["year"]), int(row["period"]))
         # #1843 reopen：无有效邸报则真空；旧 turn_logs 回落已删。
         return ""
 
@@ -10191,10 +10203,7 @@ class GameDB:
                 continue
             if self._grant_allocation_is_honorific(payload):
                 continue
-            try:
-                ordered = int(payload.get("amount") or 0)
-            except (TypeError, ValueError):
-                ordered = 0
+            ordered = int(payload.get("amount") or 0)
             if ordered <= 0:
                 continue
             dossier_id = int(row["id"])
@@ -13419,15 +13428,9 @@ class GameDB:
             # 不另立承诺事项/不占在办名额。到期由 write_due 扫案卷 due_turn → 0076。
             # 其它类型终局路径不动。期限真源＝案卷列/payload.due_turn（军令同款单源）。
             if str(row.get("action_type") or "") == "grant_allocation":
-                try:
-                    due_turn = int(row.get("due_turn") or 0)
-                except (TypeError, ValueError):
-                    due_turn = 0
+                due_turn = int(row.get("due_turn") or 0)
                 if due_turn <= 0:
-                    try:
-                        due_turn = int(payload.get("due_turn") or 0)
-                    except (TypeError, ValueError):
-                        due_turn = 0
+                    due_turn = int(payload.get("due_turn") or 0)
                 if due_turn > int(state.turn):
                     self.transition_decree_dossier(
                         dossier_id, "executing", commit=False,
@@ -13977,12 +13980,9 @@ class GameDB:
         from ming_sim.issues import apply_score_extraction
         from ming_sim.strict_types import strict_int
 
-        try:
-            authority_id = strict_int(
-                payload.get("authority_id"), accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            authority_id = 0
+        authority_id = strict_int(
+            payload.get("authority_id"), accept_numeric_strings=True,
+        )
         if authority_id <= 0:
             raise ValueError("收权案卷缺少 authority_id")
         out = apply_score_extraction(
@@ -14064,14 +14064,11 @@ class GameDB:
                 raise ValueError("撤回成命目标须为承诺/initiative")
             origin = str(issue_row["origin_ref"] or "").strip()
             if origin.startswith("dossier:"):
-                try:
-                    target_dossier_id = int(origin.split(":", 1)[1])
-                except (TypeError, ValueError):
-                    target_dossier_id = 0
+                target_dossier_id = int(origin.split(":", 1)[1])
 
         if target_dossier_id <= 0:
             # 删除 standalone issue 免代价旁路（dossier_id=0 仍 cancel_issue）
-            raise ValueError("撤回成命目标无合法案卷来源，不得免代价终结")
+            raise RevokeOriginUnresolved("撤回成命目标无合法案卷来源，不得免代价终结")
         return int(target_dossier_id), int(target_issue_id)
 
     def _apply_revoke_decree_verdict_effect(
@@ -14228,10 +14225,7 @@ class GameDB:
             )
             return False
 
-        try:
-            end_turn = int(payload.get("end_turn") or 0)
-        except (TypeError, ValueError):
-            end_turn = 0
+        end_turn = int(payload.get("end_turn") or 0)
         if end_turn <= 0:
             self.transition_decree_dossier(dossier_id, "executing", commit=False)
             self.record_dossier_execution(
@@ -14324,10 +14318,7 @@ class GameDB:
         stop_raw = payload.get("stop_condition")
         if isinstance(stop_raw, dict) and stop_raw:
             ni["stop_condition"] = stop_raw
-        try:
-            end_turn = int(payload.get("end_turn") or 0)
-        except (TypeError, ValueError):
-            end_turn = 0
+        end_turn = int(payload.get("end_turn") or 0)
         if end_turn > 0:
             ni["end_turn"] = end_turn
             # 与 stages 支对称：有绝对期限则须带 commitment marker，否则
@@ -15740,10 +15731,7 @@ class GameDB:
             target_id = pa.get("target_id")
             if target_id is None:
                 return False
-            try:
-                stage_idx = int(payload.get("stage_idx") if payload.get("stage_idx") is not None else 0)
-            except (TypeError, ValueError):
-                stage_idx = 0
+            stage_idx = int(payload.get("stage_idx") if payload.get("stage_idx") is not None else 0)
             deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
             from ming_sim.urge_lever import rush_staged_commitment_stage
             result = rush_staged_commitment_stage(
@@ -16043,10 +16031,7 @@ class GameDB:
             # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
             reason = str(payload.get("reason") or "奉旨任免")
             office_type = str(payload.get("office_type") or "").strip()
-            try:
-                appointment_tenure = appointment_tenure_from(payload)
-            except ValueError:
-                return set()
+            appointment_tenure = appointment_tenure_from(payload)
             recommendation = payload.get("recommendation")
             staged_candidate = recommendation.get("candidate") if isinstance(recommendation, dict) else None
             recommender = str(recommendation.get("recommender") or pa["minister_name"]) if isinstance(recommendation, dict) else ""
@@ -16749,12 +16734,14 @@ class GameDB:
                     # 已有案卷：幂等跳过（补交重跑 ensure 时不重复建）
                     if self.get_dossier_for_directive(did) is not None:
                         continue
+                    # 持久案卷载荷坏 = 代码/存储故障，先读后进 savepoint，上抛不洗成产物错。
+                    directive_payload = self.read_directive_dossier_payload(row)
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
                     try:
                         self._ensure_directive_dossier(
                             state, did, str(row["text"]),
-                            self.read_directive_dossier_payload(row), commit=False,
+                            directive_payload, commit=False,
                         )
                     except ValueError as exc:
                         # 产物/契约错：逐项隔离留痕，保持 draft（#1769 补交/耗尽入口）

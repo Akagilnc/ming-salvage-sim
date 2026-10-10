@@ -121,12 +121,9 @@ def commitment_natural_due_turn(row: Any) -> int:
     stages = normalize_commitment_stages(stages_raw)
     if stages:
         return max(int(s["due_turn"]) for s in stages)
-    try:
-        end_turn = int(row["end_turn"] if "end_turn" in keys else (
-            row.get("end_turn") if isinstance(row, dict) else 0
-        ) or 0)
-    except (TypeError, ValueError):
-        end_turn = 0
+    end_turn = int(row["end_turn"] if "end_turn" in keys else (
+        row.get("end_turn") if isinstance(row, dict) else 0
+    ) or 0)
     return end_turn if end_turn > 0 else 0
 
 

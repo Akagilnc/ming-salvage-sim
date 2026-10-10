@@ -31,7 +31,11 @@ from ming_sim.exceptions import (
     LLMContractError,
     LLMUnavailable,
 )
-from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
+from ming_sim.flows import (
+    _SubstrateHubFixedFlowAbort,
+    apply_fixed_period_flows,
+    raise_fixed_period_flow_abort_if_needed,
+)
 from ming_sim.issues import (
     apply_historical_fiscal_rates,
 )
@@ -960,7 +964,14 @@ def pre_settle(
             )
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
-            fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            try:
+                fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            except ValueError as exc:
+                # 饷率通道读到持久 settle 坏形状：属固定财政段的坏态，与固定流水同一中止面
+                # （整月回滚、错误包、stage=fixed_fiscal），原因链保留。
+                raise _SubstrateHubFixedFlowAbort(
+                    f"饷率通道结算失败：{type(exc).__name__}: {exc}"
+                ) from exc
             if fiscal_levies:
                 tlog(
                     f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："

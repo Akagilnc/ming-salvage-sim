@@ -79,7 +79,6 @@ from ming_sim.person_archive_contract import (
     resolve_person_transition,
 )
 from ming_sim.person_delta_adapter import normalize_person_changes
-from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
 
@@ -1222,7 +1221,6 @@ def _fiscal_levy_land_denominator(
     meta: Dict[str, object],
     parsed_total_land: float,
     *,
-    denominator_complete: bool,
     region_id: str,
 ) -> float:
     if _SETTLE_META_LAND_DENOMINATOR_KEY in meta:
@@ -1230,9 +1228,7 @@ def _fiscal_levy_land_denominator(
             meta[_SETTLE_META_LAND_DENOMINATOR_KEY],
             ctx=f"{region_id}.settle._meta.{_SETTLE_META_LAND_DENOMINATOR_KEY}",
         )
-    if denominator_complete:
-        return parsed_total_land
-    return 0.0
+    return parsed_total_land
 
 
 def _fiscal_levy_share_seed(
@@ -1390,34 +1386,28 @@ def _apply_fiscal_levy_targets(
     tian_abolished = not _fiscal_levy_tian_in_force(db)
     liao_scale = _fiscal_levy_liao_declared_scale(db) if liao_in_force else 0.0
     region_entries: List[Dict[str, object]] = []
-    denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
         fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
-        try:
-            if "settle" not in fiscal:
-                continue
-            settle = fiscal.get("settle")
-            if not isinstance(settle, dict):
-                raise ValueError(f"{region_id}.settle 非字典")
-            p = settle.get("p")
-            st = settle.get("st")
-            if not isinstance(p, dict):
-                raise ValueError(f"{region_id}.settle.p 非字典")
-            if not isinstance(st, dict):
-                raise ValueError(f"{region_id}.settle.st 非字典")
-            meta_raw = settle.get("_meta") or {}
-            if not isinstance(meta_raw, dict):
-                raise ValueError(f"{region_id}.settle._meta 非字典")
-            meta = dict(meta_raw)
-            liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
-            land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
-            base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
-            _validate_fiscal_levy_share_meta(meta, region_id)
-        except ValueError as exc:
-            denominator_complete = False
-            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+        if "settle" not in fiscal:
             continue
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict):
+            raise ValueError(f"{region_id}.settle 非字典")
+        p = settle.get("p")
+        st = settle.get("st")
+        if not isinstance(p, dict):
+            raise ValueError(f"{region_id}.settle.p 非字典")
+        if not isinstance(st, dict):
+            raise ValueError(f"{region_id}.settle.st 非字典")
+        meta_raw = settle.get("_meta", {})
+        if not isinstance(meta_raw, dict):
+            raise ValueError(f"{region_id}.settle._meta 非字典")
+        meta = dict(meta_raw)
+        liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+        land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+        base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+        _validate_fiscal_levy_share_meta(meta, region_id)
         region_entries.append({
             "region_id": region_id,
             "fiscal": fiscal,
@@ -1443,7 +1433,6 @@ def _apply_fiscal_levy_targets(
         land_denominator = _fiscal_levy_land_denominator(
             meta,
             total_land,
-            denominator_complete=denominator_complete,
             region_id=region_id,
         )
         has_jiao_seed = _SETTLE_META_JIAO_SEED_KEY in meta

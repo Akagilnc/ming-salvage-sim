@@ -1433,10 +1433,7 @@ class GameSession:
             row = self.db.get_directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
-            try:
-                bad_payload = self.db.read_directive_dossier_payload(row)
-            except ValueError:
-                continue
+            bad_payload = self.db.read_directive_dossier_payload(row)
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:

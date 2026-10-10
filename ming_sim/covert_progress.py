@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -542,14 +541,11 @@ def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[
     payload = dossier.get("payload")
     if not isinstance(payload, Mapping):
         raw_json = dossier.get("payload_json")
-        if isinstance(raw_json, str) and raw_json.strip():
-            try:
-                loaded = json.loads(raw_json)
-            except (TypeError, ValueError):
-                loaded = None
-            payload = loaded if isinstance(loaded, Mapping) else None
-        else:
-            payload = None
+        from ming_sim.models import loads_persistent_json_object
+        payload = (
+            loads_persistent_json_object(raw_json, surface="dossier.payload_json")
+            if isinstance(raw_json, str) else None
+        )
     if not isinstance(payload, Mapping):
         return None
     return coerce_covert_task_contract(payload.get(CONTRACT_KEY))
@@ -665,10 +661,7 @@ def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str,
 
 
 def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
-    try:
-        delta = float(row["delta"] or 0)
-    except (TypeError, ValueError, KeyError):
-        return False
+    delta = float(row["delta"] or 0)
     sign = int(delivery.get("effect_sign") or 0)
     return (
         ((sign < 0 and delta < 0) or (sign > 0 and delta > 0))
@@ -922,10 +915,7 @@ def investigation_fact_difficulty(
             "SELECT ability FROM characters WHERE name=?", (worker,),
         ).fetchone()
         if ability_row is not None:
-            try:
-                ability = float(ability_row["ability"])
-            except (TypeError, ValueError):
-                ability = _ABILITY_REFERENCE
+            ability = float(ability_row["ability"])
             # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零，
             # 不另立「能力为零则拒绝」的闸，也不把前置因子覆盖成常数。
             # 解析失败或非有限值仍按参考能力（乘子为 1）。
@@ -1002,11 +992,8 @@ def investigation_monthly_capacity(
         return _CAPACITY_MIN  # 未到差：无差可查，投入为零
     capacity = 1.0
     if row is not None:
-        try:
-            ability = float(row["ability"])
-        except (TypeError, ValueError):
-            ability = _ABILITY_CAPACITY_REFERENCE
-        # 零参与同一带宽公式。解析失败或非有限值用参考能力。
+        ability = float(row["ability"])
+        # 零参与同一带宽公式。非有限值用参考能力。
         if math.isfinite(ability):
             capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
                 (ability - _ABILITY_CAPACITY_REFERENCE) / _ABILITY_CAPACITY_REFERENCE

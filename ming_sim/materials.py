@@ -1603,9 +1603,11 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
         return {}
     # #1853 J8-R2：resolve_revoke_decree_target_ids 为 GameDB 必备接口；
     # 只捕获业务拒收（ValueError/TypeError→无原旨可读），禁 AttributeError 缺方法软空。
+    from ming_sim.exceptions import RevokeOriginUnresolved
+
     try:
         target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
-    except (TypeError, ValueError):
+    except RevokeOriginUnresolved:
         return {}
     dossier = db.get_decree_dossier(int(target_dossier_id))
     if dossier is None:
@@ -1756,9 +1758,10 @@ def _character_projection_from_db_row(row: Any) -> Any:
 
     def _int(key: str, default: int = 0) -> int:
         try:
-            return int(row[key])
-        except (KeyError, TypeError, ValueError):
+            value = row[key]
+        except (KeyError, IndexError, TypeError):
             return default
+        return default if value is None else int(value)
 
     def _str(key: str, default: str = "") -> str:
         try:

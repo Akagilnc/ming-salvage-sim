@@ -91,6 +91,7 @@ from ming_sim.models import (
     LLMConfig,
     TurnPhase,
     loads_effect_dict,
+    loads_persistent_json_object,
     reign_period_label,
 )
 logger = logging.getLogger(__name__)
@@ -1557,14 +1558,8 @@ class WebGame:
             if leg.clear_narrative
         }
         for row in self.db.list_active_legacies(self.state):
-            try:
-                eff = json.loads(str(row["modifiers"] or "{}"))
-            except Exception:
-                eff = {}
-            try:
-                clear_gate = json.loads(str(row["clear_gate"] or "{}"))
-            except Exception:
-                clear_gate = {}
+            eff = loads_persistent_json_object(row["modifiers"], surface="legacies.modifiers")
+            clear_gate = loads_persistent_json_object(row["clear_gate"], surface="legacies.clear_gate")
             remaining_months = self.db.legacy_remaining_months(row, self.state)
             clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")
             if not clear_condition and clear_gate:

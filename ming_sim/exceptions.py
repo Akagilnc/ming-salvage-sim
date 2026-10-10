@@ -62,6 +62,13 @@ class LLMContractError(Exception):
         self.heal_evidence = heal_evidence
 
 
+class RevokeOriginUnresolved(ValueError):
+    """撤回成命目标无合法案卷来源：判后物化拒收；只读供料方按「无原旨可读」捕获。
+
+    仅此一型可被供料方捕获；坏持久载荷、目标事项缺失等仍是普通 ValueError 上抛。
+    """
+
+
 class OfficeAppointmentRejection(ValueError):
     """Local office appointment write rejection with ADR 0015 category.
 

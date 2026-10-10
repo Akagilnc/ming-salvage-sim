@@ -45,21 +45,15 @@ def derive_opportunity_band(durable_effects: object) -> str:
             continue
         for key in ("delta", "amount", "new_value", "old_value"):
             if key in row and row.get(key) is not None:
-                try:
-                    if key == "old_value":
-                        continue
-                    total_abs += abs(int(row.get(key) or 0))
-                except (TypeError, ValueError):
-                    pass
+                if key == "old_value":
+                    continue
+                total_abs += abs(int(row.get(key) or 0))
                 break
         else:
             # fiscal change: |new-old|
-            try:
-                nv = int(row.get("new_value") or 0)
-                ov = int(row.get("old_value") or 0)
-                total_abs += abs(nv - ov)
-            except (TypeError, ValueError):
-                pass
+            nv = int(row.get("new_value") or 0)
+            ov = int(row.get("old_value") or 0)
+            total_abs += abs(nv - ov)
     if total_abs <= 0:
         return "none"
     if total_abs >= _OPPORTUNITY_HIGH_ABS:

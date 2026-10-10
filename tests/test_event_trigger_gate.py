@@ -1468,16 +1468,6 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
 
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
 
-def test_person_write_state_restore_removes_dynamic_character_attrs(game):
-    """人事写口失败回滚必须删除快照中不存在的动态属性，避免内存幽灵状态残留。"""
-    db, _state, content = game
-    snapshot = issues._snapshot_person_write_state(db, content)
-    content.characters["毛文龙"].ghost_preflight_attr = "leak"
-
-    issues._restore_person_write_state(db, content, snapshot, commit=False)
-
-    assert not hasattr(content.characters["毛文龙"], "ghost_preflight_attr")
-
 def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
     """#191 CMR：洛阳陷落是城市/流寇压力事件，福王已死不应让事件进入人物核心作废终态。"""
     db, state, content = game
