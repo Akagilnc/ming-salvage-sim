@@ -581,6 +581,3 @@ def test_location_canonical_seed_and_write_seam(env, tmp_path):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
     # 写缝已钉未知非空 fail-loud。开档别名 migrate / 开档扫 location 已随
     # _migrate_character_location_aliases 退役，不再造旧档副本期待写回。
-
-
-

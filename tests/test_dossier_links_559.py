@@ -145,5 +145,3 @@ def test_withdrawn_rejected_dossier_is_not_referenceable(game):
     db.dossiers.record_dossier_decision(dossier_id, "rejected", reason="驳回")
     db.dossiers.record_dossier_decision(dossier_id, "withdrawn", reason="收回")
     assert dossier_id not in {row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)}
-
-
