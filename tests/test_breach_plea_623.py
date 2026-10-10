@@ -40,19 +40,14 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
 )
+from tests.readback_helpers import decree_cost_event_rows
 
 
 # ── fixtures（复用 #621 三拍/_cost_events 口径）────────────────────────
 
 
 def _cost_events(db, dossier_id, *, identity="breach"):
-    return [
-        dict(row)
-        for row in db.conn.execute(
-            "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-            (int(dossier_id), identity),
-        ).fetchall()
-    ]
+    return decree_cost_event_rows(db, dossier_id, identity)
 
 
 def _executing_policy_dossier(db, state, *, token: str = "breach-623", holder: str = ""):

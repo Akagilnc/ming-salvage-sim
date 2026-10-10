@@ -23,6 +23,7 @@ from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
 import ming_sim.issues as issues
 from tests.readback_helpers import class_population as _pop
+from tests.readback_helpers import region_settle as _settle_payload
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
@@ -32,13 +33,6 @@ LIAO_SEED_SHAANXI = 2929.20151 * 0.009 / 12.0  # 辽饷九厘基线（万两/月
 
 # 明渠折算口径（票面 AC2「确定性可断言」；常数真源=ming_sim/constants.py）：
 #   入池(人) = 加派基线(万两) × 折率 × (100 − 民心)/100
-
-
-def _settle_payload(db: GameDB, region_id: str) -> dict:
-    row = db.conn.execute(
-        "SELECT fiscal FROM regions WHERE id=?", (region_id,)
-    ).fetchone()
-    return json.loads(str(row["fiscal"] or "{}"))["settle"]
 
 
 def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):

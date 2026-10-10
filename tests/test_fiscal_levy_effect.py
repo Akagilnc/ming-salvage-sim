@@ -9,18 +9,11 @@ from ming_sim.army_pay import army_needed
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 from ming_sim.models import Event
+from tests.readback_helpers import region_settle as _settle_payload
 
 
 JIAO_NATIONAL_MONTHLY = 280.0 / 12.0
 LIAN_NATIONAL_MONTHLY = 730.0 / 12.0
-
-
-def _settle_payload(db, region_id):
-    row = db.conn.execute(
-        "SELECT fiscal FROM regions WHERE id = ?",
-        (region_id,),
-    ).fetchone()
-    return json.loads(str(row["fiscal"] or "{}"))["settle"]
 
 
 def _settled_region_ids(db):

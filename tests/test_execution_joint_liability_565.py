@@ -7,6 +7,7 @@ import pytest
 import ming_sim.issues as issue_engine
 from ming_sim.strict_types import validate_affected_parties
 from tests.readback_helpers import faction_satisfaction as _sat
+from tests.readback_helpers import decree_cost_event_rows
 
 
 def _roster():
@@ -38,10 +39,7 @@ def _executing_dossier(db, state, *, roster=None):
 
 
 def _cost_events(db, dossier_id, *, identity="连坐"):
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-        (int(dossier_id), identity),
-    ).fetchall()]
+    return decree_cost_event_rows(db, dossier_id, identity)
 
 
 def _sat_events(db, dossier_id):
