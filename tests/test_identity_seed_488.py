@@ -92,5 +92,3 @@ def test_seed_schema_rejects_invalid_values(monkeypatch, field, value):
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
     with pytest.raises(SystemExit):
         load_character_content()
-
-
