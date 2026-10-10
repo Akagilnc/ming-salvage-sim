@@ -25,9 +25,6 @@ from ming_sim.token_stats import tlog
 
 # ── 省级财政计算 ──────────────────────────────────────────────────────────────
 
-# 皇庄增量租率：没收藩王庄田转皇庄后，每万亩每月增加内库收入（万两）
-# 基准皇庄收入走 fiscal_config.皇庄_base；此常数只用于增量计算
-
 _CENTRAL_TAICANG_HUMAN_LOSS_RATE = "central_taicang_human_loss_rate"
 _CENTRAL_TAICANG_SINK_LOSS_RATE = "central_taicang_sink_loss_rate"
 _CENTRAL_JINGYUN_HUMAN_LOSS_RATE = "central_jingyun_human_loss_rate"
