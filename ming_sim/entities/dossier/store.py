@@ -447,15 +447,6 @@ class DossierStore:
         ).fetchone()
         return None if row is None else hydrate_dossier_row(row)
 
-    def list_for_directive(self, directive_id: int) -> list[dict[str, Any]]:
-        """#654：directive 名下全部子差务，ORDER BY region_id, id。"""
-        rows = self._conn.execute(
-            "SELECT * FROM decree_dossiers WHERE directive_id=? "
-            "ORDER BY region_id, id",
-            (int(directive_id),),
-        ).fetchall()
-        return [hydrate_dossier_row(r) for r in rows]
-
     def get_for_secret_order(self, secret_order_id: int) -> Optional[dict[str, Any]]:
         row = self._conn.execute(
             "SELECT * FROM decree_dossiers WHERE secret_order_id=?",
@@ -888,22 +879,6 @@ class DossierStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def link_rejections(
-        self, source_dossier_id: Optional[int] = None, *,
-        pending_action_id: Optional[int] = None,
-    ) -> list[dict[str, object]]:
-        if (source_dossier_id is None) == (pending_action_id is None):
-            raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
-        if pending_action_id is not None:
-            column, value = "pending_action_id", pending_action_id
-        else:
-            column, value = "source_dossier_id", source_dossier_id
-        rows = self._conn.execute(
-            f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
-            (strict_int(value, accept_numeric_strings=False),),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
     def endorsements(self, dossier_id: int) -> list[dict[str, object]]:
         rows = self._conn.execute(
             "SELECT id,dossier_id,form,endorser_id,imperial,source_chat_turn_id,decision_key "
@@ -917,26 +892,6 @@ class DossierStore:
             "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
             "decision_key": str(row["decision_key"] or ""),
         } for row in rows]
-
-    def endorsed_candidates(self, current_turn: int) -> list[dict[str, object]]:
-        """Typed backing choices projected from durable named endorsements."""
-        rows = self._conn.execute(
-            """SELECT d.id AS dossier_id, e.endorser_id, d.decree_text AS subject
-               FROM decree_dossier_endorsements e
-               JOIN decree_dossiers d ON d.id=e.dossier_id
-               WHERE e.endorser_id<>'' AND d.created_turn<=?
-               ORDER BY d.id DESC, e.id DESC""",
-            (int(current_turn),),
-        ).fetchall()
-        result: list[dict[str, object]] = []
-        for row in rows:
-            dossier_id = int(row["dossier_id"])
-            result.append({
-                "dossier_id": dossier_id,
-                "endorser_id": str(row["endorser_id"]),
-                "subject": str(row["subject"] or ""),
-            })
-        return result
 
     def decisions(self, dossier_id: int) -> list[dict[str, object]]:
         """Production audit/restore read seam for the append-only verdict history."""
@@ -1572,17 +1527,6 @@ class DossierStore:
         )
 
 
-    def list_execution_liability_parties(
-        self, dossier_id: int,
-    ) -> list[dict[str, object]]:
-        """连坐归属读端：与写路共用 project_execution_liability_parties；永不返回知情档。"""
-        from ming_sim.participant_roster import project_execution_liability_parties
-
-        dossier = self.get(dossier_id)
-        if dossier is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        return project_execution_liability_parties(dossier.get("participant_roster"))
-
     def grant_escort_presence(
         self, dossier_id: int,
     ) -> tuple[bool, int | None, str]:
@@ -1608,33 +1552,6 @@ class DossierStore:
             "interruption_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?",
             (int(turn), reason, int(dossier_id)),
         )
-
-    def merge_execution_note(
-        self, dossier_id: int, fragment: str, *, commit: bool = True,
-    ) -> str:
-        """Merge one free-text execution note fragment onto the row."""
-        owns = self._owns()
-        text = str(fragment or "")
-        if not text.strip():
-            raise ValueError("说明片段不能为空")
-        row = self.get(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "")
-        if not existing:
-            merged = text
-        elif existing == text:
-            merged = existing
-        else:
-            merged = f"{existing}；{text}"
-        if merged != existing:
-            self._conn.execute(
-                "UPDATE decree_dossiers SET execution_note=?, "
-                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (merged, int(dossier_id)),
-            )
-            self._commit(commit, owns)
-        return merged
 
     def ids_for_secret_order(self, secret_order_id: int) -> list[int]:
         rows = self._conn.execute(
@@ -2187,7 +2104,8 @@ class DossierStore:
         text = str(memorial_text or "")
         if dossier is None:
             raise ValueError("案卷不存在")
-        if not band or not text.strip():
+        # 终值旁路行只载定性 band，引擎不自造密奏（decree_vocabulary.terminal_report_facade）。
+        if not band or (not text.strip() and not is_terminal):
             raise ValueError("进展档和密奏均不能为空")
         origin_norm = self.normalize_report_origin(
             origin, is_terminal=bool(is_terminal),
@@ -2542,13 +2460,6 @@ class DossierStore:
             "note": str(note or ""),
             "origin_ref": origin,
         }
-
-    def actual_progress(self, dossier_id: int) -> list[dict[str, object]]:
-        rows = self._conn.execute(
-            "SELECT * FROM dossier_actual_progress WHERE dossier_id=? ORDER BY turn, id",
-            (int(dossier_id),),
-        ).fetchall()
-        return [dict(r) for r in rows]
 
     def restore_row(self, row: Mapping[str, object]) -> None:
         from ming_sim.entities.column_write import upsert_by_pk
@@ -3002,64 +2913,6 @@ class DossierStore:
         cur = self._conn.execute(
             "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
             (int(action_id), int(turn)),
-        )
-        return int(cur.rowcount or 0)
-
-    def pending_ids_matching_minister(
-        self,
-        turn: int,
-        minister_name: str,
-        *,
-        kind: Optional[str] = None,
-        kind_filter_exclude: Optional[str] = None,
-        action_ids: Optional[Iterable[int]] = None,
-    ) -> list[int]:
-        params: list[object] = [int(turn), str(minister_name)]
-        where = "turn=? AND minister_name=? AND status='pending'"
-        if action_ids is not None:
-            allowed_ids = [int(action_id) for action_id in action_ids]
-            if not allowed_ids:
-                return []
-            placeholders = ",".join("?" for _ in allowed_ids)
-            where += f" AND id IN ({placeholders})"
-            params.extend(allowed_ids)
-        if kind_filter_exclude is not None:
-            where += " AND kind<>?"
-            params.append(str(kind_filter_exclude))
-        if kind is not None:
-            where += " AND kind=?"
-            params.append(str(kind))
-        return [
-            int(row["id"])
-            for row in self._conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where}",
-                tuple(params),
-            ).fetchall()
-        ]
-
-    def delete_pending_matching_minister(
-        self,
-        turn: int,
-        minister_name: str,
-        *,
-        kind_filter_exclude: Optional[str] = None,
-        action_ids: Optional[Iterable[int]] = None,
-    ) -> int:
-        params: list[object] = [int(turn), str(minister_name)]
-        where = "turn=? AND minister_name=? AND status='pending'"
-        if action_ids is not None:
-            allowed_ids = [int(action_id) for action_id in action_ids]
-            if not allowed_ids:
-                return 0
-            placeholders = ",".join("?" for _ in allowed_ids)
-            where += f" AND id IN ({placeholders})"
-            params.extend(allowed_ids)
-        if kind_filter_exclude is not None:
-            where += " AND kind<>?"
-            params.append(str(kind_filter_exclude))
-        cur = self._conn.execute(
-            f"DELETE FROM pending_actions WHERE {where}",
-            tuple(params),
         )
         return int(cur.rowcount or 0)
 

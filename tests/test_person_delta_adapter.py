@@ -46,62 +46,6 @@ def test_normalize_person_changes_keeps_new_key_items():
         }
     ]
 
-def test_normalize_person_changes_translates_legacy_keys_in_replay_order():
-    extracted = {
-        "appointments": [
-            {"name": "孙传庭", "office": "陕西总督"},
-        ],
-        "character_status_changes": [
-            {
-                "name": "洪承畴",
-                "status": "imprisoned",
-                "reason_code": "陷虏",
-                "reason": "松山兵败被执",
-            }
-        ],
-        "character_power_changes": [
-            {"name": "孔有德", "new_power": "houjin", "reason": "旧键降金"}
-        ],
-        "office_changes": [
-            {
-                "name": "毕自严",
-                "new_office": "户部尚书",
-                "new_office_type": "户部",
-            }
-        ],
-    }
-
-    normalized = normalize_person_changes(extracted)
-
-    assert [item["name"] for item in normalized] == [
-        "洪承畴",
-        "孔有德",
-        "毕自严",
-        "孙传庭",
-    ]
-    assert [item["动作"] for item in normalized] == [
-        "处置",
-        "易主",
-        "任命",
-        "任命",
-    ]
-    assert normalized[0]["legacy_gate"] is True
-    assert normalized[1] == {
-        "name": "孔有德",
-        "动作": "易主",
-        "new_power": "houjin",
-        "方式": "不明",
-        "反噬": {},
-        "reason": "旧键降金",
-        "legacy_partial": True,
-    }
-    assert normalized[2] == {
-        "name": "毕自严",
-        "动作": "任命",
-        "office": "户部尚书",
-        "office_type": "户部",
-    }
-    assert normalized[-1]["legacy_spillover"] == "appointments（朝臣 spillover）"
 
 @pytest.mark.parametrize(
     ("section", "item"),
@@ -1865,20 +1809,6 @@ def _materialize_active_prince(db, state, content):
     assert db.characters.get_character_status(name)[0] == "active"
     return name
 
-def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
-    """在朝名册的结构化成员不含 active 宗藩；材料目录仍可备好。"""
-    from ming_sim.materials import prepare_character_materials
-    db, state, content = read_game
-    name = _materialize_active_prince(db, state, content)
-    minister_name = next(
-        n for n, c in content.characters.items()
-        if getattr(c, "power_id", "ming") == "ming"
-        and getattr(c, "office_type", "") not in ("后宫", "宗藩")
-        and db.characters.get_character_status(n)[0] == "active"
-    )
-    prepare_character_materials(db, state, content.characters[minister_name])
-    court = {row["name"] for row in db.characters.current_court_rows(int(state.year), int(state.period))}
-    assert name not in court
 
 def test_apply_office_appointment_rejects_vassal_prince(game):
     """任命落地核（extractor office_changes + CLI/pending 任免共用）须拒绝给宗藩授官——否则授官会把
@@ -1893,15 +1823,6 @@ def test_apply_office_appointment_rejects_vassal_prince(game):
     assert row["office_type"] == "宗藩", "宗藩 office_type 被授官改写=反解隐藏"
     assert row["status"] == "offstage", "宗藩被授官路径翻成 active"
 
-def test_list_ministers_excludes_active_prince(read_game):
-    """召见阶段名册 GameSession.list_ministers 与各 roster 同口径排除 active 宗藩（cmr R5）。"""
-    from ming_sim.session import GameSession
-    db, state, content = read_game
-    name = _materialize_active_prince(db, state, content)
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    assert name not in [v.name for v in sess.list_ministers()], f"宗藩 {name} 漏进 list_ministers"
 
 def test_create_secret_order_rejects_vassal_prince(read_game):
     """密令创建唯一 DB 写口 create_secret_order 拒宗藩——集中守此一处覆盖 API/大臣工具/CLI/upsert

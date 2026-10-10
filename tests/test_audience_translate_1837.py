@@ -9,30 +9,24 @@ Seams:
 from __future__ import annotations
 
 import json
-import threading
 from types import SimpleNamespace
 
 import pytest
 
-import ming_sim.agents as agents_mod
 import ming_sim.audience_translate as audience_translate
 from ming_sim.audience_night import (
-    AudienceNightError,
     close_night,
     engine_command_mingfa_publication_ids,
-    list_chat_turns_for_night,
     list_ledger,
     open_night,
 )
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
-from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
     note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
-    stub_scene_agent,
 )
 
 
@@ -344,21 +338,6 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     assert rejection["reason"]
 
 
-def test_typed_stay_attend_records_named_person_not_virtual_speaker(game):
-    """#1812 第5项：口令旧路退役后，typed 留侍写缝仍按实名人落账（非殿上虚名）。"""
-    from ming_sim.audience_night import (
-        list_ledger, set_night_protagonist, stay_attend_in_audience, summon_enter,
-    )
-
-    db, state, content = game
-    person = _hong_name(db, content)
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    summon_enter(db, night_id, person)
-    set_night_protagonist(db, night_id, person, reason="test")
-    stay_id = stay_attend_in_audience(db, person, night_id=night_id)
-    assert stay_id is not None
-    assert list_ledger(db, night_id)[-1]["person_names"] == [person]
 
 
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):

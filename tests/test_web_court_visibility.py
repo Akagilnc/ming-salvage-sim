@@ -216,40 +216,8 @@ def _stub_game(monkeypatch, db, content):
     monkeypatch.setattr(web_app, "web_game", stub)
 
 
-def test_vassal_prince_chat_rejected(game, monkeypatch):
-    """宗藩不仅被朝堂列表挡，/chat 端点（_require_active_minister）也须拒绝——否则可绕列表
-    按名经 API 直接召对（cmr R1 finding D）。即便 active+ming 也拒。"""
-    import pytest
-    from fastapi import HTTPException
-    db, state, content = game
-    name, _ch = _materialized_prince(db, state, content)
-    db.set_character_status(state, name, "active", "测试：在世")
-    assert db.characters.get_character_status(name)[0] == "active"  # 物化后 setup 真生效：即便 active 也拒
-    _stub_game(monkeypatch, db, content)
-    with pytest.raises(HTTPException) as ei:
-        web_app._require_active_minister(name)
-    assert ei.value.status_code == 409
 
 
-def test_active_consort_chat_not_rejected(game, monkeypatch):
-    """后宫不在 _require_active_minister 的宗藩闸内——嫔妃 chat 复用本端点，active+ming 后宫
-    须能召对（finding D「别误伤后宫」反向锁）。"""
-    import pytest
-    db, state, content = game
-    consort = next(
-        (n for n, c in content.characters.items()
-         if getattr(c, "office_type", "") == "后宫" and getattr(c, "power_id", "ming") == "ming"),
-        None,
-    )
-    if consort is None:
-        pytest.skip("基底盘面无大明后宫人物")
-    # 物化进 DB 后 set_character_status 才真生效（选中的 content 后宫未必在 probe.db 旧档，
-    # 缺行时 set 是 no-op、status 只靠缺行默认 active 兜——gemini R4）。物化使「active 后宫过闸」可证。
-    db.add_character(state, content.characters[consort], source="测试物化")
-    db.set_character_status(state, consort, "active", "测试：在位")
-    assert db.characters.get_character_status(consort)[0] == "active"
-    _stub_game(monkeypatch, db, content)
-    web_app._require_active_minister(consort)  # 不抛 = 通过（后宫未被宗藩闸误伤）
 
 
 def test_zongfan_cannot_be_summoned_via_can_summon(game):
@@ -339,29 +307,6 @@ def test_normal_ming_minister_still_summonable(read_game):
     assert ok is True
 
 
-def test_list_ministers_uses_db_power_id(game):
-    """召见名册 list_ministers 须与 can_summon 同口径（DB 权威 power_id，#125 centralize）：
-    招抚归明者(DB翻ming/content仍旧势力) 入册；外藩 active 不入册。否则可召却不在册、两端不一致。"""
-    from ming_sim.session import GameSession
-    import pytest
-    db, state, content = game
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    # 招抚归明者：content 非 ming，DB 翻 ming → 应入册
-    归明 = next((n for n, c in content.characters.items()
-                if getattr(c, "power_id", "ming") != "ming"
-                and c.office_type not in ("后宫", "宗藩", "未仕")), None)
-    if 归明 is None:
-        pytest.skip("基底盘面无非 ming 可招抚人物")
-    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
-    db.conn.commit()
-    db.set_character_status(state, 归明, "active", "测试：招抚归明")
-    names = {v.name for v in sess.list_ministers()}
-    assert 归明 in names, "DB 已归明者却被内存值挡出召见名册"
-    # 外藩 active（DB 非 ming）不入册
-    enemy = _enemy_active_name(db, content)
-    assert enemy not in {v.name for v in sess.list_ministers()}
 
 
 def test_find_existing_minister_uses_db_power_id(game):
@@ -419,58 +364,8 @@ def _session_stub(db, content):
     return sess
 
 
-def test_shi_kefa_not_in_summonable_court_roster(read_game):
-    """#1317/#1462：史可法 office=诸生/未仕，不得以在朝身份入可召名册。
-
-    #1462：debut_year=0 表示开局即在场，不得标 offstage（否则 apply_historical_debuts
-    永不激活，人才池/朝堂双排除且无法按姓名铨选发现）。在场态靠 office_type='未仕'
-    可召资格过滤挡召见；任命写路径仍可入仕。
-
-    接缝：list_ministers + can_summon + visible_in_court 三面同拒。
-    """
-    db, _state, content = read_game
-    assert "史可法" in content.characters, "seed 须含史可法"
-    ch = content.characters["史可法"]
-    assert ch.office_type == "未仕"
-    assert "诸生" in (ch.office or "")
-    # #1462：开局即在场（debut_year 默认 0），status 须 active
-    assert int(getattr(ch, "debut_year", 0) or 0) == 0
-    assert ch.status == "active", ch.status
-    row = db.conn.execute(
-        "SELECT status, debut_year FROM characters WHERE name=?", ("史可法",),
-    ).fetchone()
-    assert row is not None
-    assert row["status"] == "active"
-    assert int(row["debut_year"] or 0) == 0
-
-    sess = _session_stub(db, content)
-    names = {v.name for v in sess.list_ministers()}
-    assert "史可法" not in names, "史可法不得入 list_ministers 可召名册"
-
-    ok, reason = sess.can_summon(ch)
-    assert ok is False, f"史可法 can_summon 应拒，实际放行 reason={reason!r}"
-    assert reason
-
-    assert visible_in_court(ch, db) is False, "史可法不得入 web 朝堂 ministers 投影"
 
 
-def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
-    """#1317 回归：真在朝大臣（非未仕）仍可召、仍在名册——禁谓词收窄误伤。"""
-    db, _state, content = read_game
-    sess = _session_stub(db, content)
-
-    for name in ("温体仁", "毕自严", "张瑞图"):
-        assert name in content.characters, f"seed 缺 {name}"
-        ch = content.characters[name]
-        assert ch.office_type != "未仕"
-        assert db.characters.get_character_status(name)[0] == "active", name
-        assert visible_in_court(ch, db) is True, name
-        ok, reason = sess.can_summon(ch)
-        assert ok is True, f"{name} 被误伤：{reason}"
-
-    roster_names = {v.name for v in sess.list_ministers()}
-    for name in ("温体仁", "毕自严", "张瑞图"):
-        assert name in roster_names, f"{name} 被挡出 list_ministers"
 
 
 

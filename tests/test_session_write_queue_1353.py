@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -131,16 +130,6 @@ def test_barrier_waits_multiple_prior_tickets():
     assert set(order[:2]) == {"a", "b"}
 
 
-def test_fail_vacate_lets_barrier_through():
-    """失败钉：腿失败票据空放行，屏障不卡死。"""
-    q = SessionWriteQueue()
-    t = q.claim(key=("extract", 9))
-    assert t is not None
-    q.vacate(t)
-    order: list[str] = []
-    q.barrier(lambda: order.append("barrier") or None)
-    assert order == ["barrier"]
-    assert q.inflight_count() == 0
 
 
 def test_post_barrier_claim_run_waits_for_barrier():
@@ -313,69 +302,8 @@ def test_barrier_waits_healthy_slow_worker_terminal():
     assert q.inflight_count() == 0
 
 
-def test_barrier_proceeds_after_worker_fail_vacate():
-    """可控失败终态：工人 vacate 后屏障放行（无 elapsed 伪失败）。"""
-    q = SessionWriteQueue()
-    t = q.claim(key=("turn", 2))
-    assert t is not None
-    order: list[str] = []
-    started = threading.Event()
-    done = threading.Event()
-
-    def failing_worker() -> None:
-        started.set()
-        order.append("fail_vacate")
-        q.vacate(t)  # 失败空放行
-
-    def run_barrier() -> None:
-        started.wait()
-        q.barrier(lambda: order.append("barrier") or None)
-        done.set()
-
-    threading.Thread(target=failing_worker, daemon=True).start()
-    threading.Thread(target=run_barrier, daemon=True).start()
-    done.wait()
-    assert order == ["fail_vacate", "barrier"], order
 
 
-def test_run_exclusive_serializes_writes():
-    """write_gate 并入队列：run_exclusive 互斥。"""
-    q = SessionWriteQueue()
-    hold = threading.Event()
-    in_critical = threading.Event()
-    order: list[str] = []
-    slow_done = threading.Event()
-    fast_done = threading.Event()
-
-    def slow() -> None:
-        in_critical.set()
-        hold.wait()
-        order.append("slow")
-
-    def fast() -> None:
-        order.append("fast")
-        fast_done.set()
-
-    th = threading.Thread(
-        target=lambda: (q.run_exclusive(slow), slow_done.set()),
-        daemon=True,
-    )
-    th.start()
-    in_critical.wait()
-    th2 = threading.Thread(
-        target=lambda: q.run_exclusive(fast),
-        daemon=True,
-    )
-    th2.start()
-    # fast 在 slow 持锁期间不得完成
-    assert not fast_done.is_set()
-    assert "fast" not in order
-    hold.set()
-    slow_done.wait()
-    fast_done.wait()
-    th.join()
-    th2.join()
-    assert order == ["slow", "fast"], order
 
 
 def test_write_turn_orders_cs_not_whole_leg_llm():

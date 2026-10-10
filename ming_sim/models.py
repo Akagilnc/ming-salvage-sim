@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES,
@@ -642,12 +642,6 @@ class GameState:
             self.period = 1
             self.year += 1
 
-
-@dataclass
-class CourtContext:
-    state: "GameState"
-    db: "object"  # GameDB；用 object 注解避免 import db.py 造成环
-    previous_summary: str = ""
 
 
 def period_label(year: int, month: int) -> str:

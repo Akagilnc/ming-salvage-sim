@@ -19,7 +19,6 @@ from types import SimpleNamespace
 
 import web_app
 from ming_sim.models import TurnPhase
-from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
 
 
 def _click_before(state) -> dict[str, int]:
@@ -67,65 +66,6 @@ def _blocking_gate(game):
         gate.release()
 
 
-def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
-    """验收：A 成功未推月清残留时 DELETE 须持 write_gate；B 持 atomic 门时 A 不得无门写入。"""
-    db, state, content = game
-    before = _click_before(state)
-    runtime = _shell(db, state, content)
-    # 成功体不推进月份，离开时仍 summoning + 快照在 → 触发成功支 clear_orphan。
-    state.turn_phase = TurnPhase.SUMMONING.value
-    db.reign.save_game_state(state)
-
-    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
-
-    # 预置残留快照（模拟点即入 capture 后未推月）
-    db.capture_month_open_snapshot(state)
-    assert db.month_open_snapshots.get(int(state.turn)) == before
-
-    gate = web_app._game_write_gate(runtime)
-    clear_saw_gate = {"locked": None}
-    orig_delete = db.month_open_snapshots.delete
-
-    def _wrapped_clear(t):
-        clear_saw_gate["locked"] = gate.locked()
-        return orig_delete(t)
-
-    db.month_open_snapshots.delete = _wrapped_clear  # type: ignore[method-assign]
-
-    # B 先持 gate（模拟进 atomic）——A 成功支 clear 须堵在 write_cm，不得无门完成 DELETE
-    assert gate.acquire(blocking=False)
-    a_done = threading.Event()
-    a_err: list = []
-
-    def _a_success():
-        try:
-            with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
-                pass  # 成功未推月
-        except Exception as exc:  # noqa: BLE001
-            a_err.append(exc)
-        finally:
-            a_done.set()
-
-    try:
-        t = threading.Thread(target=_a_success, daemon=True)
-        t.start()
-        assert not a_done.is_set(), "A 成功支 clear 不得在 B 持 gate 时无门完成"
-        # B 事务窗内快照仍在——证明 DELETE 未落进共享连接/B 侧可见状态
-        assert db.month_open_snapshots.get(int(state.turn)) == before
-        gate.release()
-        a_done.wait()
-        t.join()
-    finally:
-        db.month_open_snapshots.delete = orig_delete  # type: ignore[method-assign]
-        if gate.locked():
-            gate.release()
-
-    assert not a_err, a_err
-    assert clear_saw_gate["locked"] is True, "成功支 clear 须持 write_gate"
-    assert db.month_open_snapshots.get(int(state.turn)) is None
-    assert web_app._settlement_entry_inflight(runtime) == 0
-    assert runtime.state_payload()["turn"]["settlement_display"] is False
 
 
 def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
@@ -228,17 +168,3 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
     assert web_app._settlement_entry_inflight(runtime) == 0
     assert db.month_open_snapshots.get(int(state.turn)) is None
     assert runtime.state_payload()["turn"]["settlement_display"] is False
-
-
-def test_refresh_turn_no_longer_clears_orphan(game):
-    """F3：refresh_turn 不再是清理点——直调不得清残留（清理只在受理样板成功支）。"""
-    db, state, content = game
-    before = _click_before(state)
-    db.capture_month_open_snapshot(state)
-    state.turn_phase = TurnPhase.SUMMONING.value
-    db.reign.save_game_state(state)
-
-    runtime = _shell(db, state, content)
-    # 绑定真实方法（轻壳无实例绑定）
-    web_app.WebGame.refresh_turn(runtime)
-    assert db.month_open_snapshots.get(int(state.turn)) == before

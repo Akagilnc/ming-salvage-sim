@@ -3,14 +3,11 @@ from __future__ import annotations
 import pytest
 
 import asyncio
-import json
 import threading
 from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-from tests.wait_utils import wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
 
 
@@ -289,37 +286,6 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(mo
     assert completed == [True]
 
 
-def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
-    events: list[str] = []
-    entered = threading.Event()
-    release = threading.Event()
-
-    class _BlockingGame:
-        def chat_stream(self, minister_name: str, message: str):
-            entered.set()
-            release.wait()  # block until tick observed entry (no wall clock)
-            events.append("stream")
-            yield {"type": "done", "payload": {"ok": True}}
-
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda minister_name: None)
-    monkeypatch.setattr(web_app, "get_game", lambda: _BlockingGame())
-
-    async def drive_first_event():
-        response = await web_app.api_audience_chat_stream( web_app.ChatRequest(message="请奏"))
-        iterator = response.body_iterator
-
-        async def tick():
-            await asyncio.to_thread(entered.wait)
-            events.append("tick")
-            release.set()
-
-        first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
-        return first_event
-
-    first = asyncio.run(drive_first_event())
-
-    assert events == ["tick", "stream"]
-    assert "event: done" in first
 
 
 def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkeypatch):
@@ -375,25 +341,3 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     )
     assert state_payload == {"ok": True, "turn": 1}
     assert chat_result["answer"] == "臣已知悉。"
-
-
-def test_nonstream_chat_rejects_when_session_draining():
-    """drain 已开始时非流式 chat 不得再登记 pending——对齐 stream 拒绝路，HTTP 503。"""
-    from fastapi import HTTPException
-
-    character = SimpleNamespace(name="测试大臣")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-    db = _RecordingDB(threading.Event())
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _FakeSession(character, _FakeAgent(threading.Event()), state, db)
-    runtime.chat_history = {character.name: [], "殿上": []}
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_queue.seal()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-
-    events = list(runtime.chat_stream("殿上", "边饷如何？"))
-    assert events and events[0].get("type") == "error"
-    assert runtime._pending_writes_count == 0

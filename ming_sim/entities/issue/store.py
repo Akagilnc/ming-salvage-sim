@@ -136,9 +136,6 @@ class IssueStore:
     def read_list_closed_issues_at(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM issues WHERE closed_turn = ? AND status IN ('resolved','failed','dropped') ORDER BY id", params).fetchall()
 
-    def read_count_active_initiatives(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT COUNT(*) AS n FROM issues WHERE kind='initiative' AND status='active'", params).fetchone()
-
     def read_find_active_issue_by_origin(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM issues WHERE origin_kind=? AND origin_ref=? AND status='active' LIMIT 1", params).fetchone()
 
@@ -529,43 +526,6 @@ class IssueStore:
             (int(turn),),
         )
 
-    def clear_pending_decisions(self, turn: int) -> None:
-        """#656：按 kind 过滤——只清 'decision' 行（既有生命周期一字不变）；
-        'rescript_draft' 行跨月留存，终态清理归 #657 六动作裁决路径。"""
-        self._delete_pending_decision_rows(turn)
-        self._conn.commit()
-
-    def _insert_rescript_draft_rows(
-        self, turn: int, drafts: List[Dict[str, object]],
-    ) -> None:
-        row = self._conn.execute(
-            "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
-            (int(turn),),
-        ).fetchone()
-        idx = int(row[0] or 0)
-        for d in drafts:
-            actor_name = str(d.get("actor_name") or "")
-            actor_office = str(d.get("actor_office") or "")
-            actor_faction = str(d.get("actor_faction") or "")
-            event_id = str(d.get("event_id") or "").strip()
-            if not event_id:
-                event_id = f"urgent:{int(turn)}:{idx}"
-            self._conn.execute(
-                """INSERT INTO pending_decisions
-                   (turn, idx, event_id, title, context, options_json, choice_json,
-                    status, kind, actor_name, actor_office, actor_faction)
-                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
-                (
-                    int(turn), idx,
-                    event_id,
-                    str(d.get("title") or ""),
-                    str(d.get("context") or ""),
-                    json.dumps(d.get("options") or [], ensure_ascii=False),
-                    actor_name, actor_office, actor_faction,
-                ),
-            )
-            idx += 1
-
     def list_rescript_drafts(self) -> List[Dict[str, object]]:
         """#656：全部急务票拟行（kind='rescript_draft'），跨月留存待 #657 批红面消费。
 
@@ -595,14 +555,6 @@ class IssueStore:
                 "prior_options_json": prior,
             })
         return out
-
-    def save_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
-        """#656 / ADR 0093：急务票拟行覆写本回合（只清同 kind）。不 commit。"""
-        self._conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
-            (int(turn),),
-        )
-        self._insert_rescript_draft_rows(int(turn), drafts)
 
     def _project_rescript_desk_row(self, r: Any) -> Dict[str, object]:
         """pending_decisions 行 → desk 投影（pending/decided 共用）。"""
@@ -799,10 +751,6 @@ class IssueStore:
     def list_commitments_for_dossier(self, dossier_id: int) -> list[dict[str, object]]:
         rows = self.read_list_commitments_for_dossier((f"dossier:{int(dossier_id)}",))
         return [dict(row) for row in rows]
-
-    def count_active_initiatives(self) -> int:
-        row = self.read_count_active_initiatives()
-        return int(row["n"] or 0)
 
     def has_event_triggered(self, event_id: str) -> bool:
         row = self.read_has_event_triggered((event_id,))

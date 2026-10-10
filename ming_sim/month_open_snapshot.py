@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ming_sim.constants import ECONOMY_ACCOUNTS, SCORE_METRICS
 from ming_sim.models import FRONT_HALF_DONE_PHASES
 from ming_sim.token_stats import tlog
 
@@ -17,7 +16,6 @@ if TYPE_CHECKING:
     from ming_sim.models import GameState
 
 # 点击前四键：国库/内库/民心/皇威（GATE_METRIC_KEYS 同源，显式钉死顺序）
-MONTH_OPEN_KEYS = tuple(ECONOMY_ACCOUNTS) + tuple(SCORE_METRICS)
 
 
 def accept_settlement_period(db: "GameDB", state: "GameState") -> bool:

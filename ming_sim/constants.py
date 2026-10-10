@@ -5,7 +5,6 @@ L1：仅依赖 ming_sim.paths（L0）做 frozen-aware 路径解析。
 
 from __future__ import annotations
 
-import os
 
 from ming_sim.paths import bundled_path, bundled_root
 
@@ -254,7 +253,6 @@ EXIT_COMMANDS = {"exit", "退出游戏", "退出", "exit game"}
 COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝", "今日且到此"}
 # #1812 第5项：两句口令（「留下听着」「今日就到这里吧」）不再由代码识别，
 # 改走普通对话 → 场景模型接着演、转译记下谁在场/谁退下。不另立词表。
-MINISTER_DISMISS_COMMANDS = {"done", "退下", "跪安", "退了", "下去"}
 
 # 经济流水（economy_ledger）支出条目的结构化标签。
 # 仅对支出（delta<0）有效；收入条目（税收/抄家入帑/纳贡）三项一律 NULL。

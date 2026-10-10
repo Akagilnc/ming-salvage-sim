@@ -487,94 +487,16 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
     )
 
 
-def test_office_weight_takes_highest_domain_across_joint_offices():
-    """#9：兼职跨 domain 时，官职权重取头衔各分项里最高 domain。"""
-    from ming_sim.db import _member_office_weight
-    # 魏忠贤：domain 取司礼监 20——不再因 office_type=东厂 而只值 8。
-    assert _member_office_weight("东厂", "司礼监秉笔太监,东厂提督") == 20.0
-    # 来宗道：domain 取内阁 18——不再因 office_type=礼部 而只值 5。
-    assert _member_office_weight("礼部", "礼部尚书,东阁大学士") == 18.0
-    # 单职不变：兵部尚书 = 兵部 12 × 堂官 1.0。
-    assert _member_office_weight("兵部", "兵部尚书") == 12.0
-    # 空 office 仍 0。
-    assert _member_office_weight("司礼监", "") == 0.0
 
 
-def test_office_rank_deputy_titles_not_inflated_to_principal():
-    """#9：品级子串误匹配——副职头衔含正职关键词作子串时取最低档。"""
-    from ming_sim.db import _office_rank_multiplier
-
-    assert _office_rank_multiplier("副总兵") == 0.5, "副总兵⊃总兵 不该被误判正职 1.0"
-    assert _office_rank_multiplier("锦州副总兵") == 0.5, "锦州副总兵(祖大寿) 不该被误判正职 1.0"
-    assert _office_rank_multiplier("佥都御史") == 0.5, "佥都御史⊃都御史 不该被误判正职 1.0"
-    assert _office_rank_multiplier("佥都御史，巡按") == 0.5, "佥都御史(吴甡) 带尾缀仍 0.5"
-    assert _office_rank_multiplier("总兵") == 1.0
-    assert _office_rank_multiplier("都御史") == 1.0
-    assert _office_rank_multiplier("兵部尚书") == 1.0
-    assert _office_rank_multiplier("内阁首辅") == 1.0
-    assert _office_rank_multiplier("司礼监掌印太监") == 1.0
-    assert _office_rank_multiplier("司礼监秉笔太监") == 1.0
-    assert _office_rank_multiplier("侍郎") == 0.5
-    assert _office_rank_multiplier("东阁大学士") == 0.5
-    assert _office_rank_multiplier("次辅") == 0.5
-    assert _office_rank_multiplier("兵部职方") == 0.25
-    assert _office_rank_multiplier("郎中") == 0.25
-    assert _office_rank_multiplier("游击") == 0.25
-    assert _office_rank_multiplier("礼部尚书,东阁大学士") == 1.0
-    assert _office_rank_multiplier("火器西法") == 1.0
 
 
-def test_office_rank_aux_titles_audit_offices_json():
-    """#9：offices.json 合法佐贰官名含正职子串时仍归 0.5；正职堂官不被误降。"""
-    from ming_sim.db import _office_rank_multiplier
-
-    assert _office_rank_multiplier("副都御史") == 0.5, "副都御史⊃都御史 不该被误判正职 1.0"
-    assert _office_rank_multiplier("右副都御史") == 0.5, "右副都御史(带方位前缀)仍 0.5"
-    assert _office_rank_multiplier("都督佥事") == 0.5, "都督佥事⊃都督 是佐贰、应 0.5"
-    assert _office_rank_multiplier("都督同知") == 0.5, "都督同知⊃都督 是佐贰、应 0.5"
-    assert _office_rank_multiplier("同知") == 0.5
-    assert _office_rank_multiplier("佥事") == 0.5
-    assert _office_rank_multiplier("指挥同知") == 0.5, "卫指挥同知 是佐贰、应 0.5"
-    assert _office_rank_multiplier("副总兵") == 0.5
-    assert _office_rank_multiplier("佥都御史") == 0.5
-    assert _office_rank_multiplier("左都御史") == 1.0, "左都御史 是都察院堂官、应 1.0"
-    assert _office_rank_multiplier("右都御史") == 1.0, "右都御史 是都察院堂官、应 1.0"
-    assert _office_rank_multiplier("提督东厂") == 1.0
-    assert _office_rank_multiplier("提督京营") == 1.0
-    assert _office_rank_multiplier("总督军务") == 1.0
-    assert _office_rank_multiplier("秉笔太监") == 1.0
-    assert _office_rank_multiplier("都指挥使") == 1.0
 
 
-def test_jundadou_deputy_ouster_impact_is_half_of_principal():
-    """#9：祖大寿(锦州副总兵·边镇)权重 = 域×佐贰档，非正职满档。"""
-    from ming_sim.db import _member_office_weight
-
-    assert _member_office_weight("边镇", "锦州副总兵") == 5.0, (
-        "祖大寿(副总兵)应按佐贰半档算权重，不按正职满档"
-    )
-    assert _member_office_weight("边镇", "锦州总兵") == 10.0
 
 
-def test_xingbu_has_leverage_weight_like_other_ministries():
-    """#9：刑部尚书(六部堂官)应与礼部/工部同档贡献权重，不漏成 0。"""
-    from ming_sim.db import _member_office_weight
-
-    assert _member_office_weight("刑部", "刑部尚书") == 5.0, (
-        "刑部尚书(六部堂官)应贡献非零权重，与其余五部一致"
-    )
 
 
-def test_neiting_has_leverage_weight_like_other_court_eunuchs():
-    """#9：内廷宫廷宦官权重经词干表映射后非零，与其余在朝宦官一致。"""
-    from ming_sim.db import _member_office_weight, _office_type_from_table
-
-    assert _office_type_from_table("御马监掌印太监") == "内廷", (
-        "offices.json 词干表应把御马监掌印→内廷"
-    )
-    assert _member_office_weight("内廷", "御马监掌印太监") == 4.0, (
-        "内廷宫廷宦官(御马监掌印)应贡献非零权重"
-    )
 
 
 def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):

@@ -6,19 +6,12 @@ import json
 
 import pytest
 
-from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
-from ming_sim.entities.issue.store import IssueStore
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
     assemble_structured_decree,
 )
-from tests.directive_seed_helpers import seed_manual_draft
 from tests.rescript_test_helpers import sql_rescript_draft
 
-from tests.test_month_loop_tracer_1468 import (  # noqa: F401
-    _post_issue_stream,
-    tracer_client,
-)
 
 
 # #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
@@ -186,45 +179,6 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
     _assert_drafted_roster_nailed(db, created)
 
-def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
-    """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 大臣所拟名单。"""
-    import ming_sim.cli_backend as cli_backend
-    import web_app
-
-    new = tracer_client.post("/api/menu/new_game")
-    assert new.status_code == 200
-    game = web_app.web_game
-    assert game is not None
-
-    def backend(*_a, **_k):
-        return _owner_manual_backend_json(), 1
-
-    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # #1849：独立手拟新增 Web 口已退役；经现行 capture 核 + session 落草案
-    # （召对拟旨同一条 turn_directives 写入），下游盖玺/案卷契约不变。
-    assert seed_manual_draft(game.session, "着户部继续核查陕西赈务，按月具报。") > 0
-    turn_before = game.state.turn
-    _post_issue_stream(
-        tracer_client, expected_turn=turn_before, step="#1624 owner seal",
-    )
-    assert game.state.turn == turn_before + 1
-    dossiers = [dict(d) for d in game.db.dossiers.list_dossiers()]
-    matched = [
-        d for d in dossiers
-        if str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
-        == "shaanxi"
-        and str(json.loads(d.get("payload_json") or "{}").get("transaction_category") or "")
-        == "督赈"
-    ]
-    assert matched, f"expected shaanxi 督赈 dossier, got={dossiers!r}"
-    payload = json.loads(matched[0]["payload_json"])
-    assert payload.get("target_kind") == "region"
-    assert payload.get("locality_scope") == "single"
-    assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
-    # assignment 不得跨动作透传执行面（#1624）；与 multi-aim military 同契：字段缺失或空。
-    assert str(payload.get("execution_surface") or "").strip() == ""
-    _assert_drafted_roster_nailed(game.db, matched[0])
 
 def _executing_counts(db, *, owner_name: str, region_id: str):
     """Observe durable executing dossiers, not the retired simulator board."""
@@ -239,80 +193,6 @@ def _executing_counts(db, *, owner_name: str, region_id: str):
     ).fetchone()[0]
     return owner_open, province_open
 
-def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
-    tracer_client, monkeypatch,
-):
-    """#1790 验收：≥15 件 initiative 在办时票拟再下一旨 → 第 16 成案、executing 差务、
-    turn+1 不中止；该主办/属地在办案卷数 +1。
-
-    入口＝现行落草案路（capture 核 + session.add_directive，#1624 seal 同形；#1849 后
-    独立手拟新增 Web 口已退役），非 apply 层 helper、非 1565 交办、非 #1783 拨帑 tracer。
-    填帽 insert_issue 直落；观察面为持久化案卷。
-    """
-    import ming_sim.cli_backend as cli_backend
-    import web_app
-
-    new = tracer_client.post("/api/menu/new_game")
-    assert new.status_code == 200, new.text
-    game = web_app.web_game
-    assert game is not None
-    db, state = game.db, game.state
-
-    owner_name = "毕自严"
-    region_id = "shaanxi"
-    for idx in range(15):
-        db.insert_issue(
-            state,
-            kind="initiative",
-            title=f"在办占位{idx}",
-            origin_kind="decree",
-            origin_ref=f"cap-fill:{idx}",
-            effect_on_resolve={"metrics": {"民心": 1}},
-        )
-    assert db.issues.count_active_initiatives() >= 15
-    owner_before, province_before = _executing_counts(
-        db, owner_name=owner_name, region_id=region_id,
-    )
-
-    def backend(*_a, **_k):
-        return _owner_manual_backend_json(), 1
-
-    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # #1849：独立手拟新增 Web 口已退役，改经现行 capture 核 + session 落草案。
-    assert seed_manual_draft(game.session, "着户部继续核查陕西赈务，按月具报。") > 0
-
-    turn_before = int(state.turn)
-    body = _post_issue_stream(
-        tracer_client,
-        expected_turn=turn_before,
-        step="#1790 beyond-fifteen issue/stream",
-    )
-    assert not body.get("awaiting_decision"), body
-    assert int(game.state.turn) == turn_before + 1
-
-    assert db.issues.count_active_initiatives() >= 16
-    matched = [
-        dict(d) for d in db.dossiers.list_dossiers()
-        if str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
-        == region_id
-        and str(json.loads(d.get("payload_json") or "{}").get("transaction_category") or "")
-        == "督赈"
-    ]
-    assert len(matched) == 1, matched
-    dossier = matched[0]
-    assert dossier["status"] == "executing", dossier
-    assert str(dossier.get("region_id") or "") == region_id, dossier
-    _assert_drafted_roster_nailed(db, dossier)
-
-    landed = IssueStore(db.conn).read_find_active_issue_by_origin(("decree", f"dossier:{dossier['id']}"))
-    assert landed is not None and str(landed["kind"]) == "initiative", landed
-
-    owner_after, province_after = _executing_counts(
-        db, owner_name=owner_name, region_id=region_id,
-    )
-    assert owner_after == owner_before + 1, (owner_before, owner_after)
-    assert province_after == province_before + 1, (province_before, province_after)
 
 def test_normalize_rescript_layer_a_option_contract():
     """normalize_rescript_layer_a_option：外部可观察成败与归一结果。

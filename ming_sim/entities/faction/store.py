@@ -180,15 +180,8 @@ class FactionStore:
         rows = self.read_get_faction_stance_summaries()
         return [dict(row) for row in rows]
 
-    def get_faction_stance_summary(self, faction: str):
-        row = self.read_get_faction_stance_summary((str(faction),))
-        return dict(row) if row is not None else None
-
     def read_get_faction_stance_summaries(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM faction_stance_summaries ORDER BY faction', params).fetchall()
-
-    def read_get_faction_stance_summary(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM faction_stance_summaries WHERE faction = ?', params).fetchone()
 
     def read_resolve_target_faction_identity(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM factions WHERE name = ?', params).fetchone()

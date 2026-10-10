@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from ming_sim.session_write_queue import get_session_write_queue
 
-import json
 
 import pytest
 
@@ -384,24 +383,3 @@ def test_skip_refused_at_front_half_done(game):
     pre_settle(state, db, content=content)
     # 前半落账不推进月份；财政落账/恢复另由本文件真实收尾案证明。
     assert state.turn == turn
-
-def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
-    """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。
-
-    恢复窗口新增/确认的 draft 会被 mark_directives_issued 连带标 issued，
-    而重放 delta 不含它们=幽灵颁布。
-    """
-    from ming_sim.session import GameSession
-    db, state, content = game
-    state.turn_phase = "settling"
-
-    sess = _recovery_session(db, state, content, monkeypatch)
-    for call in (
-        lambda: sess.add_directive("新草案"),
-        lambda: sess.update_directive(1, "改"),
-        lambda: sess.delete_directive(1),
-        # #1341：set_decree 已删；冻结面只覆盖逐道草案变更器 + write_decree
-        lambda: sess.write_decree(),
-    ):
-        with pytest.raises(ValueError):
-            call()

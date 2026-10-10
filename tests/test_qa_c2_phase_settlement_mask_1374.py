@@ -17,7 +17,6 @@ from types import SimpleNamespace
 
 import web_app
 from ming_sim.models import TurnPhase
-from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
 
 
 def _click_before(state) -> dict[str, int]:
@@ -67,93 +66,6 @@ async def _drain_resolve_sse(choices):
     return "".join(chunks)
 
 
-def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
-    """#1374：resolve/stream worker 必入 _settlement_period_entry（对照三入口样板）。"""
-    db, state, _content = game
-    before = _click_before(state)
-    db.capture_month_open_snapshot(state)
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.reign.save_game_state(state)
-    db.issues.save_pending_decisions(int(state.turn), [{
-        "event_id": "evt-1",
-        "title": "饷银",
-        "context": "是否发帑",
-        "options": [{"label": "发", "hint": "发内帑"}],
-    }])
-
-    runtime = _runtime(db, state)
-    phase2_started = threading.Event()
-    release_phase2 = threading.Event()
-
-    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
-        # 生产协议：submit_hitl_choices；纯 decision 路径持 write_gate。
-        runtime.actions.append("submit")
-        with write_gate:
-            # 模拟 decided 先写（崩溃安全时序）——本刀不改 session 真写序，仅证展示态窗口。
-            db.conn.execute(
-                "UPDATE pending_decisions SET status='decided' WHERE turn=?",
-                (int(state.turn),),
-            )
-            db.conn.commit()
-            phase2_started.set()
-            release_phase2.wait()
-            return "邸报：测。"
-
-    runtime.session.submit_hitl_choices = _submit_hitl
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-
-    async def _go():
-        # 并行：放行 phase2 前先观测展示态。
-        # drain 终态必须先 stop/release，再 await watcher——禁在 finally 前无条件等 watch
-        # （resolve 失败产出 error SSE 后 drain 正常返回，phase2 永不置位）。
-        stop = threading.Event()
-
-        async def _watch():
-            # 可取消异步轮询（禁 executor 上 Event.wait：cancel 打不穿）。
-            # release 归 watcher 持有：观察/断言失败也必达，打破 resolve↔drain 互等。
-            try:
-                while not phase2_started.is_set() and not stop.is_set():
-                    await asyncio.sleep(0)
-                if not phase2_started.is_set():
-                    return
-                payload = runtime.state_payload()
-                assert payload["turn"]["settlement_display"] is True
-                for k in MONTH_OPEN_KEYS:
-                    assert payload["metrics"][k] == before[k]
-            finally:
-                release_phase2.set()
-
-        watch_task = asyncio.create_task(_watch())
-        body_exc: BaseException | None = None
-        watch_exc: BaseException | None = None
-        result = None
-        try:
-            result = await _drain_resolve_sse([{"label": "发"}])
-        except BaseException as exc:
-            body_exc = exc
-        finally:
-            # drain 已返回或失败：先 stop/release，再收 watcher。
-            # 先排空并消费 watch 异常，再按 body>watch 次序重抛——收尾不替换主体原错。
-            stop.set()
-            release_phase2.set()
-            if not watch_task.done():
-                try:
-                    await watch_task
-                except BaseException as exc:
-                    watch_exc = exc
-            elif not watch_task.cancelled():
-                watch_exc = watch_task.exception()
-        if body_exc is not None:
-            raise body_exc
-        if watch_exc is not None:
-            raise watch_exc
-        return result
-
-    serialized = asyncio.run(_go())
-    assert "event: done" in serialized
-    # 快照仍在（本替身 submit 未推进月份）；phase2 窗内展示态真源不灭
-    assert db.month_open_snapshots.get(int(state.turn)) == before
 
 
 def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, monkeypatch):

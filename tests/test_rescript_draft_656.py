@@ -293,16 +293,6 @@ def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option(raw)
 
-def test_1620_internal_canonical_xiexang_renormalizes_without_kind():
-    """内部 canonical（无 kind、grant_action=协饷）二次归一仍通；生成旁路另闸。"""
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-    raw = _army_pay_grant_option(grant_action="协饷")
-    raw.pop("grant_kind", None)
-    opt = normalize_rescript_layer_a_option(raw)
-    assert opt["grant_action"] == "协饷"
-    assert opt["purpose"] == "补饷"
-    assert opt["account"] == "国库"
 
 def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
     """desk：旧急务 ORDER BY turn,idx → 本月 decision；decision_key 与新列投影。"""

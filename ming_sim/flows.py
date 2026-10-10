@@ -9,12 +9,10 @@ from ming_sim.entities.region.store import RegionStore
 from ming_sim.entities.reign_state.store import ReignStateStore
 
 import copy
-import json
 import math
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from ming_sim.army_pay import (
-    army_pay_morale_delta,
     ARMY_SALARY_PRIORITY,
     _auto_pay_arrears_by_priority,
     _clear_zero_manpower_mutiny_latch,
@@ -553,7 +551,7 @@ def _apply_economy_list(
     allow_pay_arrears_pool=True 仅供承诺结算内部使用，表示该承诺的 arrears
     stop gate 已经给出范围，可在 pay_arrears_pool_army_ids 内按优先级池偿还。
     """
-    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
+    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
     applied: List[Dict[str, object]] = []
     # isinstance 守卫：issue-effect 的 economy（来自 enrich，未经 schema 清洗）可能被 LLM 给成真值
     # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117
@@ -937,10 +935,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
     # hub 收入已由上方 outbound/province tick 落账，预算行带 internal=substrate_hub 的跳过。
-    def _apply_budget_lines(*, skip_substrate_hub_lines: bool = False) -> None:
-        budget = compute_budget_lines(
-            db, state, project_substrate_hub=not skip_substrate_hub_lines
-        )
+    def _apply_budget_lines() -> None:
+        budget = compute_budget_lines(db, state, project_substrate_hub=False)
         # 军饷跳过认 budget_key，不咬显示名——改 name 不得导致定额路径双扣。
         skip_names = {"建筑产出", "建筑维护"}
 
@@ -948,7 +944,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             return (
                 it.get("budget_key") == "army_pay"
                 or it["name"] in skip_names
-                or (skip_substrate_hub_lines and it.get("internal") == "substrate_hub")
+                or it.get("internal") == "substrate_hub"
             )
 
         for account in ("国库", "内库"):
@@ -964,7 +960,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     origin_ref=str(it.get("origin_ref") or ""),
                 )
 
-    _apply_budget_lines(skip_substrate_hub_lines=True)
+    _apply_budget_lines()
 
     # ── #318 分叉前全军归一（不挂资格子集）──
     # 1) 零兵先清闩（防误转流寇） 2) 旧存档第三振正兵力在 advance 可解闩前转出

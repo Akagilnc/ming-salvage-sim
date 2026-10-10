@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.db import GameDB
@@ -153,7 +152,7 @@ def test_per_route_storage_restore_and_escort_split(game):
     assert db.dossiers.list_dossier_progress(escorted_grant) == []
     progress = db.dossiers.list_dossier_progress(escort_dossier_id)
     assert len(progress) == 1
-    assert "护行路已核关防" in progress[0]["memorial_text"]
+    assert progress[0]["memorial_text"] == "护行路已核关防，实银可期"
 
     # restore 逐路无损
     path = db.path
@@ -170,7 +169,7 @@ def test_per_route_storage_restore_and_escort_split(game):
 
 
 def test_close_merges_recon_note_without_second_treasury_debit(game):
-    """S10 结案同源读对账并 merge_execution_note；不二次扣库、不改原流水。"""
+    """S10 结案同源读对账；不二次扣库、不改原流水；执行说明原文原样。"""
     from ming_sim.db import grant_arrival_bounds
 
     db, state, content = game
@@ -197,7 +196,7 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     closed = db.dossiers.get(gid)
     assert closed["status"] == "closed"
     note = closed["execution_note"]
-    assert "赈银押解到达" in note
+    assert note == "赈银押解到达"
     recon = db.dossiers.reconciliations(gid)[-1]
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     assert recon["arrived_amount"] == (lo + hi) // 2

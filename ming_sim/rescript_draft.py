@@ -1056,8 +1056,6 @@ def normalize_rescript_layer_a_option(
 
 
 
-_TOP_ALLOWED_KEYS = frozenset({"items"})
-_ITEM_ALLOWED_KEYS = frozenset({"title", "context", "options", "issue_id"})
 
 
 

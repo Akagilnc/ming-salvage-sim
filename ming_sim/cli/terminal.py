@@ -16,9 +16,8 @@ from ming_sim.constants import (
     TURN_UNIT,
 )
 from ming_sim.assets import wrap
-from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
-from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
+from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character
 from ming_sim.session import (
     GameSession,
     TurnPhase,
@@ -37,8 +36,6 @@ _STATUS_LABEL = {
 }
 
 # 皇帝当场对拟旨草稿的回应
-_CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
-_REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
 
 
 def _print_header(session: GameSession) -> None:

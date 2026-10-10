@@ -44,9 +44,6 @@ _AUDIENCE_LANE_URGE = "urge"
 _AUDIENCE_LANE_COVERT_LEVY = "covert_levy"
 _AUDIENCE_LANE_UNKNOWN = "unknown"
 
-# #624 四缝白名单钉：仅 staged 进 due-review 终裁（由分派矩阵派生，非平行谓词）
-DUE_REVIEW_ENTRY_KIND_WHITELIST = frozenset({ENTRY_KIND_STAGED})
-
 
 def normalize_audience_entry_kind(entry_kind: object) -> str:
     text = str(entry_kind or ENTRY_KIND_STAGED).strip()
@@ -379,17 +376,13 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
-    # Free criterion/origin: empty-check without mutating when embedding into note (P6).
+    # 案卷原文原样落库（P6）：引擎不向承诺原文增补任何字句；终值由 outcome 列承载。
     criterion = str(review_input.get("criterion_text") or "")
-    if not criterion.strip():
-        criterion = "所约之事"
     origin = str(review_input.get("origin_context") or "")
+    note = criterion if criterion.strip() else origin
     distortion = dict(review_input.get("distortion_tendency") or {})
 
     if mid:
-        note = f"中段复核：{criterion}仍在办理"
-        if origin.strip():
-            note = f"中段复核（{origin}）：{criterion}仍在办理"
         return {
             "outcome": "executing",
             "note": note,
@@ -401,19 +394,13 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     # 末段终裁：机械读旨外标记（0072 分界；0118 对账不翻因）
     if durable_effects_beyond_intent(effects):
         outcome = "transformed"
-        note = f"到期复核：{criterion}名实已乖"
     elif effects:
         outcome = "fulfilled"
-        note = f"到期复核：{criterion}已见实绩生根"
     elif reports:
         # 有表报无实账 → 打折走样（果可见缺口，不翻因）
         outcome = "degraded"
-        note = f"到期复核：{criterion}表报有之、实绩未充"
     else:
         outcome = "failed"
-        note = f"到期复核：{criterion}届期无实绩"
-    if origin.strip():
-        note = f"{note}（原诺：{origin}）"
     return {
         "outcome": outcome,
         "note": note,
@@ -472,8 +459,8 @@ def _apply_dossier_verdict(
             origin=DOSSIER_REPORT_ORIGIN_VERDICT,
             commit=False,
         )
-    elif not is_terminal:
-        # 中段过程奏报：非终值
+    elif not is_terminal and note.strip():
+        # 中段过程奏报：非终值；只载案卷原文，无原文则不写引擎自拟陈词
         db.dossiers.record_dossier_progress(
             int(dossier_id), int(state.turn), "在办", note,
             is_terminal=False, commit=False,

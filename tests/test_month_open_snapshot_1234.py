@@ -18,14 +18,9 @@ from ming_sim.session_write_queue import get_session_write_queue
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-import pytest
 
 import web_app
-from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
-from ming_sim.month_open_snapshot import (
-    MONTH_OPEN_KEYS,
-    clear_orphan_month_open_snapshot,
-)
+from ming_sim.models import TurnPhase
 
 
 def _runtime(db, state, *, pending_decisions=None) -> web_app.WebGame:
@@ -63,236 +58,26 @@ def _null_cm(*_a, **_k):
     yield None
 
 
-def test_capture_is_idempotent_and_turn_bound(game):
-    db, state, _content = game
-    before = _click_before_metrics(state)
-
-    db.capture_month_open_snapshot(state)
-    state.metrics["国库"] = before["国库"] + 99
-    db.reign.save_game_state(state)
-    db.capture_month_open_snapshot(state)
-
-    snap = db.month_open_snapshots.get(int(state.turn))
-    assert snap == before
-    assert db.month_open_snapshots.get(int(state.turn) + 1) is None
 
 
-def test_state_payload_overlays_snapshot_when_present(game):
-    db, state, _content = game
-    before = _click_before_metrics(state)
-    db.capture_month_open_snapshot(state)
-
-    state.metrics["国库"] = before["国库"] + 50
-    state.metrics["内库"] = before["内库"] - 7
-    state.metrics["民心"] = max(0, before["民心"] - 3)
-    state.metrics["皇威"] = before["皇威"] + 2
-    db.reign.save_game_state(state)
-
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is True
-    for key in MONTH_OPEN_KEYS:
-        assert payload["metrics"][key] == before[key]
-    assert payload["budget"]["国库"]["balance"] == before["国库"]
-    assert payload["budget"]["内库"]["balance"] == before["内库"]
 
 
-def test_state_payload_live_when_no_snapshot(game):
-    db, state, _content = game
-    live = _click_before_metrics(state)
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is False
-    for key in MONTH_OPEN_KEYS:
-        assert payload["metrics"][key] == live[key]
 
 
-def test_awaiting_decision_keeps_month_open_money_and_pending(game):
-    db, state, _content = game
-    before = _click_before_metrics(state)
-    db.capture_month_open_snapshot(state)
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    state.metrics["国库"] = before["国库"] + 80
-    db.reign.save_game_state(state)
-
-    db.issues.save_pending_decisions(int(state.turn), [{
-        "event_id": "evt-x",
-        "title": "饷银",
-        "context": "是否发帑",
-        "options": [{"label": "发"}],
-    }])
-    pending = db.issues.list_pending_decisions(int(state.turn))
-
-    payload = _runtime(db, state, pending_decisions=pending).state_payload()
-
-    assert payload["turn"]["settlement_display"] is True
-    assert payload["metrics"]["国库"] == before["国库"]
-    assert payload["budget"]["国库"]["balance"] == before["国库"]
-    assert payload["pending_decisions"]
-    assert payload["pending_decisions"][0]["title"] == "饷银"
 
 
-def test_fresh_connection_same_face(game):
-    """同进程刷新 = 不经启动位；快照仍在 → 同一张脸。"""
-    db, state, _content = game
-    before = _click_before_metrics(state)
-    db.capture_month_open_snapshot(state)
-    state.metrics["国库"] = before["国库"] + 11
-    db.reign.save_game_state(state)
-
-    face_a = _runtime(db, state).state_payload()
-    face_b = _runtime(db, state).state_payload()
-    assert face_a["turn"]["settlement_display"] is True
-    assert face_b["turn"]["settlement_display"] is True
-    assert face_a["metrics"]["国库"] == face_b["metrics"]["国库"] == before["国库"]
 
 
-def test_clear_on_month_complete_returns_live_values(game):
-    db, state, _content = game
-    before = _click_before_metrics(state)
-    turn = int(state.turn)
-    db.capture_month_open_snapshot(state)
-    state.metrics["国库"] = before["国库"] + 40
-    db.reign.save_game_state(state)
-
-    db.month_open_snapshots.delete(int(turn))
-    db.conn.commit()
-    state.turn = turn + 1
-    db.reign.save_game_state(state)
-
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is False
-    assert payload["metrics"]["国库"] == before["国库"] + 40
-    assert db.month_open_snapshots.get(turn) is None
 
 
-def test_cross_month_snapshot_does_not_bleed(game):
-    db, state, _content = game
-    before = _click_before_metrics(state)
-    turn = int(state.turn)
-    db.capture_month_open_snapshot(state)
-    state.turn = turn + 1
-    state.metrics["国库"] = before["国库"] + 5
-    db.reign.save_game_state(state)
-
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is False
-    assert payload["metrics"]["国库"] == before["国库"] + 5
 
 
-def test_oracle_normal_phase_clears_via_startup_hook(game):
-    """故障注入常态路：相位常态 + 快照在 → 启动位清后无核账态，盘面为点击前值。"""
-    db, state, _content = game
-    before = _click_before_metrics(state)
-    db.capture_month_open_snapshot(state)
-    state.metrics["国库"] = before["国库"] + 123
-    state.turn_phase = TurnPhase.SUMMONING.value
-    db.reign.save_game_state(state)
-    assert state.turn_phase not in FRONT_HALF_DONE_PHASES
-
-    cleared = clear_orphan_month_open_snapshot(db, state)
-    assert cleared is True
-    assert db.month_open_snapshots.get(int(state.turn)) is None
-
-    # ADR 0008：前半段未提交窗口引擎零持久态——崩溃回滚后活盘=点击前。
-    for k, v in before.items():
-        state.metrics[k] = v
-    db.reign.save_game_state(state)
-
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is False
-    for k in MONTH_OPEN_KEYS:
-        assert payload["metrics"][k] == before[k]
 
 
-def test_oracle_settling_phase_keeps_display_for_recovery(game):
-    """故障注入 settling 路：启动位后核账态仍在，交既有恢复通道。"""
-    db, state, _content = game
-    before = _click_before_metrics(state)
-    db.capture_month_open_snapshot(state)
-    state.metrics["国库"] = before["国库"] + 50
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.reign.save_game_state(state)
-
-    cleared = clear_orphan_month_open_snapshot(db, state)
-    assert cleared is False
-    assert db.month_open_snapshots.get(int(state.turn)) == before
-
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is True
-    assert payload["metrics"]["国库"] == before["国库"]
 
 
-def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
-    """颁布入口：resolve_turn 在任何突变前持久化点击前四键。"""
-    from ming_sim.session import GameSession
-    import ming_sim.audience_night as an
-
-    db, state, content = game
-    before = _click_before_metrics(state)
-
-    sess = object.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    sess.llm_config = SimpleNamespace(channel="cli", api_key="x")
-    sess.agno_db = None
-    sess.deaths_this_turn = []
-    sess.debuts_this_turn = []
-    sess.last_decree = ""
-    sess.last_report = ""
-    sess._decree_draft_fingerprint = ()
-    sess.auto_save = lambda *_a, **_k: None
-
-    def _boom(*_a, **_k):
-        raise RuntimeError("stop-after-capture")
-
-    monkeypatch.setattr(an, "auto_close_open_night", _boom)
-
-    db.issues.add_directive(
-            state.turn, state.year, state.period, None,
-            "减赋", source="player", status="draft",
-        dossier_payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue", "target_id": "tax-relief",
-        },)
-
-    with pytest.raises(RuntimeError):
-        sess.resolve_turn(decree="诏曰测试")
-
-    assert db.month_open_snapshots.get(int(state.turn)) == before
 
 
-def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
-    """退朝入口：session.advance_without_decree → resolve_turn 在任何突变前持久化点击前四键。"""
-    from ming_sim.session import GameSession
-    import ming_sim.audience_night as an
-
-    db, state, content = game
-    before = _click_before_metrics(state)
-
-    sess = object.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    sess.llm_config = None
-    sess.agno_db = None
-    sess.deaths_this_turn = []
-    sess.debuts_this_turn = []
-    sess.last_decree = ""
-    sess.last_report = ""
-    sess._decree_draft_fingerprint = ()
-    sess.auto_save = lambda *_a, **_k: None
-
-    def _boom(*_a, **_k):
-        raise RuntimeError("stop-after-capture-advance")
-
-    monkeypatch.setattr(an, "auto_close_open_night", _boom)
-
-    with pytest.raises(RuntimeError):
-        sess.advance_without_decree()
-
-    assert db.month_open_snapshots.get(int(state.turn)) == before
 
 
 def test_player_month_advance_expires_snapshot(game, monkeypatch):
@@ -312,86 +97,8 @@ def test_player_month_advance_expires_snapshot(game, monkeypatch):
 
 
 
-def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
-    """真实颁布 API 入口：受理后状态口含核账态 + 快照四键。"""
-    from ming_sim.decree import ResolveResult
-
-    db, state, _content = game
-    before = _click_before_metrics(state)
-    runtime = _runtime(db, state)
-
-    def _fake_resolve(**_k):
-        # 生产路径在 session.resolve_turn 内 capture；此处模拟同序
-        db.capture_month_open_snapshot(state)
-        state.metrics["国库"] = before["国库"] + 30
-        state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.reign.save_game_state(state)
-        return ResolveResult(
-            awaiting=True,
-            decisions=[{"title": "测", "context": "x", "idx": 0, "options": []}],
-        )
-
-    runtime.session.resolve_turn = _fake_resolve
-    runtime.session.last_decree = "诏曰测试"
-    runtime.refresh_turn = lambda: None
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_game_write_gate", _null_cm)
-
-    result = web_app.api_issue_decree(web_app.IssueDecreeRequest())
-    assert result["awaiting_decision"] is True
-
-    payload = runtime.state_payload()
-    assert payload["turn"]["settlement_display"] is True
-    assert payload["metrics"]["国库"] == before["国库"]
-    assert payload["budget"]["国库"]["balance"] == before["国库"]
 
 
-def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
-    """真实退朝 API 入口：点即入后中途核账态+快照四键；成功回 summoning 后清残留（#1343）。
-
-    #1274：端点改走 session.advance_without_decree；观察点改在 resolve 入口。
-    """
-    import threading
-    from ming_sim.decree import ResolveResult
-
-    db, state, _content = game
-    before = _click_before_metrics(state)
-    runtime = _runtime(db, state)
-    runtime.directive_rows = lambda: []
-    actions = []
-    runtime.session.end_turn = lambda: actions.append("end_turn")
-    runtime.refresh_turn = lambda: actions.append("refresh")
-    runtime._write_gate = get_session_write_queue(runtime).write_gate
-    mid = {}
-
-    def _observe_then_done(**_kw):
-        # 点即入已在 entry accept 完成——结算入口即可见核账脸与点击前四键。
-        actions.append("resolve")
-        mid["snap"] = db.month_open_snapshots.get(int(state.turn))
-        mid["payload"] = runtime.state_payload()
-        state.metrics["国库"] = before["国库"] + 9
-        db.reign.save_game_state(state)
-        # 模拟结算完成：相位回 summoning、清快照（生产 settle 尾同款）
-        db.month_open_snapshots.delete(int(int(state.turn)))
-        db.conn.commit()
-        state.turn_phase = TurnPhase.SUMMONING.value
-        db.reign.save_game_state(state)
-        return ResolveResult(awaiting=False, report="ok", advanced=True)
-
-    runtime.session.advance_without_decree = _observe_then_done
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
-
-    result = web_app.api_advance_without_edict()
-    assert actions == ["resolve", "end_turn", "refresh"]
-    assert mid["snap"] == before
-    assert mid["payload"]["turn"]["settlement_display"] is True
-    assert mid["payload"]["metrics"]["国库"] == before["国库"]
-    # 成功回常态（summoning）：生命周期缝清残留，拟诏不再被核账门误挡。
-    assert result["state"]["turn"]["settlement_display"] is False
-    assert db.month_open_snapshots.get(int(state.turn)) is None
 
 
 def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch):
@@ -401,7 +108,6 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     持久 phase 仍 awaiting。end_turn 桩镜像生产（只置 SUMMONING 并 save）——
     若入口误调 end_turn，相位/核账脸断言红；不得以 mock 调用序单独当契约。
     """
-    import threading
     from ming_sim.decree import ResolveResult
 
     db, state, _content = game

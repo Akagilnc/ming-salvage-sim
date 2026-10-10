@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import json
 
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-from ming_sim.applier import load_stored_json, load_stored_list, load_stored_object
+from ming_sim.applier import load_stored_json, load_stored_list
 from ming_sim.entities.column_write import checked_columns
 
 # Population unit constant (shared with GameDB read path; no durable marker).
@@ -683,12 +683,6 @@ class ReignStateStore:
             (name, int(night_id)),
         )
 
-    def get_night_protagonist(self, night_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT protagonist_name FROM audience_nights WHERE id=?",
-            (int(night_id),),
-        ).fetchone()
-
     def open_night_id(self) -> int:
         row = self._conn.execute(
             "SELECT id FROM audience_nights WHERE status='open' ORDER BY id DESC LIMIT 1"
@@ -940,17 +934,6 @@ class ReignStateStore:
         return self._conn.execute(
             "SELECT * FROM story_ledger_entries WHERE night_id = ? "
             "ORDER BY COALESCE(order_key, seq) ASC, id ASC",
-            (int(night_id),),
-        ).fetchall()
-
-    def night_direct_write_tables(self, night_id: int) -> Any:
-        return self._conn.execute(
-            """
-            SELECT DISTINCT i.target_table
-            FROM chat_turn_rollback_items i
-            JOIN chat_turns t ON t.id = i.chat_turn_id
-            WHERE t.night_id = ? AND t.status NOT IN ('undone', 'failed', 'consumed')
-            """,
             (int(night_id),),
         ).fetchall()
 

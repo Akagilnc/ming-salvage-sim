@@ -1,9 +1,7 @@
 import json
 
 import pytest
-import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
-from ming_sim.session import GameSession
 from ming_sim.entities.issue.store import IssueStore
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 
@@ -908,40 +906,6 @@ def test_extractor_accepts_transformed_execution_outcome(game):
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "transformed"
 
-def test_appointment_alias_uses_canonical_dossier_identity(game):
-    db, state, content = game
-    target = next(
-        character for character in content.characters.values()
-        if character.aliases and character.name != character.aliases[0]
-        and db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=? AND status='active'",
-            (character.name,),
-        ).fetchone()
-    )
-    alias = target.aliases[0]
-    pending_id = db.stage_pending_action(
-        state.turn, kind="office", action="任命",
-        minister_name=_active_minister(db), target_id=None,
-        payload={"text": "测试任免原文", "name": alias, "office": "兵部主事"},
-    )
-    db.commit_pending_actions(state, content=content)
-    dossier = next(
-        row for row in db.dossiers.list_dossiers()
-        if row["pending_action_id"] == pending_id
-    )
-    assert dossier["target_id"] == target.name
-    assert dossier["executor_id"] == target.name
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content,
-    )
-    assert [
-        row["dossier_id"]
-        for row in db.characters.list_office_effects_for_dossier(dossier["id"])
-    ] == [dossier["id"]]
-    db.dossiers.record_execution(
-        dossier["id"], "fulfilled", "任事已毕", state.turn,
-    )
-    assert db.dossiers.get(dossier["id"])["status"] == "closed"
 
 @pytest.mark.parametrize(
     ("case", "model_fields"),
@@ -1176,69 +1140,6 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     assert db.dossiers.get_for_directive(directive_id) is not None
     assert db.issues.list_directives(state.turn)[0]["text"] == "着修河工"
 
-def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
-    import ming_sim.cli.terminal as terminal
-    import ming_sim.cli_backend as cli_backend
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    directive = session.add_directive(
-        "拨十两赈济",
-        dossier_payload={
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue",
-            "target_id": "relief",
-            "amount": 10,
-            "account": "国库",
-            "execution_surface": "immediate",
-            "mode": "midzhi",
-        },
-    )
-    revised_text = "改拨二十五两赈济"
-    response = {
-        "拟旨意图": "拟旨",
-        "动作类型": "grant_allocation",
-        "目标类型": "issue",
-        "目标": "relief",
-        "金额": 25,
-        "账户": "国库",
-        "执行面": "immediate",
-        "颁布方式": "ordinary",
-    }
-    prompts = []
-
-    def prompt_faithful_backend(prompt, *_args, **_kwargs):
-        prompts.append(prompt)
-        if revised_text not in prompt:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
-        return (json.dumps(response, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
-    monkeypatch.setattr(session, "write_decree", lambda: revised_text)
-    answers = iter([f"edit {directive.id}", revised_text, "issue", "yes"])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-    before = state.metrics["国库"]
-
-    assert terminal.review_directives(session) == "issue"
-    assert len(prompts) == 1
-
-    db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.dossiers.get_for_directive(directive.id)
-    payload = json.loads(dossier["payload_json"])
-    assert dossier["decree_text"] == revised_text
-    assert dossier["action_type"] == "grant_allocation"
-    assert (payload["amount"], payload["account"], payload["mode"]) == (
-        25, "国库", "ordinary",
-    )
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content,
-    )
-    assert state.metrics["国库"] == before - 25
-    assert db.reign.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -25
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
     from ming_sim.db import GameDB

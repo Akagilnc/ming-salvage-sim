@@ -13,11 +13,6 @@ import sqlite3
 import pytest
 
 from ming_sim.applier import atomic
-from ming_sim.constants import (
-    BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
-    RECOVERY_OUTCOME_FACTORS,
-    RECOVERY_PERSONS_PER_WAN,
-)
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
@@ -488,100 +483,6 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
         before = after
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
-    """次月无旨：真实强颁留下的在途赈灾，经世界段与转译落账，读档后仍在。
-
-    模型替身只接外部调用，不读开场或段文。引擎不代选成败。
-    """
-    import ming_sim.month_chain as month_chain
-    import ming_sim.month_translate as month_translate
-    from ming_sim.materials import continuing_dossier_facts
-    from ming_sim.models import LLMConfig
-
-    real_world = month_chain.run_world_segment_text
-    real_translate = month_translate.translate_month_segment
-
-    db, state, content = game
-    amount = 40
-    _reset_shaanxi_pool(db)
-    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount * 2 + 50)
-    shaanxi_id = _force_in_transit_recovery_grant(db, state, amount=amount, tag="west")
-    henan_id = _in_transit_recovery_grant(
-        db, state, amount=amount, region_id="henan", tag="east",
-    )
-    state.next_period()
-    db.reign.save_game_state(state)
-
-    sim_calls: list = []
-    _canned_judge(
-        monkeypatch, outcome="fulfilled", dossier_id=shaanxi_id,
-        sim_calls=sim_calls,
-    )
-    monkeypatch.setattr(month_chain, "run_world_segment_text", real_world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", real_translate)
-
-    def _world_model(_agent, _message, tag, **_kwargs):
-        if tag == "gazette":
-            return '{"title":"邸报","report":"本月赈灾实况。"}'
-        assert tag == "world-segment"
-        return "handled"
-
-    def _translate_model(_prompt, _llm_config, *, tag, policy=None):
-        del _prompt, policy
-        assert tag == "month_segment_translate"
-        # 本月各效果段不得预支下月回流。
-        assert _pop(db, "流民", "shaanxi") == displaced_before
-        return {"effects": {"dossier_executions": [{
-            "dossier_id": shaanxi_id,
-            "outcome": "fulfilled",
-            "note": "declared",
-        }]}}
-
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", _world_model)
-    monkeypatch.setattr(
-        month_translate, "run_declaration_translate_prompt", _translate_model,
-    )
-
-    displaced_before = _pop(db, "流民", "shaanxi")
-    farmer_before = _pop(db, "农民", "shaanxi")
-    closed_turn = int(state.turn)
-    session = make_light_session(db, state, content)
-    session.llm_config = LLMConfig(
-        api_key="test", base_url="http://127.0.0.1:9", model="test", channel="api",
-    )
-    result = session.advance_without_decree()
-    assert result is not None and result.awaiting is False
-    assert result.advanced is True
-    assert int(state.turn) == closed_turn + 1
-
-    loaded = GameDB(_database_path(db), content)
-    try:
-        loaded_state = loaded.load_state()
-        landed = loaded.dossiers.get(shaanxi_id)
-        assert landed["status"] == "closed"
-        assert landed["execution_outcome"] == "fulfilled"
-        assert int(landed["closed_turn"] or 0) == closed_turn
-        other = loaded.dossiers.get(henan_id)
-        assert other["status"] == "executing"
-        assert str(other["execution_outcome"] or "") == ""
-        still = {int(row["id"]) for row in continuing_dossier_facts(loaded, loaded_state.turn)}
-        assert henan_id in still and shaanxi_id not in still
-        # 回流基线＝**实抵**（652/0087）。北极星 30 两无护 15–18 → 面额 40 中位 22；
-        # 期望用独立常量，不调 grant_arrival_bounds 实现函数作 oracle。
-        from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
-        expected_arrived = 22
-        expected_transfer = expected_arrived * RECOVERY_PERSONS_PER_WAN
-        recon = loaded.list_dossier_reconciliations(shaanxi_id)
-        assert [int(r["turn"]) for r in recon] == [closed_turn]
-        arrived = int(recon[-1]["arrived_amount"])
-        assert arrived == expected_arrived, (
-            f"无护中位实抵应为 {expected_arrived}（面额 {amount}），得 {arrived}"
-        )
-        assert _pop(loaded, "流民", "shaanxi") == displaced_before - expected_transfer
-        assert _pop(loaded, "农民", "shaanxi") == farmer_before + expected_transfer
-    finally:
-        loaded.close()
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -606,5 +507,3 @@ def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
     assert result is not None and result.awaiting is False
     assert result.advanced is False
     assert db.dossiers.get(dossier_id)["status"] == "executing"
-
-

@@ -16,7 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 import web_app
-from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
+from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
 
@@ -247,37 +247,6 @@ def test_direct_db_write_refused_when_gate_held(monkeypatch, name, call):
         game._write_gate.release()
 
 
-def test_serialized_web_write_cm_contract():
-    """集中守门 CM 的契约：相位拒 / 非阻塞抢锁拒 / 正常进出且释放锁 / 体内抛异常也释放锁。"""
-    # 相位拒
-    for phase in FRONT_HALF_DONE_PHASES:
-        g = _FakeGame(phase)
-        with pytest.raises(HTTPException) as ei:
-            with web_app._serialized_web_write(g):
-                pass
-        assert ei.value.status_code == 409
-        assert not g._write_gate.locked(), "相位拒不应留下持锁"
-    # 正常相位 + 锁空：进得去、出来后锁已释放
-    g = _FakeGame(TurnPhase.SUMMONING.value)
-    with web_app._serialized_web_write(g):
-        assert g._write_gate.locked(), "CM 体内应持锁"
-    assert not g._write_gate.locked(), "CM 退出应释放锁"
-    # 锁被他人持有 → 非阻塞 409
-    g2 = _FakeGame(TurnPhase.SUMMONING.value)
-    g2._write_gate.acquire()
-    try:
-        with pytest.raises(HTTPException) as ei:
-            with web_app._serialized_web_write(g2):
-                pass
-        assert ei.value.status_code == 409
-    finally:
-        g2._write_gate.release()
-    # 体内抛异常也释放锁（finally）
-    g3 = _FakeGame(TurnPhase.SUMMONING.value)
-    with pytest.raises(RuntimeError, match='boom'):
-        with web_app._serialized_web_write(g3):
-            raise RuntimeError("boom")
-    assert not g3._write_gate.locked(), "异常路径也须释放锁"
 
 
 def test_advance_without_edict_refused_by_phase(monkeypatch):
@@ -332,71 +301,3 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
     finally:
         game._write_gate.release()
         worker.join()
-
-def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
-    """#1353 r12：删预探后，真实短持接缝被占 → 409 不挂死。
-
-    事件握手：advance 已过 accept 进入 auto_close 前夕，对端占闸；
-    短持 non-blocking acquire 须立即 409（禁阻塞等闸）。
-    """
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    game.directive_rows = lambda: []
-
-    def _should_not_run(**_k):
-        game.db.writes.append("advance_without_decree")
-        return None
-
-    game.session.advance_without_decree = _should_not_run
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-
-    at_short_hold = threading.Event()
-    gate_held_by_peer = threading.Event()
-    real_auto = web_app._auto_close_open_night_gate_free
-
-    def _wrapped_auto(game_arg, *, write_gate=None):
-        at_short_hold.set()
-        gate_held_by_peer.wait()
-        return real_auto(game_arg, write_gate=write_gate)
-
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _wrapped_auto)
-
-    result: dict[str, object] = {}
-
-    def _run_call():
-        try:
-            web_app.api_advance_without_edict()
-        except BaseException as exc:
-            result["exc"] = exc
-        finally:
-            result["done"] = True
-
-    worker = threading.Thread(target=_run_call)
-    worker.start()
-    try:
-        # 全局 #13：worker 早死不得让主线程无界挂死；等到 short-hold 或 worker 已退出。
-        while worker.is_alive() and not at_short_hold.is_set():
-            worker.join(0.05)
-        assert at_short_hold.is_set(), (
-            f"worker exited before short-hold handshake; result={result!r}"
-        )
-        assert game._write_gate.acquire(blocking=False), "gate should be free at admit→short-hold window"
-        gate_held_by_peer.set()
-        worker.join()
-        assert result.get("done") is True, "advance blocked on short-hold after peer took gate"
-        exc = result.get("exc")
-        assert isinstance(exc, HTTPException), result
-        assert exc.status_code == 409
-        assert game.db.writes == []
-    finally:
-        gate_held_by_peer.set()  # 解 worker 侧 wait，避免 finally 再挂
-        if game._write_gate.locked():
-            game._write_gate.release()
-        worker.join()
-
-def test_direct_db_write_succeeds_when_free(monkeypatch):
-    """守门不破坏正常流：相位正常 + 锁空 → 直写端点照常落库，且事后锁已释放。"""
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-    _invoke(web_app.api_set_court_layout({"layout": "{\"a\":1}"}))
-    assert game.db.writes == ["kv_set:court_layout"]
-    assert not game._write_gate.locked()

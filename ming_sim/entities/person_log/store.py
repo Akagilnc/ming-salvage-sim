@@ -118,16 +118,6 @@ class PersonLogStore:
             self._conn.commit()
         return int(cur.lastrowid or 0)
 
-    def by_origin(self, origin_ref: str) -> List[Dict[str, object]]:
-        """Every log line derived from one causal origin, oldest first."""
-        return [
-            dict(row)
-            for row in self._conn.execute(
-                "SELECT * FROM person_logs WHERE origin_ref=? ORDER BY turn, id",
-                (str(origin_ref or ""),),
-            ).fetchall()
-        ]
-
     def count_by_origin(
         self, origin_ref: str, *, turn: int, action: str = "",
     ) -> int:
@@ -407,5 +397,3 @@ class PersonLogStore:
             }
             for row in rows
         ]
-
-

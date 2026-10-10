@@ -2,10 +2,8 @@
 
 import json
 
-from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -32,18 +30,6 @@ def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatc
     assert "military" not in view["world"]
     assert "treasury" not in view["world"]
 
-def test_inner_court_materials_exclude_court_world_slice(game, tmp_path):
-    db, state, content = game
-    previous = content.characters["王承恩"]
-    messenger = content.characters["曹化淳"]
-    db.set_character_office(previous.name, "内廷随侍", "内廷")
-    db.set_character_office(messenger.name, "御前近臣", "内廷")
-    for person in (previous, messenger):
-        world = db.get_character_knowledge(state, person.name)["world"]
-        assert "court" not in world
-        prepare_character_materials(
-            db, state, person, dest_root=tmp_path / person.name,
-        )
 
 
 def test_current_state_facts_are_selected_by_content_domain_not_role_label(
@@ -1359,27 +1345,3 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     assert case_id in _referenceable_dossier_ids(db, case_helper.name, turn)
     # 刑部 is a legal central yamen: successor shares archive identity with the lead.
     assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
-
-
-def test_central_ledgers_and_unbounded_household_history_reach_final_materials(game, tmp_path):
-    """Office materials paths and knowledge scope — not free-text archive sentinels."""
-    db, state, content = game
-    household = next(c for c in content.characters.values() if c.office_type == "户部")
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    personnel = next(c for c in content.characters.values() if c.office_type == "吏部")
-    # Knowledge scope by office: treasury / military / personnel buckets — not archive prose.
-    household_view = db.get_character_knowledge(state, household.name)
-    war_view = db.get_character_knowledge(state, war.name)
-    personnel_view = db.get_character_knowledge(state, personnel.name)
-    assert household_view["world"].get("treasury")
-    assert war_view["world"].get("military") or war_view["world"].get("command")
-    assert personnel_view["world"].get("personnel")
-    # Materials root exposes a 公事档案 path per office; do not lock archive body wording.
-    for person, label in (
-        (household, "household"),
-        (war, "war"),
-        (personnel, "personnel"),
-    ):
-        prepared = prepare_character_materials(db, state, person, dest_root=tmp_path / label)
-        paths = list_materials(prepared.root)
-        assert any(p.endswith("/公事档案.txt") for p in paths), paths

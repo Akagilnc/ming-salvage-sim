@@ -28,25 +28,22 @@ import logging
 import math
 import re
 import sqlite3
-from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Set, Tuple
 
 from ming_sim.applier import (
     StoredDocumentError, atomic, connection_owns_transaction,
     coerce_beyond_intent_flag,
-    durable_float, durable_int, load_stored_json, load_stored_list, load_stored_object, load_stored_object_list,
-    safe_json_dumps, sanitize_sqlite_text,
+    durable_float, durable_int, load_stored_json, load_stored_list, load_stored_object, safe_json_dumps, sanitize_sqlite_text,
 )
 from ming_sim.appointment_tenure import appointment_tenure_from
-from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
 from ming_sim.assets import format_money, format_money_delta, format_wanliang_amount
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
     BUILDING_CATEGORIES, BUILDING_FIELD_LABELS, BUILDING_OUTPUT_METRICS,
     BUILDING_QUANTITY_FIELDS, BUILDING_SCORE_FIELDS, BUILDING_TEXT_FIELDS,
-    ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
-    POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
+    ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_FIELD_ALIASES, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS,
-    DOSSIER_LINK_TYPES, SALARY_RATE_ANCHOR, TURN_UNIT,
+    SALARY_RATE_ANCHOR, TURN_UNIT,
     DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR,
 )
 from ming_sim.content import GameContent
@@ -55,10 +52,8 @@ from ming_sim.decree_vocabulary import (
 )
 from ming_sim.entities.dossier import (
     DOSSIER_REPORT_ORIGIN_MONTHLY,
-    DOSSIER_REPORT_ORIGIN_NS,
     DOSSIER_REPORT_ORIGIN_REVIEW,
     DOSSIER_REPORT_ORIGIN_RUSH,
-    DOSSIER_REPORT_ORIGIN_VERDICT,
     DOSSIER_STATUSES,
     PROMULGATION_BLOCKED_LAYERS,
     DossierStore,
@@ -67,10 +62,8 @@ from ming_sim.entities.dossier import (
     normalize_dossier_mode,
 )
 from ming_sim.matching import match_region_id_from_text
-from ming_sim.office_rank import canonical_office_title
 from ming_sim.schema import ensure_core_schema
-from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection, PendingActionRefusal
-from ming_sim.intelligence import OFFICE_SLOTS
+from ming_sim.exceptions import OfficeAppointmentRejection
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label, reign_period_label,
@@ -701,7 +694,6 @@ def normalize_office(office: str) -> str:
     return ",".join(parts)
 
 COURT_OFFICE_TYPES = {"内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"}
-MINISTRY_OFFICE_TYPES = {"吏部", "户部", "礼部", "兵部", "刑部", "工部"}
 
 _OFFICES_TABLE: Optional[Dict[str, object]] = None
 _OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
@@ -1188,27 +1180,6 @@ class GameDB:
         if touched and commit:
             self.conn.commit()
         return touched
-
-    def settle_province_tick(
-        self, region_id: str, actions: Optional[List[Dict[str, Any]]] = None
-    ):
-        """省级月度财政 settle_tick 的 DB 桥（#66 slice2）：读 regions.fiscal['settle'] 的
-        开账 st + 月参 p → 跑 settle_tick → 写回 new_st。返回 FiscalTickResult。
-
-        **港口锁**（fiscal_tick.py §港口锁 / ADR 0008）：settle_tick 对坏输入(ValueError)/
-        守恒破(FiscalConservationError) 一律 raise，异常在下方 UPDATE **之前**抛出 → FAIL
-        tick 绝不持久化（毒态不钉进存档）。本方法只写 conn、不自带 commit——提交交调用方
-        事务边界（slice3 的 applier.atomic 全有或全无）控制；异常上抛由其回滚。
-
-        settle_tick 纯读 st（不就地改），故无需深拷贝；new_st 是全新 dict，覆盖回 settle.st。
-        官民田/隐田（清丈重分类）只写进 settle.st，不同步顶层 registered_land/hidden_land——
-        财政实收由 substrate hub 读取基座。
-        """
-        row = RegionStore(self.conn).read_settle_province_tick((region_id,))
-        if row is None:
-            raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
-        fiscal = load_stored_object(row["fiscal"], label='fiscal')
-        return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
     def settle_ming_province_substrate_ticks(
         self,
@@ -2346,7 +2317,7 @@ class GameDB:
     ) -> None:
         if not pay_rows:
             return
-        from ming_sim.flows import army_pay_morale_delta
+        from ming_sim.army_pay import army_pay_morale_delta
 
         breakdown = result.breakdown or {}
         new_debt = float((breakdown.get("NewDebt") or {}).get("军饷欠", 0) or 0)
@@ -9233,7 +9204,6 @@ class GameDB:
                 str(row["name"])
                 for row in FactionStore(self.conn).read_names()
             }
-            note_names: List[str] = []
             # 投影已先定档后去重（primary 胜）；同派系 UNIQUE 保留主责额度。
             for party in project_execution_liability_parties(
                 dossier.get("participant_roster"),
@@ -9241,14 +9211,11 @@ class GameDB:
                 person = str(party["character_id"])
                 if party["responsibility"] == "primary":
                     intensity = primary_intensity
-                    role_label = "主办"
                 else:
                     intensity = secondary_intensity
-                    role_label = "委派"
                 row = CharacterStore(self.conn).read_breach_decree_dossier((person,))
                 if row is None:
                     continue
-                note_names.append(f"{person}（{role_label}）")
                 if str(row["status"] or "") == "dead":
                     logging.getLogger(__name__).warning("跳过已故连坐责任人%s", person)
                     continue
@@ -9271,14 +9238,6 @@ class GameDB:
                         self.adjust_factions(
                             {faction: {"satisfaction": delta}}, commit=False,
                         )
-
-            if note_names:
-                # P4：只写定性人名归属，不落 weak/strong/枚举裸词。
-                self.dossiers.merge_execution_note(
-                    dossier_id,
-                    "连坐归属：" + "、".join(note_names),
-                    commit=False,
-                )
         return True
 
     def _apply_military_order_station_effect(
@@ -11216,39 +11175,6 @@ class GameDB:
             self.conn.commit()
         return deleted > 0
 
-    def drop_pending_actions_for_minister(
-        self, turn: int, minister_name: str, kind_filter_exclude: Optional[str] = None,
-        action_ids: Optional[Iterable[int]] = None,
-    ) -> int:
-        """对话确认皇帝拒绝:丢弃该召对对象本回合尚未落库的暂存动作(删 pending 行)。
-        返回删除条数。只动该大臣、只动 pending(已 committed 不动)。
-        action_ids 非空=进一步只删指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）。
-        kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
-        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。
-        仍 inactive 的 office:<id> 传召 origin 随 pending 同步清（#672 颁前拒绝）。"""
-        owns_transaction = self.owns_transaction()
-        office_ids = self.dossiers.pending_ids_matching_minister(
-            int(turn), str(minister_name), kind="office",
-            kind_filter_exclude=kind_filter_exclude, action_ids=action_ids,
-        )
-        directive_ids = self.dossiers.pending_ids_matching_minister(
-            int(turn), str(minister_name), kind="directive",
-            kind_filter_exclude=kind_filter_exclude, action_ids=action_ids,
-        )
-        for pending_id in directive_ids:
-            self._discard_deleted_directive_forecast(pending_id)
-        deleted = self.dossiers.delete_pending_matching_minister(
-            int(turn), str(minister_name),
-            kind_filter_exclude=kind_filter_exclude, action_ids=action_ids,
-        )
-        if office_ids:
-            from ming_sim.audience_night import discard_inactive_office_summon
-            for pending_id in office_ids:
-                discard_inactive_office_summon(self, pending_id)
-        if owns_transaction:
-            self.conn.commit()
-        return deleted
-
     def capture_month_open_snapshot(self, state: GameState) -> bool:
         """点击受理：独立提交点击前四键 + 所属回合。已有本回合行则不覆盖（幂等）。
 
@@ -12107,22 +12033,6 @@ class GameDB:
             self.fiscal_config.effects_for_dossier(int(dossier_id))
         )
 
-    def list_dossier_actual_rail(self, dossier_id: int) -> List[Dict[str, object]]:
-        """实况合并读：durable_effects + actual_progress（due_review 形参数化共用）。
-
-        不把 0058 奏报并入。actual_progress 行标 rail='actual_progress'。
-        """
-        out: List[Dict[str, object]] = []
-        for item in self.list_dossier_durable_effects(int(dossier_id)):
-            row = dict(item)
-            row.setdefault("rail", "durable_effect")
-            out.append(row)
-        for item in self.dossiers.actual_progress(int(dossier_id)):
-            row = dict(item)
-            row["rail"] = "actual_progress"
-            out.append(row)
-        return out
-
     def dossier_has_beyond_intent(self, dossier_id: int) -> bool:
         """#1260 单源：案卷是否含任何旨外 durable effect（economy 或 fiscal）。
 
@@ -12880,7 +12790,7 @@ class GameDB:
                 payload["tags"] = load_stored_list(tags_json, label="tags")
                 self.dossiers.update_payload(int(dossier["id"]), payload, commit=False)
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
-        self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
+        # 要旨原文已由上文写入 payload/正文列；不另写引擎增补的月度奏报（P6：不改奏报轨原文）。
         return True
 
     def close_secret_order(

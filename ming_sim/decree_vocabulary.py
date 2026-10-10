@@ -216,10 +216,6 @@ _TERMINAL_REPORT_FACADE_BAND = {
     "transformed": "已竣",
     "degraded": "将结",
 }
-_TERMINAL_REPORT_FACADE_MEMORIAL = {
-    "transformed": "所委各节均已依限办结，并无违误。",
-    "degraded": "所委已有成数，余事容再陈。",
-}
 
 
 def format_public_progress_disclosure(progress_rows: object) -> str:
@@ -238,14 +234,12 @@ def terminal_report_facade(
     """终值奏报行的（progress_band, memorial_text）假象面。
 
     变形案必须载承办人假象（奏报说兑现），不得回填判官真值；
-    progress_band 一律定性中文。
+    progress_band 一律定性中文。memorial_text 不由引擎自造：变形案只复用末次
+    非终值月报的承办人原文作假象载体，无可复用原文则留空。
     """
     key = str(outcome or "").strip()
     band = _TERMINAL_REPORT_FACADE_BAND.get(key, "办结")
-    memorial = _TERMINAL_REPORT_FACADE_MEMORIAL.get(
-        key, "所委诸事已有回奏。",
-    )
-    # 变形：优先复用末次非终值月报陈词作假象载体（仍须成功口径）。
+    memorial = ""
     if key == "transformed" and prior_reports:
         for item in reversed(list(prior_reports)):
             if not isinstance(item, dict):

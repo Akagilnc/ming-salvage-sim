@@ -15,9 +15,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ming_sim.office_rank import canonical_office_title
 from ming_sim.db import (
     _seed_guilt_storage_value,
-    canonical_office_title,
     infer_office_type_from_office,
     normalize_office,
 )

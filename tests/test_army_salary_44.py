@@ -166,16 +166,6 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     assert spent > 0
     assert row["arrears"] < 10
 
-def test_army_pay_morale_delta_tiers():
-    """士气底料 oracle：半额/超额缺口、零 due、足额无旧欠、足额旧欠门。"""
-    from ming_sim.army_pay import army_pay_morale_delta
-
-    assert army_pay_morale_delta(0, 5, 0) == 0
-    assert army_pay_morale_delta(10, 5, 0) == -4
-    assert army_pay_morale_delta(10, 12, 0) == -8
-    assert army_pay_morale_delta(10, 0, 0) == 2
-    assert army_pay_morale_delta(10, 0, 3) == 0
-    assert army_pay_morale_delta(0, 0, 0) == 0
 
 def test_coerce_new_salary_rate_blocks_freeload():
     # cmr r3 codex medium: 新军 salary_rate 健壮解析——负/非数/bool/0/None → 锚点 1.5（防免费军白嫖）。

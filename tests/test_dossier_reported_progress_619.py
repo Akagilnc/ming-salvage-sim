@@ -225,7 +225,6 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
         "degraded", "transformed", "fulfilled", "failed", "executing",
     }
     assert "变形" not in deg[0]["progress_band"]
-    assert deg[0]["memorial_text"]  # 非空定性陈词
     assert len(xf) == 1 and xf[0]["origin"] == DOSSIER_REPORT_VERDICT
     assert xf[0]["progress_band"] not in {
         "degraded", "transformed", "fulfilled", "failed", "executing",

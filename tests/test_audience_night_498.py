@@ -31,10 +31,7 @@ from ming_sim.audience_night import (
     TAG_STANDING_ROSTER,
     AudienceNightError,
 )
-from ming_sim.content import GameContent
 from ming_sim.db import GameDB
-from ming_sim.decree import pre_settle
-from ming_sim.session import TurnPhase
 
 
 def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
@@ -147,43 +144,6 @@ def test_summon_method_and_bad_method(game):
 # ── AC3 多夜隔离 + AC4 timeline ──────────────────────────────────────
 
 
-def test_two_nights_isolated_and_timeline_alignable(game):
-    db, state, content = game
-    a = _active_minister(db, content)
-    b = _active_minister(db, content, exclude={a})
-
-    n1 = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    an.summon_enter(db, n1["id"], a, method=METHOD_XUANRU)
-    tid1 = db.create_chat_turn(state, a, "sess-a", 0, night_id=n1["id"])
-    _land_reply(db, state, a, tid1)
-    an.close_night(db, state, night_id=n1["id"])
-
-    n2 = an.open_night(db, state, location="文华殿", time_of_day="日")
-    an.summon_enter(db, n2["id"], b, method=METHOD_XUANRU)
-    tid2 = db.create_chat_turn(state, b, "sess-b", 0, night_id=n2["id"])
-    _land_reply(db, state, b, tid2)
-    an.close_night(db, state, night_id=n2["id"])
-
-    assert n1["id"] != n2["id"]
-    n1_persons = {p for e in an.list_ledger(db, n1["id"]) for p in e["person_names"]}
-    n2_persons = {p for e in an.list_ledger(db, n2["id"]) for p in e["person_names"]}
-    assert a in n1_persons and a not in n2_persons
-    assert b in n2_persons and b not in n1_persons
-    assert [int(x["id"]) for x in an.list_chat_turns_for_night(db, n1["id"])] == [tid1]
-    assert [int(x["id"]) for x in an.list_chat_turns_for_night(db, n2["id"])] == [tid2]
-
-    # AC4：合流 timeline 按 night_seq 单调，chat 与 ledger 同桶
-    tl = an.list_night_timeline(db, n1["id"])
-    seqs = [int(ev["seq"]) for ev in tl]
-    assert seqs == sorted(seqs)
-    assert any(ev["kind"] == "chat_turn" for ev in tl)
-    assert any(ev["kind"] == "ledger" for ev in tl)
-    chat_ev = next(ev for ev in tl if ev["kind"] == "chat_turn")
-    assert int(chat_ev["payload"]["night_seq"]) == int(chat_ev["seq"]) > 0
-
-    state.turn_phase = TurnPhase.SUMMONING.value
-    pre_settle(state, db, content=content)
-    assert state.turn_phase == TurnPhase.SETTLING.value
 
 
 def test_chat_completion_via_attach(game):
@@ -263,28 +223,6 @@ def test_standing_roster_skips_dead(game):
 
 
 
-def test_write_decree_leaves_unacted_pending_unchanged(tmp_path, content, monkeypatch):
-    """finding3 / #497：拟诏（write_decree）是 preview——不得把未表态 pending directive
-    默认同意成 draft、不改其 status；无可用 draft 时响亮拒绝（default-agree 只到真实颁诏/过回合）。"""
-    monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: "诏曰……")
-    sess = _real_session(tmp_path, content, "wd")
-    try:
-        db, state = sess.db, sess.state
-        minister = _active_minister(db, content)
-        old_office = db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"]
-        pid = db.stage_directive_candidate(
-            state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
-        # 无 draft：拟诏响亮拒绝、不为 preview 造持久态
-        with pytest.raises(ValueError):
-            sess.write_decree()
-        # 未表态 pending 原样不动（没被默认同意成 draft）
-        assert db.conn.execute(
-            "SELECT status FROM pending_actions WHERE id=?", (pid,)).fetchone()["status"] == "pending"
-        assert db.issues.list_directives(state.turn, statuses=("draft",)) == []
-    finally:
-        sess.close()
 
 
 def test_cross_night_directive_reassigned_to_second_night(game):

@@ -19,7 +19,7 @@ import math
 import re
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
 from ming_sim.applier import StoredDocumentError, atomic, connection_owns_transaction, coerce_beyond_intent_flag, durable_int, load_stored_list, load_stored_object
@@ -28,15 +28,10 @@ from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
-    BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
-    POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
+    BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
     BANDIT_ABSORPTION_FIELDS,
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
-    LEVY_DISPLACEMENT_RATE,
-    RECOVERY_GRANT_ACTIONS,
-    RECOVERY_OUTCOME_FACTORS,
-    RECOVERY_PERSONS_PER_WAN,
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
@@ -46,7 +41,6 @@ from ming_sim.db import (
     GameDB,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
-    _has_stop_condition,
     compute_loyalty_soft_adjust,
     fold_loyalty_alias_delta,
     infer_office_type_from_office,
@@ -66,7 +60,6 @@ from ming_sim.displaced_population import (
 )
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
-    ISSUE_METRIC_LOCK_CAPS,
     _apply_class_dict,
     _apply_economy_list,
     _apply_faction_dict,
@@ -2580,7 +2573,6 @@ def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
 
 
 TRAVEL_SPEED_BY_TONE = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
-TravelTone = Literal[*TRAVEL_SPEED_BY_TONE]
 
 
 def normalize_travel_tone(value: object) -> str:

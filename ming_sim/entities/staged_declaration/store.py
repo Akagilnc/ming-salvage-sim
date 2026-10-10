@@ -19,9 +19,6 @@ from ming_sim.applier import (
     load_stored_object, load_stored_list,
 )
 
-_STATUS_STAGED = "staged"
-_STATUS_DISCARDED = "discarded"
-_STATUS_SETTLED = "settled"
 
 _TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS staged_declarations (

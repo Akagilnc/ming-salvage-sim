@@ -13,9 +13,7 @@ oracle：army_loyalty_tick_delta 分档 + hub 路真实落库接线。
 
 from __future__ import annotations
 
-import pytest
 
-from ming_sim.army_pay import army_loyalty_tick_delta
 from ming_sim.flows import apply_fixed_period_flows
 
 KEG = "guanning"    # 火药桶/主测军（content 军，needed 可控）
@@ -54,15 +52,6 @@ def _run_months(db, state, months, *, fund_fully=True):
         apply_fixed_period_flows(db, state)
 
 
-def test_army_loyalty_tick_delta_tiers():
-    """分档 oracle：满饷 +5；半欠/短欠 dead-band 0；≥3 月 -5；零需短路 0。"""
-    assert army_loyalty_tick_delta(0, 1) == 5
-    assert army_loyalty_tick_delta(0.5, 1) == 0
-    assert army_loyalty_tick_delta(1, 1) == 0
-    assert army_loyalty_tick_delta(2, 1) == 0
-    assert army_loyalty_tick_delta(3, 1) == -5
-    assert army_loyalty_tick_delta(5, 1) == -5
-    assert army_loyalty_tick_delta(10, 0) == 0
 
 
 def test_substrate_hub_path_loyalty_tier(game):

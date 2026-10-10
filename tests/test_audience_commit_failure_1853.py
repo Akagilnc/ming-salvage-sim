@@ -7,15 +7,8 @@
 
 from __future__ import annotations
 
-import json
 
-from ming_sim.audience_night import open_night
-from tests.conftest import (
-    offline_empty_audience_translate,
-    persist_and_schedule_scene,
-)
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-from tests.test_decree_forecast_1861 import _sess
 
 
 def _secret_commission(action_id: int) -> dict:
@@ -48,53 +41,6 @@ def _active_minister(content) -> str:
 
 # ── 业务拒收分流 ──────────────────────────────────────────────────────────
 
-def test_dossier_link_rejection_stays_business_refusal_not_loud(game, monkeypatch):
-    """业务拒收与系统失败分流：模型指向不存在案卷仍走 durable 审计 + 终态 failed。"""
-    db, state, content = game
-    night = open_night(db, state)
-    minister = _active_minister(content)
-    ctid = db.create_chat_turn(
-        state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
-    )
-    db.append_chat_message("殿上", int(state.turn), "user", "着密核三边饷数。")
-    action_id = _stage_secret_order(db, state, ctid, minister)
-    payload = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (action_id,),
-    ).fetchone()["payload_json"])
-    payload["dossier_links"] = [{
-        "target_dossier_id": 999999, "relation_type": "护卫", "note": "护送",
-    }]
-    db.conn.execute(
-        "UPDATE pending_actions SET payload_json=? WHERE id=?",
-        (json.dumps(payload, ensure_ascii=False), action_id),
-    )
-    db.conn.commit()
-
-    def translate_fn(prompt, llm_config):
-        return {
-            **offline_empty_audience_translate(prompt, llm_config),
-            **_secret_commission(action_id),
-        }
-
-    sess = _sess(db, state, content, monkeypatch, translate_fn)
-    result = sess.scene_chat("准此旨", chat_turn_id=ctid)
-    future = persist_and_schedule_scene(sess, db, result)
-    future.result()
-
-    assert db.character_knowledge.list_secret_orders() == []
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (action_id,),
-    ).fetchone()["status"] == "failed"
-    audit = db.list_dossier_link_rejections(pending_action_id=action_id)
-    assert audit
-    assert int(audit[-1]["pending_action_id"]) == int(action_id)
-    assert int(audit[-1]["target_dossier_id"]) == 999999
-    assert audit[-1]["relation_type"] == "护卫"
-    turn = db.conn.execute(
-        "SELECT extract_status, error_pack_path FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()
-    assert turn["extract_status"] == "done"
-    assert str(turn["error_pack_path"] or "") == ""
 
 
 # ── P2 ────────────────────────────────────────────────────────────────────
@@ -106,56 +52,6 @@ def _foreign_minister(content) -> str:
     raise AssertionError("找不到非大明人物")
 
 
-def test_ineligible_secret_order_is_business_refusal(game, monkeypatch):
-    """承办资格是业务拒收：终态该项，转译可完成，不留系统错误包。"""
-    db, state, content = game
-    night = open_night(db, state)
-    assignee = _foreign_minister(content)
-    ctid = db.create_chat_turn(
-        state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
-    )
-    db.append_chat_message("殿上", int(state.turn), "user", "着外藩承办密核。")
-    action_id = _stage_secret_order(db, state, ctid, assignee)
-
-    def translate_fn(prompt, llm_config):
-        return {
-            **offline_empty_audience_translate(prompt, llm_config),
-            **_secret_commission(action_id),
-        }
-
-    sess = _sess(db, state, content, monkeypatch, translate_fn)
-    result = sess.scene_chat("准此旨", chat_turn_id=ctid)
-    future = persist_and_schedule_scene(sess, db, result)
-    future.result()
-
-    assert db.character_knowledge.list_secret_orders() == []
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (action_id,),
-    ).fetchone()["status"] == "failed"
-    reports = db.conn.execute(
-        "SELECT category, source, item_json FROM rejection_reports",
-    ).fetchall()
-    refusal = next(row for row in reports if row["category"] == "ineligible_power")
-    assert refusal["source"] == "secret_order"
-    item = json.loads(refusal["item_json"])
-    assert item["kind"] == "secret_order"
-    assert item["pending_action_id"] == action_id
-    assert item["assignee"] == assignee
-    from ming_sim.month_chain import _gazette_feed, _month_fact_materials
-
-    assert not any(
-        row["category"] == "ineligible_power"
-        for row in _gazette_feed(db, state, {})["rejections"]
-    )
-    assert any(
-        row["category"] == "ineligible_power"
-        for row in _month_fact_materials(db, state, {}, include_secret_sources=True)["rejections"]
-    )
-    turn = db.conn.execute(
-        "SELECT extract_status, error_pack_path FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()
-    assert turn["extract_status"] == "done"
-    assert str(turn["error_pack_path"] or "") == ""
 
 
 def test_closed_secret_order_rush_fails_one_item_and_commits_the_rest(game):

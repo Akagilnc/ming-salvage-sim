@@ -38,16 +38,15 @@ except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
 
 from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
-from ming_sim.constants import ROOT_DIR
 from ming_sim.entities.issue.store import IssueStore
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
-from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import DependencyMismatch, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
@@ -57,7 +56,6 @@ from ming_sim.llm_config import (
     cli_supports_reasoning_strength,
     REASONING_STRENGTH_CHOICES,
     real_api_key_or_empty,
-    load_llm_config,
     load_runtime_llm,
     normalize_openai_base_url,
     normalize_thinking_level,
@@ -66,24 +64,11 @@ from ming_sim.llm_config import (
     save_runtime_llm,
     _slot_header_table,
 )
-from ming_sim.agents import _dump_llm_messages
-from ming_sim.llm_model import extract_agent_text, verify_llm_available
-from ming_sim.llm_transport import (
-    bind_transport_sdk_budget,
-    audience_transport_policy,
-    empty_output_failure,
-    is_stream_activity_event,
-    map_run_error_event,
-    run_transport_stream,
-    transport_attempts_public,
-    transport_failure_unavailable,
-)
-from ming_sim.llm_contract import fail_if_llm_error
+from ming_sim.llm_model import verify_llm_available
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
-    AudienceAdmission,
     _is_summonable_court_minister,
 )
 from ming_sim.highlight_judge import (
@@ -99,7 +84,6 @@ from ming_sim.session_write_queue import (
     get_session_write_queue,
 )
 from ming_sim.token_stats import tlog
-from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import (
@@ -119,7 +103,6 @@ WEB_DIST = bundled_path("web", "dist")
 UPLOAD_PORTRAIT_DIR = user_data_path("uploads", "portraits")
 # 自定义立绘 portrait_id 前缀；前端据此解析到 /portraits/custom/<name>.png。
 CUSTOM_PORTRAIT_PREFIX = "custom:"
-ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
 
 # resolve/fail_condition 同时喂 extractor（需 input.factions/leverage 等技术 key）与展示给玩家。
@@ -1221,12 +1204,6 @@ class WebGame:
         self.session.begin_turn()
         return new_config
 
-    def apply_llm_config(self, *args, **kwargs) -> LLMConfig:
-        """同步:build → verify → commit。异步端点 api_set_llm_config 改为分步以 offload verify。"""
-        new_config = self.build_llm_config(*args, **kwargs)
-        _verify_llm_configs_or_raise(new_config)
-        return self.commit_llm_config(new_config)
-
     # ── 便捷属性 ──────────────────────────────────────────────────────────
     @property
     def db(self):
@@ -1284,11 +1261,6 @@ class WebGame:
     def _complete_pending_write(self, ticket: Optional[WriteTicket] = None) -> None:
         """释放领票（成功/失败/空放行同形）。"""
         self._runtime_write_queue().complete(ticket)
-
-    @property
-    def _pending_writes_count(self) -> int:
-        """兼容只读：队列在途票据数（旧 counter 名，事实来源=队列）。"""
-        return int(self._runtime_write_queue().inflight_count())
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
@@ -2168,30 +2140,10 @@ class WebGame:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
 
 
-    def _open_night_court_break(self, message: str) -> bool:
-        """#1716：已开夜的收夜口令不得被场外记召短路。
-
-        场外 SUMMON_* 早退会吞掉「退朝/散夜」，夜停 open、chat 无落、拟诏台真空。
-        封闭集 COURT_BREAK 且本夜已开 → 放行既有 command verdict / close_night 缝。
-        """
-        from ming_sim.audience_night import (
-            CMD_CLOSE_NIGHT,
-            get_open_night,
-            recognize_audience_command,
-        )
-
-        if recognize_audience_command(message) != CMD_CLOSE_NIGHT:
-            return False
-        return get_open_night(self.db) is not None
-
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
         测试替身无 conn/该接口时返回空（无中断可重试）。"""
         return self.db.reign.get_interrupted_reply_retries(minister_name)
-
-    def reply_retries_for_night(self, night_id: int) -> List[Dict[str, Any]]:
-        """指定夜的殿上失败投影。不限当前开夜，供活卷与撤回共用。"""
-        return _reply_retries_for_night(self.db, int(night_id))
 
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
@@ -2242,18 +2194,6 @@ class WebGame:
             "pending_directive_count": self.pending_directive_count(),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
-
-    def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
-        return [
-            _pending_action_failure_payload(action)
-            for action in self.db.dossiers.list_failed_secret_order_actions(minister_name)
-        ]
-
-    def pending_action_failures(self) -> List[Dict[str, Any]]:
-        return [
-            _pending_action_failure_payload(action)
-            for action in self.db.dossiers.list_failed_secret_order_actions()
-        ]
 
     def retry_interrupted_reply(self, minister_name: str, target_chat_turn_id: Optional[int] = None) -> Dict[str, Any]:
         """恢复指定中断轮，或续接已落回话的尾随阶段；旧调用默认最新中断轮。
@@ -3253,9 +3193,6 @@ class _NonBlockingWebWriteGate:
 
     def release(self) -> None:
         self._lock.release()
-
-    def locked(self) -> bool:
-        return bool(self._lock.locked())
 
     def __enter__(self) -> "_NonBlockingWebWriteGate":
         self.acquire()
@@ -5148,17 +5085,6 @@ _STATUS_LABEL_WEB = {
 }
 
 
-def _require_active_minister(minister_name: str) -> None:
-    if minister_name not in get_game().content.characters:
-        raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
-    character = get_game().content.characters[minister_name]
-    # #1402：召见闸文案单一真源 = session.can_summon（含宗藩/非大明/非 active）。
-    # 旧副本多一个「已」字，offstage 产「已尚未登场」；后宫仍由 can_summon 放行
-    # （不拒 office_type=后宫，嫔妃 chat 复用本端点）。
-    ok, reason = get_game().session.can_summon(character)
-    if not ok:
-        raise HTTPException(status_code=409, detail=(reason or "").strip())
-
 
 def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     turns = db.reign.list_hall_chat_turns(int(night_id))
@@ -5166,8 +5092,8 @@ def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     ids = {int(row["id"]) for row in turns}
     rows: List[Dict[str, Any]] = []
     for speaker in speakers:
-        interrupted = db.get_interrupted_reply_retries(speaker)
-        post = db.get_post_reply_retries(speaker)
+        interrupted = db.reign.get_interrupted_reply_retries(speaker)
+        post = db.reign.get_post_reply_retries(speaker)
         rows.extend(
             retry for retry in (*interrupted, *post)
             if int(retry["chat_turn_id"]) in ids

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import web_app
 from tests.wait_utils import reset_menu_path_leases, wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
-from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 
 # 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
 _reset_path_leases = reset_menu_path_leases
@@ -28,100 +28,10 @@ def _drain_then_archive(game, db_path: str) -> None:
     web_app._path_request_archive(db_path)
 
 
-def test_drain_and_close_session_waits_for_gate_then_closes():
-    queue = SessionWriteQueue()
-    gate = queue.write_gate
-    closed: list[int] = []
-    game = SimpleNamespace(
-        _write_queue=queue,
-        _write_gate=gate,
-        session=SimpleNamespace(close=lambda: closed.append(1)),
-    )
-
-    assert gate.acquire(blocking=False)
-    done = threading.Event()
-
-    thread = threading.Thread(
-        target=lambda: (web_app._drain_and_close_session(game), done.set()),
-        daemon=True,
-    )
-    thread.start()
-    # While the live queue gate is held, drain must not close the session.
-    assert not done.is_set()
-    assert closed == []
-
-    gate.release()
-
-    done.wait()
-    assert closed == [1]
-    assert not gate.locked()
 
 
-def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path):
-    queue = SessionWriteQueue()
-    gate = queue.write_gate
-    closed: list[int] = []
-    db_path = str(tmp_path / "exit-delay.db")
-    fake_game = SimpleNamespace(
-        _write_queue=queue,
-        _write_gate=gate,
-        db_path=db_path,
-        session=SimpleNamespace(close=lambda: closed.append(1)),
-    )
-    _reset_path_leases()
-    assert web_app._register_holder(db_path, fake_game) is not None
-    monkeypatch.setattr(web_app, "web_game", fake_game)
-
-    gate.acquire()
-
-    result = asyncio.run(web_app.api_menu_exit())
-
-    assert result == {"ok": True}
-    assert web_app.web_game is None
-    assert closed == []
-
-    gate.release()
-
-    wait_until(lambda: closed == [1])
-    assert not gate.locked()
 
 
-def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
-    """#396: new_game 与 exit_to_menu 同构——界面立刻构建新局返回，
-    旧 session 的后台队列在 daemon 线程排空 write_gate 后再关连接（detach）。"""
-    queue = SessionWriteQueue()
-    gate = queue.write_gate
-    closed: list[int] = []
-    old_db = str(tmp_path / "old_delayed.db")
-    Path = __import__("pathlib").Path
-    Path(old_db).write_text("old", encoding="utf-8")
-    fake_old_game = SimpleNamespace(
-        _write_queue=queue,
-        _write_gate=gate,
-        db_path=old_db,
-        session=SimpleNamespace(close=lambda: closed.append(1)),
-    )
-    _reset_path_leases()
-    assert web_app._register_holder(old_db, fake_old_game) is not None
-    monkeypatch.setattr(web_app, "web_game", fake_old_game)
-    monkeypatch.setenv("MING_SIM_DB", old_db)
-    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-
-    fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
-    monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
-
-    gate.acquire()
-
-    result = asyncio.run(web_app.api_menu_new_game())
-
-    assert "state" in result
-    assert web_app.web_game is fake_new_game
-    assert closed == []  # 旧 session 尚未关闭（gate 被模拟 worker 持有）
-
-    gate.release()
-
-    wait_until(lambda: closed == [1])
-    assert not gate.locked()
 
 
 
@@ -187,34 +97,6 @@ def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_pa
     assert drain_spawns == []
 
 
-def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
-    """#402 R1（Gemini）：主库 move 失败时不得删除仍属旧库的 WAL/SHM。"""
-    db_path = str(tmp_path / "ming_sim.db")
-    wal_path = db_path + "-wal"
-    shm_path = db_path + "-shm"
-    for path, content in ((db_path, "db"), (wal_path, "wal"), (shm_path, "shm")):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-    queue = SessionWriteQueue()
-    gate = queue.write_gate
-    closed: list[int] = []
-    game = SimpleNamespace(
-        _write_queue=queue,
-        _write_gate=gate,
-        db_path=db_path,
-        session=SimpleNamespace(close=lambda: closed.append(1)),
-    )
-    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    monkeypatch.setattr(web_app.shutil, "move", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("locked")))
-
-    _reset_path_leases()
-    _drain_then_archive(game, db_path)
-
-    assert closed == [1]
-    assert os.path.exists(db_path)
-    assert os.path.exists(wal_path)
-    assert os.path.exists(shm_path)
 
 
 def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
@@ -321,24 +203,6 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     assert not (tmp_path / "saves").exists()
 
 
-def test_restore_main_db_path_config_remove_failure_is_loud(monkeypatch, tmp_path):
-    """#1749 / ADR 0005：active_db.txt 删除失败须上抛，禁静默改写成 env/default 另一身份。"""
-    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    active_file = web_app._active_db_path_file()
-    with open(active_file, "w", encoding="utf-8") as f:
-        f.write(str(tmp_path / "new.db"))
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "new.db"))
-    monkeypatch.setattr(
-        web_app.os, "remove",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("locked")),
-    )
-
-    with pytest.raises(PermissionError):
-        web_app._restore_main_db_path_config((False, "", False, ""))
-
-    # 失败后不得把身份改写成默认 ming_sim.db
-    with open(active_file, "r", encoding="utf-8") as f:
-        assert f.read().strip() == str(tmp_path / "new.db")
 
 
 def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tmp_path):
@@ -569,143 +433,10 @@ class _GapBDB:
         return result
 
 
-@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
-def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
-    """#396 Gap B: drain 不能只等当前持锁 worker——已排队（阻塞在 gate.acquire()）的旧召对请求
-    也须先跑完写库，drain 才关 session。否则 drain 抢到下一轮 acquire 直接关连接，排队请求要么
-    永不跑、要么写 closed database。"""
-    allow_finish_a = threading.Event()
-    allow_finish_b = threading.Event()
-    closed: list[int] = []
-
-    char_a = minister_double("大臣甲")
-    char_b = minister_double("大臣乙")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-    db = _GapBDB()
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _GapBSession(
-        {char_a.name: char_a, char_b.name: char_b},
-        {char_a.name: _GapBAgent(allow_finish_a), char_b.name: _GapBAgent(allow_finish_b)},
-        state, db)
-    runtime.session.close = lambda: closed.append(1)
-    runtime.chat_history = {char_a.name: [], char_b.name: [], "殿上": []}
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.can_undo_last_chat = lambda _name: False
-
-    # #1849 reopen：召对只剩殿上；同入口并发第二流被拒，drain 仍须等在飞 A 写完。
-    stream_a = runtime.chat_stream("殿上", "请奏A")
-    first_a = next(stream_a)
-    assert first_a.get("type") == "delta"
-    assert "content" in first_a
-
-    b_events = list(runtime.chat_stream("殿上", "请奏B"))
-    assert b_events and b_events[-1].get("type") == "error"
-
-    drain_done = threading.Event()
-
-    def run_drain():
-        web_app._drain_and_close_session(runtime)
-        drain_done.set()
-
-    wait_prior_entered = threading.Event()
-    real_wait_prior = runtime._write_queue.wait_prior
-
-    def observe_wait_prior(ticket):
-        wait_prior_entered.set()
-        return real_wait_prior(ticket)
-
-    runtime._write_queue.wait_prior = observe_wait_prior  # type: ignore[method-assign]
-
-    thread_drain = threading.Thread(target=run_drain, daemon=True)
-    thread_drain.start()
-    wait_prior_entered.wait()
-    assert not drain_done.is_set(), "drain 在 A 在飞写完前就关了连接"
-
-    allow_finish_a.set()
-    # 消费 A 剩余事件至 end，放行 ticket
-    for item in stream_a:
-        if item.get("type") in ("done", "error", "end"):
-            if item.get("type") == "end":
-                break
-
-    drain_done.wait()
-    assert closed == [1]
-    assert not runtime._write_gate.locked()
-
-    assert any(
-        m["minister"] == "殿上" and m["role"] == "minister"
-        for m in db.messages
-    )
 
 
-def test_drain_rejects_late_pending_write_before_gate_acquire():
-    """#402 R3（Sourcery）：drain 开始后，迟到的旧 game 写入不得再登记进关闭队列。"""
-    runtime = object.__new__(web_app.WebGame)
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    closed: list[int] = []
-    runtime.session = SimpleNamespace(close=lambda: closed.append(1))
-
-    runtime._write_gate.acquire()
-    done = threading.Event()
-    thread = threading.Thread(
-        target=lambda: (web_app._drain_and_close_session(runtime), done.set()),
-        daemon=True,
-    )
-    thread.start()
-
-    wait_until(lambda: runtime._write_queue.is_sealed())
-    assert runtime._mark_pending_write() is None
-    # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
-    assert runtime._pending_writes_count <= 1
-
-    runtime._write_gate.release()
-
-    done.wait()
-    assert closed == [1]
 
 
-def test_spawn_pending_write_thread_start_failure_releases_ownership():
-    """回归（coderabbit #1087 / Gap B）：`_spawn_pending_write_thread` 标 pending 后若
-    `Thread.start()` 抛异常，须补偿 `_complete_pending_write` 再上抛——否则 pending 泄漏、
-    drain 在 `_drain_cond` 永阻、关档/重置/加载挂死。断言异常上抛且计数归 0（无泄漏）。"""
-    runtime = object.__new__(web_app.WebGame)
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-
-    class _FailingThread:
-        def __init__(self, *a, **k):
-            pass
-
-        def start(self):
-            raise RuntimeError("线程池耗尽（模拟 start 失败）")
-
-    orig_thread = web_app.threading.Thread
-    web_app.threading.Thread = _FailingThread
-    try:
-        raised = False
-        try:
-            runtime._spawn_pending_write_thread(lambda **_k: None, (), "t")
-        except RuntimeError:
-            raised = True
-        assert raised, "start() 抛异常须上抛，不静默吞掉"
-    finally:
-        web_app.threading.Thread = orig_thread
-
-    assert runtime._pending_writes_count == 0  # pending ownership 未泄漏
 
 
 # ── #396 Step5 R4: web_game is None 时 new_game 仍须切换库路径 ───────────

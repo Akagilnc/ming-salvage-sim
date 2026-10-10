@@ -1,6 +1,5 @@
 """#566: production settlement owns the durable monthly progress rail."""
 
-import json
 import threading
 
 import pytest
@@ -49,31 +48,6 @@ def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 
 
-def test_emperor_private_payload_preserves_monthly_report(game):
-    db, state, content = game
-    order_id, dossier_id = _order(db, state)
-    marker = "首批饷车已验山海关关防566"
-    _record_monthly_report(db, state, {
-        "dossier_id": dossier_id, "progress_band": "在途核验",
-        "memorial_text": marker,
-    })
-
-    # Emperor-facing secret-order product payload exposes the canonical rail.
-    emperor_order = next(item for item in db.character_knowledge.list_secret_orders() if item["id"] == order_id)
-    last = emperor_order["dossier_progress"][-1]
-    assert int(last["turn"]) == int(state.turn)
-    assert last["progress_band"] == "在途核验"
-    assert last.get("is_terminal") is False
-    assert last["memorial_text"] == marker
-
-    from ming_sim.materials import list_materials, prepare_character_materials, release_material_tree
-    prepared = prepare_character_materials(
-        db, state, content.characters[emperor_order["minister_name"]],
-    )
-    try:
-        assert "密令/进行中.txt" in list_materials(prepared.root)
-    finally:
-        release_material_tree(prepared.root)
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):

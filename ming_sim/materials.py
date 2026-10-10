@@ -13,14 +13,12 @@ from ming_sim.entities.textual_fact.store import TextualFactStore
 
 import hashlib
 import json
-import os
 import re
 import shutil
-import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, Optional, Sequence
+from typing import Any, List, Mapping, Optional, Sequence
 
 from ming_sim.applier import load_stored_list, load_stored_object
 
@@ -146,16 +144,6 @@ def _resolve_inside(root: Path, rel: str) -> Path:
     return candidate
 
 
-def _materials_invocation_dir(db: Any, state: Any) -> Path:
-    from ming_sim.audience_night import get_open_night
-
-
-    night = get_open_night(db)
-    key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    return (
-        _materials_campaign_dir(db) / key / uuid.uuid4().hex
-    )
-
 
 def _empty_uuid_invocation_parent(path: Path) -> Optional[Path]:
     parent = path.parent
@@ -236,11 +224,6 @@ def _publish_material_tree(
     return dest, index
 
 
-def character_materials_root(db: Any, state: Any, character: Any) -> Path:
-    return _materials_invocation_dir(db, state) / _safe_segment(
-        getattr(character, "name", "")
-    )
-
 
 def list_materials(root: Path, path: str = "") -> List[str]:
     base = _resolve_inside(root, path)
@@ -310,22 +293,6 @@ def material_tools(root: Any) -> list:
     return [list_materials_tool, read_material_tool]
 
 
-def _present_names(db: Any, character: Any) -> List[str]:
-    from ming_sim.audience_night import get_open_night, present_names_at
-
-    name = str(getattr(character, "name", "") or "")
-    night = get_open_night(db)
-    if night is None:
-        return [name] if name else []
-    names = sorted(present_names_at(db, int(night["id"])))
-    return names or ([name] if name else [])
-
-
-def _spoken_this_scene(db: Any, character: Any) -> str:
-    from ming_sim.audience_night import audience_scene_recap
-
-    # #1812 P6：本场对话记录是自由正文，不得 strip；判空留给调用方按需处理。
-    return str(audience_scene_recap(db, getattr(character, "name", "")) or "")
 
 
 def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
@@ -610,17 +577,6 @@ def _opening_affair_lines(
     return handled
 
 
-def _handled_affair_lines(
-    db: Any, state: Any, character_name: str, issue_materials: Sequence[dict[str, object]],
-) -> list[dict[str, object]]:
-    """Filter canonical visible issue materials to matters this character handles."""
-    from ming_sim.participant_roster import participant_roster_names
-
-    return [
-        item for item in issue_materials
-        if character_name in participant_roster_names(item.get("participant_roster"))
-    ]
-
 
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
     return [
@@ -629,35 +585,6 @@ def _carryover_drafts(db: Any, state: Any) -> list[dict]:
         and db.dossiers.get_for_directive(int(row["id"])) is None
     ]
 
-
-def minimal_opening_context(
-    character: Any,
-    state: Any,
-    present: Sequence[str],
-    affairs: Sequence[dict[str, object]],
-    spoken: str,
-) -> str:
-    """Canonical minimal opening: identity/office, present, date, affairs, spoken."""
-    name = str(getattr(character, "name", "") or "")
-    office = str(getattr(character, "office", "") or "")
-    parts = [
-        f"身份：{name}，{office}",
-        f"在场：{'、'.join(present) if present else name}",
-        f"日期：{int(state.year)}年{int(state.period)}月",
-    ]
-    if affairs:
-        parts.append("正经手事务：")
-        parts.extend(
-            f"- #{item['id']} {item['title']}：{item['situation']}"
-            for item in affairs
-        )
-    else:
-        parts.append("正经手事务：（无）")
-    parts.append("本场已说的话：")
-    # #1812 P6：spoken 是自由正文，判空只用局部 stripped 副本，写出用原文。
-    parts.append(spoken if spoken.strip() else "（尚无）")
-    parts.append("材料在当前目录。根目录 INDEX 一行一项。其余想读自己读。")
-    return "\n".join(parts)
 
 
 def _secret_order_memorials(order: Any) -> list[str]:
@@ -1053,41 +980,6 @@ def _character_material_projection(db: Any, state: Any, character: Any) -> tuple
     issues = _visible_affair_lines({"issues": project_issue_materials(db, name, knowledge)})
     return knowledge, issues
 
-
-def prepare_character_materials(
-    db: Any,
-    state: Any,
-    character: Any,
-    *,
-    dest_root: Optional[Path] = None,
-) -> PreparedMaterials:
-    name = str(getattr(character, "name", "") or "")
-    knowledge, issue_materials = _character_material_projection(db, state, character)
-
-    dest, index = _publish_material_tree(
-        dest_root,
-        character_materials_root(db, state, character),
-        lambda tmp: _write_tree(tmp, db, state, character, knowledge, issue_materials),
-    )
-
-    affairs = _handled_affair_lines(db, state, name, issue_materials)
-    for row in _carryover_drafts(db, state):
-        title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "")
-        affairs.append({
-            "id": f"draft-{int(row['id'])}", "title": title,
-            "situation": f"{body}（尚未入档）" if body.strip() else "尚未入档",
-        })
-    from types import SimpleNamespace
-    from ming_sim.knowledge import current_character_office
-
-    office, office_type = current_character_office(db, character, name)
-    current_character = SimpleNamespace(name=name, office=office, office_type=office_type)
-    opening = minimal_opening_context(
-        current_character, state, _present_names(db, character), affairs,
-        _spoken_this_scene(db, character),
-    )
-    return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
 
 
 def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, object]]:
