@@ -8488,9 +8488,10 @@ def _apply_score_extraction_body(
                 create, commitment_economy_carriers
             )
             if residual_account:
+                raw_display = str(create.get("display") or "")
                 residual_display = (
-                    str(create.get("display") or "").strip()
-                    or (db._stem_of(key) or key) or "无名月支"
+                    raw_display if raw_display.strip()
+                    else ((db._stem_of(key) or key) or "无名月支")
                 )
                 tlog(
                     f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"

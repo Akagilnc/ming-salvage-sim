@@ -2780,8 +2780,8 @@ class GameSession:
             # Free deliberate prose: empty-check without mutating carried body (P6).
             title = str(obj.get("title") or "")
             body = str(obj.get("body") or "")
-            stance = str(obj.get("stance") or "").strip()
-            if not (title.strip() and body.strip() and stance):
+            stance = str(obj.get("stance") or "")
+            if not (title.strip() and body.strip() and stance.strip()):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
             # shape 初检；身份合法性在 apply 事务内再核（整批零写）
             supporters = obj.get("supporter_ids", [])

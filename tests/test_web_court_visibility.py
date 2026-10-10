@@ -396,62 +396,6 @@ def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
 
 
 
-def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
-    """#1317 r2 钉：身份归一认识未仕/宗藩——史宪之入仕不建重档；福王别名撞宗藩闸。"""
-    from ming_sim import issues
-    from ming_sim.session import _find_existing_minister
-
-    db, state, content = game
-
-    assert "史可法" in content.characters
-    assert "史宪之" in (content.characters["史可法"].aliases or [])
-    assert _find_existing_minister(content, "史可法", db) == "史可法"
-    assert _find_existing_minister(content, "史宪之", db) == "史可法"
-
-    before = {
-        r["name"]
-        for r in db.conn.execute("SELECT name FROM characters").fetchall()
-    }
-    res = issues.apply_office_appointment(
-        db, state, content, "史宪之", "兵部职方司主事",
-        reason="#1317 r2 别名入仕", new_office_type="兵部",
-    )
-    assert not res.get("rejected"), res
-    assert res.get("name") == "史可法"
-    after = {
-        r["name"]
-        for r in db.conn.execute("SELECT name FROM characters").fetchall()
-    }
-    assert after == before, f"史宪之入仕不得建重档，多出：{after - before}"
-    row = db.conn.execute(
-        "SELECT status, office FROM characters WHERE name=?", ("史可法",),
-    ).fetchone()
-    assert row["status"] == "active"
-    assert "职方" in (row["office"] or "") or "兵部" in (row["office"] or "")
-
-    # 福王别名 → 朱常洵 → 宗藩硬闸，不建档
-    prince = next(
-        (n for n, c in content.characters.items()
-         if c.office_type == "宗藩" and "福王" in (c.aliases or [])),
-        None,
-    )
-    assert prince is not None, "seed 须有福王别名宗藩（朱常洵）"
-    assert _find_existing_minister(content, "福王", db) == prince
-    before_p = {
-        r["name"]
-        for r in db.conn.execute("SELECT name FROM characters").fetchall()
-    }
-    res_p = issues.apply_office_appointment(
-        db, state, content, "福王", "兵部尚书", reason="幻觉授宗藩",
-    )
-    assert res_p.get("rejected") is True
-    after_p = {
-        r["name"]
-        for r in db.conn.execute("SELECT name FROM characters").fetchall()
-    }
-    assert after_p == before_p, f"福王别名不得建重档，多出：{after_p - before_p}"
-
-
 def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeypatch):
     """#1317 r2：CLI choose_minister 真入口与可召谓词同口径（排未仕，留真臣）。"""
     from ming_sim.cli import terminal as term

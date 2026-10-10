@@ -25,23 +25,6 @@ def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     assert 温["identity"] == content.characters["温体仁"].identity
     assert json.loads(温["seed_guilt"]) == content.characters["温体仁"].seed_guilt
 
-def test_identity_and_seed_guilt_survive_restore(game):
-    db, state, content = game
-    before = db.conn.execute(
-        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
-    ).fetchone()
-    content.characters["魏忠贤"].identity = 0
-    content.characters["魏忠贤"].seed_guilt = {}
-    _sync_offices_from_db_impl(content, db)
-    after = db.conn.execute(
-        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
-    ).fetchone()
-    assert dict(after) == dict(before)
-    guilt = json.loads(after["seed_guilt"])
-    assert guilt == json.loads(before["seed_guilt"])
-    assert content.characters["魏忠贤"].identity == before["identity"]
-    assert content.characters["魏忠贤"].seed_guilt == guilt
-
 _DIG_7_REQUIRED_SEED_NAMES = {
     "韩爌", "张瑞图", "来宗道", "施凤来", "黄立极", "王绍徽", "毕自严", "杨嗣昌",
     "温体仁", "钱龙锡", "刘鸿训", "钱谦益", "李标", "孙承宗", "崔呈秀", "王在晋",

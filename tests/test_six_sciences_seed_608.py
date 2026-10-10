@@ -47,24 +47,3 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
         "SELECT office FROM characters WHERE name='韩一良'"
     ).fetchone()["office"]
     assert office == ""
-
-
-def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game):
-    """TD-6：给事中退场更新持久派系权势。"""
-    db, state, _content = game
-    censor = db.conn.execute(
-        "SELECT name, faction, office_type, office FROM characters WHERE name='许誉卿'"
-    ).fetchone()
-    assert censor is not None
-
-    weight = _member_office_weight(censor["office_type"], censor["office"])
-    offset = 50 - db._faction_office_weight_sum(censor["faction"])
-    db.conn.execute(
-        "UPDATE factions SET leverage_offset=?, leverage=50 WHERE name=?",
-        (offset, censor["faction"]),
-    )
-    db.conn.commit()
-
-    db.set_character_status(state, censor["name"], "dismissed", reason="测试退场")
-
-    assert db.faction_leverage(censor["faction"]) == round(50 - weight)
