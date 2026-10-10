@@ -521,8 +521,31 @@ def _offline_scene_beat_generator():
 
 
 
+def stub_webgame_boundary(monkeypatch) -> None:
+    """WebGame 外部 LLM 边界中和：runtime 配置与高亮判官（单权威；#1847 D14）。
+
+    #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
+    """
+    import web_app
+
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+
+
 @pytest.fixture
-def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
+def webgame_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
+    """真实 WebGame 的环境与外部边界（新档、temp DB）；本夹具不构造 WebGame。
+
+    需在同一用例内多次开档（关档重开、对账）的用例请求本夹具，自行构造。
+    """
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    stub_webgame_boundary(monkeypatch)
+
+
+@pytest.fixture
+def web_game(webgame_env, monkeypatch):
     """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 与动作级 LLM 边界中和。
 
     单权威开局/生命周期夹具（#1847 消费者闭包复用）。测试只经本夹具取 runtime，
@@ -530,12 +553,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """
     import web_app
 
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     try:

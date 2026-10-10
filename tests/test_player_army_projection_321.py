@@ -16,6 +16,7 @@ from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from tests.army_pay_helpers import configure_guanning_army
 ARMY = "guanning"
 
 
@@ -33,18 +34,6 @@ _MUTINY_ORDINAL_KEYS = frozenset(
         "mutiny_state",
     }
 )
-
-def _configure(db) -> None:
-    db.conn.execute("UPDATE armies SET manpower=0")
-    db.conn.execute(
-        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1,
-           pay_source_region='liaodong', province_pay_arrears=0, central_pay_arrears=0
-           WHERE id=?""",
-        (ARMY,),
-    )
-    db.conn.commit()
-
 
 def _write_mutiny_fixture(
     db,
@@ -145,7 +134,7 @@ def test_structured_situation_on_payload_and_map_nodes(game):
     # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
     is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
     db, state, content = game
-    _configure(db)
+    configure_guanning_army(db)
     arrears = 12.5
     _write_mutiny_fixture(
         db,

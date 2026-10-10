@@ -15,17 +15,11 @@ import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
+from tests.fiscal_test_utils import class_population
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
 DISPLACED_SHAANXI = 150000    # 流民@shaanxi
-
-def _pop(db: GameDB, name: str, region_id: str) -> int:
-    row = db.conn.execute(
-        "SELECT population FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    return int(row[0]) if row else 0
 
 def _global_population(db: GameDB) -> int:
     return int(db.conn.execute("SELECT COALESCE(SUM(population),0) FROM classes").fetchone()[0])
@@ -58,8 +52,8 @@ def test_transfer_two_legs_same_transaction_conservation(game):
     assert rec["amount"] == 3000
     assert rec["reason"] == "加派"
     assert rec["origin_ref"] == "盘面自发"
-    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 3000
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 3000
+    assert class_population(db, "农民", "shaanxi") == FARMER_SHAANXI - 3000
+    assert class_population(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 3000
     assert _global_population(db) == total_before  # 全局守恒
 
 def test_all_inflow_reasons_positive_cases_land(game):
@@ -77,7 +71,7 @@ def test_all_inflow_reasons_positive_cases_land(game):
         _transfer(source="军户@beizhili", target="流民@beizhili", amount=100, reason="逃亡"),
     ]
     keys = {tuple(item[key].split("@")) for item in items for key in ("source", "target")}
-    before = {(n, r): _pop(db, n, r) for n, r in keys}
+    before = {(n, r): class_population(db, n, r) for n, r in keys}
     applied = apply_score_extraction(db, state, {"population_transfers": items}, content, None)
     assert not applied["population_transfers_rejections"]
     assert len(applied["population_transfers"]) == len(items)
@@ -88,7 +82,7 @@ def test_all_inflow_reasons_positive_cases_land(game):
         expected[src] -= int(item["amount"])
         expected[dst] += int(item["amount"])
     for key, want in expected.items():
-        got = _pop(db, key[0], key[1])
+        got = class_population(db, key[0], key[1])
         assert got == want, f"{key}: 期望 {want}，实得 {got}"
 
 # ── 方向矩阵与逐项拒收面 ─────────────────────────────────────────────────────
@@ -104,8 +98,8 @@ def test_direction_matrix_violations_rejected_per_item(game):
         _transfer(source="士绅@shaanxi", target="流民@shaanxi", amount=10, reason="加派"),   # 矩阵外源阶级
         _transfer(source="流民@shaanxi", target="军户@shaanxi", amount=10, reason="兵灾"),   # 兵灾反向
     ]
-    farmer_before = _pop(db, "农民", "shaanxi")
-    displaced_before = _pop(db, "流民", "shaanxi")
+    farmer_before = class_population(db, "农民", "shaanxi")
+    displaced_before = class_population(db, "流民", "shaanxi")
     applied = apply_score_extraction(
         db, state,
         {"population_transfers": [good, *bad_items]},
@@ -117,8 +111,8 @@ def test_direction_matrix_violations_rejected_per_item(game):
     assert all(r["category"] == "invalid_enum" for r in rejections)
     assert applied["population_transfers"] and applied["population_transfers"][0]["reason"] == "灾害"
     # 只有合法项动了账
-    assert _pop(db, "农民", "shaanxi") == farmer_before - 50
-    assert _pop(db, "流民", "shaanxi") == displaced_before + 50
+    assert class_population(db, "农民", "shaanxi") == farmer_before - 50
+    assert class_population(db, "流民", "shaanxi") == displaced_before + 50
 
 def test_amount_and_balance_validation_per_item(game):
     """amount 非严格正整数逐项拒收；实有封顶由真实过月入口覆盖。"""
@@ -133,8 +127,8 @@ def test_amount_and_balance_validation_per_item(game):
     applied = apply_score_extraction(db, state, {"population_transfers": bad_items}, content, None)
     rejections = applied["population_transfers_rejections"]
     assert len(rejections) == len(bad_items)
-    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+    assert class_population(db, "农民", "shaanxi") == FARMER_SHAANXI
+    assert class_population(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
 def test_reference_validation_national_row_cross_region_unknown(game):
     """全国行触线/跨省对/未知 region/查无阶级行逐项拒收。"""
@@ -164,7 +158,7 @@ def test_origin_ref_required_and_validated(game):
     assert len(applied["population_transfers_rejections"]) == len(bad_items)
     assert "missing_origin_ref" in cats
     assert "invalid_origin_ref" in cats
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+    assert class_population(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
 def test_whitelist_extra_field_and_non_dict_item_rejected(game):
     """白名单外字段逐项拒收；list 内非 dict 坏项由 sanitize 层按 ADR0015 F1
@@ -183,7 +177,7 @@ def test_whitelist_extra_field_and_non_dict_item_rejected(game):
     shape = [r for r in applied["validate_shape_rejections"]
              if r.get("item") == {"raw_value": 42}]
     assert shape
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+    assert class_population(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
 def test_section_non_list_rejects_section_rest_lands(game):
     """r4 分层终态：转移段非 list → 只拒该 section 留痕，其余 section 好项照落。"""

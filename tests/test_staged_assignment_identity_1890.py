@@ -25,7 +25,7 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.issues import apply_score_extraction
 from ming_sim.staged_commitment import normalize_commitment_stages
 from tests.conftest import active_ming_character, open_hall_turn
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, promulgated_policy_origin
 
 
 def _pacification_target(db) -> str:
@@ -523,24 +523,6 @@ def test_undo_deletes_only_this_turns_committed_draft_directive(game):
     ).fetchone()["status"] == "draft"
 
 
-def _promulgated_policy_origin(db, state, *, token: str) -> str:
-    """已颁布案卷的 origin_ref（``new_issues`` 承诺项须有合法 decree 来源）。
-
-    案卷只用作来源锚，本组用例不依赖它的执行面，故只颁布不推进。
-    """
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"分段承诺：{token}",
-        target_kind="issue",
-        target_id=token,
-        payload={"token": token},
-    )
-    assert dossier_id > 0
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
-
-
 # ── ADR 0142：交办机械事实不从自由散文反推 ────────────────────────────
 #
 # 判据一律取**最终持久化的结构化结果**（``issues`` 表那行），不停在暂存 payload：
@@ -688,7 +670,7 @@ def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
     机械事实。判据取既有契约口与库层零行，不盯拒收措辞。
     """
     db, state, content = game
-    origin_ref = _promulgated_policy_origin(db, state, token="prose-1890")
+    origin_ref = promulgated_policy_origin(db, state, token="prose-1890")
 
     out = apply_score_extraction(
         db, state,
@@ -715,7 +697,7 @@ def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
 def test_new_issues_structured_stages_still_land(game):
     """同一入口下显式结构化 ``stages`` 照常落段——删的是散文入口，不是能力。"""
     db, state, content = game
-    origin_ref = _promulgated_policy_origin(db, state, token="structured-1890")
+    origin_ref = promulgated_policy_origin(db, state, token="structured-1890")
 
     out = apply_score_extraction(
         db, state,

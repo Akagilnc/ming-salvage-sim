@@ -102,27 +102,21 @@ _BAD_UNKNOWN_PARTICIPANT = {
 
 
 @pytest.fixture
-def admission_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """共享 WebGame + 真 capture；模型边界由各测 _queue_backend 喂。"""
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+def admission_game(web_game, monkeypatch):
+    """共享 web_game + 真 capture；模型边界由各测 _queue_backend 喂。
+
+    生命周期（开档／关档）只经 conftest.web_game；本夹具仅叠加准入特化：
+    外层 LLM 桩之后仍复原真 capture，财政前置在开档后设定。
+    """
     real_capture = cb.capture_manual_directive_payload
     _stub_outer_llm_seams(monkeypatch)
     monkeypatch.setattr(cb, "capture_manual_directive_payload", real_capture)
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
+    game = web_game
     if getattr(game.session, "llm_config", None) is not None:
-        try:
-            game.session.llm_config.channel = "cli"
-        except Exception:
-            pass
+        game.session.llm_config.channel = "cli"
     _set_guanning_arrears(game.db, 60, central=60, province=0)
     game.state.metrics["国库"] = max(int(game.state.metrics.get("国库") or 0), 100)
-    try:
-        yield game
-    finally:
-        game.session.close()
+    return game
 
 
 def _queue_backend(monkeypatch, captures: list) -> None:

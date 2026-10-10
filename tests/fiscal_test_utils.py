@@ -12,3 +12,13 @@ def zero_non_meta_fiscal_config(db):
         WHERE kind != 'meta'
         """
     )
+
+
+def class_population(db, name: str, region_id: str) -> int:
+    """某阶层在某地区的人口读数（classes 表），无行则 0。"""
+    row = db.conn.execute(
+        "SELECT population FROM classes WHERE name=? AND region_id=?",
+        (name, region_id),
+    ).fetchone()
+    return int(row[0]) if row else 0
+

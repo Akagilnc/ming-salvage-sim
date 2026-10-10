@@ -278,7 +278,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     game, monkeypatch, entry,
 ):
     """A post-fiscal fault cannot expose preview-time directive materialization."""
-    from contextlib import contextmanager
     from types import SimpleNamespace
     import ming_sim.decree as decree
     import ming_sim.session as session_mod
@@ -326,12 +325,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
             state_payload=lambda: {"turn": state.turn},
         )
 
-        @contextmanager
-        def unlocked(_game):
-            yield
-
         monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
         invoke = web_app.api_advance_without_edict
     else:
         invoke = session.advance_without_decree

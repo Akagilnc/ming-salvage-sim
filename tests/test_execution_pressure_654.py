@@ -13,10 +13,6 @@ from ming_sim.execution_pressure import (
     resolve_dossier_region_ids,
 )
 
-@pytest.fixture
-def env(game):
-    db, state, content = game
-    return db, state, content
 
 # ── 词表 / scope 归一 ──────────────────────────────────────────────
 
@@ -38,9 +34,9 @@ def test_normalize_locality_scope_rejects_unknown():
 
 # ── locality oracle 组合矩阵 ───────────────────────────────────────
 
-def test_national_policy_is_one_dossier_not_per_province(env):
+def test_national_policy_is_one_dossier_not_per_province(game):
     """#1778 决定 4：全国政令也是一份案卷，region_id 空——不按省拆。"""
-    db, _, content = env
+    db, _, content = game
     regions = resolve_dossier_region_ids(
         db.conn,
         payload={
@@ -52,8 +48,8 @@ def test_national_policy_is_one_dossier_not_per_province(env):
     )
     assert regions == [""]
 
-def test_special_decree_without_national_is_single_empty(env):
-    db, _, content = env
+def test_special_decree_without_national_is_single_empty(game):
+    db, _, content = game
     regions = resolve_dossier_region_ids(
         db.conn,
         payload={
@@ -65,8 +61,8 @@ def test_special_decree_without_national_is_single_empty(env):
     )
     assert regions == [""]
 
-def test_region_single_by_id(env):
-    db, _, content = env
+def test_region_single_by_id(game):
+    db, _, content = game
     assert resolve_dossier_region_ids(
         db.conn,
         payload={
@@ -77,8 +73,8 @@ def test_region_single_by_id(env):
         regions_content=content.regions,
     ) == ["shaanxi"]
 
-def test_region_outside_province_set_yields_empty_locality(env):
-    db, _, content = env
+def test_region_outside_province_set_yields_empty_locality(game):
+    db, _, content = game
     # 辽东边镇不入省集合
     assert resolve_dossier_region_ids(
         db.conn,
@@ -97,15 +93,15 @@ def test_region_outside_province_set_yields_empty_locality(env):
     {"target_kind": "character", "target_id": "袁崇焕", "locality_scope": "national"},
     {"target_kind": "unknown", "target_id": "x", "locality_scope": "none"},
 ])
-def test_oracle_contradictions_fail_loud(env, payload):
-    db, _, content = env
+def test_oracle_contradictions_fail_loud(game, payload):
+    db, _, content = game
     with pytest.raises(ValueError):
         resolve_dossier_region_ids(
             db.conn, payload=payload, regions_content=content.regions,
         )
 
-def test_region_zero_hit_fail_loud(env):
-    db, _, content = env
+def test_region_zero_hit_fail_loud(game):
+    db, _, content = game
     with pytest.raises(ValueError):
         resolve_dossier_region_ids(
             db.conn,
@@ -120,8 +116,8 @@ def test_region_zero_hit_fail_loud(env):
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
 
-def test_create_decree_dossier_int_abi_single_row(env):
-    db, state, _ = env
+def test_create_decree_dossier_int_abi_single_row(game):
+    db, state, _ = game
     did = db.create_decree_dossier(
         state,
         action_type="policy",
@@ -135,8 +131,8 @@ def test_create_decree_dossier_int_abi_single_row(env):
     assert row["region_id"] == ""
 
 
-def test_normalize_payload_locality_and_target_kind(env):
-    db, _, _ = env
+def test_normalize_payload_locality_and_target_kind(game):
+    db, _, _ = game
     out = db._normalize_directive_dossier_payload({
         "dossier_action_type": "policy",
         "target_kind": "policy",
@@ -193,9 +189,9 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     return int(cur.lastrowid)
 
 
-def test_path1_conversational_draft_bad_roster_marks_failed(env):
+def test_path1_conversational_draft_bad_roster_marks_failed(game):
     """路 1 _commit_conversational_draft：成案零行 → pending failed、无案卷。"""
-    db, state, _ = env
+    db, state, _ = game
     payload = {
         "text": "清丈天下田亩",
         "actor": "毕自严",
@@ -288,8 +284,8 @@ def test_path1_conversational_draft_bad_roster_marks_failed(env):
         ("policy", "全省", "fail"),
     ],
 )
-def test_locality_matrix_8x3_and_unknown(env, target_kind, scope, expect):
-    db, _, content = env
+def test_locality_matrix_8x3_and_unknown(game, target_kind, scope, expect):
+    db, _, content = game
     payload = {"target_kind": target_kind, "target_id": "shaanxi" if target_kind == "region" else "x"}
     if scope is not None:
         payload["locality_scope"] = scope
@@ -307,9 +303,9 @@ def test_locality_matrix_8x3_and_unknown(env, target_kind, scope, expect):
     elif expect == "R1":
         assert regions == ["shaanxi"]
 
-def test_locality_fail_create_decree_dossiers_zero_rows(env):
+def test_locality_fail_create_decree_dossiers_zero_rows(game):
     """fail 格走真实 bulk 入口：异常 + 零行。"""
-    db, state, _ = env
+    db, state, _ = game
     payload = {
         "target_kind": "region",
         "target_id": "shaanxi",
@@ -327,7 +323,7 @@ def test_locality_fail_create_decree_dossiers_zero_rows(env):
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
 
-def test_revoke_decree_523_producer_durable_oracle_chain(env):
+def test_revoke_decree_523_producer_durable_oracle_chain(game):
     """#523 producer→durable→oracle：dossier 目标恰落一条 region_id='' 案卷。
 
     owner A：八值成员、dossier 三格、unknown 拒绝、revoke identity 保留。
@@ -335,7 +331,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
     import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
     from ming_sim.action_materialize import stage_revoke_decree_candidate
 
-    db, state, content = env
+    db, state, content = game
     holder = str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
         "ORDER BY name LIMIT 1"
@@ -439,13 +435,13 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
 
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 
-def test_location_canonical_seed_and_write_seam(env):
+def test_location_canonical_seed_and_write_seam(game):
     """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud。"""
     from ming_sim.matching import canonical_region_id_exact
     from ming_sim.distance import DistanceMatrix
     from ming_sim.paths import bundled_path
 
-    db, state, content = env
+    db, state, content = game
     for name in ("乔允升", "许誉卿", "韩一良"):
         loc = db.conn.execute(
             "SELECT location FROM characters WHERE name=?", (name,),

@@ -24,6 +24,7 @@ import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
+from tests.conftest import stub_webgame_boundary
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
@@ -38,11 +39,11 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     from tests.test_faction_brew_637 import _dual_brew_fn_factory
 
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
     # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+    # runtime 与高亮判官两缝经 conftest 单权威中和。
+    stub_webgame_boundary(monkeypatch)
     # 拟旨 capture 默认 30s 总罩——外层接缝 canned，禁真 LLM/真等。
     monkeypatch.setattr(
         cli_backend,

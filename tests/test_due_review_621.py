@@ -16,6 +16,7 @@ import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.audience_night import list_ledger, open_night
+from tests.dossier_test_helpers import promulgated_policy_origin
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
@@ -35,21 +36,6 @@ from ming_sim.staged_commitment import (
 
 # ── fixtures ──────────────────────────────────────────────────────────
 
-
-def _promulgated_origin(db, state, token: str) -> str:
-    # 起源夹具只需可颁布案卷 id。用 policy（非 multi_month 覆盖域）避免
-    # #1778：assignment 无点将时代码不配人；主办来自旨意自带名单，不牵撤人边。
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"分段承诺：{token}",
-        target_kind="issue",
-        target_id=token,
-        payload={"token": token},
-    )
-    assert dossier_id > 0
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
 
 
 def _executing_policy_dossier(db, state, *, token: str = "due-review-621"):
@@ -72,7 +58,7 @@ def _executing_policy_dossier(db, state, *, token: str = "due-review-621"):
 def _insert_staged_commitment(
     db, state, content, *, stages, title="徐光启分段之诺", origin_ref: str = "",
 ):
-    origin = origin_ref or _promulgated_origin(db, state, title)
+    origin = origin_ref or promulgated_policy_origin(db, state, title)
     out = apply_score_extraction(
         db,
         state,
@@ -352,7 +338,7 @@ def test_no_dossier_branch_only_scene_no_forged_dossier(game):
     }]
     # origin 指向已颁但非 executing 的 assignment 案卷（或空执行面）——走无执行面案卷分支
     # 用无 origin_ref 的承诺：insert 仍需合法 origin；用已 close 的案卷模拟无执行桥
-    origin = _promulgated_origin(db, state, "no-exec-surface")
+    origin = promulgated_policy_origin(db, state, "no-exec-surface")
     # promulgated assignment without executing transition stays promulgated if terminal?
     # assignment 有执行面；改为直接空 origin_ref 不可。用已 closed 案卷：
     did = int(origin.split(":")[1])
@@ -395,7 +381,7 @@ def test_no_dossier_branch_negative_does_not_create_dossier(game):
         "criterion_text": "农政见效",
         "origin_context": "七八年农政见效",
     }]
-    origin = _promulgated_origin(db, state, "neg-no-dossier")
+    origin = promulgated_policy_origin(db, state, "neg-no-dossier")
     did = int(origin.split(":")[1])
     db.conn.execute(
         "UPDATE decree_dossiers SET status='closed', execution_outcome='fulfilled' WHERE id=?",

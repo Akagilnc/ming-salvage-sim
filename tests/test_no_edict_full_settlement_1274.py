@@ -150,7 +150,6 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_web_no_edict_endpoint_routes_to_full_settlement(game, monkeypatch):
     """Web 退朝端点：无草案时不再走 16ms 快路，必经 simulator。"""
-    from contextlib import contextmanager
     from types import SimpleNamespace
 
     import web_app
@@ -172,13 +171,7 @@ def test_web_no_edict_endpoint_routes_to_full_settlement(game, monkeypatch):
         state_payload=lambda: {"turn": {"turn": int(state.turn)}},
     )
 
-    @contextmanager
-    def unlocked(_game):
-        yield
-
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
     # 端点不应再依赖 advance_without_edict 快路返回 True
     response = web_app.api_advance_without_edict()
 

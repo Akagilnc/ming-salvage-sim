@@ -100,7 +100,6 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
 
     runtime.session.submit_hitl_choices = _submit_hitl
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
 
     async def _go():
         # 并行：放行 phase2 前先观测展示态。
@@ -170,7 +169,6 @@ def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, mo
 
     runtime.session.submit_hitl_choices = _boom
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
 
     serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
     events = _parse_sse(serialized)
@@ -203,7 +201,6 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
 
     runtime.session.submit_hitl_choices = _submit_hitl
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
 
     import ming_sim.month_open_snapshot as mos
 

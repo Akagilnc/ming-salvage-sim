@@ -49,15 +49,8 @@ def _open_webgame(*, fresh: bool):
             game.session.close()
 
 
-def test_reopen_webgame_catches_up_pending_translation(tmp_path, monkeypatch):
+def test_reopen_webgame_catches_up_pending_translation(webgame_env, monkeypatch):
     """恢复接缝真源：关档重开经真实 WebGame 入口补跑待补转译（ADR 0036）。"""
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-
     with _open_webgame(fresh=True) as first:
         minister = _minister(first.db, first.content)
         stub_audience_translate(monkeypatch, lambda *_a, **_k: {

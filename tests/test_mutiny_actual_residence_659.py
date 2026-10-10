@@ -13,6 +13,7 @@ from __future__ import annotations
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
+from tests.fiscal_test_utils import class_population
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
 JUNHU_LIAODONG = 230000
@@ -20,13 +21,6 @@ JUNHU_DONGJIANG = 95000
 LIUMIN_LIAODONG = 0
 LIUMIN_DONGJIANG = 0
 
-
-def _pop(db: GameDB, name: str, region_id: str) -> int:
-    row = db.conn.execute(
-        "SELECT population FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    return int(row[0]) if row else 0
 
 
 def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
@@ -101,8 +95,8 @@ def test_fresh_seed_station_region_and_class_slices(game):
     assert rows["guanning"]["station_region"] == "liaodong"
     assert rows["dongjiang"]["station_region"] == "dongjiang_area"
     assert rows["guanning"]["pay_source_region"] == rows["dongjiang"]["pay_source_region"] == "liaodong"
-    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG
-    assert _pop(db, "流民", "liaodong") == LIUMIN_LIAODONG
-    assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
-    assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
+    assert class_population(db, "军户", "liaodong") == JUNHU_LIAODONG
+    assert class_population(db, "流民", "liaodong") == LIUMIN_LIAODONG
+    assert class_population(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
+    assert class_population(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
 

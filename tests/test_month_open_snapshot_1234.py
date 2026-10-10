@@ -336,7 +336,6 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
     runtime.session.last_decree = "诏曰测试"
     runtime.refresh_turn = lambda: None
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_game_write_gate", _null_cm)
 
     async def _consume():
@@ -395,7 +394,6 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
 
     runtime.session.advance_without_decree = _observe_then_done
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
 
     result = web_app.api_advance_without_edict()
@@ -447,7 +445,6 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     runtime.session.end_turn = _end_turn
     runtime.refresh_turn = lambda: None
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
 
     result = web_app.api_advance_without_edict()

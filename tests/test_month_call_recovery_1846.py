@@ -390,21 +390,10 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
     assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -2
 
 
-def test_settlement_recovery_projects_month_call_failure(
-    game, monkeypatch, tmp_path, _offline_scene_beat_generator,
-):
+def test_settlement_recovery_projects_month_call_failure(web_game, monkeypatch):
     """核账期投影交出错误原文、错误包路径与可重试（#1854 只承接呈现）。"""
     import ming_sim.month_chain as month_chain
-    import web_app
 
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    web_game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", web_game)
     db, state = web_game.db, web_game.state
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)

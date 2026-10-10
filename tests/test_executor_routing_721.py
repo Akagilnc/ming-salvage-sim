@@ -14,10 +14,6 @@ from ming_sim.decree import pre_settle
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
-@pytest.fixture
-def env(game):
-    db, state, content = game
-    return db, state, content
 
 
 def _create(db, state, *, action="assignment", category="清丈", payload=None,
@@ -38,9 +34,9 @@ def _create(db, state, *, action="assignment", category="清丈", payload=None,
 
 
 @pytest.mark.parametrize("punish_action", ["", "抄家"])
-def test_punishment_without_admitted_strike_subtype_is_excluded(env, punish_action):
+def test_punishment_without_admitted_strike_subtype_is_excluded(game, punish_action):
     """未准入惩处细类不经 stage 落 pending 或案卷。"""
-    db, state, _ = env
+    db, state, _ = game
     pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
     dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
     pending_id = stage_punishment_candidate(
@@ -52,16 +48,16 @@ def test_punishment_without_admitted_strike_subtype_is_excluded(env, punish_acti
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
 
 
-def test_unnamed_assignment_gets_no_lead_from_code(env):
+def test_unnamed_assignment_gets_no_lead_from_code(game):
     """#1778 决定 3/乙：没点将、名单也没写 → 代码不配人；成案缝响亮失败。"""
-    db, state, _ = env
+    db, state, _ = game
     with pytest.raises(ValueError):
         _create(db, state, category="清丈", payload={"transaction_category": "清丈"})
 
 
-def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(env):
+def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(game):
     """#1778 决定 3/5：主办来自旨意自带的名单，成案时钉进案卷、restore 有锚。"""
-    db, state, content = env
+    db, state, content = game
     dossier_id = _create(
         db, state, category="清丈",
         participants=[{"character_id": "毕自严", "tier": "主办"}],
@@ -80,9 +76,9 @@ def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(env):
         restored.close()
 
 
-def test_existing_delegated_lead_is_preserved_not_demoted(env):
+def test_existing_delegated_lead_is_preserved_not_demoted(game):
     """委派主办照钉、不降档；#1778：仅委派主办不算点将（须另有无委派主办）。"""
-    db, state, _ = env
+    db, state, _ = game
     # 仅委派主办 → multi_month unassigned 响亮（与 bulk named_leads 同口径）
     with pytest.raises(ValueError):
         _create(
@@ -112,8 +108,8 @@ def test_existing_delegated_lead_is_preserved_not_demoted(env):
     {"assignee_id": "陈新甲"},
     {"assignee": "陈新甲"},
 ])
-def test_production_assignee_is_named_route(env, payload):
-    db, state, _ = env
+def test_production_assignee_is_named_route(game, payload):
+    db, state, _ = game
     dossier_id = _create(db, state, category=None, payload=payload)
     dossier = db.get_decree_dossier(dossier_id)
     leads = [
@@ -127,8 +123,8 @@ def test_production_assignee_is_named_route(env, payload):
 
 
 @pytest.mark.parametrize("action", ["assignment", "military_order"])
-def test_legacy_character_executor_migrates_without_overriding_roster(env, action):
-    db, state, _ = env
+def test_legacy_character_executor_migrates_without_overriding_roster(game, action):
+    db, state, _ = game
     legacy_id = db.create_decree_dossier(
         state, action_type=action, decree_text="旧式直点",
         target_kind="issue", target_id="legacy", executor_kind="character",
@@ -150,15 +146,15 @@ def test_legacy_character_executor_migrates_without_overriding_roster(env, actio
     ] == ["毕自严"]
 
 
-def test_appointment_routes_to_appointee_at_creation(env):
-    db, state, _ = env
+def test_appointment_routes_to_appointee_at_creation(game):
+    db, state, _ = game
     dossier_id = _create(db, state, action="appointment", category=None, target="陈新甲")
     leads = [e["character_id"] for e in db.get_decree_dossier(dossier_id)["participant_roster"] if e["tier"] == "主办"]
     assert leads == ["陈新甲"]
 
 
-def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(env):
-    db, state, content = env
+def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(game):
+    db, state, content = game
     name = "测试新臣"
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name="毕自严",
@@ -192,9 +188,9 @@ def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(env
     )
 
 
-def test_unknown_appointee_keeps_declared_faction(env):
+def test_unknown_appointee_keeps_declared_faction(game):
     """#1847 N10：任命声明的派系是结构化字段，未知值原样透传，不得静默改写为「中立」。"""
-    db, state, content = env
+    db, state, content = game
     name = "测试异派新臣"
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name="毕自严",
@@ -208,12 +204,12 @@ def test_unknown_appointee_keeps_declared_faction(env):
     assert person["faction"] == "不存在派"
 
 
-def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env):
+def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(game):
     """#1778 乙：交办主办＝后置抽取所得，不是当前召对大臣；无点将不成案。
 
     代码路径不得把 minister_name 填成 assignee；事务类别仍照旧落库。
     """
-    db, state, content = env
+    db, state, content = game
     # 无承办人：可暂存，收夜成案响亮失败
     bare_id = stage_assignment_candidate(
         db, state.turn, "陈新甲", text="清丈天下田亩", title="清丈田亩",
@@ -248,8 +244,8 @@ def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env
     assert "陈新甲" not in leads
 
 
-def test_real_punishment_stage_preserves_category(env):
-    db, state, content = env
+def test_real_punishment_stage_preserves_category(game):
+    db, state, content = game
     pending_id = stage_punishment_candidate(
         db, state.turn, "陈新甲", text="拿问下狱", target_id="毕自严",
         punish_action="拿问下狱", transaction_category="缉拿",
@@ -261,8 +257,8 @@ def test_real_punishment_stage_preserves_category(env):
     assert payload["transaction_category"] == "缉拿"
 
 
-def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(env):
-    db, state, _ = env
+def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(game):
+    db, state, _ = game
     pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
     dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
     pending_id = stage_punishment_candidate(
@@ -299,10 +295,10 @@ def _bad_directive_payload():
 
 
 def test_pending_routing_rejection_lands_on_ensure_batch_seam(
-    env, monkeypatch, tmp_path,
+    game, monkeypatch, tmp_path,
 ):
     """#1769：confirm 只翻 draft；路由拒收落 ensure 批缝（坏旨 draft 留、好旨成案）。"""
-    db, state, _ = env
+    db, state, _ = game
     mirror = tmp_path / "ensure-routing.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
     bad = db.add_directive(
@@ -348,10 +344,10 @@ def test_pending_routing_rejection_lands_on_ensure_batch_seam(
     assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "locality_fanout_failed"
 
 
-def test_rolled_back_collector_reuse_does_not_mirror_orphan(env, monkeypatch, tmp_path):
+def test_rolled_back_collector_reuse_does_not_mirror_orphan(game, monkeypatch, tmp_path):
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, mirror_rejections_after_commit
 
-    db, _, _ = env
+    db, _, _ = game
     mirror = tmp_path / "collector-reuse.jsonl"
     collector = RejectionCollector()
     item = lambda marker: RejectedItem(
@@ -377,13 +373,13 @@ def test_rolled_back_collector_reuse_does_not_mirror_orphan(env, monkeypatch, tm
 
 
 def test_directive_routing_rejection_rolls_back_with_outer_owner(
-    env, monkeypatch, tmp_path,
+    game, monkeypatch, tmp_path,
 ):
     """ensure 批缝外层 atomic 回滚：无 dossier、无 rejection 落痕。
 
     #1769：confirm 不再 ensure/routing，空壳 confirm 回滚参数已删。
     """
-    db, state, _ = env
+    db, state, _ = game
     mirror = tmp_path / "batch-rollback.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
     directive_id = db.add_directive(
@@ -417,17 +413,17 @@ def test_directive_routing_rejection_rolls_back_with_outer_owner(
     ("participant_roster", "{}"),
     ("extension_json", "["),
 ])
-def test_restore_malformed_durable_json_fails_loud(env, column, bad):
-    db, state, _ = env
+def test_restore_malformed_durable_json_fails_loud(game, column, bad):
+    db, state, _ = game
     dossier_id = _create(db, state, category=None, action="policy")
     db.conn.execute(f"UPDATE decree_dossiers SET {column}=? WHERE id=?", (bad, dossier_id))
     with pytest.raises(ValueError):
         db.get_decree_dossier(dossier_id)
 
 
-def test_national_policy_is_one_dossier_without_province_routing(env):
+def test_national_policy_is_one_dossier_without_province_routing(game):
     """#1778 决定 4：全国政令一份案卷、region_id 空；无省级子行、无中央回退链。"""
-    db, state, _ = env
+    db, state, _ = game
     payload = {
         "target_kind": "policy",
         "target_id": "清丈天下田亩",

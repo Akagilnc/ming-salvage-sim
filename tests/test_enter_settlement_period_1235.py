@@ -18,7 +18,6 @@ import time
 from types import SimpleNamespace
 
 import httpx
-import pytest
 
 import web_app
 import ming_sim.agents as agents_mod
@@ -31,25 +30,6 @@ from tests.conftest import stub_audience_translate, stub_scene_agent
 
 _IN_FLIGHT_DETAIL = "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。"
 _GATE_BUSY_DETAIL = "月末结算或上一步写入进行中，请稍候再操作。"
-
-
-# ── 轻量 canned 边界（与 #498 web tracer 同形，仅中和 LLM）────────────────
-
-@pytest.fixture
-def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """真实 WebGame；LLM 边界 canned。与 #498 fixture 同形。"""
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和。
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
-    try:
-        yield game
-    finally:
-        game.session.close()
 
 
 from tests.test_court_break_player_lock_1727 import _active_minister
@@ -390,9 +370,6 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
         yield  # pragma: no cover — raise 后不可达；保 CM 形
 
     monkeypatch.setattr(web_app, "_serialized_web_write", _gate_busy)
-    # 跳过 await/close 噪声，直达 gate 缝
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
-
     async def go():
         async with _client() as client:
             return await client.post("/api/decree/advance_without_edict")
@@ -420,9 +397,6 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
     game = web_game
     before = _click_before(game.state)
     turn = int(game.state.turn)
-
-    # 跳过 await/close 噪声，直达 gate 缝
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
 
     # 请求 A：点即入真新建 + 持 _write_gate（结算 worker 在办）
     assert web_app._accept_settlement_period(game) is True
@@ -516,8 +490,6 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     game = web_game
     before = _click_before(game.state)
     turn = int(game.state.turn)
-
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
 
     saw = {"web_created": None, "session_reaccept": None}
     b_done = threading.Event()

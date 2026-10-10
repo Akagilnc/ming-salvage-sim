@@ -12,21 +12,10 @@ import pytest
 from ming_sim.db import GameDB
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
+from tests.army_pay_helpers import configure_guanning_army
 
 ARMY = "guanning"
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
-
-
-def _configure(db) -> None:
-    db.conn.execute("UPDATE armies SET manpower=0")
-    db.conn.execute(
-        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1,
-           pay_source_region='liaodong', province_pay_arrears=0, central_pay_arrears=0
-           WHERE id=?""",
-        (ARMY,),
-    )
-    db.conn.commit()
 
 
 def _set(
@@ -85,7 +74,7 @@ def _logs(db, fields: tuple[str, ...]):
 
 def test_third_strike_transfers_to_bandit_via_adapter(game):
     db, state, _ = game
-    _configure(db)
+    configure_guanning_army(db)
     # count 已 2：再 0→1 进闩即第 3 振
     _set(
         db, loyalty=19, arrears=5, latched=0,
@@ -155,7 +144,7 @@ def test_third_strike_transfers_to_bandit_via_adapter(game):
 
 def test_third_strike_does_not_repeat_while_already_bandit(game):
     db, state, _ = game
-    _configure(db)
+    configure_guanning_army(db)
     _set(
         db, loyalty=19, arrears=5, latched=0,
         mutiny_count=2, mutiny_probation=0,
@@ -176,7 +165,7 @@ def test_third_strike_does_not_repeat_while_already_bandit(game):
 
 def test_zero_manpower_latched_clears_before_continue_no_third_strike(game):
     db, state, _ = game
-    _configure(db)
+    configure_guanning_army(db)
     _set(
         db, loyalty=10, arrears=9, latched=1,
         mutiny_count=2, mutiny_probation=3, manpower=0,
@@ -199,7 +188,7 @@ def test_zero_manpower_latched_clears_before_continue_no_third_strike(game):
 def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(game):
     """DB adapter 事实契约（apply_army_deltas）：空来源不得改 latched 军归属。"""
     db, state, _ = game
-    _configure(db)
+    configure_guanning_army(db)
     for count in (1, 2):
         _set(
             db, loyalty=15, arrears=6, latched=1,
@@ -240,7 +229,7 @@ def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(game):
 
 def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     db, state, _ = game
-    _configure(db)
+    configure_guanning_army(db)
     _set(db, loyalty=70, arrears=3, latched=0, mutiny_count=0)
     db.conn.execute(
         """UPDATE armies SET pay_source_region='liaodong',

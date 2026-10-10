@@ -19,3 +19,17 @@ def _set_guanning_arrears(db, arrears: float, *, central: float | None = None,
         (float(arrears), float(province), float(central)),
     )
     db.conn.commit()
+
+
+def configure_guanning_army(db) -> None:
+    """关宁军军饷结算前置：清人数、按中央支付定位（mutiny 系列共用）。"""
+    db.conn.execute("UPDATE armies SET manpower=0")
+    db.conn.execute(
+        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1,
+           pay_source_region='liaodong', province_pay_arrears=0, central_pay_arrears=0
+           WHERE id=?""",
+        ("guanning",),
+    )
+    db.conn.commit()
+

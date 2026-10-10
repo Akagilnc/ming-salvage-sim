@@ -15,7 +15,6 @@ import asyncio
 from types import SimpleNamespace
 
 import httpx
-import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.session as session_mod
@@ -32,21 +31,6 @@ class _StreamFarewellAgent:
 
     def get_last_run_output(self):
         return None
-
-
-@pytest.fixture
-def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
-    try:
-        yield game
-    finally:
-        game.session.close()
 
 
 def _active_minister(game) -> str:

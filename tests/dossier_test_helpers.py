@@ -105,3 +105,21 @@ def promulgate_proposed_appointments(db, state, content):
         if row["action_type"] == "appointment"
     ]
     db.apply_dossier_verdicts(state, verdicts, content=content)
+
+
+def promulgated_policy_origin(db, state, token: str) -> str:
+    """已颁布案卷的 origin_ref（``new_issues`` 承诺项须有合法 decree 来源）。
+
+    案卷只用作来源锚，调用方不依赖它的执行面，故只颁布不推进。
+    """
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"分段承诺：{token}",
+        target_kind="issue",
+        target_id=token,
+        payload={"token": token},
+    )
+    assert dossier_id > 0
+    db.record_dossier_decision(dossier_id, "promulgated")
+    return f"dossier:{dossier_id}"

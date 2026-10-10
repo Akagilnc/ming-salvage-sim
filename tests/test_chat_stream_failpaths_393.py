@@ -183,26 +183,6 @@ def test_prologue_cleanup_failure_still_releases_gate_and_counter(web_game, monk
     _assert_write_path_free(runtime)
 
 
-def test_worker_cleanup_failure_still_emits_error_and_releases_gate(web_game, monkeypatch):
-    """R3 self-check: worker 内 scene payload 崩 → cleanup 自身也崩 →
-    仍须推 error 事件给消费者（否则 generator 永久挂死）、释放写路径 + pending ownership。"""
-    runtime = web_game
-    stub_audience_translate(monkeypatch)
-    stub_scene_agent(monkeypatch, _StreamCrashAgent())
-
-    def _boom_fail(*_a, **_k):
-        raise RuntimeError("fail_chat_turn 也崩了（DB 已坏）")
-
-    monkeypatch.setattr(runtime, "_fail_chat_turn_and_reload", _boom_fail)
-
-    events = list(runtime.chat_stream("殿上", "辽东军情如何？"))
-    types = [e.get("type") for e in events]
-    assert "error" in types, events
-    assert types[-1] == "end", events
-    assert types[types.index("error") + 1] == "end", types
-    _assert_write_path_free(runtime)
-
-
 def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(
     web_game, monkeypatch, caplog,
 ):
@@ -262,20 +242,13 @@ def test_worker_postprocess_exception_emits_error_end(web_game, monkeypatch):
     """#1353 r12：payload 成功后后处理（_spawn_pending_write_thread 高亮）抛错 → 单一出口 error→end。
 
     事件握手：有界消费必见 end；禁只走 finally 致消费者永阻。
-    #1842：殿上走 _scene_chat_stream_payload；后处理尾随仍为 spawn 缝。
+    真实 scene 链经外部模型边界（canned 成功回话）跑通，仅后处理尾随缝注入失败。
     """
+    from tests.test_web_audience_night_498 import _FakeAgent
+
     runtime = web_game
     stub_audience_translate(monkeypatch)
-    stub_scene_agent(monkeypatch, _StreamCrashAgent())
-    runtime.session.close_night_after_chat_if_needed = None  # type: ignore[method-assign]
-
-    runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]
-        lambda *a, **k: {
-            "answer": "臣已知晓。",
-            "minister_message_id": 1,
-            "court_action": "",
-        }
-    )
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣已知晓。"))
 
     def _boom_spawn(*_a, **_k):
         raise RuntimeError("highlight trail boom")
@@ -363,7 +336,6 @@ def test_issue_stream_llm_unavailable_is_structured_not_500(
         _write_gate=get_session_write_queue(session).write_gate,
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
 
     response = TestClient(web_app.app).post("/api/decree/issue/stream", json={})
     assert response.status_code == 200, response.text

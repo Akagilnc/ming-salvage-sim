@@ -469,15 +469,10 @@ def _assert_hud(payload: dict) -> None:
     assert "ministers" in payload
 
 
-def test_fresh_start_zero_llm_calls_disposes_old_main_db(tmp_path, monkeypatch):
+def test_fresh_start_zero_llm_calls_disposes_old_main_db(tmp_path, monkeypatch, webgame_env):
     """#1228：fresh 构造零 LLM 调用，旧主库按既有 fresh 语义删除。"""
     db_path = tmp_path / "ming.db"
     db_path.write_bytes(b"existing-progress")
-    monkeypatch.setenv("MING_SIM_DB", str(db_path))
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     calls = _count_llm_calls(monkeypatch)
 
     game = web_app.WebGame(fresh=True)
@@ -489,16 +484,12 @@ def test_fresh_start_zero_llm_calls_disposes_old_main_db(tmp_path, monkeypatch):
         game.session.close()
 
 
-def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
+def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch, webgame_env):
     """#1228 行为：continue / load_save 进 HUD，全程零 LLM 调用直至真实动作。
     #1732：局内销毁式 reset 已删；新局走 menu/new_game 归档路径，不在此覆盖。"""
     db_path = tmp_path / "ming.db"
     ud = tmp_path / "ud"
-    monkeypatch.setenv("MING_SIM_DB", str(db_path))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(ud))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     calls = _count_llm_calls(monkeypatch)
 
     # 前置：同一临时主库先 seed 再建 continue——证明读的是既存库，非空库初始化。

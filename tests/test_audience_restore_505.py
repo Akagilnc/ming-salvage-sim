@@ -615,24 +615,6 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
 # ── finding2：load_save / 换档重建走 __init__ 同序重开对账 ───────────────────
 
 
-@pytest.fixture
-def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """真实 WebGame（新档、temp DB/saves）；构造即不连 LLM，仅 runtime 配置中和。
-    """
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    # #544 / #1353 r6：高亮判官 LLM 边界离线中和，禁 sk-test 真网。
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    game = web_app.WebGame(fresh=False)
-    try:
-        yield game
-    finally:
-        game.session.close()
-
-
 def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
     """#1716：fresh Agno 3 首轮已落 run 后，公开 chat_stream 第二轮须受理。
 
