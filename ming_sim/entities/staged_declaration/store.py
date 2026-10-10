@@ -208,7 +208,7 @@ class StagedDeclarationStore:
             (ref,),
         ).fetchall()
         parts = [
-            str(row["forecast_text"]).strip()
+            str(row["forecast_text"])
             for row in rows
             if str(row["forecast_text"] or "").strip()
         ]

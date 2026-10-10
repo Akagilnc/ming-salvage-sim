@@ -20,7 +20,7 @@ from ming_sim.llm_config import (
     supports_openai_reasoning_effort,
 )
 
-from ming_sim.models import LLMConfig
+from ming_sim.models import CLI_DEFAULT_RUNNER, LLMConfig
 from ming_sim.token_stats import install_token_stats_patch
 
 _OPENAI_REASONING_BY_STRENGTH = {
@@ -200,7 +200,7 @@ def create_chat_model(
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
     # #1902：宿主只由运行配置选（channel=cli + cli_runner）；不再读 MING_SIM_LLM_BACKEND。
     backend = (
-        (getattr(llm_config, "cli_runner", "") or "agy").strip().lower()
+        (getattr(llm_config, "cli_runner", "") or CLI_DEFAULT_RUNNER).strip().lower()
         if channel == "cli" else None
     )
     if backend is not None and not is_supported_cli_runner(backend):

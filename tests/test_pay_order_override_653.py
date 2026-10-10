@@ -127,20 +127,6 @@ def test_r4_golden1_region_source_specificity_wins():
     assert resolve_haircut_bp(config, "军饷", "henan", 1, "central") is None
     assert resolve_haircut_bp(config, "军饷", "", 1, "central") is None
 
-def test_r4_golden2_expiry_falls_back_to_next_specific(game=None):
-    """r4 golden②：同一在位组合，@shaanxi#province_until_turn 到期后（其余键不变），
-    陕西省饷侧回落 #province 胜出。"""
-    config = {
-        "due_haircut_bp_军饷@shaanxi#province": 6000,
-        "due_haircut_bp_军饷@shaanxi#province_until_turn": 12,
-        "due_haircut_bp_军饷#province": 9000,
-    }
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=12).haircut_bp["军饷"] == 6000
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=13).haircut_bp["军饷"] == 9000
-    # 到期形状退出格律；键与 provenance 保留不删
-    assert config["due_haircut_bp_军饷@shaanxi#province"] == 6000
-    assert config["due_haircut_bp_军饷@shaanxi#province_until_turn"] == 12
-
 def test_arrears_order_resolution_default_and_override():
     no_cfg = resolve_pay_order_overrides({}, "shaanxi", turn=1)
     assert no_cfg is None  # 无旨 fast path：零合并

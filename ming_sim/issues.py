@@ -6798,7 +6798,7 @@ def _apply_surcharge_decrees(
         if claim in claimed_origins:
             _reject("invalid_enum", "surcharge_decrees 同批同一旨意与省份只能成功一次")
             continue
-        reason = str(item.get("reason") or "").strip()
+        reason = str(item.get("reason") or "")
         if len(reason) > 120:
             _reject("invalid_enum", f"surcharge_decrees reason 超 120 字：{reason!r}")
             continue

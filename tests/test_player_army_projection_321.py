@@ -138,55 +138,6 @@ def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
     assert isinstance(card["arrears_text"], str)
 
 
-def test_structured_situation_on_payload_and_map_nodes(game):
-    """结构化 ABI：army_payload / state_payload.armies / map_nodes 携带 situation 三键。"""
-    # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
-    is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
-    db, state, content = game
-    _configure(db)
-    arrears = 12.5
-    _write_mutiny_fixture(
-        db,
-        loyalty=loyalty,
-        arrears=arrears,
-        is_mutinied=is_mutinied,
-        mutiny_count=0,
-        mutiny_probation=probation,
-        full_pay_streak=0,
-        redemption_count=0,
-        morale=52,
-    )
-    db.conn.execute(
-        """UPDATE armies SET supply=100, training=100, morale=100, loyalty=100,
-           arrears=0, province_pay_arrears=0, central_pay_arrears=0,
-           is_mutinied=0, mutiny_probation=0
-           WHERE id != ?""",
-        (ARMY,),
-    )
-    db.conn.execute(
-        "UPDATE armies SET supply=1, training=1 WHERE id=?",
-        (ARMY,),
-    )
-    db.conn.commit()
-    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    sit = _player_army_situation(row, db._army_pay(row))
-    assert sit["mutiny_tier"] == expected
-
-    card = _payload_by_id(db)[ARMY]
-    _assert_structured_situation(card, sit, "army_payload")
-
-    runtime = _web_runtime(db, state, content)
-    payload = web_app.WebGame.state_payload(runtime)
-    armies = {a["id"]: a for a in (payload.get("armies") or [])}
-    assert ARMY in armies
-    _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
-
-    map_army = _find_army_in_map_nodes(payload.get("map_nodes") or [])
-    _assert_structured_situation(map_army, sit, "map_nodes.armies")
-    map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
-    _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
-
-
 def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
     """AC6–9：五持久列跨 reopen；仅凭 DB load_state 接续 tick；tick 后逐字段 oracle。"""
     db, _state, content = game

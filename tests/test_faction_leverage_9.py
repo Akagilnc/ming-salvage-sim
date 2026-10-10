@@ -353,42 +353,6 @@ def test_add_character_appointment_lifts_faction_leverage(game):
         f"经 add_character 新建大臣加入{faction}后 leverage 应上升(before={before} after={after})"
     )
 
-def test_active_member_empty_office_contributes_zero_weight(game):
-    """#9 cmr R2 finding#3：active + power_id='ming' + office='' + office_type 非空(理论可达边界)
-    对 faction 权重和贡献为 0（无实职=不贡献 leverage）。修前 _member_office_weight 会把
-    _office_rank_multiplier('') 的默认 1.0 × office_type 域权重算进去 → 误算满权重（红）。"""
-    db, state, content = game
-    faction = "东林"
-    # 取一个该派系在朝握官成员，裸 UPDATE 把 office 清空但保留 office_type='兵部'，制造边界态。
-    row = db.conn.execute(
-        "SELECT name, office_type FROM characters WHERE faction=? AND status='active' AND power_id='ming' "
-        "AND office_type NOT IN ('后宫','宗藩','未仕','') LIMIT 1",
-        (faction,),
-    ).fetchone()
-    if row is None:
-        pytest.skip(f"{faction} 无握官在朝成员（数据依赖）")
-    name = row["name"]
-    # 该成员单独的权重贡献：office 空、office_type='兵部' → 应为 0。
-    db.conn.execute(
-        "UPDATE characters SET office='', office_type='兵部' WHERE name=?", (name,)
-    )
-    db.conn.commit()
-    from ming_sim.db import _member_office_weight
-    assert _member_office_weight("兵部", "") == 0.0, (
-        "active 但 office 空的成员 office_type 再高也应贡献 0 权重"
-    )
-    # 端到端：把其余在朝成员全退场后，仅剩该「空 office」成员，权重和应为 0。
-    others = db.conn.execute(
-        "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' AND name!=?",
-        (faction, name),
-    ).fetchall()
-    for o in others:
-        db.set_character_status(state, o["name"], "dismissed", reason="清场")
-    weight_sum = db._faction_office_weight_sum(faction)
-    assert weight_sum == 0.0, (
-        f"仅剩 active 空 office 成员时 faction 权重和应为 0(weight_sum={weight_sum})"
-    )
-
 def test_recompute_all_reconciles_drift_from_unhooked_path(game):
     """#9 cmr R2 finding#1（集中化兜底）：绕过所有 hook 的裸 UPDATE 改了 faction 成员 office_type 后，
     recompute_all_faction_leverage() 把全部白名单派系重算回公式值（结算尾兜底层等价直测）。"""

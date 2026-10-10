@@ -315,6 +315,8 @@ FRONT_HALF_DONE_PHASES = (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.
 # 改为从这里 re-export，保留既有 import 路径。
 CODEX_DEFAULT_MODEL = "gpt-5.5"
 CLAUDE_DEFAULT_MODEL = "claude-opus-4-8"
+# channel=cli 但未声明 runner 时的兜底 runner（宿主只由运行配置选；无 env 分派）。单一真源。
+CLI_DEFAULT_RUNNER = "agy"
 # 设置页那一格（cli.timeout_seconds 槽）的默认值 = 静默判死阈值（秒）：距上次新内容
 # 这么久没有新动静，就判这次调用已死并重试。#1465 切片③ owner 2026-09-07 拍：这一格
 # 从「总超时/子进程墙钟」改接空转轴，CLI 与 API 同吃这一个权威（llm_transport 的

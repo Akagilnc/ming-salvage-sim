@@ -16,7 +16,6 @@ from ming_sim.constants import (
     EXIT_COMMANDS,
     TURN_UNIT,
 )
-from ming_sim.assets import wrap
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
 from ming_sim.session import (
@@ -178,7 +177,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return None
     _turn, result, _mid = retry_outcome
-    print(f"\n{message_speaker}：{wrap(str(getattr(result, 'answer', '') or ''))}\n")
+    print(f"\n{message_speaker}：{str(getattr(result, 'answer', '') or '')}\n")
     if str(getattr(result, "court_action", "") or "") == "court_break":
         return "court_break"
     return None
@@ -279,7 +278,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             except BaseException as cleanup_error:
                 raise original_error from cleanup_error
             raise
-        print(wrap(result.answer))
+        print(result.answer)
         print()
         # #1902 T6：旧 result 字段（拟旨/铨选/密令 landing 等）无场景产者，死消费者已清。
         if result.court_action == "court_break":
@@ -490,13 +489,13 @@ def review_directives(session: GameSession):
         if pending:
             print(f"  · {len(pending)} 道历史拟旨候结束回合成案：")
             for d in pending:
-                print(f"  [待核定] #{d.id}  {wrap(d.text)}")
+                print(f"  [待核定] #{d.id}  {d.text}")
         if staged_directives:
             print(f"  · {len(staged_directives)} 道对话拟旨待颁诏默认同意。")
         if drafts:
             for idx, d in enumerate(drafts, 1):
                 print(f"{idx}. #{d.id}")
-                print(f"   {wrap(d.text)}")
+                print(f"   {d.text}")
         elif not pending and not staged_directives:
             print("（暂无指令。back 继续召见，或 issue 结束本回合。）")
         # #1902 / #1812 待拍第 6 项：拟诏台手写新旨入口退役，CLI 只审阅与颁布；
@@ -594,9 +593,9 @@ def _adjudicate_cli_decisions(session: GameSession, result) -> str:
         title_raw = str(decision.get("title") or "")
         title = title_raw if title_raw.strip() else "（无题）"
         context = str(decision.get("context") or "")
-        print(f"\n· {wrap(title)}")
+        print(f"\n· {title}")
         if context.strip():
-            print(f"  {wrap(context)}")
+            print(f"  {context}")
         raw_options = decision.get("options")
         options = list(raw_options) if isinstance(raw_options, (list, tuple)) else []
         for idx, option in enumerate(options, 1):

@@ -1522,7 +1522,8 @@ def stage_assignment_candidate(
             "交办旨意缺少正文", failed_fields=("text",),
         )
     # 题名只认结构化锚；不得从正文/皇帝散文截取
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
+    # 题名原值入库（trim 只供判空）；空题名才回落结构化 target_id 锚。
+    matter_title = str(title or "") if str(title or "").strip() else str(target_id or "").strip()
     if not matter_title:
         raise DecreeMaterializationValidationError(
             "交办旨意缺少结构化题名（title 或 target_id）",
@@ -1745,7 +1746,8 @@ def stage_referral_candidate(
         raise DecreeMaterializationValidationError(
             "下议旨意缺少正文", failed_fields=("text",),
         )
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
+    # 题名原值入库（trim 只供判空）；空题名才回落结构化 target_id 锚。
+    matter_title = str(title or "") if str(title or "").strip() else str(target_id or "").strip()
     if not matter_title:
         raise DecreeMaterializationValidationError(
             "下议旨意缺少结构化题名（title 或 target_id）",

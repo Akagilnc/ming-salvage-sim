@@ -1210,7 +1210,9 @@ def build_draft_admission_resubmit_feedback(
     结构契约/科目词表已由 extract_draft_intent 主 prompt 注入，不在 correction 再写一份。
     """
     payload_json = json.dumps(dict(bad_payload or {}), ensure_ascii=False, sort_keys=True)
-    reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
+    reason = str(failure_reason or "")
+    if not reason.strip():
+        reason = "（未给出具体拒因）"
     # Free decree body: empty-check without mutating carried 旨文 (P6).
     text = str(decree_text or "")
     parts = [

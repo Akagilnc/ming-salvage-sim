@@ -4698,7 +4698,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
             self.recompute_faction_leverage(str(prev["faction"] or ""))
         if ousted:
             self.interrupt_dossiers_for_character(
-                state, name, f"人物终态：{status}；{reason}".rstrip("；"),
+                state, name,
+                f"人物终态：{status}" + (f"；{reason}" if str(reason or "").strip() else ""),
                 commit=False,
             )
         if commit:
@@ -6144,6 +6145,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     log_delta = actual_delta
                 else:  # REGION_TEXT_FIELDS
                     text_value = str(value).strip()
+                    # 判等/入库同一口径：结构化 id 比归一值，自由文本比原值（trim 只供判空）。
+                    kept = text_value if field in _STRUCTURED_ID_FIELDS else str(value)
                     if field == "controlled_by":
                         if (
                             value is None
@@ -6164,7 +6167,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                                 "item": {"region_id": region_id, "field": field, "value": value},
                             })
                             continue
-                    if not text_value or text_value == str(old_value):
+                    if not text_value or kept == str(old_value):
                         continue
                     if require_origin:
                         origin_error = self.effect_origin_rejection(origin_ref)
@@ -6172,8 +6175,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
                             changes.append({"region": row["name"], "field": field, **origin_error,
                                             "item": {"region_id": region_id, "field": field, "value": value}})
                             continue
-                    # 结构化 id 字段归一后入库；自由文本（灾情/状况）原值入库，trim 只供判空比对。
-                    stored_new = text_value if field in _STRUCTURED_ID_FIELDS else str(value)
+                    # 结构化 id 字段归一后入库；自由文本（灾情/状况）原值入库。
+                    stored_new = kept
                     log_delta = None
                 if require_origin and field not in REGION_TEXT_FIELDS:
                     origin_error = self.effect_origin_rejection(origin_ref)
@@ -6749,7 +6752,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     log_delta = actual_delta
                 elif field in ARMY_TEXT_FIELDS:
                     text_value = str(value).strip()
-                    if not text_value or text_value == str(old_value):
+                    kept = text_value if field in _STRUCTURED_ID_FIELDS else str(value)
+                    if not text_value or kept == str(old_value):
                         continue
                     # #659：station_region 非空须为已入库 regions.id；禁止从 station 文本反推。
                     if field == "station_region":
@@ -6768,7 +6772,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                                 },
                             })
                             continue
-                    stored_new = text_value if field in _STRUCTURED_ID_FIELDS else str(value)
+                    stored_new = kept
                     log_delta = None
                 else:
                     # field 已过 _ARMY_VALID_SET 校验，能落到此处=合法字段未被任一
@@ -7265,7 +7269,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     log_delta = None
                 elif field in BUILDING_TEXT_FIELDS:
                     text_value = str(value).strip()
-                    if not text_value or text_value == str(old_value):
+                    if not text_value or str(value) == str(old_value):
                         continue
                     stored_new = str(value)
                     log_delta = None
@@ -14544,8 +14548,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
         不得回填题名，不得以题名/target_id 冒充正文。
         真缺锚时 title 为空串——caller 复用既有 execution failed 接缝，保留案卷与正文。
         """
-        title = str(payload.get("title") or "").strip()
-        if not title:
+        # 题名是自由文本：原值入库，trim 只供判空；空题名才回落 target_id 锚。
+        title = str(payload.get("title") or "")
+        if not title.strip():
             title = str(payload.get("target_id") or "").strip()
         # Free decree body: carry payload/decree text as-is (P6); no strip-assign.
         body = str(payload.get("text") or row.get("decree_text") or "")

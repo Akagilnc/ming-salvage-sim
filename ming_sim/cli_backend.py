@@ -43,7 +43,7 @@ from pydantic import BaseModel
 
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
-from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
+from ming_sim.models import CLI_DEFAULT_RUNNER, CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 # #1902 T4：领域动作集合与 structured_decree 导入已归 draft_intent / decree_vocabulary；
 # 传输层不再定义 DRAFT_ACTION_TYPES 或挂领域规则。
 
@@ -938,10 +938,6 @@ def _dispatch_cli_runner(
     )
 
 
-#: channel=cli 但未声明 runner 时的兜底 runner（宿主只由运行配置选；无 env 分派）。
-_DEFAULT_RUNNER = "agy"
-
-
 def _llm_channel(llm_config: Any = None) -> str:
     return (getattr(llm_config, "channel", "") or "").strip().lower()
 
@@ -955,7 +951,7 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, str]]:
     channel = _llm_channel(llm_config)
     if channel != "cli":
         return None
-    runner = (getattr(llm_config, "cli_runner", "") or _DEFAULT_RUNNER).strip().lower()
+    runner = (getattr(llm_config, "cli_runner", "") or CLI_DEFAULT_RUNNER).strip().lower()
     if runner not in _CLI_BACKENDS:
         raise RuntimeError(f"未知 CLI backend：{runner}")
     model = (getattr(llm_config, "cli_model", "") or "").strip()
@@ -1091,7 +1087,7 @@ def describe_effective_model(llm_config: Any = None) -> str:
     channel = _llm_channel(llm_config)
     # #1902：宿主只由运行配置选——空 channel 不再回落环境变量，按 API 通道读 cfg.model。
     runner = (
-        (getattr(llm_config, "cli_runner", "") or _DEFAULT_RUNNER).strip().lower()
+        (getattr(llm_config, "cli_runner", "") or CLI_DEFAULT_RUNNER).strip().lower()
         if channel == "cli" else None
     )
     if not runner:  # api 通道 / 空 channel：用 cfg.model
@@ -1115,7 +1111,7 @@ def cli_backend_active(llm_config: Any = None) -> bool:
     if channel == "api":
         return False
     if channel == "cli":
-        runner = (getattr(llm_config, "cli_runner", "") or _DEFAULT_RUNNER).strip().lower()
+        runner = (getattr(llm_config, "cli_runner", "") or CLI_DEFAULT_RUNNER).strip().lower()
         return runner in _CLI_BACKENDS
     return False  # #1902：无显式 channel 即无 CLI 路径（env 选宿主已退役）
 
@@ -1276,7 +1272,7 @@ def _fake_completion(text: str, model_id: str) -> ChatCompletion:
 class CliChat(OpenAIChat):
     """agy / codex 当后端；provider 调用适配后复用 agno 的 tool loop。"""
 
-    backend: str = "agy"
+    backend: str = CLI_DEFAULT_RUNNER
     reasoning_strength: str = ""
     materials_dir: str = ""
 

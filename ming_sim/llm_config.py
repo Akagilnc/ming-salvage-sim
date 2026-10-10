@@ -14,6 +14,7 @@ from ming_sim.models import (
     LLMConfig,
     CODEX_DEFAULT_MODEL,
     CLAUDE_DEFAULT_MODEL,
+    CLI_DEFAULT_RUNNER,
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
     API_DEFAULT_TIMEOUT_SECONDS,
@@ -340,7 +341,7 @@ def llm_config_from_runtime(
         ).strip() else "api"
     api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
-    cli_runner = str(cli_slot.get("runner") or ("agy" if channel == "cli" else "")).strip().lower()
+    cli_runner = str(cli_slot.get("runner") or (CLI_DEFAULT_RUNNER if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
     base_url = _api_runtime_value(runtime, "base_url", base_url)
     model = _api_runtime_value(runtime, "model", model)

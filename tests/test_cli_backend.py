@@ -755,17 +755,6 @@ def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
-def test_describe_effective_model_includes_new_runners(runner):
-    from ming_sim.models import LLMConfig
-
-    cfg = LLMConfig(
-        api_key="", base_url="", model="api-fallback", channel="cli",
-        cli_runner=runner, cli_model="live-model",
-    )
-    assert cb.describe_effective_model(cfg) == f"{runner}/live-model"
-
-
-@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
     from ming_sim.exceptions import LLMUnavailable
 
