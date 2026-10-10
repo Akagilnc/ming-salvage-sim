@@ -23,7 +23,7 @@ import pytest
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
-from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
+from tests.conftest import MONTH_OPEN_KEYS
 from tests.conftest import stub_audience_translate
 
 _IN_FLIGHT_DETAIL = "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。"

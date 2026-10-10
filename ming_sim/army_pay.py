@@ -96,7 +96,7 @@ def derive_army_mutiny_state(army) -> str:
     if bool(army["is_mutinied"]):
         return "哗变"
     loyalty = int(army["loyalty"])
-    probation = int(army["mutiny_probation"]) if "mutiny_probation" in army.keys() else 0
+    probation = int(army["mutiny_probation"])
     if loyalty >= 60 and probation <= 0:
         return "正常"
     if loyalty >= 40:

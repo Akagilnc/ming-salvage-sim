@@ -144,33 +144,6 @@ def _resolve_inside(root: Path, rel: str) -> Path:
     return candidate
 
 
-class MaterialsRoot:
-    """Mutable live materials root shared by API tools and optional CLI cwd.
-
-    Independent of whether the concrete model declares ``materials_dir``.
-    """
-
-    __slots__ = ("_root",)
-
-    def __init__(self, root: Optional[Path | str] = "") -> None:
-        self._root = str(root or "")
-
-    @property
-    def root(self) -> str:
-        return self._root
-
-    def set(self, root: Optional[Path | str]) -> str:
-        previous = self._root
-        self._root = str(root or "")
-        return previous
-
-    def clear(self) -> str:
-        return self.set("")
-
-    def __call__(self) -> str:
-        return self._root
-
-
 def _empty_uuid_invocation_parent(path: Path) -> Optional[Path]:
     parent = path.parent
     name = parent.name
@@ -517,7 +490,7 @@ def _character_affair_lines(
         title = f"尚未入档旨稿#{int(row['id'])}"
         # #1812 P6：raw body 是草稿自由正文，判空只用局部 stripped 副本。
         # sqlite3.Row / dict 同形：下标读取，禁 .get（Row 无此方法）。
-        body = str(row["text"] if "text" in row.keys() else "")
+        body = str(row["text"])
         text = f"{body}（尚未入档）" if body.strip() else "尚未入档"
         lines.append((dir_key, title, text, text, True))
     for dir_key, title, directory_text, opening_text, is_handling in _own_affair_lines(
@@ -1745,17 +1718,11 @@ def _character_projection_from_db_row(row: Any) -> Any:
     from ming_sim.models import Character
 
     def _int(key: str, default: int = 0) -> int:
-        try:
-            value = row[key]
-        except (KeyError, IndexError, TypeError):
-            return default
+        value = row[key]
         return default if value is None else int(value)
 
     def _str(key: str, default: str = "") -> str:
-        try:
-            value = row[key]
-        except (KeyError, IndexError, TypeError):
-            return default
+        value = row[key]
         return default if value is None else str(value)
 
     return Character(

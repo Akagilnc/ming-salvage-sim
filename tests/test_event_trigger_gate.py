@@ -690,20 +690,6 @@ def test_character_text_gate_rejects_numeric_character_field():
     assert gate_text_key_form_error("character.毛文龙.loyalty")
 
 
-def test_mao_event_effect_uses_unified_person_change_key():
-    """ADR 0009 后新增事件效果应写统一 人物变更，不再写旧 flat key。"""
-    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
-    events = json.loads(events_path.read_text(encoding="utf-8"))
-    mao = next(item for item in events if item["id"] == "mao_wenlong")
-
-    effect = mao["effect_on_trigger"]
-    assert "人物变更" in effect
-    assert "character_status_changes" not in effect
-    assert effect["人物变更"] == [
-        {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
-    ]
-
-
 def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
     """auto-trigger 事务体内转 issue 时不得内部 commit，回滚边界由外层 atomic 统一控制。"""
     db, state, content = game

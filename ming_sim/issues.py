@@ -506,8 +506,7 @@ def _apply_issue_buildings(
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     """只读显式 stop_condition JSON；不再从 resolve_condition 散文解码。"""
     from ming_sim.models import loads_persistent_json_object
-    keys = row.keys() if hasattr(row, "keys") else []
-    raw = row["stop_condition"] if "stop_condition" in keys else ""
+    raw = row["stop_condition"]
     gate = loads_persistent_json_object(raw, surface="issues.stop_condition")
     for key, cond in gate.items():
         if not isinstance(cond, str):
@@ -578,8 +577,7 @@ def commitment_progress_payload(
     paid_this_month: int = 0,
     include_current_month: bool = False,
 ) -> Optional[Dict[str, object]]:
-    keys = row.keys() if hasattr(row, "keys") else []
-    if not str(row["commitment_kind"] if "commitment_kind" in keys else "").strip():
+    if not str(row["commitment_kind"]).strip():
         return None
     gate = _commitment_stop_gate(row)
     remaining = _commitment_remaining_from_gate(gate, state, db) if gate else None
@@ -588,7 +586,7 @@ def commitment_progress_payload(
     # key is absent OR present-but-NULL/0. `int(row["origin_turn"] or 0)` would collapse
     # a NULL/0 to 0 and leak the absolute turn number into months_elapsed (#380 cmr:
     # gemini + coderabbit). Only a positive origin_turn is a real anchor.
-    origin_turn_raw = row["origin_turn"] if "origin_turn" in keys else None
+    origin_turn_raw = row["origin_turn"]
     try:
         origin_turn = int(origin_turn_raw)
     except (TypeError, ValueError):
@@ -618,10 +616,9 @@ def _commitment_arrears_remaining_text(amount: object) -> str:
 
 
 def commitment_display_text(progress: Dict[str, object], row: sqlite3.Row) -> str:
-    keys = row.keys() if hasattr(row, "keys") else []
-    ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
-    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
-    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
+    ongoing = loads_effect_dict(row["ongoing_effects"])
+    end_turn = int(row["end_turn"] or 0)
+    origin_turn = int(row["origin_turn"] or 0)
     stop_gate = _commitment_stop_gate(row)
     months = int(progress.get("months_elapsed") or 0)
     duration = max(0, end_turn - origin_turn) if end_turn > 0 else 0
@@ -656,16 +653,15 @@ def commitment_timed_bar_value(progress: Dict[str, object], row: sqlite3.Row) ->
     Returns None for bar-driven (stop_gate), arrears, or passive (no ongoing effects) commitments.
     When non-None, bar = wall-clock months_elapsed / (end_turn - origin_turn) * 100, clamped 0-100.
     """
-    keys = row.keys() if hasattr(row, "keys") else []
-    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
+    end_turn = int(row["end_turn"] or 0)
     if end_turn <= 0:
         return None
     if _commitment_stop_gate(row):
         return None
-    ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
+    ongoing = loads_effect_dict(row["ongoing_effects"])
     if not _monthly_ongoing_effects_has_work(ongoing):
         return None
-    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
+    origin_turn = int(row["origin_turn"] or 0)
     duration = end_turn - origin_turn
     if duration <= 0:
         return None
@@ -6632,7 +6628,10 @@ def _apply_surcharge_decrees(
             _reject("invalid_enum", "surcharge_decrees 同批同一旨意与省份只能成功一次")
             continue
         reason = str(item.get("reason") or "")
-        meta = dict(settle.get("_meta") or {})
+        meta_raw = settle.get("_meta")
+        if meta_raw is not None and not isinstance(meta_raw, dict):
+            raise ValueError(f"{region_id}.settle._meta 必须是 object，无法累积加派账")
+        meta = {} if meta_raw is None else dict(meta_raw)
         old = max(0.0, float(meta.get(SETTLE_META_JIAPIAI_KEY, 0)))
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
         meta[SETTLE_META_JIAPIAI_KEY] = new

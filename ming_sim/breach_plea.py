@@ -110,21 +110,10 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
 
 def commitment_natural_due_turn(row: Any) -> int:
     """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
-    if hasattr(row, "keys"):
-        keys = row.keys()
-    elif isinstance(row, dict):
-        keys = row.keys()
-    else:
-        keys = []
-    stages_raw = row["stages_json"] if "stages_json" in keys else (
-        row.get("stages_json") if isinstance(row, dict) else None
-    )
-    stages = normalize_commitment_stages(stages_raw)
+    stages = normalize_commitment_stages(row["stages_json"])
     if stages:
         return max(int(s["due_turn"]) for s in stages)
-    end_turn = int(row["end_turn"] if "end_turn" in keys else (
-        row.get("end_turn") if isinstance(row, dict) else 0
-    ) or 0)
+    end_turn = int(row["end_turn"] or 0)
     return end_turn if end_turn > 0 else 0
 
 
@@ -148,10 +137,7 @@ def list_active_commitments(db: Any) -> List[Any]:
 
 def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
     refs: Set[str] = {f"issue:{int(commitment_ref)}"}
-    try:
-        origin = str(row["origin_ref"] or "").strip()
-    except (TypeError, KeyError, IndexError):
-        origin = ""
+    origin = str(row["origin_ref"] or "").strip()
     if origin:
         refs.add(origin)
     return refs
@@ -169,10 +155,7 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
             cid = str(item.get("character_id") or "").strip()
             if cid:
                 names.append(cid)
-    try:
-        origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
-    except (TypeError, KeyError, IndexError, AttributeError):
-        origin_ref = ""
+    origin_ref = row["origin_ref"]
     did = parse_dossier_id(origin_ref)
     if did is not None:
         dossier = db.get_decree_dossier(int(did))
@@ -206,22 +189,13 @@ def _dedicated_accounts(row: Any) -> List[str]:
             seen.add(acc)
             accounts.append(acc)
 
-    if hasattr(row, "keys"):
-        keys = row.keys()
-    elif isinstance(row, dict):
-        keys = row.keys()
-    else:
-        keys = []
-
-    tags_raw = row["tags"] if "tags" in keys else "[]"
-    tags = loads_persistent_name_list(tags_raw, surface="issues.tags")
+    tags = loads_persistent_name_list(row["tags"], surface="issues.tags")
     for tag in tags:
         t = tag.strip()
         if t.startswith("专款:"):
             _add(t.split(":", 1)[1].strip())
 
-    ongoing_raw = row["ongoing_effects"] if "ongoing_effects" in keys else "{}"
-    ongoing = loads_effect_dict(ongoing_raw or "{}")
+    ongoing = loads_effect_dict(row["ongoing_effects"])
     economy = ongoing.get("economy")
     if economy is not None:
         if not isinstance(economy, list):
@@ -473,10 +447,7 @@ def _spent_amount_and_fiscal_count(
     """已投入：金额（economy 负流水绝对值）与 fiscal 条数分账。"""
     spent_amount = 0
     fiscal_count = 0
-    try:
-        origin = str(row["origin_ref"] or "")
-    except (TypeError, KeyError, IndexError, AttributeError):
-        origin = ""
+    origin = str(row["origin_ref"] or "")
     did = parse_dossier_id(origin)
     if did is not None:
         for mv in db.list_economy_moves_for_dossier(int(did)):
@@ -504,7 +475,7 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     if row is None:
         return FOUNDATION_JUST_STARTED
     stages = normalize_commitment_stages(
-        row["stages_json"] if "stages_json" in row.keys() else None
+        row["stages_json"]
     )
     n_stages = len(stages)
     bar = int(row["bar_value"] or 0)
@@ -512,7 +483,7 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     spent_amount, _fiscal_count = _spent_amount_and_fiscal_count(db, row)
 
     band = ""
-    did = parse_dossier_id(row["origin_ref"] if "origin_ref" in row.keys() else "")
+    did = parse_dossier_id(row["origin_ref"])
     if did is not None:
         progress = db.list_dossier_progress(int(did))
         if progress:
@@ -1100,7 +1071,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     # 案卷 executor office 快照
     if not expected:
         did = parse_dossier_id(
-            commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
+            commitment_row["origin_ref"]
         )
         if did is not None:
             drow = db.conn.execute(
@@ -1141,7 +1112,6 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
                 # 过宽；要求 dossier 绑承诺同源
                 did = parse_dossier_id(
                     commitment_row["origin_ref"]
-                    if "origin_ref" in commitment_row.keys() else ""
                 )
                 if did is not None:
                     linked = db.conn.execute(

@@ -1342,7 +1342,7 @@ class WebGame:
         return {
             "id": int(row["id"]),
             "event_id": row["event_id"] or "",
-            "event_title": (row["event_title"] if "event_title" in row.keys() else "") or "",
+            "event_title": row["event_title"] or "",
             "actor": row["actor"] or "",
             "text": row["text"],
             "source": row["source"],

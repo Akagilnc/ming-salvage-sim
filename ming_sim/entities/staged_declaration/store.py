@@ -243,7 +243,7 @@ class StagedDeclarationStore:
 
 
 def _load_optional_json(row: Any, column: str) -> object:
-    if column not in row.keys() or row[column] is None:
+    if row[column] is None:
         return None
     return json.loads(row[column])
 
@@ -251,7 +251,7 @@ def _load_optional_json(row: Any, column: str) -> object:
 def _row_to_staged(row: Any) -> StagedDeclaration:
     verdict = _load_optional_json(row, "verdict_json")
     questions = _load_optional_json(row, "questions_json")
-    forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
+    forecast_text = row["forecast_text"]
     if verdict is not None and not isinstance(verdict, dict):
         raise ValueError(f"staged_declaration.verdict_json 须为对象，得 {type(verdict).__name__}")
     if questions is not None and not isinstance(questions, list):

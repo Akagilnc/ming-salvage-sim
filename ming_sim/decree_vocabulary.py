@@ -24,13 +24,6 @@ DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
 
 # #1778 决定 2（owner「1」）：批红可路由七类闭集整体取消——票拟/中旨 action_type
 
-# #1778 决定 3：参与名单（ADR 0053 三档、主办可多人）是票拟的结构化载荷键——
-# 由拟票大臣写进 option，随落桌呈皇帝，成案时钉进案卷。形状真源＝
-# GameDB._normalize_participant_roster；此处只登记键名与 capability 派生方式。
-PARTICIPANT_ROSTER_KEY = "participant_roster"
-
-
-
 # Ming #654 / owner A：旨意 target_kind 唯一八值真源（含结构目标 dossier）。
 # durable normalization / producer / locality oracle 共引；禁第二份枚举。
 TARGET_KINDS = frozenset({

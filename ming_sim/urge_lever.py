@@ -196,14 +196,8 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             (name,),
         ).fetchone()
         if crow is not None:
-            try:
-                integrity = int(crow["integrity"])
-            except (TypeError, ValueError):
-                integrity = 50
-            try:
-                courage = int(crow["courage"])
-            except (TypeError, ValueError):
-                courage = 50
+            integrity = int(crow["integrity"])
+            courage = int(crow["courage"])
     return {"name": name, "integrity": integrity, "courage": courage}
 
 

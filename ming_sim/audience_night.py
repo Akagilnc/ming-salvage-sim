@@ -1959,9 +1959,6 @@ def reproject_night_protagonist(db: Any, night_id: int) -> str:
     return name
 
 
-SCENE_RECAP_HEADER = "【殿上先前所闻】"
-
-
 def _is_command_entry(entry: Dict[str, Any]) -> bool:
     """口令/框架账（发起/进出/收夜/常在员额）由引擎侧确定性写入、`source_chat_turn_id==0`；
     抽取账（`>0`）的 tags 是 LLM 开放叙事标签。引擎口令常量标（TAG_ENTER/TAG_EXIT…）

@@ -21,6 +21,8 @@ from ming_sim.db import GameDB
 # 全新库 load_state 只 seed 危机/账本/开局公共见闻，不 seed powers/完整军政盘面（那些另处加载）。
 # #1356：不再 seed 固定开局邸报文。测试需要齐全盘面（powers/characters/armies），用现有存档副本作基底，最可靠。
 _SEED_DB = os.path.join(os.path.dirname(__file__), "..", "data", "probe.db")
+# 月初快照呈现前四键（国库/内库/民心/皇威）：测试侧钉死的顺序，生产不读。
+MONTH_OPEN_KEYS = ("国库", "内库", "民心", "皇威")
 
 
 
@@ -37,8 +39,6 @@ def clear_resolve_rows(db, turn):
 
 def settle_region_tick(db, region_id, actions=None):
     """单省月度 settle：经生产批量桥 settle_ming_province_substrate_ticks 取本省结果；错误 fail-loud。"""
-    if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (region_id,)).fetchone() is None:
-        raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
     outcomes = db.settle_ming_province_substrate_ticks(
         {region_id: actions} if actions else None,
     )

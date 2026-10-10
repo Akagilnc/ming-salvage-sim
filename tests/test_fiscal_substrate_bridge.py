@@ -3487,10 +3487,6 @@ def test_settle_province_tick_port_lock_no_persist_on_raise(fresh_db):
     st_after = _read_settle(fresh_db)["st"]
     assert st_after == st_before, "港口锁破：FAIL tick 改了 DB"
 
-def test_settle_province_tick_unknown_region_raises(fresh_db):
-    with pytest.raises(ValueError):
-        settle_region_tick(fresh_db, "atlantis", [])
-
 def test_settle_province_tick_nondict_fiscal_raises(fresh_db):
     # cmr R3（gemini）：fiscal JSON 非 dict（如 "[]"）→ ValueError（可被隔离捕获），
     # 非 fiscal.get 抛 AttributeError 逃逸。

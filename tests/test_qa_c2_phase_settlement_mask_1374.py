@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import web_app
 from ming_sim.models import TurnPhase
-from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
+from tests.conftest import MONTH_OPEN_KEYS
 
 
 def _click_before(state) -> dict[str, int]:

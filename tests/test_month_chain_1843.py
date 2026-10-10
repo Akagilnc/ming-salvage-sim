@@ -329,27 +329,6 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
     assert int(session.state.turn) == closed_turn
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 
-def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch):
-    db, state, content = game
-    from ming_sim.applier import Provenance
-
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment",
-        lambda *_a, **_k: {"effects": {"emperor_fate": "suicide"}},
-    )
-    chain = {"world_text_ready": True, "world_text": "世界段"}
-    session = make_light_session(db, state, content)
-
-    outcome = month_chain._run_world_segment(
-        session, chain, source=Provenance.system_simulation,
-    )
-
-    expected = {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
-    assert outcome == expected
-    assert chain["declaration_outcome"] == expected
-    payload = db.get_resolve_context(int(state.turn))["simulator_payload"]
-    assert payload["month_chain"]["declaration_outcome"] == expected
-
 def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -557,25 +536,6 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     assert not db.staged_declarations.is_settled(stale_ref)
     dossier = db.get_decree_dossier(dossier_id)
     assert decree_ref_for_dossier(db, dossier) == held_ref
-
-def test_advance_uses_staged_declaration_ending(game, monkeypatch):
-    db, state, content = game
-    turn = int(state.turn)
-    db.save_turn_report(state, "邸报已成")
-    chain = {}
-    outcome = {"status": "emperor_abdicate", "summary": "退位"}
-
-    from ming_sim.applier import Provenance
-
-    advanced = month_chain._advance_after_gazette(
-        db, state, chain, turn, "", Provenance.system_simulation,
-        declaration_outcome=outcome, content=content,
-    )
-
-    assert advanced is True
-    assert state.ended is True
-    assert state.ending_status == "emperor_abdicate"
-    assert int(state.turn) == turn + 1
 
 def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
     db, state, content = game

@@ -666,7 +666,6 @@ def normalize_office(office: str) -> str:
     return ",".join(parts)
 
 COURT_OFFICE_TYPES = {"内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"}
-MINISTRY_OFFICE_TYPES = {"吏部", "户部", "礼部", "兵部", "刑部", "工部"}
 
 _OFFICES_TABLE: Optional[Dict[str, object]] = None
 _OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
@@ -1019,26 +1018,6 @@ class GameDB:
                 jurisdiction TEXT NOT NULL DEFAULT '',
                 sort_order INTEGER NOT NULL DEFAULT 0
             );
-
-            -- Local appointment jurisdiction lives only on character_offices.region_id
-            -- (一次任职). No parallel seat catalog.
-
-            CREATE VIEW IF NOT EXISTS office_vacancies AS
-            SELECT
-                s.office_title,
-                s.office_type,
-                s.region_id,
-                s.jurisdiction,
-                s.sort_order,
-                c.name AS holder_name,
-                c.office AS holder_office,
-                c.status AS holder_status
-            FROM office_slots AS s
-            LEFT JOIN characters AS c
-              ON c.status = 'active'
-             AND (
-                 replace(replace(c.office, '（署理）', ''), '署理', '') = s.office_title
-             );
 
             CREATE TABLE IF NOT EXISTS person_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4294,8 +4273,8 @@ class GameDB:
         state = GameState(
             year=int(row["year"]), period=int(row["period"]), turn=int(row["turn"]),
             turn_phase=str(row["turn_phase"] or "summoning"),
-            ended=bool(row["ended"]) if "ended" in row.keys() else False,
-            ending_status=str(row["ending_status"] or "") if "ending_status" in row.keys() else "",
+            ended=bool(row["ended"]),
+            ending_status=str(row["ending_status"] or ""),
         )
         if metrics:
             # 只接当前 GameState 默认 dict 里有的 key，避免旧 DB 残留废弃 metric 灌入。
@@ -9070,8 +9049,8 @@ class GameDB:
             "event_id": r["event_id"],
             "title": r["title"],
             "context": r["context"],
-            "rejection_reason": r["rejection_reason"] if "rejection_reason" in r.keys() else "",
-            "opposition": r["opposition"] if "opposition" in r.keys() else "",
+            "rejection_reason": r["rejection_reason"],
+            "opposition": r["opposition"],
             "options": options,
             "choice": choice,
             "status": r["status"],
@@ -10714,10 +10693,6 @@ class GameDB:
         out.sort(key=lambda item: (int(item["turn"]), str(item["key"])), reverse=True)
         return out
 
-    def unread_memorial_count(self) -> int:
-        """未读奏报数（进度 + 检举）。"""
-        return sum(1 for row in self.list_player_memorials() if row.get("unread"))
-
     def build_faction_denunciation_facts(self, *, exclude_dossier_ids: Optional[Set[int]] = None) -> Dict[str, object]:
         """#627 供事实：派系恩怨/分叉/处境/个性——注入既有叙事 LLM 步。
 
@@ -11986,7 +11961,7 @@ class GameDB:
                     continue
                 key = self._office_archive_key(
                     lead["office"], lead["office_type"],
-                    location=lead["location"] if "location" in lead.keys() else "",
+                    location=lead["location"],
                     character_name=lead_name,
                 )
                 if key:
@@ -12240,7 +12215,7 @@ class GameDB:
                         continue
                     key = self._office_archive_key(
                         lead["office"], lead["office_type"],
-                        location=lead["location"] if "location" in lead.keys() else "",
+                        location=lead["location"],
                         character_name=lead_name,
                     )
                     if key:
@@ -12490,7 +12465,7 @@ class GameDB:
         reader_archive_key = (
             self._office_archive_key(
                 office_row["office"], office_row["office_type"],
-                location=office_row["location"] if "location" in office_row.keys() else "",
+                location=office_row["location"],
                 character_name=name,
             )
             if office_row is not None else ""
@@ -15246,31 +15221,6 @@ class GameDB:
         if requested and normalized.get("dossier_action_type") != requested:
             raise ValueError("旨稿机械载荷不完整或非法，拒绝改草")
         return normalized
-
-    def flag_directive_needs_clarification(self, candidate_id: int) -> int:
-        """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
-        「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
-        返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(candidate_id),),
-        ).fetchone()
-        if row is None:
-            return 0
-        payload = self.parse_engine_payload_json(
-            row["payload_json"], surface="pending_actions.payload_json",
-        )
-        payload["_needs_clarification"] = True
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
-        )
-        self.conn.commit()
-        return int(candidate_id)
 
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
@@ -19134,8 +19084,8 @@ class GameDB:
             {
                 "id": int(r["id"]),
                 "turn_issued": int(r["turn_issued"]),
-                "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
-                "deadline_span": int(r["deadline_span"] if "deadline_span" in r.keys() else 0),
+                "due_turn": int(r["due_turn"]),
+                "deadline_span": int(r["deadline_span"]),
                 "year_issued": int(r["year_issued"]),
                 "period_issued": int(r["period_issued"]),
                 "minister_name": r["minister_name"],
@@ -19145,7 +19095,7 @@ class GameDB:
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",
-                "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+                "sim_note": r["sim_note"] or "",
                 # Emperor-facing secret-order payload is an authorized private
                 # product seam; expose the same canonical monthly rail used by
                 # the personnel extractor and future dossier inquiry.
@@ -19154,8 +19104,8 @@ class GameDB:
                     if (dossier := self.get_dossier_for_secret_order(int(r["id"])))
                     else []
                 ),
-                "excluded_names": json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else [],
-                "excluded_targets": json.loads(r["excluded_targets"] or "{}") if "excluded_targets" in r.keys() else {},
+                "excluded_names": json.loads(r["excluded_names"] or "[]"),
+                "excluded_targets": json.loads(r["excluded_targets"] or "{}"),
                 "turn_closed": r["turn_closed"],
             }
             for r in rows
@@ -19494,9 +19444,9 @@ class GameDB:
             "id": int(r["id"]), "minister_name": r["minister_name"],
             "title": r["title"], "content": r["content"],
             "status": r["status"], "result": r["result"] or "",
-            "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+            "sim_note": r["sim_note"] or "",
             "turn_issued": int(r["turn_issued"]),
-            "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
+            "due_turn": int(r["due_turn"]),
             "turn_closed": r["turn_closed"],
         }
 

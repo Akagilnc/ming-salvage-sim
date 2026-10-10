@@ -12,6 +12,11 @@ from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
 
 
+def _unread(db) -> int:
+    """未读奏报数（进度 + 检举）：list_player_memorials 投影的 unread 位计数。"""
+    return sum(1 for row in db.list_player_memorials() if row.get("unread"))
+
+
 def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
     did = db.create_decree_dossier(
         state,
@@ -41,7 +46,7 @@ def test_new_game_memorial_inbox_empty(game):
     """新局首月无奏报 → 0 件；不得拿局势条数充数。"""
     db, state, _content = game
     assert db.list_player_memorials() == []
-    assert db.unread_memorial_count() == 0
+    assert _unread(db) == 0
     # 开局常有局势，但奏疏计数必须与之脱钩
     assert len(db.list_active_issues()) >= 1
 
@@ -94,7 +99,7 @@ def test_progress_and_denunciation_project_as_memorials(game):
     assert den["memorial_text"] == body_den
     assert den["unread"] is True
 
-    assert db.unread_memorial_count() == 2
+    assert _unread(db) == 2
 
 
 def test_mark_read_binds_to_row_not_dossier_and_persists(game):
@@ -108,10 +113,10 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
         origin="dossier-report:monthly_errand", commit=True,
     )
     key1 = f"progress:{pid1}"
-    assert db.unread_memorial_count() == 1
+    assert _unread(db) == 1
 
     db.mark_memorials_read([key1])
-    assert db.unread_memorial_count() == 0
+    assert _unread(db) == 0
     rows = db.list_player_memorials()
     assert rows[0]["key"] == key1
     assert rows[0]["unread"] is False
@@ -122,7 +127,7 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
         origin="dossier-report:monthly_errand", commit=True,
     )
     key2 = f"progress:{pid2}"
-    assert db.unread_memorial_count() == 1
+    assert _unread(db) == 1
     by_key = {r["key"]: r for r in db.list_player_memorials()}
     assert by_key[key1]["unread"] is False
     assert by_key[key2]["unread"] is True
@@ -132,12 +137,12 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
     db.close()
     restored = GameDB(path, content)
     try:
-        assert restored.unread_memorial_count() == 1
+        assert _unread(restored) == 1
         by_key = {r["key"]: r for r in restored.list_player_memorials()}
         assert by_key[key1]["unread"] is False
         assert by_key[key2]["unread"] is True
         restored.mark_memorials_read([key2])
-        assert restored.unread_memorial_count() == 0
+        assert _unread(restored) == 0
     finally:
         restored.close()
 
@@ -203,7 +208,7 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
         state.turn_phase = phase
         blocked = client.post("/api/memorials/read", json={"keys": [key]})
         assert blocked.status_code == 409
-        assert db.unread_memorial_count() == 1
+        assert _unread(db) == 1
 
     state.turn_phase = TurnPhase.SUMMONING.value
     resp = client.post("/api/memorials/read", json={"keys": [key]})
@@ -211,7 +216,7 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     payload = resp.json()
     assert payload["unread_memorial_count"] == 0
     assert all(not m["unread"] for m in payload["memorials"])
-    assert db.unread_memorial_count() == 0
+    assert _unread(db) == 0
 
 
 def test_progress_without_owner_uses_diegetic_fallback(game):

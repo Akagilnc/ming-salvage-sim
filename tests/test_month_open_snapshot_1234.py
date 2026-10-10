@@ -22,10 +22,8 @@ import pytest
 
 import web_app
 from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
-from ming_sim.month_open_snapshot import (
-    MONTH_OPEN_KEYS,
-    clear_orphan_month_open_snapshot,
-)
+from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
+from tests.conftest import MONTH_OPEN_KEYS
 
 
 def _runtime(db, state, *, pending_decisions=None) -> web_app.WebGame:

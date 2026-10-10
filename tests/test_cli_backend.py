@@ -40,15 +40,6 @@ def test_enrich_army_parsed_and_normalized(monkeypatch):
     assert armies[0]["id"] == "qinjun"
     assert armies[0]["manpower"] == 20000
 
-def test_enrich_building_region_floor(monkeypatch):
-    canned = json.dumps({
-        "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
-        "ongoing_effects": {}, "effect_on_fail": {},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    out = cb.enrich_initiative_effects("设格致局", "")
-    assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
-
 def test_enrich_backend_error_returns_empty_effects(monkeypatch):
     monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
@@ -248,15 +239,6 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     assert 'model_reasoning_effort="xhigh"' in joined
     assert 'model_reasoning_effort="medium"' not in joined
 
-def test_run_codex_stdout_empty_fallback(monkeypatch):
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    _capture_run(
-        monkeypatch,
-        _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
-    )
-    out, n = cb._run_codex("p")
-    assert out == "STDOUT_BODY"
-
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
     monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
     captured = _capture_run(monkeypatch)
@@ -391,20 +373,6 @@ def test_run_agy_success_single_subprocess(monkeypatch):
     assert out == "STDOUT_BODY" and attempts == 1
     assert state["agy"] == 1
     assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
-
-@pytest.mark.parametrize(
-    "banner", ["Authentication required", "authentication timed out"],
-)
-def test_run_agy_auth_race_is_retryable_typed_without_private_loop(monkeypatch, banner):
-    """#1465 切片③：agy auth race 抛可重试 typed，**一次子进程**——
-    重试次数归 llm_transport，runner 内不得再自转 4 次。"""
-    from ming_sim.exceptions import LLMUnavailable
-
-    state = _agy_popen(monkeypatch, [(banner, 0)])
-    with pytest.raises(LLMUnavailable) as ei:
-        cb._run_agy("p")
-    assert ei.value.code == "llm_connection_error"
-    assert state["agy"] == 1
 
 def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
     """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
