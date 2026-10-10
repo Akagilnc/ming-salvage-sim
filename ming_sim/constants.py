@@ -5,7 +5,6 @@ L1：仅依赖 ming_sim.paths（L0）做 frozen-aware 路径解析。
 
 from __future__ import annotations
 
-import os
 
 from ming_sim.paths import bundled_path, bundled_root
 

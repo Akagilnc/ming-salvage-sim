@@ -17,7 +17,7 @@ import sys
 import time
 
 from ming_sim.models import LLMConfig
-from ming_sim.session import GameSession, TurnPhase
+from ming_sim.session import GameSession
 from scripts.probe_directive_contract import add_narrative_probe_directive
 
 
@@ -37,7 +37,7 @@ def main() -> int:
     )
     session = GameSession(ns.db, cfg)
 
-    snap = session.begin_turn()
+    session.begin_turn()
     before = dict(session.state.metrics)
     print(f"[turn] {session.state.year}年{session.state.period}月 turn={session.state.turn} "
           f"国库={before.get('国库')} 民心={before.get('民心')} 皇威={before.get('皇威')}")

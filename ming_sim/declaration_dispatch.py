@@ -1583,7 +1583,7 @@ def _dispatch_commissions(
             _reject(rejected, item, str(exc), _xiexang_reject_category(exc), source)
             continue
         try:
-            raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
+            declaration_from_payload(item, allowed=ATTACH_BIRTH)  # 仅形状校验，结果不用
         except (TypeError, ValueError) as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue

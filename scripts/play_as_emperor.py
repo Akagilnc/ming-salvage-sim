@@ -19,7 +19,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import pexpect
 
@@ -307,7 +307,6 @@ def run(
 
     state = EmperorState()
     completed_periods = 0
-    last_seen_turn = 1
     step = 0
     ministers_this_turn = 0  # 本月已召见大臣数
     chat_rounds_this_turn = 0  # 本月已问话轮数（『朕问：』界面输入一次算一轮）

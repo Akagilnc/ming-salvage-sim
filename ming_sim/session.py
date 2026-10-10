@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import threading
 import time
 import uuid
@@ -19,11 +18,10 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:
-    from ming_sim.materials import PreparedMaterials
+    pass
 
 from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
-from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.materials import prepare_scene_materials
 from ming_sim.registry import create_scene_agent
@@ -55,9 +53,8 @@ from ming_sim.decree import (
 )
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
-from ming_sim.audience_night import is_inner_court_attendant
-from ming_sim.llm_model import create_agno_db, extract_agent_text
-from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
+from ming_sim.llm_model import create_agno_db
+from ming_sim.models import Character, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
 
 logger = logging.getLogger(__name__)
@@ -3140,14 +3137,12 @@ class GameSession:
         主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
         进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
 
-        次序：registry 材料目录 → scene → agno → db。仅由
+        次序：agno → db。仅由
         ``drain_and_close_session`` 在 SessionWriteQueue 已 seal、barrier 已排空且
-        持 write_gate 时调用。材料清理失败不得阻断后续 agno/db 释放，但必须诚实上抛
-        （ADR 0005，不得 ignore_errors 洗白）。agno 失败则立即上抛、不碰 db
+        持 write_gate 时调用。agno 失败则立即上抛、不碰 db
         （两侧仍完整可恢复）。agno 已成功后 ``_close_epoch`` 递增——此后即使
-        db.close 失败/conn 仍可探测，也不得恢复为活局（registry 已失 agno）。
+        db.close 失败/conn 仍可探测，也不得恢复为活局（agno 已失）。
         """
-        materials_error: BaseException | None = None
         agno = getattr(self, "agno_db", None)
         if agno is not None:
             close_fn = getattr(agno, "close", None)
@@ -3164,5 +3159,3 @@ class GameSession:
             logger.exception("GameSession.db.close failed")
             raise
         self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
-        if materials_error is not None:
-            raise materials_error

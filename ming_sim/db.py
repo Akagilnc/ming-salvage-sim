@@ -23,8 +23,7 @@ from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
     BUILDING_CATEGORIES, BUILDING_FIELD_LABELS, BUILDING_OUTPUT_METRICS,
     BUILDING_QUANTITY_FIELDS, BUILDING_SCORE_FIELDS, BUILDING_TEXT_FIELDS,
-    ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
-    POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
+    ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_FIELD_ALIASES, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS,
     DOSSIER_LINK_TYPES, SALARY_RATE_ANCHOR, TURN_UNIT,
     DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR,
@@ -33,8 +32,8 @@ from ming_sim.content import GameContent
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
-from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection, PendingActionRefusal
+from ming_sim.matching import match_region_id_from_text
+from ming_sim.exceptions import OfficeAppointmentRejection, PendingActionRefusal
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
@@ -14459,7 +14458,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
         非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
         """
-        from ming_sim.issues import apply_score_extraction
 
         target_dossier_id, target_issue_id = self.resolve_revoke_decree_target_ids(
             payload, row,

@@ -18,7 +18,6 @@ import re
 import shutil
 import sqlite3
 import sys
-import tempfile
 import time
 import threading
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -44,7 +43,6 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
-from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import (
     UnsafeSaveNameError,
     bundled_path,
@@ -56,7 +54,7 @@ from ming_sim.save_slots import (
     copy_sqlite_file,
     delete_sqlite_db_files_or_raise,
 )
-from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import DependencyMismatch, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
@@ -65,7 +63,6 @@ from ming_sim.llm_config import (
     cli_supports_reasoning_strength,
     REASONING_STRENGTH_CHOICES,
     real_api_key_or_empty,
-    load_llm_config,
     load_runtime_llm,
     normalize_openai_base_url,
     normalize_thinking_level,
@@ -73,23 +70,11 @@ from ming_sim.llm_config import (
     save_runtime_llm,
     _slot_header_table,
 )
-from ming_sim.agents import _dump_llm_messages
-from ming_sim.llm_model import extract_agent_text, verify_llm_available
-from ming_sim.llm_transport import (
-    bind_transport_sdk_budget,
-    audience_transport_policy,
-    empty_output_failure,
-    is_stream_activity_event,
-    map_run_error_event,
-    run_transport_stream,
-    transport_attempts_public,
-    transport_failure_unavailable,
-)
+from ming_sim.llm_model import verify_llm_available
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import AudienceChatTurn, GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
-    AudienceAdmission,
     _is_summonable_court_minister,
 )
 from ming_sim.highlight_judge import (
@@ -104,7 +89,6 @@ from ming_sim.session_write_queue import (
     get_session_write_queue,
 )
 from ming_sim.token_stats import tlog
-from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import (
@@ -1911,7 +1895,8 @@ class WebGame:
         before_snapshot: Optional[Dict[str, Any]] = None,
         persisted_message_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        character = None if minister_name == "殿上" else self.session._character(minister_name)
+        if minister_name != "殿上":
+            self.session._character(minister_name)  # 未建档即响亮失败（LLMContractError）
         # Durable chat_turn message ids first, then memory history.  Publishing
         # history before append/update opens a race: observers see the minister
         # reply while can_undo_last_chat_turn is still false (#976 hold path

@@ -6,7 +6,7 @@ import getpass
 import json
 import logging
 import os
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +18,6 @@ from ming_sim.models import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
     API_DEFAULT_TIMEOUT_SECONDS,
-    TRANSPORT_DEFAULT_MAX_ATTEMPTS,
-    TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
-    TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
 )
 from ming_sim.paths import user_data_path
 

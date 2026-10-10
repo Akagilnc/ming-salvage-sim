@@ -8,10 +8,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence
+from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence
 
 from agno.db.sqlite import SqliteDb
 from openai import APIConnectionError, APIStatusError, APITimeoutError
@@ -27,22 +26,14 @@ from ming_sim.applier import (
     Provenance, RejectedItem, RejectionCollector, atomic,
     mirror_rejections_after_commit,
 )
-from ming_sim.constants import TURN_UNIT
-from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
 from ming_sim.error_pack import (
-    _next_attempt,
     rejections_jsonl_path,
-    settlement_abort_message,
-    write_error_pack,
 )
 from ming_sim.exceptions import (
     LLMContractError,
     LLMUnavailable,
-    PromulgationHealEvidence,
-    SettlementAbort,
 )
-from ming_sim.faction_brew import VIEW_FACTION_STANCE
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
 from ming_sim.issues import (
     apply_historical_fiscal_rates,
@@ -65,11 +56,6 @@ TIMEOUT_TURN = 240
 
 # 逐旨／世界段请旨解析工具位于 ming_sim.settlement_payload，不从邸报抽取。
 # 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
-from ming_sim.settlement_payload import (  # noqa: E402
-    _DECISION_RE,
-    bind_decision_options,
-    parse_decision_blocks,
-)
 
 
 @dataclass
@@ -1156,7 +1142,6 @@ def resolve_decisions_phase2(
     ctx = db.get_resolve_context(state.turn)
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
-    before_turn = state.turn
     from ming_sim.month_chain import run_player_month_chain
     result = run_player_month_chain(
         state, db, agno_db, llm_config,

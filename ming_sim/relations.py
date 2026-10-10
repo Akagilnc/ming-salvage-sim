@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any, Iterable
+from typing import Any
 
 EMPEROR_NODE = "皇帝"
 

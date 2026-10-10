@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import List, Optional
+from typing import Optional
 
 from ming_sim.constants import (
     COURT_BREAK_COMMANDS,
@@ -17,7 +17,7 @@ from ming_sim.constants import (
     TURN_UNIT,
 )
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
-from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
+from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character
 from ming_sim.session import (
     GameSession,
     TurnPhase,

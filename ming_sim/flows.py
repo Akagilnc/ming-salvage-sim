@@ -599,7 +599,7 @@ def _apply_economy_list(
     allow_pay_arrears_pool=True 仅供承诺结算内部使用，表示该承诺的 arrears
     stop gate 已经给出范围，可在 pay_arrears_pool_army_ids 内按优先级池偿还。
     """
-    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
+    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
     applied: List[Dict[str, object]] = []
     # isinstance 守卫：issue-effect 的 economy（来自 enrich，未经 schema 清洗）可能被 LLM 给成真值
     # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117
@@ -1049,7 +1049,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         "SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings"
     ).fetchall()
     for row in building_rows:
-        bid = str(row["id"])
         name = str(row["name"])
         category = str(row["category"])
         condition = max(0, min(100, int(row["condition"])))

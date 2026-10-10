@@ -19,8 +19,7 @@ from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
-    BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
-    POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
+    BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
     BANDIT_ABSORPTION_FIELDS,
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
@@ -52,7 +51,6 @@ from ming_sim.displaced_population import (
 )
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
-    ISSUE_METRIC_LOCK_CAPS,
     _apply_class_dict,
     _apply_economy_list,
     _apply_faction_dict,
@@ -3478,7 +3476,7 @@ def _event_result_delta_event_ids(
         _collect_field("army_delta")
     if isinstance(extracted.get("power_updates"), dict):
         _collect_field("power_updates")
-    for index, item in enumerate(person_changes):
+    for item in person_changes:
         event_id = str(item.get("_effect_event_id") or "")
         if event_id and event_id in strategic_event_ids:
             result_ids.add(event_id)

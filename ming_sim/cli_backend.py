@@ -32,7 +32,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
@@ -70,15 +70,15 @@ _PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 # 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
 _CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
 _MATERIALS_CLI_RUNNERS = _CLI_BACKENDS
-# 闸脚本 --runner choices 与公开支持集同源。
-GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
 # 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
 # GATE_CLI_RUNNERS ⊂ 此序（无 agy）；禁在 menuPage/gameMenu 再硬编一份。
 # #1274-qa-y1：pi 紧随 grok（UI_ORDER∩_CLI_BACKENDS → cli_runner_choices 自动带出）。
 _CLI_RUNNER_UI_ORDER = ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi")
 _CLI_RUNNER_LABELS = {"agy": "agy（Gemini）"}
 # 实际消费 --model / cli_model 的 runner（describe_effective_model 用）；agy 走自身 ladder。
-_CLI_MODEL_RUNNERS = frozenset({"codex", "claude", "cursor", "kimi", "grok", "pi"})
+_CLI_MODEL_RUNNERS = _CLI_BACKENDS - {"agy"}
+# 闸脚本 --runner choices 与公开支持集同源（UI 序中去掉无 --model 旗的 agy）。
+GATE_CLI_RUNNERS = tuple(r for r in _CLI_RUNNER_UI_ORDER if r in _CLI_MODEL_RUNNERS)
 _CODEX_REASONING_BY_STRENGTH = {
     "off": "low",
     "low": "low",
@@ -106,12 +106,21 @@ _PI_THINKING_BY_STRENGTH = {
     "medium": "medium",
     "high": "high",
 }
-# 支持 reasoning_strength 传输的 CLI runner 单源（#1271/#1274-y1）：与上方 *_BY_STRENGTH
-# 表同缝。有传输表 = 支持；kimi/cursor 无独立档位旗，不入此集（另票/庭裁）。
+# 支持 reasoning_strength 传输的 CLI runner 单源（#1271/#1274-y1）：由上方 *_BY_STRENGTH
+# 表投影。有传输表 = 支持；kimi/cursor 无独立档位旗，不入此集（另票/庭裁）。
+_REASONING_TRANSPORT_BY_RUNNER = {
+    "codex": _CODEX_REASONING_BY_STRENGTH,
+    "claude": _CLAUDE_THINKING_TOKENS_BY_STRENGTH,
+    "grok": _GROK_EFFORT_BY_STRENGTH,
+    "pi": _PI_THINKING_BY_STRENGTH,
+}
 # 导出 frozenset——llm_config 谓词与 web payload 均消费此名，禁第二处手写名单。
-CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude", "grok", "pi"})
-# off 档在传输表中实取 low 的 runner（#1271 界面「最低=低」提示的唯一后端源）。
-CLI_REASONING_FLOOR_RUNNERS = frozenset({"codex", "grok"})
+CLI_REASONING_STRENGTH_RUNNERS = frozenset(_REASONING_TRANSPORT_BY_RUNNER)
+# off 档在传输表中实取 low（两档取值相同）的 runner：界面「最低=低」提示的唯一后端源，同样由表投影。
+CLI_REASONING_FLOOR_RUNNERS = frozenset(
+    runner for runner, table in _REASONING_TRANSPORT_BY_RUNNER.items()
+    if table["off"] == table["low"]
+)
 
 
 def cli_runner_choices() -> List[Dict[str, str]]:

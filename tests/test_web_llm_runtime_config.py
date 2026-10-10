@@ -851,7 +851,7 @@ def test_1271_three_endpoints_grok_reasoning_supported_and_capability_list(monke
     assert status["llm"]["reasoning_supported"] is True
     assert "grok" in status["llm"]["cli_reasoning_runners"]
     assert set(status["llm"]["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
-    assert set(status["llm"]["cli_reasoning_floor_runners"]) == {"codex", "grok"}
+    assert set(status["llm"]["cli_reasoning_floor_runners"]) == {"codex", "claude", "grok"}
 
     cfg = LLMConfig(
         api_key="",

@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional
 
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.participant_roster import (
@@ -23,7 +22,6 @@ from ming_sim.structured_decree import (
     combination_correction_feedback,
     expand_combo_failed_fields,
     structured_decree_prompt_contract,
-    transport_keys_to_canonical,
     validate_structured_decree_combination,
 )
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
