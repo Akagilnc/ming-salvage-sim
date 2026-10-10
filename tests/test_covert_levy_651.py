@@ -11,6 +11,16 @@ from ming_sim.simulation import EMPTY_EXTRACTION
 from types import SimpleNamespace
 
 
+
+def _realize_fork(db, state, did):
+    """经现役写口造真实分叉（不替换读端）：有奏报『有成』、执行格 transformed、旨外 durable 经济效果。"""
+    db.record_dossier_progress(int(did), int(state.turn), "有成", "奏报有成")
+    db.conn.execute("UPDATE decree_dossiers SET execution_outcome='transformed' WHERE id=?", (int(did),))
+    db.record_issue_economy_move(
+        state, "国库", -3, "旨外", "旨外测试", origin_ref=f"dossier:{int(did)}", beyond_intent=1,
+    )
+    db.conn.commit()
+
 def _bound_case(db, state):
     army = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
     executor = db.conn.execute("SELECT name FROM characters WHERE status='active' LIMIT 1").fetchone()[0]
@@ -31,10 +41,7 @@ def _bound_case(db, state):
 def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypatch):
     db, state, _ = game
     did, issue_id, _, executor = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) VALUES (?,?, '稽核','查账')",
         (did, did),
@@ -58,10 +65,7 @@ def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
     did, _, _, executor = _bound_case(db, state)
     faction = db.conn.execute("SELECT faction FROM characters WHERE name=?", (executor,)).fetchone()[0]
     accuser = _enemy_accuser(db, faction)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     dispatch_declaration(
         db, state,
         {"effects": {"faction_denunciations": [{
@@ -81,10 +85,7 @@ def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
 
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
         "VALUES (?,?,'稽核','查账')", (did, did),
@@ -100,10 +101,7 @@ def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
 def test_rejected_canonical_results_neither_consume_nor_create_channel(game, monkeypatch):
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
         "VALUES (?,?, '稽核','查账')", (did, did),
@@ -140,10 +138,7 @@ def _exposed_todo(db, state, monkeypatch, did):
     )
     db.record_dossier_progress(did, state.turn, "有成", "军饷已有着落", commit=False)
     db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=True, commit=False)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
         "VALUES (?,?, '稽核','查账')", (did, did),
@@ -531,10 +526,7 @@ def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game,
 
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     values = (state.turn, "甲", "阉党", "乙", "东林", did, compose_denunciation_origin(is_true=False), "{}", "诬告")
     db.conn.execute(
         "INSERT INTO faction_denunciations(turn,accuser_name,accuser_faction,subject_name,"
@@ -555,10 +547,7 @@ def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game,
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute("UPDATE classes SET population=0 WHERE name='农民' AND region_id='shaanxi'")
     extracted = {"population_transfers": [{
         "origin_ref": f"dossier:{did}", "reason": "摊派", "source": "农民@shaanxi",
