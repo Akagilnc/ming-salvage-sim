@@ -79,7 +79,7 @@ from ming_sim.person_archive_contract import (
     normalize_reason_code,
     resolve_person_transition,
 )
-from ming_sim.person_delta_adapter import normalize_person_changes
+from ming_sim.person_delta_adapter import PERSON_CHANGE_KEY, normalize_person_changes
 
 _content: Optional[GameContent] = None
 
@@ -577,6 +577,7 @@ def commitment_progress_payload(
     paid_this_month: int = 0,
     include_current_month: bool = False,
 ) -> Optional[Dict[str, object]]:
+    keys = row.keys() if hasattr(row, "keys") else []
     if not str(row["commitment_kind"]).strip():
         return None
     gate = _commitment_stop_gate(row)
@@ -586,7 +587,8 @@ def commitment_progress_payload(
     # key is absent OR present-but-NULL/0. `int(row["origin_turn"] or 0)` would collapse
     # a NULL/0 to 0 and leak the absolute turn number into months_elapsed (#380 cmr:
     # gemini + coderabbit). Only a positive origin_turn is a real anchor.
-    origin_turn_raw = row["origin_turn"]
+    # 承诺投影行可不带 origin_turn 键（未锚定）：缺键即未设，回落当前回合（#380）。
+    origin_turn_raw = row["origin_turn"] if "origin_turn" in keys else None
     try:
         origin_turn = int(origin_turn_raw)
     except (TypeError, ValueError):
@@ -728,18 +730,30 @@ def _merged_mapping_effect(effect: Dict[str, object], *keys: str) -> Dict[str, o
     return merged
 
 
+def _persisted_member_list(effect: Dict[str, object], key: str) -> List[object]:
+    """持久 ongoing_effects 的列表键：缺省/null → []；非数组或成员非对象即响亮失败（ADR 0005）。"""
+    raw = effect.get(key)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"ongoing_effects.{key} 须为数组，得 {type(raw).__name__}")
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"ongoing_effects.{key}[{index}] 须为对象，得 {type(item).__name__}")
+    return raw
+
+
 def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]:
-    items: List[Dict[str, object]] = []
-    for key in ("economy", "economy_moves"):
-        raw = effect.get(key)
-        if not isinstance(raw, list):
-            continue
-        items.extend(item for item in raw if isinstance(item, dict))
-    return items
+    return [
+        item
+        for key in ("economy", "economy_moves")
+        for item in _persisted_member_list(effect, key)
+    ]
 
 
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
     """Only the canonical 人物变更 stream; retired person_changes/character aliases stay closed."""
+    _persisted_member_list(effect, PERSON_CHANGE_KEY)
     return [
         item
         for item in normalize_person_changes(effect)

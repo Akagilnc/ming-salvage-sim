@@ -21,6 +21,19 @@ from ming_sim.settlement_payload import (
 _DecisionKey = str  # "{kind}:{source_turn}:{idx}"
 
 
+def _persisted_decision_options(row: Mapping[str, object]) -> List[Dict[str, object]]:
+    """持久 pending 行的 options：缺省/null → []；非数组或成员非对象即响亮失败（ADR 0005）。"""
+    raw = row.get("options")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"pending options 须为数组，得 {type(raw).__name__}")
+    for index, opt in enumerate(raw):
+        if not isinstance(opt, dict):
+            raise ValueError(f"pending options[{index}] 须为对象，得 {type(opt).__name__}")
+    return raw
+
+
 def _parse_decision_key(key: object) -> Tuple[str, int, int]:
     raw = str(key or "").strip()
     parts = raw.split(":")
@@ -246,7 +259,7 @@ def validate_all(
             str(row.get("event_id") or "").startswith("dossier:")
             and decision_has_rescript_capability(row)
         ):
-            options = [o for o in (row.get("options") or []) if isinstance(o, dict)]
+            options = _persisted_decision_options(row)
             option_by_pair = {}
             for option in options:
                 pair = parse_rescript_capability_pair(option)
@@ -402,7 +415,7 @@ def apply_rescript_batch(
                         "context": str(item.row.get("context") or ""),
                         "options": [
                             str(opt.get("label") or "")
-                            for opt in (item.row.get("options") or []) if isinstance(opt, dict)
+                            for opt in _persisted_decision_options(item.row)
                         ],
                     },
                     commit=False,
