@@ -29,18 +29,9 @@ from ming_sim.fiscal_tick import settle_tick
 from ming_sim.army_pay import army_needed
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.models import TurnPhase
+from tests.fiscal_test_utils import settle_province_via_batch as _settle_tick
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
 
-def _settle_tick(db, region_id, actions=None):
-    """经现役批量桥推进（一次推进全部明控 settle 省）并取该省结果；outcome.error 原样上抛。"""
-    outcomes = db.settle_ming_province_substrate_ticks({region_id: list(actions or [])})
-    mine = [o for o in outcomes if o.region_id == region_id]
-    if not mine:
-        raise ValueError(f"region {region_id!r} 非明控 settle 省，批量桥不出列")
-    outcome = mine[0]
-    if outcome.error is not None:
-        raise outcome.error
-    return outcome.result
 
 
 @pytest.fixture
