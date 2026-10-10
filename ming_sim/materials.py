@@ -1134,10 +1134,6 @@ def is_secret_order_origin(origin: object) -> bool:
     return str(origin or "").startswith(SECRET_ORDER_ORIGIN_PREFIX)
 
 
-def secret_order_origin(order_id: object) -> str:
-    """密令来源字符串：前缀 + 密令 id。"""
-    return f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}"
-
 
 def dossier_id_in_origin(origin: object) -> Optional[int]:
     text = str(origin or "")
