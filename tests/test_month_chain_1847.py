@@ -58,6 +58,14 @@ _WORLD_WITH_TWO_QUESTIONS = (
 )
 
 
+
+def _month_chain_of(db, turn):
+    """经现役公共读口 get_resolve_context 取月链账（simulator_payload.month_chain）。"""
+    ctx = db.get_resolve_context(turn) or {}
+    payload = ctx.get("simulator_payload") or {}
+    chain = payload.get("month_chain") if isinstance(payload, dict) else None
+    return dict(chain) if isinstance(chain, dict) else {}
+
 def _decision_block(title: str, *labels: str) -> str:
     options = ",".join(
         f'{{"label":"{label}","hint":"h-{label}"}}' for label in labels
@@ -288,7 +296,7 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch,
     assert continuation_calls[0][0]["note"] == "  照办\n原批  "
     assert db.list_decree_dossiers() == []
     assert session.state.turn_phase == TurnPhase.SETTLING.value
-    chain = month_chain._load_chain(db, closed_turn)
+    chain = _month_chain_of(db, closed_turn)
     assert chain.get("world_questions") in (None, [], ())
     assert chain.get("world_continued") is True
 
@@ -591,7 +599,7 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     except SettlementAbort as exc:
         raised = exc
     assert raised is not None
-    chain = month_chain._load_chain(db, closed_turn)
+    chain = _month_chain_of(db, closed_turn)
     assert chain.get("world_continued") is not True
     assert chain.get("world_questions")
     assert session.state.turn_phase == TurnPhase.SETTLING.value
@@ -602,7 +610,7 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     )
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
-    chain = month_chain._load_chain(db, closed_turn)
+    chain = _month_chain_of(db, closed_turn)
     assert chain.get("world_continued") is True
     assert chain.get("world_questions") in (None, [], ())
 
@@ -710,7 +718,7 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
     with pytest.raises(SettlementAbort) as stopped:
         session.resolve_turn(allow_empty_decree=True)
     assert stopped.value.stage == "rescript-draft"
-    assert month_chain._load_chain(db, turn)["world_committed"] is True
+    assert _month_chain_of(db, turn)["world_committed"] is True
     session = make_light_session(db, db.load_state(content), content)
     session.llm_config = object()
     state = session.state
@@ -875,7 +883,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     # 批红问后已落实入须进入 4a 事实供料（#1847／#1843 4a 供料修订）。
     turn = int(state.turn)
     feed = month_chain.build_secret_orders_supply_feed(
-        db, state, month_chain._load_chain(db, turn),
+        db, state, _month_chain_of(db, turn),
     )
     assert "origin_effects" not in feed
     assert any(
@@ -1247,7 +1255,7 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
     assert again.advanced is True
     assert state.ended is True
     assert state.ending_status == "emperor_abdicate"
-    assert month_chain._load_chain(db, closed_turn)["declaration_outcome"]["status"] == "emperor_abdicate"
+    assert _month_chain_of(db, closed_turn)["declaration_outcome"]["status"] == "emperor_abdicate"
 
 
 def _resolve_with_emperor_fate(game, monkeypatch, fate):
@@ -1275,7 +1283,7 @@ def _resolve_with_emperor_fate(game, monkeypatch, fate):
 def test_declared_deposal_ends_on_the_existing_chain(game, monkeypatch):
     """模型声明的被废走既有声明与终局链，不因旧的两值枚举停在进行中。"""
     db, state, closed_turn, result = _resolve_with_emperor_fate(game, monkeypatch, "被废")
-    outcome = month_chain._load_chain(db, closed_turn)["declaration_outcome"]
+    outcome = _month_chain_of(db, closed_turn)["declaration_outcome"]
     assert result.advanced is True
     assert state.ended is True
     assert state.ending_status == "被废"
@@ -1285,7 +1293,7 @@ def test_declared_deposal_ends_on_the_existing_chain(game, monkeypatch):
 
 def test_null_emperor_fate_does_not_end_the_month(game, monkeypatch):
     db, state, closed_turn, result = _resolve_with_emperor_fate(game, monkeypatch, None)
-    chain = month_chain._load_chain(db, closed_turn)
+    chain = _month_chain_of(db, closed_turn)
     assert result.advanced is True
     assert state.ended is not True
     assert not state.ending_status
@@ -1363,7 +1371,7 @@ def test_step_4a_no_eligible_objects_skips_run_and_completes(game, monkeypatch):
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.stage == "gazette"
-    chain = month_chain._load_chain(db, int(state.turn))
+    chain = _month_chain_of(db, int(state.turn))
     assert chain.get("secret_orders_supply_done") is True
 
 
@@ -1535,7 +1543,7 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
     assert str(rows[0]["source_id"]).startswith(f"secret_order_disclosure:{order_id}:")
     reports = db.list_dossier_progress(dossier_id)
     assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
-    chain = month_chain._load_chain(db, turn)
+    chain = _month_chain_of(db, turn)
     assert chain.get("secret_orders_disclosures_done") is True
 
 
@@ -1596,7 +1604,7 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert caught.value.stage == "secret_orders_supply"
-    chain = month_chain._load_chain(db, turn)
+    chain = _month_chain_of(db, turn)
     assert chain.get("secret_orders_supply_invalid") is True
     # Neither dossier received a progress report
     assert db.list_dossier_progress(dossier_1) == []
@@ -1669,7 +1677,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     assert call_count == 1
     # Phase 1 already committed: 0058 report exists
     assert len(db.list_dossier_progress(dossier_id)) == 1
-    chain = month_chain._load_chain(db, turn)
+    chain = _month_chain_of(db, turn)
     assert chain.get("secret_orders_reports_done") is True
     assert chain.get("secret_orders_supply_product") is not None
 
@@ -1789,7 +1797,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert caught.value.stage == "secret_orders_supply"
-    chain = month_chain._load_chain(db, turn)
+    chain = _month_chain_of(db, turn)
     failure = chain.get("call_failure")
     assert isinstance(failure, dict)
     assert failure.get("step") == "secret_orders_supply"
@@ -1816,7 +1824,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
         session.resolve_turn(allow_empty_decree=True)
     assert replaced.value.stage == "secret_orders_supply"
     assert call_count == 2
-    replaced_chain = month_chain._load_chain(db, turn)
+    replaced_chain = _month_chain_of(db, turn)
     assert replaced_chain.get("secret_orders_supply_invalid") is True
     assert replaced_chain.get("secret_orders_reports_done") is not True
     assert replaced_chain.get("secret_orders_supply_done") is not True
@@ -1851,7 +1859,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     from types import SimpleNamespace
 
     from ming_sim.decree_forecast import pending_action_decree_ref, stage_declaration
-    from ming_sim.month_chain import _load_chain, _settle_edicts
+    from ming_sim.month_chain import _settle_edicts
 
     db, state, content = game
     turn = int(state.turn)
@@ -1901,7 +1909,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     _settle_edicts(sess, chain=chain)
 
     assert db.staged_declarations.is_settled(ref)
-    reloaded = _load_chain(db, turn)
+    reloaded = _month_chain_of(db, turn)
     pending = reloaded.get("pending_disclosures") or []
     assert any(
         int(item.get("order_id") or 0) == order_id
@@ -2009,7 +2017,7 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert caught.value.stage == "secret_orders_supply"
-    chain = month_chain._load_chain(db, turn)
+    chain = _month_chain_of(db, turn)
     assert chain.get("secret_orders_supply_invalid") is not True
     assert chain.get("secret_orders_supply_product") is not None
     assert call_count == 1
@@ -2081,7 +2089,7 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
 
     # Secret order should be settled to 'done' (delivered 2.0 / target 2.0)
     assert db.get_secret_order(order_id)["status"] == "done"
-    chain = month_chain._load_chain(db, turn)
+    chain = _month_chain_of(db, turn)
     assert chain.get("due_secret_orders_settled") is True
     assert chain.get("secret_orders_supply_done") is True
 
@@ -2348,7 +2356,7 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
         and row["item"].get("target_id") == "no-such-army-1847-feed"
         for row in (captured_feed.get("rejections") or [])
     )
-    chain = month_chain._load_chain(db, turn)
+    chain = _month_chain_of(db, turn)
     assert not (chain.get("segment_applied_results") or [])
     assert db.sum_dossier_actual_progress_units(dossier_id) == 5.0
 
@@ -2415,7 +2423,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
 
     assert not db.staged_declarations.is_settled(ref)
     assert int(state.metrics["国库"]) == treasury_before
-    reloaded = month_chain._load_chain(db, turn)
+    reloaded = _month_chain_of(db, turn)
     assert not (reloaded.get("segment_applied_results") or [])
 
     monkeypatch.setattr(month_chain, "_save_chain", real_save)
@@ -2423,7 +2431,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
     assert db.staged_declarations.is_settled(ref)
     assert int(state.metrics["国库"]) == treasury_before - 17
     feed = month_chain.build_secret_orders_supply_feed(
-        db, state, month_chain._load_chain(db, turn),
+        db, state, _month_chain_of(db, turn),
     )
     assert "origin_effects" not in feed
     assert any(
