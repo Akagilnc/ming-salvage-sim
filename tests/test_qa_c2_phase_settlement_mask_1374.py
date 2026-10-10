@@ -19,8 +19,6 @@ import web_app
 from ming_sim.models import TurnPhase
 
 
-def _click_before(state) -> dict[str, int]:
-    return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
 
 
 def _runtime(db, state):

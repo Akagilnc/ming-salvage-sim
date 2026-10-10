@@ -49,8 +49,6 @@ def _runtime(db, state, *, pending_decisions=None) -> web_app.WebGame:
     return runtime
 
 
-def _click_before_metrics(state) -> dict[str, int]:
-    return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
 
 
 @contextmanager

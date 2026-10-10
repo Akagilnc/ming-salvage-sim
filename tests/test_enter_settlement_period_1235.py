@@ -62,8 +62,6 @@ def _client() -> httpx.AsyncClient:
     )
 
 
-def _click_before(state) -> dict[str, int]:
-    return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
 
 
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):
