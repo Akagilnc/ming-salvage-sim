@@ -1590,7 +1590,7 @@ describe("ReportModal — narrative settlement bulletin", () => {
     // #1902 L2：仅卷轴结构可达；删整 body 报文禁词（合法报文可含任意字）。
     expect(document.querySelector(".gazette-shell")).not.toBeNull();
     expect(document.querySelector(".gazette-document")).not.toBeNull();
-    expect(document.querySelector("pre.memorial-text")).not.toBeNull();
+    expect(document.querySelector("pre.memorial-text")?.textContent).toBe("**辽东军情**\n- 军前缺饷");
     expect(document.querySelector(".gazette-dismiss")).not.toBeNull();
   });
 
@@ -1637,7 +1637,7 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(host.querySelector(".gazette-document")).not.toBeNull();
     expect(host.querySelector(".gazette-masthead")).not.toBeNull();
     // 空壳复用原 pre，不另写固定空态文案
-    expect(host.querySelector("pre.memorial-text")).not.toBeNull();
+    expect(host.querySelector("pre.memorial-text")?.textContent).toBe("");
     expect(host.textContent).not.toContain("尚无上月邸报");
     expect(host.textContent).not.toContain("登基伊始");
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
