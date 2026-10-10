@@ -219,8 +219,8 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(
     with caplog.at_level(logging.ERROR, logger="web_app"):
         th = threading.Thread(target=consume, daemon=True)
         th.start()
-        done.wait()
-        th.join()
+        assert done.wait(timeout=30), "consumer did not reach terminal event"
+        th.join(timeout=30)
 
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
@@ -273,8 +273,8 @@ def test_worker_postprocess_exception_emits_error_end(web_game, monkeypatch):
 
     th = threading.Thread(target=consume, daemon=True)
     th.start()
-    done.wait()
-    th.join()
+    assert done.wait(timeout=30), "consumer did not reach terminal event"
+    th.join(timeout=30)
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
     assert "done" in types, events

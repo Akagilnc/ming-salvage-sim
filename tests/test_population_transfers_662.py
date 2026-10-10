@@ -10,13 +10,40 @@ canonical＝ADR 0087 + #662 票庭判词（run 01a02d40-244d-7e4c-8386-5af682d58
 
 from __future__ import annotations
 
+def _snap(db):
+    return {
+        (r["name"], r["region_id"]): int(r["population"])
+        for r in db.conn.execute(
+            "SELECT name, region_id, population FROM classes WHERE region_id <> ''"
+        ).fetchall()
+    }
+
+
+def _conservation_oracle(before, after, records):
+    """独立 oracle：每笔成功记录两侧精确 ±amount；全局相关行求和不变。
+
+    before/after：{(name, region_id): population} 快照（真源=classes 表）。
+    """
+    total_before = sum(before.values())
+    total_after = sum(after.values())
+    assert total_before == total_after, f"守恒破坏：{total_before} → {total_after}"
+    mutated = set()
+    for rec in records:
+        src = tuple(rec["source"].split("@"))
+        dst = tuple(rec["target"].split("@"))
+        amt = int(rec["amount"])
+        assert after[src] == before[src] - amt, f"源腿失真：{src}"
+        assert after[dst] == before[dst] + amt, f"目标腿失真：{dst}"
+        mutated.update({src, dst})
+    for key in before:
+        if key not in mutated:
+            assert after[key] == before[key], f"未声明行被改动：{key}"
+
+from tests.fiscal_test_utils import class_population as _pop
 from test_population_transfers_649 import (
     DISPLACED_SHAANXI,
     FARMER_SHAANXI,
-    _conservation_oracle,
     _global_population,
-    _pop,
-    _snap,
     _transfer,
 )
 

@@ -33,7 +33,7 @@ LIAO_SEED_SHAANXI = 2929.20151 * 0.009 / 12.0  # 辽饷九厘基线（万两/月
 #   入池(人) = 加派基线(万两) × 折率 × (100 − 民心)/100
 
 
-from tests.test_population_transfers_649 import _pop
+from tests.fiscal_test_utils import class_population as _pop
 
 def _settle_payload(db: GameDB, region_id: str) -> dict:
     row = db.conn.execute(

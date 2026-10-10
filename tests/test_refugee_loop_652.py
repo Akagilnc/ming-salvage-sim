@@ -29,7 +29,7 @@ DISPLACED_SHAANXI = 150000
 
 
 
-from tests.test_population_transfers_649 import _pop
+from tests.fiscal_test_utils import class_population as _pop
 
 def _strength(db: GameDB, power_id: str) -> int:
     return int(db.conn.execute(
