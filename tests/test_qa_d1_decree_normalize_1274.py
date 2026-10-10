@@ -81,7 +81,7 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    with pytest.raises(ValueError) as ei:
+    with pytest.raises(ValueError):
         draft_intent.resubmit_draft_admission_payload(
             text, bad_payload={}, failure_reason="成案未入档",
             db=db, content=content,

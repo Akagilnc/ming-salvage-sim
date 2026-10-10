@@ -2,7 +2,6 @@
 
 from ming_sim.content import load_character_content
 from ming_sim.models import Character
-from ming_sim.session import _sync_offices_from_db_impl
 
 
 def test_person_logs_accepts_audit_rows_for_existing_characters(game):

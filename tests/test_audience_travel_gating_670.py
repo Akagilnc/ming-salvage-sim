@@ -440,7 +440,7 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
-    arrived_fact = {
+    {
         "person_name": person.name,
         "original_destination": "henan",
         "origin_id": origin,
@@ -859,7 +859,7 @@ def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
     )
     night_id = int(an.open_night(db, state)["id"])
     origin = "command:continue-wait-1"
-    entry_id = an.record_summon_in_transit(
+    an.record_summon_in_transit(
         db, night_id, person.name, origin_id=origin,
     )
     assert _arrive_at_destination(game, person.name) == [

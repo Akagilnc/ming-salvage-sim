@@ -491,7 +491,7 @@ def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game
     }
     assert statuses[mid_origin] == statuses[mid_ack] == "withheld"
     assert statuses[mid_public_q] == statuses[mid_public_reply] == "released"
-    brief = db.conn.execute(
+    db.conn.execute(
         "SELECT body FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
     assert {f"chat_message:{mid_ack}", f"chat_message:{mid_origin}"}.isdisjoint(

@@ -26,7 +26,7 @@ from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import (
     install_hall_admission, minister_double, open_audience_night_conn,
 )
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_audience_translate, stub_scene_agent  # noqa: F401 pytest fixture import
 from tests.sse_helpers import parse_sse_event_pairs
 
 
@@ -804,7 +804,7 @@ def test_chat_stream_typed_429_preserved(monkeypatch, game):
     response = _post_chat_stream(monkeypatch, web_game, minister)
     events = _parse_sse(response.text)
     detail = events[-1][1]
-    max_a = default_transport_policy().max_attempts
+    default_transport_policy().max_attempts
     assert detail.get("status_code") == 429
     assert detail.get("code") == "llm_run_error"
     assert detail.get("provider_message") == reason

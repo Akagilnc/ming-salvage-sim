@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 
-import json
 
 
 def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):

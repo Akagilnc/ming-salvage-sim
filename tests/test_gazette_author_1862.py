@@ -15,13 +15,10 @@ from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.materials import (
     list_materials,
-    prepare_character_materials,
-    prepare_world_materials,
     read_material,
-    release_material_tree,
 )
 from ming_sim.audience_night import record_summon_in_transit
-from ming_sim.models import LLMConfig, reign_period_label
+from ming_sim.models import LLMConfig
 from tests.conftest import append_night_chat, open_audience_night
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.month_chain_helpers import make_light_session
@@ -138,7 +135,7 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
 def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
-    character = next(iter(content.characters.values()))
+    next(iter(content.characters.values()))
     affair = db.affairs.open(
         name="过月可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
     )
@@ -406,7 +403,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
     session = _session(db, state, content, monkeypatch)
-    result = session.resolve_turn(allow_empty_decree=True)
+    session.resolve_turn(allow_empty_decree=True)
     wait_for_background_jobs(db)
 
     assert not any(path.startswith("密令/") for path in seen["author_files"])
@@ -436,7 +433,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     public_ids = {
         str(item.get("source_id") or "") for item in knowledge.get("public_events") or []
     }
-    event_ids = {
+    {
         str(item.get("source_id") or "") for item in knowledge.get("events") or []
     }
     # 契约落结构化来源面：归档邸报经 projection:turn_report:<turn> 这一来源

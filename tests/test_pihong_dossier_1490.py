@@ -1038,7 +1038,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
             created = dict(created)
             created['_submit_turn'] = turn_before
         return created
-    stop_a1 = '军饷清完乃止'
     created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'assignment', 'label': '责成督赈', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'assignee_name': '', 'participant_roster': _roster(_ROSTER_LEAD)}, title='A1急务')
     origin = f"dossier:{int(created['id'])}"
     init = db.conn.execute('SELECT kind, origin_ref, end_turn, status FROM issues WHERE origin_ref=?', (origin,)).fetchone()
@@ -1313,7 +1312,6 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
 def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monkeypatch):
     """C1.1：急务 follow + decision 打回；真 HTTP；③后 extracted 空杀进程；
     同 DB 同 body 重 POST 无双写；resolve_context 无批副本键。"""
-    from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     db_path = _657_db_path_of(web_game)
     opt = normalize_rescript_layer_a_option({'label': '发帑赈济', 'hint': '所安者饥民', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'participant_roster': _roster(_ROSTER_LEAD)})
@@ -1461,7 +1459,6 @@ def test_657_s6_http_present_target_gets_unique_origin_entry(web_game, monkeypat
     from ming_sim.audience_night import (
         TAG_ENTER, open_night, rescript_summon_origin_ref, summon_enter,
     )
-    from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state = web_game.db, web_game.state
@@ -1488,9 +1485,7 @@ def test_657_s6_http_present_target_gets_unique_origin_entry(web_game, monkeypat
 def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     """Class4/S2 web 生产调用：真 HTTP → submit_hitl；①/③ 持同一 gate，② 释放。"""
     import threading
-    from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    db, state = (web_game.db, web_game.state)
     _657_install_real_phase2_llm_boundary(monkeypatch)
     gate = web_game._write_gate
     events = []
@@ -1551,9 +1546,8 @@ def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
 
 def test_657_illegal_summon_target_http_zero_writes(web_game, monkeypatch):
     """非法 summon target → 公共 HTTP 零 choice 落库、零 decided、零 scaffold。"""
-    from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    db, state = (web_game.db, web_game.state)
+    db = web_game.db
 
     def _phase2(_state, _db, *_a, **_k):
         raise AssertionError('illegal summon must not reach phase2')
@@ -1603,7 +1597,7 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
     roster = created.get('participant_roster') or []
     ids = [str(e.get('character_id') or '') for e in roster if isinstance(e, dict)]
     assert token not in ids, f'{token} 不得入 roster：{ids}'
-    payload = json.loads(str(created.get('payload_json') or '{}'))
+    json.loads(str(created.get('payload_json') or '{}'))
     assert int(web_game.state.turn) == turn_before + 1
 
 def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
@@ -1773,7 +1767,6 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
 ):
     """#1838 reopen：批红召见落入殿事实账（TAG_ENTER、正文空）即消费，可进 phase2。"""
     from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
-    from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state = web_game.db, web_game.state
@@ -2435,7 +2428,7 @@ def test_658_endorsement_provenance_xor(game):
     minister = _summonable_name(db, content)
     did = db.create_decree_dossier(state, action_type='policy', decree_text='试', target_kind='policy', target_id='t')
     chat = db.create_chat_turn(state, minister, '658-xor', 0)
-    eid = db.add_dossier_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat)
+    db.add_dossier_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat)
     row = db.list_dossier_endorsements(did)[0]
     assert row['source_chat_turn_id'] == chat and row['decision_key'] == ''
     eid2 = db.add_dossier_endorsement(did, form='当面站台', endorser_id=minister, decision_key='rescript_draft:1:0')

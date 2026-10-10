@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 import ming_sim.cli_backend as cb
 import ming_sim.db as dbmod

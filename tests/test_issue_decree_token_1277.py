@@ -15,7 +15,6 @@ from ming_sim.session_write_queue import ClassifiedWriteGate
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
 
 import web_app
 from ming_sim.decree import ResolveResult

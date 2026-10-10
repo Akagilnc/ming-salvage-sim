@@ -15,7 +15,6 @@ import pytest
 
 from ming_sim.fiscal_tick import settle_tick
 from ming_sim.pay_order import (
-    DEFAULT_ARREARS_PRIORITY,
     DEFAULT_DUE_PRIORITY,
     PayOrderKeyError,
     materialize_pay_order_decree,
@@ -590,7 +589,7 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
 def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
     """顺颁：判决当回合落 config；本月已按旧序完成的结算不追溯、下一次结算读取。"""
     db, state, _content = game
-    turn = db._current_settle_turn()
+    db._current_settle_turn()
     # 本月结算先按旧序完成（fixed flow 已结束的等价断言：旧序结果在案）
     before = db.settle_province_tick("shaanxi")
     assert before.breakdown["实付分账"]["军饷"] > 0

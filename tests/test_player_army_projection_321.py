@@ -1,19 +1,11 @@
 """#321 — 玩家军心/士气/欠饷投影：复用 derive + qualitative/arrears helper，四链去 raw。"""
 from __future__ import annotations
 
-import sqlite3
 from types import SimpleNamespace
 
 import pytest
 
 import web_app
-from ming_sim.db import (
-    GameDB,
-    _player_army_situation,
-    mutiny_loyalty_cap,
-)
-from ming_sim.army_pay import derive_army_mutiny_state
-from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
 

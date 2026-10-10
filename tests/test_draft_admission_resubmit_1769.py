@@ -597,7 +597,7 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
 
     monkeypatch.setattr(session_mod, "resolve_directives", spy_resolve)
 
-    body = _post_issue_stream(
+    _post_issue_stream(
         client, expected_turn=turn, step="1769 zero-exhaust system_simulation",
     )
     assert _turn_of(_get_state(client)) == turn + 1

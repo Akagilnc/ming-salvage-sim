@@ -5,8 +5,6 @@ from __future__ import annotations
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import asyncio
-import json
-import threading
 from types import SimpleNamespace
 
 import pytest

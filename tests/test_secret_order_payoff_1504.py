@@ -21,11 +21,9 @@ from ming_sim.covert_progress import (
     CovertContractError,
     apply_investigation_spoliation,
     build_covert_task_contract,
-    decide_secret_order_settlement,
     investigation_clue_records,
     live_investigation_fact_keys,
     read_covert_task_contract,
-    seed_guilt_counts_as_debt,
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
     settle_due_secret_orders,
@@ -34,7 +32,7 @@ from ming_sim.applier import Provenance
 from ming_sim.month_chain import build_secret_orders_supply_feed
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_score_extraction
-from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent  # noqa: F401 pytest fixture import
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
     if investigation_target:
@@ -798,7 +796,7 @@ def test_reaction_declarations_need_real_knowledge_across_months(game):
         db, state, name, "查核", "查核", months=6, target=1,
         kind="查核", axes=["既得利益"], investigation_target=target,
     )
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    int(db.get_dossier_for_secret_order(oid)["id"])
 
     # 未知情时声明压案 → 不落这项事实（引擎不替不知情的人记下他压了案）
     _next_month(db, state)
@@ -1066,12 +1064,12 @@ def test_investigation_history_is_not_truncated(game):
     )
     _set_axes(db, name, loyalty=90, identity=30)
     _co_locate(db, name, target)
-    informer = _relation_informer(db, name, target)
+    _relation_informer(db, name, target)
     oid = _issue(
         db, state, name, "查核", "查核", months=30, target=1,
         kind="查核", axes=["既得利益"], investigation_target=target,
     )
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    int(db.get_dossier_for_secret_order(oid)["id"])
     months = 9
     for i in range(months):
         _next_month(db, state)

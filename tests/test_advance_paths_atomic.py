@@ -7,13 +7,12 @@ from tests.conftest import wait_for_background_jobs
 from ming_sim.session_write_queue import get_session_write_queue
 
 import json
-import threading
 
 import pytest
 
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.dossier_test_helpers import TYPED_COVERT_TASK  # noqa: F401 pytest fixture import
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +50,6 @@ def _recovery_session(db, state, content, monkeypatch):
 
 def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monkeypatch):
     """#345：事件亲裁选择不能只活在 pending_decisions；phase2 清理后仍须可从事件账恢复。"""
-    import json
     import ming_sim.session as session_mod
     from ming_sim.session import GameSession
 
@@ -128,7 +126,6 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     ② #1589 起，非空无键载荷不再被静默吞掉/忽略——空 desk 无例外，整批拒、零写，
     account 上原 choice 因整批拒直接原样未动（比忽略更强的不变式）。
     """
-    import json
     import ming_sim.session as session_mod
     from ming_sim.session import GameSession
 
@@ -252,7 +249,6 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
     只补 choice_json，**不得**把已有非 triggered 终态（avoided/expired/obsolete）翻成 triggered，
     也不得把非 triggered 行的 source 改成 hitl_decision（原 ON CONFLICT 的 terminal_state CASE
     实为空操作：excluded 恒为 'triggered'）。"""
-    import json
     db, state, content = game
     eid = "__terminal_account_preserve_test__"
     db.conn.execute(
@@ -278,7 +274,6 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
 
 def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game):
     """HITL 选择只暂存 choice，不抢先把新事件写成 triggered 终态。"""
-    import json
     db, state, content = game
     eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "斩"})
@@ -291,7 +286,6 @@ def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game)
 
 def test_mark_event_triggered_upgrades_pending_choice_row(game):
     """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。"""
-    import json
     db, state, content = game
     eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "留"})
@@ -326,7 +320,6 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
 )
 def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_state, source, reason):
     """确定性终态须覆盖空终态 HITL choice 行，保留亲裁选择，并刷新终态时刻。"""
-    import json
     db, state, content = game
     eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "留"})
@@ -382,7 +375,6 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     恢复窗口新增/确认的 draft 会被 mark_directives_issued 连带标 issued，
     而重放 delta 不含它们=幽灵颁布。
     """
-    from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "settling"
 

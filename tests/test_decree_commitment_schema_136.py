@@ -1,4 +1,3 @@
-import pytest
 
 import ming_sim.issues as I
 

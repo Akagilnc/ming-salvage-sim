@@ -18,7 +18,7 @@ from tests.conftest import wait_for_background_jobs
 import pytest
 
 import ming_sim.issues as issue_engine
-from ming_sim.audience_night import list_ledger, open_night
+from ming_sim.audience_night import open_night
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
@@ -603,7 +603,7 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     assert inp["supervision_history"] == []  # 本夹具未挂稽核链
     assert inp["progress_reports"] == []
     assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
-    scene = project_due_review_scene(db, todo, review_input=inp)
+    project_due_review_scene(db, todo, review_input=inp)
 
 
 def test_formal_review_blocks_extractor_second_terminal(game):

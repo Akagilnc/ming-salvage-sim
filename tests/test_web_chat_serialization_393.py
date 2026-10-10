@@ -289,7 +289,6 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
 
 def test_nonstream_chat_rejects_when_session_draining():
     """drain 已开始时非流式 chat 不得再登记 pending——对齐 stream 拒绝路，HTTP 503。"""
-    from fastapi import HTTPException
 
     character = SimpleNamespace(name="测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")

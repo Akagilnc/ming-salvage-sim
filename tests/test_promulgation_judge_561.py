@@ -8,7 +8,7 @@ from ming_sim.exceptions import LLMContractError
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import power_band, qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict  # noqa: F401 pytest fixture import
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
     return db.create_decree_dossier(

@@ -3,7 +3,6 @@ import json
 import pytest
 
 import ming_sim.issues as I
-from ming_sim.db import _has_stop_condition
 
 
 def _promulgated_commitment_origin(db, state, token: str) -> str:

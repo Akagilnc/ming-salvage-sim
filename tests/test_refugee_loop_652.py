@@ -15,7 +15,7 @@ import sqlite3
 import pytest
 
 from ming_sim.applier import atomic
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
 

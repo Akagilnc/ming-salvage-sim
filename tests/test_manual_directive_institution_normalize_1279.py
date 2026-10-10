@@ -20,7 +20,6 @@ from types import SimpleNamespace
 def _mock_draft_intent(monkeypatch, *, roster):
     import ming_sim.cli_backend as cli_backend
 
-    import ming_sim.draft_intent as draft_intent
     response = {
         "拟旨意图": "拟旨",
         "动作类型": "policy",
@@ -44,7 +43,6 @@ def _mock_draft_intent(monkeypatch, *, roster):
 
 
 def _capture_ids(game, monkeypatch, *, text: str, roster):
-    import ming_sim.cli_backend as cli_backend
 
     import ming_sim.draft_intent as draft_intent
     db, _state, content = game
@@ -58,7 +56,6 @@ def _capture_ids(game, monkeypatch, *, text: str, roster):
 
 def test_capture_manual_directive_drops_ministry_name_as_participant(game, monkeypatch):
     """着户部… 不得把「户部」当人物参与人拒收；成案零 409。"""
-    import ming_sim.cli_backend as cli_backend
 
     import ming_sim.draft_intent as draft_intent
     db, state, content = game
@@ -172,7 +169,6 @@ def test_capture_manual_directive_drops_collective_and_institution_names(
 
 def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
     """禁放松主键校验：纠错耗尽后真正不存在的人名仍在 capture seam 拒收。"""
-    import ming_sim.cli_backend as cli_backend
 
     import ming_sim.draft_intent as draft_intent
     db, _state, content = game
@@ -182,7 +178,7 @@ def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
         roster=[{"character_id": "不存在之人甲", "tier": "主办"}],
     )
 
-    with pytest.raises(ValueError) as ei:
+    with pytest.raises(ValueError):
         draft_intent.resubmit_draft_admission_payload(
             text, bad_payload={}, failure_reason="成案未入档",
             db=db, content=content,

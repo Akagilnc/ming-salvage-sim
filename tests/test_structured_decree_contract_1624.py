@@ -144,7 +144,6 @@ def test_shared_validate_rejects_region_id_and_category_holes():
 
 def test_rescript_follow_draft_nails_drafted_roster(game, monkeypatch):
     """真实批红 follow_draft：Owner 例未点将 → 主办来自票拟名单，成案钉进案卷。"""
-    import ming_sim.rescript_actions as ra
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     from contextlib import nullcontext
     from tests.test_cli_entry_1902 import _real_submit_session

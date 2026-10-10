@@ -4,7 +4,6 @@ import pytest
 
 import ming_sim.cli_backend as cli_backend
 import ming_sim.draft_intent as draft_intent
-import ming_sim.decree as decree_mod
 from tests.dossier_test_helpers import rejected_verdict
 from tests.rescript_test_helpers import sql_rescript_draft
 

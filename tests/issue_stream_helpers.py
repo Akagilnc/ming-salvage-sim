@@ -89,7 +89,6 @@ async def apost_issue_stream(client, *, expected_turn: Optional[int] = None,
 
 async def consume_issue_stream_response(response, *, step: str = "issue/stream"):
     """直调 api_issue_decree_stream 时的同形解析（不经 HTTP client 的旧式用例用）。"""
-    import asyncio
 
     events: list[dict] = []
     async for chunk in response.body_iterator:

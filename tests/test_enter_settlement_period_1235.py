@@ -162,7 +162,7 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
     detail = resp.json()["detail"]
-    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
+    detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
 
 
 # ── 3. 真失败另形：pending 抽取仍失败 → 人话 + 展示态退出 ──────────────
@@ -182,7 +182,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
-    before = _click_before(game.state)
+    _click_before(game.state)
     turn = int(game.state.turn)
     nid, ctid = _open_night_with_unextracted_reply(game, minister)
 
@@ -239,7 +239,7 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
-    before = _click_before(game.state)
+    _click_before(game.state)
     turn = int(game.state.turn)
     _open_night_with_unextracted_reply(game, minister)
     game.db.add_directive(
@@ -403,7 +403,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
     resp = asyncio.run(go())
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
-    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
+    detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
     # 点即入曾发生
     assert saw.get("snap") == before
     # 拒收后不得留孤儿核账展示态
@@ -513,7 +513,6 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     B finally 虽 created_display=False 仍须 non-blocking 抢到锁并清孤儿。
     """
     import threading
-    import time
 
     from ming_sim.month_open_snapshot import accept_settlement_period
 

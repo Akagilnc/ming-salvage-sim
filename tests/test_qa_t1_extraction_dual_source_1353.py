@@ -17,23 +17,19 @@
 from __future__ import annotations
 
 import threading
-from types import SimpleNamespace
 
 import pytest
 
 import ming_sim.audience_translation as audience_translation
 from ming_sim.audience_translation import list_pending_translations
-import ming_sim.cli.terminal as term
-import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.exceptions import ExitGame
 from ming_sim.session import GameSession, TurnPhase
 from tests.test_audience_extraction_501 import (
     _minister,
     _open_night_with_persisted_reply,
 )
-from ming_sim.session_write_queue import SessionWriteQueue, ClassifiedWriteGate
+from ming_sim.session_write_queue import SessionWriteQueue
 from tests.test_no_edict_full_settlement_1274 import _canned_full_settlement
 from tests.conftest import stub_audience_translate
 
@@ -272,7 +268,6 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
     audience_translation；本案从现役 startup spawner 入口进，在共核接缝观察
     write_gate，不直调 callee、不 patch 已退役的 web_app 顶层符号。
     """
-    import ming_sim.audience_translation as audience_translation
 
     game = web_game
     seen = {}
@@ -322,7 +317,7 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     from tests.web_audience_test_doubles import install_hall_admission
 
     game = web_game
-    minister = next(iter(game.content.characters))
+    next(iter(game.content.characters))
     install_hall_admission(game.session)
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: None
     game._spawn_pending_write_thread = lambda *_a, **_k: None
@@ -356,7 +351,7 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     from tests.web_audience_test_doubles import install_hall_admission
 
     game = web_game
-    minister = next(iter(game.content.characters))
+    next(iter(game.content.characters))
     install_hall_admission(game.session)
     game.session.scene_chat = lambda *_a, **_k: ChatTurnResult(answer="臣遵旨。")
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: (_ for _ in ()).throw(
@@ -379,7 +374,6 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
 
 def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monkeypatch):
     """#1353 fold-in r8：外层已持闸时 resolve 不得再抢同一把非重入锁。"""
-    from ming_sim.session import GameSession, TurnPhase
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))

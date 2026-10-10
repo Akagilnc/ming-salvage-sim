@@ -19,7 +19,7 @@ from ming_sim.session import GameSession
 from tests.test_month_loop_tracer_1468 import (
     _assert_not_bare_500,
     _pick_active_minister,
-    tracer_client,
+    tracer_client,  # noqa: F401 pytest fixture import
 )
 from tests.sse_helpers import parse_sse_events as _parse_sse
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes

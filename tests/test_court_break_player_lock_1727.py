@@ -91,7 +91,7 @@ def _named_scene_beats(scroll) -> list[str]:
 def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch):
     """#1727：真实退朝在 done 暴露前预领屏障，随后收夜。"""
     game = web_game
-    minister = _active_minister(game)
+    _active_minister(game)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     agent = _StreamFarewellAgent()

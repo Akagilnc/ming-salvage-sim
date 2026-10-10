@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from ming_sim.db import _member_office_weight
 
 
 def test_fresh_seed_contains_sourced_six_sciences_censors(game):

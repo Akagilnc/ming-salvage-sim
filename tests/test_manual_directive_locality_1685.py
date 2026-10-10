@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from tests.test_month_loop_tracer_1468 import _post_issue_stream, tracer_client
+from tests.test_month_loop_tracer_1468 import _post_issue_stream, tracer_client  # noqa: F401 pytest fixture import
 
 
 def _extracted(scope, person="毕自严"):

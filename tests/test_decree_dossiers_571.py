@@ -5,7 +5,7 @@ import ming_sim.cli_backend as cli_backend
 import ming_sim.draft_intent as draft_intent
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
-from tests.conftest import covering_monthly_extract
+from tests.conftest import covering_monthly_extract  # noqa: F401 pytest fixture import
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 
 def _active_people(db, count):
@@ -963,8 +963,6 @@ def test_manual_directive_capture_reaches_structured_dossier(
 ):
     """#1902：拟诏台手写入口退役后，抽取核 → 案卷这条路只有一条（原 web/cli 两参数
     维度已随两条入口同形而删——同一路径跑两遍不证明任何额外契约）。"""
-    import ming_sim.cli_backend as cli_backend
-    import ming_sim.draft_intent as draft_intent
     from ming_sim.session import GameSession
 
     db, state, content = game
@@ -1042,8 +1040,6 @@ def test_manual_directive_capture_reaches_structured_dossier(
 def test_manual_directive_capture_rejects_malformed_roster(
     game, monkeypatch, entry, bad_roster,
 ):
-    import ming_sim.cli_backend as cli_backend
-    import ming_sim.draft_intent as draft_intent
     from ming_sim.session import GameSession
     db, state, content = game
     response = {
@@ -1083,8 +1079,6 @@ def test_manual_directive_capture_rejects_malformed_roster(
 def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_writes(
     game, monkeypatch, entry, tier,
 ):
-    import ming_sim.cli_backend as cli_backend
-    import ming_sim.draft_intent as draft_intent
     from ming_sim.session import GameSession
     db, state, content = game
     participant = _active_minister(db)
@@ -1125,7 +1119,6 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
 ):
     """#1902：CLI 拟诏台手写入口退役后，成案草案只剩「不可见、不可删」一条护栏。"""
     import ming_sim.cli.terminal as terminal
-    from ming_sim.session import GameSession
 
     db, state, _content = game
     directive_id = db.add_directive(
@@ -1325,10 +1318,8 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
 ):
     from ming_sim.db import GameDB
     from ming_sim.models import LLMConfig
-    from ming_sim.session import GameSession
     import ming_sim.cli_backend as cli_backend
 
-    import ming_sim.draft_intent as draft_intent
     db, state, content = game
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
@@ -1372,7 +1363,6 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
 def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game, monkeypatch):
     from ming_sim.decree_forecast import decree_ref_for_dossier
     from tests.test_month_chain_1843 import _prepare_player_month
-    from ming_sim.session import GameSession
     from scripts.probe_directive_contract import add_narrative_probe_directive
 
     db, state, content = game
@@ -1626,9 +1616,7 @@ def test_military_directive_projects_normalized_due_turn_to_dossier(game):
 
 def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch):
     """现役单旨：署理不入草案（#1902 N5 多旨批抽已退役）。"""
-    import ming_sim.cli_backend as cli_backend
 
-    import ming_sim.draft_intent as draft_intent
     acting = {
         "拟旨意图": "拟旨",
         "正文": "命洪承畴暂署兵部尚书",

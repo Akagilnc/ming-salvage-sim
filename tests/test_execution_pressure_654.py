@@ -529,7 +529,7 @@ def test_path1_conversational_draft_bad_roster_marks_failed(env):
     ).fetchone()
     assert st["status"] == "failed"
     # 回滚后不应残留 directive 案卷
-    n = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     # 允许他用例无关行；本 pending 名下必须为空
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM decree_dossiers WHERE pending_action_id=?",

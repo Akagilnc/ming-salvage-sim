@@ -10,7 +10,6 @@
 from __future__ import annotations
 from tests.conftest import open_hall_turn
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -32,7 +31,6 @@ from ming_sim.audience_night import (
     TAG_STANDING_ROSTER,
     AudienceNightError,
 )
-from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
 from ming_sim.session import TurnPhase
@@ -272,7 +270,7 @@ def test_write_decree_leaves_unacted_pending_unchanged(tmp_path, content, monkey
     try:
         db, state = sess.db, sess.state
         minister = _active_minister(db, content)
-        old_office = db.conn.execute(
+        db.conn.execute(
             "SELECT office FROM characters WHERE name=?", (minister,),
         ).fetchone()["office"]
         pid = db.upsert_pending_directive(
