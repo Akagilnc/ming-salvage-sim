@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.applier import StoredDocumentError, durable_float, durable_int, load_stored_object, load_stored_object_list
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
-from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
 from ming_sim.value_matrix import (
     normalize_axes,
@@ -597,8 +596,6 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
     has_reports = bool(review_input.get("has_reports"))
-    # Free origin prose: empty-check without mutating when embedding into note (P6).
-    origin = str(review_input.get("origin_context") or "")
 
     delivered = target > 0.0 and actual + 1e-9 >= target
     if delivered:
@@ -611,8 +608,6 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
         note = f"machine_settle gap Σ={actual:g}/{target:g}"
         if has_reports:
             note = f"{note};表报有之、不翻实账"
-    if origin.strip():
-        note = f"{note} ({origin})"
     return {
         "status": status,
         "outcome": outcome,
@@ -1970,7 +1965,6 @@ def settle_due_secret_orders(
             "target_units": target,
             "criterion_text": str(order.get("title") or order.get("content") or "密令"),
             "has_reports": bool(reports),
-            "origin_context": secret_order_origin(oid),
         })
         player_text = player_facing_secret_order_close_text(order, reports)
         # 到期入口正文来自既有 result/奏报身份，不把选用原文再当新终奏入库（#1889 R13）
