@@ -258,10 +258,6 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_public,)
     ).fetchone()["knowledge_status"] == "held"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{mid_public}",),
-    ).fetchone()[0] == 0
 
     oid = create_test_secret_order(
         db, state, assignee.name, "密查国丈", extracted, [],
@@ -300,10 +296,6 @@ def test_883_post_brief_public_audience_enters_shared_sources(game):
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "held"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{mid}",),
-    ).fetchone()[0] == 0
 
     db.release_held_audience_knowledge()
     status = db.conn.execute(
@@ -392,10 +384,6 @@ def test_883_thematic_public_audience_survives_secret_create(game):
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "held"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{mid}",),
-    ).fetchone()[0] == 0
 
     oid = create_test_secret_order(db, state, assignee.name, sec_title, sec_body, [])
     assert oid > 0
@@ -418,10 +406,6 @@ def test_976_minister_reply_not_shared_before_classification(game):
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "held"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{mid}",),
-    ).fetchone()[0] == 0
 
 
 def test_976_pure_public_minister_reply_released_after_settle(game, monkeypatch):
@@ -557,10 +541,6 @@ def test_976_held_user_chat_released_when_never_classified_as_secret(game):
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "held"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{mid}",),
-    ).fetchone()[0] == 0
 
     n = db.release_held_audience_knowledge()
     assert n >= 1

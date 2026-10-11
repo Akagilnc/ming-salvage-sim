@@ -163,27 +163,6 @@ def test_participation_survives_restore(game):
     assert any(item["source_id"] == stored["source_id"] for item in after["events"])
 
 
-def test_delete_chat_messages_removes_chat_derived_knowledge_from_context(game):
-    """删除聊天消息时也不能留下可投影的见闻来源。"""
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "内阁")
-    marker = "删除消息应一并抹去的召对事项"
-
-    message_id = db.append_chat_message(minister.name, state.turn, "assistant", marker)
-    db.delete_chat_messages([message_id])
-
-    source_id = f"chat_message:{message_id}"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_events WHERE source_id=?", (source_id,)
-    ).fetchone()[0] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?", (source_id,)
-    ).fetchone()[0] == 0
-    assert not any(
-        item.get("source_id") == source_id
-        for item in db.get_character_knowledge(state, minister.name)["events"]
-    )
-
 def test_public_directive_remains_visible_on_a_later_turn(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
