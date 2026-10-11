@@ -1,4 +1,6 @@
-"""#1853：召对应允业务拒收与系统失败分流（承办资格、案卷关联、已结催办）。
+"""#1853：召对应允业务拒收与系统失败分流（承办资格、已结催办）。
+
+未知案卷关联拒收与回滚 ID 复用由 tests/test_dossier_links_559.py 承载。
 
 原轮提交故障／恢复生命周期由现役 HTTP tracer
 （tests/test_web_audience_night_498.py）承载；本文件不常驻平行修复证明链。
@@ -7,31 +9,7 @@
 
 from __future__ import annotations
 
-import json
-import pytest
-
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-
-
-def _secret_commission(action_id: int) -> dict:
-    return {
-        "promises": [{"action_id": action_id, "decision": "应允"}],
-    }
-
-
-def _stage_secret_order(db, state, ctid, minister: str) -> int:
-    return db.stage_pending_action(
-        int(state.turn), "secret_order", "新建", minister,
-        {
-            "title": "夜行查饷", "content": "着即密核三边饷数。",
-            "assignee": minister, "tags": [],
-            "covert_task": TYPED_COVERT_TASK,
-            "origin_chat_message_id": int(db.conn.execute(
-                "SELECT id FROM chat_messages ORDER BY id DESC LIMIT 1",
-            ).fetchone()["id"]),
-        },
-        source_chat_turn_id=int(ctid),
-    )
 
 
 def _active_minister(content) -> str:
@@ -96,25 +74,15 @@ def test_closed_secret_order_rush_fails_one_item_and_commits_the_rest(game):
     assert db.character_knowledge.get_secret_order(closed)["status"] == "done"
 
 
-@pytest.mark.parametrize("refusal", ["unknown_link", "foreign_assignee"])
-def test_secret_commission_business_refusal_has_no_landed_order(game, refusal):
-    from ming_sim.audience_night import open_night
-
+def test_foreign_assignee_business_refusal_has_no_landed_order(game):
     db, state, content = game
-    night = open_night(db, state)
-    ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
-    db.chat_messages.insert(minister_name="殿上", turn=int(state.turn), role="user", content="着即密核三边饷数。")
-    minister = _active_minister(content) if refusal == "unknown_link" else _foreign_minister(content)
-    action_id = _stage_secret_order(db, state, ctid, minister)
-    if refusal == "unknown_link":
-        payload = json.loads(db.conn.execute("SELECT payload_json FROM pending_actions WHERE id=?", (action_id,)).fetchone()[0])
-        payload["dossier_links"] = [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}]
-        db.conn.execute("UPDATE pending_actions SET payload_json=? WHERE id=?", (json.dumps(payload, ensure_ascii=False), action_id))
-    db.conn.commit()
+    minister = _foreign_minister(content)
+    action_id = db.stage_pending_action(
+        state.turn, "secret_order", "新建", minister,
+        {"title": "夜行查饷", "content": "着即密核三边饷数。",
+         "assignee": minister, "covert_task": TYPED_COVERT_TASK},
+    )
     before = len(db.character_knowledge.list_secret_orders())
     assert db.commit_pending_actions(state, content=content) == []
     assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (action_id,)).fetchone()[0] == "failed"
     assert len(db.character_knowledge.list_secret_orders()) == before
-    if refusal == "unknown_link":
-        audit = db.conn.execute("SELECT * FROM decree_dossier_link_rejections WHERE pending_action_id=?", (action_id,)).fetchall()
-        assert audit and audit[-1]["target_dossier_id"] == 999999

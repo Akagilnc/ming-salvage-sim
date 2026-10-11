@@ -1,10 +1,5 @@
 
-import pytest
-
-from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
-from tests.web_audience_test_doubles import HallAdmissionSessionMixin
-from web_app import WebGame
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -149,29 +144,18 @@ def test_withdrawn_rejected_dossier_is_not_referenceable(game):
 
 def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(game):
     db, state, _ = game
+    missing_id = _make_dossier(db, state, '缺失旧案卷')
+    db.conn.execute('DELETE FROM decree_dossiers WHERE id=?', (missing_id,))
+    db.conn.commit()
     before_orders = len(db.character_knowledge.list_secret_orders())
-    action_id = db.stage_pending_action(state.turn, 'secret_order', '新建', '孙承宗', {'title': '护行密令', 'content': '护送旧案', 'assignee': '孙承宗', 'covert_task': TYPED_COVERT_TASK, 'dossier_links': [{'target_dossier_id': 999999, 'relation_type': '护卫', 'note': '护送'}]})
+    action_id = db.stage_pending_action(state.turn, 'secret_order', '新建', '孙承宗', {'title': '护行密令', 'content': '护送旧案', 'assignee': '孙承宗', 'covert_task': TYPED_COVERT_TASK, 'dossier_links': [{'target_dossier_id': missing_id, 'relation_type': '护卫', 'note': '护送'}]})
     assert db.commit_pending_actions(state, action_ids=[action_id]) == []
     assert len(db.character_knowledge.list_secret_orders()) == before_orders
     assert db.dossiers.list_pending_actions(state.turn, status='failed')[0]['id'] == action_id
     audit = list(db.conn.execute("SELECT * FROM decree_dossier_link_rejections WHERE pending_action_id=? ORDER BY id", (action_id,)))
-    assert audit[-1]['target_dossier_id'] == 999999
-
-
-def test_unknown_target_link_is_rejected_and_audited(game):
-    db, state, _ = game
-    source = _make_dossier(db, state, '护行密令')
-    with pytest.raises(ValueError):
-        db.dossiers.add_links(source, [{'target_dossier_id': 999999, 'relation_type': '护卫', 'note': '护送'}])
-    assert db.dossiers.links(source) == []
-    audit = list(db.conn.execute("SELECT * FROM decree_dossier_link_rejections WHERE source_dossier_id=? ORDER BY id", (source,)))
-    assert audit[-1]['target_dossier_id'] == 999999
-
-
-def test_pending_rejection_does_not_follow_reused_rolled_back_source_id(game):
-    db, state, _ = game
-    action_id = db.stage_pending_action(state.turn, 'secret_order', '新建', '孙承宗', {'title': '坏引用', 'content': '坏引用', 'assignee': '孙承宗', 'covert_task': TYPED_COVERT_TASK, 'dossier_links': [{'target_dossier_id': 999999, 'relation_type': '护卫', 'note': '护送'}]})
-    assert db.commit_pending_actions(state, action_ids=[action_id]) == []
+    assert audit[-1]['target_dossier_id'] == missing_id
+    assert audit[-1]['source_dossier_id'] == 0
     reused_id = _make_dossier(db, state, '后建案卷')
+    assert reused_id == missing_id + 1
     assert list(db.conn.execute("SELECT * FROM decree_dossier_link_rejections WHERE source_dossier_id=?", (reused_id,))) == []
     assert list(db.conn.execute("SELECT * FROM decree_dossier_link_rejections WHERE pending_action_id=? ORDER BY id", (action_id,)))

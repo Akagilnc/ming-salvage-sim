@@ -226,20 +226,12 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     assert chat_result["answer"] == "臣已知悉。"
 
 
-def test_nonstream_chat_rejects_when_session_draining(game):
-    from fastapi import HTTPException
-    character = SimpleNamespace(name='测试大臣')
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase='summoning')
-    db, state, _ = game
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _FakeSession(character, _FakeAgent(threading.Event()), state, db)
-    runtime.chat_history = {character.name: [], '殿上': []}
-    runtime._write_queue = SessionWriteQueue()
+def test_chat_rejects_when_session_draining(monkeypatch, game):
+    runtime, _, allow_finish, *_ = _runtime_for_stream_race(monkeypatch, game)
+    allow_finish.set()
     runtime._write_queue.seal()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ('pending',))
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)
+    before = runtime.db.conn.total_changes
     events = list(runtime.chat_stream('殿上', '边饷如何？'))
     assert events and events[0].get('type') == 'error'
     assert runtime._write_queue.inflight_count() == 0
+    assert runtime.db.conn.total_changes == before
