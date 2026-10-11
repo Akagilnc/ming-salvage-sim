@@ -683,10 +683,8 @@ def resolve_directives(
 ) -> ResolveResult:
     """玩家过月入口：前括号之后走 ADR 0157 主链，不再用 extractor 落账。
 
-    source（#146 cmr r2）：本回合结算 delta 的来源。默认 player_decree——正常皇帝下旨路
-    行为不变。崩溃恢复 fallthrough（SETTLING 非 ready ctx 重走本函数）须把存档 ctx['source']
-    经 _provenance_from_stored 还原后传入，使 provenance 按构造保真（system_simulation 重跑仍
-    记 system、对玩家静默），不依赖「非 ready SETTLING ctx 恒 player」这一脆弱不变式。
+    source：本回合结算声明的来源，默认 player_decree。恢复时由 resolve context 的
+    source 经 _provenance_from_stored 还原后传入，保持 system_simulation 等来源不变。
 
     cheat_directive: 作弊控制台（Ctrl+~）下的强制结算指令。非空时交给本月世界段，
     按字面当既成事实，不另开 extractor。

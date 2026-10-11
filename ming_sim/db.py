@@ -11787,7 +11787,7 @@ class GameDB:
         if str(payload.get("target_kind") or row.get("target_kind") or "") != "army" or not target_id:
             raise ValueError("拨饷案卷须指定 target_kind=army 与 target_id")
         origin_ref = f"dossier:{int(dossier_id)}"
-        # 幂等：同案已有补饷流水则不二扣（ready 重放 / 重复 settle 护栏）。
+        # 幂等：同案已有补饷流水则不二扣。
         existing = [
             m for m in self.list_economy_moves_for_dossier(int(dossier_id))
             if str(m.get("purpose") or "") == "补饷"

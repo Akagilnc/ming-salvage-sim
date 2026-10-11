@@ -110,7 +110,7 @@ def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
 
 
 def test_replayed_delta_does_not_double_write(game):
-    """结算重放（恢复/重试）幂等：UNIQUE(source,target,kind,context,origin) 吸收重复。"""
+    """同一声明重复落账幂等：UNIQUE(source,target,kind,context,origin) 吸收重复。"""
     db, state, content = game
     delta = {
         "relation_edge_events": [{

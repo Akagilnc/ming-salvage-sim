@@ -352,8 +352,8 @@ def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_stat
     assert row["terminal_reason"] == "留"
     assert json.loads(row["choice_json"]) == {"label": "留"}
 
-def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
-    """恢复重放与正常路同守门：pending 拟旨未核定不得推进（cmr S7 r8 codex）。
+def test_recovery_blocked_by_pending_directives(game, monkeypatch):
+    """恢复与正常路同守门：pending 拟旨未核定不得推进（cmr S7 r8 codex）。
 
     跳过守门的话恢复期大臣新拟的旨随推进孤儿在旧回合——正常路会拦。
     """
@@ -388,7 +388,7 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。
 
     恢复窗口新增/确认的 draft 会被 mark_directives_issued 连带标 issued，
-    而重放 delta 不含它们=幽灵颁布。
+    但它们未经过本月逐旨核算=幽灵颁布。
     """
     from ming_sim.session import GameSession
     db, state, content = game

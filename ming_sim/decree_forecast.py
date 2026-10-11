@@ -487,7 +487,7 @@ def _submit_snapshot_job(
                 snapshot["forecast_key"] = forecast_key
                 _forecast(session, snapshot, write_lock=write_lock)
             except Exception as exc:
-                if _rate_limited(exc):
+                if isinstance(exc, LLMUnavailable) and _rate_limited(exc):
                     return
 
                 def stop_if_current() -> None:
@@ -505,6 +505,7 @@ def _submit_snapshot_job(
 
                 with write_lock if write_lock is not None else nullcontext():
                     queue.run(ticket, stop_if_current)
+                raise
         finally:
             release_forecast_materials(snapshot)
             queue.complete(ticket)

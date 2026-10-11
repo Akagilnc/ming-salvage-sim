@@ -440,7 +440,7 @@ def review_directives(session: GameSession) -> str:
             from ming_sim.session import FRONT_HALF_DONE_PHASES
             if session.state.turn_phase in FRONT_HALF_DONE_PHASES:
                 # 恢复态：上月结算未完成（崩溃/中止后），跳过拟诏直接续跑结算——
-                # resolve_turn 的恢复分流自己决定重放/重新推演/回放决策点
+                # resolve_turn 沿已存的过月进度与夜里声明续跑未成部分。
                 # （ship-pre r3：write_decree 在此态必拒，不开此口 CLI 永远够不到恢复入口）。
                 # #1812 第9项：未完成转译恢复保留。
                 print("\n检测到上月结算未完成，续跑结算……")

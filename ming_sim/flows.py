@@ -1238,7 +1238,7 @@ class DeltaApplyResult(NamedTuple):
 
 def _value_reject(key: str, raw: object, item: object, field: str = "") -> Dict[str, object]:
     """构造 faction/class 值级 invalid_enum 拒收项（坏值留痕，#14 模式 A）。
-    item 载原始 delta 项（供恢复重放/诊断，ADR 决定 5「原 item 原样保留」）。"""
+    item 载原始 delta 项（供拒收诊断，ADR 决定 5「原 item 原样保留」）。"""
     where = f"{field} " if field else ""
     out: Dict[str, object] = {
         "name": str(key), "rejected": True,

@@ -244,7 +244,7 @@ def validate_request_keys(
     desk_rows: Sequence[Mapping[str, object]],
     request_choices: object,
 ) -> Tuple[Dict[str, Dict[str, object]], Dict[str, Dict[str, object]]]:
-    """①-a 请求索引校验（内存，零写库；validate_all 与 ready-replay 短路唯一共用权威）。
+    """①-a 请求索引校验（内存，零写库；validate_all 的 envelope/key membership 真源）。
 
     - 键∈desk；无重复；choice 缺 decision_key 或引用 desk 外键→整批拒
     - 仅校验 envelope/key membership，不比较/采纳 choice 内容

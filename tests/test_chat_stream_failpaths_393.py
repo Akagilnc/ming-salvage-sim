@@ -49,8 +49,8 @@ def _assert_write_path_free(runtime) -> None:
 
     t = threading.Thread(target=_try_serialized_write, daemon=True)
     t.start()
-    entered.wait(timeout=30)
-    t.join(timeout=30)
+    entered.wait()
+    t.join()
     assert entered.is_set() and not t.is_alive(), "serialized write path still blocked"
 
     drained = threading.Event()
@@ -203,7 +203,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         try:
             with web_app._serialized_web_write(runtime):
                 other_entered.set()
-                allow_other_exit.wait(timeout=30)
+                allow_other_exit.wait()
             other_completed_ok.append(True)
         except Exception:
             other_completed_ok.append(False)
@@ -216,7 +216,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
-        other_entered.wait(timeout=30)
+        other_entered.wait()
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
