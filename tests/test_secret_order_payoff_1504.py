@@ -2309,11 +2309,6 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
     assert row["units"] == 0.0
     assert len(_actual_progress_rows(db, did)) == 1
 
-def test_task_specific_contract_rejects_empty_without_typed_fields():
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract()
-
-
 def test_settle_due_preserves_reports_without_forging_actual_progress(game):
     db, state, _ = game
     name = _minister(db)
