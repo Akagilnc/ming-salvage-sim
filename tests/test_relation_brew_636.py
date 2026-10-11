@@ -86,6 +86,17 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game):
     prior_origin = db.conn.execute(
         "SELECT origin FROM relation_edge_events WHERE id=?", (prior_id,),
     ).fetchone()["origin"]
+
+    # 未酿历史事件没有本月新事，也没有 pending：关系及其派系均不得入选。
+    calls: list = []
+    assert db.get_relation_brew_pending() == []
+    assert db.get_faction_brew_pending() == []
+    report = run_month_end_relation_brew(db, state, _brew_fn_factory(calls))
+    assert report["selected"] == 0
+    assert calls == []
+    assert db.get_relation_summary(source, target) is None
+    assert db.get_faction_stance_summaries() == []
+
     _add_edge(db, state, source=source, target=target, kind="知遇",
               context="首月知遇。", origin="audience:month-1")
     brew_fn = _brew_fn_factory([])
@@ -159,8 +170,11 @@ def test_brew_persistence_faults_propagate_original_error(game, monkeypatch, sea
 @pytest.mark.parametrize("error_type", [KeyError, ValueError])
 def test_brew_program_error_propagates_loudly_not_degraded(game, error_type):
     db, state, _ = game
-    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
-              context="召见。", origin="audience:program-failure")
+    failed_id = _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
+                          context="召见。", origin="audience:program-failure")
+    failed_origin = db.conn.execute(
+        "SELECT origin FROM relation_edge_events WHERE id=?", (failed_id,),
+    ).fetchone()["origin"]
     fault = error_type("injected brew program error")
 
     def brew(_payload):
@@ -178,7 +192,10 @@ def test_brew_program_error_propagates_loudly_not_degraded(game, error_type):
     run_month_end_relation_brew(db, state, _brew_fn_factory(calls))
     assert db.get_relation_brew_pending() == []
     assert db.get_relation_summary(EMPEROR_NODE, "杨嗣昌") is not None
-    assert next(item for item in calls if "source" in item)["has_pending_failure"] is True
+    payload = next(item for item in calls if "source" in item)
+    assert payload["has_pending_failure"] is True
+    assert [event["origin"] for event in payload["new_events"]].count(failed_origin) == 1
+    assert failed_origin not in [event["origin"] for event in payload["prior_events"]]
 
 
 @pytest.mark.parametrize("malformed", [
