@@ -142,7 +142,6 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
     stub_audience_translate(monkeypatch, translate_fn)
     session = GameSession.__new__(GameSession)
     session.db, session.state, session.content = db, state, content
-    session.registry = None
     session.llm_config = LLMConfig(
         api_key="sk-test", base_url="https://example.invalid", model="test",
     )

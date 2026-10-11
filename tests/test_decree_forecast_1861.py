@@ -131,7 +131,6 @@ def _sess(db, state, content, monkeypatch, translate_fn):
     sess.db = db
     sess.state = state
     sess.content = content
-    sess.registry = None
     sess.llm_config = LLMConfig(
         api_key="test", base_url="https://example.invalid/v1", model="test-model",
     )

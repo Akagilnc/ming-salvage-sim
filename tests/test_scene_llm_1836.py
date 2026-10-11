@@ -31,7 +31,6 @@ def _sess(db, state, content, *, llm_config=None):
     sess.db = db
     sess.state = state
     sess.content = content
-    sess.registry = None
     sess.llm_config = llm_config or SimpleNamespace(channel="api")
     sess.temporary_characters = {}
     sess.agno_db = None

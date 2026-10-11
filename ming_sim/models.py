@@ -422,7 +422,7 @@ def is_vassal_prince(character: "Character") -> bool:
 
     单一定义，所有面引用此规则（PR#121，cmr R3–R5 cross-section coverage-drift 收敛于此）。
     受守面清单（新增同类面时一并加，勿漏）：
-    - web_app: visible_in_court / in_talent_pool / _require_active_minister / api_create_secret_order
+    - web_app: visible_in_court / in_talent_pool / api_create_secret_order
     - materials: 人物/朝臣名册.txt
     - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）

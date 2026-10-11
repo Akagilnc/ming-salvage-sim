@@ -12,7 +12,7 @@ from tests.readback_helpers import faction_satisfaction as _faction_satisfaction
 from tests.readback_helpers import class_satisfaction as _class_satisfaction
 
 
-from tests.test_decree_commitment_creation_136 import _promulgated_commitment_origin
+from tests.dossier_test_helpers import promulgated_policy_origin
 
 def _army_arrears(db, army_id: str) -> int:
     row = db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()
@@ -74,7 +74,7 @@ def test_created_future_limited_duration_commitment_applies_first_month(game, mo
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "future-monthly-authority"),
+                    "origin_ref": promulgated_policy_origin(db, state, "future-monthly-authority"),
                     "kind": "initiative",
                     "title": "连续两月宣示皇威",
                     "stage_text": "连续两月遣使宣示皇威。",
@@ -917,7 +917,7 @@ def test_commitment_missing_purpose_still_routes_arrears_budget(game):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "missing-purpose"),
+                    "origin_ref": promulgated_policy_origin(db, state, "missing-purpose"),
                     "kind": "initiative",
                     "title": "每月补关宁欠饷直到补齐",
                     "ongoing_effects": {
@@ -1164,7 +1164,7 @@ def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "future-review"),
+                    "origin_ref": promulgated_policy_origin(db, state, "future-review"),
                     "kind": "initiative",
                     "title": "三月后复试",
                     "ongoing_effects": {},

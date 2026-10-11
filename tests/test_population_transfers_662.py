@@ -39,7 +39,7 @@ def _conservation_oracle(before, after, records):
         if key not in mutated:
             assert after[key] == before[key], f"未声明行被改动：{key}"
 
-from tests.fiscal_test_utils import class_population as _pop
+from tests.readback_helpers import class_population as _pop
 from test_population_transfers_649 import (
     DISPLACED_SHAANXI,
     FARMER_SHAANXI,

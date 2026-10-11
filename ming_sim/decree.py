@@ -279,13 +279,11 @@ def build_promulgation_judge_context(
 
 
 def _require_promulgation_verdict_list(
-    generated: object, *, raw_value: object = None,
+    generated: object,
 ) -> List[Dict[str, object]]:
     """Canonical top-level shape authority for every promulgation verdict batch."""
     if not isinstance(generated, list):
-        raise LLMContractError(
-            "颁布判官 verdicts 必须为列表", raw_value=raw_value,
-        )
+        raise LLMContractError("颁布判官 verdicts 必须为列表")
     return generated
 
 
@@ -362,9 +360,7 @@ def llm_promulgation_verdicts(
         transport_policy=transport_policy,
     )
     parsed = parse_agent_json(raw, "颁布判官")
-    return _require_promulgation_verdict_list(
-        parsed.get("verdicts"), raw_value=parsed,
-    )
+    return _require_promulgation_verdict_list(parsed.get("verdicts"))
 
 
 def _validate_promulgation_verdict_item(

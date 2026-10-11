@@ -4895,18 +4895,6 @@ _STATUS_LABEL_WEB = {
 }
 
 
-def _require_active_minister(minister_name: str) -> None:
-    if minister_name not in get_game().content.characters:
-        raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
-    character = get_game().content.characters[minister_name]
-    # #1402：召见闸文案单一真源 = session.can_summon（含宗藩/非大明/非 active）。
-    # 旧副本多一个「已」字，offstage 产「已尚未登场」；后宫仍由 can_summon 放行
-    # （不拒 office_type=后宫，嫔妃 chat 复用本端点）。
-    ok, reason = get_game().session.can_summon(character)
-    if not ok:
-        raise HTTPException(status_code=409, detail=(reason or "").strip())
-
-
 def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     turns = db.list_hall_chat_turns(int(night_id))
     speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)

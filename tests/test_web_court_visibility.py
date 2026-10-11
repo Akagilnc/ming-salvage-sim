@@ -197,7 +197,7 @@ def test_consort_excluded_from_court(read_game):
 
 
 def _stub_game(monkeypatch, db, content):
-    """把 web_app.web_game 换成轻量 stub（复用真 db/content），供 _require_active_minister 端点守门测试。
+    """把 web_app.web_game 换成轻量 stub（复用真 db/content），供召见资格测试。
 
     #1402：端点改调 session.can_summon 取文案——stub 须挂真 GameSession.can_summon
     （db + temporary_characters），不得再空壳 SimpleNamespace。
@@ -220,7 +220,7 @@ def _stub_game(monkeypatch, db, content):
 
 def test_active_consort_chat_not_rejected(game):
     """后宫不在宗藩闸内——嫔妃 chat 复用召对入口，active+ming 后宫须可召（finding D 反向锁）。
-    闸经现役公共入口 GameSession.can_summon（web 端点 _require_active_minister 的共用闸）断言。"""
+    闸经现役公共入口 GameSession.can_summon 断言。"""
     import pytest
     from ming_sim.session import GameSession
     db, state, content = game
@@ -243,7 +243,7 @@ def test_active_consort_chat_not_rejected(game):
 
 def test_zongfan_cannot_be_summoned_via_can_summon(game):
     """summon_minister 工具链（session 召对 + web 流式两路）共用 session.can_summon 闸——宗藩须在此拒，
-    否则裁判可绕朝堂列表按名召宗室（cmr R4：_require_active_minister 只守 /chat 直连，summon 工具走
+    否则裁判可绕朝堂列表按名召宗室（cmr R4：summon 工具走
     can_summon）。集中守 can_summon 一处覆盖两路；后宫不受此闸影响。"""
     import pytest
     from ming_sim.session import GameSession

@@ -18,6 +18,7 @@ import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
+from tests.dossier_test_helpers import promulgated_policy_origin
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
@@ -37,12 +38,7 @@ LIAO_SEED_SHAANXI = 2929.20151 * 0.009 / 12.0  # 辽饷九厘基线（万两/月
 
 def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):
     if "origin_ref" not in kw:
-        dossier_id = db.create_decree_dossier(
-            state, action_type="policy", decree_text=f"{region_id}加派",
-            target_kind="region", target_id=region_id,
-        )
-        db.record_dossier_decision(dossier_id, "promulgated")
-        kw["origin_ref"] = f"dossier:{dossier_id}"
+        kw["origin_ref"] = promulgated_policy_origin(db, state, f"{region_id}加派")
     item = {"region_id": region_id, "monthly_amount": monthly_amount}
     item.update(kw)
     return item

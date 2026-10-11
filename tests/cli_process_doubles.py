@@ -134,18 +134,13 @@ class FakeCliProcess:
 
     def __init__(
         self,
-        cmd: Optional[Sequence[str]] = None,
         *,
         stdout_script: Sequence[ScriptItem] = (),
         stderr_script: Sequence[ScriptItem] = (),
         returncode: int = 0,
-        popen_kwargs: Optional[Dict[str, Any]] = None,
         stdin_error: Optional[BaseException] = None,
     ) -> None:
-        self.cmd = list(cmd or [])
-        self.popen_kwargs = dict(popen_kwargs or {})
         self.killed = threading.Event()
-        self.terminated = False
         self.stdin = _FakeStdin(stdin_error)
         self.stdout = _ScriptedStream(stdout_script, self.killed)
         self.stderr = _ScriptedStream(stderr_script, self.killed)
@@ -166,7 +161,6 @@ class FakeCliProcess:
 
     def terminate(self) -> None:
         # 真 subprocess 对已退进程 terminate 是 no-op：退出码不得被收尾动作改写。
-        self.terminated = True
         if self.poll() is None:
             self.killed.set()
 
@@ -193,11 +187,9 @@ class FakeCliRunnerScript:
             index = len(self.processes)
             spec = self._runs[min(index, len(self._runs) - 1)]
             proc = FakeCliProcess(
-                cmd,
                 stdout_script=spec.get("stdout", ()),
                 stderr_script=spec.get("stderr", ()),
                 returncode=int(spec.get("returncode", 0)),
-                popen_kwargs=kwargs,
                 stdin_error=spec.get("stdin_error"),
             )
             self.processes.append(proc)

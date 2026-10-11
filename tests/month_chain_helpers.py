@@ -17,7 +17,6 @@ def make_light_session(db, state, content):
     session.db = db
     session.state = state
     session.content = content
-    session.registry = None
     session.llm_config = None
     session.agno_db = None
     session.deaths_this_turn = []

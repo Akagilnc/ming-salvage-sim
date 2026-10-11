@@ -77,11 +77,9 @@ def _capture_run(monkeypatch, proc=None):
         captured["kw"] = kw
         spec = proc(cmd, **kw) if callable(proc) else proc
         fake = FakeCliProcess(
-            cmd,
             stdout_script=((spec.stdout,) if spec.stdout else ()),
             stderr_script=((spec.stderr,) if spec.stderr else ()),
             returncode=spec.returncode,
-            popen_kwargs=kw,
         )
         captured["proc"] = fake
         return fake

@@ -364,8 +364,7 @@ def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch)
 
     def fake_popen(cmd, **kwargs):
         captured["cmd"] = list(cmd)
-        return FakeCliProcess(cmd, stdout_script=("臣领旨。\n",), returncode=0,
-                              popen_kwargs=kwargs)
+        return FakeCliProcess(stdout_script=("臣领旨。\n",), returncode=0)
 
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)

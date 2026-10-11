@@ -20,6 +20,7 @@ from ming_sim.constants import (
 )
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
+from tests.dossier_test_helpers import promulgated_policy_origin
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
 from tests.readback_helpers import class_population as _pop
 
@@ -88,15 +89,11 @@ def test_standalone_absorption_is_durable_to_second_connection(game):
 
 def test_standalone_surcharge_is_durable_to_second_connection(game):
     db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="陕西加派",
-        target_kind="region", target_id="shaanxi",
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    origin = promulgated_policy_origin(db, state, "陕西加派")
     applied = apply_score_extraction(db, state, {
         "surcharge_decrees": [{
             "region_id": "shaanxi", "monthly_amount": 10.0,
-            "origin_ref": f"dossier:{dossier_id}",
+            "origin_ref": origin,
         }],
     }, content, None)
     expected = applied["surcharge_decrees"][0]["加派基线"]
@@ -113,17 +110,13 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
     before_fiscal = db.conn.execute(
         "SELECT fiscal FROM regions WHERE id='shaanxi'"
     ).fetchone()[0]
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="陕西加派",
-        target_kind="region", target_id="shaanxi",
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    origin = promulgated_policy_origin(db, state, "陕西加派")
     with pytest.raises(RuntimeError):
         with atomic(db):
             apply_score_extraction(db, state, {
                 "surcharge_decrees": [{
                     "region_id": "shaanxi", "monthly_amount": 10.0,
-                    "origin_ref": f"dossier:{dossier_id}",
+                    "origin_ref": origin,
                 }],
                 "bandit_absorptions": [{
                     "region_id": "shaanxi", "power_id": "bandit_li_zicheng",
