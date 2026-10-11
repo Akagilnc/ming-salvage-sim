@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from ming_sim.session_write_queue import SessionWriteQueue
+from tests.test_session_write_queue_1353 import wait_pending_writes
 
 
 class _RunContent:
@@ -130,12 +131,10 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
         done_collected = threading.Event()
 
         def _take_done() -> None:
-            while True:
-                item = next(stream)
+            for item in stream:
                 if item.get("type") == "done":
                     done_box.append(item)
                     done_collected.set()
-                    return
 
         collector = threading.Thread(target=_take_done, daemon=True)
         collector.start()
@@ -161,6 +160,7 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
             settlement_thread.join()
         if collector is not None and collector.ident is not None:
             collector.join()
+        wait_pending_writes(runtime)
 
 
 def test_identity_setup_failure_preserves_question_and_releases_pending_owner(monkeypatch, game):
