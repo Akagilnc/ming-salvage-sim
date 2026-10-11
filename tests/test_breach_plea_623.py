@@ -1017,3 +1017,63 @@ def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
     ).fetchall())
     assert edges, "撤人边/0056 辜负不得丢"
     assert len(edges) == 1, "同人辜负不重复"
+
+
+def test_policy_reversal_revoke_keeps_same_origin_world_situations(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token='revoke-keep-world')
+    cid, _ = _insert_commitment(db, state, title='撤令停诺之诺', origin_ref=f'dossier:{did}', bar_value=20, end_turn=state.turn + 30, participants=[{'character_id': holder, 'tier': '主办', 'role': '承办'}])
+    unrest_id = db.insert_issue(state, kind='situation', title='流民聚众抗粮', origin_kind='dossier', origin_ref=f'dossier:{did}')
+    revoke_id = db.create_decree_dossier(state, action_type='revoke_decree', decree_text='前旨作废', target_kind='dossier', target_id=str(did), payload={'revoke_target_dossier_id': did, 'text': '前旨作废'})
+    db.apply_dossier_verdicts(state, [{'dossier_id': revoke_id, 'decision': 'promulgated'}], content=content)
+    statuses = {int(row['id']): str(row['status']) for row in db.conn.execute('SELECT id, status FROM issues WHERE id IN (?, ?)', (cid, unrest_id)).fetchall()}
+    assert statuses[int(cid)] == 'dropped'
+    assert statuses[int(unrest_id)] == 'active', '撤令不得无差别终结同源世界局势'
+
+
+def test_audience_revoke_commission_rejects_unrevocable_target(game):
+    from ming_sim.declaration_dispatch import dispatch_declaration
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    before = db.conn.execute("SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'").fetchone()['c']
+    result = dispatch_declaration(db, state, {'commissions': [{'text': '把方才那话收回去', 'revoke': {'target_kind': 'dossier', 'target_id': '999999'}}]}, minister_name='')
+    assert not result.commissions.applied
+    assert result.commissions.rejected
+    after = db.conn.execute("SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'").fetchone()['c']
+    assert int(after) == int(before)
+
+
+def test_policy_reversal_revoke_rejected_leaves_everything_untouched(game):
+    from dossier_test_helpers import rejected_verdict
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token='revoke-rejected')
+    cid, _ = _insert_commitment(db, state, title='劝回则不撤之诺', origin_ref=f'dossier:{did}', bar_value=20, end_turn=state.turn + 30, participants=[{'character_id': holder, 'tier': '主办', 'role': '承办'}])
+    revoke_id = db.create_decree_dossier(state, action_type='revoke_decree', decree_text='前旨作废', target_kind='dossier', target_id=str(did), payload={'revoke_target_dossier_id': did, 'text': '前旨作废'})
+    db.apply_dossier_verdicts(state, [rejected_verdict(revoke_id)], content=content)
+    assert db.dossiers.get(did)['status'] == 'executing'
+    assert db.conn.execute('SELECT status FROM issues WHERE id=?', (cid,)).fetchone()['status'] == 'active'
+    assert _cost_events(db, did) == []
+    assert _pending_pleas(db) == []
+
+
+def test_revoke_target_identity_falls_back_to_dossier_row(game):
+    db, state, content = game
+    did, holder = _executing_policy_dossier(db, state, token="row-fallback")
+    cid, _ = _insert_commitment(
+        db, state, origin_ref=f"dossier:{did}", end_turn=state.turn + 30,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    revoke_id = db.create_decree_dossier(
+        state, action_type="revoke_decree", decree_text="撤回前旨",
+        target_kind="issue", target_id=str(cid), payload={"text": "撤回前旨"},
+    )
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": revoke_id, "decision": "promulgated"}], content=content,
+    )
+    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (cid,)).fetchone()[0] == "dropped"
+    assert db.dossiers.get(did)["status"] == "executing"

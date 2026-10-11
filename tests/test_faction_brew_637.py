@@ -390,3 +390,65 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls(game)
     # 必须含新措辞（正向）
     # 宪法 P6 禁负向句：不得出现“不要当作本月发生/不要把旧事件当本月”
     # 正向表述校验：提示按自带时序判断（不通过否定达到）
+
+
+def test_failed_faction_brew_rebrews_once_via_existing_pending_seam(game):
+    db, state, _ = game
+    _add_edge(db, state, source='温体仁', target='周延儒', kind='结怨', context='温体仁当殿讦周延儒。', origin='audience:turn-1')
+
+    def failing_brew(payload_json: str) -> str:
+        raise LLMUnavailable('酿制裁判接口不可用')
+    report = run_month_end_relation_brew(db, state, failing_brew, parallel=False)
+    assert report['selected'] == 2
+    assert len(report['degraded']) == 2
+    assert next((r for r in db.factions.get_faction_stance_summaries() if r['faction'] == '皇党'), None) is None
+    pending = db.person_logs.get_faction_brew_pending()
+    assert [row['faction'] for row in pending] == ['皇党']
+    assert [(row['source'], row['target']) for row in db.person_logs.get_relation_brew_pending()] == [('温体仁', '周延儒')]
+    state.turn += 1
+    state.period += 1
+    calls: list = []
+    brew_fn = _dual_brew_fn_factory(calls, stance='皇党内因温周之隙而生嫌隙。')
+    report = run_month_end_relation_brew(db, state, brew_fn, parallel=False)
+    faction_payloads = [payload for payload in calls if payload.get('view') == VIEW_FACTION_STANCE]
+    assert len(faction_payloads) == 1
+    assert faction_payloads[0]['has_pending_failure'] is True
+    assert faction_payloads[0]['faction'] == '皇党'
+    assert len(report['brewed']) == 2
+    assert next(r for r in db.factions.get_faction_stance_summaries() if r['faction'] == '皇党')['last_brewed_period'] == state.period
+    assert db.person_logs.get_faction_brew_pending() == []
+    assert db.person_logs.get_relation_brew_pending() == []
+    state.turn += 1
+    state.period += 1
+    summaries_before = db.factions.get_faction_stance_summaries()
+    calls.clear()
+    report = run_month_end_relation_brew(db, state, brew_fn, parallel=False)
+    assert report['selected'] == 0
+    assert calls == []
+    assert db.factions.get_faction_stance_summaries() == summaries_before
+
+
+def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
+    db, state, _ = game
+    _add_edge(db, state, source=EMPEROR_NODE, target='杨嗣昌', kind='知遇', context='越次一召。', origin='audience:turn-1')
+    calls: list = []
+    brew_fn = _dual_brew_fn_factory(calls, stance='皇党旧文。')
+    run_month_end_relation_brew(db, state, brew_fn, parallel=False)
+    before = next((r for r in db.factions.get_faction_stance_summaries() if r['faction'] == '皇党'), None)
+    state.turn += 1
+    state.period += 1
+    _add_edge(db, state, source=EMPEROR_NODE, target='杨嗣昌', kind='辜负', context='所请被驳。', origin='audience:turn-2')
+    calls.clear()
+    brew_fn.stances = ['{"irrelevant": 1}']
+    report = run_month_end_relation_brew(db, state, brew_fn, parallel=False)
+    assert report['degraded'], '派系腿 shape 违约必须降级留痕'
+    after = next((r for r in db.factions.get_faction_stance_summaries() if r['faction'] == '皇党'), None)
+    assert after['stance_segment'] == before['stance_segment']
+    assert [row['faction'] for row in db.person_logs.get_faction_brew_pending()] == ['皇党']
+    state.turn += 1
+    state.period += 1
+    calls.clear()
+    brew_fn.stances = [{STANCE_KEY: '皇党因杨嗣昌被驳而渐离。'}]
+    report = run_month_end_relation_brew(db, state, brew_fn, parallel=False)
+    assert next(r for r in db.factions.get_faction_stance_summaries() if r['faction'] == '皇党')['last_brewed_period'] == state.period
+    assert db.person_logs.get_faction_brew_pending() == []

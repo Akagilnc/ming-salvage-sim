@@ -55,6 +55,7 @@ def test_db_offstage_excluded_even_if_memory_active(game):
     db.set_character_status(state, name, "offstage", "测试：离场")
     assert ch.status == "active"  # 内存 stale，证明分叉确实存在
     assert visible_in_court(ch, db) is False
+    assert name not in {row["name"] for row in db.characters.current_court_rows(state.year, state.period)}
 
 
 def test_db_active_included_even_if_memory_offstage(game):
@@ -445,3 +446,40 @@ def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeyp
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
     chosen = term.choose_minister(sess)
     assert chosen is content.characters["温体仁"]
+
+
+
+
+def test_shi_kefa_not_in_summonable_court_roster(read_game):
+    db, _state, content = read_game
+    assert '史可法' in content.characters, 'seed 须含史可法'
+    ch = content.characters['史可法']
+    assert ch.office_type == '未仕'
+    assert '诸生' in (ch.office or '')
+    assert int(getattr(ch, 'debut_year', 0) or 0) == 0
+    assert ch.status == 'active', ch.status
+    row = db.conn.execute('SELECT status, debut_year FROM characters WHERE name=?', ('史可法',)).fetchone()
+    assert row is not None
+    assert row['status'] == 'active'
+    assert int(row['debut_year'] or 0) == 0
+    sess = _session_stub(db, content)
+    ok, reason = sess.can_summon(ch)
+    assert ok is False, f'史可法 can_summon 应拒，实际放行 reason={reason!r}'
+    assert reason
+    assert visible_in_court(ch, db) is False, '史可法不得入 web 朝堂 ministers 投影'
+
+
+def test_role_roster_only_lists_current_active_ming_people(game):
+    db, state, content = game
+    names = list(content.characters)[:4]
+    for name, status, debut_year, power_id in zip(
+        names, ("dismissed", "offstage", "active", "active"),
+        (0, 0, state.year + 1, 0), ("ming", "ming", "ming", "houjin"),
+    ):
+        db.conn.execute(
+            "UPDATE characters SET office_type='礼部', status=?, debut_year=?, power_id=? WHERE name=?",
+            (status, debut_year, power_id, name),
+        )
+    db.conn.commit()
+    listed = {row["name"] for row in db.characters.current_court_rows(state.year, state.period)}
+    assert set(names).isdisjoint(listed)

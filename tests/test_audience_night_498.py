@@ -400,6 +400,13 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
     db2 = GameDB(path, content)
     state2 = db2.load_state()
     assert an.get_night(db2, night["id"])["status"] == "closing"
+    before = db2.conn.total_changes
+    for what in ("召对", "阅折"):
+        with pytest.raises(AudienceNightError) as blocked:
+            an.assert_night_accepts_player_input(db2, what=what)
+        assert blocked.value.code == "night_closing"
+        assert blocked.value.detail == {"night_id": night["id"], "what": what}
+    assert db2.conn.total_changes == before
     # 新召对：open_night 无 content/registry → 响亮拒绝，不隐式封夜、不丢任免
     with pytest.raises(AudienceNightError) as ei:
         open_hall_turn(
@@ -560,3 +567,26 @@ def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):
         and not str(entry.get("origin_ref") or "").strip()
         for entry in entries
     )
+
+
+def test_two_nights_isolated_and_timeline_alignable(game):
+    db, state, content = game
+    a = _active_minister(db, content)
+    b = _active_minister(db, content, exclude={a})
+    n1 = an.open_night(db, state, location='乾清宫', time_of_day='夜')
+    an.summon_enter(db, n1['id'], a, method=METHOD_XUANRU)
+    tid1 = db.create_chat_turn(state, a, 'sess-a', 0, night_id=n1['id'])
+    _land_reply(db, state, a, tid1)
+    an.close_night(db, state, night_id=n1['id'])
+    n2 = an.open_night(db, state, location='文华殿', time_of_day='日')
+    an.summon_enter(db, n2['id'], b, method=METHOD_XUANRU)
+    tid2 = db.create_chat_turn(state, b, 'sess-b', 0, night_id=n2['id'])
+    _land_reply(db, state, b, tid2)
+    an.close_night(db, state, night_id=n2['id'])
+    assert n1['id'] != n2['id']
+    n1_persons = {p for e in an.list_ledger(db, n1['id']) for p in e['person_names']}
+    n2_persons = {p for e in an.list_ledger(db, n2['id']) for p in e['person_names']}
+    assert a in n1_persons and a not in n2_persons
+    assert b in n2_persons and b not in n1_persons
+    assert [int(x['id']) for x in an.list_chat_turns_for_night(db, n1['id'])] == [tid1]
+    assert [int(x['id']) for x in an.list_chat_turns_for_night(db, n2['id'])] == [tid2]

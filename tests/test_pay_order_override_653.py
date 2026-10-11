@@ -13,7 +13,7 @@ import math
 import pytest
 
 from ming_sim.fiscal_tick import settle_tick
-from ming_sim.pay_order import materialize_pay_order_decree, parse_override_key, resolve_haircut_bp, resolve_pay_order_overrides
+from ming_sim.pay_order import PayOrderKeyError, restore_pay_order_override, materialize_pay_order_decree, parse_override_key, resolve_haircut_bp, resolve_pay_order_overrides
 
 def _override_dossier(db, state, entries, *, text="偿还序/折发旨") -> int:
     """成案一道 pay_order_override 案卷（F1.2：旨意不是面板、每道旨一张案卷）。"""
@@ -76,12 +76,12 @@ def test_override_key_illegal_shapes_fail_loud(key):
 
 @pytest.mark.parametrize("value", [0, -1, 10001, "5000", True, 5000.0, None])
 def test_haircut_value_domain_fail_loud(value):
-    from ming_sim.pay_order import validate_override_value
+    from ming_sim.pay_order import PayOrderKeyError, restore_pay_order_override, validate_override_value
     with pytest.raises(ValueError):
         validate_override_value("due_haircut_bp_宗禄", value)
 
 def test_priority_value_domain_rejects_non_int():
-    from ming_sim.pay_order import validate_override_value
+    from ming_sim.pay_order import PayOrderKeyError, restore_pay_order_override, validate_override_value
     with pytest.raises(ValueError):
         validate_override_value("due_priority_军饷", "10")
     with pytest.raises(ValueError):
@@ -162,7 +162,7 @@ def test_golden1_pay_order_reversal_breakdown_tsv():
 def test_golden2_haircut_half_is_exemption_not_debt():
     """②「宗禄折半」：floor(Due×bp/10000)；折掉部分不入宗禄欠；NewDebt 只含折后未付。
     r2 golden：Due=101、bp=5000 → 应得 50、免除 51。"""
-    from ming_sim.pay_order import haircut_due
+    from ming_sim.pay_order import PayOrderKeyError, restore_pay_order_override, haircut_due
     eff, exempt = haircut_due(101, 5000)
     assert eff == 50.0 and exempt == 51.0
 
@@ -242,8 +242,7 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
 
     db, state, _content = game
     db.conn.execute(
-        "UPDATE armies SET province_pay_arrears = 12.0, "
-        "arrears = 12.0 + central_pay_arrears WHERE id = 'shaanxi_army'"
+        "UPDATE armies SET province_pay_arrears = 12.0 WHERE id = 'shaanxi_army'"
     )
     db.conn.commit()
     applied = apply_score_extraction(
@@ -435,10 +434,137 @@ def _capture_override_decree(game, monkeypatch, text, entries):
     session.state = state
     dv = session.add_directive(text, dossier_payload=payload)
     db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(dv.id)
+    dossier = db.dossiers.get_for_directive(dv.id)
     assert dossier is not None
     assert dossier["action_type"] == "pay_order_override"
     return int(dossier["id"])
 
 
 # ═══════════════ F2.3（owner 拍板 r5）：官俸欠/宗禄欠当回合流量持久留痕 ═══════════════
+
+
+def test_r4_no_phantom_region_materialization_is_all_or_nothing(game):
+    db, state, _content = game
+    entries = [{'key': 'due_haircut_bp_军饷@shaanxi#province', 'value': 8000}, {'key': 'due_haircut_bp_军饷@SX#province', 'value': 9000}]
+    with pytest.raises(ValueError):
+        _override_dossier(db, state, entries)
+    cfg = db.fiscal_config.values()
+    assert 'due_haircut_bp_军饷@shaanxi#province' not in cfg
+    assert db.conn.execute('SELECT COUNT(*) c FROM fiscal_config_changes').fetchone()['c'] == 0
+
+
+def test_proposed_revoke_does_not_restore_override(game):
+    db, state, _content = game
+    until = int(state.turn) + 2
+    target = _override_dossier(db, state, [{'key': 'due_priority_军饷@shaanxi', 'value': 40, 'until_turn': until}])
+    db.apply_dossier_promulgation(state, target, 'promulgated')
+    revoke = db.create_decree_dossier(state, action_type='revoke_decree', decree_text='撤回前旨', target_kind='dossier', target_id=str(target), payload={'revoke_target_dossier_id': target})
+    before_cfg = dict(db.fiscal_config.values())
+    with pytest.raises(PayOrderKeyError):
+        restore_pay_order_override(db, turn=int(state.turn), target_dossier_id=target, revoke_dossier_id=revoke, reason='未颁不得删 config')
+    cfg = db.fiscal_config.values()
+    assert cfg['due_priority_军饷@shaanxi'] == 40
+    assert cfg['due_priority_军饷@shaanxi_until_turn'] == until
+    assert cfg['due_priority_军饷@shaanxi'] == before_cfg['due_priority_军饷@shaanxi']
+    assert cfg['due_priority_军饷@shaanxi_until_turn'] == before_cfg['due_priority_军饷@shaanxi_until_turn']
+    origin = f'dossier:{revoke}'
+    assert db.conn.execute('SELECT COUNT(*) c FROM fiscal_config_tombstones WHERE origin_ref=?', (origin,)).fetchone()['c'] == 0
+    assert db.conn.execute('SELECT COUNT(*) c FROM fiscal_config_changes WHERE origin_ref=?', (origin,)).fetchone()['c'] == 0
+
+
+def test_rejected_revoke_does_not_restore_override(game):
+    from dossier_test_helpers import rejected_verdict
+    db, state, _content = game
+    until = int(state.turn) + 2
+    target = _override_dossier(db, state, [{'key': 'due_priority_军饷@shaanxi', 'value': 40, 'until_turn': until}])
+    db.apply_dossier_promulgation(state, target, 'promulgated')
+    revoke = db.create_decree_dossier(state, action_type='revoke_decree', decree_text='撤回前旨', target_kind='dossier', target_id=str(target), payload={'revoke_target_dossier_id': target})
+    db.apply_dossier_verdicts(state, [rejected_verdict(revoke)])
+    before_cfg = dict(db.fiscal_config.values())
+    with pytest.raises(PayOrderKeyError):
+        restore_pay_order_override(db, turn=int(state.turn), target_dossier_id=target, revoke_dossier_id=revoke, reason='打回不得删 config')
+    cfg = db.fiscal_config.values()
+    assert cfg['due_priority_军饷@shaanxi'] == 40
+    assert cfg['due_priority_军饷@shaanxi_until_turn'] == until
+    assert cfg['due_priority_军饷@shaanxi'] == before_cfg['due_priority_军饷@shaanxi']
+    assert cfg['due_priority_军饷@shaanxi_until_turn'] == before_cfg['due_priority_军饷@shaanxi_until_turn']
+    origin = f'dossier:{revoke}'
+    assert db.conn.execute('SELECT COUNT(*) c FROM fiscal_config_tombstones WHERE origin_ref=?', (origin,)).fetchone()['c'] == 0
+    assert db.conn.execute('SELECT COUNT(*) c FROM fiscal_config_changes WHERE origin_ref=?', (origin,)).fetchone()['c'] == 0
+
+
+def test_revoke_later_same_dim_decree_not_stomped(game):
+    db, state, _content = game
+    first = _override_dossier(db, state, [{'key': 'due_priority_军饷@shaanxi', 'value': 40}], text='前旨边饷居末')
+    db.apply_dossier_promulgation(state, first, 'promulgated')
+    second = _override_dossier(db, state, [{'key': 'due_priority_军饷@shaanxi', 'value': 5}], text='后旨边饷最前')
+    db.apply_dossier_promulgation(state, second, 'promulgated')
+    assert db.fiscal_config.values()['due_priority_军饷@shaanxi'] == 5
+    revoke = db.create_decree_dossier(state, action_type='revoke_decree', decree_text='撤回前旨', target_kind='dossier', target_id=str(first), payload={'revoke_target_dossier_id': first})
+    db.apply_dossier_promulgation(state, revoke, 'promulgated')
+    cfg = db.fiscal_config.values()
+    assert cfg['due_priority_军饷@shaanxi'] == 5
+    row = db.conn.execute("SELECT origin_ref FROM fiscal_config WHERE key='due_priority_军饷@shaanxi'").fetchone()
+    assert row['origin_ref'] == f'dossier:{second}'
+    stomps = db.conn.execute("SELECT 1 FROM fiscal_config_changes WHERE origin_ref=? AND key='due_priority_军饷@shaanxi'", (f'dossier:{revoke}',)).fetchone()
+    assert stomps is None
+
+
+def test_lifecycle_rejected_decree_zero_config_write(game):
+    from dossier_test_helpers import rejected_verdict
+    db, state, _content = game
+    did = _override_dossier(db, state, [{'key': 'due_priority_军饷', 'value': 40}])
+    before_cfg = db.fiscal_config.values()
+    before_rows = db.conn.execute('SELECT COUNT(*) c FROM fiscal_config_changes').fetchone()['c']
+    db.apply_dossier_verdicts(state, [rejected_verdict(did)])
+    assert db.fiscal_config.values() == before_cfg
+    assert db.conn.execute('SELECT COUNT(*) c FROM fiscal_config_changes').fetchone()['c'] == before_rows
+    assert db.dossiers.get(did)['status'] == 'proposed'
+
+
+def test_stale_until_cleared_by_permanent_overwrite(game):
+    """F1.4：有期限旨被后来的永久旨覆盖 → 遗留 _until_turn 清除，新旨不再到期。"""
+    db, state, _content = game
+    turn = int(state.turn)
+    d1 = _override_dossier(db, state, [{'key': 'due_priority_军饷', 'value': 40, 'until_turn': turn + 1}])
+    db.apply_dossier_promulgation(state, d1, 'promulgated')
+    assert 'due_priority_军饷_until_turn' in db.fiscal_config.values()
+    d2 = _override_dossier(db, state, [{'key': 'due_priority_军饷', 'value': 30}])
+    db.apply_dossier_promulgation(state, d2, 'promulgated')
+    cfg = db.fiscal_config.values()
+    assert 'due_priority_军饷_until_turn' not in cfg
+    assert cfg['due_priority_军饷'] == 30
+    tomb = db.conn.execute("SELECT key, value, origin_ref FROM fiscal_config_tombstones WHERE key='due_priority_军饷_until_turn' ORDER BY id DESC LIMIT 1").fetchone()
+    assert tomb is not None and tomb['origin_ref'] == f'dossier:{d2}'
+    res = resolve_pay_order_overrides(db.fiscal_config.values(), 'shaanxi', turn + 2)
+    assert res is not None
+    assert res.due_order == ('官俸', '军饷', '宗禄', '赈济')
+
+
+def test_manual_override_capture_stages_without_premature_materialization(game, monkeypatch):
+    db, _state, _content = game
+    entries = [{'key': 'due_priority_军饷@shaanxi', 'value': 40}]
+    did = _capture_override_decree(game, monkeypatch, '今岁边饷居末', entries)
+    assert db.dossiers.get(did)['status'] == 'proposed'
+    assert 'due_priority_军饷@shaanxi' not in db.fiscal_config.values()
+
+
+def test_revoke_provincial_falls_back_to_nationwide(game):
+    """Codex-11/revoke_shape_exit②：全国+省域并存时撤省域后该省回落全国键。"""
+    db, state, _content = game
+    nation = _override_dossier(db, state, [{'key': 'due_priority_军饷', 'value': 35}], text='全国边饷居后')
+    db.apply_dossier_promulgation(state, nation, 'promulgated')
+    local = _override_dossier(db, state, [{'key': 'due_priority_军饷@shaanxi', 'value': 50}], text='陕西边饷居末')
+    db.apply_dossier_promulgation(state, local, 'promulgated')
+    turn = db.reign.current_settle_turn()
+    before = resolve_pay_order_overrides(db.fiscal_config.values(), 'shaanxi', turn)
+    assert before is not None and before.due_order.index('军饷') == 3
+    revoke = db.create_decree_dossier(state, action_type='revoke_decree', decree_text='撤陕西旨', target_kind='dossier', target_id=str(local), payload={'revoke_target_dossier_id': local})
+    db.apply_dossier_promulgation(state, revoke, 'promulgated')
+    cfg = db.fiscal_config.values()
+    assert 'due_priority_军饷@shaanxi' not in cfg
+    assert cfg['due_priority_军饷'] == 35
+    after = resolve_pay_order_overrides(cfg, 'shaanxi', turn)
+    assert after is not None
+    assert after.due_order == ('官俸', '宗禄', '军饷', '赈济')
+    assert resolve_pay_order_overrides(cfg, 'henan', turn).due_order == after.due_order

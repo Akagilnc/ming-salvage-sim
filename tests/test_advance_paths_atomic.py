@@ -369,3 +369,34 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     with pytest.raises(ValueError):
         sess.resolve_turn()
     assert state.turn == turn  # 未推进，拟旨不孤儿
+
+
+@pytest.mark.parametrize("phase", ["settling", "awaiting_decision"])
+def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch, phase):
+    db, state, content = game
+    sess = _recovery_session(db, state, content, monkeypatch)
+    payload = {"dossier_action_type": "policy", "target_kind": "issue", "target_id": "tax-relief"}
+    did = sess.add_directive("原草案", dossier_payload=payload).id
+    before = dict(db.issues.directive(did))
+    state.turn_phase = phase
+    for call in (lambda: sess.add_directive("新草案", dossier_payload=payload),
+                 lambda: sess.update_directive(did, "改", dossier_payload=payload),
+                 lambda: sess.delete_directive(did)):
+        with pytest.raises(ValueError):
+            call()
+    assert dict(db.issues.directive(did)) == before
+    assert [r["id"] for r in db.issues.list_directives(state.turn)] == [did]
+
+
+def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, monkeypatch):
+    from tests.month_chain_helpers import make_light_session, canned_full_settlement
+    db, state, content = game
+    session = make_light_session(db, state, content)
+    canned_full_settlement(monkeypatch)
+    gate = session._write_gate
+    assert gate.acquire(blocking=False)
+    try:
+        session.resolve_turn(allow_empty_decree=True, write_gate_already_held=True)
+        assert not gate.acquire(blocking=False)
+    finally:
+        gate.release()

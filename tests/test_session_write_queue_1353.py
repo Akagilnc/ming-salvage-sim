@@ -464,3 +464,21 @@ def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
     with pytest.raises(RuntimeError) as ei:
         wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)
     assert ei.value is fault
+
+
+def test_fail_vacate_lets_barrier_through():
+    """失败钉：腿失败票据空放行，屏障不卡死。"""
+    q = SessionWriteQueue()
+    t = q.claim(key=("extract", 9))
+    assert t is not None
+    fault = RuntimeError("worker failed")
+    def fail():
+        raise fault
+    with pytest.raises(RuntimeError) as exc:
+        q.run(t, fail)
+    assert exc.value is fault
+    q.complete(t)  # 现役调用者负责结票；失败票据也必须到终态。
+    order: list[str] = []
+    q.barrier(lambda: order.append("barrier") or None)
+    assert order == ["barrier"]
+    assert q.inflight_count() == 0

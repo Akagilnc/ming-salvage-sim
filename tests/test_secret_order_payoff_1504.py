@@ -379,6 +379,10 @@ def test_monthly_actual_then_delivered_done(game):
     _set_axes(db, name, loyalty=90, identity=30)
     oid = _issue(db, state, name, "三月密查", "限期三月查明", months=3, target=3)
     did = int(db.dossiers.get_for_secret_order(oid)["id"])
+    issued = apply_monthly_covert_actual_progress(db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True)
+    assert not any(row.get("order_id") == oid for row in issued)
+    assert db.dossiers.actual_progress_units(did) == 0.0
+    assert list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,))) == []
     for _ in range(3):
         state.turn += 1
         db.reign.save_game_state(state)
@@ -2357,3 +2361,93 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     close = next(r for r in settled if r["order_id"] == oid)
     assert close["status"] == "failed"
     assert close["actual_units"] == 0.0
+
+
+@pytest.mark.parametrize('off_status', ['offstage', 'dismissed', 'imprisoned', 'exiled', 'retired', 'dead'])
+def test_offstage_minister_no_progress_no_world_effects(game, off_status):
+    db, state, _ = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    oid = _issue(db, state, name, '离场密令', '不应再办', months=2, target=2)
+    state.turn += 1
+    db.reign.save_game_state(state)
+    before_neiku = int(state.metrics.get('内库', 0))
+    db.conn.execute('UPDATE characters SET status=? WHERE name=?', (off_status, name))
+    db.conn.commit()
+    assert db.character_knowledge.get_secret_order(oid)['status'] == 'active'
+    did = int(db.dossiers.get_for_secret_order(oid)['id'])
+    out = apply_monthly_covert_actual_progress(db, state, selections=[{'order_id': oid, 'fidelity': '忠实'}], commit=True)
+    row = next((r for r in out if r['order_id'] == oid))
+    assert row.get('skipped') is True
+    assert db.dossiers.actual_progress_units(did) == 0.0
+    assert list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,))) == []
+    assert int(state.metrics.get('内库', 0)) == before_neiku
+
+
+def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
+    db, state, _ = game
+    name = _minister(db)
+    target = next((row['name'] for row in db.conn.execute("SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name", (name,)).fetchall() if live_investigation_fact_keys(db, row['name'])))
+    _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
+    key = live_investigation_fact_keys(db, target)[0]
+    oid = _issue(db, state, name, '查核', '查核', months=6, target=1, kind='查核', axes=['既得利益'], investigation_target=target)
+    did = int(db.dossiers.get_for_secret_order(oid)['id'])
+    _next_month(db, state)
+    for bad in ({}, {'effort': '尽力'}, {'fidelity': '忠实', 'fact_key': key}):
+        out = apply_monthly_covert_actual_progress(db, state, selections=[{'order_id': oid, **bad}], commit=True)
+        row = next((r for r in out if r['order_id'] == oid))
+        assert row['rejected'] is True
+        assert row['invalid'] is True
+        assert row['category'] == 'invalid_enum'
+        assert list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,))) == []
+        assert _lanes(db, oid)[key]['effort'] == 0.0
+    out = apply_monthly_covert_actual_progress(db, state, selections=[{'order_id': oid, 'effort': 0.0}], commit=True)
+    row = next((r for r in out if r['order_id'] == oid))
+    assert 'rejected' not in row
+    assert row['units'] == 0.0
+    assert len(list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,)))) == 1
+
+
+@pytest.mark.parametrize('bad', [{}, {'effort': '尽力'}, {'fidelity': '忠实'}])
+def test_invalid_declaration_stops_month_chain_and_marks_invalid(game, bad):
+    db, state, _ = game
+    name = _minister(db)
+    target = next((row['name'] for row in db.conn.execute("SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name", (name,)).fetchall() if live_investigation_fact_keys(db, row['name'])))
+    _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
+    key = live_investigation_fact_keys(db, target)[0]
+    oid = _issue(db, state, name, '查核', '查核', months=6, target=1, kind='查核', axes=['既得利益'], investigation_target=target)
+    did = int(db.dossiers.get_for_secret_order(oid)['id'])
+    _next_month(db, state)
+    chain = _run_supply_4a(db, state, [{'order_id': oid, **bad}])
+    assert chain.get('covert_progress_done') is not True
+    assert chain.get('secret_orders_supply_done') is not True
+    assert chain.get('secret_orders_supply_invalid') is True
+    assert (chain.get('call_failure') or {}).get('step') == 'secret_orders_supply'
+    assert list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,))) == []
+    assert _lanes(db, oid)[key]['effort'] == 0.0
+    assert investigation_lane_actual_units(db, did) == 0.0
+    import ming_sim.month_chain as month_chain
+    month_chain._consume_call_failure_for_retry(db, chain, int(state.turn), decree_text='', source=Provenance.secret_order)
+    resumed = month_chain._load_chain(db, int(state.turn))
+    assert 'secret_orders_supply_product' not in resumed
+    assert 'secret_orders_supply_invalid' not in resumed
+    assert 'call_failure' not in resumed
+    calls = []
+
+    def _fake_supply(db_, state_, llm_config_, chain_):
+        calls.append(True)
+        return {'dossier_progress_reports': [{'dossier_id': int(r['dossier_id']), 'progress_band': '持平', 'memorial_text': '据实以奏'} for r in db_.list_monthly_dossier_progress_nudges(int(state_.turn))], 'covert_exec_selections': [{'order_id': oid, 'fact_key': key, 'effort': 1.0}]}
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(month_chain, 'run_secret_orders_supply', _fake_supply)
+    try:
+        month_chain._step_4a_secret_order_supply(db, state, resumed, turn=int(state.turn), decree_text='', source=Provenance.secret_order, llm_config=object())
+    except SettlementAbort as exc:
+        raise AssertionError(f'失效重起后不该再停续：{exc}')
+    finally:
+        monkey.undo()
+    assert calls, '重试未真正重调 4a——说明仍在复用被废弃的无效产物'
+    assert resumed.get('covert_progress_done') is True
+    assert resumed.get('secret_orders_supply_done') is True
+    assert _lanes(db, oid)[key]['effort'] > 0.0

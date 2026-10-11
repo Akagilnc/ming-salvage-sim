@@ -3939,3 +3939,86 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
         "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
         ("huangtaiji_chengdi",),
     ).fetchone()[0] == 1
+
+
+def test_fiscal_levy_events_stay_out_of_model_candidate_pool(game):
+    """#1892/#1893：三饷是皇帝亲裁，不进人物候选交模型代批（ADR 0020）。"""
+    from ming_sim.issues import FISCAL_LEVY_EVENT_CATEGORY
+    db, state, content = game
+    issues.bind_content(content)
+    levy_ids = {ev.id for ev in content.events if getattr(ev, 'category', '') == FISCAL_LEVY_EVENT_CATEGORY}
+    assert levy_ids, 'content 里应至少有一个三饷事件'
+    for year in (1631, 1637, 1639, 1640):
+        state.year, state.period = (year, 1)
+        db.reign.save_game_state(state)
+        assert not levy_ids & {ev.id for ev in issues.gather_candidate_events(state, db)}
+
+
+@pytest.mark.parametrize('event_id,setup', [('korea_envoy', lambda db: db.conn.execute("UPDATE powers SET leverage=80 WHERE id='houjin'")), ('houjin_split', lambda db: db.conn.execute("UPDATE powers SET cohesion=50 WHERE id='houjin'")), ('jiangnan_gentry_revolt', lambda db: db.conn.executemany("UPDATE classes SET satisfaction=20 WHERE name='士绅' AND region_id=?", [('nanzhili',), ('zhejiang',), ('fujian',)]))])
+def test_person_events_are_model_candidates_not_engine_hard_fired(game, event_id, setup):
+    """#1892 J2：有人拍板者的人物事件迁出 auto_trigger——引擎不硬发，只作候选交模型选。
+
+    门槛达标时若仍被引擎硬发，等于代码替人物（朝鲜仁祖／后金贝勒／江南士绅）拍板。
+    """
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1628
+    state.period = 6
+    db.reign.save_game_state(state)
+    setup(db)
+    db.conn.commit()
+    assert not content.event_by_id[event_id].auto_trigger
+    triggered = issues.auto_trigger_seed_issues(state, db)
+    assert all((item['id'] != event_id for item in triggered))
+    assert db.issues.event_terminal_state(event_id) is None
+    assert db.conn.execute("SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=? LIMIT 1", (event_id,)).fetchone() is None
+    assert event_id in {ev.id for ev in issues.gather_candidate_events(state, db)}
+
+
+def test_gated_auto_trigger_seed_event_does_not_refire_after_issue_resolved(game):
+    """#1892：世界事件读已落终态不再重发——结案后下月不复发（判 J4）。
+
+    旧合同（带 gate 的 seed 硬触发结案后可再立第二条）使同一世界事件被发两次。
+    """
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event('__test_no_refire_auto_seed__', {'民心': '<=5'})
+    ev.auto_trigger = True
+    ev.event_type = 'situation'
+    content.seed_events.append(ev)
+    try:
+        state.metrics['民心'] = 3
+        first = issues.auto_trigger_seed_issues(state, db)
+        first_item = next((item for item in first if item['id'] == '__test_no_refire_auto_seed__'))
+        assert db.issues.event_terminal_state('__test_no_refire_auto_seed__') == 'triggered'
+        db.conn.execute("UPDATE issues SET status='resolved' WHERE id=?", (first_item['issue_id'],))
+        db.conn.commit()
+        second = issues.auto_trigger_seed_issues(state, db)
+        assert all((item['id'] != '__test_no_refire_auto_seed__' for item in second))
+        assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?", ('__test_no_refire_auto_seed__',)).fetchone()[0] == 1
+    finally:
+        content.seed_events.remove(ev)
+
+
+def test_event_pool_pending_person_power_change_blocks_gate(game):
+    """同批人物易主会真实落库，pending 闸门也必须按同一语义预检。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute('UPDATE characters SET status=?, power_id=? WHERE name=?', ('active', 'ming', '袁崇焕'))
+    if '袁崇焕' in content.characters:
+        ch = content.characters['袁崇焕']
+        ch.status = 'active'
+        ch.power_id = 'ming'
+    ev = Event(id='__test_person_power_pending__', title='测试·易主门', kind='朝议', summary='袁崇焕仍属明时才可触发。', urgency=10, severity=10, credibility=100, interests=[], audiences=[], event_type='situation', trigger_gate={'character.袁崇焕.power_id': '== ming'})
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        assert any((c.id == ev.id for c in issues.gather_candidate_events(state, db)))
+        out = issues.apply_score_extraction(db, state, {'new_issues': [{'origin_kind': 'event_pool', 'id': ev.id}], '人物变更': [{'origin_ref': '盘面自发', 'name': '袁崇焕', '动作': '易主', 'new_power': 'houjin', '方式': '主动投敌', '反噬': {'houjin': {'leverage': 1}}, 'reason': '测试易主'}]}, content=content)
+        new_issue = out['issue_summary']['new_issues'][0]
+        assert new_issue['rejected'] is True
+        assert db.conn.execute("SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?", (ev.id,)).fetchone() is None
+        assert db.conn.execute('SELECT power_id FROM characters WHERE name=?', ('袁崇焕',)).fetchone()['power_id'] == 'houjin'
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)

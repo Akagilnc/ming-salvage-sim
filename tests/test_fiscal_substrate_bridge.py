@@ -3127,6 +3127,7 @@ def test_economy_move_writes_live_balance_in_same_transaction(fresh_game):
     "mutate",
     [
         lambda settle: settle.__setitem__("p", []),
+        lambda settle: settle["p"].pop("火耗率"),
         lambda settle: settle["p"].__setitem__("Due", []),
         lambda settle: settle.__setitem__("st", []),
     ],
@@ -3860,3 +3861,38 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             raw["正赋本色_石"] * effective_rate / 10000 / 12,
             abs_tol=0.01,
         )
+
+
+def test_budget_projection_preserves_persisted_fiscal_snapshots(fresh_game):
+    from ming_sim.flows import compute_budget_lines
+    db, state = fresh_game
+    before = [dict(row) for row in db.conn.execute('SELECT id, fiscal FROM regions ORDER BY id')]
+    budget = compute_budget_lines(db, state)
+    assert isinstance(budget, dict) and '国库' in budget
+    assert compute_budget_lines(db, state) == budget
+    assert [dict(row) for row in db.conn.execute('SELECT id, fiscal FROM regions ORDER BY id')] == before
+
+
+@pytest.mark.parametrize("exempt", [False, True])
+def test_zero_due_province_army_morale_short_circuits(fresh_db, exempt):
+    db = fresh_db
+    db.conn.execute("UPDATE armies SET self_funded_pay=1,is_tusi=1,pay_source_region='',province_pay_share=0,central_pay_share=0,province_pay_arrears=0,central_pay_arrears=0")
+    army_id = "southwest_tusi" if exempt else "fujian_navy"
+    db.conn.execute("UPDATE armies SET morale=80,manpower=0 WHERE id=?", (army_id,))
+    if not exempt:
+        db.conn.execute("UPDATE armies SET self_funded_pay=0,is_tusi=0,pay_source_region='fujian',province_pay_share=1,central_pay_share=0,owner_power='ming' WHERE id=?", (army_id,))
+    db.conn.commit()
+    outcomes = db.settle_ming_province_substrate_ticks()
+    assert all(o.error is None for o in outcomes)
+    row = db.conn.execute("SELECT morale,arrears FROM armies WHERE id=?", (army_id,)).fetchone()
+    assert row["arrears"] == 0 and row["morale"] == 80
+
+
+def test_settle_province_tick_nondict_fiscal_raises(fresh_db):
+    from ming_sim.applier import StoredDocumentError
+    fresh_db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
+    fresh_db.conn.commit()
+    with pytest.raises(StoredDocumentError):
+        fresh_db.settle_ming_province_substrate_ticks()
+    after = [dict(r) for r in fresh_db.conn.execute("SELECT id,fiscal FROM regions ORDER BY id")]
+    assert next(r for r in after if r["id"] == "shaanxi")["fiscal"] == "[]"

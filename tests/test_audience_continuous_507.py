@@ -56,12 +56,16 @@ def test_exit_excludes_later_public_ledger_from_character_hearing(game):
     _activate(db, state, "毕自严", "徐光启")
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     nid = int(night["id"])
+    before_entry_id = _public(db, nid, "徐光启", "入殿前公开事实")
     an.summon_enter(db, nid, "毕自严")
     an.summon_enter(db, nid, "徐光启")
     heard_id = _public(db, nid, "徐光启", "徐光启奏：陕西糜烂当速定督抚。")
     an.dismiss_from_audience(db, "毕自严", night_id=nid)
+    present = an.present_names_at(db, nid)
+    assert "毕自严" not in present and "徐光启" in present
     unheard_id = _public(db, nid, "徐光启", "徐光启续奏：九边军饷全无着落。")
 
     visible_ids = {r["id"] for r in an.audible_entries_for(db, nid, "毕自严")}
+    assert before_entry_id not in visible_ids
     assert heard_id in visible_ids
     assert unheard_id not in visible_ids

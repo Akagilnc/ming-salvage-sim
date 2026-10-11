@@ -754,3 +754,73 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game):
     triggered = db.issues.has_event_triggered("jisi_lubian")
     assert state.metrics["民心"] == metric_before + (-3 if triggered else 0)
     assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)
+
+
+def test_unparseable_month_segment_does_not_stage_or_commit(game, monkeypatch):
+    from ming_sim.audience_translate import AudienceTranslateError
+    from ming_sim.month_translate import dispatch_month_segment
+    db, state, _ = game
+    monkeypatch.setattr('ming_sim.cli_backend._run_json_extractor_for_config', lambda *args, **kwargs: ('not-json', ''))
+    with pytest.raises(AudienceTranslateError):
+        dispatch_month_segment(db, state, segment='世界段')
+    assert db.conn.execute('SELECT COUNT(*) FROM staged_declarations').fetchone()[0] == 0
+    with pytest.raises(AudienceTranslateError):
+        dispatch_month_segment(db, state, segment='世界段', translate_fn=lambda request, config: None)
+
+
+def test_staged_month_declarations_settle_in_given_order_and_effects_are_idempotent(game):
+    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
+    from ming_sim.declaration_dispatch import stage_declaration
+    db, state, _ = game
+    person, army = (_character_name(db), _army_id(db))
+    turn = int(state.turn)
+    army_before = db.conn.execute('SELECT morale FROM armies WHERE id=?', (army,)).fetchone()[0]
+    declarations = iter(({'textual_facts': [{'subject_kind': 'character', 'subject_id': person, 'body': '早旨'}], 'effects': {'army_delta': {army: {'origin_ref': '盘面自发', 'morale': 1}, 'missing-army-order': {'morale': 1}}}}, {'textual_facts': [{'subject_kind': 'character', 'subject_id': person, 'body': '晚旨'}], 'effects': {'army_delta': {army: {'origin_ref': '盘面自发', 'morale': 2}}}}))
+    for ref in ('decree:early', 'decree:late'):
+        stage_declaration(db, decree_ref=ref, turn=turn, declaration=next(declarations))
+    assert db.conn.execute('SELECT morale FROM armies WHERE id=?', (army,)).fetchone()[0] == army_before
+    assert db.textual_facts.readable_materials(subject_kind='character', subject_id=person) == ()
+    from ming_sim.declaration_dispatch import discard_staged_declaration
+    stage_declaration(db, decree_ref='discarded', turn=turn, declaration={'textual_facts': [{'subject_kind': 'character', 'subject_id': person, 'body': '不颁布'}]})
+    assert discard_staged_declaration(db, 'discarded') == 1
+    assert db.staged_declarations.staged_for('discarded') == ()
+    assert db.textual_facts.readable_materials(subject_kind='character', subject_id=person) == ()
+    results = settle_staged_declarations_in_decree_order(db, state, ['decree:late', 'decree:early'])
+    assert list(results) == ['decree:late', 'decree:early']
+    assert [fact.body for fact in db.textual_facts.readable_materials(subject_kind='character', subject_id=person)] == ['晚旨', '早旨']
+    assert db.conn.execute('SELECT morale FROM armies WHERE id=?', (army,)).fetchone()[0] == army_before + 3
+    rejected = db.conn.execute('SELECT section, reason, category FROM rejection_reports WHERE turn=?', (turn,)).fetchall()
+    assert [(row['section'], row['category']) for row in rejected] == [('army_changes', 'missing_ref')]
+    assert rejected[0]['reason']
+    early_effects = results['decree:early'].effects.applied[0]['army_changes']
+    assert early_effects[-1]['rejected'] is True
+    assert early_effects[-1]['reason']
+    assert settle_staged_declarations_in_decree_order(db, state, ['decree:late', 'decree:early']) == {}
+    assert db.conn.execute('SELECT morale FROM armies WHERE id=?', (army,)).fetchone()[0] == army_before + 3
+    assert db.conn.execute('SELECT COUNT(*) c FROM rejection_reports WHERE turn=?', (turn,)).fetchone()['c'] == 1
+
+
+def test_staged_month_effects_keep_input_reference_authority(game):
+    from ming_sim.declaration_dispatch import stage_declaration, settle_staged_declarations_in_decree_order
+    db, state, _ = game
+    visible = db.affairs.open(name="预推可见", origin="旨", year=state.year, period=state.period, turn=state.turn)
+    future = visible.id + 1
+    before = state.metrics["国库"]
+    stage_declaration(db, decree_ref="frozen-refs", turn=int(state.turn), visible_refs={"affairs": [visible.id]}, declaration={"effects": {"economy_moves": [
+        {"origin_ref": f"affair:{i}", "account": "国库", "delta": -1, "category": "过月支出", "reason": "输入"} for i in (visible.id, future)
+    ]}})
+    assert state.metrics["国库"] == before
+    hidden = db.affairs.open(name="后开", origin="世界", year=state.year, period=state.period, turn=state.turn)
+    assert hidden.id == future
+    result = settle_staged_declarations_in_decree_order(db, state, ["frozen-refs"])["frozen-refs"]
+    assert state.metrics["国库"] == before - 1
+    rejected = result.effects.applied[0]["economy_moves_rejections"]
+    assert [r["item"]["origin_ref"] for r in rejected if r["rejected"]] == [f"affair:{future}"]
+
+
+def test_null_emperor_fate_does_not_end_the_month(game):
+    from ming_sim.month_translate import dispatch_month_segment
+    db, state, _ = game
+    result = dispatch_month_segment(db, state, segment="本月", translate_fn=lambda request, config: {"effects": {"emperor_fate": None}})
+    assert not state.ended and not state.ending_status
+    assert all("victory_status" not in applied for applied in result.effects.applied)

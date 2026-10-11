@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+import json
 import pytest
 
 import ming_sim.month_chain as month_chain
@@ -119,3 +120,50 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     archive = db.turn_reports.archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
+
+
+def test_author_excludes_secret_sources_from_structured_feed(game, monkeypatch):
+    import ming_sim.agents as agents
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+    from tests.dossier_test_helpers import create_test_secret_order
+    from ming_sim.declaration_dispatch import stage_declaration
+    from ming_sim.materials import list_materials
+
+    db, state, content = game
+    name = next(iter(content.characters))
+    affair = db.affairs.open(name="公开事务", origin="旨", year=state.year, period=state.period, turn=state.turn)
+    oid = create_test_secret_order(db, state, name, "密题", "密令输入", [], deadline_months=1)
+    secret = db.dossiers.get_for_secret_order(oid)["id"]
+    plain = db.create_decree_dossier(state, action_type="policy", decree_text="公开输入", target_kind="issue", target_id="gazette-public")
+    db.apply_dossier_promulgation(state, plain, "promulgated")
+    origins = [f"affair:{affair.id}", f"dossier:{plain}", f"secret_order:{oid}", f"dossier:{secret}"]
+    for origin in origins:
+        if origin != origins[3]:
+            stage_declaration(db, decree_ref=origin, turn=int(state.turn), declaration={"textual_facts": []}, forecast_text=origin)
+            db.staged_declarations.mark_settled(origin)
+        db.textual_facts.append(subject_kind="character", subject_id=name, body="实况输入", year=state.year, period=state.period, turn=state.turn, origin_ref=origin)
+        db.conn.execute("INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,origin_ref) VALUES (?,?,?,'国库',-1,1,'测试','输入',?)", (state.turn,state.year,state.period,origin))
+        collector = RejectionCollector()
+        collector.record("测试", RejectedItem({"origin_ref": origin}, "输入拒因", "invalid_shape", Provenance.player_decree), state.turn)
+        collector.flush_to_db(db)
+        db.insert_issue(state, kind="initiative", title="到期复核", origin_kind="decree", origin_ref=origin, commitment_kind="once", end_turn=state.turn)
+    db.conn.commit()
+    seen = {}
+    def author(_config, prepared):
+        seen["paths"] = list_materials(prepared.root)
+        return object()
+    def model(_agent, message, **_kw):
+        seen["feed"] = json.loads(message)
+        return json.dumps({"title": "标题输入", "report": "正文输入"})
+    monkeypatch.setattr(agents, "create_gazette_author_agent", author)
+    monkeypatch.setattr(agents, "run_agent_text", model)
+    month_chain.run_gazette_text(db, state, _llm(), {"world_text": "世界输入"})
+    assert not any(p.startswith("密令/") for p in seen["paths"])
+    feed = seen["feed"]
+    for key in ("landed", "rejections", "due_commitments"):
+        rows = feed[key]
+        refs = {str((r.get("item") or r).get("origin_ref") or "") for r in rows}
+        assert set(origins[:2]) <= refs
+        assert set(origins[2:]).isdisjoint(refs)
+    assert {r["decree_ref"] for r in feed["nominal"]}.isdisjoint(origins[2:])
+    assert feed["forecasts"] == origins[:2]

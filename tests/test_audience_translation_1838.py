@@ -326,3 +326,31 @@ def test_on_scene_fact_undo_via_translation_entry(game):
         "SELECT status FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()
     assert turn_row["status"] == "undone"
+
+
+def test_retry_older_round_keeps_newer_protagonist(game):
+    db, state, _ = game
+    _activate(db, state, "王绍徽", "王承恩")
+    nid = int(open_night(db, state, location="乾清宫", time_of_day="戌时")["id"])
+    older = db.create_chat_turn(state, "殿上", "older", 0, night_id=nid)
+    newer = db.create_chat_turn(state, "殿上", "newer", 0, night_id=nid)
+    for ctid in (older, newer):
+        db.reign.set_chat_turn_status(ctid, "active")
+    apply_audience_round_translation(db, state, {"protagonist": {"person_name": "王承恩"}}, night_id=nid, chat_turn_id=newer)
+    apply_audience_round_translation(db, state, {"protagonist": {"person_name": "王绍徽"}}, night_id=nid, chat_turn_id=older)
+    assert db.conn.execute("SELECT protagonist_name FROM audience_nights WHERE id=?", (nid,)).fetchone()[0] == "王承恩"
+
+
+def test_protagonist_undo_reprojects_night_current(game):
+    db, state, _ = game
+    _activate(db, state, "王绍徽", "王承恩")
+    nid = int(open_night(db, state, location="乾清宫", time_of_day="戌时")["id"])
+    turns = []
+    for person in ("王绍徽", "王承恩"):
+        turn_id = _active_chat_turn(db, state, nid)
+        turns.append(turn_id)
+        apply_audience_round_translation(db, state, {"protagonist": {"person_name": person}}, night_id=nid, chat_turn_id=turn_id)
+    db.undo_chat_turn(turns[1])
+    assert db.conn.execute("SELECT protagonist_name FROM audience_nights WHERE id=?", (nid,)).fetchone()[0] == "王绍徽"
+    db.undo_chat_turn(turns[0])
+    assert db.conn.execute("SELECT protagonist_name FROM audience_nights WHERE id=?", (nid,)).fetchone()[0] == ""

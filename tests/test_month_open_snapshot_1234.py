@@ -12,6 +12,8 @@
 """
 
 from __future__ import annotations
+import pytest
+
 
 from ming_sim.session_write_queue import get_session_write_queue
 
@@ -20,7 +22,8 @@ from types import SimpleNamespace
 
 
 import web_app
-from ming_sim.models import TurnPhase
+from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
+from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
 
 
 def _runtime(db, state, *, pending_decisions=None) -> web_app.WebGame:
@@ -154,3 +157,78 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     assert result["state"]["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
     assert result["state"]["turn"]["settlement_display"] is True
     assert db.month_open_snapshots.get(turn_before) is not None
+
+
+def test_cross_month_snapshot_does_not_bleed(game):
+    db, state, _content = game
+    before = {k: int(state.metrics[k]) for k in ("国库", "内库", "民心", "皇威")}
+    turn = int(state.turn)
+    db.capture_month_open_snapshot(state)
+    state.turn = turn + 1
+    state.metrics['国库'] = before['国库'] + 5
+    db.reign.save_game_state(state)
+    payload = _runtime(db, state).state_payload()
+    assert payload['turn']['settlement_display'] is False
+    assert payload['metrics']['国库'] == before['国库'] + 5
+
+
+def test_oracle_normal_phase_clears_via_startup_hook(game):
+    db, state, _content = game
+    before = {k: int(state.metrics[k]) for k in ("国库", "内库", "民心", "皇威")}
+    db.capture_month_open_snapshot(state)
+    state.metrics['国库'] = before['国库'] + 123
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.reign.save_game_state(state)
+    assert state.turn_phase not in FRONT_HALF_DONE_PHASES
+    assert _runtime(db, state).state_payload()["turn"]["settlement_display"] is True
+    assert db.month_open_snapshots.get(int(state.turn)) == before
+    cleared = clear_orphan_month_open_snapshot(db, state)
+    assert cleared is True
+    assert db.month_open_snapshots.get(int(state.turn)) is None
+    for k, v in before.items():
+        state.metrics[k] = v
+    db.reign.save_game_state(state)
+    payload = _runtime(db, state).state_payload()
+    assert payload['turn']['settlement_display'] is False
+    for k in before:
+        assert payload['metrics'][k] == before[k]
+
+
+@pytest.mark.parametrize("phase", [TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value])
+def test_oracle_settling_phase_keeps_display_for_recovery(game, phase):
+    db, state, _content = game
+    before = {k: int(state.metrics[k]) for k in ("国库", "内库", "民心", "皇威")}
+    db.capture_month_open_snapshot(state)
+    state.metrics['国库'] = before['国库'] + 50
+    state.turn_phase = phase
+    db.reign.save_game_state(state)
+    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
+    assert exit_settlement_display_on_failure(db, state) is False
+    cleared = clear_orphan_month_open_snapshot(db, state)
+    assert cleared is False
+    assert db.month_open_snapshots.get(int(state.turn)) == before
+    db.issues.save_pending_decisions(state.turn, [{"event_id": "awaiting-test", "title": "待裁", "options": [{"label": "准"}]}])
+    pending = db.issues.list_pending_decisions(state.turn) if phase == TurnPhase.AWAITING_DECISION.value else []
+    payload = _runtime(db, state, pending_decisions=pending).state_payload()
+    if phase == TurnPhase.AWAITING_DECISION.value:
+        assert payload["pending_decisions"] == pending
+    assert payload['turn']['settlement_display'] is True
+    assert payload['metrics']['国库'] == before['国库']
+
+
+@pytest.mark.parametrize("method", ["resolve_turn", "advance_without_decree"])
+def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch, method):
+    from tests.month_chain_helpers import make_light_session
+    import ming_sim.audience_night as an
+
+    db, state, content = game
+    before = {k: int(state.metrics[k]) for k in ("国库", "内库", "民心", "皇威")}
+    session = make_light_session(db, state, content)
+    fault = RuntimeError("close fault")
+    def fail(*_a, **_k):
+        raise fault
+    monkeypatch.setattr(an, "auto_close_open_night", fail)
+    with pytest.raises(RuntimeError) as exc:
+        getattr(session, method)()
+    assert exc.value is fault
+    assert db.month_open_snapshots.get(int(state.turn)) == before

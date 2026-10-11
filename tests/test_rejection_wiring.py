@@ -480,3 +480,21 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type
+
+
+def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
+    from ming_sim.applier import RejectionCollector
+    db, state, content = game
+    monkeypatch.setenv('MING_SIM_USER_DATA_DIR', str(tmp_path))
+    turn = state.turn
+    real_flush = RejectionCollector.flush_to_db
+
+    def _boom(self, db_):
+        real_flush(self, db_)
+        raise RuntimeError('crash after flush')
+    monkeypatch.setattr(RejectionCollector, 'flush_to_db', _boom)
+    with pytest.raises(RuntimeError):
+        run_settle(db, state, content, {'character_status_changes': [{'name': '查无此人乙', 'status': 'dead', 'reason': '测试'}]}, narrative='x', decree_text='y')
+    monkeypatch.setattr(RejectionCollector, 'flush_to_db', real_flush)
+    assert _rejection_rows(db, turn) == []
+    assert not (tmp_path / 'error_packs' / 'rejections.jsonl').exists()

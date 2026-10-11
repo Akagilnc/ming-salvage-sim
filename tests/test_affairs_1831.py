@@ -221,3 +221,13 @@ def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeyp
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM issues WHERE affair_id > 0",
     ).fetchone()["n"] == pointers_before
+
+
+def test_birth_close_is_rejected(game):
+    db, state, _ = game
+    affair = db.affairs.open(name=NINGYUAN, origin=ORIGIN, year=state.year, period=state.period, turn=state.turn)
+    before = len(db.dossiers.list_dossiers())
+    with pytest.raises(ValueError):
+        db.create_decree_dossier(state, action_type="policy", decree_text="输入", target_kind="issue", target_id="review", payload={"affair_declaration": {"attach": "close", "affair_id": affair.id}})
+    assert len(db.dossiers.list_dossiers()) == before
+    assert db.affairs.get(affair.id).status == "open"

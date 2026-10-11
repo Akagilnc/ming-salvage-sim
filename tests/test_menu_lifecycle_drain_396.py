@@ -505,3 +505,67 @@ def test_new_game_switches_db_path_when_web_game_none_and_no_env(monkeypatch, tm
     assert new_path != str(tmp_path / "ming_sim.db")  # 不是默认路径
     with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
         assert f.read().strip() == new_path
+
+
+def test_restore_main_db_path_config_remove_failure_is_loud(monkeypatch, tmp_path):
+    monkeypatch.setattr(web_app, 'user_data_path', lambda *parts: str(tmp_path.joinpath(*parts)))
+    active_file = web_app._active_db_path_file()
+    with open(active_file, 'w', encoding='utf-8') as f:
+        f.write(str(tmp_path / 'new.db'))
+    monkeypatch.setenv('MING_SIM_DB', str(tmp_path / 'new.db'))
+    monkeypatch.setattr(web_app.os, 'remove', lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError('locked')))
+    with pytest.raises(PermissionError):
+        web_app._restore_main_db_path_config((False, '', False, ''))
+    with open(active_file, 'r', encoding='utf-8') as f:
+        assert f.read().strip() == str(tmp_path / 'new.db')
+
+
+def test_spawn_pending_write_thread_start_failure_releases_ownership():
+    runtime = object.__new__(web_app.WebGame)
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ('pending',))
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)
+
+    class _FailingThread:
+
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            raise RuntimeError('线程池耗尽（模拟 start 失败）')
+    orig_thread = web_app.threading.Thread
+    web_app.threading.Thread = _FailingThread
+    try:
+        raised = False
+        try:
+            runtime._spawn_pending_write_thread(lambda **_k: None, (), 't')
+        except RuntimeError:
+            raised = True
+        assert raised, 'start() 抛异常须上抛，不静默吞掉'
+    finally:
+        web_app.threading.Thread = orig_thread
+    assert runtime._write_queue.inflight_count() == 0
+
+
+def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
+    """#402 R1（Gemini）：主库 move 失败时不得删除仍属旧库的 WAL/SHM。"""
+    db_path = str(tmp_path / 'ming_sim.db')
+    wal_path = db_path + '-wal'
+    shm_path = db_path + '-shm'
+    for path, content in ((db_path, 'db'), (wal_path, 'wal'), (shm_path, 'shm')):
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
+    queue = SessionWriteQueue()
+    gate = queue.write_gate
+    closed: list[int] = []
+    game = SimpleNamespace(_write_queue=queue, _write_gate=gate, db_path=db_path, session=SimpleNamespace(close=lambda: closed.append(1)))
+    monkeypatch.setattr(web_app, 'user_data_path', lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setattr(web_app.shutil, 'move', lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError('locked')))
+    _reset_path_leases()
+    _drain_then_archive(game, db_path)
+    assert closed == [1]
+    assert os.path.exists(db_path)
+    assert os.path.exists(wal_path)
+    assert os.path.exists(shm_path)

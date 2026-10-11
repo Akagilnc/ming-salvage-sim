@@ -1,4 +1,4 @@
-"""#506 撤回本轮效果逆转（轮级撤销日志 / 白名单审计，ADR 0038 cmr R1 修订版）。
+"""#506 撤回本轮效果逆转（轮级撤销日志，ADR 0038 cmr R1 修订版）。
 
 一条贯穿真实入口：召对夜里一「轮」= 一次玩家发话到下一次发话的完整交换，落为一条
 `chat_turns` 行。生产走 `capture_chat_rollback_snapshot`（轮前）→ 该轮全部写入 →
@@ -418,3 +418,55 @@ def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
     assert db.conn.execute(
         "SELECT count(*) FROM story_ledger_entries WHERE id=?", (entry_id,),
     ).fetchone()[0] == 0
+
+
+def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
+    db, state, content = game
+    m = _active_minister(db, content)
+    an.open_night(db, state)
+    night_id = int(an.get_open_night(db)['id'])
+    assert m not in an.present_names_at(db, night_id)
+    ledger_ids_before = {e['id'] for e in an.list_ledger(db, night_id)}
+    orig_create = db.create_chat_turn
+
+    def _boom(*a, **k):
+        raise RuntimeError('inject crash: enter 已落、origin 未绑')
+    db.create_chat_turn = _boom
+    try:
+        with pytest.raises(RuntimeError):
+            open_hall_turn(db, state, m)
+    finally:
+        db.create_chat_turn = orig_create
+    assert {e['id'] for e in an.list_ledger(db, night_id)} == ledger_ids_before
+    assert m not in an.present_names_at(db, night_id)
+
+
+def test_reject_pending_discards_inactive_office_summon_origin(game):
+    db, state, content = game
+    m = _active_minister(db, content)
+    night = an.open_night(db, state)
+    pending_id = db.stage_pending_action(int(state.turn), 'office', '任命', m, {'text': '测试任免原文', 'name': '袁崇焕', 'office': '辽东巡抚', 'summon_after': '是'})
+    an.ensure_inactive_office_summon(db, int(pending_id), '袁崇焕', night_id=int(night['id']), origin_chat_turn_id=0)
+    origin = f'office:{int(pending_id)}'
+    assert db.conn.execute('SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?', (origin,)).fetchone()[0] == 1
+    dropped = db.withdraw_pending_action(int(pending_id), int(state.turn))
+    assert dropped == 1
+    assert db.conn.execute('SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?', (origin,)).fetchone()[0] == 0
+
+
+def test_undo_removes_unlisted_person_registration(game):
+    db, state, content = game
+    from ming_sim.models import Character
+    caller = _active_minister(db, content)
+    newcomer = '临时借调_算学郎中'
+
+    def _register(night_id: int, chat_id: int) -> None:
+        db.add_character(state, Character(name=newcomer, office='翰林院侍读', office_type='翰林院', faction='', aliases=[], personal_skills=[], loyalty=60, ability=70, integrity=60, courage=50, style='谨饬', power_id='ming'), source='宣召入册')
+        an.ensure_summon_enter(db, night_id, newcomer, origin_chat_turn_id=chat_id)
+    night_id, chat_id = _run_round(db, state, caller, writes=_register)
+    assert db.characters.get_character_status(newcomer)[0] == 'active'
+    assert newcomer in an.present_names_at(db, night_id)
+    db.undo_chat_turn(chat_id)
+    assert db.conn.execute('SELECT 1 FROM characters WHERE name = ?', (newcomer,)).fetchone() is None
+    assert db.conn.execute('SELECT 1 FROM character_offices WHERE character_name = ?', (newcomer,)).fetchone() is None
+    assert newcomer not in an.present_names_at(db, night_id)

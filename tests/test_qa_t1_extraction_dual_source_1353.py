@@ -333,3 +333,10 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     assert game.pending_translation_retries(chat_turn_id=chat_turn_id) == []
     assert [(m["role"], m["content"]) for m in game.chat_projection("殿上")] == [
         ("user", "边饷如何？"), ("minister", "臣遵旨。")]
+
+
+def test_empty_startup_catchup_claims_zero_tickets(web_game):
+    queue = web_game._runtime_write_queue()
+    assert queue.inflight_count() == 0
+    web_game._spawn_startup_extraction_catch_up()
+    assert queue.inflight_count() == 0

@@ -1117,3 +1117,19 @@ def test_fresh_summon_omitted_content_syncs_db_and_rolls_back_together(game):
         (row["origin_id"], row["kind"]) for row in an.list_unsettled_summons(db)
         if row["origin_id"] in {"command:omit-a", "command:omit-b"}
     } == {("command:omit-a", "fresh"), ("command:omit-b", "fresh")}
+
+
+def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game):
+    db, state, _ = game
+    session = _session(game)
+    person = _set_place(game, "洪承畴", location="shaanxi", transit_to="beizhili", transit_start_turn=0)
+    for origin in ("test:transit:a", "test:transit:b"):
+        result = session.consume_audience_admission(person, origin_id=origin, state=state)
+        assert result.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    assert len(an.list_unsettled_summons(db)) == 2
+    _arrive_at_destination(game, person.name)
+    waiting = an.list_waiting_audience_summons(db)
+    assert len(waiting) == 1 and waiting[0]["origin_id"] == "test:transit:a"
+    an.settle_summon_origin(db, "test:transit:a")
+    waiting = an.list_waiting_audience_summons(db)
+    assert len(waiting) == 1 and waiting[0]["origin_id"] == "test:transit:b"

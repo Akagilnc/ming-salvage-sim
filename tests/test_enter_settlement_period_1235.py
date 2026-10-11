@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import asyncio
 import httpx
 import pytest
 
@@ -143,9 +144,13 @@ def test_accept_creator_atomic_only_one_true(game, monkeypatch):
     assert (first, second) == (True, False)
 
     # 行确实只建一次（绕过恒 None 补丁读真库）
-    assert real_get(turn) is not None
+    before = {k: int(state.metrics[k]) for k in ("国库", "内库", "民心", "皇威")}
+    assert real_get(turn) == before
+    state.metrics["国库"] += 7
     third = accept_settlement_period(db, state)
     assert third is False
+    assert real_get(turn) == before
+    assert real_get(turn + 1) is None
 
 
 # ── 5. accept 后 gate/HTTPException 拒收 → 不得留孤儿核账展示态 ──────────
@@ -162,3 +167,60 @@ def test_accept_creator_atomic_only_one_true(game, monkeypatch):
 
 
 # ── 5. SP1 #1241：断线→重连 e2e tracer（#1220 US14）──────────────────────
+
+
+@pytest.mark.parametrize("endpoint", ["advance_without_edict", "issue"])
+def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, tmp_path, endpoint):
+    from tests.conftest import stub_audience_translate
+    from ming_sim.exceptions import LLMUnavailable
+    game = web_game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    def fail(*_a, **_k):
+        raise LLMUnavailable("模型失败输入", code="llm_error")
+    stub_audience_translate(monkeypatch, fail)
+    nid, _ = _open_night_with_unextracted_reply(game, _active_minister(game))
+    turn = int(game.state.turn)
+    async def go():
+        async with _client() as client:
+            return await client.post(f"/api/decree/{endpoint}")
+    resp = asyncio.run(go())
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["stage"] == "audience_translation_exhausted"
+    assert detail["error_pack_path"]
+    assert game.db.month_open_snapshots.get(turn) is None
+    assert game.state_payload()["turn"]["settlement_display"] is False
+    assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
+    assert game.db.reign.list_unextracted_replies(night_id=nid)
+
+
+@pytest.mark.parametrize("existing_owner", [False, True])
+def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch, existing_owner):
+    game = web_game
+    turn = int(game.state.turn)
+    before = {k: int(game.state.metrics[k]) for k in ("国库", "内库", "民心", "皇威")}
+    if existing_owner:
+        game.db.capture_month_open_snapshot(game.state)
+        web_app._begin_settlement_entry(game)
+    close = web_app._auto_close_open_night_gate_free
+    def acquire_late(g, **kw):
+        assert g.db.month_open_snapshots.get(turn) == before
+        assert g.state_payload()["turn"]["settlement_display"] is True
+        assert g.session._write_gate.acquire(blocking=False)
+        try:
+            return close(g, **kw)
+        finally:
+            g.session._write_gate.release()
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", acquire_late)
+    async def go():
+        async with _client() as client:
+            return await client.post("/api/decree/advance_without_edict")
+    try:
+        resp = asyncio.run(go())
+        assert resp.status_code == 409
+        assert int(game.state.turn) == turn
+        assert game.db.month_open_snapshots.get(turn) == (before if existing_owner else None)
+        assert game.state_payload()["turn"]["settlement_display"] is existing_owner
+    finally:
+        if existing_owner:
+            web_app._end_settlement_entry(game)

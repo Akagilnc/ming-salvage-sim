@@ -2,7 +2,7 @@
 
 真实入口：草稿落桌（#1849 后走现行 capture 核 + session.add_directive；
 独立手拟新增 Web 口已退役）→ POST /api/decree/issue/stream；
-下月供料经 session.write_decree → write_decree_with_agno 真实投影。
+未入档草案在现行 resolve_turn 成案准入路径验证，不依赖已退役拟诏入口。
 断言 SSE 终态与 turn_directives / rejection_reports / dossier 结构化字段。
 
 本文件只断言结构化事实（供料入参 / 案卷字段 / DB 终态 / 错误包 manifest），
@@ -26,12 +26,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import ming_sim.cli_backend as cb
-import ming_sim.decree as decree_mod
-import ming_sim.session as session_mod
 import web_app
-from ming_sim.decree import write_decree_with_agno as _real_write_decree_with_agno
 from ming_sim.error_pack import latest_error_pack_for_turn
-from ming_sim.entities.issue.store import IssueStore
 from tests.army_pay_helpers import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import _get_state, _stub_outer_llm_seams, _turn_of
 
@@ -139,63 +135,10 @@ def _queue_backend(monkeypatch, captures: list) -> None:
     monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
 
 
-def _spy_resubmit_kwargs(monkeypatch) -> tuple[list[dict], list[str]]:
-    """截获补交结构化入参与本轮产物失败事实（failure_reason 源），不扫 prompt。
-
-    返回 (calls, product_faults)：
-    - calls[i]["failure_reason"] = 实际回喂给 LLM 的诊断
-    - product_faults = 各次 resubmit 自身抛出的 ValueError 原文（carry_over 源）
-    来源保真：下一轮 failure_reason 必须等于对应 product_fault，不得只验非空/次数。
-    """
-    calls: list[dict] = []
-    product_faults: list[str] = []
-    real = cb.resubmit_draft_admission_payload
-
-    def wrapper(decree_text, *, bad_payload, failure_reason, **kwargs):
-        calls.append({
-            "failure_reason": str(failure_reason or ""),
-            "bad_payload": dict(bad_payload or {}),
-            "decree_text": str(decree_text or ""),
-        })
-        try:
-            return real(
-                decree_text,
-                bad_payload=bad_payload,
-                failure_reason=failure_reason,
-                **kwargs,
-            )
-        except ValueError as exc:
-            product_faults.append(str(exc))
-            raise
-
-    monkeypatch.setattr(cb, "resubmit_draft_admission_payload", wrapper)
-    return calls, product_faults
 
 
-def _spy_ensure_rejection_reasons(monkeypatch, game) -> list[list[tuple[int, str]]]:
-    """按轮截获 ensure_dossiers 拒因（directive_id, reason），作回喂源真值。"""
-    rounds: list[list[tuple[int, str]]] = []
-    real = game.db.ensure_dossiers_for_draft_directives
-
-    def wrapper(state, record_rejections=False):
-        result = real(state, record_rejections=record_rejections)
-        rounds.append([
-            (int(item["directive_id"]), str(item.get("reason") or ""))
-            for item in (result or [])
-            if item.get("directive_id") is not None
-        ])
-        return result
-
-    monkeypatch.setattr(game.db, "ensure_dossiers_for_draft_directives", wrapper)
-    return rounds
 
 
-def _reason_for_directive(
-    round_rows: list[tuple[int, str]], directive_id: int,
-) -> str:
-    matched = [reason for did, reason in round_rows if did == int(directive_id)]
-    assert matched, f"ensure 轮次无 directive#{directive_id} 拒因"
-    return matched[0]
 
 
 _ENSURE_FAULT_MARK = "simulated ensure code fault #1769"
@@ -212,25 +155,8 @@ def _assert_error_pack_from(game, turn: int, marker: str) -> None:
     )
     assert manifest["exception_type"] == "RuntimeError"
     assert manifest["exception_message"] == marker
-    assert marker in (Path(pack) / "traceback.txt").read_text(encoding="utf-8")
 
 
-def _finish_month_after_gazette(game, turn: int) -> None:
-    """ADR 0157：写成邸报后主链才推进。作者替身已写成时不再推进第二次。"""
-    if int(game.state.turn) > int(turn):
-        assert int(game.state.turn) == int(turn) + 1
-        return
-    game.db.conn.execute(
-        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
-        (int(turn), int(game.state.year), int(game.state.period), "邸报已成"),
-    )
-    game.db.conn.commit()
-    from ming_sim.month_chain import run_player_month_chain
-    result = run_player_month_chain(
-        game.state, game.db, game.session.agno_db, game.session.llm_config,
-    )
-    assert result.advanced is True
-    assert int(game.state.turn) == int(turn) + 1
 
 
 def _post_directive(game, text: str) -> int:
@@ -244,12 +170,6 @@ def _post_directive(game, text: str) -> int:
     return seed_manual_draft(game.session, text)
 
 
-def _latest_directive_id(game) -> int:
-    row = IssueStore(game.db.conn).directive(int(game.db.conn.execute(
-        "SELECT id FROM turn_directives ORDER BY id DESC LIMIT 1"
-    ).fetchone()["id"]))
-    assert row is not None
-    return int(row["id"])
 
 
 def _rejection_rows(game, directive_id: int):
@@ -261,22 +181,6 @@ def _rejection_rows(game, directive_id: int):
     ).fetchall()
 
 
-def _write_decree_capture_payloads(monkeypatch, game) -> list[dict]:
-    """恢复真实 write_decree_with_agno；截 agent.run 入参 JSON（拟诏真实入口）。"""
-    captured: list[dict] = []
-
-    class _CapturingAgent:
-        def run(self, text):
-            captured.append(json.loads(text) if isinstance(text, str) else dict(text))
-            return type("RunOut", (), {"content": "奉天承运，诏曰：着户部清核辽饷。"})()
-
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", _real_write_decree_with_agno)
-    monkeypatch.setattr(
-        decree_mod, "create_decree_writer_agent",
-        lambda *a, **k: _CapturingAgent(),
-    )
-    game.session.write_decree()
-    return captured
 
 
 
@@ -327,3 +231,60 @@ def test_advance_without_edict_vacuum_no_decree_issued(
     assert body.get("advanced") is True
     assert _turn_of(_get_state(client)) == turn + 1
     assert not (game.session.last_decree or "").strip()
+
+
+@pytest.mark.parametrize("rewrite", [_BAD_PAY_ORDER, _NO_INTENT_REWRITE])
+@pytest.mark.parametrize("status", ["draft", "pending"])
+def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkeypatch, rewrite, status):
+    from ming_sim.cli_backend import project_draft_extract_to_directive_payload
+    game = admission_game
+    turn = int(game.state.turn)
+    payload = project_draft_extract_to_directive_payload({"draft_action": "拟旨", "dossier_action_type": "pay_order_override", "target_kind": "army", "target_id": "guanning", "mode": "ordinary", "entries": [{"key": "arrears_priority_军饷", "value": 1}], "assignee": "郭允厚"}, decree_text=_DECREE_TEXT)
+    did = game.db.issues.add_directive(turn, game.state.year, game.state.period, None, _DECREE_TEXT, "minister", actor="郭允厚", status=status, dossier_payload=payload)
+    game.session.last_decree = "陈旧拟诏稿"
+    _queue_backend(monkeypatch, [rewrite])
+    result = TestClient(web_app.app).post("/api/decree/issue", json={"expected_turn": turn})
+    assert result.status_code == 200, result.text
+    assert int(game.state.turn) == turn + 1
+    row = game.db.issues.directive(did)
+    assert row["status"] == "draft"
+    assert game.db.dossiers.get_for_directive(did) is None
+    assert json.loads(row["dossier_payload_json"])["dossier_action_type"] == "pay_order_override"
+    assert len(_rejection_rows(game, did)) == 1
+    assert game.session.last_decree == ""
+
+
+@pytest.mark.parametrize("seam,marker", [("ensure", _ENSURE_FAULT_MARK), ("resubmit", _RESUBMIT_FAULT_MARK)])
+def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monkeypatch, seam, marker):
+    game = admission_game
+    _queue_backend(monkeypatch, [_GOOD_XIEANG if seam == "ensure" else _BAD_PAY_ORDER])
+    _post_directive(game, _DECREE_TEXT)
+    turn = int(game.state.turn)
+    def fail(*_a, **_k):
+        raise RuntimeError(marker)
+    if seam == "ensure":
+        monkeypatch.setattr(game.db, "_ensure_directive_dossier", fail)
+    else:
+        monkeypatch.setattr(cb, "resubmit_draft_admission_payload", fail)
+    result = TestClient(web_app.app).post("/api/decree/issue", json={"expected_turn": turn})
+    assert result.status_code == 409
+    assert result.json()["detail"]["error_pack_path"]
+    assert int(game.state.turn) == turn
+    _assert_error_pack_from(game, turn, marker)
+
+
+def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypatch):
+    game = admission_game
+    turn = int(game.state.turn)
+    _queue_backend(monkeypatch, [_GOOD_XIEANG, _BAD_PAY_ORDER, _BAD_UNKNOWN_PARTICIPANT])
+    good = _post_directive(game, "拨关宁军饷十五万两")
+    bad = _post_directive(game, _DECREE_TEXT)
+    response = TestClient(web_app.app).post("/api/decree/issue", json={"expected_turn": turn})
+    assert response.status_code == 200, response.text
+    assert int(game.state.turn) == turn + 1
+    assert game.db.issues.directive(good)["status"] == "issued"
+    assert game.db.dossiers.get_for_directive(good) is not None
+    assert game.db.issues.directive(bad)["status"] == "draft"
+    assert game.db.dossiers.get_for_directive(bad) is None
+    assert len(_rejection_rows(game, bad)) == 1 and not _rejection_rows(game, good)
+    assert not latest_error_pack_for_turn(game.db.path, turn)

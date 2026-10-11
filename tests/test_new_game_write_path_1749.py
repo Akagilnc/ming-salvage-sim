@@ -18,10 +18,10 @@ import web_app
 from ming_sim.session import GameSession
 from tests.test_month_loop_tracer_1468 import (
     _assert_not_bare_500,
-    _parse_sse,
     _pick_active_minister,
     tracer_client,
 )
+from tests.test_web_audience_night_498 import _parse_sse
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 from tests.wait_utils import wait_until
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
@@ -568,3 +568,36 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
                 op.done.wait()
         else:
             web_app._drain_and_close_session(g0)
+
+
+def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
+    client = tracer_client
+    _install_canned_minister_factory(monkeypatch)
+    seed = client.post('/api/menu/new_game')
+    assert seed.status_code == 200
+    g0 = web_app.web_game
+    assert g0 is not None
+    old_path = g0.db_path
+    c0 = _campaign(g0)
+    g0.save_to('snap1749')
+    real_close = g0.session.close
+
+    def boom_close() -> None:
+        raise RuntimeError('close boom')
+    g0.session.close = boom_close
+    try:
+        r = client.post('/api/menu/load_save/snap1749')
+        assert r.status_code == 409, r.text
+        assert web_app.web_game is g0
+        assert web_app._runtime_restorable(g0)
+        assert os.path.isfile(old_path)
+        web_app._path_request_archive(old_path)
+        assert os.path.isfile(old_path)
+        assert _drained(Path(web_app.user_data_path())) == []
+        marker = '着户部清核辽饷（load-save-close-fail）。'
+        marker_edited = _rewrite_draft_via_http(client, marker, marker='着户部清核辽饷（load-save-close-fail·改稿）。')
+        snap = _db_snapshot(old_path)
+        assert snap['campaign_id'] == c0
+        assert marker_edited in snap['directive_texts']
+    finally:
+        g0.session.close = real_close

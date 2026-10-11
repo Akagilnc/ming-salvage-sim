@@ -566,3 +566,69 @@ def test_location_canonical_seed_and_write_seam(env, tmp_path):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
     # 写缝已钉未知非空 fail-loud。开档别名 migrate / 开档扫 location 已随
     # _migrate_character_location_aliases 退役，不再造旧档副本期待写回。
+
+
+def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
+    db, state, _ = env
+    payload = {'target_kind': 'policy', 'target_id': '清丈天下田亩', 'locality_scope': 'national', 'dossier_action_type': 'assignment', 'participant_roster': [{'character_id': '查无此人', 'tier': '主办'}]}
+    did = _insert_directive(db, state, text='清丈天下田亩', payload=payload)
+    before = db.conn.execute('SELECT COUNT(*) AS n FROM decree_dossiers').fetchone()['n']
+    with pytest.raises(ValueError):
+        db.create_decree_dossiers(state, action_type='assignment', decree_text='清丈天下田亩', target_kind='policy', target_id='清丈天下田亩', directive_id=did, payload=payload, commit=True)
+    after = db.conn.execute('SELECT COUNT(*) AS n FROM decree_dossiers').fetchone()['n']
+    assert after == before
+    assert [r for r in db.dossiers.list_dossiers() if r["directive_id"] == did] == []
+
+
+def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
+    db, state, _ = env
+    payload = {'target_kind': 'policy', 'target_id': '清丈天下田亩', 'locality_scope': 'national', 'dossier_action_type': 'assignment', 'participant_roster': [{'character_id': '查无此人', 'tier': '主办'}], 'mode': 'ordinary'}
+    did = _insert_directive(db, state, text='清丈天下田亩', payload=payload, status='pending')
+    db.confirm_directive(did, state)
+    row = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (did,)).fetchone()
+    assert row['status'] == 'draft'
+    assert [r for r in db.dossiers.list_dossiers() if r["directive_id"] == did] == []
+    rejections = db.ensure_dossiers_for_draft_directives(state)
+    assert any((int(r['directive_id']) == did for r in rejections))
+    row = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (did,)).fetchone()
+    assert row['status'] == 'draft'
+    assert [r for r in db.dossiers.list_dossiers() if r["directive_id"] == did] == []
+
+
+def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
+    db, state, _ = env
+    long_text = '敕令陕西清丈田亩' + '甲' * 120
+    payload = {'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'none', 'dossier_action_type': 'policy', 'mode': 'ordinary'}
+    did = _insert_directive(db, state, text=long_text, payload=payload, status='draft')
+    other_payload = {'target_kind': 'region', 'target_id': 'henan', 'locality_scope': 'single', 'dossier_action_type': 'policy', 'assignee_id': '毕自严', 'mode': 'ordinary'}
+    other_id = _insert_directive(db, state, text='河南清丈', payload=other_payload, status='draft')
+    db.ensure_dossiers_for_draft_directives(state)
+    bad = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (did,)).fetchone()
+    good = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (other_id,)).fetchone()
+    assert bad['status'] == 'draft'
+    assert [r for r in db.dossiers.list_dossiers() if r["directive_id"] == did] == []
+    assert good['status'] == 'draft'
+    assert len([r for r in db.dossiers.list_dossiers() if r["directive_id"] == other_id]) == 1
+    rej = db.conn.execute("SELECT item_json, reason, category FROM rejection_reports WHERE section='directive_locality' ORDER BY id DESC LIMIT 5").fetchall()
+    assert rej, '应记 locality rejection'
+    matched = [json.loads(r['item_json']) for r in rej]
+    hit = next((item for item in matched if item.get('directive_id') == did))
+    assert 'text' not in hit
+    assert set(hit.keys()) == {'directive_id'}
+    raw = next((r['item_json'] for r in rej if json.loads(r['item_json']).get('directive_id') == did))
+    assert '敕令陕西' not in raw
+    assert '甲甲' not in raw
+
+
+def test_national_creates_one_row_idempotent(env):
+    db, state, _ = env
+    payload = {"locality_scope": "national", "assignee_id": "毕自严",
+        "transaction_category": "清丈", "participant_roster": [
+            {"character_id": "毕自严", "tier": "主办", "role": "清丈"}]}
+    directive_id = db.issues.add_directive(state.turn, state.year, state.period, None, "清丈天下", "test")
+    ids = db.create_decree_dossiers(state, action_type="policy", decree_text="清丈天下",
+        target_kind="policy", target_id="land", directive_id=directive_id, payload=payload, commit=True)
+    replay = db.create_decree_dossiers(state, action_type="policy", decree_text="清丈天下",
+        target_kind="policy", target_id="land", directive_id=directive_id, payload=payload, commit=True)
+    assert replay == ids
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (directive_id,)).fetchone()[0] == 1

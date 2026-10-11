@@ -721,3 +721,25 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
     assert ticks >= mid_ticks
     # #1353 K10a：工人终态后继续，不按在飞 elapsed 造 409
     assert status == 200, f"advance after chat terminal expected 200, got {status}"
+
+
+def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
+    game = web_game
+    stub_scene_agent(monkeypatch, _FakeAgent())
+    game.state.turn_phase = TurnPhase.SUMMONING.value
+    nights, turns = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
+    queue = game.session._write_queue
+    claim = queue.claim
+    def flip_after_claim(*a, **kw):
+        ticket = claim(*a, **kw)
+        game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        return ticket
+    monkeypatch.setattr(queue, "claim", flip_after_claim)
+    async def go():
+        async with _client() as client:
+            return await client.post("/api/audience/chat/stream", json={"message": "边饷如何？"})
+    events = _parse_sse(asyncio.run(go()).text)
+    assert events[-1]["event"] == "error"
+    assert _count(game.db, "audience_nights") == nights
+    assert _count(game.db, "chat_turns") == turns
+    assert queue.inflight_count() == 0

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import json
+import pytest
 
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 
@@ -92,3 +94,27 @@ def test_closed_secret_order_rush_fails_one_item_and_commits_the_rest(game):
     assert {int(item["id"]) for item in applied} == {first, second}
     assert db.character_knowledge.get_secret_order(live)["title"] == "在办再改"
     assert db.character_knowledge.get_secret_order(closed)["status"] == "done"
+
+
+@pytest.mark.parametrize("refusal", ["unknown_link", "foreign_assignee"])
+def test_secret_commission_business_refusal_has_no_landed_order(game, refusal):
+    from ming_sim.audience_night import open_night
+
+    db, state, content = game
+    night = open_night(db, state)
+    ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
+    db.chat_messages.insert(minister_name="殿上", turn=int(state.turn), role="user", content="着即密核三边饷数。")
+    minister = _active_minister(content) if refusal == "unknown_link" else _foreign_minister(content)
+    action_id = _stage_secret_order(db, state, ctid, minister)
+    if refusal == "unknown_link":
+        payload = json.loads(db.conn.execute("SELECT payload_json FROM pending_actions WHERE id=?", (action_id,)).fetchone()[0])
+        payload["dossier_links"] = [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}]
+        db.conn.execute("UPDATE pending_actions SET payload_json=? WHERE id=?", (json.dumps(payload, ensure_ascii=False), action_id))
+    db.conn.commit()
+    before = len(db.character_knowledge.list_secret_orders())
+    assert db.commit_pending_actions(state, content=content) == []
+    assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (action_id,)).fetchone()[0] == "failed"
+    assert len(db.character_knowledge.list_secret_orders()) == before
+    if refusal == "unknown_link":
+        audit = db.conn.execute("SELECT * FROM decree_dossier_link_rejections WHERE pending_action_id=?", (action_id,)).fetchall()
+        assert audit and audit[-1]["target_dossier_id"] == 999999

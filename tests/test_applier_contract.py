@@ -50,9 +50,13 @@ def test_mirror_idempotent_after_flush(clean_rejections, tmp_path):
     """commit 后同一批行 mirror 两次只写一次（已镜像的行不重复 append）。"""
     db, state, content = clean_rejections
     rc = RejectionCollector()
+    rc.flush_to_db(db)
+    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 0
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("metric_delta", ri, turn=1)
     rc.flush_to_db(db)
+    rc.flush_to_db(db)
+    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
     db.conn.commit()
 
     out = str(tmp_path / "rejections.jsonl")
@@ -61,6 +65,14 @@ def test_mirror_idempotent_after_flush(clean_rejections, tmp_path):
 
     lines = open(out, encoding="utf-8").readlines()
     assert len(lines) == 1
+
+
+    rc.record("metric_delta", ri, turn=2)
+    rc.reset()
+    rc.flush_to_db(db)
+    rc.mirror_to_jsonl(out)
+    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
+    assert len(open(out, encoding="utf-8").readlines()) == 1
 
 
 def test_unflushed_rows_never_mirrored(tmp_path):
