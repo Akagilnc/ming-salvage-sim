@@ -203,7 +203,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         try:
             with web_app._serialized_web_write(runtime):
                 other_entered.set()
-                allow_other_exit.wait()
+                assert allow_other_exit.wait(timeout=5)
             other_completed_ok.append(True)
         except Exception:
             other_completed_ok.append(False)
@@ -216,21 +216,23 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
-        other_entered.wait()
+        assert other_entered.wait(timeout=5)
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
-    gen = runtime.chat_stream("殿上", "辽东军情如何？")
-    with pytest.raises(RuntimeError):
-        next(gen)
+    try:
+        gen = runtime.chat_stream("殿上", "辽东军情如何？")
+        with pytest.raises(RuntimeError):
+            next(gen)
 
-    assert db.failed_turns == [7]
-    # Foreign holder must still own the serialized write path after prologue finally.
-    assert other_entered.is_set()
-    assert other_completed_ok == [], (
-        "foreign holder's critical section was broken by prologue finally"
-    )
-    allow_other_exit.set()
+        assert db.failed_turns == [7]
+        # Foreign holder must still own the serialized write path after prologue finally.
+        assert other_entered.is_set()
+        assert other_completed_ok == [], (
+            "foreign holder's critical section was broken by prologue finally"
+        )
+    finally:
+        allow_other_exit.set()
     assert other_thread_holder, "foreign writer thread was not started"
     other_thread_holder[0].join()
     assert not other_thread_holder[0].is_alive()

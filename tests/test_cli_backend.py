@@ -28,22 +28,6 @@ def _patch_backend(monkeypatch, payload: str):
     monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
 
 
-def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
-    from ming_sim.db import canonical_secret_order_exclusions
-
-    content = game[2]
-    character = next(
-        ch for ch in content.characters.values() if getattr(ch, "aliases", None)
-    )
-    alias = character.aliases[0]
-    office = character.office_type
-    people, offices = canonical_secret_order_exclusions(
-        content, [alias], [office], "勿使玩家散文成为第二输入源",
-    )
-    assert people == [character.name]
-    assert offices == [office]
-
-
 # ── enrich_initiative_effects ──
 
 def test_enrich_army_parsed_and_normalized(monkeypatch):

@@ -282,7 +282,7 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
         )
         db.record_character_participation(
             state, [who], "case", row["title"], "本人的办案经历",
-            source_id=f"issue:{row['id']}", excluded_names=[other],
+            source_id=f"issue:{row['id']}",
         )
     db.conn.commit()
     captured = {}

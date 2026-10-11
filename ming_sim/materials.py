@@ -413,16 +413,23 @@ def _own_affair_lines(
     still-active linked issue" cannot occur — this function does not need to
     special-case it.
     """
-    from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience
+    from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience, origin_visible_to
     from ming_sim.participant_roster import participant_roster_names
 
     store = db.affairs
 
     dossier_participant_ids: set[int] = set()
     for row in db.conn.execute(
-        "SELECT affair_id, participant_roster FROM decree_dossiers WHERE affair_id != 0",
+        "SELECT id, affair_id, secret_order_id, participant_roster "
+        "FROM decree_dossiers WHERE affair_id != 0",
     ).fetchall():
-        if character_name in participant_roster_names(row["participant_roster"]):
+        if (
+            row["secret_order_id"] is not None
+            and origin_visible_to(db, f"dossier:{row['id']}", character_name)
+        ) or (
+            row["secret_order_id"] is None
+            and character_name in participant_roster_names(row["participant_roster"])
+        ):
             dossier_participant_ids.add(int(row["affair_id"]))
 
     linked_material: dict[int, list[str]] = {}
@@ -490,7 +497,8 @@ def _own_affair_lines(
             affair = store.get(affair_id)
         except KeyError:
             continue
-        facts = store.current_situation(textual_facts, affair_id)
+        facts = tuple(fact for fact in store.current_situation(textual_facts, affair_id)
+                      if origin_visible_to(db, fact.origin_ref, character_name))
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         extra_lines = linked_material.get(affair_id) or []
         directory_lines = [*fact_lines, *extra_lines]
@@ -811,6 +819,8 @@ def _write_textual_fact_files(
     tmp: Path, db: Any, character: Any, knowledge: dict,
     issue_materials: Sequence[dict[str, object]],
 ) -> list[str]:
+    from ming_sim.knowledge import origin_visible_to
+
     store = db.textual_facts
     subjects: list[tuple[str, str, str]] = []
     name = str(getattr(character, "name", "") or "")
@@ -845,7 +855,8 @@ def _write_textual_fact_files(
         if key in seen:
             continue
         seen.add(key)
-        facts = store.readable_materials(subject_kind=kind, subject_id=subject_id)
+        facts = tuple(fact for fact in store.readable_materials(subject_kind=kind, subject_id=subject_id)
+                      if origin_visible_to(db, fact.origin_ref, name))
         if not facts:
             continue
         body = "\n".join(
@@ -1328,13 +1339,8 @@ def secret_order_origin(order_id: object) -> str:
 
 
 def dossier_id_in_origin(origin: object) -> Optional[int]:
-    text = str(origin or "")
-    if not text.startswith("dossier:"):
-        return None
-    raw = text[len("dossier:"):].split(":", 1)[0]
-    if not raw.isdigit():
-        return None
-    return int(raw)
+    match = re.match(r"(?:decree_)?dossier:(\d+)(?:[:/]|$)", str(origin or ""))
+    return int(match.group(1)) if match else None
 
 
 def _candidate_event_fact(ev: Any) -> dict[str, object]:
@@ -1397,8 +1403,7 @@ def candidate_supply(
 
 def _world_board_text(
     db: Any, state: Any, *,
-    ledger_origin_prefix_excluded: str = "",
-    exclude_dossier_ids: Optional[set[int]] = None,
+    public_only: bool = False,
 ) -> str:
     """盘面全量：未按职位裁切的实况账本（0034 后出注记：仅人物按职位读衙门底账，
     推演者不受此限）。各段落直取账本读方法，不经任何奏报/邸报文本中转——满足
@@ -1407,8 +1412,7 @@ def _world_board_text(
     # 约定一致，真正的全量——不是拿一个更大的数顶替旧上限（#1834 大理寺 bounce）。
     sections = (
         ("国库", db.treasury_report(
-            state, limit=None, exclude_origin_prefix=ledger_origin_prefix_excluded,
-            exclude_dossier_ids=exclude_dossier_ids,
+            state, limit=None, public_only=public_only,
         )),
         ("军务", db.army_report(limit=None)),
         ("地方", db.region_report(limit=None)),
@@ -2140,6 +2144,8 @@ def _write_one_present_person(
     _write_text(tmp / exp_rel, _experience_text(knowledge, audible))
     index.append(exp_rel)
 
+    from ming_sim.knowledge import origin_visible_to
+
     # #1839 / ADR 0156：文字事实当场落账后须进本夜场景目录（下一句可见）。
     # 与世界目录同形（按月实况），投影复用 _textual_facts_text，不另造读口。
     facts_rel = f"{base}/按月实况.txt"
@@ -2148,6 +2154,7 @@ def _write_one_present_person(
         _textual_facts_text(
             db.textual_facts,
             subject_kind="character", subject_id=name,
+            include_fact=lambda fact: origin_visible_to(db, fact.origin_ref, name),
         ),
     )
     index.append(facts_rel)
@@ -2313,7 +2320,6 @@ def prepare_world_materials(
     dest_root: Optional[Path] = None,
     include_fact: Any = None,
     include_event: Any = None,
-    ledger_origin_prefix_excluded: str = "",
     exclude_secret_order_dossiers: bool = False,
     exclude_secret_order_audience: bool = False,
     public_feed: bool = False,
@@ -2322,15 +2328,14 @@ def prepare_world_materials(
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
     在本函数职责内——本函数只组装可读材料，不提供任何写入口。
 
-    `public_feed=True` 只给公共供料方（公共邸报作者）：受显式排除的公开说法
-    不进其目录（#1829 C1）。世界段、逐旨预推、整月密报是全量推演者，按
-    ADR 0155 三层全看，不传该参数（#1829 F1）。"""
+    `public_feed=True` selects the public author; world simulation and private
+    reports retain the full read surface.
+    """
     from ming_sim.knowledge import build_character_knowledge
 
-    # public_events 的既有投影与具体 character_name 无关（build_character_knowledge
-    # 里 public_events 恒取 `_character_knowledge_events("", ...)`）——借用同一投影，
-    # 不另建一套「世界公开说法」查询。排除边界按调用职责落，不按有无姓名落。
-    knowledge = build_character_knowledge(db, state, "", public_feed=public_feed)
+    # Reuse the public-version read projection. Full world facts and each
+    # person's own experiences are read independently below.
+    knowledge = build_character_knowledge(db, state, "")
     public_events = knowledge.get("public_events") or []
     affair_lines = _world_affair_lines(db, include_fact)
     dossier_facts = continuing_dossier_facts(db, int(state.turn))
@@ -2343,8 +2348,7 @@ def prepare_world_materials(
             if int(fact["id"]) not in secret_dossiers
         ]
     board_text = _world_board_text(
-        db, state, ledger_origin_prefix_excluded=ledger_origin_prefix_excluded,
-        exclude_dossier_ids=secret_dossiers or None,
+        db, state, public_only=public_feed,
     )
     denunciation_facts = db.build_faction_denunciation_facts(
         exclude_dossier_ids=secret_dossiers,
@@ -2381,7 +2385,7 @@ def _inquiry_monthly_report_rels(
     """查访声明点名的密令，只拉该令当前月度非终值奏报。
 
     见闻里没有 order 标记的委派不打开任何密令。承办人自己的在办令已在进行中.txt。
-    排除看密令当前字段，不看委派当时的快照。没有月报正文就不写文件。
+    委派是经手授权，与官职无关。没有月报正文就不写文件。
     """
     from ming_sim.knowledge import knowledge_row_visible_to
 
@@ -2407,17 +2411,7 @@ def _inquiry_monthly_report_rels(
         order = by_id.get(order_id)
         if order is None:
             continue
-        visible_row = {
-            "source_id": event.get("source_id"),
-            "kind": event.get("kind"),
-            "excluded_names": json.dumps(
-                list(order.get("excluded_names") or []), ensure_ascii=False,
-            ),
-            "excluded_targets": json.dumps(
-                order.get("excluded_targets") or {}, ensure_ascii=False,
-            ),
-        }
-        if not knowledge_row_visible_to(db, visible_row, name):
+        if not knowledge_row_visible_to(db, {"source_id": f"secret_order:{order_id}"}, name):
             continue
         texts = _secret_order_memorials(order)
         if not texts:

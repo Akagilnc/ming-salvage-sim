@@ -81,12 +81,12 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     reader = _礼部大臣(content)
     assert reader.name != "袁崇焕"
 
-    saying_id = record_public_saying(
-        db,
-        state,
-        "袁崇焕已死于宁远",
-        involved_characters=["袁崇焕"],
-    )
+    from ming_sim.declaration_dispatch import dispatch_declaration
+    result = dispatch_declaration(db, state, {"public_sayings": [{
+        "body": "袁崇焕已死于宁远", "involved_characters": ["袁崇焕"],
+    }]}, minister_name=reader.name)
+    assert result.public_sayings.rejected == []
+    saying_id = result.public_sayings.applied[0]["id"]
     source_id = f"public_saying:{saying_id}"
 
     view = db.get_character_knowledge(state, reader.name)
@@ -110,153 +110,6 @@ def _saying_hits_on(db, state, name: str, source_id: str) -> list[dict]:
     ]
 
 
-def test_public_saying_excluded_name_does_not_see_it_others_do(
-    game, monkeypatch, tmp_path,
-):
-    """#1829 reopen：召对转译落账 + 玩家过月主链后，被瞒者零条、其余恰一条。"""
-    db, state, content = game
-    excluded_name = _礼部大臣(content).name
-    other_name = _active_other(db, content, exclude={excluded_name, "袁崇焕"})
-    claim = "袁崇焕已死于宁远"
-
-    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
-    def translate_fn(prompt, config):
-        return {
-            **offline_empty_audience_translate(prompt, config),
-            "public_sayings": [{
-                "body": claim,
-                "involved_characters": ["袁崇焕"],
-                "excluded_names": [excluded_name],
-                "excluded_offices": [],
-            }],
-            "scene_facts": [{
-                "body": "臣遵旨。", "role": "minister", "audibility": "殿上公开", "person_names": [other_name],
-            }],
-        }
-
-    class Agent:
-        def run(self, message):
-            return SimpleNamespace(content="臣遵旨。", tools=[])
-
-    stub_scene_agent(monkeypatch, Agent())
-    stub_audience_translate(monkeypatch, translate_fn)
-    session = GameSession.__new__(GameSession)
-    session.db, session.state, session.content = db, state, content
-    session.registry = None
-    session.llm_config = LLMConfig(
-        api_key="sk-test", base_url="https://example.invalid", model="test",
-    )
-    session.temporary_characters = {}
-    session.agno_db = None
-    session._write_gate = threading.Lock()
-    chat_turn_id = int(db.create_chat_turn(
-        state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
-    ))
-    reply = session.scene_chat(
-        f"密令：对外只说{claim}，瞒着{excluded_name}，不要让他得知。",
-        chat_turn_id=chat_turn_id,
-    )
-    pending = persist_and_schedule_scene(session, db, reply)
-    assert pending is not None
-    pending.result()
-    sayings = list_public_sayings(db)
-    assert len(sayings) == 1
-    saying_id = int(sayings[0]["id"])
-    source_id = f"public_saying:{saying_id}"
-    assert db.conn.execute(
-        "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (source_id,),
-    ).fetchone() is None
-    saying = next(row for row in list_public_sayings(db) if row["id"] == saying_id)
-    assert saying["body"] == claim
-    assert excluded_name in saying["excluded_names"]
-
-    # 现役玩家过月主链（resolve_directives → run_player_month_chain）。
-    # Replace only model transport; run the real month-chain lifecycle.
-    # Admission below is asserted by source_id, not by reading prose.
-    before_turn = int(state.turn)
-    plain_claim = "边情已定，漕运如常"
-    plain_id = record_public_saying(db, state, plain_claim)
-    from ming_sim import knowledge
-    real_projection = knowledge.build_character_knowledge
-    projected_ids = {}
-
-    def observe_projection(db_, state_, name, *, public_feed=False):
-        projected = real_projection(db_, state_, name, public_feed=public_feed)
-        if name == "":
-            projected_ids[public_feed] = {
-                row["source_id"] for row in projected["public_events"]
-            }
-        return projected
-
-    monkeypatch.setattr(knowledge, "build_character_knowledge", observe_projection)
-
-    def model(agent, prompt, tag, **_kwargs):
-        assert tag in {"world-segment", "gazette"}, f"unexpected agent tag: {tag!r}"
-        if tag == "gazette":
-            return json.dumps(
-                {"title": "本月邸报", "report": "本月朝局如常。"}, ensure_ascii=False,
-            )
-        return "本月边事如常。"
-
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", model)
-    monkeypatch.setattr(
-        "ming_sim.mechanical_tail._run_tail_body", lambda *_a, **_k: "done",
-    )
-    # World segment and gazette author run in the same real player month.
-    from ming_sim import month_chain
-
-    real_world = month_chain.run_world_segment_text
-    session = _prepare_player_month(
-        db, state, content, monkeypatch,
-        world=lambda *a, **k: real_world(*a, **k),
-    )
-    session.llm_config = LLMConfig(
-        api_key="sk-test", base_url="https://example.invalid", model="test",
-    )
-    session._write_gate = threading.Lock()
-    advanced = session.resolve_turn(allow_empty_decree=True)
-    assert advanced.advanced is True
-    assert int(state.turn) == before_turn + 1
-    assert source_id in projected_ids[False]
-    assert source_id not in projected_ids[True]
-    assert f"public_saying:{plain_id}" in projected_ids[True]
-
-    def _saying_hits(name: str):
-        return _saying_hits_on(db, state, name, source_id)
-
-    assert _saying_hits(excluded_name) == []
-    other_hits = _saying_hits(other_name)
-    assert len(other_hits) == 1
-    assert other_hits[0]["body"] == claim
-    assert db.conn.execute(
-        "SELECT 1 FROM character_knowledge_events "
-        "WHERE character_name='' AND source_id=?", (source_id,),
-    ).fetchone() is None
-
-    # 票面「过月、重开、再召见」的重开腿：换库重读，排除边界与「只读一次」都还在。
-    shutil.copy(db.path, tmp_path / "reopen.db")
-    reopened = GameDB(str(tmp_path / "reopen.db"), content)
-    try:
-        reopened_state = reopened.load_state()
-        assert int(reopened_state.turn) == int(state.turn)
-        assert _saying_hits_on(reopened, reopened_state, excluded_name, source_id) == []
-        reopened_hits = _saying_hits_on(
-            reopened, reopened_state, other_name, source_id,
-        )
-        assert len(reopened_hits) == 1
-        assert reopened_hits[0]["body"] == claim
-        status, _ = reopened.get_character_status("袁崇焕")
-        assert status != "dead"
-        # 「单份记录」按本条说法核，不按全表行数——同表另有无排除的普通说法。
-        assert [
-            row["id"] for row in list_public_sayings(reopened)
-            if row["source_id"] == source_id
-        ] == [saying_id]
-        assert reopened.conn.execute(
-            "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (source_id,),
-        ).fetchone() is None
-    finally:
-        reopened.close()
 
 
 def test_public_saying_survives_same_turn_archive_projection(game):

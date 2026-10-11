@@ -1485,20 +1485,14 @@ def _dispatch_commissions(
                 )
                 continue
             # ADR 0005 决定 2：可选集合字段坏类型只拒本项，不带走同批合法交办。
-            optional_lists = {
-                key: _declared_str_list(secret.get(key))
-                for key in ("tags", "excluded_names", "excluded_offices")
-            }
-            bad_key = next(
-                (key for key, value in optional_lists.items() if value is None), "",
-            )
+            tags = _declared_str_list(secret.get("tags"))
             # dossier_links 不是字符串数组：现役消费者 db.add_dossier_links 收的是
             # 关联对象 {target_dossier_id, relation_type, note}（ADR 0054:5 案卷
             # 关联契约）。按既有字段契约校验形状，坏类型同样只拒本项。
             links = _declared_dossier_links(secret.get("dossier_links"))
-            if bad_key:
+            if tags is None:
                 _reject(
-                    rejected, item, f"密令字段 {bad_key} 须为字符串数组", "invalid_shape", source,
+                    rejected, item, "密令字段 tags 须为字符串数组", "invalid_shape", source,
                 )
                 continue
             if links is None:
@@ -1533,10 +1527,8 @@ def _dispatch_commissions(
                 "title": title,
                 "content": body,
                 "assignee": assignee,
-                "tags": optional_lists["tags"],
+                "tags": tags,
                 "deadline_months": deadline,
-                "excluded_names": optional_lists["excluded_names"],
-                "excluded_offices": optional_lists["excluded_offices"],
                 "dossier_links": links,
                 "covert_task": frozen_task,
                 "origin_chat_message_id": int(source_turn["user_message_id"]),
@@ -2355,14 +2347,6 @@ def _dispatch_inquiries(
                     "hallucinated_id", source,
                 )
                 continue
-            from ming_sim.knowledge import knowledge_row_visible_to
-            if not knowledge_row_visible_to(db, {
-                "source_id": f"secret_order:{order_id}",
-                "excluded_names": json.dumps(order.get("excluded_names") or []),
-                "excluded_targets": json.dumps(order.get("excluded_targets") or {}),
-            }, attendant):
-                _reject(rejected, item, "受命者在密令排除名单内", "invalid_state", source)
-                continue
             from ming_sim.materials import inquiry_order_source_suffix
             order_suffix = inquiry_order_source_suffix(order_id)
         # 可预期拒收只在声明形状/幻影 id；持久化失败不得洗成 invalid_state 继续
@@ -2838,15 +2822,19 @@ def _dispatch_textual_facts(
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
-        origin_ref, error_category = _resolve_affair_origin_ref(db, item)
+        affair_id, error_category = _peek_affair_id(db, item)
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
+            continue
+        origin_ref = item.get("origin_ref", "")
+        if not isinstance(origin_ref, str):
+            _reject(rejected, item, "来源引用须为字符串", "invalid_shape", source)
             continue
         try:
             fact = db.textual_facts.append(
                 subject_kind=subject_kind, subject_id=subject_id,
                 body=item.get("body"), year=state.year, period=state.period,
-                turn=state.turn, origin_ref=origin_ref,
+                turn=state.turn, origin_ref=origin_ref, affair_id=affair_id or 0,
             )
         except ValueError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
@@ -2881,12 +2869,7 @@ def _dispatch_public_sayings(
     db: Any, state: Any, raw: object, *, source: Provenance,
     source_turn_error: Optional[str] = None,
 ) -> SectionResult:
-    """公开说法：R3 记录 + 进公开层。声明可带 `excluded_names`/`excluded_offices`
-    ——密令『瞒某人』排除名单与正文同落公开说法表（#1829 reopen），读口按
-    `public_saying:<id>` 一票否决压过公开层与职位桶。
-
-    夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
-    """
+    """Public versions are readable by everyone; they grant no secret truth."""
     items, rejected = _section_items(raw, label="公开说法声明", source=source)
     applied: List[Any] = []
     for item in items:
@@ -2902,14 +2885,6 @@ def _dispatch_public_sayings(
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
-        excluded_names = _string_array_field(item, "excluded_names")
-        if excluded_names is None:
-            _reject(rejected, item, "排除人物须为字符串数组", "invalid_shape", source)
-            continue
-        excluded_offices = _string_array_field(item, "excluded_offices")
-        if excluded_offices is None:
-            _reject(rejected, item, "排除职位须为字符串数组", "invalid_shape", source)
-            continue
         affair_ref, error_category = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
@@ -2918,8 +2893,6 @@ def _dispatch_public_sayings(
             saying_id = record_public_saying(
                 db, state, item.get("body"),
                 involved_characters=involved, affair_ref=affair_ref,
-                excluded_names=excluded_names,
-                excluded_targets={"offices": excluded_offices} if excluded_offices else None,
             )
         except ValueError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)

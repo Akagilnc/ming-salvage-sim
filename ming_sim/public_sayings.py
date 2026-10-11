@@ -38,15 +38,9 @@ def record_public_saying(
     *,
     involved_characters: Iterable[str] = (),
     affair_ref: str = "",
-    excluded_names: Iterable[str] = (),
-    excluded_targets: Mapping[str, Iterable[str]] | None = None,
     commit: bool = True,
 ) -> int:
-    """记下一条公开说法，并写入公开层。不改人物实况。
-
-    `excluded_names`/`excluded_targets`：密令『瞒某人』这类显式排除黑名单
-    一票否决压过公开层。正文与排除名单只存在公开说法记录一处（#1829 reopen）；
-    读口经 `public_saying:<id>` 回查本表，不另抄见闻来源、不月末物化。"""
+    """Record public speech without granting its associated private facts."""
     if not isinstance(body, str) or not body.strip():
         raise ValueError("公开说法正文不能为空")
     if not isinstance(affair_ref, str):
@@ -55,18 +49,11 @@ def record_public_saying(
     affair = sanitize_sqlite_text(affair_ref.strip())
     people = _character_names(involved_characters)
     people_json = json.dumps(people, ensure_ascii=False)
-    names = _character_names(excluded_names)
-    targets = {
-        str(key): _character_names(values)
-        for key, values in (excluded_targets or {}).items()
-        if _character_names(values)
-    }
     owns = bool(commit) and connection_owns_transaction(db.conn)
     cur = db.conn.execute(
         "INSERT INTO public_sayings "
-        "(turn, year, period, body, involved_characters, affair_ref, source_id, "
-        "excluded_names, excluded_targets) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(turn, year, period, body, involved_characters, affair_ref, source_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             int(state.turn),
             int(state.year),
@@ -75,8 +62,6 @@ def record_public_saying(
             people_json,
             affair,
             f"{SOURCE_PREFIX}pending",
-            json.dumps(names, ensure_ascii=False),
-            json.dumps(targets, ensure_ascii=False),
         ),
     )
     saying_id = int(cur.lastrowid)
@@ -90,55 +75,19 @@ def record_public_saying(
     return saying_id
 
 
-def public_layer_events(db: Any, *, for_public_feed: bool = False) -> list[dict[str, object]]:
-    """投影进 0034 公开层的条目：人人读到「有此说法」，不是实况。
-
-    `for_public_feed=True` 只由公共供料方（公共邸报作者）使用：带显式排除
-    名单的说法不是「人人可读」，公共供料没有可被排除的具体读者，故不投影，
-    否则公共供料会把受排除材料重新公开（#1829 C1）。其余读者（人物、全量
-    推演者）走 `knowledge_row_visible_to` 的按人边界：推演者按 ADR 0155 三层
-    全看，无读者不代表公共（#1829 F1）。
-    """
+def public_layer_events(db: Any) -> list[dict[str, object]]:
+    """Everyone hears the public version, whether true, rumor, or cover story."""
     return [
-        {
-            "turn": row["turn"],
-            "year": row["year"],
-            "period": row["period"],
-            "kind": "public",
-            "title": LAYER_TITLE,
-            "body": row["body"],
-            "source_id": row["source_id"],
-        }
+        {"turn": row["turn"], "year": row["year"], "period": row["period"],
+         "kind": "public", "title": LAYER_TITLE, "body": row["body"],
+         "source_id": row["source_id"]}
         for row in list_public_sayings(db)
-        if row.get("source_id")
-        and not (
-            for_public_feed
-            and (row["excluded_names"] or row["excluded_targets"])
-        )
     ]
 
 
 def _json_name_list(raw: object) -> list[str]:
-    # 与 db 持久 list 权威同缝；腐坏响亮，不 catch-to-[]（#1897 E1）。
     from ming_sim.db import _load_durable_str_list
-    return list(
-        _load_durable_str_list(raw, surface="public_sayings.excluded_names")
-    )
-
-
-def _json_target_map(raw: object) -> dict[str, list[str]]:
-    # 与 db._load_exclusion_targets 同一权威；空串/腐坏响亮（#1897 E1）。
-    from ming_sim.db import _load_exclusion_targets
-    targets = _load_exclusion_targets(
-        raw, surface="public_sayings.excluded_targets",
-    )
-    result: dict[str, list[str]] = {}
-    for key, values in targets.items():
-        if key in {"people", "offices"} and isinstance(values, list) and values:
-            result[str(key)] = [str(name) for name in values]
-        elif key not in {"people", "offices"} and isinstance(values, list) and values:
-            result[str(key)] = [str(name) for name in values if str(name).strip()]
-    return result
+    return _load_durable_str_list(raw, surface="public_sayings.involved_characters")
 
 
 def _row_as_saying(row: Any) -> dict[str, object]:
@@ -151,8 +100,6 @@ def _row_as_saying(row: Any) -> dict[str, object]:
         "involved_characters": _json_name_list(row["involved_characters"]),
         "affair_ref": str(row["affair_ref"] or ""),
         "source_id": str(row["source_id"] or ""),
-        "excluded_names": _json_name_list(row["excluded_names"]),
-        "excluded_targets": _json_target_map(row["excluded_targets"]),
     }
 
 
@@ -163,8 +110,7 @@ def list_public_sayings(
     affair_ref: str | None = None,
 ) -> list[dict[str, object]]:
     rows = db.conn.execute(
-        "SELECT id, turn, year, period, body, involved_characters, affair_ref, source_id, "
-        "excluded_names, excluded_targets "
+        "SELECT id, turn, year, period, body, involved_characters, affair_ref, source_id "
         "FROM public_sayings ORDER BY id"
     ).fetchall()
     result = [_row_as_saying(row) for row in rows]

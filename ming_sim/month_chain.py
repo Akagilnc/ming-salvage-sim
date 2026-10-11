@@ -66,31 +66,8 @@ def run_world_segment_text(
         release_material_tree(prepared.root)
 
 
-def _gazette_public_fact(fact: Any, secret_dossier_ids: Optional[set[int]] = None) -> bool:
-    from ming_sim.materials import dossier_id_in_origin, is_secret_order_origin
-
-    origin = str(getattr(fact, "origin_ref", "") or "")
-    if is_secret_order_origin(origin):
-        return False
-    dossier_id = dossier_id_in_origin(origin)
-    return dossier_id is None or dossier_id not in (secret_dossier_ids or set())
-
-
-def _gazette_public_event(event: Any) -> bool:
-    """作者经历投影：密令简报仍留在大臣自己的知识里，不写入作者可读经历。"""
-    from ming_sim.materials import is_secret_order_origin
-
-    if not isinstance(event, dict):
-        return True
-    kind = str(event.get("kind") or "")
-    source = str(event.get("source_id") or "")
-    if kind in {"secret_order", "secret_order_brief"}:
-        return False
-    return not is_secret_order_origin(source)
-
-
-def _secret_sourced(value: object) -> bool:
-    from ming_sim.materials import is_secret_order_origin
+def _secret_sourced(db: Any, value: object) -> bool:
+    from ming_sim.knowledge import origin_visible_to
 
     if isinstance(value, dict):
         if str(value.get("kind") or "") == "secret_order":
@@ -98,35 +75,21 @@ def _secret_sourced(value: object) -> bool:
         if value.get("secret_order_id"):
             return True
         origin = str(value.get("origin_ref") or value.get("source_id") or "")
-        if is_secret_order_origin(origin):
+        if not origin_visible_to(db, origin, linked_dossier_id=int(value.get("dossier_id") or 0)):
             return True
         orders = value.get("secret_orders")
         if isinstance(orders, list) and orders:
             return True
-        return any(_secret_sourced(item) for item in value.values())
+        return any(_secret_sourced(db, item) for item in value.values())
     if isinstance(value, list):
-        return any(_secret_sourced(item) for item in value)
+        return any(_secret_sourced(db, item) for item in value)
     return False
 
 
-def _origin_is_secret_dossier(origin: object, secret_dossiers: set[int]) -> bool:
-    from ming_sim.materials import dossier_id_in_origin
-
-    dossier_id = dossier_id_in_origin(origin)
-    return dossier_id is not None and dossier_id in secret_dossiers
-
-
-def _item_is_secret_dossier(item: object, secret_dossiers: set[int]) -> bool:
-    if not isinstance(item, dict):
-        return False
-    origin = item.get("origin_ref") or item.get("source_id") or ""
-    return _origin_is_secret_dossier(origin, secret_dossiers)
-
-
 def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
-    from ming_sim.materials import is_secret_order_origin
+    from ming_sim.knowledge import origin_visible_to
 
-    if is_secret_order_origin(decree_ref):
+    if not origin_visible_to(db, decree_ref):
         return True
     prefix = "pending-action:"
     if not str(decree_ref).startswith(prefix):
@@ -151,10 +114,9 @@ def _month_fact_materials(
     """
     import json
 
-    from ming_sim.materials import is_secret_order_origin, secret_order_dossier_ids
+    from ming_sim.knowledge import origin_visible_to
 
     turn = int(state.turn)
-    secret_dossiers = secret_order_dossier_ids(db) if not include_secret_sources else set()
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
     rows = db.conn.execute(
@@ -187,8 +149,8 @@ def _month_fact_materials(
             ) from exc
         if not include_secret_sources and (
             _decree_ref_is_secret(db, decree_ref)
-            or _secret_sourced(declaration)
-            or _secret_sourced(visible)
+            or _secret_sourced(db, declaration)
+            or _secret_sourced(db, visible)
         ):
             continue
         nominal.append({"decree_ref": decree_ref, "declaration": declaration})
@@ -197,14 +159,13 @@ def _month_fact_materials(
             forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
     for row in db.conn.execute(
-        "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
+        "SELECT account, delta, category, reason, origin_ref, dossier_id FROM economy_ledger "
         "WHERE turn=? ORDER BY id",
         (turn,),
     ):
         origin = str(row["origin_ref"] or "")
-        if not include_secret_sources and (
-            is_secret_order_origin(origin)
-            or _origin_is_secret_dossier(origin, secret_dossiers)
+        if not include_secret_sources and not origin_visible_to(
+            db, origin, linked_dossier_id=int(row["dossier_id"] or 0),
         ):
             continue
         landed.append({
@@ -230,9 +191,7 @@ def _month_fact_materials(
             item = GameDB.parse_engine_payload_json(
                 row["item_json"], surface="rejection_reports.item_json",
             )
-            if not include_secret_sources and (
-                _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
-            ):
+            if not include_secret_sources and _secret_sourced(db, item):
                 continue
             rejections.append({
                 "section": row["section"],
@@ -271,16 +230,14 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     from ming_sim.audience_night import list_waiting_audience_summons
     from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
-    from ming_sim.materials import is_secret_order_origin, secret_order_dossier_ids
+    from ming_sim.knowledge import origin_visible_to
     from ming_sim.settlement_payload import list_due_commitments
 
     turn = int(state.turn)
     materials = _month_fact_materials(db, state, chain, include_secret_sources=False)
-    secret_dossiers = secret_order_dossier_ids(db)
     due_commitments = [
         item for item in list_due_commitments(db, state)
-        if not is_secret_order_origin(item["origin_ref"])
-        and not _origin_is_secret_dossier(item["origin_ref"], secret_dossiers)
+        if origin_visible_to(db, item["origin_ref"])
     ]
     return {
         "instruction": "据已落定的实况写本期邸报。title 由你写，report 是全文。",
@@ -304,28 +261,14 @@ def _persisted_transit_arrivals(db: Any, turn: int) -> list:
 
 
 def prepare_gazette_author_materials(db: Any, state: Any):
-    """邸报作者可读目录。五道筛是这一次准备的内容，不是另一套材料账。"""
-    from ming_sim.materials import (
-        SECRET_ORDER_ORIGIN_PREFIX,
-        prepare_world_materials,
-        secret_order_dossier_ids,
-    )
-
-    secret_dossiers = secret_order_dossier_ids(db)
-
-    def include_fact(fact: Any) -> bool:
-        return _gazette_public_fact(fact, secret_dossiers)
-
-    def include_event(event: Any) -> bool:
-        if not _gazette_public_event(event):
-            return False
-        return not _item_is_secret_dossier(event, secret_dossiers)
+    """Public monthly catalog uses the same provenance boundary as people."""
+    from ming_sim.materials import prepare_world_materials
+    from ming_sim.knowledge import origin_visible_to, knowledge_row_visible_to
 
     return prepare_world_materials(
         db, state,
-        include_fact=include_fact,
-        include_event=include_event,
-        ledger_origin_prefix_excluded=SECRET_ORDER_ORIGIN_PREFIX,
+        include_fact=lambda fact: origin_visible_to(db, fact.origin_ref),
+        include_event=lambda event: knowledge_row_visible_to(db, event, ""),
         exclude_secret_order_audience=True,
         exclude_secret_order_dossiers=True,
         public_feed=True,

@@ -79,7 +79,7 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     }
 
 
-def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
+def test_public_disclosure_does_not_grant_secret_dossier_access(game):
     from ming_sim.knowledge import knowledge_row_visible_to
 
     db, state, _ = game
@@ -87,12 +87,12 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
     dossier = db.get_dossier_for_secret_order(order_id)
     source_id = f"secret_order_disclosure:{order_id}:test"
     db.record_public_knowledge_event(
-        state, "密查辽饷已披露", source_id=source_id, excluded_names=["孙承宗"])
+        state, "密查辽饷已披露", source_id=source_id)
     event = db.conn.execute(
         "SELECT * FROM character_knowledge_events WHERE source_id=?", (source_id,)
     ).fetchone()
 
-    assert knowledge_row_visible_to(db, event, "孙承宗") is False
+    assert knowledge_row_visible_to(db, event, "孙承宗") is True
     assert dossier["id"] not in {
         row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
     }

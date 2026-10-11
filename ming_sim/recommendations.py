@@ -20,15 +20,7 @@ def _known_names(db: Any, recommender: str) -> set[str]:
             return
         if not knowledge_row_visible_to(db, source, recommender):
             return
-        for name in participant_roster_names(source["participant_roster"]):
-            target = conn.execute(
-                "SELECT name, office, office_type FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            if target is not None and knowledge_row_visible_to(
-                db, source, recommender, target=target,
-            ):
-                if event is None or knowledge_row_visible_to(db, event, recommender, target=target):
-                    names.add(name)
+        names.update(participant_roster_names(source["participant_roster"]))
 
     for source, event in _visible_sources(db, recommender):
         add_visible_roster(source, event)
@@ -39,12 +31,12 @@ def _visible_sources(db: Any, recommender: str) -> Iterable[tuple[Any, Any]]:
     """Yield sources the recommender may read, with their participation event."""
     conn = db.conn
     rows = conn.execute(
-        "SELECT source_id, excluded_names FROM character_knowledge_events WHERE character_name=?",
+        "SELECT source_id, kind FROM character_knowledge_events WHERE character_name=?",
         (recommender,),
     ).fetchall()
     for row in rows:
         source = conn.execute(
-            "SELECT source_id, participant_roster, excluded_names, excluded_targets "
+            "SELECT source_id, participant_roster, kind "
             "FROM character_knowledge_sources WHERE source_id=?",
             (row["source_id"],),
         ).fetchone()
@@ -55,7 +47,7 @@ def _visible_sources(db: Any, recommender: str) -> Iterable[tuple[Any, Any]]:
     # immediately after a source is written), and recommendations must not
     # lose an otherwise reachable candidate in that interval.
     for source in conn.execute(
-        "SELECT source_id, participant_roster, excluded_names, excluded_targets "
+        "SELECT source_id, participant_roster, kind "
         "FROM character_knowledge_sources"
     ).fetchall():
         if recommender in participant_roster_names(source["participant_roster"]):
@@ -64,7 +56,7 @@ def _visible_sources(db: Any, recommender: str) -> Iterable[tuple[Any, Any]]:
     # Public sources are visible without a direct participation row.  Their
     # structured roster is the public-event side of the #459 read projection.
     for source in conn.execute(
-        "SELECT source_id, participant_roster, excluded_names, excluded_targets "
+        "SELECT source_id, participant_roster, kind "
         "FROM character_knowledge_sources WHERE kind='public'"
     ).fetchall():
         yield source, None
