@@ -16,21 +16,11 @@ import json
 
 import pytest
 
+from tests.dossier_test_helpers import close_issue_with_effect
+
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
 from tests.readback_helpers import non_ming_power_id as _valid_power_id
 
-
-def _close_issue_with_effect(db, state, title: str, effect: dict) -> None:
-    """经现役结案入口：立国策（effect_on_resolve）后 close_issues，效果在结案路落账/报错。"""
-    import ming_sim.issues as I
-    dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text=title, target_kind="issue", target_id=title)
-    db.record_dossier_decision(dossier_id, "promulgated")
-    I.apply_issue_tracker_output(db, state, {"new_issues": [{
-        "origin_kind": "decree", "origin_ref": f"dossier:{dossier_id}", "title": title,
-        "kind": "initiative", "effect_on_resolve": effect,
-    }]})
-    issue_id = int(db.conn.execute("SELECT id FROM issues WHERE title=?", (title,)).fetchone()[0])
-    I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]})
 
 def run_settle(db, state, content, extracted, **kwargs):
     """These rejection tests model canonical spontaneous extractor envelopes."""
@@ -560,7 +550,7 @@ def test_issue_path_tolerates_previously_skipped_cases(game):
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
     before = db.conn.execute(
         "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
-    _close_issue_with_effect(db, state, "容忍旧跳过案", {
+    close_issue_with_effect(db, state, "容忍旧跳过案", {
         "army_delta": {aid: {"morale": 2, "士气大振": 1}},  # 非法字段,历史 print-skip
     })
     after = db.conn.execute(
@@ -571,7 +561,7 @@ def test_issue_path_still_strict_for_historically_fatal(game):
     """历史上就 raise 的类别(查无此军)在国策结案路保持严格(pin)，经现役结案入口断言。"""
     db, state, _ = game
     with pytest.raises(ValueError):
-        _close_issue_with_effect(db, state, "严格旧案", {
+        close_issue_with_effect(db, state, "严格旧案", {
             "army_delta": {"查无此军xyz": {"morale": 2}},
         })
 
@@ -628,7 +618,6 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
 
     rows = _rejection_rows(
         db, turn, "issue_summary.entity_rejections",
-        columns="section, reason, category, source, item_json",
     )
     assert len(rows) == 1
     section, reason, category, source = rows[0]

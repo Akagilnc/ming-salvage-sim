@@ -10,13 +10,12 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as I
+from tests.dossier_test_helpers import (
+    close_issue_with_effect,
+    create_issue_with_effect,
+    promulgated_policy_origin,
+)
 from tests.conftest import active_ming_character
-
-
-def _decree_origin(db, state) -> str:
-    dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试国策来源", target_kind="issue", target_id="test")
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
 
 
 def _pay_source() -> dict[str, object]:
@@ -73,16 +72,10 @@ def test_resolve_character_status_syncs_content_travel_state(game):
             content=content,
         )
 
-        created = I.apply_issue_tracker_output(db, state, {"new_issues": [{
-            "origin_kind": "decree", "origin_ref": _decree_origin(db, state),
-            "title": "行旅问责结案", "kind": "initiative",
-            "effect_on_resolve": {"人物变更": [{
+        close_issue_with_effect(db, state, "行旅问责结案", {
+            "人物变更": [{
                 "name": name, "动作": "处置", "status": "dismissed", "reason": "局势失败问责",
-            }]},
-        }]}, content=content)
-        issue_id = created["new_issues"][0]["issue_id"]
-        I.apply_issue_tracker_output(db, state, {
-            "close_issues": [{"issue_id": issue_id, "reason": "resolved"}],
+            }],
         }, content=content)
 
         row = db.conn.execute(
@@ -128,12 +121,7 @@ def test_resolve_applies_unified_person_change_effect(game):
 def test_issue_person_change_effect_rejects_malformed_shape(game, bad_effect):
     """结案效果（effect_on_resolve）人物变更形状畸形：经现役结案入口 close_issues 须响亮报错。"""
     db, state, _ = game
-    I.apply_issue_tracker_output(db, state, {"new_issues": [{
-        "origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "畸形人物变更结案",
-        "kind": "initiative", "effect_on_resolve": bad_effect,
-    }]})
-    issue_id = int(db.conn.execute(
-        "SELECT id FROM issues WHERE title='畸形人物变更结案'").fetchone()[0])
+    issue_id = create_issue_with_effect(db, state, "畸形人物变更结案", bad_effect)
     with pytest.raises(ValueError):
         I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]})
 
@@ -215,12 +203,7 @@ def test_apply_score_extraction_rejects_unknown_top_level_key(game):
 def test_non_dict_person_change_item_raises(game):
     """结案效果人物变更含非 dict 项：经现役结案入口须响亮报错，不静默丢。"""
     db, state, _ = game
-    I.apply_issue_tracker_output(db, state, {"new_issues": [{
-        "origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "非dict人物项结案",
-        "kind": "initiative", "effect_on_resolve": {"人物变更": ["这不是dict"]},
-    }]})
-    issue_id = int(db.conn.execute(
-        "SELECT id FROM issues WHERE title='非dict人物项结案'").fetchone()[0])
+    issue_id = create_issue_with_effect(db, state, "非dict人物项结案", {"人物变更": ["这不是dict"]})
     with pytest.raises(ValueError):
         I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]})
 
@@ -233,7 +216,7 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     before = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
-            "origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "效果字段畸形国策", "kind": "initiative",
+            "origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "test"), "title": "效果字段畸形国策", "kind": "initiative",
             "effect_on_resolve": "这是字符串不是dict",   # 恶意非 dict（旧码 dict() 会抛 ValueError）
             "ongoing_effects": ["也不是dict"],
             "effect_on_fail": None,
@@ -243,7 +226,6 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     new = [e for e in out["new_issues"] if e.get("title") == "效果字段畸形国策"]
     assert new and not new[0].get("rejected")
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
-
 
 
 def test_inertia_natural_resolve_applies_entities(game):

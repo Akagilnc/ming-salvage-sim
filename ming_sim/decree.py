@@ -135,7 +135,6 @@ def collect_new_arrival_waiting_audience(
     return result
 
 
-
 # #1753 decision key promulgation-verdict-heal-by-resume-then-fail-closed：
 # 颁布判决 LLM 违契约 → 同一会话有界纠正补交次数（单一真源；不含首次）。
 PROMULGATION_VERDICT_HEAL_RETRIES = 3
@@ -160,9 +159,6 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
     """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
     return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
-
-
-
 
 
 def build_promulgation_judge_context(
@@ -597,9 +593,6 @@ def _rescript_decisions(
     return decisions
 
 
-
-
-
 def write_decree_with_agno(
     llm_config: LLMConfig,
     agno_db: SqliteDb,
@@ -782,16 +775,6 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
     return state
 
 
-class _AtomicOutcome:
-    """atomic_and_reload yield 出的结果句柄（cmr PR2 R1 sourcery）：取代把
-    `_reload_failed` 动态属性挂到任意 BaseException 上（slotted/复用异常时脆弱）。
-    专用对象、固定字段——settle 用 `as` 接、外层 except 读 `.reload_failed`。"""
-    __slots__ = ("reload_failed",)
-
-    def __init__(self) -> None:
-        self.reload_failed = False
-
-
 @contextmanager
 def atomic_and_reload(
     db: GameDB,
@@ -799,7 +782,7 @@ def atomic_and_reload(
     *,
     content=None,
     on_error: Optional[Callable[[BaseException], None]] = None,
-) -> "Iterator[_AtomicOutcome]":
+) -> "Iterator[None]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
 
     供 pre_settle 与玩家月链中需要事务回滚并重载内存状态的步骤使用。
@@ -816,10 +799,9 @@ def atomic_and_reload(
     内存缓冲须同步清场）。settle 的中断透传 / 错误包 / SettlementAbort 包装等**特殊** except
     逻辑不属公共内核，仍由调用方在本助手之外的外层 try/except 处理。
     """
-    outcome = _AtomicOutcome()
     try:
         with atomic(db):
-            yield outcome
+            yield
     except BaseException as exc:
         if on_error is not None:
             on_error(exc)
@@ -827,10 +809,6 @@ def atomic_and_reload(
             try:
                 reload_state_from_db(db, state, content=content)
             except BaseException as reload_exc:
-                # reload 失败标记落在专用句柄上（不挂异常属性）：settle 的外层 except
-                # 凭 `as` 句柄裸传播原异常,不包 SettlementAbort 不写错误包（内存仍脏时
-                # 宣传可重试/基于脏态写包都是误导;b12a60e 原语义保真,cmr S4 r1）。
-                outcome.reload_failed = True
                 raise exc from reload_exc
         raise
 
@@ -1070,8 +1048,6 @@ def pre_settle(
         raise
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return auto_triggered
-
-
 
 
 def _collect_inline_rejections(

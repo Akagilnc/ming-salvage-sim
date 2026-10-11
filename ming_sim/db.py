@@ -9585,13 +9585,6 @@ class GameDB:
             commit=commit,
         )
 
-    def _current_open_night_id(self) -> int:
-        """当前开着（open/closing）的召对夜 id；无夜返回 0（#498）。"""
-        row = self.conn.execute(
-            "SELECT id FROM audience_nights "
-            "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        return int(row["id"]) if row is not None else 0
 
     # ── #571 旨意案卷公共接口 ──────────────────────────────────────
 
@@ -15860,34 +15853,6 @@ class GameDB:
         return normalized
 
 
-    def flag_directive_needs_clarification(self, candidate_id: int) -> int:
-        """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
-        「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
-        返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(candidate_id),),
-        ).fetchone()
-        if row is None:
-            return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        payload["_needs_clarification"] = True
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
-        )
-        self.conn.commit()
-        return int(candidate_id)
-
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
@@ -18004,7 +17969,6 @@ class GameDB:
             return dict(value)
         tlog(f"[{surface}] 非对象，拒绝静默：{type(value).__name__}")
         raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
-
 
 
     @classmethod

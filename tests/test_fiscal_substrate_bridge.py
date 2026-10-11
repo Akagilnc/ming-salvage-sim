@@ -19,6 +19,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.dossier_test_helpers import close_issue_with_effect
+
 import ming_sim.content as content_mod
 from ming_sim.applier import atomic
 from ming_sim.content import GameContent
@@ -32,18 +34,6 @@ from ming_sim.models import TurnPhase
 from tests.fiscal_test_utils import settle_province_via_batch as _settle_tick
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
 
-def _close_issue_with_economy(db, state, economy: list) -> None:
-    """经现役结案入口：立国策（effect_on_resolve.economy）后 close_issues，经济效果在结案路落账。"""
-    import ming_sim.issues as I
-    title = f"经济效果案{abs(hash(str(economy))) % 10**9}"
-    dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text=title, target_kind="issue", target_id=title)
-    db.record_dossier_decision(dossier_id, "promulgated")
-    I.apply_issue_tracker_output(db, state, {"new_issues": [{
-        "origin_kind": "decree", "origin_ref": f"dossier:{dossier_id}", "title": title,
-        "kind": "initiative", "effect_on_resolve": {"economy": economy},
-    }]})
-    issue_id = int(db.conn.execute("SELECT id FROM issues WHERE title=?", (title,)).fetchone()[0])
-    I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]})
 
 @pytest.fixture
 def fresh_db(tmp_path):
@@ -2345,10 +2335,10 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
     expected_province_pay = 5 * before_army["province_pay_arrears"] / before_total
     expected_central_pay = 5 * before_army["central_pay_arrears"] / before_total
 
-    _close_issue_with_economy(
+    close_issue_with_effect(
         fresh_db,
         state,
-        [{
+        "经济效果案", {"economy": [{
             "account": "国库",
             "delta": -5,
             "category": "补饷",
@@ -2356,7 +2346,7 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": "shaanxi_army",
-        }],
+        }]},
     )
 
     after_army = fresh_db.conn.execute(
@@ -2400,10 +2390,10 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
     assert before_army["province_pay_arrears"] > 3
     assert before_army["central_pay_arrears"] == pytest.approx(0)
 
-    _close_issue_with_economy(
+    close_issue_with_effect(
         fresh_db,
         state,
-        [{
+        "经济效果案", {"economy": [{
             "account": "国库",
             "delta": -3,
             "category": "补饷",
@@ -2411,7 +2401,7 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": "fujian_navy",
-        }],
+        }]},
     )
 
     after_army = fresh_db.conn.execute(
@@ -2448,10 +2438,10 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
     )
     fresh_db._reconcile_army_pay_source_region_container("shaanxi")
 
-    _close_issue_with_economy(
+    close_issue_with_effect(
         fresh_db,
         state,
-        [{
+        "经济效果案", {"economy": [{
             "account": "国库",
             "delta": -1,
             "category": "补饷",
@@ -2459,7 +2449,7 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": "shaanxi_army",
-        }],
+        }]},
     )
 
     row = fresh_db.conn.execute(
@@ -2501,10 +2491,10 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
     )
     fresh_db._reconcile_army_pay_source_region_container("shaanxi")
 
-    _close_issue_with_economy(
+    close_issue_with_effect(
         fresh_db,
         state,
-        [{
+        "经济效果案", {"economy": [{
             "account": "国库",
             "delta": -3,
             "category": "补饷",
@@ -2512,7 +2502,7 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": "shaanxi_army",
-        }],
+        }]},
     )
 
     row = fresh_db.conn.execute(
@@ -2576,7 +2566,7 @@ def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_
     ).fetchone()
     before_province = _province_pay_arrears(fresh_db, "shaanxi")
 
-    _close_issue_with_economy(fresh_db, state, [move])
+    close_issue_with_effect(fresh_db, state, "经济效果案", {"economy": [move]})
 
     after_army = fresh_db.conn.execute(
         """

@@ -342,8 +342,6 @@ def register_unlisted_person_record(
     return character
 
 
-
-
 def _canonical_minister_key(content: Any, name: str, db: "GameDB") -> str:
     """姓名归一到在册原始 key（别名→原名）；无 content / 查不到时返回去空白原名。
 
@@ -481,12 +479,6 @@ def apply_appointment(
     if row:
         character.portrait_id = str(row["portrait_id"])
     return (name, displaced)
-
-
-
-
-
-
 
 
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
@@ -644,7 +636,6 @@ class GameSession:
             self.last_decree = ""
             # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
             self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
-            self._begun = False
             # #1353：per-session 单写者票据队列（CLI/Web 共用）；write_gate 并入队列。
             from ming_sim.session_write_queue import SessionWriteQueue
             self._write_queue = SessionWriteQueue()
@@ -711,7 +702,6 @@ class GameSession:
         ):
             self.state.turn_phase = TurnPhase.SUMMONING.value
             self.db.save_state(self.state)
-        self._begun = True
         return self.turn_snapshot()
 
     def current_phase(self) -> TurnPhase:
@@ -930,7 +920,6 @@ class GameSession:
             from ming_sim.decree_forecast import schedule_held_decree_forecasts
             schedule_held_decree_forecasts(self)
         return decision
-
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
@@ -1358,7 +1347,6 @@ class GameSession:
             write_queue=write_queue,
             admitted_ticket=getattr(result, "_admitted_write_ticket", None),
         )
-
 
 
     # ── 拟旨 / 草案阶段 ───────────────────────────────────────────────────

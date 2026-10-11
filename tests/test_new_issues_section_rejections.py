@@ -11,14 +11,9 @@ import json
 import pytest
 
 import ming_sim.issues as I
+from tests.dossier_test_helpers import promulgated_policy_origin
 from ming_sim.models import Event
 from tests.section_rejection_helpers import game
-
-
-def _decree_origin(db, state) -> str:
-    dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试新立局势来源", target_kind="issue", target_id="validation")
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
 
 
 class _TempEvents:
@@ -148,7 +143,7 @@ def test_new_issue_oversized_severity_clamped_not_abort(game):
     # except 后会逃逸 abort。severity 与 bar_value 同 0-100 分值，应 clamp 到 100、照常落库
     # （非拒整项；与 bar_value 静默 clamp 一致，cmr ni r2 codex）。
     out = I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation",
+        "new_issues": [{"origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "validation"), "kind": "situation",
                         "title": "测试·超大severity", "severity": 10 ** 100}],
     })
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
@@ -163,7 +158,7 @@ def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(gam
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
-            "origin_ref": _decree_origin(db, state),
+            "origin_ref": promulgated_policy_origin(db, state, "validation"),
             "kind": "situation",
             "title": "测试·stop_condition fallback",
             "bar_value": 90,
@@ -215,7 +210,7 @@ def test_new_issue_severity_zero_preserved(game):
     db, state, _ = game
     # 合法 severity=0 须保留，不能被 `or 50` 静默改成 50（数据保真，cmr ni r4 codex）。
     out = I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·severity0",
+        "new_issues": [{"origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "validation"), "kind": "situation", "title": "测试·severity0",
                         "severity": 0, "effect_on_resolve": {"metrics": {"民心": 1}}}],
     })
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
@@ -277,7 +272,7 @@ def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     monkeypatch.setattr(type(db), "insert_issue", _boom)
     with pytest.raises(RuntimeError) as ei:
         I.apply_issue_tracker_output(db, state, {
-            "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state),
+            "new_issues": [{"origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "validation"),
                             "kind": "situation", "title": "测试·正常字段"}],
         })
     assert ei.value is fault
@@ -288,7 +283,7 @@ def test_new_issue_valid_decree_still_creates(game):
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree", "kind": "situation", "title": "测试·新立局势",
-            "origin_ref": _decree_origin(db, state),
+            "origin_ref": promulgated_policy_origin(db, state, "validation"),
             "bar_value": 30, "severity": 60, "tags": ["测试"],
             "effect_on_resolve": {"metrics": {"民心": 1}},
         }],
@@ -439,7 +434,7 @@ def test_new_issue_non_string_tag_element_rejected(read_game):
 def test_new_issue_valid_list_tags_preserved(game):
     db, state, _ = game
     # 正常 list[str] tags 整词保全（不拆字），pairing 短语完整 → 正常立项落库。
-    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常tags", "tags": ["募营", "边事"]}
+    ni = {"origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "validation"), "kind": "situation", "title": "测试·正常tags", "tags": ["募营", "边事"]}
     out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
     assert len(created) == 1, out

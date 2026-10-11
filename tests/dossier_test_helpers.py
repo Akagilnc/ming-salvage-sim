@@ -123,3 +123,25 @@ def promulgated_policy_origin(db, state, token: str) -> str:
     assert dossier_id > 0
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
+
+
+def create_issue_with_effect(db, state, title: str, effect: dict, *, content=None):
+    """Create a policy issue through the live tracker, anchored to a promulgated dossier."""
+    from ming_sim.issues import apply_issue_tracker_output
+
+    origin = promulgated_policy_origin(db, state, title)
+    created = apply_issue_tracker_output(db, state, {"new_issues": [{
+        "origin_kind": "decree", "origin_ref": origin, "title": title,
+        "kind": "initiative", "effect_on_resolve": effect,
+    }]}, content=content)
+    return created["new_issues"][0]["issue_id"]
+
+
+def close_issue_with_effect(db, state, title: str, effect: dict, *, content=None):
+    """Resolve the policy issue; callers testing a close failure use its creation seam."""
+    from ming_sim.issues import apply_issue_tracker_output
+
+    issue_id = create_issue_with_effect(db, state, title, effect, content=content)
+    return apply_issue_tracker_output(db, state, {
+        "close_issues": [{"issue_id": issue_id, "reason": "resolved"}],
+    }, content=content)

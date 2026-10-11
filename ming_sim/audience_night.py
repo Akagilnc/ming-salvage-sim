@@ -393,7 +393,6 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
     return out
 
 
-
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     # 撤回的轮（status='undone'）从「按夜取数」隐去——与「该轮未发生」等价（#506）。
     # failed 半场轮 / consumed 空问话召见 scaffold 同样不计入夜时间线。
@@ -1952,22 +1951,6 @@ def _is_command_entry(entry: Dict[str, Any]) -> bool:
     return int(entry.get("source_chat_turn_id") or 0) == 0
 
 
-
-
-
-
-def persons_present_tonight(db: Any, night_id: int) -> set[str]:
-    """当前在场名单 = 夜末在场态（#501 AC2/AC9）。
-
-    与 `present_names_at` 共用单一在场步进 `_presence_delta`（ADR 0035 R2）——进=口令账
-    TAG_ENTER（宣入/常在员额）**或**抽取账 presence_effect='enter'；出=口令账 TAG_EXIT
-    （令退）**或**抽取账 presence_effect='exit'。抽取账开放 tags 不驱动在场（机器承重态不
-    解析自由文本，与 settle `check_dead=(effect==enter)` 对称）。派生只认已落账（list_ledger
-    只返回已 settle 的账），故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。
-    """
-    return present_names_at(db, int(night_id))
-
-
 def presence_roster(db: Any, night_id: int) -> List[Dict[str, Any]]:
     """Project everyone who entered this night, in first-entry order, with current presence."""
     present: set[str] = set()
@@ -2008,30 +1991,6 @@ def ensure_summon_enter(
         origin_ref=origin_ref,
         commit=commit,
     )
-
-
-
-def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
-    origin = str(origin or "").strip()
-    if not origin:
-        return None
-    row = db.conn.execute(
-        "SELECT * FROM story_ledger_entries WHERE origin_ref = ? LIMIT 1",
-        (origin,),
-    ).fetchone()
-    if row is None:
-        return None
-    raw = _row_dict(row)
-    return {
-        "id": int(raw["id"]),
-        "night_id": int(raw["night_id"]),
-        "body": str(raw.get("body") or ""),
-        "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
-        "origin_ref": str(raw.get("origin_ref") or ""),
-        "tags": list(_json_list(raw.get("tags"))),
-        "person_names": list(_json_list(raw.get("person_names"))),
-    }
-
 
 
 def mark_actions_night_approved(
