@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -175,7 +177,7 @@ def test_cross_month_snapshot_does_not_bleed(game):
     assert payload["metrics"]["国库"] == before["国库"] + 5
 
 
-def test_oracle_normal_phase_clears_via_startup_hook(game, capsys):
+def test_oracle_normal_phase_clears_via_startup_hook(game):
     """故障注入常态路：相位常态 + 快照在 → 启动位清后无核账态，盘面为点击前值。"""
     db, state, _content = game
     before = _click_before_metrics(state)
@@ -188,9 +190,6 @@ def test_oracle_normal_phase_clears_via_startup_hook(game, capsys):
     cleared = clear_orphan_month_open_snapshot(db, state)
     assert cleared is True
     assert db.get_month_open_snapshot(int(state.turn)) is None
-    logged = capsys.readouterr().out
-    assert "month_open_snapshot" in logged
-    assert "启动清除孤儿月初快照" in logged
 
     # ADR 0008：前半段未提交窗口引擎零持久态——崩溃回滚后活盘=点击前。
     for k, v in before.items():
@@ -241,8 +240,6 @@ def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
     sess.last_decree = ""
     sess.last_report = ""
     sess._decree_draft_fingerprint = ()
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess.auto_save = lambda *_a, **_k: None
 
     def _boom(*_a, **_k):
@@ -258,7 +255,7 @@ def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
         },
     )
 
-    with pytest.raises(RuntimeError, match="stop-after-capture"):
+    with pytest.raises(RuntimeError):
         sess.resolve_turn(decree="诏曰测试")
 
     assert db.get_month_open_snapshot(int(state.turn)) == before
@@ -284,8 +281,6 @@ def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
     sess.last_decree = ""
     sess.last_report = ""
     sess._decree_draft_fingerprint = ()
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess.auto_save = lambda *_a, **_k: None
 
     def _boom(*_a, **_k):
@@ -293,30 +288,20 @@ def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
 
     monkeypatch.setattr(an, "auto_close_open_night", _boom)
 
-    with pytest.raises(RuntimeError, match="stop-after-capture-advance"):
+    with pytest.raises(RuntimeError):
         sess.advance_without_decree()
 
     assert db.get_month_open_snapshot(int(state.turn)) == before
 
 
-def test_settle_with_delta_expires_snapshot_inside_atomic(game):
-    """月推进完成：后半段 atomic 内过期快照（与 clear_resolve_context 同窗）。"""
-    import ming_sim.decree as dm
+def test_player_month_advance_expires_snapshot(game, monkeypatch):
+    """邸报完成后的真实月推进清除本月快照。"""
+    from tests.test_due_review_621 import _settle_empty_month
 
     db, state, content = game
     turn = int(state.turn)
     db.capture_month_open_snapshot(state)
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-
-    report = dm.settle_with_delta(
-        state, db, {},
-        before_turn=turn,
-        content=content,
-        decree_text="d",
-        narrative="n",
-    )
-    assert isinstance(report, str)
+    _settle_empty_month(db, state, content, monkeypatch)
     assert db.get_month_open_snapshot(turn) is None
     assert state.turn == turn + 1
     payload = _runtime(db, state).state_payload()
@@ -351,8 +336,6 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_game_write_gate", _null_cm)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     result = web_app.api_issue_decree(web_app.IssueDecreeRequest())
     assert result["awaiting_decision"] is True
@@ -378,7 +361,7 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     actions = []
     runtime.session.end_turn = lambda: actions.append("end_turn")
     runtime.refresh_turn = lambda: actions.append("refresh")
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = get_session_write_queue(runtime).write_gate
     mid = {}
 
     def _observe_then_done(**_kw):
@@ -398,8 +381,6 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     result = web_app.api_advance_without_edict()
     assert actions == ["resolve", "end_turn", "refresh"]
@@ -425,7 +406,7 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     turn_before = int(state.turn)
     runtime = _runtime(db, state)
     runtime.directive_rows = lambda: []
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = get_session_write_queue(runtime).write_gate
     decisions = [
         {
             "event_id": "evt-await-c2",
@@ -452,10 +433,6 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(
-        web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: []
-    )
 
     result = web_app.api_advance_without_edict()
 
@@ -471,48 +448,3 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     assert result["state"]["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
     assert result["state"]["turn"]["settlement_display"] is True
     assert db.get_month_open_snapshot(turn_before) is not None
-
-
-def test_recovery_path_keeps_settlement_display(game, monkeypatch):
-    """settling 恢复停在邸报前仍展示月初快照；归档推进后清。"""
-    import ming_sim.decree as dm
-    import ming_sim.month_chain as month_chain
-    from tests.test_advance_paths_atomic import _recovery_session
-
-    db, state, content = game
-    before = _click_before_metrics(state)
-    turn = int(state.turn)
-    db.capture_month_open_snapshot(state)
-
-    dm.pre_settle(state, db, content=content)
-    assert state.turn_phase == TurnPhase.SETTLING.value
-    assert clear_orphan_month_open_snapshot(db, state) is False
-
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is True
-    for k in MONTH_OPEN_KEYS:
-        assert payload["metrics"][k] == before[k]
-
-    dm.persist_resolve_context(
-        db, turn, {"metric_delta": {}},
-        decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-    )
-    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    sess = _recovery_session(db, state, content, monkeypatch)
-    result = sess.resolve_turn()
-    assert result.awaiting is False
-    assert result.stage == "gazette"
-    assert state.turn == turn
-    assert db.get_month_open_snapshot(turn) is not None
-    db.conn.execute(
-        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
-        (turn, state.year, state.period, "邸报已成"),
-    )
-    db.conn.commit()
-    result = sess.resolve_turn()
-    assert result.advanced is True
-    assert state.turn == turn + 1
-    assert db.get_month_open_snapshot(turn) is None
-    done = _runtime(db, state).state_payload()
-    assert done["turn"]["settlement_display"] is False

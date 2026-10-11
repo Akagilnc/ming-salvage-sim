@@ -9,20 +9,19 @@
 编排约束：
 - 选中判据＝该 settled 年月新增边事件（id > 水位）∨ 存在 pending（庭裁 r1 F1）——
   历史月份的未酿旧事件不得选中无本月新事件的关系（「本月新增」总判据）。
-- 认领先行（庭裁 r2/r3 F1）：入选关系在酿造开始前先作 durable claim（pending 落盘）
-  ——生产路径在结算事务内与本月边事件同生共死；任意缝崩溃→pending 在册→下次
-  结算补酿。pending 不靠失败后 catch 补记。
-- 输入依赖边界（ID-10）：本月边事件集定型后方启酿；腿内批内条目无依赖必并行（P5）；
-  生产路径由 settle_with_delta 把 brew() 放进唯一一条受管 Future，使 LLM 等待与无
-  依赖的 chapter/ending 等后处理重叠，摘要持久化前 join、异常路排空丢弃。
+- 认领先行（庭裁 r2/r3 F1）：入选关系在酿造开始前先作 durable claim（pending 落盘）；
+  崩溃后凭 pending 补酿，不靠失败后 catch 补记。
+- 输入依赖边界（ID-10）：本月边事件集定型后方启酿；腿内批内条目无依赖必并行（P5）。
+  生产路径由 mechanical_tail 在月份推进后依次 prepare、brew、persist；未完尾跨重开续接。
 - 异常边界（ADR 0005/0008）：prepare/persist 两段是 DB 相——claim/apply/mark 的
   DB/schema/程序错误响亮上抛，绝不降级。brew() 段按**结构位置**分界而非异常类型：
   LLM 调用缝只收其声明类型 LLMUnavailable；解析/shape 校验缝只收输出结构化契约
-  违约（LLMContractError/ValueError）；两段各自降级留痕（保旧摘要＋事件已在流水
-  ＋认领已在册，不阻塞结算）。缝外的程序逻辑异常——含 _brew_fn 自身抛出的裸
-  ValueError——一律响亮上抛，不用异常类型猜语义。
+  违约（LLMContractError/ValueError）；两段各自留痕（保旧摘要＋事件已在流水
+  ＋认领已在册）；生产机械尾随后将失败上抛到重试入口。
+  缝外的程序逻辑异常——含 _brew_fn 自身抛出的裸 ValueError——一律响亮上抛，
+  不用异常类型猜语义。
 - 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1）。
-- settled 年月快照由 decree 在 next_period 之前取定并传入；一律不得直读 state 年月
+- settled 年月快照由机械尾从已关闭月份传入；一律不得直读推进后的 state 年月
   落款（直调路径回落调用时的 state——此时 state 仍指被结算的那个月）。
 """
 
@@ -172,10 +171,10 @@ def parse_brew_output(raw: str, stage: str = "关系酿制") -> Dict[str, Any]:
     不截断不 clamp；new_foundings 逐句原样追加。
 
     酿制专用严格解析边界（庭裁 Z1）：raw 必须本身就是唯一、完整、合法的 JSON
-    object——不复用 parse_agent_json 的 fence 剥离/控制字节正则清洗/首对象截取
-    等任何修补。重复对象拼接、未转义控制字节、前后杂文等畸形产出一律契约错
-    拒收（LLMContractError），沿单条降级保旧摘要与 pending；绝不把改写/择取后
-    的散文当模型产出落库（ADR 0142 零删改）。其它调用方不受影响。"""
+    object——不复用 parse_agent_json 的 fence 剥离/外围截取/首对象截取等任何
+    修补。重复对象拼接、未转义控制字节、前后杂文等畸形产出一律契约错拒收
+    （LLMContractError），沿单条降级保旧摘要与 pending；绝不把改写/择取后的
+    散文当模型产出落库（ADR 0142 零删改）。其它调用方不受影响。"""
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as error:
@@ -220,17 +219,16 @@ def merge_founding_segment(old_founding: str, new_foundings: List[str]) -> str:
 
 
 class MonthEndRelationBrewLeg:
-    """月末增量重酿腿的三段生命周期对象（ID-10/P5；settle_with_delta 单点编排）。
+    """月末增量重酿腿的三段生命周期对象（ID-10/P5；机械尾编排）。
 
-    prepare()＝DB 相（主线程、可在结算事务内运行）：选中、认领、备料。brew()＝LLM
-    相（零 DB 访问，可放进 Future 与 chapter/ending 重叠跑）。persist()＝DB 相
-    （主线程、必须在结算事务提交之后）：apply/mark 落定。异常边界（ADR 0005/0008）：
-    DB/schema/程序错误在任何一段都响亮上抛；只有 brew() 内单条 LLM 调用或其结构化
-    输出契约失败降级留痕。brew_fn(rendered_payload) -> LLM 原始文本（生产＝
+    prepare()＝DB 相：选中、认领、备料。brew()＝LLM 相（零 DB 访问）。
+    persist()＝DB 相：apply/mark 落定。异常边界（ADR 0005/0008）：
+    DB/schema/程序错误在任何一段都响亮上抛；brew() 内单条 LLM 调用或其结构化
+    输出契约失败先留痕，机械尾再上抛到重试入口。brew_fn(rendered_payload) -> LLM 原始文本（生产＝
     run_agent_text 闭包；测试注入确定性假手）。
 
-    settled_turn/year/period＝被结算月份的快照（decree 在 next_period 之前取定
-    传入）；None 时回落当前 state（直调路径，state 尚未推进）。"""
+    settled_turn/year/period＝已关闭月份的快照（机械尾传入）；None 时回落当前
+    state（直调路径，state 尚未推进）。"""
 
     def __init__(
         self,
@@ -246,8 +244,7 @@ class MonthEndRelationBrewLeg:
         self._db = db
         self._brew_fn = brew_fn
         self._parallel = bool(parallel)
-        # settled 年月快照：生产路径由 decree 在 next_period 之前取定传入；直调
-        # （测试/探针）回落构造时的 state——此时 state 仍指被结算的那个月。
+        # 机械尾传入已关闭月份的快照；直调回落构造时的 state（尚未推进）。
         self.turn = int(settled_turn) if settled_turn is not None else int(state.turn)
         self.year = int(settled_year) if settled_year is not None else int(state.year)
         self.period = int(settled_period) if settled_period is not None else int(state.period)
@@ -266,8 +263,8 @@ class MonthEndRelationBrewLeg:
         入选＝关系对（#636 判据）∪ 派系（#637 S6 涉派判据），同批同命（ID-10：
         关系摘要与派系摘要同批增量酿）。认领先行（庭裁 r2/r3 F1）：入选工作项在
         酿造开始前先把 pending 落盘——两条 claim 走同一 durable claim 机制
-        （庭裁 r1 F2：不建第二套）；生产路径在结算事务内与本月边事件同生共死；
-        任意缝崩溃→pending 在册→下次结算补酿；pending 不靠失败后 catch 补记。
+        （庭裁 r1 F2：不建第二套）；崩溃后凭 pending 补酿，
+        pending 不靠失败后 catch 补记。
         本相任何 DB/schema/程序错误响亮上抛（ADR 0005/0008）：无 durable claim
         就开酿会让失败月失去恢复凭据，宁可不酿。"""
         targets = select_brew_targets(self._db, year=self.year, period=self.period)
@@ -356,8 +353,8 @@ class MonthEndRelationBrewLeg:
         return job, parsed, None
 
     def brew(self) -> None:
-        """LLM 相：批内条目间无依赖必并行（P5）。零 DB 访问——可在 Future 中与
-        chapter/ending 等无依赖后处理重叠（ID-10）；结果存 self.outcomes 待 persist。"""
+        """LLM 相：批内条目间无依赖必并行（P5）。零 DB 访问；
+        结果存 self.outcomes 待 persist。"""
         if not self.jobs:
             self.outcomes = []
             return
@@ -436,30 +433,3 @@ class MonthEndRelationBrewLeg:
             report["brewed"].append({"source": source, "target": target})
             tlog(f"[relation-brew] {source}→{target} 酿制落定（pending 同事务清除）")
         return report
-
-
-def run_month_end_relation_brew(
-    db: Any,
-    state: GameState,
-    brew_fn: Callable[[str], str],
-    *,
-    parallel: bool = True,
-    settled_turn: Optional[int] = None,
-    settled_year: Optional[int] = None,
-    settled_period: Optional[int] = None,
-) -> Dict[str, Any]:
-    """月末增量重酿腿（三段顺序合跑：prepare→brew→persist，直调/测试便利入口）。
-
-    生产路径不经此函数：settle_with_delta 持有 Leg 三段生命周期，把 brew() 放进
-    受管 Future 与 chapter/ending 重叠。返回机械报告。"""
-    leg = MonthEndRelationBrewLeg(
-        db, state, brew_fn,
-        settled_turn=settled_turn,
-        settled_year=settled_year,
-        settled_period=settled_period,
-        parallel=parallel,
-    )
-    if not leg.prepare():
-        return leg.report
-    leg.brew()
-    return leg.persist()

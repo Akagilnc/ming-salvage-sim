@@ -8,7 +8,7 @@ tests name ADR scenarios before the state mutation code exists.
 from __future__ import annotations
 
 
-PERSON_TRANSITION_ACTIONS = ("任命", "罢黜", "调任", "处置", "易主", "册封", "行止")
+PERSON_TRANSITION_ACTIONS = ("任命", "罢黜", "调任", "处置", "易主", "行止")
 
 PERSON_NON_TRANSITION_ACTIONS = ("评定", "性情")
 
@@ -22,13 +22,17 @@ def format_person_actions() -> str:
 
 PERSON_STATUSES = (
     "active",
-    "candidate",
     "offstage",
     "dismissed",
     "imprisoned",
     "exiled",
     "retired",
     "dead",
+)
+
+# ADR 0009 不变式 1：离事者（非 active）职名分必清。由 PERSON_STATUSES 派生，禁止各入口另造平行集合。
+PERSON_OUSTED_STATUSES = frozenset(
+    status for status in PERSON_STATUSES if status != "active"
 )
 
 PERSON_REASON_CODES = (
@@ -39,7 +43,6 @@ PERSON_REASON_CODES = (
     "自请",
     "出宫",
     "陷虏",
-    "落选",
     "历史卒",
     "登场",
     # #690 / ADR 0011-2 D2-5：依律集扩 0009（走程序坐实 flag；与 cw 高低正交）
@@ -57,8 +60,6 @@ PERSON_TITLE_KINDS = ("职名分", "身名分", "无名分")
 PERSON_IDENTITY_TITLES = ("听用候铨", "降臣", "归附", "待选", "诸生")
 
 PERSON_ALLEGIANCE_CHANGE_WAYS = ("主动投敌", "被俘而降", "主动归附")
-
-PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS = ("不明",)
 
 PERSON_REASON_CODE_ALIASES = {
     "守制": "丁忧",
@@ -112,6 +113,26 @@ def normalize_title_kind(value: object) -> str:
     return ""
 
 
+def current_title_kind(office: object = "", office_type: object = "") -> str:
+    """ADR 0009 当前名分类别（供 resolve_person_transition）：职名分 / 身名分。
+
+    口径与既有事件闸／声明入口同源：空职、显式「身名分」、PERSON_IDENTITY_TITLES
+    （及 normalize_title_kind 能认作身名分的职衔字）→ 身名分；其余非空现职 → 职名分。
+    未仕／宗藩／后宫／外臣等身份桶现职以静态名册为真源；禁止经本函数扩 transition 语义。
+    """
+    office_text = str(office or "").strip()
+    kind = str(office_type or "").strip()
+    if (
+        not office_text
+        or kind == "身名分"
+        or office_text in PERSON_IDENTITY_TITLES
+        or normalize_title_kind(office_text) == "身名分"
+    ):
+        return "身名分"
+    return "职名分"
+
+
+
 def resolve_person_transition(
     status: str,
     action: str,
@@ -150,17 +171,7 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "apply",
         "处置": "apply",
         "易主": "apply",
-        "册封": "reject:invalid_transition",
         "行止": "apply",
-    },
-    "candidate": {
-        "任命": "reject:invalid_transition",
-        "罢黜": "reject:invalid_transition",
-        "调任": "reject:invalid_transition",
-        "处置": "apply",
-        "易主": "reject:invalid_transition",
-        "册封": "apply",
-        "行止": "reject:invalid_transition",
     },
     "offstage": {
         "任命": "derive:起复",
@@ -168,7 +179,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "normalize:任命",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "dismissed": {
@@ -177,7 +187,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "normalize:任命",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "imprisoned": {
@@ -186,7 +195,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "derive:放归",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "exiled": {
@@ -195,7 +203,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "derive:赦还",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "retired": {
@@ -204,7 +211,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "normalize:任命",
         "处置": "apply",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
     "dead": {
@@ -213,7 +219,6 @@ PERSON_TRANSITION_MATRIX = {
         "调任": "reject:invalid_transition",
         "处置": "reject:invalid_transition",
         "易主": "reject:invalid_transition",
-        "册封": "reject:invalid_transition",
         "行止": "reject:invalid_transition",
     },
 }
@@ -318,13 +323,6 @@ ACCEPTANCE_SCENARIOS = (
         "input": "任命毛文龙镇东江",
         "actions": ("任命",),
         "requires": ("reject:invalid_transition", "dead_no_outgoing_status"),
-    },
-    {
-        "id": "S14",
-        "title": "选妃册封",
-        "input": "册封某氏为妃",
-        "actions": ("册封",),
-        "requires": ("status:candidate", "candidate_exit"),
     },
     {
         "id": "S15",

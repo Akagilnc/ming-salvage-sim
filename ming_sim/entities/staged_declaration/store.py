@@ -29,7 +29,10 @@ CREATE TABLE IF NOT EXISTS staged_declarations (
     status TEXT NOT NULL DEFAULT 'staged'
         CHECK(status IN ('staged','discarded','settled')),
     created_turn INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    verdict_json TEXT,
+    questions_json TEXT,
+    forecast_text TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_staged_declarations_decree
     ON staged_declarations(decree_ref, id);
@@ -69,17 +72,6 @@ class StagedDeclarationStore:
     @staticmethod
     def ensure_schema(conn: Any) -> None:
         conn.executescript(_SCHEMA_SQL)
-        cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(staged_declarations)")}
-        if "visible_refs_json" not in cols:
-            conn.execute(
-                "ALTER TABLE staged_declarations ADD COLUMN visible_refs_json TEXT NOT NULL DEFAULT '{}'"
-            )
-        if "verdict_json" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN verdict_json TEXT")
-        if "questions_json" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN questions_json TEXT")
-        if "forecast_text" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN forecast_text TEXT")
 
     def stage(
         self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
@@ -185,7 +177,10 @@ class StagedDeclarationStore:
         return row is not None
 
     def questions_for(self, decree_ref: str) -> list:
-        """该旨未作废行上的请旨；已结算行仍保留，供过月重试判断是否还在等答复。"""
+        """该旨未作废行上的请旨；已结算行仍保留，供过月重试判断是否还在等答复。
+
+        SQL NULL = 真正缺省（跳过）；空串/非列表/腐坏 JSON 响亮（#1897 E1）。
+        """
         ref = str(decree_ref or "").strip()
         if not ref:
             return []
@@ -197,15 +192,20 @@ class StagedDeclarationStore:
         questions: list = []
         for row in rows:
             raw = row["questions_json"]
-            if not raw:
+            if raw is None:
                 continue
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                questions.extend(parsed)
+            from ming_sim.db import _load_durable_json_list
+            parsed = _load_durable_json_list(
+                raw, surface=f"staged_declarations.questions_json:{ref}",
+            )
+            questions.extend(parsed)
         return questions
 
     def forecast_text_for(self, decree_ref: str) -> str:
-        """问前段文。已结算行仍保留，续推只读，不重推、不重落。"""
+        """问前段文。已结算行仍保留，续推只读，不重推、不重落。
+
+        原文过手：strip 只判空副本，运输值不加工（#1897 E2 / P6）。
+        """
         ref = str(decree_ref or "").strip()
         if not ref:
             return ""
@@ -215,11 +215,15 @@ class StagedDeclarationStore:
             "AND forecast_text IS NOT NULL ORDER BY id",
             (ref,),
         ).fetchall()
-        parts = [
-            str(row["forecast_text"]).strip()
-            for row in rows
-            if str(row["forecast_text"] or "").strip()
-        ]
+        parts: list[str] = []
+        for row in rows:
+            text = row["forecast_text"]
+            if text is None:
+                continue
+            original = text if isinstance(text, str) else str(text)
+            if not original.strip():
+                continue
+            parts.append(original)
         return "\n".join(parts)
 
     def clear_questions(self, decree_ref: str) -> int:
@@ -250,22 +254,44 @@ class StagedDeclarationStore:
         return int(cur.rowcount or 0)
 
 
-def _load_optional_json(row: Any, column: str) -> object:
-    if column not in row.keys() or row[column] is None:
-        return None
-    return json.loads(row[column])
-
-
 def _row_to_staged(row: Any) -> StagedDeclaration:
-    verdict = _load_optional_json(row, "verdict_json")
-    questions = _load_optional_json(row, "questions_json")
+    from ming_sim.db import (
+        GameDB,
+        _load_durable_json_list,
+        _load_durable_json_object,
+    )
+    # 可选列：仅 SQL NULL = 合法缺省；其余值复用既有持久 list/object 权威
+    # （JSON 文本 null/空串/非形一律响亮，禁平行 json.loads + 洗缺席，#1897 E1）。
+    decree_ref = str(row["decree_ref"])
+    if "verdict_json" not in row.keys() or row["verdict_json"] is None:
+        verdict = None
+    else:
+        verdict = _load_durable_json_object(
+            row["verdict_json"],
+            surface=f"staged_declarations.verdict_json:{decree_ref}",
+        )
+    if "questions_json" not in row.keys() or row["questions_json"] is None:
+        questions = None
+    else:
+        questions = _load_durable_json_list(
+            row["questions_json"],
+            surface=f"staged_declarations.questions_json:{decree_ref}",
+        )
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
-        id=int(row["id"]), decree_ref=str(row["decree_ref"]),
-        declaration=json.loads(row["declaration_json"] or "{}"),
+        id=int(row["id"]), decree_ref=decree_ref,
+        declaration=GameDB.parse_engine_payload_json(
+            row["declaration_json"],
+            surface=f"staged_declarations.declaration_json:{decree_ref}",
+        ),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
-        visible_refs=json.loads(row["visible_refs_json"] or "{}"),
-        verdict=verdict if isinstance(verdict, dict) else None,
-        questions=questions if isinstance(questions, list) else None,
-        forecast_text=None if forecast_text is None else str(forecast_text),
+        visible_refs=GameDB.parse_engine_payload_json(
+            row["visible_refs_json"],
+            surface=f"staged_declarations.visible_refs_json:{decree_ref}",
+        ),
+        verdict=verdict,
+        questions=questions,
+        forecast_text=None if forecast_text is None else (
+            forecast_text if isinstance(forecast_text, str) else str(forecast_text)
+        ),
     )

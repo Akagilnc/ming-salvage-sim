@@ -5,8 +5,13 @@
 ## 一、两条入口
 
 ```text
+册外入册（须先于任命）
+  转译/月链声明 registrations
+    → declaration_dispatch._dispatch_registrations
+    → session.register_unlisted_person_record
+
 召对任免
-  propose_appointment / 口头任免分类
+  转译声明 commission.appointment / 口头任免分类
     → pending_actions(kind=office)
     → 玩家确认或结束回合默认同意
     → commit_pending_actions：只成任免案卷，不授官
@@ -15,20 +20,20 @@
        └─ 顺颁 / 强颁：apply_dossier_promulgation
             → _commit_office_action
             → 人物效果按「三、颁布与物化」权威分流落地
-            → 同一 outer atomic 内完成授官及可选传召启程
+            → 同一 outer atomic 内完成授官
             → outer commit 后 registry.project_outcome
 
 月末人物变化
-  extractor 的「人物变更」
-    → apply_score_extraction
+  月链声明段「人物变更」
+    → declaration_dispatch → apply_score_extraction
     → ADR 0009 人物 applier
 ```
 
-旧 `appointments` / `office_changes` / `character_status_changes` / `character_power_changes` 只为历史 delta 重放保留，由 sanitize 层翻译；新内容只写 `人物变更`，字段与动作见 ADR 0009 和 `docs/DELTA_SCHEMA.md`。
+人物写只认 canonical 键 `人物变更`（ADR 0009 / [`DELTA_SCHEMA`](DELTA_SCHEMA.md)）；旧四 key 与 legacy 翻译层已退役，不得再经 sanitize 重放。
 
 ## 二、召对任免
 
-`propose_appointment` 返回任免候选；`GameSession._stage_appointment_candidate` 将其写入 `pending_actions`，与口头任免共用确认闸。候选在这里尚未授官，也不能因该候选获得新职或传召资格。
+召对转译声明的任免载荷（`commission.appointment` 等）经现役 stage 写入 `pending_actions(kind=office)`，与口头任免共用确认闸。候选在这里尚未授官，也不能因该候选获得新职或传召资格。册外新人须先走上一节 `registrations` 入册，不得假定已退役的 `propose_appointment` 工具仍存在。
 
 候选载荷的核心字段：
 
@@ -39,15 +44,13 @@
   "office_type": "督抚",
   "faction": "中立",
   "reason": "奉旨起复",
-  "replaces": "原任者名",
-  "summon_after": "是"
+  "replaces": "原任者名"
 }
 ```
 
 - `name`、`office` 为任命必需；罢免不需 `office`。
-- `summon_after` 由任命/传召分类与合并接线保留；不另造第二份任免 schema。
-- 撤回、拒绝或 undo 会同时清除尚未激活的 `office:<pending_id>` 传召 origin。
 - 朝臣名册外目标在成案时只登记身份为 `offstage/待选`，不提前授官；月末自由文本凭空产生的陌生人物仍按 ADR 0009 `hallucinated_id` 拒收。
+- 场外传召走现役召对口令／`record_summon_fresh` 等入口，不挂在任命载荷上。
 
 ## 三、颁布与物化
 
@@ -69,14 +72,7 @@
 
 朝臣任命路径与后宫册封路径都不调用完整 `apply_score_extraction`，因此不会顺带重跑赈灾回流、议题或其他月末结算核。
 
-### 任命并传召
-
-`summon_after=是` 时，传召先以未激活故事账与任命同源暂存。只有任命成功后，`apply_dossier_promulgation` 才激活该 origin，并在同一 outer atomic 内沿既有传召状态机从人物当前所在地启程。
-
-- 任命失败：任命、传召、在途状态全部回滚。
-- 同人同夜多来源：既有 #670 单次消费规则保证只启程一次。
-- 同地传召：仍记同一 origin，但不制造虚假路程。
-- 结算提交成功后，受影响人物才由 `registry.project_outcome` 注册或刷新；事务内不碰运行时缓存。
+结算提交成功后，受影响人物才由 `registry.project_outcome` 注册或刷新；事务内不碰运行时缓存。
 
 ## 四、人物与任职存储
 
@@ -108,7 +104,7 @@ character_offices (
 
 - 任免候选成案不等于生效；颁布结果才决定人物效果。
 - 人物效果按「三、颁布与物化」权威分流落地；任免局部写不得借完整月末 applier 搭便车。
-- 任命、可选传召、案卷状态与结算写处于同一 outer atomic；失败不留半写。
+- 任命与案卷状态与结算写处于同一 outer atomic；失败不留半写。
 - registry 只在 outer commit 成功后投影；回滚不得留下脏 Agent。
 - `character_offices` 只存最近任职；完整过程看 `person_logs`。
 - LLM 负责判断任免内容；代码只校验结构、状态转换并记账。
@@ -119,6 +115,5 @@ character_offices (
 |---|---|
 | 玩家确认后尚未授官 | 正常；查任免案卷是否已进入颁布判决 |
 | 结算后仍未授官 | 查案卷判决、`rejection_reports` 与人物 applier 回执 |
-| 任命成功但未启程 | 查载荷 `summon_after`、未激活 origin 是否被正确提升，以及 #670 单次消费结果 |
-| 失败后残留在途或脏 Agent | 属事务/outer-commit 投影缺陷；任命、传召、缓存必须一起核 |
+| 失败后残留脏 Agent | 属事务/outer-commit 投影缺陷；任命与缓存必须一起核 |
 | 月末陌生人物被拒 | 正常；先走史实人物补档或用户确认登记，再任命 |

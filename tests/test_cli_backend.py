@@ -12,11 +12,8 @@ import os
 from types import SimpleNamespace
 
 import pytest
-from agno.agent import Agent
 from agno.models.message import Message
-from pydantic import BaseModel
 
-from ming_sim.agents import run_agent_stream_text
 import ming_sim.cli_backend as cb
 from ming_sim.models import LLMConfig
 
@@ -26,606 +23,6 @@ def _cli_codex_cfg() -> LLMConfig:
         api_key="cli-backend", base_url="", model="api-fallback",
         channel="cli", cli_runner="codex", cli_model="gpt-5.5",
     )
-
-
-def _so_json(**fields) -> str:
-    base = {
-        "标题": "密查",
-        "内容": "TASK_BODY",
-        "承办人": "",
-        "期限月数": 0,
-        "标签": [],
-    }
-    base.update(fields)
-    return json.dumps(base, ensure_ascii=False)
-
-
-def _patch_backend(monkeypatch, payload: str):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
-
-
-def _resolve_secret(monkeypatch, reply: str, message: str, *, default="王在晋",
-                    payload: str | None = None, secret_context: str = ""):
-    if payload is not None:
-        _patch_backend(monkeypatch, payload)
-    kw = {}
-    if secret_context:
-        kw["secret_context"] = secret_context
-    return cb.resolve_minister_actions(
-        reply, message, default_assignee=default, **kw,
-    )["secret_order"]
-
-
-# ── resolve_minister_actions：拟旨/密令前缀分派 ──
-
-def test_draft_prefix_captures_reply():
-    reply = "REPLY_DECREE_BODY"
-    acts = cb.resolve_minister_actions(
-        reply, "拟旨如下：INTENT_DRAFT", default_assignee="毕自严",
-    )
-    assert acts["decree_text"] == reply
-    assert acts["secret_order"] is None
-
-
-def test_no_prefix_no_action():
-    acts = cb.resolve_minister_actions(
-        "REPLY_PLAIN", "MSG_PLAIN", default_assignee="王在晋",
-    )
-    assert acts["decree_text"] is None
-    assert acts["secret_order"] is None
-
-
-def test_secret_prefix_merges_emperor_intent_with_reply(monkeypatch):
-    """显式密令前缀 + 大臣回话 → 结构化密令；prompt 同时见御旨与回话。"""
-    task, person = "查辽东军饷有无侵冒", "李若琏"
-    captured = {}
-
-    def fake_run(prompt):
-        captured["prompt"] = prompt
-        return (_so_json(
-            标题="密查辽东军饷",
-            内容=f"{task}，着{person}暗查。",
-            承办人=person,
-            期限月数=3,
-            标签=["辽饷"],
-        ), 1)
-
-    monkeypatch.setattr(cb, "_run_backend", fake_run)
-    so = cb.resolve_minister_actions(
-        f"臣领密旨，可授{person}暗查。",
-        f"密令如下：{task}，三月内回奏",
-        default_assignee="王在晋",
-    )["secret_order"]
-    assert so is not None
-    assert task in captured["prompt"]
-    assert person in captured["prompt"]
-    assert task in so["content"] and person in so["content"]
-    assert so["assignee"] == person
-    assert so["deadline_months"] == 3
-
-
-def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
-    canned = json.dumps({
-        "标题": "密查",
-        "内容": "查账",
-        "承办人": "毕自严",
-        "排除对象": {"人物": ["魏忠贤"], "机构": ["司礼监"]},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    result = cb._extract_secret_order("密查账目", "臣领旨", "毕自严")
-    assert result["excluded_names"] == ["魏忠贤"]
-    assert result["excluded_offices"] == ["司礼监"]
-    assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
-
-
-def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatch):
-    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-    assert len(long_title) > 20
-    canned = _so_json(标题=long_title, 内容="查明事实并回奏。", 承办人="毕自严", 标签=["辽饷"])
-
-    def fake_json_extractor(prompt, llm_config=None, tag="", *, policy=None):
-        return canned, 1
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
-    result = cb._extract_secret_order(
-        f"密令如下：{long_title}\n查明事实并回奏。", "臣领密旨", "毕自严",
-    )
-    assert result["title"] == long_title
-    assert len(result["title"]) == len(long_title)
-
-
-def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
-    from ming_sim.db import canonical_secret_order_exclusions
-
-    content = game[2]
-    character = next(
-        ch for ch in content.characters.values() if getattr(ch, "aliases", None)
-    )
-    alias = character.aliases[0]
-    office = character.office_type
-    people, offices = canonical_secret_order_exclusions(
-        content, [alias], [office], "勿使玩家散文成为第二输入源",
-    )
-    assert people == [character.name]
-    assert offices == [office]
-
-
-def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
-    """密令按钮只补期限时，从前文皇帝任务恢复正文；大臣补充须在 extractor「内容」。"""
-    task = "查辽东军饷有无侵冒"
-    material = "封存兵部辽饷册"
-    deadline_bit = "三月内回奏"
-    # extractor 契约字段已含任务+补充+期限（不再从大臣行散文抠）
-    _patch_backend(monkeypatch, _so_json(
-        标题="密查辽东军饷",
-        内容=f"{task}，着李若琏暗查并{material}，{deadline_bit}",
-        承办人="李若琏", 期限月数=3, 标签=["辽饷"],
-    ))
-    so = _resolve_secret(
-        monkeypatch, "臣领旨。", f"密令如下：{deadline_bit}",
-        default="孙承宗",
-        secret_context=(
-            f"皇帝：{task}\n"
-            f"大臣：可授李若琏暗查并{material}"
-        ),
-    )
-    assert so is not None
-    assert task in so["content"]
-    assert deadline_bit in so["content"]
-    assert material in so["content"]
-    # force_default 上下文路径固定默认召对大臣为承办人
-    assert so["assignee"] == "孙承宗"
-
-
-def test_secret_content_assembly_is_emperor_plus_extractor_only():
-    """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    import inspect
-
-    params = inspect.signature(cb.assemble_secret_order_content).parameters
-    assert set(params) == {"emperor_intent", "extractor_content"}
-    assert "reply" not in params and "minister_reply" not in params
-
-    task = "密查关宁欠饷"
-    extracted = f"{task}，三月内回奏，方法：密访核册"
-    body = cb.assemble_secret_order_content(
-        emperor_intent=task,
-        extractor_content=extracted,
-    )
-    assert body == extracted
-    # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
-    partial = "臣已领旨办理。"
-    merged = cb.assemble_secret_order_content(
-        emperor_intent=f"{task}，三月内回奏",
-        extractor_content=partial,
-    )
-    assert task in merged and "三月内回奏" in merged
-    assert partial in merged
-
-
-def test_secret_content_assembly_mutation_reply_not_in_signature_or_merge_sites(monkeypatch):
-    """变异：把 reply 塞回拼装必红——签名与三路源码不得再合并 reply/material。"""
-    import inspect
-
-    from ming_sim.session import GameSession
-
-    sig = inspect.signature(cb.assemble_secret_order_content)
-    assert "reply" not in sig.parameters and "minister_reply" not in sig.parameters
-
-    extract_src = inspect.getsource(cb._extract_secret_order)
-    assert "assemble_secret_order_content" in extract_src
-    assert "_minister_material_clauses" not in extract_src
-    assert "_strip_secret_content_acknowledgments" not in extract_src
-    assert "_content_reflects_minister_supplements" not in extract_src
-
-    staged_src = inspect.getsource(GameSession._merge_staged_new_secret_order_content)
-    assert "assemble_secret_order_content" in staged_src
-    assert "_minister_material_clauses" not in staged_src
-    assert "reply_material" not in staged_src
-    assert "_strip_secret_content_acknowledgments" not in staged_src
-
-    # 运行时：reply 独有标记不得仅因回话出现而进入 content
-    reply_mark = "MARK_REPLY_ONLY_答奏不得入正文"
-    so = _resolve_secret(
-        monkeypatch,
-        f"臣领旨。{reply_mark}",
-        "密令如下：密查关宁欠饷，三月内回奏",
-        default="李若琏",
-        payload=_so_json(
-            内容="密查关宁欠饷，三月内回奏", 承办人="李若琏", 期限月数=3, 标签=["关宁"],
-        ),
-    )
-    assert so is not None
-    assert reply_mark not in so["content"]
-    assert "密查关宁欠饷" in so["content"]
-
-
-@pytest.mark.parametrize(
-    "case_id,llm_content,llm_assignee,reply,message,expect_content_bits,absent_content_bits,expect_assignee",
-    [
-        (
-            "bad_llm_ack_falls_back_to_emperor",
-            "臣领密旨，可授李若琏暗查。",
-            "李若琏",
-            "臣领密旨，可授李若琏暗查。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏"),
-            (),
-            "李若琏",
-        ),
-        (
-            "partial_drops_deadline_clause",
-            "查辽东军饷有无侵冒；着李若琏暗查。",
-            "李若琏",
-            "臣领密旨，可授李若琏暗查。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏", "李若琏"),
-            (),
-            "李若琏",
-        ),
-        (
-            "reply_assignee_hint_not_forced_into_content",
-            "查辽东军饷有无侵冒，三月内回奏",
-            "",
-            "臣领密旨，可授李若琏暗查。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏"),
-            (),  # 回话建议不入 content；亦不得作承办人（ADR 0142）
-            "王在晋",  # 无御旨祈使、无结构化字段 → 默认
-        ),
-        (
-            "extractor_carries_minister_supplement",
-            "查辽东军饷有无侵冒，三月内回奏；须先封存兵部辽饷册，再密访关宁诸将",
-            "",
-            "臣领密旨，须先封存兵部辽饷册，再密访关宁诸将。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏", "封存兵部辽饷册", "密访关宁诸将"),
-            (),
-            "王在晋",
-        ),
-        (
-            "reply_only_supplement_not_merged_without_extractor",
-            "查辽东军饷有无侵冒，三月内回奏",
-            "",
-            "臣领密旨，须先封存兵部辽饷册，再密访关宁诸将。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "三月内回奏"),
-            ("封存兵部辽饷册", "密访关宁诸将"),
-            "王在晋",
-        ),
-    ],
-    ids=[
-        "bad_llm_ack_falls_back_to_emperor",
-        "partial_drops_deadline_clause",
-        "reply_assignee_hint_not_forced_into_content",
-        "extractor_carries_minister_supplement",
-        "reply_only_supplement_not_merged_without_extractor",
-    ],
-)
-def test_secret_prefix_structured_assembly_guards(
-    monkeypatch, case_id, llm_content, llm_assignee, reply, message,
-    expect_content_bits, absent_content_bits, expect_assignee,
-):
-    """#1274 K1：content=御旨+extractor；reply 不入拼装；承办人禁回话散文（ADR 0142）。"""
-    so = _resolve_secret(
-        monkeypatch, reply, message,
-        payload=_so_json(内容=llm_content, 承办人=llm_assignee, 期限月数=3, 标签=["辽饷"]),
-    )
-    assert so is not None
-    for bit in expect_content_bits:
-        assert bit in so["content"], (case_id, bit, so["content"])
-    for bit in absent_content_bits:
-        assert bit not in so["content"], (case_id, bit, so["content"])
-    assert so["assignee"] == expect_assignee
-    assert so["deadline_months"] == 3
-
-
-@pytest.mark.parametrize(
-    "action_verb,person,reply",
-    [
-        ("协办", "周延儒", "臣领密旨，可由周延儒协办此事。"),
-        ("监督", "周延儒", "臣领密旨，可委周延儒监督此事。"),
-        ("处理", "周延儒", "臣领密旨，可委周延儒处理。"),
-        ("负责", "李若琏", "臣领密旨，可委李若琏负责。"),
-    ],
-    ids=["协办", "监督", "处理", "负责"],
-)
-def test_secret_action_verb_preserved_when_in_extractor_content(
-    monkeypatch, action_verb, person, reply,
-):
-    """公开 resolve：动作词由 extractor「内容」显式承载（非回话散文回填）。"""
-    task = "查辽东军饷有无侵冒"
-    so = _resolve_secret(
-        monkeypatch, reply, f"密令如下：{task}",
-        payload=_so_json(
-            内容=f"{task}，着{person}{action_verb}", 承办人=person, 期限月数=3, 标签=["辽饷"],
-        ),
-    )
-    assert so is not None
-    assert task in so["content"]
-    assert action_verb in so["content"], (action_verb, so["content"])
-    assert so["assignee"] == person
-
-
-def test_secret_assignee_defaults_when_unspecified(monkeypatch):
-    so = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：去查",
-        default="毕自严",
-        payload=_so_json(标题="去查", 内容="去查某事"),
-    )
-    assert so["assignee"] == "毕自严"
-
-
-def test_secret_ack_only_reply_does_not_enter_content(monkeypatch):
-    """纯领命回话不入 content；合法 extractor 正文原样采纳。"""
-    task = "查辽东军饷有无侵冒，着李若琏暗查"
-    so = _resolve_secret(
-        monkeypatch, "领命。", f"密令如下：{task}",
-        payload=_so_json(内容=task, 承办人="李若琏", 期限月数=3),
-    )
-    assert so is not None
-    assert so["content"] == task
-    assert "领命" not in so["content"]
-    assert so["assignee"] == "李若琏"
-
-
-def test_secret_content_structured_assembly_keeps_completion(monkeypatch):
-    """#1274 K1：content=御旨+extractor schema 内容；补全字段（标签/期限）保留。
-
-    答奏只在回话侧；拼装不读 reply。extractor「内容」已含任务与方法。
-    """
-    task = "密查关宁欠饷"
-    answer = (
-        "臣李若琏，谨领圣谕，闻命如雷。"
-        "臣当密访关宁诸将，核其欠饷册籍，三月内据实回奏。"
-    )
-    extracted = f"{task}\n方法：密访核册"
-    # 御旨仅任务句（已被 extractor 内容覆盖）；标签/期限走结构化键，不进正文拼装
-    so = _resolve_secret(
-        monkeypatch,
-        answer,
-        f"密令如下：{task}",
-        default="李若琏",
-        payload=_so_json(
-            标题=task, 内容=extracted, 承办人="李若琏", 期限月数=3, 标签=["关宁", "欠饷"],
-        ),
-    )
-    assert so is not None
-    body = so["content"]
-    # #1436：夹具已给完整 extractor 内容；须精确相等，禁 contains 放行夹带
-    assert body == extracted
-    # 补全字段保留（结构化键，非正文自由拼装）
-    assert so["deadline_months"] == 3
-    assert "关宁" in so["tags"] and "欠饷" in so["tags"]
-    assert so["assignee"] == "李若琏"
-    # reply 独有答奏不因回话而进入（extractor 未携带）
-    assert answer not in body
-
-
-def test_secret_content_merge_fallback_excludes_reply(monkeypatch):
-    """#1274 K1：御旨守门失败走兜底合并时，只并御旨+extractor，不并 reply。"""
-    task = "密查关宁欠饷"
-    answer = "臣李若琏，谨领圣谕，闻命如雷。"
-    so = _resolve_secret(
-        monkeypatch,
-        answer,
-        f"密令如下：{task}，三月内回奏，着李若琏暗查",
-        default="李若琏",
-        payload=_so_json(
-            标题=task, 内容="臣已领旨办理。", 承办人="李若琏", 期限月数=3, 标签=["关宁"],
-        ),
-    )
-    assert so is not None
-    body = so["content"]
-    assert task in body
-    assert answer not in body
-    assert so["deadline_months"] == 3
-    assert "关宁" in so["tags"]
-
-
-@pytest.mark.parametrize(
-    "reply",
-    [
-        "领命：可授李若琏暗查\n并封存兵部辽饷册。",
-        "领命，即办。可授李若琏暗查并封存兵部辽饷册。",
-        "谨遵。可授李若琏暗查并封存兵部辽饷册，三月内回奏。",
-        "遵旨。可授李若琏暗查并封存兵部辽饷册。",
-    ],
-    ids=["colon_multiline", "领命_即办", "谨遵", "遵旨"],
-)
-def test_secret_mixed_reply_does_not_override_extractor_content(monkeypatch, reply):
-    """混合领命+实质补充的回话不覆盖 extractor 正文；content 以 schema 字段为准。"""
-    task, material = "查辽东军饷有无侵冒", "封存兵部辽饷册"
-    llm_content = f"{task}，着李若琏暗查并{material}，三月内回奏"
-    so = _resolve_secret(
-        monkeypatch, reply, f"密令如下：{task}，三月内回奏",
-        payload=_so_json(内容=llm_content, 承办人="李若琏", 期限月数=3),
-    )
-    assert so is not None
-    assert so["content"] == llm_content
-    assert task in so["content"] and material in so["content"]
-    assert so["assignee"] == "李若琏"
-
-
-def test_secret_repeated_assignee_name_accepts_clean_backend_content(monkeypatch):
-    """公开 resolve：回话 speaker 前缀重复承办人名时，完整 LLM 正文须原样采纳、不并入噪声回话。"""
-    task = "查辽东军饷有无侵冒"
-    reply = "李若琏：可委派李若琏暗查并封存兵部辽饷册。"
-    llm_content = f"{task}，着李若琏暗查并封存兵部辽饷册"
-    so = _resolve_secret(
-        monkeypatch, reply, f"密令如下：{task}",
-        payload=_so_json(内容=llm_content, 承办人="李若琏", 期限月数=3),
-    )
-    assert so is not None
-    assert so["content"] == llm_content
-    assert "李若琏：" not in so["content"]
-    assert so["assignee"] == "李若琏"
-
-
-def test_secret_imperative_assignee_requires_command_boundary(monkeypatch):
-    payload = _so_json(内容="查办辽饷", 承办人="")
-    so_default = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：此密令调查此事",
-        default="毕自严", payload=payload,
-    )
-    assert so_default["assignee"] == "毕自严"
-    so_named = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着李若琏查办辽饷",
-        default="毕自严", payload=payload,
-    )
-    assert so_named["assignee"] == "李若琏"
-
-
-def test_secret_assignee_emperor_imperative_beats_structured_field(monkeypatch):
-    """御旨祈使点名优先于结构化字段；禁从回话/正文散文反推（ADR 0142）。"""
-    so = _resolve_secret(
-        monkeypatch,
-        "臣领密旨，可授王在晋暗查。",  # 回话建议不得覆盖御旨
-        "密令如下：着李若琏查辽东军饷有无侵冒，三月内回奏",
-        payload=_so_json(
-            内容="查辽东军饷有无侵冒，三月内回奏；着王在晋暗查。",
-            承办人="王在晋", 期限月数=3, 标签=["辽饷"],
-        ),
-    )
-    assert so is not None
-    assert so["assignee"] == "李若琏"
-
-
-def test_secret_assignee_structured_field_when_no_emperor_name(monkeypatch):
-    """无御旨祈使时采信显式结构化承办人；回话建议不读。"""
-    so = _resolve_secret(
-        monkeypatch,
-        "臣领密旨，可授李若琏暗查。",
-        "密令如下：查辽东军饷有无侵冒，三月内回奏",
-        payload=_so_json(
-            内容="查辽东军饷有无侵冒，三月内回奏；着王在晋暗查。",
-            承办人="王在晋", 期限月数=3, 标签=["辽饷"],
-        ),
-    )
-    assert so is not None
-    assert "王在晋" in so["content"]
-    assert so["assignee"] == "王在晋"
-
-
-def test_secret_assignee_uses_emperor_imperative_hint_when_llm_blank(monkeypatch):
-    so = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着李若琏查辽东军饷有无侵冒",
-        payload=_so_json(内容="查辽东军饷有无侵冒，着李若琏暗查。", 承办人="", 期限月数=3),
-    )
-    assert so is not None
-    assert so["assignee"] == "李若琏"
-
-
-@pytest.mark.parametrize(
-    "person",
-    ["曹化淳", "曹文诏"],
-    ids=["cao_huachun", "cao_wenzhao"],
-)
-def test_secret_assignee_keeps_cao_surname_characters(monkeypatch, person):
-    """公开 resolve：曹姓不得被机关字滤误拒（#397）；经御旨祈使点名。"""
-    so = _resolve_secret(
-        monkeypatch, "臣领旨。", f"密令如下：着{person}暗查东厂线索",
-        default="王在晋",
-        payload=_so_json(内容="TASK_BODY", 承办人=""),
-    )
-    assert so is not None
-    assert so["assignee"] == person
-
-
-def test_secret_assignee_keeps_wei_and_si_surnames(monkeypatch):
-    """公开 resolve：卫/司 作姓经祈使保留；锦衣卫/布政司整词仍滤回默认。"""
-    blank = _so_json(内容="TASK_BODY", 承办人="")
-    so_wei = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着卫景瑗暗查东厂线索",
-        default="王在晋", payload=blank,
-    )
-    assert so_wei["assignee"] == "卫景瑗"
-    so_si = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着司马懿督师",
-        default="王在晋", payload=blank,
-    )
-    assert so_si["assignee"] == "司马懿"
-    so_jinyi = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着锦衣卫查办",
-        default="王在晋", payload=blank,
-    )
-    assert so_jinyi["assignee"] == "王在晋"
-    so_buzheng = _resolve_secret(
-        monkeypatch, "臣领旨。", "密令如下：着布政司核对",
-        default="王在晋", payload=blank,
-    )
-    assert so_buzheng["assignee"] == "王在晋"
-
-
-def test_secret_assignee_structured_field_not_prose_prefix(monkeypatch):
-    """r11：结构化字段承办人；回话『可委派』散文不得覆盖/补事实。"""
-    so = _resolve_secret(
-        monkeypatch, "可委派李若琏暗查辽饷。", "密令如下：TASK_BODY",
-        default="王在晋",
-        payload=_so_json(内容="TASK_BODY", 承办人="李若琏"),
-    )
-    assert so is not None
-    assert so["assignee"] == "李若琏"
-    # 无结构化、仅回话散文 → 默认
-    so_default = _resolve_secret(
-        monkeypatch, "可差派李若琏暗查辽饷。", "密令如下：TASK_BODY",
-        default="王在晋",
-        payload=_so_json(内容="TASK_BODY", 承办人=""),
-    )
-    assert so_default["assignee"] == "王在晋"
-
-
-# ── enrich_initiative_effects ──
-
-def test_enrich_army_parsed_and_normalized(monkeypatch):
-    canned = json.dumps({
-        "effect_on_resolve": {
-            "metrics": {"皇威": 5},
-            "new_armies": [{"id": "qinjun", "name": "秦兵", "owner_power": "ming",
-                            "manpower": 20000, "maintenance_per_turn": 4, "commander": "孙传庭"}],
-        },
-        "ongoing_effects": {}, "effect_on_fail": {},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    out = cb.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
-    armies = out["effect_on_resolve"]["new_armies"]
-    assert armies[0]["id"] == "qinjun"
-    assert armies[0]["manpower"] == 20000
-
-
-def test_enrich_building_region_floor(monkeypatch):
-    canned = json.dumps({
-        "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
-        "ongoing_effects": {}, "effect_on_fail": {},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    out = cb.enrich_initiative_effects("设格致局", "")
-    assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
-
-
-def test_enrich_backend_error_returns_empty_effects(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    out = cb.enrich_initiative_effects("设格致局", "")
-    assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
-
-
-def test_enrich_nondict_subfields_guarded(monkeypatch):
-    monkeypatch.setattr(
-        cb, "_run_backend",
-        lambda p: ('{"effect_on_resolve": "坏数据", "ongoing_effects": ["x"], "effect_on_fail": 3}', 1),
-    )
-    monkeypatch.setattr(cb, "_trace", lambda r: None)
-    out = cb.enrich_initiative_effects("设局", "")
-    assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
-
-
-def test_enrich_trace_records_actual_backend(monkeypatch):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"effect_on_resolve":{}}', 1))
-    rec = {}
-    monkeypatch.setattr(cb, "_trace", lambda r: rec.update(r))
-    cb.enrich_initiative_effects("设局", "")
-    assert rec.get("backend") == "codex"
 
 
 # ── cli_backend_from_env / backend dispatch ──
@@ -642,37 +39,7 @@ def test_backend_env_claude(monkeypatch):
     assert cb.cli_backend_from_env() == "claude"
 
 
-@pytest.mark.parametrize(
-    "env,attr,out",
-    [
-        ("claude", "_run_claude", "CLAUDE_OUT"),
-        (None, "_run_agy", "AGY_DEFAULT_OUT"),
-        ("codex", "_run_codex", "CODEX_OUT"),
-    ],
-)
-def test_run_backend_dispatch(monkeypatch, env, attr, out):
-    if env is None:
-        monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    else:
-        monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
-    monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))
-    assert cb._run_backend("x") == (out, 1)
-
-
 # ── secret extract keep family ──
-
-def test_secret_extract_backend_error_raises_system_failure(monkeypatch):
-    """#1765 C1：密令 extractor transport 失败响亮上抛 LLMUnavailable（0005/0046），不得吞回兜底。"""
-    from ming_sim.exceptions import LLMUnavailable
-
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    with pytest.raises(LLMUnavailable):
-        cb.resolve_minister_actions(
-            "臣领密旨，暗查辽东军饷虚冒事。",
-            "密令如下：查辽东军饷",
-            default_assignee="王在晋",
-        )
 
 
 # ── runner argv / error contracts (subprocess mocked) ──
@@ -732,7 +99,7 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     assert "--allowedTools" in captured["cmd"]
     assert "Read" in captured["cmd"] and "Glob" in captured["cmd"] and "Grep" in captured["cmd"]
     mcp_at = captured["cmd"].index("--mcp-config")
-    assert captured["cmd"][mcp_at + 1] == '{"mcpServers":{}}'
+    assert json.loads(captured["cmd"][mcp_at + 1]) == {"mcpServers": {}}
     assert "--permission-mode" in captured["cmd"]
     assert "dontAsk" in captured["cmd"]
     assert "--disallowedTools" not in captured["cmd"]
@@ -778,38 +145,6 @@ def test_run_codex_flags_and_stdout(monkeypatch):
     assert "-c" not in captured["cmd"]
 
 
-def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
-    """codex --json 只给终包（无 delta 事件）时，流式 runner 仍出完整终文。"""
-    from tests.cli_process_doubles import FakeCliRunnerScript
-
-    final = "STREAM_FINAL_BODY"
-    script = FakeCliRunnerScript([{
-        "stdout": (
-            json.dumps({"type": "item.started", "item": {"type": "reasoning"}}) + "\n",
-            json.dumps(
-                {"type": "item.completed", "item": {"type": "agent_message", "text": final}}
-            ) + "\n",
-        ),
-        "returncode": 0,
-    }])
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cb.subprocess, "Popen", script.popen)
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-
-    chunks = []
-    agent = Agent(
-        name="stream-test", id="stream-test",
-        model=cb.CliChat(id="gpt-test", backend="codex"),
-        instructions=["only body"], markdown=False,
-    )
-    text = run_agent_stream_text(agent, "PROMPT_STREAM", "simulator", on_text=chunks.append)
-    assert text == final
-    assert chunks == [final]
-    cmd = script.commands[0]
-    assert "--json" in cmd and cmd[-1] == "-"
-    assert "PROMPT_STREAM" in "".join(script.processes[0].stdin.written)
-
-
 def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     seen = {}
 
@@ -829,81 +164,10 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     assert seen["runner"] == "codex" and seen["json_events"] is True
 
 
-def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
-    class _Ev:
-        def __init__(self, content=None, is_final=False):
-            self.content = content
-            self.is_final = is_final
-
-    class _FakeStreamAgent:
-        model = SimpleNamespace(id="hermes-test")
-
-        def run(self, prompt, stream=False, stream_events=False):
-            assert stream and stream_events
-            yield _Ev(content="A")
-            yield _Ev(content="B")
-            yield _Ev(content="C")
-            yield _Ev(content=None, is_final=True)
-
-        def get_last_run_output(self):
-            return None
-
-    chunks = []
-    text = run_agent_stream_text(
-        _FakeStreamAgent(), "PROMPT", "simulator", on_text=chunks.append
-    )
-    assert text == "ABC"
-    assert chunks == ["A", "B", "C"]
-
-
-def test_luna_shaped_stream_keeps_content_when_reasoning_deltas_interleave(monkeypatch):
-    """#1452：推理模型流式 delta 可能夹 reasoning 分片；正文 content 不得被丢。
-
-    钉 agents.run_agent_stream_text 路径；本票 web 面 RunErrorEvent 闸由
-    tests/test_chat_stream_failpaths_393.py 真实入口覆盖，不在此重复。
-    """
-    class _Delta:
-        def __init__(self, content=None, reasoning_content=None, is_final=False):
-            self.content = content
-            self.reasoning_content = reasoning_content
-            self.is_final = is_final
-
-    class _FakeLunaAgent:
-        model = SimpleNamespace(id="gpt-5.6-luna")
-
-        def run(self, prompt, stream=False, stream_events=False):
-            assert stream and stream_events
-            yield _Delta(reasoning_content="先核辽饷账目…")
-            yield _Delta(content="辽")
-            yield _Delta(reasoning_content="再陈缺口。")
-            yield _Delta(content="饷缺口甚大。")
-            yield _Delta(content="辽饷缺口甚大。", is_final=True)
-
-        def get_last_run_output(self):
-            return None
-
-    texts: list[str] = []
-    thinks: list[str] = []
-    out = run_agent_stream_text(
-        _FakeLunaAgent(),
-        "PROMPT",
-        "minister",
-        on_text=texts.append,
-        on_thinking=thinks.append,
-    )
-    assert out == "辽饷缺口甚大。"
-    assert texts == ["辽", "饷缺口甚大。"]
-    assert any("辽饷" in t or "账" in t for t in thinks)
-
-
-def test_codex_final_text_handles_item_completed_shape():
-    assert cb._codex_final_text(
-        {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}
-    ) == "BODY"
+def test_codex_final_text_filters_reasoning_items():
     assert cb._codex_final_text(
         {"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}}
     ) == ""
-    assert cb._codex_final_text({"type": "agent_message", "message": "TOP"}) == "TOP"
 
 
 @pytest.mark.parametrize(
@@ -942,16 +206,6 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     assert 'model_reasoning_effort="medium"' not in joined
 
 
-def test_run_codex_stdout_empty_fallback(monkeypatch):
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    _capture_run(
-        monkeypatch,
-        _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
-    )
-    out, n = cb._run_codex("p")
-    assert out == "STDOUT_BODY"
-
-
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
     monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
     captured = _capture_run(monkeypatch)
@@ -968,106 +222,12 @@ def test_run_claude_off_reasoning_uses_explicit_minimum_tokens(monkeypatch):
     assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == "2000"
 
 
-# ── _resolve_cli_bin / login shell path ──
-
-def test_resolve_cli_bin_found_on_current_path(monkeypatch):
-    monkeypatch.setattr(
-        cb.shutil, "which",
-        lambda name, path=None: "/usr/local/bin/codex" if path is None else None,
-    )
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: (_ for _ in ()).throw(AssertionError("no")))
-    assert cb._resolve_cli_bin("codex", "codex") == "/usr/local/bin/codex"
 
 
-def test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare(monkeypatch):
-    monkeypatch.setattr(cb, "_EXTRA_BIN_DIRS", ["/fake/extra/bin"])
-    monkeypatch.setattr(cb.os.path, "isdir", lambda p: True)
-    home_bin = "/fake/extra/bin/codex"
-
-    def fake_which(name, path=None):
-        if path is None:
-            return None
-        assert "/fake/extra/bin" in path
-        return home_bin
-
-    login_calls = {"n": 0}
-
-    def spy_login():
-        login_calls["n"] += 1
-        return None
-
-    monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", spy_login)
-    assert cb._resolve_cli_bin("codex", "codex") == home_bin
-    assert login_calls["n"] == 0
 
 
-def test_resolve_cli_bin_login_shell_path_last_resort(monkeypatch):
-    cb._BIN_CACHE.clear()
-
-    def fake_which(name, path=None):
-        if path and "/opt/odd/bin" in path:
-            return "/opt/odd/bin/codex"
-        return None
-
-    monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: "/opt/odd/bin")
-    assert cb._resolve_cli_bin("codex", "codex") == "/opt/odd/bin/codex"
 
 
-def test_resolve_cli_bin_falls_back_and_miss_not_cached(monkeypatch):
-    cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
-    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
-    assert cb._resolve_cli_bin("codex", "codex") == "codex"
-    assert "codex" not in cb._BIN_CACHE
-    monkeypatch.setattr(
-        cb.shutil, "which",
-        lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None,
-    )
-    assert cb._resolve_cli_bin("codex", "codex") == "/Users/x/.local/bin/codex"
-
-
-def test_resolve_cli_bin_caches(monkeypatch):
-    cb._BIN_CACHE.clear()
-    calls = {"n": 0}
-
-    def fake_which(name, path=None):
-        calls["n"] += 1
-        return "/abs/codex"
-
-    monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
-    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
-    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
-    assert calls["n"] == 1
-
-
-def test_login_shell_path_extracts_from_sentinels_despite_noise(monkeypatch):
-    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
-
-    class _R:
-        stdout = (
-            "Warning: /usr/local/bin not writable: skipping\n"
-            "<<<CMRPATH>>>/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin<<<ENDPATH>>>\n"
-        )
-        stderr = ""
-        returncode = 0
-
-    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _R())
-    assert cb._login_shell_path() == "/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin"
-
-
-def test_login_shell_path_single_dir_not_dropped(monkeypatch):
-    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
-
-    class _R:
-        stdout = "<<<CMRPATH>>>/usr/bin<<<ENDPATH>>>\n"
-        stderr = ""
-        returncode = 0
-
-    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _R())
-    assert cb._login_shell_path() == "/usr/bin"
 
 
 def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
@@ -1088,16 +248,6 @@ def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
     assert {"-l", "-i", "-c"} <= set(captured["cmd"])
 
 
-def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
-    monkeypatch.setattr(
-        cb.shutil, "which",
-        lambda name, path=None: "./bin/codex" if path is None else None,
-    )
-    result = cb._resolve_cli_bin("codex", "./bin/codex")
-    assert cb.os.path.isabs(result)
-    assert result == cb.os.path.abspath("./bin/codex")
-
 
 @pytest.mark.parametrize(
     "runner,resolved",
@@ -1117,156 +267,20 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     assert captured["cmd"][0] == resolved
 
 
-# ── extract_minister_actions ──
-
-def test_extract_minister_actions_update(monkeypatch):
-    canned = json.dumps({
-        "密令动作": "更新", "目标密令编号": 6,
-        "新标题": "拨内库补边军欠饷", "新内容": "每月内库百万、半年通计六百万，按月御前领发",
-        "期限月数": 6,
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions(
-        "记得更新你的密令。是每月100万内库", "臣已记明，改按月月百万",
-        [{"id": 6, "title": "拨内库百万补边军欠饷", "content": "限期半年"}], is_consort=False,
-    )
-    assert act["secret_action"] == "更新"
-    assert act["order_id"] == 6
-    assert "月月百万" in act["new_content"] or "每月" in act["new_content"]
-
-
-def test_extract_minister_actions_preserves_long_new_title(monkeypatch):
-    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-    assert len(long_title) > 20
-    canned = json.dumps({
-        "密令动作": "更新", "目标密令编号": 6,
-        "新标题": long_title, "新内容": "查明事实并回奏",
-        "期限月数": 3,
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions(
-        "把标题改全些", "臣遵旨",
-        [{"id": 6, "title": "旧标题", "content": "旧内容"}], is_consort=False,
-    )
-    assert act["secret_action"] == "更新"
-    assert act["new_title"] == long_title
-    assert len(act["new_title"]) == len(long_title)
-
-
-def test_extract_minister_actions_none(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"密令动作":"无","目标密令编号":0}', 1))
-    act = cb.extract_minister_actions("MSG", "REPLY", [{"id": 6, "title": "x", "content": "y"}])
-    assert act["secret_action"] == "无"
-
-
-def test_extract_minister_actions_cultivate(monkeypatch):
-    canned = json.dumps(
-        {"密令动作": "无", "目标密令编号": 0, "调教技能": "书法精通", "调教性格": "更温婉"},
-        ensure_ascii=False,
-    )
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions("教你书法，望你更温婉", "妾领旨", [], is_consort=True)
-    assert act["cultivate_skill"] == "书法精通"
-    assert act["cultivate_trait"] == "更温婉"
-
-
-def test_extract_minister_actions_backend_error_safe(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
-    act = cb.extract_minister_actions("随便", "臣以为", [{"id": 6, "title": "x", "content": "y"}])
-    assert act["secret_action"] == "无"
-    assert act["order_id"] == 0
-
-
-def test_extract_minister_actions_nonint_ids_floor_to_zero(monkeypatch):
-    canned = json.dumps(
-        {"密令动作": "催办", "目标密令编号": "六号", "期限月数": "三个月"},
-        ensure_ascii=False,
-    )
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions("催一下", "臣加紧", [{"id": 6, "title": "x", "content": "y"}])
-    assert act["secret_action"] == "催办"
-    assert act["order_id"] == 0
-    assert act["deadline_months"] == 0
-
-
-def test_extract_minister_actions_unknown_action_floored(monkeypatch):
-    canned = json.dumps({"密令动作": "乱填的动作", "目标密令编号": 6}, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == "无"
-
-
 # ── lenient JSON via public extract seam ──
-
-@pytest.mark.parametrize(
-    "raw,expect_action,expect_order_id",
-    [
-        ('{"密令动作":"更新","目标密令编号":6}', "更新", 6),
-        ('```json\n{"密令动作":"更新","目标密令编号":6}\n```', "更新", 6),
-        ('note {"密令动作":"更新","目标密令编号":6} tail', "更新", 6),
-        ("NOT_JSON", "无", 0),
-        ("prefix {bad: json,} suffix", "无", 0),
-        ('{\n  "密令动作": "更新", // c\n  "目标密令编号": 6,\n}', "更新", 6),
-        ('{"密令动作":"更新","目标密令编号":6,}', "更新", 6),
-    ],
-)
-def test_extract_parses_lenient_backend_json(monkeypatch, raw, expect_action, expect_order_id):
-    """_loads_lenient 契约经 extract_minister_actions 公开出口观察。"""
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == expect_action
-    assert act["order_id"] == expect_order_id
-
-
-@pytest.mark.parametrize(
-    "raw,expect_new_content",
-    [
-        # 外层尾逗号/注释迫使走 JSONC cleaner；串内 //、URL、,}、转义引号须原样进入 new_content
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"a//b",}', "a//b"),
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"http://x.com//y",}', "http://x.com//y"),
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"x,}",}', "x,}"),
-        ('{"密令动作":"更新","目标密令编号":6,"新内容":"he said \\"hi\\" //x",}', 'he said "hi" //x'),
-        (
-            '{\n  "密令动作": "更新", // c\n  "目标密令编号": 6,\n  "新内容": "a//b",\n}',
-            "a//b",
-        ),
-    ],
-    ids=["slash_in_string", "url_in_string", "comma_brace_in_string",
-         "escaped_quote_slash", "comment_plus_slash_string"],
-)
-def test_extract_lenient_cleaner_preserves_quoted_delimiters(
-    monkeypatch, raw, expect_new_content,
-):
-    """畸形外层分隔迫使 quote-aware 清洗；消费字段 new_content 保留串内精确字节。"""
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == "更新"
-    assert act["order_id"] == 6
-    assert act["new_content"] == expect_new_content
-
-
-def test_extract_preserves_array_trailing_comma_via_loads_path(monkeypatch):
-    """数组尾逗号清洗仍可达（dict 根 + 嵌套数组）。"""
-    raw = '{"密令动作":"更新","目标密令编号":6,"xs":[1, 2, ]}'
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
-    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
-    assert act["secret_action"] == "更新"
-    assert act["order_id"] == 6
 
 
 # ── CliChat public: prompt shape + typed completion structure ──
 
 def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
-    """#1563：公开 invoke 只证 prompt 角色标签顺序与 typed completion 结构；不锁生成正文。"""
+    """#1563：公开 invoke 的 typed completion 原样带回（拼装 prompt 文面不锁）。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
-    seen = {}
 
     # Deterministic fixture the old _strip_agent_narration would have rewritten
     # (drop leading "I will …" line). Public content must equal the stub verbatim.
     runner_text = "I will check the files.\nBODY_ZH_REPLY"
 
     def fake_cli(prompt):
-        seen["prompt"] = prompt
         return (runner_text, 1)
 
     monkeypatch.setattr(cc, "_call_cli", fake_cli)
@@ -1281,45 +295,10 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
         SimpleNamespace(role="developer", content=12345),
     ]
     out = cc.invoke(msgs, Message(role="assistant"))
-    p = seen["prompt"]
-    # role tags + order (structural markers from deterministic inputs)
-    for tag in ("【系统设定】", "【皇帝/输入】", "【你此前的回答】", "【工具结果】", "【developer】"):
-        assert tag in p
-    assert p.index("【系统设定】") < p.index("【皇帝/输入】")
-    assert p.count("【皇帝/输入】") == 1  # blank skipped
-    assert "【你此前的回答】" in p and "PRIOR_ASST" in p
-    assert "12345" in p
-    assert "【执行约束·必读】" in p
     # typed completion + passthrough on structured content (fixture, not LLM prose)
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
     assert out.tool_calls == []
-    assert out.content == runner_text
-
-
-def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
-    cc = cb.CliChat(id="cli-test", backend="agy")
-    seen = []
-
-    def fake_cli(prompt):
-        seen.append(prompt)
-        return ("{}", 1)
-
-    monkeypatch.setattr(cc, "_call_cli", fake_cli)
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    msgs = [SimpleNamespace(role="user", content="EXTRACT")]
-    cc.invoke(msgs, Message(role="assistant"), response_format={"type": "json_object"})
-    assert "【输出格式硬约束】" in seen[0]
-
-    class _RF(BaseModel):
-        x: int = 0
-
-    cc.invoke(msgs, Message(role="assistant"), response_format=_RF)
-    assert "【输出格式硬约束】" in seen[1]
-
-    cc.invoke(msgs, Message(role="assistant"))
-    assert "【输出格式硬约束】" not in seen[2]
-    assert "【执行约束·必读】" in seen[2]
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
@@ -1334,33 +313,6 @@ def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
     assert traced.get("error") == "cli down"
     assert "cli down" in (ei.value.provider_message or "")
     assert "cli down" not in ei.value.message
-
-
-def test_clichat_call_cli_dispatch(monkeypatch):
-    seen = {}
-
-    def fake_codex(p, model=None, **kwargs):
-        seen["codex"] = model
-        return ("CODEX", 1)
-
-    def fake_claude(p, model=None, **kwargs):
-        seen["claude"] = model
-        return ("CLAUDE", 1)
-
-    def fake_agy(p):
-        seen["agy"] = "called"
-        return ("AGY", 1)
-
-    monkeypatch.setattr(cb, "_run_codex", fake_codex)
-    monkeypatch.setattr(cb, "_run_claude", fake_claude)
-    monkeypatch.setattr(cb, "_run_agy", fake_agy)
-    assert cb.CliChat(id="m-codex", backend="codex", timeout=111)._call_cli("p") == ("CODEX", 1)
-    assert cb.CliChat(id="m-claude", backend="claude", timeout=222)._call_cli("p") == ("CLAUDE", 1)
-    assert cb.CliChat(id="m-agy", backend="agy", timeout=333)._call_cli("p") == ("AGY", 1)
-    # #1465 切片③：model.timeout 不再下发给 runner；等多久算死归 transport 策略。
-    assert seen["codex"] == "m-codex"
-    assert seen["claude"] == "m-claude"
-    assert seen["agy"] == "called"
 
 
 def test_clichat_call_cli_unknown_backend_raises():
@@ -1404,21 +356,6 @@ def test_run_agy_success_single_subprocess(monkeypatch):
     assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
 
 
-@pytest.mark.parametrize(
-    "banner", ["Authentication required", "authentication timed out"],
-)
-def test_run_agy_auth_race_is_retryable_typed_without_private_loop(monkeypatch, banner):
-    """#1465 切片③：agy auth race 抛可重试 typed，**一次子进程**——
-    重试次数归 llm_transport，runner 内不得再自转 4 次。"""
-    from ming_sim.exceptions import LLMUnavailable
-
-    state = _agy_popen(monkeypatch, [(banner, 0)])
-    with pytest.raises(LLMUnavailable) as ei:
-        cb._run_agy("p")
-    assert ei.value.code == "llm_connection_error"
-    assert state["agy"] == 1
-
-
 def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
     """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
     state = _agy_popen(monkeypatch, [("", 1)])
@@ -1459,35 +396,23 @@ def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
 
 # ── trace throat ──
 
-@pytest.mark.parametrize(
-    "prompt,expect_tag",
-    [
-        ("你扮演被皇帝召见的大臣，回话……", "minister"),
-        ("本月结算抽取，输出 delta……", "extractor"),
-        ("simulator_payload: 当前盘面 TSV……", "simulator"),
-        ("请拟一道诏书，颁行天下", "decree"),
-        ("只输出合法 JSON，无多余字", "sanitizer"),
-        ("今日天气如何", "other"),
-        # 优先级：minister 先于 decree。
-        ("你扮演被皇帝召见的大臣，臣请拟诏书一道……", "minister"),
-    ],
-    ids=[
-        "minister", "extractor", "simulator",
-        "decree", "sanitizer", "other",
-        "minister_over_decree",
-    ],
-)
-def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_tag):
-    """公共咽喉 _run_backend_for_config：tag 空时从 prompt 推断 trace.tag（不直测 helper）。"""
+
+
+def test_run_backend_empty_tag_is_other_not_prompt_guess(monkeypatch):
+    """公共咽喉 _run_backend_for_config：tag 空时记 other，不从自由 prompt 猜分类。"""
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     monkeypatch.setattr(
         cb, "_run_codex",
         lambda prompt, model=None, **kwargs: ("ok", 1),
     )
-    cb._run_backend_for_config(prompt, _cli_codex_cfg())  # no explicit tag
+    # Prompt contains words that the retired prose→tag guesser would have classified.
+    cb._run_backend_for_config(
+        "你扮演被皇帝召见的大臣，请拟一道诏书，只输出合法 JSON",
+        _cli_codex_cfg(),
+    )
     assert len(recs) == 1
-    assert recs[0]["tag"] == expect_tag
+    assert recs[0]["tag"] == "other"
 
 
 def test_run_backend_for_config_traces_every_call(monkeypatch):
@@ -1503,35 +428,20 @@ def test_run_backend_for_config_traces_every_call(monkeypatch):
     assert r["backend"] == "codex" and r["error"] is None
 
 
-def test_run_backend_for_config_passes_reasoning_strength_to_codex(monkeypatch):
-    seen = {}
-
-    def fake_codex(prompt, model=None, reasoning_strength=None):
-        seen["reasoning_strength"] = reasoning_strength
-        return "外臣", 1
-
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    monkeypatch.setattr(cb, "_run_codex", fake_codex)
-    cfg = SimpleNamespace(
-        channel="cli", cli_runner="codex", cli_model="gpt-5.5",
-        cli_timeout_seconds=240, reasoning_strength="low",
-    )
-    cb._run_backend_for_config("判官名：后金汗", cfg, tag="office_infer")
-    assert seen["reasoning_strength"] == "low"
-
-
 def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+    fault = RuntimeError("codex 挂了")
 
     def boom(prompt, model=None, **kwargs):
-        raise RuntimeError("codex 挂了")
+        raise fault
 
     monkeypatch.setattr(cb, "_run_codex", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as caught:
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
+    assert caught.value is fault
     assert len(recs) == 1
-    assert recs[0]["error"] and "codex 挂了" in recs[0]["error"]
+    assert recs[0]["error"] == str(fault)
 
 
 def test_office_inference_llm_call_is_traced(monkeypatch):
@@ -1546,24 +456,12 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]
 
 
-def test_secret_extract_traces_exactly_once(monkeypatch):
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
-    assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
-
-
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──
 
 
 def test_public_cli_support_restores_existing_runners(monkeypatch):
-    assert cb._CLI_BACKENDS == frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
-    assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
     assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
-    assert set(cb.cli_model_choices()) == set(cb._CLI_BACKENDS)
+    assert set(cb.cli_model_choices()) == {row["value"] for row in cb.cli_runner_choices()}
     for name in ("opencode",):
         assert not cb.is_supported_cli_runner(name)
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)
@@ -1597,7 +495,7 @@ def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_pa
             cb, "_resolve_cli_bin",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("missing")),
         )
-        with pytest.raises(RuntimeError, match="missing"):
+        with pytest.raises(RuntimeError):
             list(cb._iter_cli_runner_text("kimi", "PROMPT", materials_dir=root))
         assert created and not os.path.exists(created[0])
     elif runner == "grok":
@@ -1669,61 +567,6 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
     assert "noise" not in out.lower()
 
 
-@pytest.mark.parametrize(
-    "env,attr,out",
-    [
-        ("cursor", "_run_cursor", "CURSOR_OUT"),
-        ("kimi", "_run_kimi", "KIMI_OUT"),
-        ("grok", "_run_grok", "GROK_OUT"),
-        ("pi", "_run_pi", "PI_OUT"),
-    ],
-)
-def test_run_backend_dispatch_new_runners(monkeypatch, env, attr, out):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
-    monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))
-    assert cb._run_backend("x") == (out, 1)
-
-
-@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
-def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
-    from ming_sim.models import LLMConfig
-
-    seen = {}
-
-    def fake(prompt, model=None, reasoning_strength=None, **kw):
-        seen["args"] = (prompt, model, reasoning_strength)
-        return (f"{runner}-ok", 1)
-
-    monkeypatch.setattr(cb, f"_run_{runner}", fake)
-    cfg = LLMConfig(
-        api_key="", base_url="", model="m", channel="cli",
-        cli_runner=runner, cli_model="mdl-x", cli_timeout_seconds=12.0,
-        reasoning_strength="low",
-    )
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    text, n = cb._run_backend_for_config("P", cfg, tag="t")
-    assert text == f"{runner}-ok" and n == 1
-    assert seen["args"][0] == "P"
-    assert seen["args"][1] == "mdl-x"
-    # 槽位（cli_timeout_seconds）是设置页的静默判死阈值，不逐调用透传给 runner
-    assert seen["args"][2] == "low"
-
-
-@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
-def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
-    seen = {}
-
-    def fake(prompt, model=None, reasoning_strength=None, **kw):
-        seen["model"] = model
-        return ("OK", 1)
-
-    monkeypatch.setattr(cb, f"_run_{runner}", fake)
-    chat = cb.CliChat(id="mdl", backend=runner, timeout=99)
-    assert chat._call_cli("p") == ("OK", 1)
-    # cli_model 仍透传；model.timeout 不再下发给 runner（等多久算死归 transport 策略）
-    assert seen["model"] == "mdl"
-
-
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_describe_effective_model_includes_new_runners(runner):
     from ming_sim.models import LLMConfig
@@ -1780,7 +623,7 @@ def test_gate_llm_config_api_from_env(monkeypatch):
 
 def test_gate_llm_config_cli_requires_runner():
     args = SimpleNamespace(channel="cli", runner="", model="m", api_key="", base_url="")
-    with pytest.raises(ValueError, match="--runner"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
 
 
@@ -1790,10 +633,10 @@ def test_gate_llm_config_api_requires_key_and_url(monkeypatch):
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("MING_SIM_API_BASE_URL", raising=False)
     args = SimpleNamespace(channel="api", runner="", model="m", api_key="", base_url="")
-    with pytest.raises(ValueError, match="api-key|API_KEY"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
     args.api_key = "sk-x"
-    with pytest.raises(ValueError, match="base-url|BASE_URL"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
 
 

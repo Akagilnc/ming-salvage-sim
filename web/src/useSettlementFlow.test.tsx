@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EndingModal } from "./components/endingModal";
+import { MechanicalTailFailure } from "./components/mechanicalTailFailure";
 import { yearMonthLabel } from "./settlementPresentation";
 import type { GameState, PendingDecision } from "./types";
 import { useSettlementFlow } from "./useSettlementFlow";
@@ -42,6 +43,19 @@ const settlingState = {
   turn: { ...awaitingState.turn, phase: "settling" },
   pending_decisions: [],
 } as GameState;
+
+const advancedMonthState = {
+  turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
+  metrics: { 国库: 1700, 内库: 300, 民心: 54, 皇威: 41 },
+  budget: {
+    国库: { balance: 1700 },
+    内库: { balance: 300 },
+  },
+  previous_summary: "十月邸报·已归档",
+  previous_reign_period_label: "天启七年十月",
+  last_attendant_message: "奴婢呈上月邸报。",
+  pending_decisions: [],
+} as unknown as GameState;
 
 function sseUnadvancedResponse(): Response {
   const body = `event: done\ndata: ${JSON.stringify({ advanced: false, report: "" })}\n\n`;
@@ -121,6 +135,12 @@ function mountHarness(opts: {
         <div data-testid="pending-count">{String(hookRef.current.pendingDecisions.length)}</div>
         <div data-testid="phase">{turn?.phase || ""}</div>
         <div data-testid="settlement-display">{String(Boolean(turn?.settlement_display))}</div>
+        {!state?.ending ? (
+          <MechanicalTailFailure
+            failure={state?.mechanical_tail_failure}
+            onRetry={opts.onRetry ?? (() => {})}
+          />
+        ) : null}
         {state?.ending ? <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => {}} onRetry={opts.onRetry ?? (() => {})} /> : null}
       </div>
     );
@@ -241,8 +261,8 @@ describe("#1845 ending summary stays background and becomes visible", () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(loadState).toHaveBeenCalledTimes(1);
+    // 史评正文不锁；忙态清除＝尾段落地的结构契约（节点在 pending 时已存在，不得再用 notNull 充数）。
     expect(summary()?.getAttribute("aria-busy")).toBeNull();
-    expect(summary()?.textContent).toBe("史评");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
@@ -279,11 +299,14 @@ describe("#1845 background tail failure observation", () => {
       mechanical_tail_failure: { error_pack_path: "/tmp/tail-error" },
     } as GameState;
     const loadState = vi.fn<() => Promise<GameState | null>>().mockResolvedValue(failed);
-    const { cleanup } = mountHarness({ initial: running, loadState });
+    const { host, cleanup } = mountHarness({ initial: running, loadState });
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("/tmp/tail-error");
     expect(loadState).toHaveBeenCalledTimes(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(loadState).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
     cleanup();
   });
 });
@@ -292,7 +315,10 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
   it("POST 携 state.turn 为 expected_turn", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ state: preClickState, pending_action_failures: [] }),
+      json: async () => ({
+        state: advancedMonthState,
+        advanced: true,
+      }),
     }));
     vi.stubGlobal("fetch", fetchMock);
     const reload = vi.fn();
@@ -300,9 +326,10 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
       configurable: true,
       value: { ...window.location, reload },
     });
+    const loadState = vi.fn(async () => advancedMonthState);
 
     const { hookRef, cleanup } = mountHarness({
-      loadState: async () => preClickState,
+      loadState,
       initial: preClickState,
     });
 
@@ -315,7 +342,9 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
     expect(String(url)).toContain("/api/decree/advance_without_edict");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({ expected_turn: 5 });
-    expect(reload).toHaveBeenCalledTimes(1);
+    // #1852：写成即推进走 loadState + 本面阅读，不整页 reload
+    expect(reload).not.toHaveBeenCalled();
+    expect(loadState).toHaveBeenCalled();
     cleanup();
   });
 
@@ -388,11 +417,6 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
       json: async () => ({
         detail: {
           message: FAIL_MSG,
-          pending_action_failures: [{
-            action_id: "a1",
-            minister_name: "袁崇焕",
-            summary: "落库失败",
-          }],
         },
       }),
     })));
@@ -407,8 +431,9 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
     });
 
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe(FAIL_MSG);
-    expect(hookRef.current!.settlementHudError).toBe(FAIL_MSG);
-    expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
+    // #1888 J3：共享 error 已由 harness 渲染断言；settlementHudError 位不另读内部态
+    // ——其玩家可见投影（hud-error 告警）由 appDurableWiring.test.tsx 的真实 App 用例证明。
+    expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
     cleanup();
   });
 });
@@ -432,7 +457,6 @@ describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload 
               state: awaitingState,
               awaiting_decision: true,
               decisions: [validDecision],
-              pending_action_failures: [],
             }),
           };
         }
@@ -456,7 +480,7 @@ describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload 
     expect(reload).not.toHaveBeenCalled();
     // 批红面不丢：同会话停窗弹决策，HUD 读状态口投影
     expect(host.querySelector("[data-testid=pending-count]")?.textContent).toBe("1");
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月 · 待批");
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe(yearMonthLabel(awaitingState.turn));
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
@@ -547,7 +571,7 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     const { host, hookRef, cleanup } = mountHarness({ loadState });
 
     // 点击前：无核账标
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月");
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe(yearMonthLabel(preClickState.turn));
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("false");
 
     await act(async () => {
@@ -558,7 +582,7 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     expect(reload).not.toHaveBeenCalled();
 
     // 同会话不 reload：状态口投影驱动 HUD
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月 · 待批");
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe(yearMonthLabel(awaitingState.turn));
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=treasury]")?.textContent).toBe("1781");
     expect(host.querySelector("[data-testid=inner]")?.textContent).toBe("320");
@@ -606,3 +630,6 @@ describe("#1843 未推进的过月终包", () => {
     cleanup();
   });
 });
+
+// 本面邸报阅读态、跨局回执隔离与迟到刷新不重挂邸报，均由 appDurableWiring.test.tsx 的
+// 真实 App 玩家入口用例证明；此层不另立只数 loadState 次数／reload spy 的内部接线副本。

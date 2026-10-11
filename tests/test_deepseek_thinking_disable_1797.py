@@ -138,20 +138,6 @@ def test_create_chat_model_deepseek_enable_thinking_still_disables(monkeypatch):
     assert relay.extra_body == {"reasoning": {"enabled": False}}
 
 
-def test_create_chat_model_non_deepseek_dashscope_strength_unchanged(monkeypatch):
-    """非 DeepSeek × dashscope × medium → 既有开思考 + budget（本片不得改坏）。"""
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        model="qwen-plus",
-        channel="api",
-        reasoning_strength="medium",
-    )
-    model = create_chat_model(cfg, enable_thinking=False)
-    assert model.extra_body == {"enable_thinking": True, "thinking_budget": 10000}
-
-
 def test_create_chat_model_non_deepseek_minimax_strength_unchanged(monkeypatch):
     """非 DeepSeek × minimax × medium → 既有 adaptive（本片不得改坏）。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -170,13 +156,21 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
     """dump 三样均落盘：reasoning 正文 / usage.reasoning_tokens / finish_reason（键值同断）。
 
     finish_reason 只读 model_provider_data / message.provider_data 字面键；
-    生产形（两容器皆无该键）据实记 (缺)；有值夹具只种实有字段。
+    生产形（两容器皆无该键）据实为 null；有值夹具只种实有字段。
+    验收读结构化记录字段，不锁 JSON 空格/键序等编码呈现。
     """
     import ming_sim.agents as agents_mod
 
-    dump_path = tmp_path / "llm_dump_test.log"
+    import json
+
+    dump_path = tmp_path / "llm_dump_test.jsonl"
     monkeypatch.setattr(agents_mod, "_DUMP_LLM", True)
     monkeypatch.setattr(agents_mod, "_DUMP_PATH", str(dump_path))
+
+    def _last_record() -> dict:
+        lines = [ln for ln in dump_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        assert lines, "dump 应至少落一条 JSONL 记录"
+        return json.loads(lines[-1])
 
     msg = SimpleNamespace(
         role="assistant",
@@ -194,7 +188,7 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
         reasoning_tokens=42,
     )
 
-    # 生产形缺席：agno 不写 finish_reason 进实有容器 → 记缺
+    # 生产形缺席：agno 不写 finish_reason 进实有容器 → null
     agents_mod._dump_llm_messages(
         SimpleNamespace(
             messages=[msg],
@@ -204,13 +198,19 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
         ),
         "test-tag",
     )
-    text = dump_path.read_text(encoding="utf-8")
-    # reasoning：字段正文（不锁 dump 字数/标签模板）
-    assert "思考过程甲" in text
-    assert "中转 reasoning 正文" in text
-    # usage / finish_reason：键值同断
-    assert '"reasoning_tokens": 42' in text
-    assert "[finish_reason] (缺)" in text
+    record = _last_record()
+    assert record["tag"] == "test-tag"
+    # 消息输入原样写入记录（#1897 T1 运输）
+    assert record["messages"][0]["content"] == msg.content
+    assert record["messages"][0]["reasoning_content"] == msg.reasoning_content
+    assert record["messages"][0]["reasoning"] == msg.reasoning
+    usage = record["usage"]
+    assert usage is not None
+    assert usage["input_tokens"] == 100
+    assert usage["output_tokens"] == 20
+    assert usage["total_tokens"] == 120
+    assert usage["reasoning_tokens"] == 42
+    assert record["finish_reason"] is None
 
     # 有值演练：只种 RunOutput.model_provider_data 字面键（bounce 明示允许）
     dump_path.write_text("", encoding="utf-8")
@@ -223,7 +223,7 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
         ),
         "test-tag-mpd",
     )
-    assert "[finish_reason] stop" in dump_path.read_text(encoding="utf-8")
+    assert _last_record()["finish_reason"] == "stop"
 
     # 有值演练：只种 Message.provider_data 字面键
     dump_path.write_text("", encoding="utf-8")
@@ -246,4 +246,4 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
         ),
         "test-tag-pd",
     )
-    assert "[finish_reason] length" in dump_path.read_text(encoding="utf-8")
+    assert _last_record()["finish_reason"] == "length"

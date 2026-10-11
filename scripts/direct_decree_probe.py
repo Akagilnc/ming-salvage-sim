@@ -127,13 +127,8 @@ def main() -> int:
 
     session.enter_review()
 
-    def on_event(kind, data):
-        if kind in ("simulator_chunk", "extractor_chunk"):
-            return
-        print(f"[evt] {kind}: {str(data)[:200]}")
-
     print("[resolve] 开始结算 ...")
-    report = session.resolve_turn(decree=args.decree, on_event=on_event, cheat_directive=args.cheat)
+    report = session.resolve_turn(decree=args.decree, cheat_directive=args.cheat)
     print(f"[resolve] 完成。Report 字符数={len(report)}")
     print("---- REPORT 头 300 ----")
     print(report[:300])

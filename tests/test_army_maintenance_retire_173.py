@@ -11,7 +11,7 @@
 
 import pytest
 
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 
 
 def _pseudo(title="测试"):
@@ -26,77 +26,11 @@ def _pay_source():
     }
 
 
-def _disable_army_pay_source_cutover(db):
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__army_pay_source_cutover', 0, 'meta', 'legacy new-army test')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
-    db.conn.commit()
-
-
 # ── schema：列已物理删除 ──────────────────────────────────────────────
 
-def test_armies_table_has_no_maintenance_column(read_game):
-    db, _state, _ = read_game
-    cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}
-    assert "maintenance_per_turn" not in cols, "维护费列应已物理删除"
-
-
-def test_drop_maintenance_column_removes_and_idempotent(game):
-    # 老档迁移路径：模拟列仍在的旧档 → _drop_maintenance_column 物理移除；再调一次幂等不崩。
-    db, _state, _ = game
-    db.conn.execute("ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFAULT 0")
-    db.conn.commit()
-    assert "maintenance_per_turn" in {
-        r["name"] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}, "前提：列已加回"
-    db._drop_maintenance_column()
-    assert "maintenance_per_turn" not in {
-        r["name"] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}, "drop 后列应消失"
-    db._drop_maintenance_column()  # 幂等：列已无 → no-op 不崩
-
-
-def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
-    # cmr drop R1(codex high)：driver 开现存档只走 GameDB.__init__→init_schema、不走 seed_static_data。
-    # 维护费退役 drop 须挂 init_schema，否则现存档（maintenance NOT NULL 无 default）不删列 → 删列后
-    # 建新军 INSERT（已不含该列）崩。模拟「升级前老档」：seed 后 ADD 回 maintenance 列，重开同档（纯
-    # init_schema 路径）应 drop 该列、且其后建新军不崩。
-    from ming_sim.db import GameDB
-    path = str(tmp_path / "old_save.db")
-    db = GameDB(path, content)
-    db.seed_static_data()
-    db.conn.execute("ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFAULT 5")
-    db.conn.commit()
-    db.close()
-    # 重开：GameDB.__init__ → init_schema 的维护费退役迁移应 drop（不调 seed_static_data）。
-    db2 = GameDB(path, content)
-    try:
-        cols = {r["name"] for r in db2.conn.execute("PRAGMA table_info(armies)").fetchall()}
-        assert "maintenance_per_turn" not in cols, "现存档重开应在 init_schema 路径 drop 维护费列"
-        state2 = db2.load_state()
-        created = db2.create_armies_from_extraction(state2, [{
-            "id": "post_drop_army", "name": "迁移后新军", "owner_power": "ming",
-            "manpower": 5000, **_pay_source(),
-        }])
-        assert not created[0].get("rejected"), f"drop 后建新军 INSERT 应成功不崩：{created[0]}"
-        assert db2.conn.execute("SELECT id FROM armies WHERE id='post_drop_army'").fetchone() is not None
-    finally:
-        db2.close()
 
 
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
-
-def test_legacy_new_army_needs_only_manpower(game):
-    db, state, _ = game
-    _disable_army_pay_source_cutover(db)
-    created = db.create_armies_from_extraction(state, [{
-        "id": "qin_army_x", "name": "秦军营", "owner_power": "ming", "manpower": 8000,
-    }])
-    assert not created[0].get("rejected"), f"只给 manpower 应建军成功：{created[0]}"
-    assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_x'").fetchone() is not None
-
 
 def test_new_army_maintenance_key_ignored(game):
     # LLM 若仍塞维护费/军费（别名已删）→ 当未知键忽略，不入库、不报错、建军照成。

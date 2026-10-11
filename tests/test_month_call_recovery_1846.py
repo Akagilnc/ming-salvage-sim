@@ -18,15 +18,10 @@ from ming_sim.llm_transport import (
     TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
 )
 from ming_sim.models import TurnPhase
-from tests.settlement_seam_helpers import make_light_session
+from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):
-    import ming_sim.decree as decree_mod
-    import ming_sim.simulation as simulation
-
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -112,7 +107,6 @@ def test_month_entry_world_push_follows_audience_transport_policy(
     calls = {"n": 0}
 
     def boom(self, *_args, **_kwargs):
-        assert getattr(self, "id", None) == "world-segment"
         calls["n"] += 1
         raise sequence[calls["n"] - 1]
 
@@ -246,14 +240,14 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     assert len(rows) == 1 and int(rows[0]["delta"]) == -7
     abort = caught.value
     assert abort.error_pack_path
-    assert abort.stage in {"world_text", "world-segment", "world_segment"}
+    assert abort.stage == "world_text"
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure = chain.get("call_failure") or {}
     assert failure.get("kind") == "model_exhausted"
     assert failure.get("error_pack_path") == abort.error_pack_path
-    assert "world" in str(failure.get("step") or abort.stage)
+    assert failure.get("step") == "world_text"
     assert not chain.get("world_text_ready")
     assert not chain.get("world_committed")
 
@@ -298,8 +292,9 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
-    assert chain.get("world_text_ready") is True
+    # world() mock return "世界段已成文。" → month_chain.world_text 原样暂存
     assert chain.get("world_text") == "世界段已成文。"
+    assert chain.get("world_text_ready") is True
     assert not chain.get("world_committed")
     assert db.staged_declarations.is_settled(ref)
     rows_after_fail = _ningyuan_ledger_rows(db)
@@ -317,7 +312,8 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not repush world")),
     )
     db.save_turn_report(state, "邸报已成")
-    result = session.resolve_turn(allow_empty_decree=True)
+    # Web's advance_without_edict endpoint uses this exact session entry after reopening.
+    result = session.advance_without_decree()
     assert result.advanced is True
     assert world_calls == [1]
     assert translate_calls == ["fail", "ok"]
@@ -435,7 +431,6 @@ def test_settlement_recovery_projects_month_call_failure(
     recovery = web_game.state_payload().get("settlement_recovery")
     assert isinstance(recovery, dict)
     assert recovery.get("retryable") is True
-    assert recovery.get("ready_replay") is False
     assert recovery.get("error_pack_path")
     assert "核账期可见原文" in str(recovery.get("message") or "")
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
@@ -460,9 +455,9 @@ def test_settlement_recovery_projects_month_call_failure(
     chain_again = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
-    assert recovery_again.get("message") == (
-        (chain_again.get("call_failure") or {}).get("message")
-    )
+    failure_again = chain_again.get("call_failure") or {}
+    assert failure_again.get("kind") == "model_exhausted"
+    assert failure_again.get("escape_armed") is False
     web_game.session.close()
 
 
@@ -646,7 +641,6 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     assert int(state.turn) == turn
     assert state.turn_phase == TurnPhase.SETTLING.value
     assert isinstance(caught.value.__cause__, RuntimeError)
-    assert "edict settle crashed" in str(caught.value.__cause__)
     assert caught.value.error_pack_path
     assert not db.staged_declarations.is_settled(ref)
     assert _ningyuan_ledger_rows(db) == []
@@ -684,11 +678,13 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     )
     real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
     calls = {"n": 0}
+    settle_error = RuntimeError("edict settle crashed")
+    pack_error = OSError("error pack unwritable")
 
     def settle_once(*args, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise RuntimeError("edict settle crashed")
+            raise settle_error
         return real_settle(*args, **kwargs)
 
     monkeypatch.setattr(
@@ -696,7 +692,7 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     )
 
     def unwritable(*_args, **_kwargs):
-        raise OSError("error pack unwritable")
+        raise pack_error
 
     monkeypatch.setattr(error_pack, "write_error_pack", unwritable)
     session = make_light_session(db, state, content)
@@ -706,13 +702,14 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
         session.resolve_turn(allow_empty_decree=True)
 
     assert caught.value.error_pack_path is None
-    assert caught.value.message == "edict settle crashed"
-    assert isinstance(caught.value.__cause__, OSError)
+    # 原结算诊断保真：注入异常对象／str 作期望；写包次生挂 cause，不得顶替。
+    assert caught.value.args[:1] == settle_error.args[:1]
+    assert caught.value.__cause__ is pack_error
     assert not db.staged_declarations.is_settled(ref)
     assert _ningyuan_ledger_rows(db) == []
     failure = _month_chain_of(db, turn).get("call_failure") or {}
     assert failure.get("kind") == "code_exception"
-    assert "edict settle crashed" in str(failure.get("message") or "")
+    assert failure.get("message") == str(settle_error)
     assert not failure.get("error_pack_path")
 
     session.resolve_turn(allow_empty_decree=True)

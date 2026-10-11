@@ -3,7 +3,6 @@
 测试预算 ≤3：
 ① AC1+AC2（transformed/degraded 对照）端到端 tracer + AC4 溯源 + 假进度零入 apply
 ② AC5 稽核信号正负成对
-③ AC6 哨兵（progress_band + 公开面渲染 + scene_text 三面）
 
 #621 接管窗/连坐/fail-closed 既有断言不得放松（本文件不改 #621 测）。
 """
@@ -11,43 +10,19 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
-from ming_sim.decree_vocabulary import (
-    DEFORMATION_BANNED_PLAYER_TOKENS,
-    format_public_progress_disclosure,
-)
-from ming_sim.due_review import (
-    apply_pending_due_reviews,
-    decide_due_review_verdict,
-    list_due_review_scenes,
-)
 from ming_sim.flows import _apply_economy_list
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
-from ming_sim.simulation import _sanitize_module_output
-from ming_sim.staged_commitment import write_due_staged_commitment_todos
+from ming_sim.issues import apply_score_extraction
+from ming_sim.situation_drift import apply_situation_monthly_drift
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
+from tests.test_due_review_621 import _executing_policy_dossier as _executing_policy
+from tests.test_fiscal_beyond_intent_1260 import _prime_and_apply_due_review as _apply_due_review
 
 
 # ── shared helpers ────────────────────────────────────────────────────
-
-
-def _executing_policy(db, state, *, token: str):
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        participants=[
-            {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
-            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
-        ],
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
 
 
 def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
@@ -81,19 +56,7 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     return int(created["issue_id"])
 
 
-def _prime_and_apply_due_review(db, state, content, *, dossier_id: int, title: str):
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    _insert_final_stage(db, state, content, dossier_id=dossier_id, title=title)
-    write_due_staged_commitment_todos(db, state)
-    db.conn.execute(
-        "UPDATE next_audience_todos SET created_turn=?",
-        (state.turn - 1,),
-    )
-    db.conn.commit()
-    results = apply_pending_due_reviews(db, state, commit=True)
-    assert results and results[0].get("branch") == "dossier"
-    return results[0]
+_prime_and_apply_due_review = partial(_apply_due_review, stage_writer=_insert_final_stage)
 
 
 def _cost_liability(db, dossier_id):
@@ -108,8 +71,6 @@ def _cost_liability(db, dossier_id):
     ]
 
 
-# #629：提升入生产单源 decree_vocabulary.DEFORMATION_BANNED_PLAYER_TOKENS
-_BANNED_SURFACE_TOKENS = DEFORMATION_BANNED_PLAYER_TOKENS
 
 
 # ── ① AC1+AC2(+AC4) tracer ───────────────────────────────────────────
@@ -169,21 +130,14 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     # 连坐走既有挂载点
     assert len(_cost_liability(db, xf_id)) == 1
 
-    # 双口径三面：奏报说兑现 × 执行格记变形 × 实况效果在库
+    # 双口径：角色自己的过程奏报留在奏报轨；执行格记变形；实况效果在库。
+    # 结案不再另造终值陈词。
     xf_progress = db.list_dossier_progress(xf_id)
-    terminal_rows = [r for r in xf_progress if r.get("is_terminal")]
-    assert terminal_rows, xf_progress
-    term = terminal_rows[-1]
-    assert term["progress_band"] not in {
-        "transformed", "degraded", "fulfilled", "failed", "executing", "变形",
-    }
-    assert "变形" not in term["memorial_text"]
-    assert "名实已乖" not in term["memorial_text"]  # 假象，非判官 note
+    assert not [r for r in xf_progress if r.get("is_terminal")]
+    assert len(xf_progress) == 1
     assert xf_dossier["execution_outcome"] == "transformed"
     assert db.list_economy_moves_for_dossier(xf_id)
-    # 机械分叉：list_dossier_progress band 面 ≠ 英文执行格原串
-    bands = {r["progress_band"] for r in xf_progress}
-    assert "transformed" not in bands
+    # progress_band 是自由奏报面，不以英文执行格作禁词门（#1897 T1）。
 
     # AC4：restore 后旨外效果可溯源
     backup = tmp_path / "restore-622.db"
@@ -206,32 +160,6 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     # 无 durable beyond_intent 效果——仅表报
     assert db.list_economy_moves_for_dossier(deg_id) == []
 
-    # 单元对照：decide_due_review_verdict 仅标记不同
-    base_input = {
-        "mid_stage": False,
-        "criterion_text": "清丈见成数",
-        "origin_context": "清丈畿辅田亩",
-        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
-        "durable_effects": [{
-            "origin_ref": "dossier:0",
-            "delta": 12,
-            "beyond_intent": False,
-        }],
-    }
-    # 有实况无旨外 → fulfilled（对照树完整性）
-    assert decide_due_review_verdict(base_input)["outcome"] == "fulfilled"
-    marked = dict(base_input)
-    marked["durable_effects"] = [{
-        "origin_ref": "dossier:0",
-        "delta": 12,
-        "beyond_intent": True,
-    }]
-    assert decide_due_review_verdict(marked)["outcome"] == "transformed"
-    # 无实况有表报 → degraded（与 transformed 对照）
-    no_effects = dict(base_input)
-    no_effects["durable_effects"] = []
-    assert decide_due_review_verdict(no_effects)["outcome"] == "degraded"
-
     result_deg = _prime_and_apply_due_review(
         db, state, content, dossier_id=deg_id, title="打折对照·清丈",
     )
@@ -239,10 +167,8 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert deg_dossier["execution_outcome"] == "degraded"
     assert result_deg["verdict"]["outcome"] == "degraded"
     deg_progress = db.list_dossier_progress(deg_id)
-    deg_term = [r for r in deg_progress if r.get("is_terminal")][-1]
-    assert deg_term["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
+    assert not [r for r in deg_progress if r.get("is_terminal")]
+    assert len(deg_progress) == 1
     # 假进度尾部：再写奏报，世界 fingerprint 不变
     fp_before_fake = _world_fingerprint(db)
     db.record_dossier_progress(
@@ -308,176 +234,6 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     assert "audit_fork_signals" not in escort_nudge
 
 
-# ── ③ AC6 哨兵三面 ───────────────────────────────────────────────────
-
-
-def test_ac6_sentinel_no_system_tokens_on_three_surfaces(game):
-    """断言面=progress_band 列 + 公开面渲染 + 到期复命 scene_text；变形/分界等零裸露。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-
-    dossier_id = _executing_policy(db, state, token="sentinel-622")
-    db.record_dossier_progress(
-        dossier_id, state.turn, "在办", "臣工奏称诸事已妥",
-        is_terminal=False, commit=True,
-    )
-    apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "国库",
-                "delta": 3,
-                "category": "浮收",
-                "reason": "额外加派",
-                "origin_ref": f"dossier:{dossier_id}",
-                "beyond_intent": True,
-            }],
-        },
-        content=content,
-    )
-    _insert_final_stage(
-        db, state, content, dossier_id=dossier_id, title="哨兵·清丈",
-    )
-    write_due_staged_commitment_todos(db, state)
-
-    # 面 3：到期复命 scene_text（落格前可读）
-    scenes = list_due_review_scenes(db, state)
-    assert scenes
-    for token in ("变形", "分界", "transformed", "degraded", "beyond_intent",
-                  "fulfilled", "failed", "executing", "progress_band"):
-        assert token not in scenes[0]["scene_text"], token
-        assert token not in scenes[0].get("gap_text", ""), token
-        assert token not in scenes[0].get("statement_text", ""), token
-
-    db.conn.execute(
-        "UPDATE next_audience_todos SET created_turn=?",
-        (state.turn - 1,),
-    )
-    db.conn.commit()
-    apply_pending_due_reviews(db, state, commit=True)
-
-    # 面 1：dossier_reported_progress.progress_band 列
-    rows = db.list_dossier_progress(dossier_id)
-    assert rows
-    for row in rows:
-        band = str(row["progress_band"])
-        memorial = str(row["memorial_text"])
-        for token in _BANNED_SURFACE_TOKENS:
-            assert token not in band, (token, band)
-            # memorial 允许普通中文，但禁系统词
-        for token in ("变形", "分界", "transformed", "degraded", "beyond_intent"):
-            assert token not in band
-            assert token not in memorial
-
-    # 面 2：公开面渲染（生产单源 format_public_progress_disclosure）
-    public = format_public_progress_disclosure(rows)
-    for token in _BANNED_SURFACE_TOKENS:
-        assert token not in public, (token, public)
-
-    # 执行格真值仍在（哨兵不覆盖机面）
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
-
-
-# ── ④ web 路真清洗器 seam（#622 剥键点）────────────────────────────────
-
-
-def test_web_sanitize_seam_beyond_intent_survives_to_transformed(game, content):
-    """穿 _sanitize_module_output 真清洗器 seam：beyond_intent 须存活到 apply 与终裁。
-
-    旧测失明原因：test_deformation_dual_rail_622.py:127/:266/:316/:205-228 全部直调
-    applier/DB/裁决函数，注入起点在剥键点（_clean_economy_moves 合法行重建）下游一站，
-    清洗器被切在断言线外——web 真路经 cleaner 重建 entry 时 beyond_intent 被静默丢掉，
-    旧测仍绿。本条强制 raw extractor 输出形（旨外别名 + beyond_intent 英文键）先过
-    _sanitize_module_output("internal", …）再合并喂 apply_score_extraction。
-    """
-    db, state, _content = game
-    dossier_id = _executing_policy(db, state, token="sanitize-seam-622")
-    origin = f"dossier:{dossier_id}"
-
-    # raw extractor 输出形：一条中文别名 旨外:true + 一条 beyond_intent:true
-    raw_internal = {
-        "economy_moves": [
-            {
-                "account": "国库",
-                "delta": 8,
-                "category": "地方浮收",
-                "reason": "借清丈加派入私",
-                "origin_ref": origin,
-                "旨外": True,
-            },
-            {
-                "account": "内库",
-                "delta": 4,
-                "category": "额外进项",
-                "reason": "旨外受益入内",
-                "origin_ref": origin,
-                "beyond_intent": True,
-            },
-        ],
-    }
-    cleaned = _sanitize_module_output("internal", raw_internal)
-    moves_out = cleaned.get("economy_moves") or []
-    assert len(moves_out) == 2, moves_out
-    # cleaner 须无损透传（别名已由 _canonical_item_fields 归一）；不在此判真假
-    assert all("beyond_intent" in m for m in moves_out), moves_out
-
-    applied = apply_score_extraction(db, state, cleaned, content=content)
-    assert applied["economy_moves"], applied
-    stored = db.list_economy_moves_for_dossier(dossier_id)
-    assert len(stored) >= 2, stored
-    assert all(m["beyond_intent"] is True for m in stored), stored
-    assert all(m["origin_ref"] == origin for m in stored), stored
-
-    # 续走到到期复核：终裁须落 transformed（标记存活到裁决读端）
-    result = _prime_and_apply_due_review(
-        db, state, content, dossier_id=dossier_id, title="清洗器缝·清丈",
-    )
-    assert result["verdict"]["outcome"] == "transformed"
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
-
-
-# ── ⑤ coerce 闭世界肯定识别器（#622 r2 畸形归 0）────────────────────
-
-
-def test_coerce_beyond_intent_flag_closed_affirmative_world():
-    """coerce_beyond_intent_flag 是闭世界肯定识别器。
-
-    仅契约内肯定表示（True / 非零 int·float / 肯定串集）→1；
-    缺席、否定、空、任何畸形（含非标量、非契约串）一律 →0。
-    开放兜底永不得回归。
-    """
-    coerce = GameDB.coerce_beyond_intent_flag
-
-    # 肯定集
-    for value in (True, 1, 2, 1.5, "true", "TRUE", "1", "yes", "on", "是", "有", "真"):
-        assert coerce(value) == 1, value
-
-    # 否定 / 缺省
-    for value in (False, 0, 0.0, None, "否", "无", "off", "false", "no", "0"):
-        assert coerce(value) == 0, value
-
-    # 畸形：非标量 + 垃圾串 + 空串 —— 一律 0（不得捏造肯定）
-    for value in ([], {}, [False], {"a": 1}, "null", "None", "0.0", "", "  ", "maybe", "garbage"):
-        assert coerce(value) == 0, value
-
-
-def test_decide_due_review_malformed_beyond_intent_stays_fulfilled():
-    """durable_effects 带 beyond_intent=[] 畸形标记须判 fulfilled 而非 transformed。"""
-    review_input = {
-        "mid_stage": False,
-        "criterion_text": "清丈见成数",
-        "origin_context": "清丈畿辅田亩",
-        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
-        "durable_effects": [{
-            "origin_ref": "dossier:0",
-            "delta": 12,
-            "beyond_intent": [],
-        }],
-    }
-    assert decide_due_review_verdict(review_input)["outcome"] == "fulfilled"
-
-
 # ── ⑥ 补饷路由 seam：beyond_intent 不得因 purpose 分叉丢键（#622 r3）──
 
 
@@ -534,6 +290,31 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
     assert row["purpose"] == "补饷"
     assert row["target_id"] == army_id
     assert row["origin_ref"] == "dossier:parent"
+
+    applied_yes = _apply_economy_list(
+        db,
+        state,
+        [{
+            "account": "国库",
+            "delta": -2,
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": army_id,
+            "category": "补饷",
+            "reason": "定向补饷肯定串",
+            "origin_ref": "dossier:yes",
+            "beyond_intent": "是",
+        }],
+        origin_ref="dossier:yes",
+        commit=True,
+    )
+    assert applied_yes and applied_yes[0].get("beyond_intent") is True, applied_yes
+    yes_row = db.conn.execute(
+        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
+        ("定向补饷肯定串",),
+    ).fetchone()
+    assert yes_row is not None
+    assert int(yes_row["beyond_intent"]) == 1
 
     # 反向锚：不带标记 → ledger=0，canonical 回执为 false/空来源
     applied_plain = _apply_economy_list(
@@ -592,7 +373,7 @@ def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_army_arrears(db, "guanning", 40)
     _seed_army_arrears(db, "xuan_da", 30)
     state.metrics["国库"] = 500
@@ -624,7 +405,7 @@ def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
         cancellable="decree",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
 
     rows = db.conn.execute(
         "SELECT beyond_intent, purpose, target_kind, target_id, delta "

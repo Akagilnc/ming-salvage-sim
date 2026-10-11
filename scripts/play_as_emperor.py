@@ -76,8 +76,7 @@ EMPEROR_SYSTEM_PROMPT = """你是崇祯帝，刚刚登基。你正在玩一个�
 
 【召见对话界面】prompt 含"朕问："：
 - 输任意自然语言问话，与大臣 LLM 对话。
-- 若想让大臣拟旨入草案：用自然话示意采纳（"准奏"、"善"、"就这么办"、"卿且去办"、"依卿所议即着办理"），
-  大臣会自动调用 propose_directive 工具把方案拟成圣旨入草案。不要自己写圣旨，让大臣写。
+- 若要交办政事或准许大臣所荐，请用自然话明确交代；本轮回话后的转译会记录交办及应允，收夜后成案。
 - 输 "done" / "退下" 让该大臣退下。
 - 输 "传XXX来" 换召另一位大臣（直接召）。
 - 输 "quit" 退朝。
@@ -103,7 +102,7 @@ EMPEROR_SYSTEM_PROMPT = """你是崇祯帝，刚刚登基。你正在玩一个�
   - 同意入档：输 "可"（或 "准"、"准奏"、回车也可）。
   - 驳回让大臣重拟：输 "驳"（或 "不准"、"驳回"）。
 - 不要拼接其它意图（换人、退朝、quit），其它字眼会被判"未识别"，原地重问，浪费一步。
-- 想换个旨意：先驳回让大臣重拟，或入档/驳回后回到草案界面用 del 删旧条 + add 新增，不要在这里直接改。
+- 想换个旨意：先驳回让大臣重拟，或入档/驳回后回到草案界面用 del 删旧条；手写新增已退役，旨意只从召对来。
 - 入档完成回到"朕问："界面，再去说退下、传谁、quit。
 
 【月末等待】prompt 含 "按回车继续下一月"：
@@ -223,20 +222,20 @@ def parse_emperor_output(raw: str) -> tuple[str, str]:
     if not obj_match:
         raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw[:200]}")
     obj = json.loads(obj_match.group(0))
-    reasoning = str(obj.get("reasoning", "")).strip()
-    input_text = str(obj.get("input", "")).strip()
-    if "\n" in input_text:
-        input_text = input_text.splitlines()[0]
+    # 原件过手：reasoning/input 不 strip、不截首行（传话链保真）
+    reasoning = str(obj.get("reasoning", ""))
+    input_text = str(obj.get("input", ""))
     return reasoning, input_text
 
 
 def ask_emperor(agent: Agent, cli_chunk: str, prompt_hint: str, progress: str = "") -> tuple[str, str]:
     # progress：本月进度提示（已问几轮/已下旨几条/还差啥）。num_history_runs 只留近 8 轮，
     # agent 看不到完整本月动作易盲凑、重复召见，故每步显式喂进度，让它知道走到哪、该收尾还是继续。
+    # CLI 对端原文整段转交，不截尾。
     payload = (
         f"{progress}\n\n" if progress else ""
     ) + (
-        f"CLI 当前输出（最新一段）：\n```\n{cli_chunk[-3500:]}\n```\n\n"
+        f"CLI 当前输出（最新一段）：\n```\n{cli_chunk}\n```\n\n"
         f"当前等待输入的 prompt 是：{prompt_hint}\n\n"
         f"请输出下一条键盘输入（严格 JSON）。"
     )
@@ -323,6 +322,7 @@ def run(
     prev_hint = ""            # 上一步命中的 prompt，用于检测卡同界面
     stuck_count = 0           # 同一界面连续重复次数
     STUCK_LIMIT = 6           # 连续卡同界面上限，超则升级退出路径
+    termination_failed = False
 
     try:
         while completed_periods < turns:
@@ -470,12 +470,6 @@ def run(
                 child.sendline("exit")
                 break
 
-            # 超长单行输入(尤其『指令内容：』界面 agent 整篇诏书)会卡死 CLI/pexpect → 截断。
-            # 诏书细节由 LLM 拟诏/结算补全，这里只需一句能立项的指令文本。
-            if len(action) > 200:
-                log(f"[输入截断 step {step}：{len(action)} 字 → 200 字，防 CLI 卡]")
-                action = action[:200]
-
             log(f"[崇祯] reasoning: {reasoning}")
             log(f"[崇祯] input: {action!r}")
             state.history.append({"step": step, "prompt": prompt_hint.strip(), "reasoning": reasoning, "input": action})
@@ -511,14 +505,24 @@ def run(
             pass
 
     finally:
+        # pexpect.terminate 返回 False = 未能终止；不得当成功返回。
+        # 日志关闭仍执行（资源收尾与失败呈现分立）。
         if child.isalive():
-            child.terminate(force=True)
+            stopped = child.terminate(force=False)
+            if not stopped:
+                termination_failed = True
+                log(
+                    "[收尾失败] pexpect.terminate(force=False) 返回 False，"
+                    f"child 仍存活={child.isalive()}"
+                )
         log_file.close()
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")
     print("\n### 玩家(qwen) 侧 token：")
     from ming_sim.token_stats import print_token_summary
     print_token_summary()
+    if termination_failed:
+        return 1
     return 0 if completed_periods >= turns else 1
 
 

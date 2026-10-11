@@ -12,8 +12,9 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from ming_sim.applier import Provenance, atomic
 
@@ -54,8 +55,10 @@ def run_world_segment_text(
 
     prepared = prepare_world_materials(db, state)
     message = "推演本月世界段。"
-    if str(cheat_directive or "").strip():
-        message = str(cheat_directive).strip() + "\n" + message
+    # Free prose cheat_directive: preserve raw; strip only emptiness (#1834 F16).
+    cheat_raw = str(cheat_directive or "")
+    if cheat_raw.strip():
+        message = cheat_raw + "\n" + message
     try:
         agent = create_world_segment_agent(llm_config, prepared)
         return run_agent_text(
@@ -66,73 +69,36 @@ def run_world_segment_text(
         release_material_tree(prepared.root)
 
 
-def _gazette_public_fact(fact: Any, secret_dossier_ids: Optional[set[int]] = None) -> bool:
-    origin = str(getattr(fact, "origin_ref", "") or "")
-    if origin.startswith("secret_order:"):
-        return False
-    from ming_sim.materials import dossier_id_in_origin
+def _secret_sourced(db: Any, value: object) -> bool:
+    from ming_sim.knowledge import origin_visible_to
 
-    dossier_id = dossier_id_in_origin(origin)
-    return dossier_id is None or dossier_id not in (secret_dossier_ids or set())
-
-
-def _gazette_public_event(event: Any) -> bool:
-    """作者经历投影：密令简报仍留在大臣自己的知识里，不写入作者可读经历。"""
-    if not isinstance(event, dict):
-        return True
-    kind = str(event.get("kind") or "")
-    source = str(event.get("source_id") or "")
-    if kind in {"secret_order", "secret_order_brief"}:
-        return False
-    return not source.startswith("secret_order")
-
-
-def _secret_sourced(value: object) -> bool:
     if isinstance(value, dict):
         if str(value.get("kind") or "") == "secret_order":
             return True
         if value.get("secret_order_id"):
             return True
         origin = str(value.get("origin_ref") or value.get("source_id") or "")
-        if origin.startswith("secret_order:"):
+        if not origin_visible_to(db, origin, linked_dossier_id=int(value.get("dossier_id") or 0)):
             return True
         orders = value.get("secret_orders")
         if isinstance(orders, list) and orders:
             return True
-        return any(_secret_sourced(item) for item in value.values())
+        return any(_secret_sourced(db, item) for item in value.values())
     if isinstance(value, list):
-        return any(_secret_sourced(item) for item in value)
+        return any(_secret_sourced(db, item) for item in value)
     return False
 
 
-def _secret_dossier_ids(db: Any) -> set[int]:
-    from ming_sim.materials import secret_order_dossier_ids
-
-    return secret_order_dossier_ids(db)
-
-
-def _origin_is_secret_dossier(origin: object, secret_dossiers: set[int]) -> bool:
-    from ming_sim.materials import dossier_id_in_origin
-
-    dossier_id = dossier_id_in_origin(origin)
-    return dossier_id is not None and dossier_id in secret_dossiers
-
-
-def _item_is_secret_dossier(item: object, secret_dossiers: set[int]) -> bool:
-    if not isinstance(item, dict):
-        return False
-    origin = item.get("origin_ref") or item.get("source_id") or ""
-    return _origin_is_secret_dossier(origin, secret_dossiers)
-
-
 def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
-    if str(decree_ref).startswith("secret_order:"):
+    from ming_sim.knowledge import origin_visible_to
+
+    if not origin_visible_to(db, decree_ref):
         return True
     prefix = "pending-action:"
     if not str(decree_ref).startswith(prefix):
         return False
     raw = str(decree_ref)[len(prefix):].split(":", 1)[0]
-    if not raw.isdigit() or not hasattr(db, "conn"):
+    if not raw.isdigit():
         return False
     row = db.conn.execute(
         "SELECT kind FROM pending_actions WHERE id=?", (int(raw),),
@@ -151,98 +117,103 @@ def _month_fact_materials(
     """
     import json
 
+    from ming_sim.knowledge import origin_visible_to
+
     turn = int(state.turn)
-    secret_dossiers = _secret_dossier_ids(db) if not include_secret_sources else set()
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
-    if hasattr(db, "conn"):
-        rows = db.conn.execute(
-            "SELECT decree_ref, declaration_json, forecast_text, visible_refs_json "
-            "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
-            (turn,),
-        ).fetchall()
-        for row in rows:
-            decree_ref = str(row["decree_ref"] or "")
-            try:
-                declaration = json.loads(row["declaration_json"] or "{}")
-            except json.JSONDecodeError:
-                declaration = {}
-            try:
-                visible = json.loads(row["visible_refs_json"] or "{}")
-            except json.JSONDecodeError:
-                visible = {}
-            if not include_secret_sources and (
-                _decree_ref_is_secret(db, decree_ref)
-                or _secret_sourced(declaration)
-                or _secret_sourced(visible)
-            ):
-                continue
-            nominal.append({"decree_ref": decree_ref, "declaration": declaration})
-            forecast = row["forecast_text"]
-            if isinstance(forecast, str) and forecast.strip():
-                forecasts.append(forecast)
+    rows = db.conn.execute(
+        "SELECT decree_ref, declaration_json, forecast_text, visible_refs_json "
+        "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
+        (turn,),
+    ).fetchall()
+    for row in rows:
+        decree_ref = str(row["decree_ref"] or "")
+        # 已结算声明是内部机械事实；与 parse_engine_payload_json 同权威，
+        # 空串/腐坏响亮，不得洗成空声明供料（#1897 E1/K2）。
+        from ming_sim.db import GameDB
+        try:
+            declaration = GameDB.parse_engine_payload_json(
+                row["declaration_json"],
+                surface=f"settled.declaration_json:{decree_ref}",
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"settled declaration_json 无效：{decree_ref}"
+            ) from exc
+        try:
+            visible = GameDB.parse_engine_payload_json(
+                row["visible_refs_json"],
+                surface=f"settled.visible_refs_json:{decree_ref}",
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"settled visible_refs_json 无效：{decree_ref}"
+            ) from exc
+        if not include_secret_sources and (
+            _decree_ref_is_secret(db, decree_ref)
+            or _secret_sourced(db, declaration)
+            or _secret_sourced(db, visible)
+        ):
+            continue
+        nominal.append({"decree_ref": decree_ref, "declaration": declaration})
+        forecast = row["forecast_text"]
+        if isinstance(forecast, str) and forecast.strip():
+            forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
-    if hasattr(db, "conn"):
+    for row in db.conn.execute(
+        "SELECT account, delta, category, reason, origin_ref, dossier_id FROM economy_ledger "
+        "WHERE turn=? ORDER BY id",
+        (turn,),
+    ):
+        origin = str(row["origin_ref"] or "")
+        if not include_secret_sources and not origin_visible_to(
+            db, origin, linked_dossier_id=int(row["dossier_id"] or 0),
+        ):
+            continue
+        landed.append({
+            "account": row["account"],
+            "delta": int(row["delta"]),
+            "category": row["category"],
+            "reason": row["reason"],
+            "origin_ref": origin,
+        })
+    rejections: List[Dict[str, Any]] = []
+    exists = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
+    ).fetchone()
+    if exists is not None:
         for row in db.conn.execute(
-            "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
+            "SELECT section, item_json, reason, category, source FROM rejection_reports "
             "WHERE turn=? ORDER BY id",
             (turn,),
         ):
-            origin = str(row["origin_ref"] or "")
-            if not include_secret_sources and (
-                origin.startswith("secret_order:")
-                or _origin_is_secret_dossier(origin, secret_dossiers)
-            ):
+            if not include_secret_sources and str(row["source"] or "") == "secret_order":
                 continue
-            landed.append({
-                "account": row["account"],
-                "delta": int(row["delta"]),
-                "category": row["category"],
+            from ming_sim.db import GameDB
+            item = GameDB.parse_engine_payload_json(
+                row["item_json"], surface="rejection_reports.item_json",
+            )
+            if not include_secret_sources and _secret_sourced(db, item):
+                continue
+            rejections.append({
+                "section": row["section"],
+                "item": item,
                 "reason": row["reason"],
-                "origin_ref": origin,
+                "category": row["category"],
             })
-    rejections: List[Dict[str, Any]] = []
-    if hasattr(db, "conn"):
-        exists = db.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-        ).fetchone()
-        if exists is not None:
-            for row in db.conn.execute(
-                "SELECT section, item_json, reason, category, source FROM rejection_reports "
-                "WHERE turn=? AND COALESCE(resimulation_invalidated, 0)=0 ORDER BY id",
-                (turn,),
-            ):
-                if not include_secret_sources and str(row["source"] or "") == "secret_order":
-                    continue
-                try:
-                    item = json.loads(row["item_json"] or "{}")
-                except json.JSONDecodeError:
-                    item = {}
-                if not include_secret_sources and (
-                    _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
-                ):
-                    continue
-                rejections.append({
-                    "section": row["section"],
-                    "item": item,
-                    "reason": row["reason"],
-                    "category": row["category"],
-                })
     answers: List[Dict[str, Any]] = []
-    if hasattr(db, "list_pending_decisions"):
-        for row in db.list_pending_decisions(turn):
-            if str(row.get("status") or "") != "decided":
-                continue
-            choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
-            answers.append({
-                "title": row.get("title") or "",
-                "label": choice.get("label") or "",
-                "note": choice.get("note") or "",
-                "event_id": row.get("event_id") or "",
-            })
-    snapshot = None
-    if hasattr(db, "get_month_open_snapshot"):
-        snapshot = db.get_month_open_snapshot(turn)
+    for row in db.list_pending_decisions(turn):
+        if str(row.get("status") or "") != "decided":
+            continue
+        choice = row.get("choice") or {}
+        answers.append({
+            "title": row.get("title") or "",
+            "label": choice.get("label") or "",
+            "note": choice.get("note") or "",
+            "event_id": row.get("event_id") or "",
+        })
+    snapshot = db.get_month_open_snapshot(turn)
     return {
         "nominal": nominal,
         "landed": landed,
@@ -262,16 +233,14 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     from ming_sim.audience_night import list_waiting_audience_summons
     from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
-    from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
+    from ming_sim.knowledge import origin_visible_to
+    from ming_sim.settlement_payload import list_due_commitments
 
     turn = int(state.turn)
     materials = _month_fact_materials(db, state, chain, include_secret_sources=False)
-    grouped = augment_secret_orders_with_due_commitments({}, db, state)
-    # Trust augment's Dict[str, list] contract — shape errors must fail loud.
     due_commitments = [
-        item for group in grouped.values()
-        for item in group
-        if item.get("entry_kind") == "due_commitment"
+        item for item in list_due_commitments(db, state)
+        if origin_visible_to(db, item["origin_ref"])
     ]
     return {
         "instruction": "据已落定的实况写本期邸报。title 由你写，report 是全文。",
@@ -285,13 +254,40 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def transit_arrivals_from_payload(payload: object) -> list:
+    """simulator_payload.transit_arrivals 单一读口：缺键/None→[]；list→list；错形响亮。"""
+    if not isinstance(payload, dict):
+        return []
+    if "transit_arrivals" not in payload or payload.get("transit_arrivals") is None:
+        return []
+    arrivals = payload.get("transit_arrivals")
+    if not isinstance(arrivals, list):
+        raise ValueError(
+            f"simulator_payload.transit_arrivals 须为 list，得 {type(arrivals).__name__}"
+        )
+    return list(arrivals)
+
+
 def _persisted_transit_arrivals(db: Any, turn: int) -> list:
-    """过月前半段已写入 resolve context 的本月抵达。缺键与非列表按该读口视为无抵达。"""
+    """过月前半段已写入 resolve context 的本月抵达。"""
     ctx = db.get_resolve_context(int(turn)) or {}
     payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
-    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
-        return list(payload["transit_arrivals"])
-    return []
+    return transit_arrivals_from_payload(payload)
+
+
+def prepare_gazette_author_materials(db: Any, state: Any):
+    """Public monthly catalog uses the same provenance boundary as people."""
+    from ming_sim.materials import prepare_world_materials
+    from ming_sim.knowledge import origin_visible_to, knowledge_row_visible_to
+
+    return prepare_world_materials(
+        db, state,
+        include_fact=lambda fact: origin_visible_to(db, fact.origin_ref),
+        include_event=lambda event: knowledge_row_visible_to(db, event, ""),
+        exclude_secret_order_audience=True,
+        exclude_secret_order_dossiers=True,
+        public_feed=True,
+    )
 
 
 def run_gazette_text(
@@ -303,28 +299,11 @@ def run_gazette_text(
     from ming_sim.agents import create_gazette_author_agent, parse_agent_json, run_agent_text
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_transport import audience_transport_policy
-    from ming_sim.materials import prepare_world_materials, release_material_tree
+    from ming_sim.materials import release_material_tree
 
     if llm_config is None:
         raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
-    secret_dossiers = _secret_dossier_ids(db)
-
-    def include_fact(fact: Any) -> bool:
-        return _gazette_public_fact(fact, secret_dossiers)
-
-    def include_event(event: Any) -> bool:
-        if not _gazette_public_event(event):
-            return False
-        return not _item_is_secret_dossier(event, secret_dossiers)
-
-    prepared = prepare_world_materials(
-        db, state,
-        include_fact=include_fact,
-        include_event=include_event,
-        ledger_origin_prefix_excluded="secret_order:",
-        exclude_secret_order_audience=True,
-        exclude_secret_order_dossiers=True,
-    )
+    prepared = prepare_gazette_author_materials(db, state)
     message = json.dumps(_gazette_feed(db, state, chain), ensure_ascii=False)
     try:
         agent = create_gazette_author_agent(llm_config, prepared)
@@ -346,9 +325,12 @@ def run_gazette_text(
 
 def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
     """核账期恢复投影只读：本月链上未消费的调用失败（无则 None）。"""
+    from ming_sim.db import GameDB
+
     chain = _load_chain(db, int(turn))
-    failure = chain.get("call_failure")
-    return dict(failure) if isinstance(failure, dict) else None
+    return GameDB.optional_object(
+        chain.get("call_failure"), surface="month_chain.call_failure",
+    )
 
 
 def continue_world_after_answers(
@@ -428,7 +410,8 @@ def continue_decree_after_answers(
         # LLM 已成功且无问后文：空后果终态，方可清问。
         db.staged_declarations.clear_questions(decree_ref)
         return
-    payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
+    # _dossier_row / get_decree_dossier 已保证 payload 为对象。
+    payload = dossier["payload"]
 
     def consume(result: Any) -> None:
         candidate = _ending_from_dispatch_result(result)
@@ -441,7 +424,7 @@ def continue_decree_after_answers(
 
     dispatch_month_segment(
         db, state, segment=prefix,
-        decree_payload=payload if isinstance(payload, dict) else {},
+        decree_payload=payload,
         llm_config=session.llm_config,
         source=source,
         alongside=consume,
@@ -454,35 +437,32 @@ def _run_decree_continuation_text(
     import json
 
     from ming_sim.agents import create_decree_forecast_agent, run_agent_text
-    from ming_sim.decree_forecast import decree_ref_for_dossier
+    from ming_sim.decree_forecast import (
+        decree_ref_for_dossier,
+        forecast_snapshot,
+        release_forecast_materials,
+    )
     from ming_sim.llm_transport import audience_transport_policy
-    from ming_sim import decree as decree_mod
-    from ming_sim import simulation
 
-    db, state = session.db, session.state
+    db = session.db
     decree_ref = decree_ref_for_dossier(db, dossier)
-    visible = dict(dossier)
-    visible["promulgation_decision"] = "promulgated"
-    projected = decree_mod.project_dossiers_for_simulator([visible], db, state)
-    sim_payload = simulation.build_simulator_payload(
-        state, db, str(dossier.get("decree_text") or ""), "",
-        decree_dossiers=projected,
-    )
-    # 与夜里逐旨预推同一边界：续推这一道旨，不带世界候选事件。
-    sim_payload["candidate_events"] = []
-    sim_payload["rescript_answers"] = list(answers)
-    agent = create_decree_forecast_agent(session.llm_config, sim_payload)
-    return run_agent_text(
-        agent,
-        json.dumps({
-            "instruction": "皇帝已批红答复本旨请旨。只续写问后后果，勿重写问前已落之事。",
-            "prior_forecast_text": db.staged_declarations.forecast_text_for(decree_ref),
-            "questions": db.staged_declarations.questions_for(decree_ref),
-            "answers": answers,
-        }, ensure_ascii=False),
-        tag="decree-forecast-continue",
-        transport_policy=audience_transport_policy(),
-    )
+    snapshot = forecast_snapshot(session, dict(dossier), decree_ref=decree_ref)
+    try:
+        agent = create_decree_forecast_agent(session.llm_config, snapshot["prepared"])
+        return run_agent_text(
+            agent,
+            json.dumps({
+                "instruction": "皇帝已批红答复本旨请旨。只续写问后后果，勿重写问前已落之事。",
+                "this_decree": snapshot["this_decree"],
+                "prior_forecast_text": db.staged_declarations.forecast_text_for(decree_ref),
+                "questions": db.staged_declarations.questions_for(decree_ref),
+                "answers": answers,
+            }, ensure_ascii=False),
+            tag="decree-forecast-continue",
+            transport_policy=audience_transport_policy(),
+        )
+    finally:
+        release_forecast_materials(snapshot)
 
 
 def run_player_month_chain(
@@ -493,14 +473,12 @@ def run_player_month_chain(
     *,
     decree_text: str = "",
     before_turn: int = 0,
-    on_event: Any = None,
     content: Any = None,
-    registry: Any = None,
     source: Provenance = Provenance.system_simulation,
     cheat_directive: str = "",
 ) -> Any:
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
-    del on_event, before_turn
+    del before_turn
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
     from ming_sim.mechanical_tail import ensure_mechanical_tails
 
@@ -518,8 +496,10 @@ def run_player_month_chain(
         )
 
     try:
-        if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
-            chain["cheat_directive"] = str(cheat_directive).strip()
+        # Free prose cheat_directive: preserve raw; strip only emptiness (#1834 F16).
+        cheat_raw = str(cheat_directive or "")
+        if cheat_raw.strip() and not chain.get("cheat_directive"):
+            chain["cheat_directive"] = cheat_raw
             _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     except Exception as exc:
@@ -536,7 +516,7 @@ def run_player_month_chain(
     try:
         return _run_loaded_month_chain(
             state, db, agno_db, llm_config, chain,
-            decree_text=decree_text, content=content, registry=registry,
+            decree_text=decree_text, content=content,
             source=source,
         )
     except Exception as exc:
@@ -553,7 +533,6 @@ def _run_loaded_month_chain(
     *,
     decree_text: str,
     content: Any,
-    registry: Any,
     source: Provenance,
 ) -> Any:
     """已装入的月链。代码异常由入口收成同一条 call_failure，不在这里另做恢复。"""
@@ -570,7 +549,10 @@ def _run_loaded_month_chain(
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
     declaration_outcome = _settle_edicts(
-        session, registry=registry, chain=chain, on_outcome=persist_declaration_outcome,
+        session, chain=chain, on_outcome=persist_declaration_outcome,
+    )
+    _consume_event_gates_after_edicts(
+        session, chain, decree_text=decree_text, source=source,
     )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
@@ -622,14 +604,14 @@ def _run_opening_levy(
     """月初旧账只消费一次，先于本月旨意改账。"""
     if chain.get("opening_levy_done"):
         return
-    from ming_sim.issues import _apply_levy_driven_transfers
+    from ming_sim.displaced_population import apply_levy_driven_transfers
     from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
     from ming_sim.decree import _collect_inline_rejections
     from ming_sim.error_pack import rejections_jsonl_path
 
     collector = RejectionCollector()
     with atomic(db):
-        _applied, rejected = _apply_levy_driven_transfers(db, commit=False)
+        _applied, rejected = apply_levy_driven_transfers(db, commit=False)
         if rejected:
             _collect_inline_rejections(
                 collector, {"population_transfers_rejections": rejected}, turn,
@@ -645,18 +627,26 @@ def _consume_call_failure_for_retry(
     db: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
 ) -> None:
     """玩家点「重试」再入主链：按需丢段，然后清失败标记，只续未完成步。"""
-    failure = chain.get("call_failure")
-    if not isinstance(failure, dict):
+    from ming_sim.db import GameDB
+
+    failure = GameDB.optional_object(
+        chain.get("call_failure"), surface="month_chain.call_failure",
+    )
+    if failure is None:
         return
     step = str(failure.get("step") or "")
     if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
         _discard_segment_for_escape(chain, failure)
         chain["translate_exhaust_stops"] = 0
     if step == "secret_orders_supply":
-        # 仅废弃 0058 校验未通过的产物；其它中断保留产物，重开接续未完成相。
+        # 0058 缺报或 0073 执行态校验失败的产物作废并重起供料；其它中断保留产物。
         if chain.get("secret_orders_supply_invalid"):
+            # 作废的是整份产物。奏报相与执行态相属于这份额度，旧完成标记
+            # 不得让下一份空报或残报跳过验收。已落的密奏披露不重做。
             chain.pop("secret_orders_supply_product", None)
             chain.pop("secret_orders_supply_invalid", None)
+            chain.pop("secret_orders_reports_done", None)
+            chain.pop("covert_progress_done", None)
     chain.pop("call_failure", None)
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
@@ -691,12 +681,9 @@ def _abort_month_call(
     turn = int(state.turn)
     # 事务已回滚时，失败记录只叠在已提交链上。调用方链在 alongside 里改过的
     # 内存相位（world_committed 等）不随失败写回。
-    if (
-        kind == "code_exception"
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
+    if kind == "code_exception" and db.owns_transaction():
         from ming_sim.decree import reload_state_from_db
-        reload_state_from_db(db, state, content=getattr(db, "content", None))
+        reload_state_from_db(db, state, content=db.content)
     committed = _load_chain(db, turn)
     escape_armed = False
     if kind == "model_exhausted" and step in _TRANSLATE_ESCAPE_STEPS:
@@ -775,7 +762,7 @@ def _guard_month_call(
 
 
 def _settle_edicts(
-    session: Any, *, registry: Any, chain: Dict[str, Any], on_outcome: Any = None,
+    session: Any, *, chain: Dict[str, Any], on_outcome: Any = None,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
     from ming_sim.decree import _is_stalled_deliberation
@@ -789,6 +776,20 @@ def _settle_edicts(
 
     db, state = session.db, session.state
     outcome = None
+    # 同月任免的快照均以首案物化前盘面为准。未判案只记录校验结果，
+    # 直到判官实际顺颁才消费；中断重开仍认这一批的原始盘面。
+    prevalidated = set(chain.get("recommendation_prevalidated_ids") or [])
+    invalid = set(chain.get("recommendation_invalid_ids") or [])
+    if "recommendation_prevalidated_ids" not in chain:
+        appointments = [row for row in db.list_decree_dossiers(status="proposed")
+                        if row.get("action_type") == "appointment"
+                        and int(row.get("created_turn") or 0) == int(state.turn)]
+        if len(appointments) > 1:
+            invalid = db._invalid_office_recommendation_snapshots(state, appointments)
+            prevalidated = {int(row["id"]) for row in appointments} - invalid
+            chain["recommendation_prevalidated_ids"] = sorted(prevalidated)
+            chain["recommendation_invalid_ids"] = sorted(invalid)
+            _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
     for dossier in db.list_decree_dossiers():
         if _is_stalled_deliberation(dossier):
             continue
@@ -836,19 +837,27 @@ def _settle_edicts(
             if isinstance(verdict, dict) and verdict.get("decision"):
                 current = db.get_decree_dossier(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":
+                    # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
+                    if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
+                        raise ValueError("任免案卷载荷物化失败")
                     # 判决与元数据、预声明中旨代价同一事务；两种入口共用 DB 写口。
-                    with atomic(db):
-                        db.apply_dossier_promulgation(
-                            state, int(dossier["id"]), str(verdict["decision"]),
-                            blocked_layer=str(verdict.get("blocked_layer") or ""),
-                            reason=str(verdict.get("reason") or ""),
-                            legal_reason_code=str(verdict.get("legal_reason_code") or ""),
-                            primary_opponents=verdict.get("primary_opponents") or [],
-                            gatekeeper_id=verdict.get("gatekeeper_id"),
-                            criteria_snapshot=verdict.get("criteria_snapshot") or {},
-                            content=session.content, registry=registry,
-                        )
-                        db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
+                    previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
+                    db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
+                    try:
+                        with atomic(db):
+                            db.apply_dossier_promulgation(
+                                state, int(dossier["id"]), str(verdict["decision"]),
+                                blocked_layer=str(verdict.get("blocked_layer") or ""),
+                                reason=str(verdict.get("reason") or ""),
+                                legal_reason_code=str(verdict.get("legal_reason_code") or ""),
+                                primary_opponents=verdict.get("primary_opponents") or [],
+                                gatekeeper_id=verdict.get("gatekeeper_id"),
+                                criteria_snapshot=verdict.get("criteria_snapshot") or {},
+                                content=session.content,
+                            )
+                            db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
+                    finally:
+                        db.conn._recommendation_snapshots_prevalidated = previous
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_decree_ref: str, result: Any) -> None:
@@ -899,6 +908,40 @@ def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: An
                 }
                 if item not in pending:
                     pending.append(item)
+
+
+def _consume_event_gates_after_edicts(
+    session: Any, chain: Dict[str, Any], *, decree_text: str, source: Provenance,
+) -> None:
+    """#1892：世界事件的唯一消费时点——逐旨落账之后、世界段之前。
+
+    判门读当月实账。旨前跑过的终态不可撤销，所以这里不是第二遍补判，
+    ``pre_settle`` 不再调用这两条判门。``event_gates_after_edicts_done`` 只防止
+    同月恢复时再消费一次。
+    """
+    from ming_sim.issues import apply_event_terminal_states, auto_trigger_seed_issues
+    from ming_sim.token_stats import tlog
+
+    db, state = session.db, session.state
+    turn = int(state.turn)
+    if chain.get("event_gates_after_edicts_done"):
+        return
+    with atomic(db):
+        terminalized = apply_event_terminal_states(state, db, commit=False)
+        triggered = auto_trigger_seed_issues(state, db)
+    if terminalized:
+        tlog(
+            f"[event-gate] 逐旨后终态 {len(terminalized)} 条："
+            f"{[(t['id'], t['terminal_state']) for t in terminalized]}"
+        )
+    if triggered:
+        tlog(
+            f"[event-gate] 逐旨后硬触发 {len(triggered)} 条："
+            f"{[t.get('title') for t in triggered]}"
+        )
+    with atomic(db):
+        chain["event_gates_after_edicts_done"] = True
+        _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
 
 def _run_world_segment(
@@ -975,18 +1018,34 @@ def _apply_deferred_disclosures(
 def _enrich_eligible_dossiers_for_supply(
     db: Any, candidates: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。"""
+    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。
+
+    密令关联案卷的现行要旨与期限只读 secret_orders（#1897 S2）；案卷 decree_text
+    是发令历史原诏，不作现行正文真源。
+    """
     from ming_sim.covert_progress import read_covert_task_contract
 
     out: List[Dict[str, Any]] = []
     for item in candidates:
         row = dict(item)
         dossier_id = int(item.get("dossier_id") or 0)
-        dossier = db.get_decree_dossier(dossier_id) if dossier_id and hasattr(db, "get_decree_dossier") else None
+        dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
         if dossier is not None:
-            row["decree_text"] = str(dossier.get("decree_text") or "")
-            payload = dossier.get("payload")
-            row["payload"] = payload if isinstance(payload, dict) else {}
+            secret_order_id = int(
+                dossier.get("secret_order_id") or item.get("secret_order_id") or 0
+            )
+            order = (
+                db.get_secret_order(secret_order_id)
+                if secret_order_id and hasattr(db, "get_secret_order")
+                else None
+            )
+            if order is not None:
+                row["decree_text"] = str(order.get("content") or "")
+                row["title"] = str(order.get("title") or row.get("title") or "")
+                row["due_turn"] = int(order.get("due_turn") or 0)
+            else:
+                row["decree_text"] = str(dossier.get("decree_text") or "")
+            row["payload"] = dossier["payload"]
             row["status"] = str(dossier.get("status") or "")
             contract = read_covert_task_contract(dossier)
             if contract is not None:
@@ -995,26 +1054,162 @@ def _enrich_eligible_dossiers_for_supply(
     return out
 
 
+def _identity_materials(db: Any, state: Any, name: str) -> Dict[str, Any]:
+    """按身份指给某人一份可及材料（ADR 0034 非全知 / 0155 身份隔离 / #1814）。
+
+    只给**材料目录里的路径**，不给正文：读取形态是「备一个地方它自己读」
+    （ADR 0155:8）。``materials.write_identity_materials`` 在 4a 备树之后、
+    调用之前复用人物材料写手，按身份分列正文，``identity_material_rel``
+    指向本人子目录的人读索引；不保留综合正文副本，restore 可复现。
+    查案对象不是真人物（如「某类人」式题名）时没有身份材料，如实留空，不编。
+    """
+    who = str(name or "").strip()
+    if not who:
+        return {}
+    if not db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", (who,),
+    ).fetchone():
+        # 不是真人物（如「某类人」式题名）：没有身份材料，如实留空，不编。
+        return {"name": who}
+    from ming_sim.knowledge import build_character_knowledge
+
+    knowledge = build_character_knowledge(db, state, who)
+    from ming_sim.materials import identity_material_rel
+
+    return {
+        "name": who,
+        "office": str(knowledge.get("office") or ""),
+        "materials_path": identity_material_rel(who),
+    }
+
+
+def _attach_investigation_facts(
+    db: Any, state: Any, orders: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """#1896 给 4a 逐证清单：每条实有罪证的键、已投入多少、还差多少、是否已被毁。
+
+    并按身份接入办案人与被查者的可及材料（#1814）：4a 一次 run 里既扮办案人
+    决定查法与投入，也扮经真实关系网知情后的被查者决定毁证／压案／不动——
+    两个人各自只见自己身份下能接触到的材料（ADR 0034／0155），同场不等于全知。
+
+    供料是人物"能接触到的材料"：只列真相底 live 集里的实有罪证，不塞机制说明
+    以外的判定口径；空 lane 集照列空清单（清白目标也照开案，不因无证而拒开——
+    那会变成免费清白神谕）。
+    """
+    from ming_sim.covert_progress import (
+        investigation_fact_is_gone,
+        investigation_tip_records,
+        investigation_action_records,
+        live_investigation_fact_keys,
+        read_covert_task_contract,
+        _investigation_target_of,
+        _dossier_payload_map,
+        _lanes_from_payload,
+    )
+
+    out: List[Dict[str, Any]] = []
+    for raw in orders:
+        order = dict(raw)
+        dossier = db.get_dossier_for_secret_order(int(order.get("id") or 0))
+        if dossier is None:
+            out.append(order)
+            continue
+        contract = read_covert_task_contract(dossier)
+        target = _investigation_target_of(contract) if contract else ""
+        if not target:
+            out.append(order)
+            continue
+        did = int(dossier["id"])
+        investigator = str(order.get("minister_name") or "")
+        lanes = {
+            str(lane["fact_key"]): lane
+            for lane in _lanes_from_payload(_dossier_payload_map(db, did))
+        }
+        facts: List[Dict[str, Any]] = []
+        for key in live_investigation_fact_keys(db, target):
+            lane = lanes.get(key, {})
+            if investigation_fact_is_gone(db, target, key):
+                state_text = "已被毁证湮灭"
+            elif bool(lane.get("mastered")):
+                state_text = "已掌握"
+            else:
+                state_text = "在查"
+            # 不把 difficulty 数值递给模型：那是引擎的账，给了等于递答案，
+            # 模型会照着填一个"刚好够"的值。人物只据实说自己下了多大劲。
+            facts.append({
+                "fact_key": key,
+                "months_under_investigation": int(lane.get("months") or 0),
+                "effort_so_far": round(float(lane.get("effort") or 0.0), 3),
+                "state": state_text,
+            })
+        order["investigation_target"] = target
+        order["investigation_facts"] = facts
+        order["investigator_identity_materials"] = _identity_materials(
+            db, state, investigator,
+        )
+        order["investigation_target_identity_materials"] = _identity_materials(
+            db, state, target,
+        )
+        order["investigation_tips"] = investigation_tip_records(db, did)
+        # 完整历史实况供料（ADR 0155:8 撤除硬上限）：不取"最后 6 条"——尾取
+        # 会让跨月的知情与因果承接读不到上月记录。
+        order["investigation_actions"] = investigation_action_records(db, did)
+        out.append(order)
+    return out
+
+
+def _feed_identity_names(feed: Mapping[str, Any]) -> List[str]:
+    """从 4a 供料里取出该备身份材料的人名（承办人与被查者，去重保序）。
+
+    供料与材料树两处都以这里为准：供料给路径、材料树写正文，名单不同源就会
+    出现"给了路径却读不到"或"备了没人指"的对不上。
+    """
+    names: List[str] = []
+    for order in feed.get("active_secret_orders") or []:
+        if not isinstance(order, Mapping):
+            continue
+        for side in ("investigator_identity_materials", "investigation_target_identity_materials"):
+            who = str((order.get(side) or {}).get("name") or "").strip()
+            if who and who not in names:
+                names.append(who)
+    return names
+
+
 def build_secret_orders_supply_feed(
     db: Any, state: Any, chain: Dict[str, Any],
 ) -> Dict[str, Any]:
     """整月密报供料：沿邸报作者本月材料读口，但不滤密令来源；另附密令对象与盘面。
 
-    不拼装「已生效效果」清单，也不另造逐段实际结果账本。
+    不拼装「已生效效果」清单，也不另造逐段实际结果账本；专用逐路实况账本已退役（#1900 J18）。
     """
     from ming_sim.covert_progress import _is_issuance_turn
-    from ming_sim.materials import _world_board_text
+    from ming_sim.materials import _world_board_text, actual_progress_notes
 
     turn = int(state.turn)
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
-    active_orders = [
+    for row in eligible:
+        dossier_id = int(row.get("dossier_id") or 0)
+        row["actual_notes"] = actual_progress_notes(db, dossier_id) if dossier_id else []
+    active_orders = _attach_investigation_facts(db, state, [
         dict(o) for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
-    ]
+    ])
+    # #1897：密令供料附实况轨原文（与案卷 eligible 同形）。
+    for item in active_orders:
+        dossier = (
+            db.get_dossier_for_secret_order(int(item["id"]))
+            if hasattr(db, "get_dossier_for_secret_order") else None
+        )
+        item["actual_notes"] = (
+            actual_progress_notes(db, int(dossier["id"])) if dossier is not None else []
+        )
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
-        "instruction": "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。",
+        "instruction": (
+            "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。"
+            "逐路汇总执行状态时据案卷关联与核账事实读，别拿整条密令的成败反推。"
+        ),
         "turn": turn,
         "eligible_dossiers": eligible,
         "active_secret_orders": active_orders,
@@ -1041,7 +1236,14 @@ def run_secret_orders_supply(
     message = json.dumps(feed, ensure_ascii=False)
     # 与邸报作者同目录读口；密报侧不滤密令来源（默认 prepare 全量可读）。
     prepared = prepare_world_materials(db, state)
+    # #1896：供料里只给身份材料路径，正文写进**本次调用自己**的树（ADR 0155:8
+    # 目录读取形态／#1814 身份隔离）。不并进世界段与邸报作者共用的世界树——那份
+    # 树的读者不该因共用而读到某人的私务（含其在办密报正文）。
+    # 身份写入与调用同在既有 try/finally 里：写入失败也释放本树，不另建清理层。
+    from ming_sim.materials import write_identity_materials
+
     try:
+        write_identity_materials(prepared, db, state, _feed_identity_names(feed))
         agent = create_secret_order_supply_agent(llm_config, prepared)
         raw = run_agent_text(
             agent, message, tag="secret_orders_supply",
@@ -1098,9 +1300,22 @@ def _step_4a_secret_order_supply(
         chain["secret_orders_supply_product"] = product
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
-    # Phase 1: 0058 report completeness validation and persistence
-    if not chain.get("secret_orders_reports_done"):
-        reports = product.get("dossier_progress_reports") or []
+    # Phase 1: 0058 覆盖校验。已提交过的合法报告不重写；新重起产物仍须完整校验。
+    reports = product.get("dossier_progress_reports") or []
+    if chain.get("secret_orders_reports_done"):
+        try:
+            db.validate_monthly_dossier_progress(int(turn), reports)
+        except ValueError as exc:
+            chain["secret_orders_supply_invalid"] = True
+            _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+            _abort_month_call(
+                db, state, chain,
+                decree_text=decree_text, source=source,
+                step="secret_orders_supply",
+                exc=exc,
+                kind="code_exception",
+            )
+    else:
         validation_failed = False
         try:
             with atomic(db):
@@ -1149,14 +1364,24 @@ def _step_4a_secret_order_supply(
         from ming_sim.decree import _collect_inline_rejections
         from ming_sim.error_pack import rejections_jsonl_path
 
+        collector = RejectionCollector()
+        selections = product.get("covert_exec_selections") or []
+        invalid_declarations = False
         try:
-            collector = RejectionCollector()
-            selections = product.get("covert_exec_selections") or []
             with atomic(db):
                 rows = apply_monthly_covert_actual_progress(
                     db, state, selections=selections, only_supplied=False, commit=False,
                 )
                 rejections = [r for r in rows if r.get("rejected")]
+                invalid_declarations = any(
+                    bool(r.get("invalid")) or r.get("category") == "invalid_enum"
+                    for r in rejections
+                )
+                if invalid_declarations:
+                    # 无效声明不冒充合法完成：本段整体回滚（不留半截实况行），
+                    # 随后按 #1846 失效重起契约标 invalid 并中止本月 run，
+                    # 重试时弃掉本月 4a 产物重新调用；已落的前段成果不动。
+                    raise ValueError("密令声明无效，本月 4a 产物须重来")
                 if rejections:
                     _collect_inline_rejections(
                         collector, {"covert_exec_selections": rows}, turn, source,
@@ -1166,6 +1391,9 @@ def _step_4a_secret_order_supply(
                 _save_chain(db, turn, chain, decree_text=decree_text, source=source)
                 mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
         except Exception as exc:
+            if invalid_declarations:
+                chain["secret_orders_supply_invalid"] = True
+                _save_chain(db, turn, chain, decree_text=decree_text, source=source)
             _abort_4a(exc)
 
     # Phase 4: Settle due secret orders
@@ -1186,7 +1414,8 @@ def _run_month_drift(
 ) -> None:
     if chain.get("inertia_done") or not chain.get("world_committed"):
         return
-    from ming_sim.issues import apply_issue_inertia_and_ongoing, clear_gated_legacies
+    from ming_sim.issues import clear_gated_legacies
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     from ming_sim.due_review import apply_pending_due_reviews
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     from ming_sim.breach_plea import expire_breach_pleas_on_due, scan_and_write_breach_pleas
@@ -1200,24 +1429,29 @@ def _run_month_drift(
     collector = RejectionCollector()
     with atomic(db):
         db.record_monthly_supervision_presence(turn, commit=False)
-        db.record_monthly_grant_reconciliations(
-            turn, [], rejection_collector=collector, source=source,
-        )
+        db.record_monthly_grant_reconciliations(turn)
         db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
-        rejections = apply_issue_inertia_and_ongoing(db, state)
-        if rejections:
-            _collect_inline_rejections(
-                collector, {"issue_inertia": {"entity_rejections": rejections}},
-                turn, source,
-            )
-            collector.flush_to_db(db)
+        # #651：漂移只承接不依赖本段 applied 的持久态（已决「禁摊派」欠饷是否再开口）。
+        # 默许/查办必须在逐段落账接缝带该段 report 结算，见 declaration_dispatch。
+        from ming_sim.covert_levy import settle_exposure_from_canonical_actions, write_exposure_todos
+        write_exposure_todos(db, state)
+        settle_exposure_from_canonical_actions(db, state, {})
+        person_changes: list[dict[str, object]] = []
+        rejections = apply_situation_monthly_drift(
+            db, state, applied_person_changes=person_changes,
+        )
+        _collect_inline_rejections(
+            collector, {
+                "issue_inertia": {"entity_rejections": rejections},
+                "issue_summary": {"applied_person_changes": person_changes},
+            }, turn, source,
+        )
+        collector.flush_to_db(db)
         db.recompute_all_faction_leverage()
         clear_gated_legacies(db, state)
         apply_pending_due_reviews(db, state, commit=False)
         settle_due_secret_orders(db, state, commit=False)
-        # 密令分类与到期结算已完成；全局放行须在邸报供料之前，withheld 密源钉不放。
-        db.release_held_audience_knowledge(commit=False)
         expire_breach_pleas_on_due(db, state, commit=False)
         consume_pending_urge_audience_todos(db, state, commit=False)
         write_due_staged_commitment_todos(db, state, commit=False)
@@ -1324,6 +1558,8 @@ def _materialize_rescript_desk(
         decisions.append(_question_as_decision(
             question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
         ))
+    if open_items["world_questions"]:
+        _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
     if decisions:
         db.save_pending_decisions(turn, decisions)
     # 已应用 return_revise 仍 pending，但是本批已办，不是新待裁。
@@ -1341,29 +1577,132 @@ def _materialize_rescript_desk(
     return desk
 
 
+def world_question_event_bindings(
+    chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
+) -> Dict[str, str]:
+    """读推送时钉死的「案头行身份 → 事件身份」。缺表时补钉一次，已钉的不再重算。
+
+    形检与补钉只在 ``_pin_world_question_event_bindings`` 一次完成；本读口委托
+    该入口后直接消费其保证的对象（含合法空 {}），不再重验。
+    """
+    _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
+    pinned = chain.get("world_question_event_bindings") or {}
+    return {
+        str(key): str(value)
+        for key, value in pinned.items()
+        if str(value or "").strip()
+    }
+
+
+def _pin_world_question_event_bindings(
+    chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
+) -> None:
+    """推送案头时把事件身份钉进月链（ADR 0115）。
+
+    案头行身份保持 ``world-question:{turn}:{idx}``，不把事件 id 写进那一列。
+    事件身份只来自交接时请旨块自带、且属于当回合
+    ``gather_fiscal_levy_petitions`` 快照的 event_id。只从 origin_ref 填进来的
+    id 不是这份快照。没有这份身份的请旨保持非事件身份：剩余数量不能证明它属于
+    某一到期事项，也不按标题猜配。钉完之后快照再变也不改这张表。
+
+    本入口是绑定表形状的唯一必要读取：缺键/None 补钉；合法 {} 已钉不重算；
+    错形响亮且不覆盖原值。读口与其它调用方均委托此处，不平行再验。
+    """
+    from ming_sim.db import GameDB
+    from ming_sim.issues import gather_fiscal_levy_petitions
+
+    if GameDB.optional_object(
+        chain.get("world_question_event_bindings"),
+        surface="month_chain.world_question_event_bindings",
+    ) is not None:
+        return
+
+    questions = [
+        q for q in (chain.get("world_questions") or []) if isinstance(q, dict)
+    ]
+    due_set: set[str] = set()
+    for ev in gather_fiscal_levy_petitions(state, db):
+        event_id = str(ev.id or "").strip()
+        if event_id:
+            due_set.add(event_id)
+    bindings: Dict[str, str] = {}
+    used: set[str] = set()
+    for idx, question in enumerate(questions):
+        desk_key = f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}"
+        echoed = str(question.get("event_id") or "").strip()
+        origin_ref = str(question.get("origin_ref") or "").strip()
+        if origin_ref and echoed == origin_ref:
+            echoed = ""
+        if echoed in due_set and echoed not in used:
+            bindings[desk_key] = echoed
+            used.add(echoed)
+    chain["world_question_event_bindings"] = bindings
+
+
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
     options = question.get("options") if isinstance(question.get("options"), list) else []
     cleaned = []
     for opt in options:
         if not isinstance(opt, dict):
             continue
-        label = str(opt.get("label") or "").strip()
-        if not label:
+        # #1897：选项 label/hint 原样；判空用局部副本。
+        label = str(opt.get("label") or "")
+        if not label.strip():
             continue
         cleaned.append({
             "label": label,
-            "hint": str(opt.get("hint") or "").strip(),
+            "hint": str(opt.get("hint") or ""),
             **{
                 key: opt[key] for key in opt
                 if key not in {"label", "hint"} and opt[key] is not None
             },
         })
+    # #1897：请旨 title/context 自由正文原样；仅真正空 title 才回落「请旨」。
+    title = str(question.get("title") or "")
     return {
         "event_id": event_id,
-        "title": str(question.get("title") or "").strip() or "请旨",
-        "context": str(question.get("context") or "").strip(),
+        "title": title or "请旨",
+        "context": str(question.get("context") or ""),
         "options": cleaned,
     }
+
+
+def _record_world_question_event_choices(
+    db: Any, state: Any, chain: Dict[str, Any], world_rows: List[Dict[str, object]], *,
+    turn: int,
+) -> None:
+    """绑定了三饷事项的请旨行：把「已呈奏疏 + 皇帝原批语」整份落进事件账（#1892）。
+
+    案头身份恒为 world-question: 前缀，故此处按绑定表（world_question_event_bindings，
+    单一真源）取事件身份，而不是从行上的 event_id 反推——那正是 K1 里两处判断不同步
+    的病根。写入走 :meth:`db.record_event_petition_answer`：**只记账，不置结局**。
+
+    结局标签不在这儿落：亲笔准驳须经 #1815 单一语义写口
+    （:func:`ming_sim.issues.apply_petition_event_outcome`，由世界段续推的语义转译
+    声明驱动）置定事件结局。把原始选项标签直接写成 terminal_reason 就是以标签旁路
+    替代亲裁语义转译（ADR 0153:5），也是留中标签污染终局标签集的根因。
+    """
+    bindings = world_question_event_bindings(chain, db=db, state=state, turn=turn)
+    if not bindings:
+        return
+    with atomic(db):
+        for row in world_rows:
+            event_id = bindings.get(str(row.get("event_id") or ""))
+            if not event_id:
+                continue
+            choice = dict(row.get("choice") or {})
+            db.record_event_petition_answer(
+                state, event_id, choice,
+                {
+                    "title": str(row.get("title") or ""),
+                    "context": str(row.get("context") or ""),
+                    "options": [
+                        str(opt.get("label") or "")
+                        for opt in (row.get("options") or []) if isinstance(opt, dict)
+                    ],
+                },
+                commit=False,
+            )
 
 
 def _consume_rescript_answers(
@@ -1382,11 +1721,12 @@ def _consume_rescript_answers(
 
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        # #1897：批红答案自由字段原样续推，禁 strip。
         return {
-            "label": str(choice.get("label") or "").strip(),
-            "hint": str(choice.get("hint") or "").strip(),
-            "note": str(choice.get("note") or "").strip(),
-            "context": str(row.get("context") or "").strip(),
+            "label": str(choice.get("label") or ""),
+            "hint": str(choice.get("hint") or ""),
+            "note": str(choice.get("note") or ""),
+            "context": str(row.get("context") or ""),
             "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }
@@ -1395,7 +1735,7 @@ def _consume_rescript_answers(
         event_id = str(row.get("event_id") or "")
         if not event_id.startswith("dossier:"):
             continue
-        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        choice = row.get("choice") or {}
         _apply_decided_triad(db, state, row, choice, content=session.content)
 
     world_rows = [
@@ -1407,6 +1747,7 @@ def _consume_rescript_answers(
         and all(str(r.get("status") or "") == "decided" for r in world_rows)
         and chain.get("world_questions")
     ):
+        _record_world_question_event_choices(db, state, chain, world_rows, turn=turn)
         continue_world_after_answers(
             session, chain,
             answers=[_answer_from_row(r) for r in world_rows],
@@ -1500,33 +1841,51 @@ def _advance_after_gazette(
     if chain.get("advanced"):
         return True
     from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
-    from ming_sim.decree import (
-        TIMEOUT_TURN, _carry_pending_clarification_actions, atomic_and_reload,
-    )
+    from ming_sim.decree import TIMEOUT_TURN, atomic_and_reload
     from ming_sim.rescript_actions import clear_return_revise_choice_anchors
+
+    from ming_sim.db import GameDB
 
     settled_year, settled_period = int(state.year), int(state.period)
     ending_outcome: Optional[Dict[str, object]] = None
+
+    def _coalesce_declaration_outcome(
+        *candidates: object,
+    ) -> Optional[Dict[str, object]]:
+        """形状校验后保留合法空对象回落：``a or b or …``（{} 不抢下一位真源）。"""
+        for value in candidates:
+            if value is None:
+                continue
+            checked = GameDB.optional_object(
+                value, surface="month_chain.declaration_outcome",
+            )
+            if checked:  # 合法 {} 继续回落
+                return checked
+        return None
+
     with atomic_and_reload(db, state, content=content):
         if not state.ended:
-            outcome = declaration_outcome or chain.get("declaration_outcome") or victory_status(db, state)
+            outcome = _coalesce_declaration_outcome(
+                declaration_outcome, chain.get("declaration_outcome"),
+            )
+            if outcome is None:
+                outcome = victory_status(db, state)
             if (
-                isinstance(outcome, dict)
-                and outcome.get("status") == ENDING_ONGOING
+                outcome.get("status") == ENDING_ONGOING
                 and state.turn >= TIMEOUT_TURN
             ):
                 outcome = {
                     "status": ENDING_TIMEOUT,
                     "summary": ENDING_LABELS.get(ENDING_TIMEOUT, ""),
                 }
-            if isinstance(outcome, dict) and outcome.get("status") != ENDING_ONGOING:
+            if outcome.get("status") != ENDING_ONGOING:
                 state.ended = True
                 state.ending_status = str(outcome.get("status") or "")
                 ending_outcome = dict(outcome)
-        elif isinstance(declaration_outcome, dict):
-            ending_outcome = dict(declaration_outcome)
-        elif isinstance(chain.get("declaration_outcome"), dict):
-            ending_outcome = dict(chain["declaration_outcome"])
+        else:
+            ending_outcome = _coalesce_declaration_outcome(
+                declaration_outcome, chain.get("declaration_outcome"),
+            )
         from ming_sim.mechanical_tail import mark_mechanical_tail_pending
         mark_mechanical_tail_pending(
             db, turn, settled_year=settled_year, settled_period=settled_period,
@@ -1535,8 +1894,10 @@ def _advance_after_gazette(
         chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
         clear_return_revise_choice_anchors(db, None)
+        # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
+        from ming_sim.displaced_population import apply_recovery_driven_transfers
+        apply_recovery_driven_transfers(db, state, commit=False)
         state.next_period()
-        _carry_pending_clarification_actions(db, state, turn, content=content)
         state.turn_phase = "issued"
         db.save_state(state)
         db.clear_month_open_snapshot(turn)
@@ -1576,7 +1937,7 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
     questions: List[dict] = []
     first_start: Optional[int] = None
     for match in _DECISION_RE.finditer(text):
-        parsed = parse_decision_blocks(match.group(0))[1]
+        parsed = parse_decision_blocks(match.group(0))
         if not parsed:
             continue
         if first_start is None:
@@ -1588,10 +1949,15 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
+    from ming_sim.db import GameDB
+
+    # get_resolve_context 已由 parse_engine_payload_json 保证 simulator_payload 为对象。
     ctx = db.get_resolve_context(turn) or {}
     payload = ctx.get("simulator_payload") or {}
-    chain = payload.get(_CHAIN_KEY) if isinstance(payload, dict) else None
-    return dict(chain) if isinstance(chain, dict) else {}
+    chain = payload.get(_CHAIN_KEY)
+    if chain is None:
+        return {}
+    return dict(GameDB.optional_object(chain, surface="month_chain") or {})
 
 
 def _save_chain(
@@ -1606,11 +1972,7 @@ def _save_chain(
     db.save_resolve_context(
         turn,
         decree_text or str(ctx.get("decree_text") or ""),
-        str(ctx.get("narrative") or ""),
         payload,
-        secret_orders=ctx.get("secret_orders"),
-        relevant_memories=ctx.get("relevant_memories"),
-        extracted=ctx.get("extracted"),
         source=source_value or Provenance.system_simulation.value,
         attendant_message=str(ctx.get("attendant_message") or ""),
     )

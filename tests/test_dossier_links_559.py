@@ -1,15 +1,9 @@
-import json
-import threading
-from types import SimpleNamespace
 
 import pytest
 
-from ming_sim import cli_backend
-from ming_sim.session import GameSession
-from ming_sim.skills import bind_content as bind_skills_content
-from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
-from tests.web_audience_test_doubles import HallAdmissionSessionMixin
-from web_app import WebGame
+from ming_sim.action_materialize import DecreeMaterializationValidationError
+
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -55,119 +49,6 @@ def test_only_confirmed_narrowed_references_are_persisted(game):
     assert db.list_dossier_links(xuanda, direction="incoming") == []
 
 
-def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monkeypatch):
-    extracted = {
-        "标题": "护行三路饷银",
-        "内容": "护卫辽东、宣大、东江三份补饷案卷。",
-        "承办人": "孙承宗",
-        "期限月数": 1,
-        "差务": "清丈",
-        "价值轴": ["实务事功"],
-        "方向": 1,
-        "交付单位": "万亩",
-        "交付目标": 1, "效果符号": 1,
-        "标签": ["护饷"],
-        "排除对象": {"人物": [], "机构": []},
-        "案卷关联": [
-            {"目标案卷ID": 11, "类型": "护卫", "说明": "护送辽东饷银"},
-            {"目标案卷ID": 12, "类型": "护卫", "说明": "护送宣大饷银"},
-            {"目标案卷ID": "模糊的东江案", "类型": "护卫", "说明": "未钉死"},
-        ],
-    }
-    def run_extractor(*args, **kwargs):
-        value = ({"confirmed_links": [{"target_dossier_id": 11, "relation_type": "护卫"}, {"target_dossier_id": 12, "relation_type": "护卫"}]}
-                 if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
-        return json.dumps(value, ensure_ascii=False), 1
-
-    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", run_extractor)
-
-    result = cli_backend._extract_secret_order(
-        "护卫边军饷银", "臣领命：只护辽东补饷、宣大补饷。", "孙承宗",
-        dossier_candidates=[
-            {"id": 11, "decree_text": "辽东补饷"},
-            {"id": 12, "decree_text": "宣大补饷"},
-            {"id": 13, "decree_text": "东江补饷"},
-        ],
-    )
-
-    assert [link["target_dossier_id"] for link in result["dossier_links"]] == [11, 12]
-
-
-@pytest.mark.parametrize("reply", [
-    "臣不能确认护卫辽东补饷。",
-    "臣只是引述旧案辽东补饷，并未承诺关联。",
-    "臣会照看那份饷案。",
-    "臣确认护卫辽东补饷补充。",
-])
-def test_semantic_verdict_rejects_negative_quote_vague_and_containment(monkeypatch, reply):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": []}), 1),
-    )
-    links = cli_backend.confirm_dossier_links(
-        reply,
-        [{"id": 11, "decree_text": "辽东补饷"},
-         {"id": 12, "decree_text": "辽东补饷补充"}],
-        [{"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"},
-         {"target_dossier_id": 12, "relation_type": "护卫", "note": "护送补充案"}],
-    )
-    assert links == []
-
-
-@pytest.mark.parametrize("verdict", [
-    {"confirmed_ids": [True]},
-    {"confirmed_ids": [{"id": 11}]},
-    {"confirmed_ids": "11"},
-    {"confirmed_ids": {"id": 11}},
-    {},
-    [11],
-])
-def test_semantic_verdict_bad_shape_fails_closed_without_crashing(monkeypatch, verdict):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps(verdict), 1),
-    )
-
-    assert cli_backend.confirm_dossier_links(
-        "臣明确确认护卫辽东补饷。",
-        [{"id": 11, "decree_text": "辽东补饷"}],
-        [{"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"}],
-    ) == []
-
-
-def test_semantic_verdict_can_narrow_to_exactly_one_proposed_candidate(monkeypatch):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": [{"target_dossier_id": 12, "relation_type": "接应"}, {"target_dossier_id": 999, "relation_type": "接应"}]}), 1),
-    )
-    links = cli_backend.confirm_dossier_links(
-        "臣明确确认接应辽东补饷补充案。",
-        [{"id": 11, "decree_text": "辽东补饷"},
-         {"id": 12, "decree_text": "辽东补饷补充"}],
-        [{"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"},
-         {"target_dossier_id": 12, "relation_type": "接应", "note": "接应补充案"}],
-    )
-    assert links == [{"target_dossier_id": 12, "relation_type": "接应", "note": "接应补充案"}]
-
-
-def test_secret_order_extractor_rejects_model_id_outside_visible_candidates(monkeypatch):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({
-            "内容": "护送旧案", "案卷关联": [
-                {"目标案卷ID": 99, "类型": "护卫", "说明": "模型臆造"}
-            ]
-        }, ensure_ascii=False), 1),
-    )
-
-    result = cli_backend._extract_secret_order(
-        "护送旧案", "臣领命，护卫虚构旧旨。", "孙承宗",
-        dossier_candidates=[{"id": 11, "decree_text": "辽东补饷"}],
-    )
-
-    assert result["dossier_links"] == []
-
-
 def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     db, state, _ = game
     draft_id = _make_dossier(db, state, "尚未明发饷案")
@@ -187,7 +68,7 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     }
 
 
-def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
+def test_public_disclosure_does_not_grant_secret_dossier_access(game):
     from ming_sim.knowledge import knowledge_row_visible_to
 
     db, state, _ = game
@@ -195,220 +76,15 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
     dossier = db.get_dossier_for_secret_order(order_id)
     source_id = f"secret_order_disclosure:{order_id}:test"
     db.record_public_knowledge_event(
-        state, "密查辽饷已披露", source_id=source_id, excluded_names=["孙承宗"])
+        state, "密查辽饷已披露", source_id=source_id)
     event = db.conn.execute(
         "SELECT * FROM character_knowledge_events WHERE source_id=?", (source_id,)
     ).fetchone()
 
-    assert knowledge_row_visible_to(db, event, "孙承宗") is False
+    assert knowledge_row_visible_to(db, event, "孙承宗") is True
     assert dossier["id"] not in {
         row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
     }
-
-
-@pytest.mark.parametrize("confirmed_ids, expected", [
-    ("target", True), ([], False), ([{"target_dossier_id": True, "relation_type": "护卫"}], False), ([{"id": 1}], False),
-])
-def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
-    game, monkeypatch, confirmed_ids, expected,
-):
-    db, state, content = game
-    target = _make_dossier(db, state, "辽东补饷")
-    db.record_dossier_decision(target, "promulgated")
-    minister = "毕自严"
-    payload = json.dumps({
-        "title": "护行辽饷", "content": "护送辽饷", "assignee": minister,
-        "covert_task": TYPED_COVERT_TASK,
-        "dossier_links": [{"target_dossier_id": target, "relation_type": "护卫", "note": "护送"}],
-    }, ensure_ascii=False)
-    verdict_ids = [target] if confirmed_ids == "target" else confirmed_ids
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": ([{"target_dossier_id": target, "relation_type": "护卫"}] if verdict_ids == [target] else verdict_ids)}), 1),
-    )
-
-    class Agent:
-        def run(self, _message):
-            answer = "臣明确确认护卫辽东补饷。" if expected else "臣不能确认护卫辽东补饷。"
-            return SimpleNamespace(
-                content=answer,
-                tools=[SimpleNamespace(tool_name="secret_order", result=f"__secret_order__{payload}")],
-            )
-
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = SimpleNamespace(get=lambda _character, **_kw: Agent())
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_args, **_kwargs: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
-
-    result = GameSession.chat(sess, minister, "下密令护行辽饷。")
-    db.commit_pending_actions(state, action_ids=[result.pending_action_id])
-    order = db.list_secret_orders(minister_name=minister)[0]
-    source = db.get_dossier_for_secret_order(order["id"])
-    assert bool(db.list_dossier_links(source["id"])) is expected
-
-
-@pytest.mark.parametrize("confirmed_ids, expected", [
-    ("target", True), (None, False), ([{"target_dossier_id": True, "relation_type": "护卫"}], False), ([{"id": 1}], False),
-])
-def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
-    game, monkeypatch, confirmed_ids, expected,
-):
-    db, state, content = game
-    target = _make_dossier(db, state, "辽东补饷")
-    db.record_dossier_decision(target, "promulgated")
-    extracted = {
-        "标题": "护行辽饷", "内容": "护送辽饷", "承办人": "毕自严",
-        **TYPED_COVERT_EXTRACT,
-        "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "护送"}],
-    }
-    def runner(*args, **kwargs):
-        ids = [target] if confirmed_ids == "target" else (confirmed_ids or [])
-        value = ({"confirmed_links": ([{"target_dossier_id": target, "relation_type": "护卫"}] if ids == [target] else ids)}
-                 if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
-        return json.dumps(value, ensure_ascii=False), 1
-    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = SimpleNamespace(refresh=lambda _name: None)
-    sess.llm_config = SimpleNamespace(channel="cli")
-
-    result = sess.apply_cli_conversation_actions(
-        SimpleNamespace(name="毕自严", office_type="户部"),
-        "密令：护行辽饷。",
-        "臣明确确认护卫辽东补饷。" if expected else "臣不能确认护卫辽东补饷。",
-        has_directive=False, secret_order_id=None,
-    )
-    db.commit_pending_actions(state, action_ids=[result["pending_action_id"]])
-    order = db.list_secret_orders(minister_name="毕自严")[0]
-    source = db.get_dossier_for_secret_order(order["id"])
-    assert bool(db.list_dossier_links(source["id"])) is expected
-
-
-@pytest.mark.parametrize("proposal, verdict, expected", [
-    (lambda target: {"target_dossier_id": target, "relation_type": "护卫", "note": "护送"},
-     lambda target: [{"target_dossier_id": target, "relation_type": "护卫"}], True),
-    (lambda target: {"target_dossier_id": target, "relation_type": "护卫", "note": "护送"},
-     lambda _target: [], False),
-    (lambda target: {"target_dossier_id": target, "relation_type": "越权", "note": "坏类型"},
-     lambda target: [{"target_dossier_id": target, "relation_type": "越权"}], False),
-    (lambda _target: {"target_dossier_id": 999999, "relation_type": "护卫", "note": "不可见"},
-     lambda _target: [{"target_dossier_id": 999999, "relation_type": "护卫"}], False),
-    (lambda target: {"target_dossier_id": float(target), "relation_type": "护卫", "note": "浮点截断"},
-     lambda target: [{"target_dossier_id": target, "relation_type": "护卫"}], False),
-    (lambda target: {"target_dossier_id": target, "relation_type": "护卫", "note": "   "},
-     lambda target: [{"target_dossier_id": target, "relation_type": "护卫"}], False),
-])
-def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
-    game, monkeypatch, proposal, verdict, expected,
-):
-    db, state, content = game
-    target = _make_dossier(db, state, "辽东补饷")
-    db.record_dossier_decision(target, "promulgated")
-    minister = "毕自严"
-    payload = json.dumps({
-        "title": "护行辽饷", "content": "护送辽饷", "assignee": minister,
-        "covert_task": TYPED_COVERT_TASK,
-        "dossier_links": [proposal(target)],
-    }, ensure_ascii=False)
-
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": verdict(target)}, ensure_ascii=False), 1),
-    )
-
-    class RunOutput:
-        def __init__(self):
-            self.content = None
-            self.tools = [
-                SimpleNamespace(tool_name="secret_order", result=f"__secret_order__{payload}")]
-
-    class Agent:
-        def run(self, *_args, **_kwargs):
-            yield SimpleNamespace(event="RunContent", content="臣明确确认护卫辽东补饷。")
-            yield RunOutput()
-
-    class Session(HallAdmissionSessionMixin):
-        llm_config = SimpleNamespace(channel="api")
-        temporary_characters = set()
-
-        def __init__(self):
-            self.db, self.state, self.content = db, state, content
-            self.registry = SimpleNamespace(
-                get=lambda _character, **_kw: Agent(), refresh=lambda _name: None, session_ids={})
-
-        def _character(self, name):
-            return self.content.characters[name]
-
-        def _start_cli_action_intent(self, *_args):
-            return None
-
-        def _finish_cli_action_intent(self, *_args):
-            return None
-
-        def _confirmation_intent_for_preexisting_pending(self, *args, **kwargs):
-            return GameSession._confirmation_intent_for_preexisting_pending(self, *args, **kwargs)
-
-        def apply_cli_conversation_actions(self, *_args, **_kwargs):
-            return {"directive": None, "secret_order_id": None, "pending_action_id": 0}
-
-        def _merge_staged_new_secret_order_content(self, *args, **kwargs):
-            return GameSession._merge_staged_new_secret_order_content(self, *args, **kwargs)
-
-        def pending_count(self):
-            return 0
-
-        def list_directives(self, include_pending=True):
-            # WebGame.directive_rows 唯一权威：委托真 GameSession 过滤（含 dossier 剔除）。
-            return GameSession.list_directives(self, include_pending=include_pending)
-
-        # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
-        def start_chat_turn_scene(self, *_a, **_k):
-            return None
-
-        def start_chat_turn_exit_scene(self, *_a, **_k):
-            return None
-
-        def join_chat_turn_scene(self, *_a, **_k):
-            return []
-
-        def persist_chat_turn_scene(self, *_a, **_k):
-            return None
-
-        def abandon_chat_turn_scene(self, *_a, **_k):
-            return None
-
-        def schedule_pending_scene_translation(self, result):
-            # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
-            return None
-
-    bind_skills_content(content)
-    runtime = WebGame.__new__(WebGame)
-    runtime.session = Session()
-    runtime.chat_history = {name: [] for name in content.characters}
-    runtime.suggestions_for = lambda _character: []
-    from ming_sim.session_write_queue import SessionWriteQueue
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    # #1842：殿上默认 scene_chat；本测咬密令 tool→pending→commit 链，须走正式密令入口
-    # （_SECRET_PREFIXES / intent），禁殿上 scene、不复活旧 tool envelope 到 scene 路。
-    events = list(runtime.chat_stream(minister, "密令：护行辽饷。", "secret_order"))
-    assert not [event for event in events if event["type"] == "error"], events
-    done = next(event for event in events if event["type"] == "done")
-    pending_id = done["payload"]["pending_action_id"]
-    applied = db.commit_pending_actions(state, action_ids=[pending_id])
-
-    assert [item["id"] for item in applied] == [pending_id]
-    assert db.list_pending_actions(state.turn, status="failed") == []
-    order = db.list_secret_orders(minister_name=minister)[0]
-    source = db.get_dossier_for_secret_order(order["id"])
-    assert bool(db.list_dossier_links(source["id"])) is expected
 
 
 def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
@@ -430,62 +106,6 @@ def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
     order = db.list_secret_orders(minister_name="孙承宗")[0]
     dossier = db.get_dossier_for_secret_order(order["id"])
     assert [row["target_dossier_id"] for row in db.list_dossier_links(dossier["id"])] == targets
-
-
-def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(game):
-    db, state, _ = game
-    before_orders = len(db.list_secret_orders())
-    action_id = db.stage_pending_action(
-        state.turn, "secret_order", "新建", "孙承宗",
-        {"title": "护行密令", "content": "护送旧案", "assignee": "孙承宗",
-         "covert_task": TYPED_COVERT_TASK,
-         "dossier_links": [
-             {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}
-         ]},
-    )
-
-    assert db.commit_pending_actions(state, action_ids=[action_id]) == []
-
-    assert len(db.list_secret_orders()) == before_orders
-    assert db.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
-    audit = db.list_dossier_link_rejections(pending_action_id=action_id)
-    assert audit[-1]["target_dossier_id"] == 999999
-    assert "指向不存在案卷" in audit[-1]["reason"]
-
-
-def test_unknown_target_link_is_rejected_and_audited(game):
-    db, state, _ = game
-    source = _make_dossier(db, state, "护行密令")
-
-    with pytest.raises(ValueError, match="指向不存在案卷"):
-        db.add_dossier_links(
-            source,
-            [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}],
-        )
-
-    assert db.list_dossier_links(source) == []
-    audit = db.list_dossier_link_rejections(source)
-    assert audit[-1]["target_dossier_id"] == 999999
-    assert "指向不存在案卷" in audit[-1]["reason"]
-
-
-
-def test_same_target_multiple_relations_keep_exact_confirmed_tuples(monkeypatch):
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": [
-            {"target_dossier_id": 11, "relation_type": "护卫"},
-            {"target_dossier_id": 11, "relation_type": "稽核"},
-        ]}, ensure_ascii=False), 1),
-    )
-    proposals = [
-        {"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"},
-        {"target_dossier_id": 11, "relation_type": "稽核", "note": "查账"},
-        {"target_dossier_id": 11, "relation_type": "接应", "note": "接应"},
-    ]
-    assert cli_backend.confirm_dossier_links(
-        "臣确认护卫并稽核该案。", [{"id": 11, "decree_text": "辽饷"}], proposals,
-    ) == proposals[:2]
 
 
 def test_force_promulgated_rejected_dossier_is_referenceable(game):
@@ -510,100 +130,20 @@ def test_withdrawn_rejected_dossier_is_not_referenceable(game):
     assert dossier_id not in {row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)}
 
 
-def test_pending_rejection_does_not_follow_reused_rolled_back_source_id(game):
+def test_unknown_target_link_is_rejected_and_audited(game):
     db, state, _ = game
-    action_id = db.stage_pending_action(
-        state.turn, "secret_order", "新建", "孙承宗",
-        {"title": "坏引用", "content": "坏引用", "assignee": "孙承宗",
-         "covert_task": TYPED_COVERT_TASK, "dossier_links": [
-            {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}]},
-    )
-    assert db.commit_pending_actions(state, action_ids=[action_id]) == []
-    reused_id = _make_dossier(db, state, "后建案卷")
-    assert db.list_dossier_link_rejections(reused_id) == []
-    assert db.list_dossier_link_rejections(pending_action_id=action_id)
+    source = _make_dossier(db, state, "护行密令")
 
+    with pytest.raises(DecreeMaterializationValidationError) as caught:
+        db.add_dossier_links(
+            source,
+            [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}],
+        )
 
-def test_serial_and_parallel_join_share_proposal_normalization(monkeypatch):
-    candidates = [{"id": 11, "decree_text": "辽饷"}]
-    mixed = [
-        {"target_dossier_id": 11, "relation_type": " 护卫 ", "note": " 护送 "},
-        {"target_dossier_id": 11, "relation_type": "稽核", "note": "   "},
-        {"target_dossier_id": 11, "relation_type": "越权", "note": "坏类型"},
-        {"target_dossier_id": True, "relation_type": "护卫", "note": "坏 ID"},
-        {"target_dossier_id": 99, "relation_type": "接应", "note": "不可见"},
-    ]
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_links": [
-            {"target_dossier_id": 11, "relation_type": "护卫"},
-            {"target_dossier_id": 11, "relation_type": "稽核"},
-        ]}, ensure_ascii=False), 1),
-    )
-
-    normalized = cli_backend._normalize_dossier_link_proposals(candidates, mixed)
-    serial = cli_backend.confirm_dossier_links("臣确认护卫辽饷。", candidates, mixed)
-    confirmed = {(11, "护卫"), (11, "稽核")}
-    parallel_join = [item for identity, item in normalized.items() if identity in confirmed]
-
-    assert serial == parallel_join == [
-        {"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"}
-    ]
-
-
-def test_parallel_cli_bad_link_does_not_roll_back_valid_secret_order(game, monkeypatch):
-    db, state, content = game
-    target = _make_dossier(db, state, "辽东补饷")
-    db.record_dossier_decision(target, "promulgated")
-    extracted = {
-        "标题": "护行辽饷", "内容": "护送辽饷", "承办人": "毕自严",
-        **TYPED_COVERT_EXTRACT,
-        "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "   "}],
-    }
-
-    def runner(*args, **kwargs):
-        value = ({"confirmed_links": [
-            {"target_dossier_id": target, "relation_type": "护卫"}
-        ]} if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
-        return json.dumps(value, ensure_ascii=False), 1
-
-    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = SimpleNamespace(refresh=lambda _name: None)
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
-
-    result = sess.apply_cli_conversation_actions(
-        SimpleNamespace(name="毕自严", office_type="户部"),
-        "密令：护行辽饷。", "臣明确确认护卫辽东补饷。",
-        has_directive=False, secret_order_id=None,
-    )
-    applied = db.commit_pending_actions(state, action_ids=[result["pending_action_id"]])
-
-    assert [item["id"] for item in applied] == [result["pending_action_id"]]
-    assert db.list_pending_actions(state.turn, status="failed") == []
-    order = db.list_secret_orders(minister_name="毕自严")[0]
-    source = db.get_dossier_for_secret_order(order["id"])
-    assert db.list_dossier_links(source["id"]) == []
-
-
-def test_cli_secret_extraction_overlaps_independent_confirmation(monkeypatch):
-    import threading
-    barrier = threading.Barrier(2)
-    seen = []
-    extracted = {"标题": "护饷", "内容": "护饷", "承办人": "孙承宗", "案卷关联": [
-        {"目标案卷ID": 11, "类型": "护卫", "说明": "护送"}]}
-    def runner(*args, **kwargs):
-        seen.append(kwargs.get("tag"))
-        barrier.wait()
-        value = ({"confirmed_links": [{"target_dossier_id": 11, "relation_type": "护卫"}]}
-                 if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
-        return json.dumps(value, ensure_ascii=False), 1
-    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
-    result = cli_backend._extract_secret_order(
-        "护饷", "臣确认护卫辽饷。", "孙承宗",
-        llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
-        dossier_candidates=[{"id": 11, "decree_text": "辽饷"}],
-    )
-    assert set(seen) == {"secret_extract", "dossier_link_confirmation"}
-    assert result["dossier_links"][0]["target_dossier_id"] == 11
+    assert db.list_dossier_links(source) == []
+    assert caught.value.category == "hallucinated_id"
+    audit = db.conn.execute(
+        "SELECT target_dossier_id FROM decree_dossier_link_rejections WHERE source_dossier_id=? ORDER BY id",
+        (source,),
+    ).fetchall()
+    assert audit[-1]["target_dossier_id"] == 999999

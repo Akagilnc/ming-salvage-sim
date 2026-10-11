@@ -4,10 +4,11 @@ import type { CasedDirective, Directive, GameState, LocalDirectiveItem } from ".
 
 /** #1764：source/actor 结构化字段直接并列（P7/0142；非角色台词模板）。 */
 function sourceLabel(source: string, actor: string): string {
-  const src = (source || "").trim();
-  const who = (actor || "").trim();
-  if (who && src) return `${src} · ${who}`;
-  return who || src;
+  // #1834 F16：判空用 trim 副本；展示取值保原文。
+  const src = source || "";
+  const who = actor || "";
+  if (who.trim() && src.trim()) return `${src} · ${who}`;
+  return who.trim() ? who : src;
 }
 
 /** 权威 source 写入值（session/db）；不猜测 chat/legacy/子串。 */
@@ -60,7 +61,6 @@ function cardStateA11y(
 
 export function EdictModal({
   state,
-  directiveText,
   editingDirectiveId,
   editingDirectiveText,
   decree,
@@ -68,18 +68,14 @@ export function EdictModal({
   busy,
   error,
   localDirectives = [],
-  onDirectiveTextChange,
   onEditingTextChange,
-  onCreateDirective,
   onStartEdit,
   onCancelEdit,
   onSaveDirective,
   onDeleteDirective,
   onIssueDecree,
-  onAdvanceWithoutEdict,
 }: {
   state: GameState;
-  directiveText: string;
   editingDirectiveId: number | null;
   editingDirectiveText: string;
   decree: string;
@@ -88,55 +84,38 @@ export function EdictModal({
   error: string;
   /** #1764：本地在飞/失败项（会话态）。 */
   localDirectives?: LocalDirectiveItem[];
-  onDirectiveTextChange: (value: string) => void;
   onEditingTextChange: (value: string) => void;
-  onCreateDirective: () => void;
   onStartEdit: (directive: Directive) => void;
   onCancelEdit: () => void;
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
   /** #1277/#1560：有可结算工作（草案或 resolve_turn 可消费 pending）时主钮走盖玺颁诏；真空禁用。 */
   onIssueDecree: () => void;
-  /** #1560：failed-only 确认后退朝；复用既有 advance_without_edict 客户端接缝。 */
-  onAdvanceWithoutEdict: () => void;
 }) {
   // Conversational directives are approved when the audience turn settles (ADR 0049).
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
   const draftDirectives = state.directives;
   const casedDirectives: CasedDirective[] = state.cased_directives ?? [];
-  // save/delete 绑在既有草案卡，不另占席；仅 create 会话卡计入桌面条数。
-  const createLocals = localDirectives.filter((item) => item.directiveId == null);
+  // save/delete 绑在既有草案卡，不另占席。
   const requestByDirectiveId = new Map(
-    localDirectives
-      .filter((item) => item.directiveId != null)
-      .map((item) => [item.directiveId as number, item]),
+    localDirectives.map((item) => [item.directiveId, item]),
   );
-  // deskCount 仅呈现条数（含本地 create 卡）；动作/恢复门控不得依赖它（#1764）。
-  const deskCount = draftDirectives.length + casedDirectives.length + createLocals.length;
+  // deskCount 仅呈现条数；动作/恢复门控不得依赖它（#1764）。
+  const deskCount = draftDirectives.length + casedDirectives.length;
   const hasDrafts = draftDirectives.length > 0;
   const hasCased = casedDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasPendingSecretOrders = (state.pending_secret_order_count ?? 0) > 0;
-  const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
-  // draft/pending/cased 走 issue/stream；failed-only 另开确认后退朝；真空禁用。
+  // draft/pending/cased 走 issue/stream；真空禁用。
   // #1764：已成案·待盖玺亦是可结算工作（list_directives 滤掉后仍须能盖玺）。
+  // #1853 J5：终态业务拒收不再以 failed 计数开启退朝确认支线。
   const hasSettleWork =
     hasDrafts || hasCased || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
-  const failedOnly = !hasSettleWork && hasFailedSecretOrders;
   // 请求按钮禁重复点击：全局 busy 或任一卡在飞。
   const requestLocked =
     !!busy || localDirectives.some((item) => item.phase === "inflight");
-  // #1732 B：failed-only 页脚就地条，补退朝语义；取消零请求。
-  const [confirmAdvance, setConfirmAdvance] = React.useState(false);
-  React.useEffect(() => {
-    if (!failedOnly) setConfirmAdvance(false);
-  }, [failedOnly]);
-  const onFooterClick = hasSettleWork
-    ? onIssueDecree
-    : failedOnly
-      ? () => setConfirmAdvance(true)
-      : undefined;
+  const onFooterClick = hasSettleWork ? onIssueDecree : undefined;
 
   const renderBody = (text: string, bodyId: string, notes?: string) => (
     <>
@@ -150,9 +129,8 @@ export function EdictModal({
       <small id={errorId} className="local-fail-note" data-role="local-error" role="alert">{message}</small>
     ) : null;
 
-  // 御案两区：草稿（可改删 + 本地 create）/ 已发的旨意（成案只读，0048 无准驳）。
-  const showDraftZone =
-    draftDirectives.length > 0 || createLocals.length > 0;
+  // 御案两区：草稿（可改删）/ 已发的旨意（成案只读，0048 无准驳）。
+  const showDraftZone = draftDirectives.length > 0;
   const showIssuedZone = casedDirectives.length > 0;
   const draftHeadingId = "edict-zone-draft-title";
   const issuedHeadingId = "edict-zone-issued-title";
@@ -242,29 +220,6 @@ export function EdictModal({
                     </div>
                   );
                 })}
-
-                {createLocals.map((local) => {
-                  const bodyId = `edict-body-local-${local.localKey}`;
-                  const errorId = `edict-err-local-${local.localKey}`;
-                  const failMsg = local.phase === "failed" ? local.error : undefined;
-                  return (
-                    <div
-                      className={cardClassName({ phase: local.phase })}
-                      key={local.localKey}
-                      data-directive-phase={local.phase}
-                      data-local-key={local.localKey}
-                      {...cardStateA11y(local.phase, bodyId, { id: errorId, message: failMsg })}
-                    >
-                      <div className="directive-head">
-                        <b data-role="local-mark" />
-                        <PhaseChip phase={local.phase} />
-                      </div>
-                      {renderBody(local.text, bodyId)}
-                      {renderFailNote(failMsg, errorId)}
-                    </div>
-                  );
-                })}
-
               </section>
             ) : null}
 
@@ -300,52 +255,19 @@ export function EdictModal({
           </div>
         </section>
 
-        <section className="desk-pane desk-compose">
-          <h2>御笔自拟</h2>
-          <textarea
-            value={directiveText}
-            onChange={(event) => onDirectiveTextChange(event.target.value)}
-            placeholder="例如：命户部核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
-          />
-          <button
-            className="desk-add-btn"
-            onClick={onCreateDirective}
-            disabled={requestLocked || !directiveText.trim()}
-          >
-            <Edit3 size={14} />新增草案
-          </button>
-        </section>
       </div>
 
       {error && <div className="error-line" role="alert">{error}</div>}
 
       <div className="desk-footer">
-        {/* #1560：真空禁用；draft/pending 走 issue；failed-only 确认后 advance。 */}
-        {failedOnly && confirmAdvance ? (
-          <div className="edict-footer-confirm" role="group" aria-label="退朝确认">
-            <div className="edict-footer-confirm-title">退朝确认</div>
-            <div className="edict-footer-confirm-body">
-              本月无可颁诏草案，仍有失败密令未处理。确认不经盖玺颁诏、直接退朝结束本月？
-            </div>
-            <div className="edict-footer-confirm-actions">
-              {/* 纯本地取消：只收起确认条，不发请求，不吃 requestLocked。 */}
-              <button type="button" className="seal-btn-compose" onClick={() => setConfirmAdvance(false)}>
-                取消
-              </button>
-              <button type="button" className="seal-btn-issue" disabled={requestLocked} onClick={onAdvanceWithoutEdict}>
-                退朝结束本月
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            className={hasSettleWork || failedOnly ? "seal-btn-issue" : "seal-btn-compose"}
-            onClick={onFooterClick}
-            disabled={requestLocked || (!hasSettleWork && !failedOnly)}
-          >
-            {hasSettleWork ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
-          </button>
-        )}
+        {/* #1560：真空禁用；draft/pending 走 issue。#1853 J5：清退 failed-only 退朝确认。 */}
+        <button
+          className={hasSettleWork ? "seal-btn-issue" : "seal-btn-compose"}
+          onClick={onFooterClick}
+          disabled={requestLocked || !hasSettleWork}
+        >
+          {hasSettleWork ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
+        </button>
       </div>
     </div>
   );

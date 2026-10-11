@@ -1,19 +1,16 @@
-"""Affair records: identity, birth, close-by-declaration, pointers (ADR 0154)."""
+"""Affair records: identity, birth, pointers (ADR 0154). No declare-closed action."""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
-from ming_sim.strict_types import strict_int
+from ming_sim.strict_types import strict_sqlite_id
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
-_ATTACH_CLOSE = "close"
 ATTACH_BIRTH = frozenset({_ATTACH_NEW, _ATTACH_EXISTING})
-ATTACH_RESULT_CLOSE = frozenset({_ATTACH_CLOSE})
 ATTACH_EXPERIENCE = frozenset({_ATTACH_EXISTING})
 _ORIGIN_AFFAIR = "affair"
 _ORIGIN_DOSSIER = "dossier"
@@ -94,11 +91,12 @@ class AffairStore:
         turn: int,
         birth_key: str = "",
     ) -> Affair:
-        title = str(name or "").strip()
-        cause = str(origin or "").strip()
-        if not title:
+        # Free prose name/origin on the materials board: preserve bytes.
+        title = str(name or "")
+        cause = str(origin or "")
+        if not title.strip():
             raise ValueError("事务名字不能为空")
-        if not cause:
+        if not cause.strip():
             raise ValueError("事务起因不能为空")
         key = str(birth_key or "").strip()
         owns = connection_owns_transaction(self._conn)
@@ -130,6 +128,11 @@ class AffairStore:
             raise KeyError(f"事务不存在：{affair_id}")
         return _row_to_affair(row)
 
+    def list_all(self) -> tuple[Affair, ...]:
+        """Durable matters remain readable after closure."""
+        rows = self._conn.execute("SELECT * FROM affairs ORDER BY id").fetchall()
+        return tuple(_row_to_affair(row) for row in rows)
+
     def list_open(self) -> tuple[Affair, ...]:
         rows = self._conn.execute(
             "SELECT id, name, origin, status, birth_key, created_turn, "
@@ -137,18 +140,6 @@ class AffairStore:
             "FROM affairs WHERE status='open' ORDER BY id"
         ).fetchall()
         return tuple(_row_to_affair(row) for row in rows)
-
-    def declare_closed(self, affair_id: int, *, turn: int) -> Affair:
-        """LLM-declared close. No conditions, no dossier-status checks."""
-        self.get(affair_id)
-        owns = connection_owns_transaction(self._conn)
-        self._conn.execute(
-            "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
-            (int(turn), int(affair_id)),
-        )
-        if owns:
-            self._conn.commit()
-        return self.get(affair_id)
 
     def resolve_declaration(
         self,
@@ -200,28 +191,6 @@ class AffairStore:
             "SELECT id FROM affairs WHERE birth_key=?", (key,),
         ).fetchone()
         return None if row is None else int(row["id"])
-
-    def close_from_declaration(
-        self,
-        declaration: Mapping[str, object],
-        *,
-        turn: int,
-        authorized_ids: set[int],
-    ) -> int:
-        """Close only a visible affair without an active linked issue."""
-        parsed = parse_affair_declaration(
-            declaration, allowed=ATTACH_RESULT_CLOSE,
-        )
-        affair_id = int(parsed["affair_id"])
-        if affair_id not in authorized_ids:
-            raise UnauthorizedAffairOriginRef()
-        active_issue = self._conn.execute(
-            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
-            (affair_id,),
-        ).fetchone()
-        if active_issue is not None:
-            raise ValueError("事务尚有未了局势")
-        return self.declare_closed(affair_id, turn=turn).id
 
     def attach_from_declaration(
         self,
@@ -281,9 +250,6 @@ class AffairStore:
         if owns:
             self._conn.commit()
 
-    def point_dossier(self, dossier_id: int, affair_id: int) -> None:
-        self.attach_pointer("decree_dossiers", dossier_id, affair_id)
-
     def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)
         if label is None:
@@ -312,9 +278,6 @@ class AffairStore:
             }
             for row in rows
         )
-
-    def point_issue(self, issue_id: int, affair_id: int) -> None:
-        self.attach_pointer("issues", issue_id, affair_id)
 
     def assert_origin_matches_declaration(
         self, origin_ref: str, declaration: Mapping[str, object]
@@ -439,34 +402,33 @@ class AffairStore:
             + ") OR origin_ref LIKE ? ORDER BY id",
             (*refs, f"{affair_ref}/%"),
         ).fetchall()
+        from ming_sim.db import GameDB
+
         out: list[dict[str, object]] = []
+        from ming_sim.db import _load_durable_str_list
         for row in rows:
             origin = str(row["origin_ref"] or "").strip()
-            try:
-                tags = json.loads(row["tags"] or "[]")
-            except (TypeError, ValueError):
-                tags = []
-            if not isinstance(tags, list):
-                tags = []
-            try:
-                people = json.loads(row["person_names"] or "[]")
-            except (TypeError, ValueError):
-                people = []
-            if not isinstance(people, list):
-                people = []
+            # 故事账 tags/person_names：腐坏响亮，不 catch-to-[]（#1897 E1）。
+            tags = _load_durable_str_list(
+                row["tags"], surface=f"story_ledger_entries#{int(row['id'])}.tags",
+            )
+            people = _load_durable_str_list(
+                row["person_names"],
+                surface=f"story_ledger_entries#{int(row['id'])}.person_names",
+            )
             out.append({
                 "id": int(row["id"]),
                 "body": str(row["body"] or ""),
                 "origin_ref": origin,
-                "person_names": [str(name) for name in people if str(name).strip()],
-                "tags": [str(tag) for tag in tags if str(tag).strip()],
+                "person_names": list(people),
+                "tags": list(tags),
             })
         return tuple(out)
 
 
 def parse_positive_affair_id(raw: object) -> int:
-    """Affair identity: reject bool/float, keep integer-string compat, require >0."""
-    value = strict_int(raw, accept_numeric_strings=True)
+    """Affair identity: reject bool/float/超 SQLite 界, keep integer-string compat, require >0."""
+    value = strict_sqlite_id(raw, accept_numeric_strings=True)
     if value <= 0:
         raise ValueError("affair_id must be a positive integer")
     return value
@@ -481,17 +443,14 @@ def parse_affair_declaration(
     if not isinstance(raw, Mapping):
         raise ValueError("事务声明须为对象")
     attach = str(raw.get("attach") or "").strip()
-    permitted = ATTACH_BIRTH | ATTACH_RESULT_CLOSE if allowed is None else allowed
+    permitted = ATTACH_BIRTH if allowed is None else allowed
     if attach not in permitted:
-        if attach == _ATTACH_CLOSE:
-            raise ValueError("本阶段不能了结事务")
-        if attach in ATTACH_BIRTH and permitted == ATTACH_RESULT_CLOSE:
-            raise ValueError("顶层事务声明只接受了结")
         raise ValueError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
-        name = str(raw.get("name") or "").strip()
-        origin = str(raw.get("origin") or "").strip()
-        if not name or not origin:
+        # Affair name/origin are free prose on the materials board: preserve bytes.
+        name = str(raw.get("name") or "")
+        origin = str(raw.get("origin") or "")
+        if not name.strip() or not origin.strip():
             raise ValueError("新事务声明须有名字与起因")
         key = str(raw.get("birth_key") or "").strip()
         identity = str(raw.get("identity") or "").strip()
@@ -504,9 +463,7 @@ def parse_affair_declaration(
     try:
         affair_id = parse_positive_affair_id(raw.get("affair_id"))
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "了结须有 affair_id" if attach == _ATTACH_CLOSE else "接到已开事务须有 affair_id"
-        ) from exc
+        raise ValueError("接到已开事务须有 affair_id") from exc
     return {"attach": attach, "affair_id": affair_id}
 
 
@@ -548,14 +505,18 @@ def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:
 
 
 def _row_to_affair(row: Any) -> Affair:
-    return Affair(
-        id=int(row["id"]),
-        name=str(row["name"]),
-        origin=str(row["origin"]),
-        status=str(row["status"]),
-        birth_key=str(row["birth_key"] or ""),
-        created_turn=int(row["created_turn"]),
-        created_year=int(row["created_year"]),
-        created_period=int(row["created_period"]),
-        closed_turn=int(row["closed_turn"] or 0),
-    )
+    """持久行解码：列损坏是账本故障（RuntimeError），不得被外层收成模型产物错。"""
+    try:
+        return Affair(
+            id=int(row["id"]),
+            name=str(row["name"]),
+            origin=str(row["origin"]),
+            status=str(row["status"]),
+            birth_key=str(row["birth_key"] or ""),
+            created_turn=int(row["created_turn"]),
+            created_year=int(row["created_year"]),
+            created_period=int(row["created_period"]),
+            closed_turn=int(row["closed_turn"] or 0),
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("affairs 持久行解码失败") from exc

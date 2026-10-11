@@ -37,7 +37,7 @@ def test_departure_rejects_nonfinite_distance_before_ledger_write(game, monkeypa
         issues.DistanceMatrix, "from_file", classmethod(lambda cls, path: InvalidMatrix()),
     )
 
-    with pytest.raises(ValueError, match="invalid baked travel time"):
+    with pytest.raises(ValueError):
         issues.apply_score_extraction(db, state, {"人物变更": [{
             "name": name, "origin_ref": "盘面自发", "动作": "行止",
             "transit_to": "liaodong",
@@ -162,15 +162,17 @@ def test_status_exit_clears_complete_transit_ledger(game, exit_path):
 
     if exit_path == "appointment_replacement":
         appointed, displaced = apply_appointment(
-            db, state, content, None,
+            db, state, content,
             {"name": "新任测试官", "office": "兵部尚书", "replaces": name},
         )
         assert appointed == "新任测试官"
         assert displaced == name
     else:
-        assert db._commit_office_action(
-            state, {"action": "罢免"}, {"name": name}, content, None,
-        ) == {name}
+        dossier_id = db.create_decree_dossier(
+            state, action_type="dismiss_assignment", decree_text="罢免", target_kind="character", target_id=name,
+            payload={"name": name, "_office_action": "罢免"},
+        )
+        db.apply_dossier_promulgation(state, dossier_id, "promulgated", content=content)
 
     row = db.conn.execute(
         "SELECT status, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
@@ -209,7 +211,7 @@ def test_office_appointment_keeps_status_reason_mirrored(
     character.reason_code = "旧代码"
 
     result = apply_office_appointment(
-        db, state, content, None, name, "兵部尚书", reason=appointment_reason,
+        db, state, content, name, "兵部尚书", reason=appointment_reason,
     )
 
     assert not result.get("rejected")

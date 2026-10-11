@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
 from ming_sim.models import reign_period_label
@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS textual_facts (
     turn INTEGER NOT NULL,
     body TEXT NOT NULL,
     origin_ref TEXT NOT NULL DEFAULT '',
+    affair_id INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_textual_facts_subject
@@ -41,6 +42,7 @@ class TextualFact:
     turn: int
     body: str
     origin_ref: str = ""
+    affair_id: int = 0
 
     @property
     def occurred_month(self) -> str:
@@ -67,6 +69,7 @@ class TextualFactStore:
         period: int,
         turn: int,
         origin_ref: str = "",
+        affair_id: int = 0,
     ) -> TextualFact:
         kind, target = _parse_subject(subject_kind, subject_id)
         if not isinstance(body, str) or not body.strip():
@@ -81,9 +84,9 @@ class TextualFactStore:
         owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
             "INSERT INTO textual_facts "
-            "(subject_kind, subject_id, year, period, turn, body, origin_ref) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (kind, target, year_n, month, turn_n, stored, origin),
+            "(subject_kind, subject_id, year, period, turn, body, origin_ref, affair_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (kind, target, year_n, month, turn_n, stored, origin, int(affair_id)),
         )
         if owns:
             self._conn.commit()
@@ -96,46 +99,20 @@ class TextualFactStore:
             turn=turn_n,
             body=stored,
             origin_ref=origin,
+            affair_id=int(affair_id),
         )
 
     def readable_materials(self, *, subject_kind: str, subject_id: str) -> tuple[TextualFact, ...]:
         """All textual facts on this object, oldest month first. No collapse, no expiry."""
         kind, target = _parse_subject(subject_kind, subject_id)
         rows = self._conn.execute(
-            "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref "
+            "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref, affair_id "
             "FROM textual_facts "
-            "WHERE subject_kind = ? AND subject_id = ? "
+            "WHERE (subject_kind = ? AND subject_id = ?) OR (affair_id = ? AND affair_id > 0) "
             "ORDER BY year ASC, period ASC, id ASC",
-            (kind, target),
+            (kind, target, int(target) if kind == "affair" and target.isdecimal() else 0),
         ).fetchall()
         return tuple(_row_to_fact(row) for row in rows)
-
-    def pointing_at(
-        self,
-        origin_refs: Iterable[str],
-        *,
-        subject_kind: str | None = None,
-    ) -> tuple[TextualFact, ...]:
-        refs = [str(ref).strip() for ref in origin_refs if str(ref).strip()]
-        if not refs:
-            return ()
-        placeholders = ",".join("?" for _ in refs)
-        sql = (
-            "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref "
-            "FROM textual_facts WHERE origin_ref IN (" + placeholders + ")"
-        )
-        params: list[object] = list(refs)
-        if subject_kind is not None:
-            kind = str(subject_kind or "").strip()
-            if kind not in TEXTUAL_FACT_SUBJECT_KINDS:
-                raise ValueError(
-                    f"textual fact subject_kind must be one of {sorted(TEXTUAL_FACT_SUBJECT_KINDS)}"
-                )
-            sql += " AND subject_kind = ?"
-            params.append(kind)
-        sql += " ORDER BY year ASC, period ASC, id ASC"
-        return tuple(_row_to_fact(row) for row in self._conn.execute(sql, params).fetchall())
-
 
 def _row_to_fact(row: Any) -> TextualFact:
     return TextualFact(
@@ -147,6 +124,7 @@ def _row_to_fact(row: Any) -> TextualFact:
         turn=int(row["turn"]),
         body=str(row["body"]),
         origin_ref=str(row["origin_ref"] or ""),
+        affair_id=int(row["affair_id"]),
     )
 
 

@@ -24,8 +24,9 @@ export function CheatConsole({
   }, [history]);
 
   const submit = () => {
-    const text = draft.trim();
-    if (!text) return;
+    // Free prose cheat_directive: preserve raw; trim only emptiness (#1834 F16).
+    const text = draft;
+    if (!text.trim()) return;
     onCommit(text);
     setHistory((h) => [...h, `> ${text}`, "  已挂载强制结算项，下次颁诏随结算生效（一次性）。"]);
     setDraft("");

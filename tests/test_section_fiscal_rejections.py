@@ -8,14 +8,14 @@ fiscal_removes / fiscal_creates / fiscal_changes 三段原先 LLM 脏项要么 p
 「在场即须合法」vs「缺省走默认」:fiscal_creates 的 init_value 缺省 0 合法、在场脏值拒;
 fiscal_changes 的 delta 显式给 0 = 无操作不记拒。
 
-经 driver.run_settle 端到端驱动(公共接口,与 test_section4_rejections.py 同风格)。
+从现役原子声明入口验证逐项拒收。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from tests.section_rejection_helpers import prepare_then_settle as _run_settle
+from tests.section_rejection_helpers import run_declaration as _run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 
@@ -440,53 +440,6 @@ def test_falsy_dirty_delta_still_rejected(game, bad):
     assert rows[0][2] == "invalid_enum"
 
 
-# ───────── cmr S3 r1:引擎真路 cleaner 不得吞脏(验证单点化在 applier) ─────────
-
-def test_cleaner_passes_dirty_delta_through():
-    """_clean_fiscal_changes 不得 coerce(3.7→3/True→1)或静默丢脏串——原样透传,
-    由 applier 拒收留痕;无损整数串("5")照转,真 int 0 照旧滤掉(cmr S3 r1,2/2:
-    引擎真路被 cleaner 预消毒,拒收契约对 fiscal 失明)。"""
-    from ming_sim.simulation import _clean_fiscal_changes
-
-    out = _clean_fiscal_changes([
-        {"key": "a_base", "delta": 3.7},      # lossy float → 透传
-        {"key": "b_base", "delta": True},     # bool → 透传
-        {"key": "c_base", "delta": "三成"},    # 脏串 → 透传
-        {"key": "d_base", "delta": "5"},      # 无损整数串 → 转 5
-        {"key": "e_base", "delta": 0},        # 真 0 → 滤
-        {"key": "f_base", "delta": 2},        # 好值 → 保
-    ])
-    by_key = {c["key"]: c["delta"] for c in out}
-    assert by_key["a_base"] == 3.7
-    assert by_key["b_base"] is True
-    assert by_key["c_base"] == "三成"
-    assert by_key["d_base"] == 5
-    assert "e_base" not in by_key
-    assert by_key["f_base"] == 2
-
-
-def test_cleaner_passes_dirty_create_fields_through():
-    """_clean_fiscal_creates 不得把脏 init_value 归 0、不得静默丢非法
-    account/direction——透传由 applier 拒留痕;direction 同义词(收/支出)仍规范化,
-    init_value 缺省/null 仍归 0(合法默认)(cmr S3 r1,2/2)。"""
-    from ming_sim.simulation import _clean_fiscal_creates
-
-    out = _clean_fiscal_creates([
-        {"key": "t1", "account": "国库", "direction": "收", "init_value": 10},   # 同义词规范化
-        {"key": "t2", "account": "国库", "direction": "income", "init_value": "三百"},  # 脏值透传
-        {"key": "t3", "account": "省库", "direction": "income", "init_value": 1},  # 非法 account 透传
-        {"key": "t4", "account": "国库", "direction": "斜着走", "init_value": 1},  # 非法 direction 透传
-        {"key": "t5", "account": "国库", "direction": "income"},                  # 缺省 → 0
-    ])
-    by_key = {c["key"]: c for c in out}
-    assert by_key["t1"]["direction"] == "income"
-    assert by_key["t2"]["init_value"] == "三百"
-    assert by_key["t3"]["account"] == "省库"
-    assert by_key["t4"]["direction"] == "斜着走"
-    assert by_key["t5"]["init_value"] == 0
-    assert by_key["t5"]["display"] == ""  # cleaner 不预填 display,默认归 applier(r12)
-
-
 def test_create_rate_only_sibling_collision_rejected_not_abort(game):
     """田赋默认只有 田赋_rate 无 _base——create_fiscal_item 只查 base 键,新立
     田赋_base 时第二条 INSERT 撞 rate 键 PK = IntegrityError 崩整月,绕过拒收
@@ -609,25 +562,9 @@ def test_double_suffix_remove_rejected_not_destructive(game):
     assert after == before  # 真科目毫发无损
 
 
-def test_sanitizer_passes_empty_key_items_through():
-    """引擎 sanitizer 路的空 key 项不得被 cleaner 静默滤——透传给 applier 记拒
-    (cmr S3 r7 codex:driver 路有痕、引擎路无痕=同输入两判,推翻原 disposition)。"""
-    from ming_sim.simulation import (
-        _clean_fiscal_changes, _clean_fiscal_creates, _clean_fiscal_removes,
-    )
-
-    assert _clean_fiscal_changes([{"key": "", "delta": 5}]) != []
-    assert _clean_fiscal_changes([{"key": ""}]) != []  # 空 key+无 delta 退化角(r8)
-    assert _clean_fiscal_changes([{"key": "", "delta": 0}]) != []  # 空 key+真0 退化角(r8)
-    assert _clean_fiscal_creates([{"key": "", "account": "国库",
-                                   "direction": "income", "init_value": 1}]) != []
-    assert _clean_fiscal_removes([{"key": "", "reason": "x"}]) != []
-
-
-def test_chinese_direction_alias_accepted_on_driver_path(game):
-    """direction='收' 经 driver 路也要同判落库——同义词归一须在唯一守门人(applier)
-    处做,放在 driver 不经过的 cleaner 层 = 同输入两判(cmr S3 r9 claude;
-    DELTA_SCHEMA 明言吃中文别名)。"""
+def test_chinese_direction_alias_accepted_at_applier(game):
+    """direction='收' 直接落账同判——同义词归一须在 applier，
+    不能仅在可选 cleaner 层（DELTA_SCHEMA 明言吃中文别名）。"""
     db, state, content = game
     turn = state.turn
 
@@ -642,9 +579,8 @@ def test_chinese_direction_alias_accepted_on_driver_path(game):
     assert rows == []
 
 
-def test_whitespace_only_key_rejected_on_driver_path(game):
-    """空白 key('  ')在 applier 不 strip 时两路两判——applier 守门处统一 strip
-    (cmr S3 r9 codex)。"""
+def test_whitespace_only_key_rejected_at_applier(game):
+    """空白 key('  ')在 applier 守门处统一 strip 并拒收。"""
     db, state, content = game
     turn = state.turn
 
@@ -660,8 +596,7 @@ def test_whitespace_only_key_rejected_on_driver_path(game):
 # ──────── cmr S3 r10:终局集中化——cleaner 零值逻辑,applier 唯一语义点 ────────
 
 def test_lossless_int_string_same_verdict_both_paths(game):
-    """无损整数串("5"/"300")在 applier 归一接受——转换留在 cleaner 时引擎路收
-    driver 路拒=同输入两判(cmr S3 r10,2/2 high;与 r9 direction 同处方)。"""
+    """无损整数串("5"/"300")在 applier 归一接受，不能只依赖可选 cleaner。"""
     db, state, content = game
     turn = state.turn
     key = next(iter(db.get_fiscal_config()))
@@ -679,9 +614,8 @@ def test_lossless_int_string_same_verdict_both_paths(game):
         "SELECT value FROM fiscal_config WHERE key='整串测试_base'").fetchone()[0] == 300
 
 
-def test_driver_path_display_defaults_from_key(game):
-    """display 缺省=key 去 _base 后缀——默认只在 cleaner 时 driver 路建出空名
-    预算行(DELTA_SCHEMA 契约对象正是 driver 路)(cmr S3 r10 claude medium)。"""
+def test_direct_fiscal_create_display_defaults_from_key(game):
+    """display 缺省=key 去 _base 后缀；直接落账不能依赖 cleaner 补默认值。"""
     db, state, content = game
 
     run_settle(db, state, content, {

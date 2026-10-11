@@ -22,7 +22,14 @@ CHARACTER_AXIS_LABELS = {
     "courage": "胆略",
 }
 
-INTRIGUE_QUALITATIVE_PLACEHOLDER = "阴谋能力未详，暂以查案行事表现推知"
+_INTRIGUE_BANDS = (
+    "毫无城府", "心思疏浅", "善藏行迹", "机权深沉", "鬼蜮难测",
+)
+
+
+def intrigue_band(value: object) -> str:
+    """Render 0108 阴谋能力 through the one shared qualitative vocabulary."""
+    return qualitative_band(value, _INTRIGUE_BANDS, default=50)
 
 
 def qualitative_character_axes(character: object) -> Mapping[str, str]:
@@ -34,7 +41,7 @@ def qualitative_character_axes(character: object) -> Mapping[str, str]:
         for field in CHARACTER_QUALITATIVE_BANDS
     }
     projected["党派认同"] = identity_band(getattr(character, "identity"))
-    projected["阴谋"] = INTRIGUE_QUALITATIVE_PLACEHOLDER
+    projected["阴谋"] = f"阴谋{intrigue_band(getattr(character, 'intrigue', None))}"
     return projected
 
 
@@ -42,10 +49,6 @@ def qualitative_character_axis(field: str, value: object) -> str:
     """Project one character score through the canonical ADR 0122 bands."""
     return qualitative_band(value, CHARACTER_QUALITATIVE_BANDS[field])
 
-
-def qualitative_character_attribute(field: str, value: object) -> str:
-    """Render one canonical 0122 character attribute band for a player."""
-    return qualitative_character_axis(field, value)
 
 def qualitative_bucket(
     value: object,
@@ -156,8 +159,6 @@ PROGRESS_BANDS = ("未见起色", "略有起色", "进展过半", "进展顺利"
 # Region resistance / military pressure — single vocabulary (db.region_report + #652 two_axis).
 GENTRY_RESISTANCE_BANDS = ("极弱", "偏弱", "中等", "偏强", "强")
 MILITARY_PRESSURE_BANDS = ("极低", "偏低", "中等", "偏高", "极高")
-DISASTER_SEVERITY_BANDS = ("轻微", "偏轻", "中等", "偏重", "极重")
-
 
 def public_support_band(value: object) -> str:
     """Present 民心 / region public_support without exposing the score."""
@@ -192,11 +193,6 @@ def gentry_resistance_band(value: object) -> str:
 def military_pressure_band(value: object) -> str:
     """Present region military_pressure / 流寇压力 without exposing the score."""
     return qualitative_band(value, MILITARY_PRESSURE_BANDS)
-
-
-def disaster_severity_band(value: object) -> str:
-    """Present issue/disaster severity without exposing the score."""
-    return qualitative_band(value, DISASTER_SEVERITY_BANDS)
 
 
 def population_wan_kou_label(persons: object) -> str:

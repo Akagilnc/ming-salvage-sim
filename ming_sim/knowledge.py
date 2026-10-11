@@ -1,9 +1,7 @@
 """Per-character knowledge projection (#489).
 
-The projection is deliberately a read model: durable participation/public-event
-rows are the source of memory, while the office bucket is rebuilt from current
-world state on every read.  That makes a fresh turn useful and keeps restore
-free of a second copy of the world state.
+Personal records and independent public speech are read from their original
+ledgers. Current office accounts are rebuilt from world state on every read.
 """
 
 from __future__ import annotations
@@ -13,10 +11,7 @@ import re
 from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
-from ming_sim.public_sayings import (
-    public_layer_events,
-    public_layer_prose,
-)
+from ming_sim.public_sayings import public_layer_events
 
 
 def _prose(text: object) -> str:
@@ -45,15 +40,14 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
 
     raw: object = None
     saw_db_row = False
-    if hasattr(db, "conn"):
-        row = db.conn.execute(
-            "SELECT audiences FROM events WHERE id=?", (origin_ref,),
-        ).fetchone()
-        if row is not None:
-            saw_db_row = True
-            raw = row["audiences"]
+    row = db.conn.execute(
+        "SELECT audiences FROM events WHERE id=?", (origin_ref,),
+    ).fetchone()
+    if row is not None:
+        saw_db_row = True
+        raw = row["audiences"]
     if not saw_db_row:
-        content = getattr(db, "content", None)
+        content = db.content
         event_by_id = getattr(content, "event_by_id", None) or {}
         ev = event_by_id.get(origin_ref)
         if ev is None:
@@ -61,6 +55,8 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
         raw = getattr(ev, "audiences", None)
 
     if isinstance(raw, str):
+        # Content/event audience supplement: keep JSONDecodeError/TypeError surface
+        # already locked by material-entry fail-loud cases (not an empty-facts wash).
         raw = json.loads(raw)
     if not isinstance(raw, list):
         raise TypeError(
@@ -79,215 +75,75 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     return names
 
 
-def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
-    """Parse excluded_names and excluded_targets.people/offices from one row."""
-    try:
-        excluded_names = {
-            str(name) for name in json.loads(row["excluded_names"] or "[]")
-        }
-    except (TypeError, ValueError, KeyError, IndexError):
-        excluded_names = set()
-    targets: object = {}
-    try:
-        raw_targets = row["excluded_targets"]
-    except (KeyError, IndexError, TypeError):
-        raw_targets = None
-    if raw_targets:
-        try:
-            targets = json.loads(raw_targets or "{}")
-        except (TypeError, ValueError):
-            targets = {}
-    if not isinstance(targets, dict):
-        targets = {}
-    people = {str(name) for name in (targets.get("people") or [])}
-    offices = {str(name) for name in (targets.get("offices") or [])}
-    return excluded_names, people, offices
+def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
+    """Whether the optional audience supplement names this reader.
 
-
-def _subject_matches_exclusion(
-    subject: Any,
-    fallback_name: str,
-    *,
-    excluded_names: set[str],
-    people: set[str],
-    offices: set[str],
-) -> bool:
-    """True when person name or current office/office_type hits exclusion lists."""
-    if subject is None:
-        name, office_type, office = fallback_name, "", ""
-    else:
-        try:
-            name = str(subject["name"] or fallback_name)
-            office_type = str(subject["office_type"] or "")
-            office = str(subject["office"] or "")
-        except (KeyError, IndexError, TypeError):
-            name, office_type, office = fallback_name, "", ""
-    if name in excluded_names or name in people:
-        return True
-    return bool(office_type and office_type in offices) or bool(
-        office and office in offices
-    )
-
-
-def knowledge_row_visible_to(
-    db: Any, row: Any, character_name: str, *, target: Any = None,
-) -> bool:
-    """Apply one source's person and current-position secrecy boundary.
-
-    ``target`` is the person whose visibility is being tested.  When omitted,
-    the subject is the reader, which is the projection's normal use case.
-    Recommendation reads pass each roster candidate explicitly so an excluded
-    office cannot be reintroduced by a name-only roster projection.
+    ``None`` means the supplement does not apply. That is not a grant.
+    An empty supplement does not name anyone. Malformed audience payloads
+    still raise from ``_issue_audience_names``.
     """
-    reader = None
-    try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
-        ).fetchone()
-    except (AttributeError, TypeError):
-        reader = None
-    target = target or reader or row
-    def target_value(key: str) -> object:
-        try:
-            return target[key]
-        except (KeyError, IndexError, TypeError):
-            return None
+    audiences = _issue_audience_names(db, issue)
+    return bool(audiences) and character_name in audiences
 
-    target_name = str(target_value("name") or target_value("character_id") or character_name)
-    excluded_names, people, offices = _exclusion_lists_from_row(row)
-    source_id = str(row["source_id"] or "")
-    # 合成读模型行未必自带 excluded_names；source 上的持久黑名单仍是同一真源。
-    if hasattr(db, "knowledge_exclusions_for_source"):
-        excluded_names |= {
-            str(name)
-            for name in (db.knowledge_exclusions_for_source(source_id) or [])
-        }
-    if not people and not offices:
-        if hasattr(db, "knowledge_exclusion_targets_for_source"):
-            fallback = db.knowledge_exclusion_targets_for_source(source_id)
-            if isinstance(fallback, dict):
-                people = {str(name) for name in (fallback.get("people") or [])}
-                offices = {str(name) for name in (fallback.get("offices") or [])}
-    if _subject_matches_exclusion(
-        reader, character_name,
-        excluded_names=excluded_names, people=people, offices=offices,
-    ) or _subject_matches_exclusion(
-        target, target_name,
-        excluded_names=excluded_names, people=people, offices=offices,
-    ):
-        return False
-    # A private source's roster is a positive capability, not a deny-list
-    # snapshot.  Enforce it at read time so characters created after archival
-    # cannot inherit old participant-private material.
-    try:
-        source = db.conn.execute(
-            "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
-            (str(row["source_id"] or ""),),
-        ).fetchone()
-    except (AttributeError, KeyError, IndexError, TypeError):
-        source = None
-    # A public event is a new disclosure capability even when it deliberately
-    # retains the private source id for provenance.  It keeps its own explicit
-    # people/office exclusions above, but must not inherit the source roster.
-    try:
-        event_is_public = str(row["kind"] or "") == "public"
-    except (KeyError, IndexError, TypeError):
-        event_is_public = False
-    if not event_is_public and source is not None and str(source["kind"] or "") != "public":
-        participants = participant_roster_names(source["participant_roster"])
+
+def origin_visible_to(
+    db: Any, origin: object, character_name: str = "", *, linked_dossier_id: int = 0,
+) -> bool:
+    """Secret provenance grants only handlers; office/publicity never grants truth.
+
+    Empty reader denotes the public feed, not the all-seeing world simulator.
+    Affairs are associations, not access boundaries for their individual facts.
+    """
+    source = str(origin or "")
+    registered = db.conn.execute(
+        "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
+        (source,),
+    ).fetchone()
+    if registered is not None and registered["kind"] != "public":
+        participants = participant_roster_names(registered["participant_roster"])
         if participants and character_name not in participants:
             return False
-    return True
+    oral = re.match(r"chat_message:(\d+)$", source)
+    if oral and int(oral.group(1)) in db._secret_origin_message_ids(character_name):
+        return False
+    match = re.match(r"secret_order(?:_brief)?:(\d+)(?:[:/]|$)", source)
+    order_id = int(match.group(1)) if match else 0
+    from ming_sim.materials import dossier_id_in_origin, inquiry_source_order_id
 
-
-def _prose(text: object) -> str:
-    """Carry durable report prose without mechanically interpreting it."""
-    return str(text or "")
-
-
-def project_issue_materials(
-    db: Any, character_name: str, knowledge: Dict[str, object],
-) -> list[Dict[str, object]]:
-    """Canonical materials projection: knowledge issues ∪ audience-named grant.
-
-    Base visibility is exactly ``knowledge["issues"]``.  ``events.audiences``
-    only adds originating issues that name this reader; it never removes a
-    knowledge-visible issue.  A legitimate empty audience list is an empty
-    supplement.
-    """
-    projected: dict[int, Dict[str, object]] = {}
-
-    for issue in knowledge.get("issues") or []:
-        issue_id = int(issue["id"])
-        audiences = _issue_audience_names(db, issue)
-        row = dict(issue)
-        row["source_id"] = str(row.get("source_id") or f"issue:{issue_id}")
-        row["audience_names"] = tuple(sorted(audiences or ()))
-        projected[issue_id] = row
-
-    active_issues = db.list_active_issues() if hasattr(db, "list_active_issues") else []
-    for issue in active_issues:
-        issue_id = int(issue["id"])
-        if issue_id in projected:
-            continue
-        audiences = _issue_audience_names(db, issue)
-        if not audiences or character_name not in audiences:
-            continue
-        row = {
-            "id": issue_id,
-            "kind": issue["kind"],
-            "origin_kind": issue["origin_kind"],
-            "origin_ref": issue["origin_ref"],
-            "title": issue["title"],
-            "stage_text": issue["stage_text"],
-            "resolve_condition": issue["resolve_condition"],
-            "fail_condition": issue["fail_condition"],
-            "affair_id": int(issue["affair_id"] or 0),
-            "participant_roster": issue["participant_roster"],
-            "source_id": f"issue:{issue_id}",
-            "audience_names": tuple(sorted(audiences)),
-        }
-        projected[issue_id] = row
-
-    return list(projected.values())
-
-
-def render_character_knowledge(
-    knowledge: Dict[str, object],
-    character_name: str,
-    *,
-    db: Any = None,
-    state: Any = None,
-) -> str:
-    """Render one character's projected knowledge for an audience prompt.
-
-    The projection has already enforced access control; this function only
-    de-duplicates and orders durable knowledge rows without a feed cap.
-    Issue case material is projected separately by ``project_issue_materials``
-    for the directory.
-    """
-    lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
-    for key, value in (knowledge.get("world") or {}).items():
-        if value:
-            lines.append(f"{key}：{value}")
-    event_items = [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
-    by_source = {}
-    for item in event_items:
-        source_id = str(item.get("source_id") or "")
-        key = (source_id, item.get("title") or "", item.get("body") or "") if source_id else (
-            int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
-        )
-        by_source[key] = item
-    items = sorted(
-        by_source.values(),
-        key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
+    dossier_id = dossier_id_in_origin(source) or int(linked_dossier_id)
+    if dossier_id:
+        row = db.conn.execute(
+            "SELECT secret_order_id FROM decree_dossiers WHERE id=?", (dossier_id,),
+        ).fetchone()
+        if row is not None:
+            order_id = int(row["secret_order_id"] or order_id)
+    if not order_id:
+        return True
+    if not character_name:
+        return False
+    order = db.get_secret_order(order_id)
+    if order is None:
+        return False
+    if character_name == str(order["minister_name"]):
+        return True
+    dossier = db.get_dossier_for_secret_order(order_id)
+    if dossier is not None and character_name in participant_roster_names(dossier["participant_roster"]):
+        return True
+    # Inquiry assignments are actual delegated handling, not a position grant.
+    return any(
+        inquiry_source_order_id(event["source_id"]) == order_id
+        for event in db._character_knowledge_events(character_name)
+        if event["kind"] == "inquiry_assignment"
     )
-    for item in items:
-        title = str(item.get("title") or "旧闻")
-        body = str(item.get("body") or "")
-        if body:
-            lines.append(f"- {title}：{body}")
-    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def knowledge_row_visible_to(db: Any, row: Any, character_name: str) -> bool:
+    """Public speech is universal; private sources retain their own roster."""
+    item = dict(row)
+    if item.get("kind") == "public":
+        return True
+    source_id = str(item.get("source_id") or "")
+    return origin_visible_to(db, source_id, character_name)
 
 
 def project_court_roster_rows(
@@ -297,122 +153,27 @@ def project_court_roster_rows(
 
     The complete roster remains an internal query result.  A personnel-domain
     capability may expose it; otherwise only the reader's current role roster
-    and people named in already-authorized events cross the output boundary.
+    crosses the output boundary. Free-prose name hits in event bodies are not
+    an admission grant (ADR 0142 / #1834 F46).
     """
     world = knowledge.get("world") or {}
     if "personnel" in world:
         return list(rows)
     current_office_type = str(knowledge.get("office_type") or office_type or "")
-    visible_event_text = "\n".join(
-        "：".join(str(value) for value in (item.get("title"), item.get("body")) if value)
-        for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
-    )
     return [
         row for row in rows
         if str(row["office_type"] or "") == current_office_type
-        or str(row["name"] or "") in visible_event_text
     ]
 
 
 def _appointment_register(db: Any, state: Any) -> str:
     """吏部任免簿：当前在朝职名，不是派系底账。"""
-    if not hasattr(db, "current_court_roster_rows"):
-        return "任免簿：暂无。"
     rows = db.current_court_roster_rows(state)
     if not rows:
         return "任免簿：暂无。"
     return "任免簿：\n" + "\n".join(
         f"{row['name']}：{row['office'] or '无现任官职'}"
         for row in rows
-    )
-
-
-def _role_roster(db: Any, office_type: str, state: Any) -> str:
-    """Return only the current roster for this office type.
-
-    The role rail is intentionally queried from the current DB rather than
-    copied from the character's event history.  It is therefore a real
-    position-scoped fact set and updates automatically after appointments or
-    restore, while the qualitative rendering keeps machine values out of the
-    audience prompt.
-    """
-    if not hasattr(db, "conn"):
-        return f"{office_type}本职在册：暂无。"
-    rows = db.conn.execute(
-        """SELECT name, office FROM characters
-           WHERE office_type = ? AND status = 'active' AND power_id = 'ming'
-             AND (debut_year = 0 OR debut_year < ?
-                  OR (debut_year = ? AND debut_month <= ?))
-           ORDER BY name""",
-        (office_type, int(state.year), int(state.year), int(state.period)),
-    ).fetchall()
-    if not rows:
-        return f"{office_type}本职在册：暂无。"
-    # The roster is a membership fact, not a second free-text office report.
-    # Including office strings here can name people outside this role (for
-    # example a kinship note in an office title), defeating the role boundary.
-    roster = "、".join(str(row["name"]) for row in rows)
-    return f"{office_type}本职在册：{roster}。"
-
-
-def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[Dict[str, object]]:
-    """Project durable source rows into this character's archive boundary.
-
-    ``character_knowledge_sources`` is the write-side source of truth for
-    restricted matters.  It must participate in archive projection even when
-    no public-event mirror exists; otherwise a mixed aggregate has no exact
-    source fragment to redact.
-    """
-    if not hasattr(db, "conn"):
-        return []
-    rows = db.conn.execute(
-        "SELECT turn, year, period, kind, title, body, source_id, "
-        "participant_roster, excluded_names FROM character_knowledge_sources "
-        "WHERE turn <= ? ORDER BY turn, id",
-        (int(upto_turn),),
-    ).fetchall()
-    projected: list[Dict[str, object]] = []
-    for row in rows:
-        source_id = str(row["source_id"] or "")
-        # Plain turn-report/chapter rows are rendered aggregate read models,
-        # not independently authorizable sources.  Their explicit ``:public``
-        # counterparts remain source-scoped and are projected below.
-        if ((source_id.startswith("turn_report:") and not source_id.endswith(":public"))
-                or (source_id.startswith("chapter:") and not source_id.startswith("chapter_source:"))
-                or re.fullmatch(r"settlement:narrative:\d+", source_id)):
-            continue
-        participants = participant_roster_names(row["participant_roster"])
-        try:
-            excluded = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
-            excluded = []
-        if not isinstance(excluded, list):
-            excluded = []
-        # A participant-rostered source is private to its participants unless
-        # an explicit exclusion says otherwise.  Empty rosters are not added
-        # here: public events already have their own projection path.
-        if not participants:
-            continue
-        if character_name not in participants:
-            excluded.append(character_name)
-        projected.append({
-            "turn": int(row["turn"]), "year": int(row["year"]),
-            "period": int(row["period"]), "kind": row["kind"],
-            "title": row["title"], "body": row["body"],
-            "source_id": row["source_id"],
-            "excluded_names": json.dumps(list(dict.fromkeys(excluded)), ensure_ascii=False),
-        })
-    return projected
-
-
-def _household_secret_case_hidden(
-    row: Any, character_name: str, reader: Any,
-) -> bool:
-    """户部流水密令案情是否对读者隐藏：复用 typed 密令 excluded_names / excluded_targets。"""
-    excluded_names, people, offices = _exclusion_lists_from_row(row)
-    return _subject_matches_exclusion(
-        reader, character_name,
-        excluded_names=excluded_names, people=people, offices=offices,
     )
 
 
@@ -423,24 +184,14 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
     ).fetchone()
     rows = db.conn.execute(
         """SELECT e.year,e.period,e.delta,e.balance_after,e.category,e.reason,
-                  s.excluded_names, s.excluded_targets
+                  e.origin_ref, e.dossier_id
            FROM economy_ledger e
-           LEFT JOIN decree_dossiers d ON d.id = CASE
-             WHEN e.origin_ref LIKE 'dossier:%' THEN CAST(substr(e.origin_ref,9) AS INTEGER)
-             ELSE e.dossier_id END
-           LEFT JOIN secret_orders s ON s.id=d.secret_order_id
            WHERE e.account='国库' ORDER BY e.id DESC"""
     ).fetchall()
-    try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?",
-            (character_name,),
-        ).fetchone()
-    except (AttributeError, TypeError):
-        reader = None
     lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
     for row in reversed(rows):
-        hide = _household_secret_case_hidden(row, character_name, reader)
+        hide = not origin_visible_to(db, row["origin_ref"], character_name,
+                                     linked_dossier_id=int(row["dossier_id"] or 0))
         detail = "密支" if hide else str(row["reason"] or row["category"] or "收支")
         lines.append(
             f"{int(row['year'])}年{int(row['period'])}月：{int(row['delta']):+d}，"
@@ -462,13 +213,8 @@ def _world(
     db: Any, state: Any, character_name: str, office_name: str, office_type: str,
 ) -> tuple[Dict[str, str], Dict[str, tuple[str, ...]]]:
     """Project current truth only through exact durable person relationships."""
-    result: Dict[str, str] = {
-        "public": "登基伊始，朝廷暂无前回合奏报。",
-        "role": _role_roster(db, office_type, state),
-    }
+    result: Dict[str, str] = {}
     scope: Dict[str, tuple[str, ...]] = {"region_ids": (), "army_ids": ()}
-    if not hasattr(db, "conn"):
-        return result, scope
 
     if office_type == "户部":
         result["treasury"] = _household_ledger(db, state, character_name)
@@ -479,11 +225,9 @@ def _world(
 
     # Authoritative office→辖域 projection (shared with dossier archive keys).
     # Region from the holder's appointment (character_offices.region_id) — never location.
-    projected = {}
-    if hasattr(db, "project_office_identity"):
-        projected = db.project_office_identity(
-            office_name, office_type, character_name=character_name,
-        ) or {}
+    projected = db.project_office_identity(
+        office_name, office_type, character_name=character_name,
+    ) or {}
     region_ids = tuple(
         str(rid) for rid in (projected.get("region_ids") or ()) if str(rid or "").strip()
     )
@@ -511,13 +255,11 @@ def _world(
 def current_character_office(
     db: Any, character: Any, character_name: str = "",
 ) -> tuple[str, str]:
-    """Current durable (office, office_type), with seed fallback for lightweight callers."""
+    """Current durable (office, office_type); missing DB row falls back to seed character fields."""
     name = str(character_name or getattr(character, "name", "") or "")
-    current = None
-    if hasattr(db, "conn"):
-        current = db.conn.execute(
-            "SELECT office, office_type FROM characters WHERE name = ?", (name,),
-        ).fetchone()
+    current = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name = ?", (name,),
+    ).fetchone()
     return (
         str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
         str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),
@@ -535,13 +277,11 @@ def _issue_audience_case_events(
 
     Read-time only.  Must never be folded into ``build_character_knowledge`` /
     ``get_character_knowledge`` events — those APIs return durable rows only
-    (#492 near_minister tail contract).
+    (durable knowledge events remain distinct from prompt-only synthesis).
     """
     known = set(known_source_ids or ())
     synthesized: list[Dict[str, object]] = []
-    active_issues = (
-        db.list_active_issues() if hasattr(db, "list_active_issues") else []
-    )
+    active_issues = db.list_active_issues()
     for issue in active_issues:
         try:
             source_id = f"issue:{int(issue['id'])}"
@@ -550,10 +290,12 @@ def _issue_audience_case_events(
         if source_id in known:
             continue
         try:
-            stage = _prose(issue["stage_text"]).strip()
+            stage = _prose(issue["stage_text"])
         except (KeyError, IndexError, TypeError):
             stage = ""
-        if not stage or character_name not in _issue_audience_names(db, issue):
+        if not origin_visible_to(db, issue["origin_ref"], character_name):
+            continue
+        if not str(stage).strip() or not _reader_in_issue_audience(db, issue, character_name):
             continue
         if not knowledge_row_visible_to(
             db,
@@ -578,17 +320,18 @@ def _issue_audience_case_events(
     return synthesized
 
 
-def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:
+def build_character_knowledge(
+    db: Any, state: Any, character_name: str,
+) -> Dict[str, object]:
+    """Current office accounts, personal handling, and independently public speech."""
     character = db.content.characters.get(character_name) if db.content else None
     # The content object is the seed/in-memory roster and can lag behind a
     # restored save.  The characters table is the durable current-world source.
     office_name, office_type = current_character_office(db, character, character_name)
     world, scope = _world(db, state, character_name, office_name, office_type)
-    events = db._character_knowledge_events(character_name, include_exclusions=True)
-    public_events = db._character_knowledge_events("", include_exclusions=True)
-    public_events.extend(_source_archive_rows(db, character_name, int(state.turn)))
-    # Issued directives are public by their nature.  Read them here so old
-    # saves and the normal decree path need no second write hook.
+    events = db._character_knowledge_events(character_name) if character_name else []
+    public_events = db._character_knowledge_events("")
+    # Issued directives are public; read their original records.
     for directive in db.list_issued_directives():
         public_events.append({
             "turn": int(directive["turn"]), "year": int(directive["year"]),
@@ -597,218 +340,17 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "body": _prose(directive.get("text") or ""),
             "source_id": f"directive:{directive['id']}",
         })
-    def source_projection(turn: int, fallback: object, *, public_counterpart: str = "") -> str:
-        """Project aggregate narrative from source rows, never from redaction.
-
-        Reports and chapter memories are rendered aggregates.  When their turn
-        has source-scoped knowledge rows, those rows are the only material used
-        for this character.  Without an independent source, it grants nothing.
-        """
-        # Only durable source rows are inputs here.  The synthetic
-        # ``turn_report:*``/``chapter:*`` rows below are read-model outputs;
-        # feeding one archive back into the next archive would duplicate
-        # material and make an already-rendered aggregate look like an
-        # unrestricted source.
-        rows = []
-        for row in public_events:
-            source_id = str(row.get("source_id") or "")
-            # ``turn_report:*:public`` and ``chapter_source:*`` are explicit,
-            # source-scoped public counterparts written by the archive API.
-            # Unlike aggregate read-model rows, each has its own durable source
-            # boundary and remains visible beside a same-turn secret.
-            aggregate_row = (
-                source_id.startswith("opening:")
-                or source_id.startswith("directive:")
-                or (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
-                or source_id.startswith("chapter:")
-                or source_id == f"settlement:narrative:{turn}"
-            )
-            if int(row.get("turn") or 0) == turn and not aggregate_row:
-                rows.append(row)
-        # Direct archive callers persist an explicit public counterpart.  It
-        # is the authoritative public fragment for that aggregate; mixing it
-        # with unrelated same-turn sources would turn one gazette item into a
-        # synthetic bundle and lose its independently addressable history.
-        counterpart_rows = [row for row in rows if str(row.get("source_id") or "") == public_counterpart]
-        # Independently public source rows are already the canonical audience
-        # material.  Do not add a report/chapter rendering of the same turn on
-        # top of them: that is how ordinary monthly prose was repeated.
-        if any(
-            not row.get("excluded_names")
-            and not str(row.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))
-            for row in rows
-        ):
-            return ""
-        if counterpart_rows:
-            # A chapter's public counterpart is derived from the same
-            # independently public source set as that turn's gazette.  Keep
-            # the gazette projection as the one monthly rendering instead of
-            # replaying identical prose through the chapter archive.
-            if public_counterpart.startswith("chapter_source:"):
-                report_counterpart = f"turn_report:{turn}:public"
-                report_rows = [
-                    row for row in rows
-                    if str(row.get("source_id") or "") == report_counterpart
-                ]
-                if report_rows:
-                    return ""
-            rows = counterpart_rows
-        visible = [
-            row for row in rows
-            if knowledge_row_visible_to(
-                db, {**row, "office_type": office_type, "office": office_name}, character_name,
-            )
-        ]
-
-        # An aggregate has no independent source boundary.  It is never a
-        # knowledge grant: source rows are the sole public projection seam.
-        # #883 deliberately has no old-save compatibility fallback.
-        if rows:
-            return "\n".join(
-                _prose(row.get("body") or row.get("title") or "")
-                for row in visible
-                if row.get("body") or row.get("title")
-            )
-        return ""
-
-    # Keep the durable source rows, and add a character-specific projection of
-    # each aggregate archive.  Source rows redact restricted fragments from
-    # the aggregate, while independently persisted public fragments remain
-    # available to the character.
-    for report in db.list_turn_reports():
-        # The opening gazette is seed material, not a prior played turn.
-        # Its separately persisted opening facts remain visible without
-        # turning the turn-zero aggregate into every role's public rail.
-        if int(report["turn"]) <= 0:
-            continue
-        report_turn = int(report["turn"])
-        body = source_projection(
-            report_turn, report.get("report"),
-            public_counterpart=f"turn_report:{report_turn}:public",
-        )
-        if body:
-            public_events.append({
-                "turn": int(report["turn"]), "year": int(report["year"]),
-                "period": int(report["period"]), "kind": "public",
-                "title": "邸报", "body": body,
-                    "source_id": f"projection:turn_report:{report['turn']}",
-                    "excluded_names": "[]",
-                })
-    # #1845：章节记忆退役——大臣知识面不再灌 chapter_summary；历月邸报自 turn_report 读。
-
-    visible_events = [
-        {
-            key: (_prose(value) if key == "body" else value)
-            for key, value in row.items() if key != "excluded_names"
-        }
-        for row in events
-        if knowledge_row_visible_to(
-            db,
-            {**row, "office_type": office_type, "office": office_name},
-            character_name,
-        )
-    ]
-    projected_turns = set()
-    for row in public_events:
-        source_id = str(row.get("source_id") or "")
-        if source_id.startswith("turn_report:") and source_id.endswith(":public"):
-            turn = source_id.removeprefix("turn_report:").removesuffix(":public")
-        elif source_id.startswith("chapter_source:"):
-            turn = source_id.removeprefix("chapter_source:")
-        elif source_id.startswith("projection:turn_report:"):
-            turn = source_id.removeprefix("projection:turn_report:")
-        elif source_id.startswith("projection:chapter:"):
-            turn = source_id.removeprefix("projection:chapter:")
-        else:
-            continue
-        if turn.isdigit():
-            projected_turns.add(int(turn))
-    visible_public = [
-        {
-            key: (_prose(value) if key == "body" else value)
-            for key, value in row.items() if key != "excluded_names"
-        }
-        for row in public_events
-        # Aggregate archive writers leave compatibility source rows behind.
-        # They are not authorization boundaries: when the turn contains a
-        # restricted source their prose may be a rewrite of that source.  The
-        # character-specific turn_report/chapter projection above is the only
-        # archive representation allowed into the audience view.
-        if not str(row.get("source_id") or "").startswith(
-            ("turn_report:", "chapter_source:")
-        )
-        and not re.fullmatch(r"settlement:narrative:\d+", str(row.get("source_id") or ""))
-        # When a source-preserving archive projection exists for this turn,
-        # expose it once through that archive rather than beside its source
-        # row.  This keeps normal monthly prose from being tripled by source,
-        # gazette, and chapter read models.
-        and (
-            int(row.get("turn") or 0) not in projected_turns
-            or bool(row.get("excluded_names"))
-            or str(row.get("source_id") or "").startswith("projection:")
-            or str(row.get("source_id") or "").startswith("opening:")
-            or str(row.get("source_id") or "").startswith("directive:")
-        )
-        if knowledge_row_visible_to(
-            db,
-            {**row, "office_type": office_type, "office": office_name},
-            character_name,
-        )
-    ]
-    report_projection_turns = {
-        int(row.get("turn") or 0) for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:turn_report:")
-    }
-    visible_public = [
-        row for row in visible_public
-        if not (
-            str(row.get("source_id") or "").startswith("projection:chapter:")
-            and int(row.get("turn") or 0) in report_projection_turns
-        )
-    ]
-    projection_bodies_by_turn: dict[int, list[str]] = {}
-    for row in visible_public:
-        if str(row.get("source_id") or "").startswith("projection:"):
-            projection_bodies_by_turn.setdefault(int(row.get("turn") or 0), []).append(
-                str(row.get("body") or "")
-            )
-    visible_public = [
-        row for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:")
-        or not any(
-            str(row.get("body") or "")
-            and str(row.get("body") or "") in aggregate
-            for aggregate in projection_bodies_by_turn.get(int(row.get("turn") or 0), [])
-        )
-    ]
-    # Collapse only exact same-turn archive/source duplicates.  Never compare
-    # substrings and never deduplicate across turns: those are independent
-    # historical facts even when their prose happens to overlap.
-    archive_bodies = {
-        (int(row.get("turn") or 0), str(row.get("body") or ""))
-        for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:")
-    }
-    visible_public = [
-        row for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:")
-        or (int(row.get("turn") or 0), str(row.get("body") or "")) not in archive_bodies
-    ]
-    deduped_public = []
-    seen_exact: set[tuple[int, str]] = set()
-    for row in visible_public:
-        identity = (int(row.get("turn") or 0), str(row.get("body") or ""))
-        if identity[1] and identity in seen_exact:
-            continue
-        seen_exact.add(identity)
-        deduped_public.append(row)
-    # Independently persisted public sayings never enter the archive
-    # aggregation/dedup rules above.  Append the authoritative public-layer
-    # projection after those rules, then join its layer prose.
+    visible_events = [dict(row) for row in events
+                      if knowledge_row_visible_to(db, row, character_name)]
+    # Public versions and personal sources have separate carriers.
+    visible_public = [dict(row) for row in public_events
+                      if knowledge_row_visible_to(db, row, character_name)]
+    # Public versions have their own durable records; registered sources are
+    # read directly, without an archival mirror or payload precedence rule.
     public_saying_events = [
         {
             key: (_prose(value) if key == "body" else value)
-            for key, value in row.items() if key != "excluded_names"
+            for key, value in row.items()
         }
         for row in public_layer_events(db)
         if knowledge_row_visible_to(
@@ -817,45 +359,37 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             character_name,
         )
     ]
-    visible_public = [*deduped_public, *public_saying_events]
-    public_bodies = [
-        _prose(item.get("body") or item.get("title") or "")
-        for item in deduped_public
-        if (item.get("body") or item.get("title"))
-        and not str(item.get("source_id") or "").startswith("opening:")
-    ]
-    public_bodies.extend(public_layer_prose(item) for item in public_saying_events)
-    world["public"] = "\n".join(public_bodies) or world["public"]
-    known_source_ids = {
-        str(row.get("source_id") or "")
-        for row in [*events, *public_events]
-        if row.get("source_id")
-    }
+    visible_public.extend(public_saying_events)
     visible_issues = []
-    for issue in db.list_active_issues() if hasattr(db, "list_active_issues") else []:
+    for issue in db.list_active_issues():
+        if not origin_visible_to(db, issue["origin_ref"], character_name):
+            continue
         source_id = f"issue:{issue['id']}"
         try:
             participants = participant_roster_names(issue["participant_roster"])
         except (KeyError, IndexError, TypeError):
             participants = set()
-        # Unassigned issues are public; assigned issues are visible only when
-        # this character entered the durable source projection.
-        if participants:
-            if character_name not in participants or source_id not in known_source_ids:
-                continue
+        if participants and character_name not in participants:
+            continue
         if not knowledge_row_visible_to(
             db,
-            {"source_id": source_id, "excluded_names": "[]", "office_type": office_type, "office": office_name},
+            {"source_id": source_id, "office_type": office_type, "office": office_name},
             character_name,
         ):
             continue
-        try:
-            target_roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (KeyError, TypeError, ValueError):
+        if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
-        if issue["origin_kind"] != "impeachment_surge" or not isinstance(target_roster, list):
-            target_roster = []
-        target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
+        else:
+            # 已持久 target_roster 腐坏响亮，不洗成空名单改准入（#1897 E1）。
+            from ming_sim.db import _load_durable_json_list
+
+            target_roster = _load_durable_json_list(
+                issue["target_roster"],
+                surface=f"弹劾潮#{int(issue['id'])}.target_roster",
+            )
+            target_roster = [
+                str(target).strip() for target in target_roster if str(target).strip()
+            ]
         visible_issues.append({
             "id": int(issue["id"]), "kind": issue["kind"],
             "origin_kind": issue["origin_kind"], "origin_ref": issue["origin_ref"],

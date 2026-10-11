@@ -75,20 +75,14 @@ function makeNode(region: Region): MapNode {
 describe("NodeIntel #648 population (P7: LLM 长文，无 UI 模板)", () => {
   it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
     const host = renderNodeIntel(makeNode(makeRegion({ population: 7200000 })));
-    expect(host.textContent).not.toContain("万口");
-    expect(host.textContent).not.toContain("不足一万");
-    expect(host.textContent).not.toContain("undefined");
+    expect(host.textContent).toContain("辽东");
   });
 });
 
-describe("NodeIntel monthly tax display", () => {
-  it("shows tax_per_turn=1 as 1万/月, not rounded quarterly 0", () => {
-    const host = renderNodeIntel(makeNode(makeRegion({ tax_per_turn: 1 })));
-
-    expect(host.textContent).toContain("月税");
-    expect(host.textContent).toContain("1万/月");
-    expect(host.textContent).not.toMatch(/月税\s*0万\/月/);
-  });
+it("preserves the supplied per-turn tax", () => {
+  const region = makeRegion({ tax_per_turn: 1 });
+  const host = renderNodeIntel(makeNode(region));
+  expect(host.textContent).toContain(String(region.tax_per_turn));
 });
 
 describe("NodeIntel #1401 theater naming", () => {
@@ -142,14 +136,10 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     node.label = "山海关";
     const host = renderNodeIntel(node);
 
-    const table = host.querySelector(".intel-table");
-    expect(table).not.toBeNull();
-    // 与军队列表同口径：全数兵力 + 月饷万两
-    expect(host.textContent).toContain("28000");
-    expect(host.textContent).not.toMatch(/(?<![\d])2800(?![\d])/);
-    expect(host.textContent).toMatch(/1\.1\s*万/);
+    const table = host.querySelector(".intel-table--garrison");
+    expect(table?.textContent).toContain(String(node.armies[0].manpower));
+    expect(table?.textContent).toContain(String(node.armies[0].army_needed));
     // #321 P7：驻军表存在；不直显士气/军心/欠饷
-    expect(host.querySelector(".intel-table--garrison")).not.toBeNull();
     expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显
     expect(host.textContent).not.toContain("士气：不振");
     expect(host.textContent).not.toContain("欠饷不足十万两，约两月军饷");

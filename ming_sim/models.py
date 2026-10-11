@@ -33,20 +33,14 @@ from ming_sim.person_archive_contract import PERSON_ACTIONS
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:
-    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）：
-    - 已是 dict（调用方传解析过的对象）→ 原样返回；
-    - JSON 字符串 → 解析；解析失败或真值非 dict（脏库/历史写路径/标量）→ {}。
-    所有 effect-列读取统一经此，下游 .get/.items 永不在非 dict 上崩回合。放 models（leaf，只依赖 json）
-    避免 db↔issues 循环——db / issues / simulation / web_app 都从这里取（cmr #117 R4）。"""
-    if isinstance(raw, dict):
-        return raw
-    if not raw:  # None / 空串等常见空值：快速返 {}，免 json.loads 解析开销（gemini PR#127 R2）
-        return {}
-    try:
-        v = json.loads(raw)
-    except (ValueError, TypeError):
-        return {}
-    return v if isinstance(v, dict) else {}
+    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口。
+
+    真空→{}；腐坏/非对象响亮 ValueError（#1834 F39，不得洗成空 effect）。
+    放 models 避免 db↔issues 循环——调用方 lazy 取 GameDB 解析助手。
+    """
+    from ming_sim.db import GameDB
+
+    return GameDB.parse_engine_payload_json(raw, surface="effect_json")
 
 
 def _nonzero_int(raw: object) -> bool:
@@ -278,6 +272,8 @@ def _legacy_effect_has_work(raw: object) -> bool:
 
 def effect_dict_has_work(raw: object) -> bool:
     """Return whether an effect/ongoing payload has semantic work, not just a non-empty shell."""
+    from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS
+
     effect = loads_effect_dict(raw)
     if not effect:
         return False
@@ -308,9 +304,11 @@ def effect_dict_has_work(raw: object) -> bool:
         ),
         _building_effect_has_work(effect.get("buildings")),
         _new_armies_effect_has_work(effect.get("new_armies")),
-        _person_effect_has_work(effect.get("人物变更")),
-        _person_effect_has_work(effect.get("person_changes")),
-        _character_effect_has_work(effect.get("character")),
+        *(
+            _character_effect_has_work(effect.get(key)) if key == "character"
+            else _person_effect_has_work(effect.get(key))
+            for key in PERSON_EFFECT_KEYS
+        ),
         _character_status_effect_has_work(effect.get("character_status_changes")),
         _character_power_effect_has_work(effect.get("character_power_changes")),
         _power_renames_effect_has_work(effect.get("power_renames")),
@@ -333,13 +331,6 @@ class TurnPhase(str, Enum):
 # 「前半段已提交」相位集：pre_settle 守门/粘滞/skip 跳过判定的单一真源（cmr S4 r3 集中化）。
 # AWAITING 只可能在 pre_settle 事务提交后出现（HITL 暂停在 resolve 中段），语义同 settling。
 FRONT_HALF_DONE_PHASES = (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value)
-
-
-@dataclass
-class ChatResult:
-    action: str
-    next_minister: str = ""
-    refresh_ministers: List[str] = field(default_factory=list)
 
 
 # LLM 后端默认值 / 通道集合的单一真源——放 L0 叶子 models，llm_config 与 cli_backend 都从此处
@@ -416,6 +407,9 @@ class Character:
     portrait_id: str = ""  # 头像文件标识：空=无专属；"minister_pool_3"=用第3号预设头像
     seed_guilt: Dict[str, str] = field(default_factory=dict)  # 开局罪谱；引擎内部值，不进入人物呈现上下文
     identity: int = 50  # 党派认同度；引擎内部值，不进入人物呈现上下文
+    # ADR 0108 阴谋能力：静态 seed 能力轴（第五轴），LLM 零权碰此 int。
+    # 引擎内部值，不进入人物呈现上下文（只走定性投影，P4）。
+    intrigue: int = 50
 
 
 VASSAL_PRINCE_OFFICE_TYPE = "宗藩"
@@ -428,7 +422,6 @@ def is_vassal_prince(character: "Character") -> bool:
     单一定义，所有面引用此规则（PR#121，cmr R3–R5 cross-section coverage-drift 收敛于此）。
     受守面清单（新增同类面时一并加，勿漏）：
     - web_app: visible_in_court / in_talent_pool / _require_active_minister / api_create_secret_order
-    - simulation: court_roster / active_ministers / _talent_pool_rows（SQL office_type NOT IN(…'宗藩'…)）
     - materials: 人物/朝臣名册.txt
     - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
@@ -437,8 +430,8 @@ def is_vassal_prince(character: "Character") -> bool:
     roster 类同时排 后宫/未仕，用 office_type in ('后宫','宗藩','未仕')；本 helper 只判宗藩这一面。
 
     **规则边界（玩家动作 vs 世界事件，cmr R7 拍）**：守的是「皇帝把宗室当朝堂命官来召见/任免/
-    罢免/下密令」这类玩家动作面。**simulator/extractor 叙事处置故意不守**——宗室可因世界事件
-    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），extractor character_status_changes 的
+    罢免/下密令」这类玩家动作面。**世界段叙事处置故意不守**——宗室可因世界事件
+    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），转译产生的 character_status_changes 的
     罢黜/处置路（issues.apply_person_status_changes）应允许改宗藩状态；况且 dismiss/dead 不改
     office_type，宗藩照旧不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。
 
@@ -456,10 +449,9 @@ def is_weishi(character: "Character") -> bool:
     - web_app: visible_in_court
     - cli: terminal.choose_minister
     - cli_backend: _draft_intent_character_roster_facts（拟诏事实块）
-    - simulation: court_roster / active_ministers（SQL office_type NOT IN(…'未仕')）
     - materials: 人物/朝臣名册.txt
     - db: current_court_roster_rows（已排）
-    - web_app: in_talent_pool / simulation._talent_pool_rows（未入仕非「可起复前臣」）
+    - web_app: in_talent_pool（未入仕非「可起复前臣」）
     任命写路径（apply_office_appointment）**不**守本闸——未仕入仕是合法铨选。
     同型 seed 先例：郑成功/张煌言等诸生童生 offstage（非钱谦益——钱为罢居礼部、非未仕）。
     容 None：传 None 返 False。"""
@@ -484,15 +476,17 @@ class Event:
     trigger_end_year: int = 0   # 候选窗口结束年（0=不设上限）
     trigger_end_month: int = 0  # 候选窗口结束月（0=年内任意月）
     open_window: bool = False  # True=显式开放窗，永不过期
-    precondition: str = ""  # 触发前提+改写口子人话说明，喂 simulator 由 LLM 据盘面判断是否改写/跳过（见 season_simulator.md 候选情势触发判定）
+    precondition: str = ""  # 触发前提+改写口子人话说明，由 LLM 据盘面判断是否改写/跳过
     event_type: str = "situation"  # situation=转 bar issue；node=只播报不转 issue；ending=交结局判定
     trigger_class: str = ""  # strategic_foreign=战略/外敌类：点名将按席位顶替，不因将领死亡作废
     category: str = ""  # 事件机制分类；fiscal_levy 等特化确定性通道按此识别，不硬编 id
     person_core_subjects: List[str] = field(default_factory=list)  # 人物核心事件主体：这些人永久死亡→事件作废退候选
     trigger_gate: Dict[str, str] = field(default_factory=dict)  # seed 候选门槛：{metric: 比较式}，全满足才进候选
-    auto_trigger: bool = False  # True=gate 达标即由程序硬立项，绕过 LLM 因果判定（不进候选池等 extractor 决定）
+    # 语义已收窄为「**非人世界事件**由引擎按时间/阈值/状态门硬发并算后果」单一含义
+    # （#1892）。人物事件不得声明它——那属引擎代人物拍板（CLAUDE.md P6）。故本布尔既是
+    # 硬触发开关、也是「这是世界事件」的唯一权威标记，不另开第二个归属字段。
+    auto_trigger: bool = False
     terminal_reason_labels: List[str] = field(default_factory=list)  # 封闭结局标签集；空=无专用白名单
-    default_terminal_reason: str = ""  # shadow / deterministic stub 默认结局，必须属于 terminal_reason_labels
     # 以下为可选「精调 issue 字段」：原 opening_crises 那种手调危机用，立项时 event_to_issue 优先读这些，
     # 缺省（0/空）则按 severity/kind 自动推导。合并 opening_crises → seed_events 后承接其手调值。
     bar_value: int = 0                                            # 0=自动推导
@@ -689,7 +683,7 @@ def period_label(year: int, month: int) -> str:
 
 
 # 年号纪年：西历年 → 天启/崇祯汉字年号。state.year 是西历（开局 1627=天启七年）；
-# 崇祯改元逾年，元年=1628。章节记忆/邸报 title 单一真源，禁「崇祯{year}年」字面拼接。
+# 崇祯改元逾年，元年=1628。年号格式统一由此换算，禁「崇祯{year}年」字面拼接。
 _CN_DIGITS = "零一二三四五六七八九"
 _CN_MONTH_ORDINAL = {
     1: "正", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六",

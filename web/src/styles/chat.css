@@ -111,12 +111,6 @@
   color: var(--muted);
 }
 
-.hitl-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
 
 .chat-main {
   display: grid;
@@ -290,38 +284,6 @@
   border-top: 1px solid rgba(111, 83, 46, 0.18);
 }
 
-.hitl-bar button {
-  min-height: 30px;
-  padding: 5px 8px;
-  border: 1px solid rgba(111, 83, 46, 0.22);
-  border-radius: 4px;
-  color: #573d1f;
-  background: rgba(255, 238, 198, 0.56);
-}
-
-.hitl-bar button:disabled {
-  opacity: 0.56;
-}
-
-.hitl-bar button:hover {
-  color: #5f331d;
-  border-color: rgba(151, 83, 45, 0.38);
-  background: rgba(255, 241, 207, 0.82);
-}
-
-/* 填前缀型快捷按钮（拟旨/密令）—— 深色边框 + 图标感 */
-.hitl-bar button.hitl-prefix {
-  border-color: rgba(120, 50, 20, 0.45);
-  background: rgba(200, 140, 60, 0.15);
-  color: #5a2a05;
-  font-weight: 700;
-}
-
-.hitl-bar button.hitl-prefix:hover {
-  background: rgba(200, 140, 60, 0.28);
-  border-color: rgba(140, 60, 20, 0.6);
-}
-
 .chat-input {
   display: grid;
   gap: 6px;
@@ -387,7 +349,6 @@ select {
 }
 
 .primary-action,
-.desk-add-btn,
 .directive-tools button {
   display: inline-flex;
   align-items: center;

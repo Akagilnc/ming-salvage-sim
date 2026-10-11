@@ -127,7 +127,7 @@ describe("全局 ESC 关闭结局页（endingDismissed）", () => {
         status: "defeat",
         label: "煤山自缢",
         summary: "终章。",
-        timeline: [{ turn: 1, year: 1644, period: 3, decree_brief: "", effect_brief: "", gazette: "三月邸报" }],
+        timeline: [{ turn: 1, year: 1644, period: 3, gazette: "三月邸报" }],
       },
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {

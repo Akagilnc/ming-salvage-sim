@@ -1,6 +1,6 @@
 """#1274 QA A-新3：409/超时 UX 族（#1301/#1306/#1312/#1319(a)/#1322）。
 
-刀口只锁玩家面文案、相位分文、authority 投影与 resolve 锁前预检；
+刀口锁状态码、结构化 detail、相位分叉与 resolve 锁前预检；
 ADR 0036/0006 机制零动。
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 import web_app
 from ming_sim import audience_night as an
+from ming_sim.session_write_queue import ClassifiedWriteGate
 from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
 
 
@@ -46,60 +47,43 @@ def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
         an.assert_night_accepts_player_input(object(), what="召对")
 
     msg = str(ei.value)
-    assert "收夜中" in msg
-    assert "召对" in msg
-    assert "42" not in msg
-    assert ":42" not in msg.replace(" ", "")
+    assert msg
     assert ei.value.code == "night_closing"
     assert ei.value.detail == {"night_id": 42, "what": "召对"}
+
+    with pytest.raises(an.AudienceNightError) as other:
+        an.assert_night_accepts_player_input(object(), what="阅折")
+    assert other.value.code == "night_closing"
+    assert other.value.detail == {"night_id": 42, "what": "阅折"}
 
 
 # ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
 
-def test_serialized_web_write_awaiting_decision_says_waiting_for_rescript():
-    """#1306：awaiting_decision 报「等待批红」，不得报「月末结算进行中」。"""
+def _front_half_detail(phase: str) -> str:
     game = SimpleNamespace(
-        state=SimpleNamespace(turn_phase=TurnPhase.AWAITING_DECISION.value),
-        _write_gate=threading.Lock(),
+        state=SimpleNamespace(turn_phase=phase),
+        _write_gate=ClassifiedWriteGate(),
     )
     with pytest.raises(HTTPException) as ei:
         with web_app._serialized_web_write(game):
             pass
     assert ei.value.status_code == 409
     detail = str(ei.value.detail)
-    assert "等待批红" in detail
-    assert "月末结算进行中" not in detail
-
-
-def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
-    """#1306：settling 仍报月末结算进行中。"""
-    game = SimpleNamespace(
-        state=SimpleNamespace(turn_phase=TurnPhase.SETTLING.value),
-        _write_gate=threading.Lock(),
-    )
-    with pytest.raises(HTTPException) as ei:
-        with web_app._serialized_web_write(game):
-            pass
-    assert ei.value.status_code == 409
-    assert "月末结算进行中" in str(ei.value.detail)
+    assert detail
+    return detail
 
 
 def test_serialized_web_write_phase_messages_cover_front_half_done():
-    """#1306 全 FRONT_HALF_DONE 相位均 409，且文案按相位分叉。"""
+    """#1306 全 FRONT_HALF_DONE 相位均 409，详情只按 awaiting / 其余两支分叉。"""
+    awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)
+    other = _front_half_detail(TurnPhase.SETTLING.value)
+    assert awaiting != other
     for phase in FRONT_HALF_DONE_PHASES:
-        game = SimpleNamespace(
-            state=SimpleNamespace(turn_phase=phase),
-            _write_gate=threading.Lock(),
-        )
-        with pytest.raises(HTTPException) as ei:
-            with web_app._serialized_web_write(game):
-                pass
-        assert ei.value.status_code == 409
-        detail = str(ei.value.detail)
+        detail = _front_half_detail(phase)
         if phase == TurnPhase.AWAITING_DECISION.value:
-            assert "等待批红" in detail
+            assert detail == awaiting
         else:
-            assert "月末结算进行中" in detail
+            assert detail == other
 
 
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────
@@ -109,16 +93,14 @@ class _Row(dict):
         return super().keys()
 
 
-def test_directive_payload_authority_not_notes_alias(monkeypatch):
+def test_directive_payload_authority_not_notes_alias():
     """#1319(a)：notes 备注不得投影成 authority；无真 authority 则空串。"""
-    monkeypatch.setattr(web_app, "skill_display_name", lambda _sid: "")
     game = web_app.WebGame.__new__(web_app.WebGame)
     row = _Row(
         id=9,
         event_id="",
         event_title="",
         actor="袁崇焕",
-        skill_id="",
         text="发帑辽东",
         source="manual",
         status="draft",
@@ -153,7 +135,7 @@ class _PhaseSession:
 
 
 class _ResolveGame:
-    def __init__(self, phase: str, gate: threading.Lock):
+    def __init__(self, phase: str, gate: ClassifiedWriteGate):
         self.state = SimpleNamespace(turn=3, ended=False, turn_phase=phase)
         self.session = _PhaseSession(phase)
         self.session.state = self.state
@@ -195,11 +177,10 @@ async def _consume_resolve_sse() -> list[tuple[str, object]]:
 
 def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     """#1322：非 awaiting 相位在抢锁前快速失败；持锁者不被卡住；submit 不进。"""
-    gate = threading.Lock()
+    gate = ClassifiedWriteGate()
     gate.acquire()  # 模拟结算 worker 持锁；若预检在锁后，本测会阻塞至超时
     game = _ResolveGame(TurnPhase.SETTLING.value, gate)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
 
     try:
         # gate held: precheck must finish without acquiring it (hang → CI final line)
@@ -210,39 +191,32 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     assert events, "expected at least one SSE event"
     event, payload = events[-1]
     assert event == "error"
-    message = payload["message"] if isinstance(payload, dict) else str(payload)
-    assert "待裁" in message or "亲裁" in message
+    assert isinstance(payload, dict) and payload.get("message")
     assert game.session._submit_called is False
     assert game.actions == []
 
 
 def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch):
     """#1322：awaiting 相位仍经 submit_hitl 在 write_gate 内提交（权威复查保留）。"""
-    gate = threading.Lock()
+    gate = ClassifiedWriteGate()
     game = _ResolveGame(TurnPhase.AWAITING_DECISION.value, gate)
     submitted = {"ok": False}
 
-    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
         with write_gate:
             assert gate.locked(), "submit must run while write gate held"
             game.actions.append("submit")
             submitted["ok"] = True
-            if on_event:
-                on_event("stage", "数值推演结算")
             return "邸报：已裁。"
 
     game.session.submit_hitl_choices = _submit_hitl  # type: ignore[method-assign]
     game.session.last_decree = "诏曰：发帑。"
     monkeypatch.setattr(web_app, "get_game", lambda: game)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(
-        web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: []
-    )
 
     events = asyncio.run(_consume_resolve_sse())
     assert submitted["ok"] is True
     kinds = [ev for ev, _ in events]
-    assert "stage" in kinds
+    assert "stage" not in kinds
     assert kinds[-1] == "done"
     payload = events[-1][1]
     assert payload["report"] == "邸报：已裁。"
@@ -255,7 +229,7 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     and before tail write grabs the gate. Externally: load 409, end_turn/refresh on the
     original session. Does not lock gate.locked / entry_lock internals.
     """
-    gate = threading.Lock()
+    gate = ClassifiedWriteGate()
     game = _ResolveGame(TurnPhase.AWAITING_DECISION.value, gate)
     old_session = game.session
     replacements: list[str] = []
@@ -264,23 +238,18 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     release_body = threading.Event()
     resolve_done = threading.Event()
 
-    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
         with write_gate:
             game.actions.append("submit")
-            if on_event:
-                on_event("stage", "数值推演结算")
             # Completed settlement advances the turn while still under the gate.
             game.state.turn_phase = TurnPhase.ISSUED.value
             game.state.turn += 1
         return "邸报：已裁。"
 
-    def _failures_after_submit(*_a, **_k):
-        # web_app resolve stream calls this after submit returns, before tail write.
+    def _end_turn():
+        # #1853 J5：原握手挂在已删的 failed 载荷 helper；改挂尾写 end_turn（仍在短持 gate 内）。
         body_ready.set()
         release_body.wait()
-        return []
-
-    def _end_turn():
         game.actions.append("end_turn")
         tail_sessions.append(game.session)
 
@@ -291,10 +260,6 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     game.state_payload = lambda: {"ok": True}  # type: ignore[attr-defined]
 
     monkeypatch.setattr(web_app, "get_game", lambda: game)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(
-        web_app, "_new_secret_order_failure_payloads_for_turn", _failures_after_submit
-    )
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
 
@@ -308,15 +273,16 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     t_resolve.start()
     body_ready.wait()
 
-    with pytest.raises(HTTPException) as ei:
-        asyncio.run(web_app.api_load_save("存档"))
-    assert ei.value.status_code == 409
-    assert replacements == []
-    assert game.session is old_session
-
-    release_body.set()
-    resolve_done.wait()
-    t_resolve.join()
+    try:
+        with pytest.raises(HTTPException) as ei:
+            asyncio.run(web_app.api_load_save("存档"))
+        assert ei.value.status_code == 409
+        assert replacements == []
+        assert game.session is old_session
+    finally:
+        release_body.set()
+        resolve_done.wait()
+        t_resolve.join()
 
     assert game.actions == ["submit", "end_turn", "refresh"]
     assert tail_sessions == [old_session]

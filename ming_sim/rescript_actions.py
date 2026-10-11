@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -71,39 +70,6 @@ def _parse_decision_key(key: object) -> Tuple[str, int, int]:
 
 def _stable_json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, object]:
-    """CLI/probe 首选项投影唯一真源。
-
-    - 急务 ``rescript_draft``：首 option → ``follow_draft`` + ``draft_capability``
-    - 普通 decision：首 option 原样（补 decision_key）
-    """
-    options = decision.get("options") or []
-    first = options[0] if options else {}
-    if not isinstance(first, dict):
-        first = {"label": str(first or "")}
-    item = dict(first)
-    dk = str(decision.get("decision_key") or "").strip()
-    if not dk:
-        kind = str(decision.get("kind") or "decision").strip() or "decision"
-        turn = decision.get("source_turn", decision.get("turn"))
-        idx = decision.get("idx")
-        if turn is not None and idx is not None:
-            dk = f"{kind}:{int(turn)}:{int(idx)}"
-    if dk:
-        item.setdefault("decision_key", dk)
-    kind = str(decision.get("kind") or "").strip()
-    if kind == "rescript_draft":
-        item["action"] = "follow_draft"
-        cap = str(item.get("draft_capability") or "").strip()
-        if not cap:
-            # derive_draft_capability 为纯函数，缺字段回填默认后哈希，不上抛业务异常
-            cap = derive_draft_capability(item)
-        item["draft_capability"] = cap
-        if not str(item.get("label") or "").strip():
-            item["label"] = "依拟"
-    return item
 
 
 def canonical_choice(raw: object) -> Dict[str, object]:
@@ -469,11 +435,13 @@ def validate_all(
             )
 
             event_id = str(row.get("event_id") or "")
-            label = str(req.get("label") or "").strip()
-            note = str(req.get("note") or "").strip()
+            # #1897 S1：选项身份与 bind_decision_options 同规——原样 label 命中；
+            # strip 只作判空局部副本，不改写请求身份、不另立兼容通道。
+            label = str(req.get("label") or "")
+            note = str(req.get("note") or "")
             if (
-                not label
-                and note
+                not label.strip()
+                and note.strip()
                 and (
                     event_id.startswith(_DECREE_QUESTION_PREFIX)
                     or event_id.startswith(_WORLD_QUESTION_PREFIX)
@@ -772,8 +740,9 @@ def map_rescript_option_or_choice(
             raise ValueError("military_order 缺 assignee_name")
         payload["assignee_id"] = assignee_name
         payload["name"] = assignee_name
-        station = str(src.get("station") or "").strip()
-        if station:
+        # 人读 station：保原文；判空只用局部副本（#1834 F21 / ADR 0142）。
+        station = str(src.get("station") or "")
+        if station.strip():
             payload["station"] = station
         else:
             due = 0
@@ -1082,11 +1051,10 @@ def list_deliberation_candidate_ids(db: Any, content: Any) -> List[str]:
 
     if content is None:
         raise ValueError("deliberate 需要 content 以解析可召候选")
-    resolve = getattr(db, "resolve_power_id", None)
     names: List[str] = []
     characters = getattr(content, "characters", {}) or {}
     for name, ch in characters.items():
-        if not _is_summonable_court_minister(ch, resolve_power_id=resolve):
+        if not _is_summonable_court_minister(ch, resolve_power_id=db.resolve_power_id):
             continue
         # 与 can_summon 同口径：DB 权威 status 须 active（罢/狱/流/致仕/故/未登场均排除）
         status, _ = db.get_character_status(str(name))
@@ -1236,11 +1204,7 @@ def apply_imperial_deliberation_push(
         raise ValueError(f"御笔强推目标案卷不存在：{did}")
     if str(row.get("status") or "") != "proposed":
         raise ValueError(f"御笔强推只接 proposed 案卷：{did}")
-    payload = row.get("payload")
-    if not isinstance(payload, dict):
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-    if not isinstance(payload, dict):
-        raise ValueError("廷议案卷 payload 非对象")
+    payload = row["payload"]
     if str(payload.get("deliberation_state") or "") != "stalled":
         raise ValueError(f"御笔强推只接 stalled 廷议：{did}")
     origin = f"dossier:{did}"
@@ -1288,7 +1252,7 @@ def _apply_return_revise(
     new_options = prewrite.revise_by_key.get(item.decision_key)
     if not isinstance(new_options, list) or not new_options:
         raise ValueError(f"return_revise 缺 prewrite 新 options：{item.decision_key}")
-    # 改票 options 必经层 A 单真源（与 validate_rescript_draft_items 同缝）
+    # 改票 options 必经层 A 单真源（normalize_rescript_layer_a_option）
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     stamped: List[Dict[str, object]] = []
     for opt in new_options:
@@ -1401,6 +1365,8 @@ def apply_rescript_batch(
                     _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
                 )
                 # 请旨身份不是 events 表事件；与 dossier: 同属案头身份前缀，不得进 event_triggers。
+                # 绑定了到期事件的请旨（三饷亲裁）也走此前缀，其事件账由 month_chain 的
+                # world_question_event_bindings 单一写口落，不在此按行反推（#1892 K1）。
                 if (
                     event_id
                     and not event_id.startswith("dossier:")
@@ -1520,19 +1486,17 @@ def clear_return_revise_choice_anchors(
         "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
     ).fetchall()
     for r in rows:
-        raw = r["choice_json"] or "{}"
+        from ming_sim.db import GameDB
         try:
-            choice = json.loads(raw)
-        except json.JSONDecodeError as exc:
+            choice = GameDB.parse_engine_payload_json(
+                r["choice_json"],
+                surface=f"pending_decisions.choice_json:turn={r['turn']}:idx={r['idx']}",
+            )
+        except ValueError as exc:
             raise ValueError(
                 f"return_revise 清锚 choice_json 损坏："
                 f"turn={r['turn']} idx={r['idx']}"
             ) from exc
-        if not isinstance(choice, dict):
-            raise ValueError(
-                f"return_revise 清锚 choice 非 object："
-                f"turn={r['turn']} idx={r['idx']} type={type(choice).__name__}"
-            )
         row = {
             "status": r["status"],
             "revision_round": r["revision_round"],

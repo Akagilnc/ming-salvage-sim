@@ -36,7 +36,6 @@ def test_advance_non_dict_item_rejected_not_crash(read_game, bad_item):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "非对象" in rej[0]["reason"]
 
 
 @pytest.mark.parametrize("bad_id", ["abc", None, True, 1.5, -10 ** 100])
@@ -47,7 +46,6 @@ def test_advance_bad_issue_id_rejected(read_game, bad_id):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert "issue_id" in rej[0]["reason"]
 
 
 @pytest.mark.parametrize("field,bad", [
@@ -104,11 +102,16 @@ def test_advance_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     iid = _make_active_issue(db, state)
     # advance_issue 的代码/DB 真异常上抛（上层 applier.atomic 据此 SettlementAbort），不 WARN 吞。
+    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
+    fault = RuntimeError("模拟 advance_issue 落库代码异常")
+
     def _boom(*a, **k):
-        raise RuntimeError("模拟 advance_issue 落库代码异常")
+        raise fault
+
     monkeypatch.setattr(type(db), "advance_issue", _boom)
-    with pytest.raises(RuntimeError, match="模拟 advance_issue"):
+    with pytest.raises(RuntimeError) as ei:
         I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]})
+    assert ei.value is fault
 
 
 # --- reject 路径不得泄漏 metric 副作用（cmr advances r1 codex high + claude concur）---

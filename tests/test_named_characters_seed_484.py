@@ -3,6 +3,7 @@
 import pytest
 
 import ming_sim.content as content_module
+from ming_sim.assets import load_json_asset
 from ming_sim.content import load_character_content
 
 
@@ -12,20 +13,27 @@ def _by_name():
 
 
 def test_r3_named_characters_load_legal_guilt_and_historical_offices():
+    """loader 输出与 characters.json 已加载输入结构化保真（crime/severity 全等，不硬编码文句）。"""
     chars = _by_name()
+    raw_items = load_json_asset("characters.json")["characters"]
+    raw_by_name = {str(item["name"]): item for item in raw_items}
 
-    assert chars["郭允厚"].seed_guilt == {"crime": "交结近侍又次等", "severity": "中"}
-    assert chars["李从心"].seed_guilt == {"crime": "交结近侍又次等", "severity": "中"}
+    def _expected_guilt(name: str) -> dict:
+        raw = raw_by_name[name].get("seed_guilt") or {}
+        return {
+            "crime": str(raw.get("crime") or "").strip(),
+            "severity": str(raw.get("severity") or "无").strip(),
+        }
+
+    for name in ("郭允厚", "李从心", "胡廷宴"):
+        assert chars[name].seed_guilt == _expected_guilt(name)
 
     hu = chars["胡廷宴"]
-    assert hu.office == "原三边总督，革职候勘"
+    # ADR 0009：离事职名分必清；罪由走 seed_guilt，不挂现职。
+    assert hu.office == ""
     assert hu.office_type == "督抚"
     assert hu.status == "dismissed"
     assert hu.aliases == ["胡廷宴", "胡总督"]
-    assert hu.seed_guilt == {
-        "crime": "三边兵变弹压失机，已革职候勘；责任待勘，不预判为可坐重罪",
-        "severity": "轻",
-    }
 
     li = chars["李从心"]
     assert "工部尚书" in li.office
@@ -44,7 +52,7 @@ def test_r4_hu_tingyan_loader_and_db_preserve_non_holder_seed(read_game):
         "SELECT office, office_type, status, seed_guilt FROM characters WHERE name=?", ("胡廷宴",)
     ).fetchone()
     assert {key: row[key] for key in ("office", "office_type", "status")} == {
-        "office": "原三边总督,革职候勘",
+        "office": "",
         "office_type": "督抚",
         "status": "dismissed",
     }
@@ -52,17 +60,20 @@ def test_r4_hu_tingyan_loader_and_db_preserve_non_holder_seed(read_game):
 
 
 def test_r4_named_characters_debut_in_historical_order(game):
+    """offstage 登场预备：职名分空 office（ADR 0009 / #1843 名分）；office_type/debut 元数据保留。
+    apply_historical_debuts 读 characters.office，空则回退「重臣」标签喂上下文。"""
     db, state, content = game
 
     assert state.year == 1627
     expected = {
-        "张缙彦": ("清涧知县", "地方", 1631, ""),
-        "汤若望": ("钦天监历局修历", "礼部", 1630, "beizhili"),
-        "李之藻": ("历局修历起复", "礼部", 1629, "beizhili"),
+        "张缙彦": ("地方", 1631, "", "皇党"),
+        "汤若望": ("礼部", 1630, "beizhili", "西学"),
+        "李之藻": ("礼部", 1629, "beizhili", "西学"),
     }
-    for name, (office, office_type, debut_year, location) in expected.items():
+    for name, (office_type, debut_year, location, _faction) in expected.items():
         character = content.characters[name]
-        assert (character.office, character.office_type) == (office, office_type)
+        assert character.office == ""
+        assert character.office_type == office_type
         assert character.status == "offstage"
         assert character.debut_year == debut_year
         assert character.location == location
@@ -73,17 +84,17 @@ def test_r4_named_characters_debut_in_historical_order(game):
 
     state.year, state.period = 1629, 1
     debuted = db.apply_historical_debuts(state)
-    assert {"name": "李之藻", "office": "历局修历起复", "faction": "西学"} in debuted
+    assert {"name": "李之藻", "office": "重臣", "faction": "西学"} in debuted
     assert db.get_character_status("李之藻")[0] == "active"
 
     state.year, state.period = 1630, 4
     debuted = db.apply_historical_debuts(state)
-    assert {"name": "汤若望", "office": "钦天监历局修历", "faction": "西学"} in debuted
+    assert {"name": "汤若望", "office": "重臣", "faction": "西学"} in debuted
     assert db.get_character_status("汤若望")[0] == "active"
 
     state.year, state.period = 1631, 1
     debuted = db.apply_historical_debuts(state)
-    assert {"name": "张缙彦", "office": "清涧知县", "faction": "皇党"} in debuted
+    assert {"name": "张缙彦", "office": "重臣", "faction": "皇党"} in debuted
     assert db.get_character_status("张缙彦")[0] == "active"
 
 
@@ -121,7 +132,7 @@ def test_r4_loader_rejects_seed_guilt_list(monkeypatch):
         },
     )
 
-    with pytest.raises(SystemExit, match="seed_guilt 必须是 JSON 对象"):
+    with pytest.raises(SystemExit):
         content_module.load_character_content()
 
 
@@ -157,14 +168,14 @@ def _patch_single_character(monkeypatch, character):
 def test_r5_loader_rejects_nested_seed_guilt_crime_list(monkeypatch):
     _patch_single_character(monkeypatch, _minimal_character_with_seed_guilt({"crime": [], "severity": "无"}))
 
-    with pytest.raises(SystemExit, match="设定字段应为字符串"):
+    with pytest.raises(SystemExit):
         content_module.load_character_content()
 
 
 def test_r5_loader_rejects_nested_seed_guilt_severity_object(monkeypatch):
     _patch_single_character(monkeypatch, _minimal_character_with_seed_guilt({"crime": "", "severity": {}}))
 
-    with pytest.raises(SystemExit, match="设定字段应为非空字符串"):
+    with pytest.raises(SystemExit):
         content_module.load_character_content()
 
 

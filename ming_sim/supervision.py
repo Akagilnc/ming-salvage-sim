@@ -5,10 +5,13 @@ DB 只机械记事实（监督在场 / 空子暴露 / 任期读既有 appointmen
 - 在场连号派生（不落库）
 - 派系同/敌判定
 - #619 origin 结构化私货/同派标记
-- 孤直反制硬门（涌现缝立 issue）
 - #627 政敌检举：fork 单源谓词、真伪 origin 派生、去重键（检举人×案卷×真伪类）
   （判断权归 LLM；引擎只供事实/承接 clamp/真伪底——禁烈度门/quota/文字模板）
-- 玩家可见面禁词
+
+#1895：原「孤直稽核满 12 月 → 自动立反制 issue」硬门退役——代码不再按
+characters.integrity 档判定「这位大臣会不会反制」，也不再 hash 指定反制形态。
+人物据其可及事实决定是否反制、采取何种行动（#1861 逐旨推演／#1843 世界段
+run）；监督在场行、连续月数、稽核人派系与操守定性等事实素材全部照留。
 """
 
 from __future__ import annotations
@@ -22,13 +25,7 @@ from ming_sim.qualitative import qualitative_character_axis
 # 监督关系：本票只记「稽核」在场（护卫属 #567 押解口径，不入钝化事实底）
 SUPERVISION_RELATION = "稽核"
 
-# 判官读面三键（simulator / due_review / issues extractor 共调）
-SUPERVISION_SURFACE_KEYS = (
-    "supervision_history",
-    "loophole_exposures",
-    "transformation_tendency_facts",
-)
-
+# 督办判官读面的三个结构化键
 # transformation_tendency_facts 空形——唯一真源（禁调用方手写七键字面量）
 EMPTY_TRANSFORMATION_TENDENCY_FACTS: Dict[str, object] = {
     "longest_consecutive_presence_months": 0,
@@ -59,70 +56,13 @@ DENUNCIATION_ORIGIN_BASE = "dossier-report:faction_denunciation"
 INTEGRITY_UPRIGHT_BANDS = frozenset({"操守清正", "清介可称"})  # 孤直型
 INTEGRITY_MEDIOCRE_BANDS = frozenset({"操守多亏", "操守未稳", "操守平常"})  # 庸吏
 
-# 反制硬门：同路稽核连续在场满 12 月
-COUNTERMEASURE_PRESENCE_MONTHS = 12
-COUNTERMEASURE_KINDS = (
-    "架空", "断信息", "诬告围攻", "明升暗调",
-)
-COUNTERMEASURE_ORIGIN_KIND = "supervision_countermeasure"
-
-# 玩家可见面禁词（AC5 扫描面：scene_text/narrative/turn_report/knowledge_items/memorial_text）
-SUPERVISION_BANNED_PLAYER_TOKENS = (
-    "钝化",
-    "钝化度",
-    "陋规化",
-    "supervision_history",
-    "loophole_exposure",
-    "loophole_exposures",
-    "consecutive_months",
-    "private_goods",
-    "same_faction_blind",
-    "transformation_tendency",
-    "dulling",
-    "dull_rate",
-    "dullness",
-    # #627 真伪底 / fork 暴露 / 旧烈度门系统词
-    "denunciation_true",
-    "denunciation_false",
-    "faction_conflict_intensity",
-    "denunciation_quota",
-    "faction_denunciation",
-    "fork_exposure",
-    "veracity",
-    "true_denunciation",
-    "false_denunciation",
-)
-
-# #627 检举事实表列白名单（PRAGMA 验收）
-DENUNCIATION_TABLE = "faction_denunciations"
-DENUNCIATION_ALLOWED_COLS = frozenset({
-    "id", "turn", "accuser_name", "accuser_faction",
-    "subject_name", "subject_faction", "target_dossier_id",
-    "origin", "payload_json", "memorial_text",
-})
-
-# PRAGMA 白名单：事实表仅 id / FK / turn / 枚举 / 布尔
-PRESENCE_TABLE = "dossier_supervision_presence"
-EXPOSURE_TABLE = "dossier_loophole_exposures"
-PRESENCE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "auditor_name", "audit_dossier_id",
-    "relation_type", "present",
-})
-EXPOSURE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "action_type", "execution_form",
-})
-# 全库禁「钝化数值」列名（AC1）
-FORBIDDEN_DULLING_COL_FRAGMENTS = (
-    "dull", "dulling", "钝化", "陋规", "supervision_score", "dull_rate",
-)
-
+# #1895：反制硬门常量（连续在场月数门／反制形态闭集／origin kind）随
+# GameDB.trigger_supervision_countermeasures 一并退役——代码不再按 integrity 档
+# 判定人物是否反制、不再 hash 指定反制形态。监督在场事实与稽核人定性仍照留，
+# 供 #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
 
 def integrity_band(value: object) -> str:
     return str(qualitative_character_axis("integrity", value) or "")
-
-
-def is_upright_integrity(value: object) -> bool:
-    return integrity_band(value) in INTEGRITY_UPRIGHT_BANDS
 
 
 def faction_relation(auditor_faction: object, subject_faction: object) -> str:
@@ -201,6 +141,29 @@ def denunciation_case_upgraded(
     return False
 
 
+DECLARED_REPORT_ACTION_MARKS = frozenset({
+    ORIGIN_MARK_PRIVATE_GOODS,
+    ORIGIN_MARK_SAME_FACTION_BLIND,
+})
+
+
+def declared_report_action_origin(raw: object, *, base: str) -> str:
+    """月报 origin 只留下人物已经声明的睁眼闭眼或带私货。
+
+    同派／敌派是监督事实，不是行动。未声明、或声明里夹着别的记号，都不写成行动。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return base
+    if text.startswith("dossier-report:"):
+        _root, parsed = parse_report_origin(text)
+        marks = [mark for mark in parsed if mark in DECLARED_REPORT_ACTION_MARKS]
+        return compose_report_origin(base, marks)
+    parts = [part.strip() for part in text.split(ORIGIN_MARK_SEP) if part.strip()]
+    marks = [part for part in parts if part in DECLARED_REPORT_ACTION_MARKS]
+    return compose_report_origin(base, marks)
+
+
 def compose_report_origin(base: str, marks: Iterable[str] = ()) -> str:
     """结构化 origin：base[+mark...]。base 须已带 dossier-report: 前缀。"""
     cleaned = [str(m).strip() for m in marks if str(m or "").strip()]
@@ -238,6 +201,14 @@ def parse_report_origin(origin: object) -> Tuple[str, Tuple[str, ...]]:
     return base, marks
 
 
+def report_origin_base(origin: object) -> str:
+    """业务身份：标记不算另一条奏报。空 origin 即月度轨。"""
+    from ming_sim.db import GameDB
+
+    base, _marks = parse_report_origin(origin)
+    return base or GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
+
+
 def origin_has_mark(origin: object, mark: str) -> bool:
     _base, marks = parse_report_origin(origin)
     return str(mark) in marks
@@ -269,7 +240,7 @@ def derive_consecutive_months(
 def unpack_supervision_surface(
     surface: Mapping[str, object] | None = None,
 ) -> Dict[str, object]:
-    """surface 三键 unpack 单源 helper——due_review / simulator / extractor 共调。"""
+    """为督办复核解包监督读面的三个结构化键。"""
     src = surface or {}
     tendency = src.get("transformation_tendency_facts")
     return {
@@ -324,24 +295,6 @@ def build_transformation_tendency_facts(
         "exposure_count": len(list(loophole_exposures)),
     })
     return out
-
-
-def countermeasure_origin_ref(auditor_name: str, dossier_id: int) -> str:
-    return f"auditor:{auditor_name}:dossier:{int(dossier_id)}"
-
-
-def pick_countermeasure_kind(auditor_name: str, dossier_id: int) -> str:
-    """确定性选一种反制形态（restore 可复现，无真 RNG）。"""
-    seed = f"{auditor_name}:{int(dossier_id)}"
-    idx = sum(ord(ch) for ch in seed) % len(COUNTERMEASURE_KINDS)
-    return COUNTERMEASURE_KINDS[idx]
-
-
-def assert_no_banned_tokens(text: object, *, surface: str) -> None:
-    raw = str(text or "")
-    for token in SUPERVISION_BANNED_PLAYER_TOKENS:
-        if token in raw:
-            raise AssertionError(f"{surface} 裸露禁词：{token!r}")
 
 
 def character_tenure(db: Any, name: str) -> str:

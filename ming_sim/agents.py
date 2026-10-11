@@ -9,19 +9,19 @@ from __future__ import annotations
 import inspect
 import json
 import os
-import re
 import time
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from dataclasses import asdict, is_dataclass
+from typing import Any, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.assets import strip_json_fence
 from ming_sim.content import GameContent
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMContractError
 from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
-from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
+from ming_sim.llm_contract import abort_llm_contract
 from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
@@ -33,11 +33,10 @@ from ming_sim.llm_transport import (
     run_with_transport,
     transport_failure_unavailable,
 )
-from ming_sim.models import GameState, LLMConfig, reign_period_label
-from ming_sim.token_stats import record_stream_metrics, tlog
+from ming_sim.models import LLMConfig
+from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
-_THINKING_STREAM_CHAR_LIMIT = max(0, int(os.environ.get("MING_SIM_THINKING_STREAM_LIMIT", "600") or "0"))
 _MINIMAX_SHORT_THINKING_PROMPT = (
     "【MiniMax 推演思考约束】\n"
     "若启用 thinking/reasoning，请极短思考：只列必要因果链，不复述题目、盘面、系统规则或历史常识；"
@@ -58,34 +57,34 @@ def _ctx() -> GameContent:
 
 
 # 调试开关：MING_SIM_DUMP_LLM=1 时把每次 agno 调用真实送进 LLM 的 system/user/assistant
-# 全文落盘到 scripts/runs/llm_dump_<pid>.log。从 RunOutput.messages 取（=实际 payload，非重建）。
+# 以 JSONL（一行一对象）落盘到 scripts/runs/llm_dump_<pid>.jsonl。从 RunOutput.messages 取。
 _DUMP_LLM = os.environ.get("MING_SIM_DUMP_LLM", "").strip() in ("1", "true", "yes")
-_DUMP_PATH = f"scripts/runs/llm_dump_{os.getpid()}.log"
+_DUMP_PATH = f"scripts/runs/llm_dump_{os.getpid()}.jsonl"
 
 
-def _dump_value(value: Any) -> str:
-    """观测落盘：字符串原样，其余 json/repr，不造字段白名单。"""
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        return json.dumps(value, ensure_ascii=False, default=str)
-    raw = getattr(value, "__dict__", None)
-    if isinstance(raw, dict) and raw:
-        return json.dumps(raw, ensure_ascii=False, default=str)
-    try:
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except TypeError:
-        return repr(value)
+def _json_default(obj: Any) -> Any:
+    """json.dumps default：复用对象自带结构出口（agno to_dict / pydantic model_dump /
+    dataclass asdict / __dict__），不再预递归清洗或 default=str 探测。"""
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        return model_dump()
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    raw = getattr(obj, "__dict__", None)
+    if isinstance(raw, dict):
+        return raw
+    return str(obj)
 
 
 def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> None:
-    """把这次 run 的完整 messages（含 system prompt）追加写盘。仅 _DUMP_LLM 开时生效。
+    """把这次 run 的诊断事实以唯一 JSONL 记录追加写盘。仅 _DUMP_LLM 开时生效。
 
     非流式：output 即 RunOutput，带 .messages。
     流式：终结事件 RunCompletedEvent 无 .messages，改从 agent.get_last_run_output() 取。
-    #1797：加记 reasoning 类字段（长度+正文）、usage/metrics、finish_reason（原样；缺则记缺）。
+    #1797：messages（含 reasoning 类字段）、usage/metrics、finish_reason（原样；缺则 null）。
     """
     if not _DUMP_LLM:
         return
@@ -97,40 +96,33 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
             msgs = getattr(last, "messages", None)
             if last is not None:
                 run_src = last
-        except Exception:  # noqa: BLE001 — dump 是调试旁路，任何异常都不该断结算
+        except Exception as exc:  # noqa: BLE001 — dump 是调试旁路，不中断主路径但须留真因
+            tlog(f"[DUMP-LLM] get_last_run_output failed: {type(exc).__name__}: {exc}")
             msgs = None
     if not msgs:
         return
-    lines = [f"\n{'='*80}\n[DUMP] tag={tag}  共 {len(msgs)} 条 message\n{'='*80}"]
     # 票面/phase0 已列真名：官方 reasoning_content；vLLM/Nous reasoning + reasoning_details
     reasoning_field_names = ("reasoning_content", "reasoning", "reasoning_details")
-    for i, m in enumerate(msgs):
-        role = getattr(m, "role", "?")
-        content = getattr(m, "content", "")
-        if content is None:
-            content = ""
-        lines.append(f"\n----- #{i} role={role} ({len(str(content))} 字) -----\n{content}")
+    message_records: list[dict[str, Any]] = []
+    for m in msgs:
+        item: dict[str, Any] = {
+            "role": getattr(m, "role", "?"),
+            "content": "" if getattr(m, "content", None) is None else getattr(m, "content"),
+        }
         for fname in reasoning_field_names:
             rval = getattr(m, fname, None)
             if rval is None or rval == "" or rval == []:
                 continue
-            rtext = _dump_value(rval)
-            lines.append(f"\n  [{fname}] ({len(rtext)} 字)\n{rtext}")
-        # 工具调用也带上
+            item[fname] = rval
         tcalls = getattr(m, "tool_calls", None)
         if tcalls:
-            lines.append(f"\n  [tool_calls] {tcalls}")
-    run_reasoning = getattr(run_src, "reasoning_content", None)
-    if run_reasoning:
-        rtext = _dump_value(run_reasoning)
-        lines.append(f"\n[run.reasoning_content] ({len(rtext)} 字)\n{rtext}")
+            item["tool_calls"] = tcalls
+        message_records.append(item)
     run_metrics = getattr(run_src, "metrics", None)
     if run_metrics is None:
         run_metrics = getattr(run_src, "usage", None)
-    if run_metrics is not None:
-        lines.append(f"\n[usage/metrics] {_dump_value(run_metrics)}")
     # finish_reason：只认字面键，只走 dump 入口实有容器（RunOutput.model_provider_data /
-    # Message.provider_data）。agno 不把 Choice.finish_reason 写入这两处时据实记缺。
+    # Message.provider_data）。agno 不把 Choice.finish_reason 写入这两处时据实为 null。
     finish_reason = None
     mpd = getattr(run_src, "model_provider_data", None)
     if isinstance(mpd, dict):
@@ -144,13 +136,18 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
                 if fr is not None and fr != "":
                     finish_reason = fr
                     break
-    if finish_reason is None or finish_reason == "":
-        lines.append("\n[finish_reason] (缺)")
-    else:
-        lines.append(f"\n[finish_reason] {_dump_value(finish_reason)}")
+    if finish_reason == "":
+        finish_reason = None
+    record = {
+        "tag": tag,
+        "messages": message_records,
+        "run_reasoning_content": getattr(run_src, "reasoning_content", None),
+        "usage": run_metrics,
+        "finish_reason": finish_reason,
+    }
     try:
         with open(_DUMP_PATH, "a", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+            f.write(json.dumps(record, ensure_ascii=False, default=_json_default) + "\n")
         tlog(f"[{tag}] LLM messages 已 dump → {_DUMP_PATH}")
     except OSError as e:
         tlog(f"[{tag}] dump 写盘失败：{e}")
@@ -201,10 +198,7 @@ def _history_backed_truncate_anchor(
     session_id = str(getattr(agent, "session_id", "") or "")
     if not session_id:
         return None
-    if not hasattr(game_db, "truncate_agno_session_runs"):
-        return None
-    if not hasattr(game_db, "agno_runs_length"):
-        return None
+    # game_db 已非 None：直调必备 GameDB 截缝，禁 hasattr 能力缺失兼容。
     keep = int(game_db.agno_runs_length(session_id))
     return game_db, session_id, keep
 
@@ -366,144 +360,15 @@ def _agent_run_accepts_stream(agent: object) -> bool:
     return "stream" in params or "stream_events" in params
 
 
-def run_agent_stream_text(
-    agent: Agent,
-    prompt: str,
-    tag: str,
-    on_thinking: Optional[Callable[[str], None]] = None,
-    on_text: Optional[Callable[[str], None]] = None,
-) -> str:
-    """流式跑 agent，按事件实时打到 stdout（带毫秒时间戳），最终返回拼合后的纯文本。
-
-    on_thinking(chunk): 每次思考片段到达时回调（可选）。
-    on_text(chunk): 每次正文增量到达时回调（可选）。
-
-    #1465 切片①：公共流不套入 transport 重试闭环（仅真实 API 召对接缝接线）。
-    仅对签名/显式属性确证不支持流式的替身走非流；未知 TypeError 响亮上浮（0005）。
-    RunErrorEvent 走系统层 typed 出口（与 web 同构造权威）。
-    """
-    tlog(f"[{tag}] 开始流式推演（首字到达前可能等几秒）")
-    pieces: List[str] = []
-    final_output = None
-    last_print = time.monotonic()
-    chunk_buf: List[str] = []
-    chars_since_flush = 0
-    if not _agent_run_accepts_stream(agent):
-        tlog(f"[{tag}] run 未声明流式能力，走普通 run")
-        text = extract_agent_text(agent.run(prompt))
-        if on_text:
-            on_text(text)
-        return text
-    stream = agent.run(prompt, stream=True, stream_events=True)
-
-    reasoning_buf: List[str] = []
-    reasoning_chars_since_flush = 0
-    reasoning_last_print = time.monotonic()
-    reasoning_streamed_chars = 0
-    tool_calls = 0
-    for event in stream:
-        ev_type = type(event).__name__
-        if ev_type == "ToolCallStartedEvent":
-            tool = getattr(event, "tool", None)
-            tname = getattr(tool, "tool_name", "?") if tool else "?"
-            targs = getattr(tool, "tool_args", {}) if tool else {}
-            tool_calls += 1
-            tlog(f"[{tag}/工具] 调用 {tname}({targs})")
-            if on_thinking:
-                on_thinking(f"\n〔查阅 {tname} {targs}〕\n")
-            continue
-        if ev_type == "ToolCallCompletedEvent":
-            tool_res = getattr(event, "tool", None)
-            tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
-            if tres:
-                tlog(f"[{tag}/工具结果] {tres!r}")
-            continue
-        rdelta = getattr(event, "reasoning_content", None)
-        if isinstance(rdelta, str) and rdelta:
-            reasoning_buf.append(rdelta)
-            reasoning_chars_since_flush += len(rdelta)
-            now = time.monotonic()
-            if reasoning_chars_since_flush >= 120 or (now - reasoning_last_print) >= 1.5:
-                merged = "".join(reasoning_buf)
-                tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-                if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-                    remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
-                    chunk = merged[:remaining]
-                    if chunk:
-                        on_thinking(chunk)
-                        reasoning_streamed_chars += len(chunk)
-                    if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
-                        on_thinking("\n〔思考已截断，继续推演中〕\n")
-                reasoning_buf.clear()
-                reasoning_chars_since_flush = 0
-                reasoning_last_print = now
-        is_terminal = (
-            (hasattr(event, "is_final") and getattr(event, "is_final", False))
-            or ev_type in ("RunOutput", "RunCompletedEvent")
-        )
-        err = map_run_error_event(event)
-        if err is not None:
-            raise err
-        if is_terminal:
-            final_output = event
-            continue
-        delta = getattr(event, "content", None)
-        if isinstance(delta, str) and delta:
-            pieces.append(delta)
-            chunk_buf.append(delta)
-            chars_since_flush += len(delta)
-            if on_text:
-                on_text(delta)
-            now = time.monotonic()
-            if chars_since_flush >= 80 or (now - last_print) >= 1.0:
-                merged = "".join(chunk_buf).replace("\n", " ⏎ ")
-                tlog(f"[{tag}] …{merged[-160:]}")
-                chunk_buf.clear()
-                chars_since_flush = 0
-                last_print = now
-
-    if reasoning_buf:
-        merged = "".join(reasoning_buf)
-        tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-        if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-            remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
-            chunk = merged[:remaining]
-            if chunk:
-                on_thinking(chunk)
-                reasoning_streamed_chars += len(chunk)
-            if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
-                on_thinking("\n〔思考已截断，继续推演中〕\n")
-    if chunk_buf:
-        merged = "".join(chunk_buf).replace("\n", " ⏎ ")
-        tlog(f"[{tag}] …{merged[-160:]}")
-
-    streamed = "".join(pieces)
-    if streamed.strip():
-        text = streamed
-        fail_if_llm_error(text, "LLM 调用")
-    elif final_output is not None:
-        text = extract_agent_text(final_output)
-        if not text.strip():
-            abort_llm_contract(tag, "流式终结事件没有正文 content", "")
-    else:
-        abort_llm_contract(tag, "流式无内容且无终结事件", "")
-    tlog(f"[{tag}] 完成，{len(text)} 字，工具调用 {tool_calls} 次")
-    _dump_llm_messages(final_output, tag, agent=agent)
-    if final_output is not None:
-        metrics = getattr(final_output, "metrics", None)
-        model_id = getattr(getattr(agent, "model", None), "id", None) or "stream"
-        record_stream_metrics(str(model_id), metrics, caller_tag=tag)
-    return text
-
-
 def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
+    """Decode agent JSON. Structural fence/outer/first-object only; never rewrite string bodies."""
     text = strip_json_fence(raw)
     # 试 1：原文直解
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         data = None
-    # 试 2：截 {...} 最外层再解
+    # 试 2：截 {...} 最外层再解（外围结构，不改正文）
     if data is None:
         start = text.find("{")
         end = text.rfind("}")
@@ -514,14 +379,7 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
             data = json.loads(snippet)
         except json.JSONDecodeError:
             data = None
-        # 试 3：净化 control char（\r\v\f\x00-\x1f 等）后再解
-        if data is None:
-            cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", snippet)
-            try:
-                data = json.loads(cleaned)
-            except json.JSONDecodeError:
-                data = None
-        # 试 4：截取首个合法平衡的 {...} 子串（防 LLM 重发拼接）
+        # 试 3：截取首个合法平衡的 {...} 子串（防 LLM 重发拼接；不擦洗字符串正文）
         if data is None:
             depth = 0
             in_str = False
@@ -548,7 +406,6 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
                         break
             if best_end > 0:
                 first_block = snippet[: best_end + 1]
-                first_block = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", first_block)
                 try:
                     data = json.loads(first_block)
                 except json.JSONDecodeError as error:
@@ -629,6 +486,11 @@ def create_promulgation_judge_agent(
             "命门类可打回并置 midzhi_unpromulgatable=true，普通中旨无前科时从严但不得机械地"
             "一概打回；有 promulgation_history 批红强颁前科时与无前科差分，优先打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
+            "action_type=revoke_decree 的案卷是撤回一道已发旨：其 revoke_target "
+            "给出那道原旨的正文、已投入（paid）、实际办理进度（progress）与"
+            "参与者。撤令与别的旨一样本月由外廷反应：你可以准行，也可以劝回、"
+            "或以拖延（打回/留中）不使其生效——按原旨办到几分、已花掉多少、"
+            "谁在承办自行判断，代码不预设你必须准行。",
         ],
     )
 
@@ -642,43 +504,6 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
         id="decree-writer",
         model=create_chat_model(llm_config, temperature=0.3, top_p=0.9),
         instructions=[_ctx().game_world_prompt, _ctx().decree_writer_prompt],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
-    """#671：抵京候见独立报到声部（王承恩 one-shot；勿复用夜卷）。"""
-    return Agent(
-        name="王承恩抵京报到",
-        id="arrival-attendant",
-        model=create_chat_model(llm_config, temperature=0.4),
-        instructions=[
-            "你是王承恩——御前老太监。用户给出本月新抵京、尚在候旨的结构化名单"
-            "（年月、人名、地点、候旨状态）。你据此向皇爷低声递话。",
-            "名单每行只代表一位来人；据该行连续通报此人本月抵京、现正候旨、仍尚未宣入，自由措辞。",
-            "同月多人逐人点到，以递话正文作答。",
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_settlement_attendant_agent(llm_config: LLMConfig) -> Agent:
-    """#1745 / 0150-D5-b：结算拒收递话声部（王承恩 one-shot；与抵京报到并列，不复用）。
-
-    代码只供结构化拒收事实；措辞由本 agent 据实编织，代码不写戏内句。
-    """
-    return Agent(
-        name="王承恩结算拒收递话",
-        id="settlement-attendant",
-        model=create_chat_model(llm_config, temperature=0.4),
-        instructions=[
-            "你是王承恩——御前老太监。用户给出本回合有司录档、尚未得行的结构化拒收事实"
-            "（年月、section、category、reason）。你据此向皇爷低声递话。",
-            "只据事实包自由措辞，不复述技术字段名，不编造未给出的细节。",
-            "有事实才开口；以递话正文作答。",
-        ],
         add_history_to_context=False,
         markdown=False,
     )
@@ -703,167 +528,33 @@ def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
 
 
 
-def create_endorsement_extractor_agent(llm_config: LLMConfig) -> Agent:
-    """收夜 endorsement-only 抽取员（#612 / ADR 0070）：只绑定已说出口的担名，不写故事账。"""
-    return Agent(
-        name="召对背书绑定员",
-        id="endorsement_extractor",
-        model=create_chat_model(llm_config, temperature=0.1),
-        instructions=[
-            "你只做一件事：把本夜对话里已经说出口的会签、当面站台、御笔手敕，"
-            "绑定到输入给出的可背书案卷。只输出引用绑定，不重写、不复制故事正文。",
-            "只输出 JSON，形如 "
-            '{"endorsements":[{"dossier_id":1,"form":"会签","endorser_id":"毕自严",'
-            '"imperial":false,"source_chat_turn_id":42}]}。',
-            "字段：输入「可背书案卷」以 ref.dossier_id 标识案卷；输出必须用扁平 dossier_id"
-            "（取值自对应 ref.dossier_id），不得输出 dossier_ref；"
-            "form ∈ {会签,当面站台,御笔手敕}；"
-            "会签/当面站台须具名 endorser_id 且 imperial=false；"
-            "御笔手敕须 endorser_id 空串且 imperial=true；"
-            "source_chat_turn_id 必须是输入 surviving_source_turns 中的 id。",
-            "没说出口则不要编造；禁字段：不得输出 facts/body/presence_effect/"
-            "audibility/tags/person_names/dossier_ref。"
-            "无背书时输出 {\"endorsements\":[]}。不输出 JSON 以外任何文字。",
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
 
+def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
+    """逐旨预推：与世界段同一材料目录读法，本旨事实由调用消息携带。"""
+    from ming_sim.materials import material_tools
 
-def _is_cols_rows_table(v: object) -> bool:
-    """判断某字段是否 {cols,rows} 二维表（可转 TSV）。"""
-    return isinstance(v, dict) and set(v.keys()) == {"cols", "rows"}
-
-
-def _table_to_tsv(name: str, table: Dict[str, object]) -> str:
-    """{cols,rows} → 真 TSV 文本块（tab 分隔、换行分行）。
-
-    放在 json.dumps 之外，避免 \\t/\\n 被 JSON 转义吃掉压缩收益（实测比 dict-of-rows -25%、
-    比转义后塞进 JSON 再 -10%）。空表只吐表头行（空）。None → 空串。
-    """
-    cols = [str(c) for c in (table.get("cols") or [])]
-    rows = table.get("rows") or []
-    lines = ["\t".join(cols)]
-    for r in rows:  # type: ignore[assignment]
-        lines.append("\t".join("" if v is None else str(v) for v in r))
-    return f"## {name}（TSV，首行列名，tab 分隔）\n" + "\n".join(lines)
-
-
-def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> str:
-    """拼 simulator/extractor 共用的盘面前缀段（turn_header + 盘面 TSV 块 + 其余 JSON）。
-
-    缓存关键：simulator 与 extractor 的 system instructions 前缀都是
-    `[game_world, simulator_context, ...]`。本函数对二者吐出**字节级一致**的 simulator_context，
-    simulator 先跑就把 `game_world + simulator_context` 写进 DeepSeek 前缀缓存，extractor
-    再命中。turn_header 文案、取值路径(统一从 payload['turn'])、序列化参数三者两边同源。
-
-    BUG 修复：历史上 simulator 用 state 路径+文案「邸报抬头与正文涉及年月」，extractor 用
-    payload['turn']+文案「抽取涉及年月」→ 第一个字节就分叉 → extractor 整段 payload 全 miss。
-    实测统一后结算 token -14.7%。
-
-    TSV 优化：`{cols,rows}` 二维表（regions/armies/buildings/court_roster/powers_brief）转**真
-    TSV 文本块**（json.dumps 之外，免转义），按「变化最小→最易变」排序——建筑/人物在前，军队/
-    地区其次，诏书/记忆/issue 等高频变化字段连同非表字段走尾部 JSON。其余字段（含 factions_brief/
-    classes_brief 叙述串、issues/memories 等）维持 JSON。实测表类 -25% token。
-    """
-    payload = simulator_payload or {}
-    turn_header = ""
-    # build_simulator_payload 恒带 turn；缺 label 时只走 reign_period_label()，禁西历字面抬头。
-    if isinstance(payload.get("turn"), dict):
-        t = payload["turn"]
-        label = t.get("reign_period_label")
-        if not label:
-            y, p = t.get("year"), t.get("period")
-            if y is not None and p is not None:
-                try:
-                    label = reign_period_label(int(y), int(p))
-                except (TypeError, ValueError):
-                    label = ""
-            else:
-                label = ""
-        if label:
-            turn_header = (
-                f"【本回合年月】{label}（第 {t.get('turn')} 回合）。"
-                f"涉及年月时以此为准。\n"
-            )
-
-    # 盘面表（{cols,rows}）转 TSV，按「稳→变」排序置前；缺失/非表的跳过。
-    table_order = ("buildings", "court_roster", "armies", "regions")
-    tsv_blocks: List[str] = []
-    consumed: set[str] = set()
-    for name in table_order:
-        v = payload.get(name)
-        if _is_cols_rows_table(v):
-            tsv_blocks.append(_table_to_tsv(name, v))  # type: ignore[arg-type]
-            consumed.add(name)
-    # table_order 未列到、但仍是 {cols,rows} 的表也转 TSV（防新增表字段漏压缩），稳定排序。
-    for name in sorted(k for k in payload if k not in consumed and _is_cols_rows_table(payload.get(k))):
-        tsv_blocks.append(_table_to_tsv(name, payload[name]))  # type: ignore[arg-type]
-        consumed.add(name)
-
-    rest = {k: v for k, v in payload.items() if k not in consumed}
-    parts = [turn_header + "【本回合推演输入 simulator_payload】"]
-    parts.extend(tsv_blocks)
-    parts.append("## 其余字段（JSON）\n" + json.dumps(rest, ensure_ascii=False, sort_keys=False))
-    return "\n".join(parts)
-
-
-def create_season_simulator_agent(
-    llm_config: LLMConfig,
-    agno_db: SqliteDb,
-    state: Optional[GameState] = None,
-    db: Optional[object] = None,
-    simulator_payload: Optional[Dict[str, object]] = None,
-) -> Agent:
-    """月末推演日讲官。全量盘面走 user payload，无 tool。
-    走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。
-    一次性 agent：不传 db，免得 runs 累积撑爆 <db>.emperor.db。"""
-    del db, state, agno_db
-    cfg = _llm_for_role(llm_config, "simulator")
-    tlog(f"[simulator] 使用模型 {describe_effective_model(cfg)}")
-    # simulator_context 与 extractor 共用 build_simulator_context → 字节一致 → 暖好 extractor 前缀缓存。
-    simulator_context = build_simulator_context(simulator_payload)
-    from ming_sim.action_clusters import season_option_contract_prompt
-    instructions = [
-        _ctx().game_world_prompt,
-        simulator_context,
-        _ctx().season_simulator_prompt,
-        season_option_contract_prompt("grant_allocation"),
-    ]
-    if is_minimax_base_url(cfg.base_url):
-        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
-
-    return Agent(
-        name="月末推演日讲官",
-        id="season-simulator",
-        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
-        instructions=instructions,
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_decree_forecast_agent(
-    llm_config: LLMConfig,
-    simulator_payload: Dict[str, object],
-) -> Agent:
-    """逐旨夜里预推；复用 simulator 模型与盘面投影，不跑月度邸报契约。"""
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[decree-forecast] 使用模型 {describe_effective_model(cfg)}")
+    model = create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True)
+    root = getattr(prepared, "root", "")
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(root or "")
     instructions = [
         _ctx().game_world_prompt,
-        build_simulator_context(simulator_payload),
         "只推演本次输入中这一道旨在当前盘面上的可能后果。",
         "这是夜里预推，不推演月度世界事件，也不生成月末邸报。",
         "若推演需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        "开场只有最小集。其余材料在当前目录，按需自读。",
+        str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):
         instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
     return Agent(
         name="逐旨预推者",
         id="decree-forecast",
-        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
+        model=model,
         instructions=instructions,
+        tools=material_tools(root),
         add_history_to_context=False,
         markdown=False,
     )
@@ -890,6 +581,11 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         "本段只写推演结果。",
         "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
         "开场只有最小集。其余材料在当前目录，按需自读。",
+        # #1893：候选事实在世界目录里（盘面/候选事件与弹劾潮.txt），本段自读、
+        # 自行判定本月哪些真发生、哪个派系是否发难；不选的照实不写。
+        "本段自行取阅本月候选的人物事件与弹劾潮（盘面/候选事件与弹劾潮.txt），"
+        "按盘面与史实成因判断哪些本月真的发生、是否有人借机发难；"
+        "确实发生的写进本段正文，不选中的不必提及。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):
@@ -919,7 +615,7 @@ def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         model.materials_dir = str(root or "")
     instructions = [
         _ctx().game_world_prompt,
-        _ctx().season_simulator_prompt,
+        _ctx().gazette_author_prompt,
         "你写本期邸报。盘面与历月材料沿当前目录，按需自读。",
         "用 json 返回两个字段：title 是你为本期写的标题，report 是呈皇帝的全文。",
         str(getattr(prepared, "opening", "") or ""),
@@ -955,31 +651,6 @@ def _rescript_option_instructions(
         structured_decree_prompt_contract(),
     ]
 
-
-def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """#656 / ADR 0093 前半：急务分拣＋票拟生成官（phase2 fan-out 第 N+1 路，N=extractor 模块数）。一次性，不持久化。"""
-    del agno_db
-    ctx = _ctx()
-    cfg = _llm_for_role(llm_config, "extractor")
-    return Agent(
-        name="急务票拟官",
-        id="rescript-drafter",
-        model=create_chat_model(
-            cfg,
-            temperature=0.4,
-            top_p=0.9,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=[
-            ctx.game_world_prompt,
-            ctx.rescript_draft_prompt,
-            # 初拟 payload 注入 character_targets（#1804）
-            *_rescript_option_instructions(character_targets_supplied=True),
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
 
 
 def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
@@ -1048,7 +719,7 @@ def create_rescript_deliberate_agent(llm_config: LLMConfig, agno_db: SqliteDb) -
 
 
 def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """国史编纂官：读所给历月邸报与时间线，生成史评式结局总结（纯文本）。一次性，不持久化。"""
+    """国史编纂官：读所给历月邸报，生成史评式结局总结（纯文本）。一次性，不持久化。"""
     del agno_db
     ctx = _ctx()
     return Agent(
@@ -1111,7 +782,12 @@ def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
 
 
 def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None) -> Agent:
-    """整月密令供料推演者（步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。"""
+    """整月密令供料推演者（步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。
+
+    #1896：查案密令不再用"执行态档位"折进度，改由模型按其所读材料声明本月**实际投入**
+    与**所查事实**；被查者经关系网知情后的毁证选择也在同一次 run 内按其视角声明。
+    引擎只据声明核算累计投入与逐证难度（P6：呈现层零改字，此处只改输入）。
+    """
     from ming_sim.materials import material_tools
 
     cfg = _llm_for_role(llm_config, "simulator")
@@ -1126,17 +802,44 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         _ctx().game_world_prompt,
         "你是整月密令供料推演者（步骤 4a）。",
         "根据本月事实材料（名义声明、实入流水、拒收、预推文、世界段、请旨答复、盘面）"
-        "及合资格长差案卷、在办密令，自行据实判断办理与拒收，产出密奏和执行态声明。"
+        "及合资格长差案卷、在办密令，自行据实判断办理与拒收，产出密奏和执行态声明。",
         "不得把未落或被拒收的意向当成已生效事实。盘面与文字事实可按需自读当前目录。",
         "必须返回 JSON 对象，包含两个字段：",
         "1. `dossier_progress_reports`: 列表，每个合资格长差案卷一条。每项包含：",
         "   - dossier_id: 整数，对应 eligible_dossiers 中的 dossier_id",
         "   - progress_band: 字符串，进展评级（如'顺利'、'持平'、'受阻'等）",
         "   - memorial_text: 字符串，承办人呈报皇帝的本月密奏正文，不可为空",
+        "   - origin: 承办人在这条密奏里自己选择的行动。睁眼闭眼写 same_faction_blind，"
+        "带私货写 private_goods；两样都选则用 + 连在一起。只写他这一次选出的记号",
         "2. `covert_exec_selections`: 列表，每个在办密令一条。每项包含：",
         "   - order_id: 整数，对应 active_secret_orders 中的 id",
         "   - fidelity: 字符串，执行态，必须为 '忠实'、'打折'、'阳奉阴违'、'反噬' 之一",
         "   - note: 字符串，执行态备注",
+        "查案密令（active_secret_orders 里带 investigation_facts 的那些）改用下列字段"
+        "表态，不要用 fidelity 折算查案进度。effort 必填：敷衍或停办写 0，"
+        "缺这一项不算数——那是没有声明，不是零投入：",
+        "   - effort: 0 到 1 之间的数字，表示你这个月**下了多大劲**去查："
+        "敷衍或停办给 0，真下功夫深挖给 1，取中间的按实情给。这是你的心意，"
+        "不是你办成了多少——引擎会按你手上实情（能力、人在不在差上、别的差务"
+        "压着多少）核出本月实投，并逐月累计。一条罪证要查多久是引擎的账，"
+        "不是你说了算；你本月真下死力，引擎也不拦着当月查出来。",
+        "   - fact_key: 字符串，本月实际下手的罪证标识，取自 investigation_facts。"
+        "只填你真正去查的那条；本月无从下手则省略此字段（引擎不会替你挑一条）。",
+        "   - method: 字符串，你本月用的查法。",
+        "   - tip_off: 对象，仅在你**确有一条消息经关系网递到了被查者手里**时给出："
+        "{source: 递话给他的人}。开案本身他不会知道——须真有人把话递到才算知情；"
+        "没有这条声明，引擎不认他知情，后续毁证与压案声明都不会被承接。",
+        "   - spoliation: 对象，仅在被查者已经知情、且你（按其视角）决定毁证时给出："
+        "{effect: 'harder' 或 'gone', fact_key: 被毁的那条罪证标识}。毁证只作用于"
+        "所指的那一条罪证，不牵连其他；是否毁、毁到何种程度由你按人物决定。",
+        "   - suppression: 对象，仅在被查者已经知情、且你决定压案（行贿说项之类）时"
+        "给出：{form: 他怎么压的}。压不压得住不由你填表决定，写下他做了什么即可。",
+        "   - note: 字符串，密奏正文。奏报写得好听与否与上面声明的实际投入无关。",
+        "active_secret_orders 里每位人物的 investigator_identity_materials / "
+        "investigation_target_identity_materials 的 materials_path 指向本人可及材料索引；"
+        "正文按人物经历、公事档案、事务与公开材料分列在该索引所在子目录，"
+        "先列该子目录取得相对调用根目录的路径，再按需读文件；"
+        "按各自身份演绎，同场不等于谁都知道对方的底细。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):

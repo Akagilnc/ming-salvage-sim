@@ -77,9 +77,10 @@ agno Agent.run()
 | 来源 | 路径 | 内容 |
 |---|---|---|
 | **结构化 trace**(默认开) | `scripts/runs/cli_trace_<pid>.jsonl` | 每次 LLM 调用一行:序号 / **agent 标签**(大臣/写诏/推演/extractor/章节记忆,已验证标对) / 耗时 / 重试 / prompt 全文 / 响应全文 |
+| **LLM dump**（`MING_SIM_DUMP_LLM=1`） | `scripts/runs/llm_dump_<pid>.jsonl` | 每次调用一行 JSON：tag / messages（含 reasoning）/ usage / finish_reason |
 | 游戏 stdout | 需 `tee` | 确定性结算细节:实际落库 delta、事项推进、结局判定、数值变化 |
 
-开关:`MING_SIM_TRACE=0` 关 trace、`MING_SIM_TRACE_PATH=...` 改路径、`MING_SIM_LLM_DEBUG=1` 调用摘要打屏、`MING_SIM_DUMP_LLM=1` 额外 dump 原始 agno messages。
+开关:`MING_SIM_TRACE=0` 关 trace、`MING_SIM_TRACE_PATH=...` 改路径、`MING_SIM_LLM_DEBUG=1` 调用摘要打屏、`MING_SIM_DUMP_LLM=1` 开上表 JSONL dump。
 
 ---
 
@@ -113,4 +114,4 @@ MING_SIM_LLM_BACKEND=agy MING_SIM_DB=data/probe.db \
 - `cli_backend` 新增 `cursor` / `kimi` / `grok` 三 runner（opencode **不**入清单，走 api 通道）。
 - 名单单源：`_CLI_BACKENDS` / `GATE_CLI_RUNNERS`；月末多 extractor 并发对所有 runner 一视同仁（无按模型串行白名单）。
 - 四闸脚本 `--channel api|cli` + choices 共享；ds-flash 群友基线走 OpenCode Go `https://opencode.ai/zen/v1`。
-- 用法与基线纪律见 [`LLM_BACKEND_BENCH.md` §十三](LLM_BACKEND_BENCH.md)；端点核实 [`evidence/issue-1256-opencode-go-ds-flash-api.json`](evidence/issue-1256-opencode-go-ds-flash-api.json)。
+- 用法与基线纪律见 [`LLM_BACKEND_BENCH.md` §十三](LLM_BACKEND_BENCH.md)。

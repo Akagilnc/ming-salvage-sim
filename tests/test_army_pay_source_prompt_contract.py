@@ -1,4 +1,4 @@
-from tests.section_rejection_helpers import prepare_then_settle as run_settle
+from tests.section_rejection_helpers import run_declaration as run_settle
 
 
 def test_prompt_compatible_ming_new_army_pay_source_aliases_land(game):
@@ -10,13 +10,14 @@ def test_prompt_compatible_ming_new_army_pay_source_aliases_land(game):
         state,
         content,
         {
-            "新建军队": [
+            "new_armies": [
                 {
                     "id": "prompt_pay_source_army",
                     "origin_ref": "盘面自发",
                     "name": "饷源契约军",
                     "owner_power": "ming",
                     "station": "陕西/西安",
+                    "station_region": "shaanxi",
                     "commander": "孙传庭",
                     "troop_type": "募兵步骑",
                     "manpower": 8000,

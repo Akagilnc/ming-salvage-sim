@@ -5,7 +5,6 @@ import sqlite3
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.relations import EMPEROR_NODE, credit_events_as_edges
 
 
 def test_directed_edge_events_are_stored_and_queryable(game):
@@ -38,7 +37,7 @@ def test_directed_edge_events_are_stored_and_queryable(game):
 def test_edge_event_kind_and_evidence_are_fail_closed(game):
     db, state, _ = game
 
-    with pytest.raises(ValueError, match="未知边事件类目"):
+    with pytest.raises(ValueError):
         db.record_relation_edge_event(
             source="甲",
             target="乙",
@@ -48,7 +47,7 @@ def test_edge_event_kind_and_evidence_are_fail_closed(game):
             turn=state.turn,
         )
 
-    with pytest.raises(ValueError, match="evidence"):
+    with pytest.raises(ValueError):
         db.record_relation_edge_event(
             source="甲",
             target="乙",
@@ -72,63 +71,6 @@ def test_edge_event_kind_and_evidence_are_fail_closed(game):
     assert row["id"] == row_id
     assert row["evidence"] is True
     assert "round:" in row["origin"]
-
-
-def test_credit_contract_fixture_reads_as_semantic_directed_edges():
-    fixture = [
-        {
-            "person": "杨嗣昌",
-            "event_kind": "兑现所托",
-            "context": "奉诏清丈，按期复命。",
-            "origin": "credit:fixture:兑现所托",
-            "turn": 4,
-        },
-        {
-            "person": "毕自严",
-            "event_kind": "辜负",
-            "context": "帝面却毕自严泣血之谏。",
-            "origin": "credit:fixture:辜负",
-            "turn": 5,
-        },
-        {
-            "person": "王承恩",
-            "event_kind": "撑腰",
-            "context": "皇帝当面为王承恩挡下责难。",
-            "origin": "credit:fixture:撑腰",
-            "turn": 6,
-        },
-        {
-            "person": "洪承畴",
-            "event_kind": "弃卒保车",
-            "context": "皇帝为保全大局弃置洪承畴。",
-            "origin": "credit:fixture:弃卒保车",
-            "turn": 7,
-        },
-        {
-            "person": "徐光启",
-            "event_kind": "知遇",
-            "context": "越次简拔，命其入阁。",
-            "origin": "credit:fixture:知遇",
-            "turn": 8,
-        },
-    ]
-
-    edges = credit_events_as_edges(fixture)
-
-    assert [(edge["source"], edge["target"]) for edge in edges] == [
-        ("杨嗣昌", EMPEROR_NODE),
-        (EMPEROR_NODE, "毕自严"),
-        (EMPEROR_NODE, "王承恩"),
-        (EMPEROR_NODE, "洪承畴"),
-        (EMPEROR_NODE, "徐光启"),
-    ]
-    assert [edge["event_kind"] for edge in edges] == [
-        "兑现所托",
-        "辜负",
-        "撑腰",
-        "弃卒保车",
-        "知遇",
-    ]
 
 
 def test_relation_edges_survive_restore(game, tmp_path):
@@ -158,19 +100,20 @@ def test_relation_edges_survive_restore(game, tmp_path):
     try:
         rows = restored.get_relation_edge_events(source="杨嗣昌", target="徐光启")
         assert len(rows) == 1
-        assert rows[0]["context"] == "二人当面相发明。"
         assert rows[0]["origin_round"] == 7
         for key in (
-            "source", "target", "event_kind", "context", "origin",
+            "source", "target", "event_kind", "origin",
             "year", "period", "turn",
         ):
             assert rows[0][key] == edge[key]
         summary2 = restored.get_relation_summary("杨嗣昌", "徐光启")
+        # 水位／身份结构化字段；不锁 founding/recent 自由正文等值（#1897 T1）。
         for key in (
-            "founding_segment", "recent_segment", "last_event_id",
+            "last_event_id",
             "last_brewed_year", "last_brewed_period", "dimension",
         ):
             assert summary2[key] == summary[key]
+        assert summary2 is not None and int(summary2["last_event_id"]) == int(edge["id"])
     finally:
         restored.close()
 

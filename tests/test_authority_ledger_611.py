@@ -1,4 +1,4 @@
-"""#611 authority ledger: production slot, projection, restore, revoke impression."""
+"""#611 authority ledger: production slot, projection, restore, revoke facts."""
 
 import pytest
 
@@ -6,14 +6,7 @@ from ming_sim.db import GameDB
 from ming_sim import issues as issue_engine
 import ming_sim.decree as decree_mod
 from ming_sim.relations import EMPEROR_NODE
-from ming_sim.simulation import TOP_LEVEL_ALIASES, canonicalize_extraction
-
-
-def _minister(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
+from tests.readback_helpers import ming_character_name as _minister
 
 
 def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
@@ -58,43 +51,12 @@ def _revoke(db, state, content, authority_id, dossier):
     return result
 
 
-def test_authority_changes_alias_canonicalizes_chinese_and_english_op_locally():
-    assert TOP_LEVEL_ALIASES["授权变更"] == "authority_changes"
-    canonical = canonicalize_extraction({
-        "authority_changes": [{
-            "op": "revoke", "authority_id": 2, "dossier_id": 3,
-        }],
-    })
-    assert canonical["authority_changes"] == [{
-        "op": "revoke", "authority_id": 2, "dossier_id": 3,
-    }]
-
-    chinese = canonicalize_extraction({
-        "授权变更": [{
-            "动作": "授予", "授予对象": "甲", "权项": "便宜行事",
-            "事域": "issue:x", "案卷编号": 1,
-        }],
-    })
-    assert chinese["authority_changes"] == [{
-        "op": "授予", "holder_id": "甲", "privilege": "便宜行事",
-        "scope": "issue:x", "dossier_id": 1,
-    }]
 
 
-def test_authority_op_alias_does_not_rewrite_other_sections_action_field():
-    canonical = canonicalize_extraction({
-        "人物变更": [{"动作": "任命", "name": "甲"}],
-        "建筑": [{"动作": "create", "名称": "火器局"}],
-        "authority_changes": [{"动作": "grant", "dossier_id": 7}],
-    })
-
-    assert canonical["人物变更"][0]["action"] == "任命"
-    assert canonical["建筑"][0]["action"] == "create"
-    assert canonical["authority_changes"][0]["op"] == "grant"
 
 
-def test_production_path_grant_restore_revoke_impression_tracer(game):
-    """Real production-slot lifecycle: grant → judge → restore → revoke → restore."""
+def test_production_path_grant_restore_revoke_without_auto_grudge(game):
+    """Grant → restore → revoke keeps authority facts; no auto holder→emperor 结怨 (#1895)."""
     db, state, content = game
     holder = _minister(db)
     domain = "issue:清丈田亩"
@@ -170,13 +132,10 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert record["revoked"] is True
     assert record["revoked_turn"] == final_state.turn
 
-    edges = final.get_relation_edge_events(
+    # #1895 / J19: first revoke records only the revoke fact — no automatic 结怨.
+    assert final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
-    )
-    assert len(edges) == 1
-    assert edges[0]["context"] == f"收权·罢差·便宜行事·{domain}"
-    assert edges[0]["origin"].startswith(f"authority_revoke:{authority_id}")
-    assert not edges[0]["evidence"]
+    ) == []
 
     # Zero 0056 / 皇威 / faction cost on revoke.
     assert final_state.metrics == metrics_before
@@ -192,7 +151,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert gone["dossiers"][0]["held_authorities"] == []
     assert gone["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
 
-    # Idempotent already_revoked: no second edge, no revoked_turn rewrite.
+    # Idempotent already_revoked: no revoked_turn rewrite, still no auto edge.
     first_revoked_turn = record["revoked_turn"]
     again = issue_engine.apply_score_extraction(final, final_state, {
         "authority_changes": [{
@@ -204,9 +163,9 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert again["authority_changes"][0]["reason"] == "already_revoked"
     assert again["authority_changes"][0].get("rejected") is not True
     assert final.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
-    assert len(final.get_relation_edge_events(
+    assert final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
-    )) == 1
+    ) == []
 
 
 def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
@@ -307,20 +266,12 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     dossier = db.get_decree_dossier(dossier_id)
     projected = db.project_applicable_authorities(state.turn, dossier)
     assert [row["id"] for row in projected] == [typed]
-    assert bare not in {row["id"] for row in projected}
-    assert informed_only not in {row["id"] for row in projected}
 
     context = decree_mod.build_promulgation_judge_context(db, state, [dossier])
     assert context["dossiers"][0]["held_authorities"] == projected
     assert context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
         str(typed),
     ]
-    assert "payload-auth" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
-    assert "payload-list" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
 
 
 def test_same_dossier_grant_replay_is_idempotent(game):
@@ -490,8 +441,7 @@ def test_production_rejects_bare_domain_scope(game):
 def test_promulgation_payload_does_not_write_authority_records(game):
     """授权案卷不得平行直写 authority_records；#528 仅经 authority_changes 授予。
 
-    完整 privilege/scope/holder 的公开委任顺颁后落一条授权档（单一入口）；
-    skill_grants 仍为零（禁技能镜像）。
+    完整 privilege/scope/holder 的公开委任顺颁后落一条授权档（单一入口）。
     """
     db, state, _content = game
     holder = _minister(db)
@@ -505,17 +455,12 @@ def test_promulgation_payload_does_not_write_authority_records(game):
         executor_id=holder,
         payload={
             "character_id": holder,
-            "skill_id": "便宜行事",
             "holder_id": holder,
             "privilege": "便宜行事",
             "scope": "issue:payload旁路",
             "mode": "ordinary",
         },
     )
-    skills_before = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM skill_grants WHERE character_name=?",
-        (holder,),
-    ).fetchone()["n"]
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     rows = db.conn.execute(
         "SELECT * FROM authority_records WHERE dossier_id=?",
@@ -525,28 +470,3 @@ def test_promulgation_payload_does_not_write_authority_records(game):
     assert str(rows[0]["holder_id"]) == holder
     assert str(rows[0]["privilege"]) == "便宜行事"
     assert str(rows[0]["scope"]) == "issue:payload旁路"
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM skill_grants WHERE character_name=?",
-        (holder,),
-    ).fetchone()["n"] == skills_before
-
-
-def test_promulgation_judge_instructions_cover_held_authority_modifiers(monkeypatch):
-    import ming_sim.agents as agents_mod
-    from ming_sim.models import LLMConfig
-
-    monkeypatch.setattr(
-        agents_mod, "create_chat_model", lambda _cfg, **kwargs: object(),
-    )
-    monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
-    agent = agents_mod.create_promulgation_judge_agent(
-        LLMConfig(api_key="test", base_url="http://unused", model="test"),
-        object(),
-        session_id="promulgation-judge-turn-test",
-        num_history_runs=4,
-    )
-    text = "\n".join(str(item) for item in agent["instructions"])
-    assert "held_authorities" in text
-    assert "尚方剑密授" in text and "阻力" in text
-    assert "便宜行事" in text and "程序" in text
-    assert "专差督办" in text and "节制" in text

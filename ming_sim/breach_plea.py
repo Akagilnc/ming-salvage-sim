@@ -7,6 +7,12 @@ kind 分派矩阵（法）：
 - list_due_review_scenes：投影哭谏场面
 - apply_pending_due_reviews：禁当 staged 终裁；沉默保留 pending
 - dossiers_with_pending_due_review：不计入接管窗
+
+#1894：明确撤旨（撤回一道已发旨）不走本模块的挽留场——照常过外廷、当月见
+办理结果。外廷准行的撤令落地由 ``apply_persist_revoke_tail`` 承（0056 名声
+代价、捆带授权收回、同源**承诺**停 tick；不代模型结案，案卷终局由执行格
+判官的 ``dossier_executions`` 判决落）。
+本模块只管断供／挪用／撤人等非撤令的松手事实。
 """
 
 from __future__ import annotations
@@ -16,7 +22,6 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from ming_sim.db import GameDB
 from ming_sim.models import loads_effect_dict
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
@@ -66,10 +71,6 @@ _SPENT_AMOUNT_HALFWAY = 1  # 已投入金额达此即有资格入中档（与进
 # 断供：当月实拨低于承诺月供的此比例 → 欠额达阈
 _FUNDING_ARREARS_RATIO = 0.5
 
-# 办到一半国势倒退：0014 涌现缝 seed 事件 id
-HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
-_HALFWAY_METRICS_HIT = {"民心": -3, "皇威": -2}
-
 _DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
 _ISSUE_REF_RE = re.compile(r"^issue:([1-9][0-9]*)$")
 
@@ -85,23 +86,23 @@ def parse_dossier_id(origin_ref: object) -> Optional[int]:
 
 
 def encode_plea_meta(meta: Dict[str, object]) -> str:
-    """origin_context 承载机读元数据（场面投影只取 display，不泄 JSON）。"""
+    """origin_context 承载机读元数据。"""
     payload = dict(meta or {})
     return _META_PREFIX + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def decode_plea_meta(origin_context: object) -> Dict[str, object]:
+    from ming_sim.db import GameDB
+
     text = str(origin_context or "").strip()
     if not text.startswith(_META_PREFIX):
-        return {"display": text, "breach_kind": "", "reason": text}
-    raw = text[len(_META_PREFIX):]
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError):
-        return {"display": text, "breach_kind": "", "reason": text}
-    if not isinstance(data, dict):
-        return {"display": text, "breach_kind": "", "reason": text}
-    return data
+        return {}
+    # 有前缀的机读元数据：腐坏 JSON/非对象响亮，不 catch-to-{}（#1897 E1）。
+    from ming_sim.db import _load_durable_json_object
+    return _load_durable_json_object(
+        text[len(_META_PREFIX):],
+        surface="breach_plea.origin_context.meta",
+    )
 
 
 def commitment_natural_due_turn(row: Any) -> int:
@@ -155,23 +156,24 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
+    from ming_sim.db import GameDB
+
     names: List[str] = []
-    try:
-        roster = json.loads(row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
-    if isinstance(roster, list):
-        for item in roster:
-            if isinstance(item, dict) and item.get("tier") == "主办":
-                cid = str(item.get("character_id") or "").strip()
-                if cid:
-                    names.append(cid)
+    # 承诺名册走共同权威；腐坏响亮，不 catch-to-[]（#1897 E1）。
+    from ming_sim.participant_roster import decode_durable_participant_roster
+    roster = decode_durable_participant_roster(row["participant_roster"])
+    for item in roster:
+        if item.get("tier") == "主办":
+            cid = str(item.get("character_id") or "").strip()
+            if cid:
+                names.append(cid)
     try:
         origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
     except Exception:
         origin_ref = ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
+        # get_decree_dossier 已响亮解码名册；再消费其结构化列表。
         dossier = db.get_decree_dossier(int(did))
         if dossier is not None:
             for item in dossier.get("participant_roster") or []:
@@ -205,16 +207,14 @@ def _dedicated_accounts(row: Any) -> List[str]:
     except Exception:
         keys = []
 
-    tags_raw = row["tags"] if "tags" in keys else "[]"
-    try:
-        tags = json.loads(tags_raw or "[]")
-    except (TypeError, ValueError):
-        tags = []
-    if isinstance(tags, list):
-        for tag in tags:
-            t = str(tag or "").strip()
-            if t.startswith("专款:"):
-                _add(t.split(":", 1)[1].strip())
+    tags_raw = row["tags"] if "tags" in keys else None
+    # issues.tags 持久字符串数组：腐坏响亮（#1897 E1）。
+    from ming_sim.db import _load_durable_str_list
+    tags = _load_durable_str_list(tags_raw, surface="issues.tags")
+    for tag in tags:
+        t = str(tag or "").strip()
+        if t.startswith("专款:"):
+            _add(t.split(":", 1)[1].strip())
 
     ongoing_raw = row["ongoing_effects"] if "ongoing_effects" in keys else "{}"
     ongoing = loads_effect_dict(ongoing_raw or "{}")
@@ -292,7 +292,6 @@ def _merge_plea_kind_into_todo(
     breach_kind: str,
     reason: str,
     target_dossier_id: int,
-    display: str,
     extra: Optional[Dict[str, object]],
 ) -> int:
     """同回合第二类松手：显式并入既有 pending，log+meta 记全被吞类。"""
@@ -310,25 +309,14 @@ def _merge_plea_kind_into_todo(
             todo.get("commitment_ref"), todo.get("id"), primary, kind,
         )
     meta["absorbed_breach_kinds"] = absorbed_list
-    # 保留首类 primary；补充理由/案卷
-    if reason and not str(meta.get("reason") or "").strip():
-        meta["reason"] = str(reason)[:400]
-    elif reason:
+    # 保留首类 primary；补充理由/案卷（#1897：不按正文身份去重，只追加；
+    # 仅空白的既有 reason 也是原文，不得因 strip 判空而覆盖）。
+    if reason:
         prev = str(meta.get("reason") or "")
-        add = str(reason)[:200]
-        if add and add not in prev:
-            meta["reason"] = f"{prev}；{add}"[:400]
+        add = str(reason)
+        meta["reason"] = f"{prev}；{add}" if prev else add
     if int(target_dossier_id or 0) > 0 and int(meta.get("target_dossier_id") or 0) <= 0:
         meta["target_dossier_id"] = int(target_dossier_id)
-    if display:
-        # 场面词保留首条 display；并入类记入 absorbed_labels
-        labels = meta.get("absorbed_labels")
-        if not isinstance(labels, list):
-            labels = []
-        label = BREACH_KIND_LABELS.get(kind, kind)
-        if label and label not in labels and kind != primary:
-            labels.append(label)
-        meta["absorbed_labels"] = labels
     if extra:
         for k, v in extra.items():
             if k not in meta:
@@ -350,7 +338,6 @@ def write_breach_plea_todo(
     breach_kind: str,
     reason: str = "",
     target_dossier_id: int = 0,
-    display: str = "",
     extra: Optional[Dict[str, object]] = None,
     commit: bool = False,
 ) -> int:
@@ -372,9 +359,6 @@ def write_breach_plea_todo(
     due = commitment_natural_due_turn(row)
     due_turn = due if due > 0 else turn
     title = str(row["title"] or "")
-    disp = str(display or "").strip() or (
-        f"臣工泣谏：皇上于「{title}」有{label}之举，臣的信心一半是皇爷给的，请陛下三思。"
-    )
 
     # 同回合已有条 → 并入（禁 UNIQUE+IGNORE 静默吞）
     existing = _find_pending_plea_same_turn(db, int(commitment_ref), turn)
@@ -391,18 +375,16 @@ def write_breach_plea_todo(
         return _merge_plea_kind_into_todo(
             db, existing,
             breach_kind=kind,
-            reason=str(reason or label)[:400],
+            reason=str(reason or label),
             target_dossier_id=int(target_dossier_id or 0),
-            display=disp[:400],
             extra=extra,
         )
 
     meta: Dict[str, object] = {
         "breach_kind": kind,
-        "reason": str(reason or label)[:400],
+        "reason": str(reason or label),
         "target_dossier_id": int(target_dossier_id or 0),
-        "display": disp[:400],
-        "commitment_title": title[:120],
+        "commitment_title": title,
         "absorbed_breach_kinds": [],
     }
     if extra:
@@ -427,9 +409,8 @@ def write_breach_plea_todo(
             return _merge_plea_kind_into_todo(
                 db, existing,
                 breach_kind=kind,
-                reason=str(reason or label)[:400],
+                reason=str(reason or label),
                 target_dossier_id=int(target_dossier_id or 0),
-                display=disp[:400],
                 extra=extra,
             )
         logger.warning(
@@ -448,25 +429,6 @@ def project_breach_plea_scene(
     meta = decode_plea_meta(todo.get("origin_context"))
     breach_kind = str(meta.get("breach_kind") or "")
     label = BREACH_KIND_LABELS.get(breach_kind, str(todo.get("criterion_text") or "松手"))
-    absorbed = meta.get("absorbed_labels") or []
-    if isinstance(absorbed, list) and absorbed:
-        label = label + "、" + "、".join(str(x) for x in absorbed if x)
-    display = str(meta.get("display") or "").strip()
-    title = str(meta.get("commitment_title") or "")
-    if not display:
-        display = (
-            f"主办哭谏：前诺「{title}」遭{label}，"
-            f"臣的信心一半是皇爷给的，求皇上收回成命。"
-        )
-    from ming_sim.credit_events import FOUNDATION_BANNED_PLAYER_TOKENS
-    from ming_sim.decree_vocabulary import DEFORMATION_STRIP_PLAYER_TOKENS
-    # 静默剥离只载无歧义系统词；汉语普通词（变形/分界…）归 assert 哨兵。
-    for token in (
-        *DEFORMATION_STRIP_PLAYER_TOKENS,
-        *FOUNDATION_BANNED_PLAYER_TOKENS,
-        "AWAITING_DECISION", "<<DECISION>>",
-    ):
-        display = display.replace(token, "")
     return {
         "kind": "breach_plea",
         "entry_kind": ENTRY_KIND_BREACH_PLEA,
@@ -476,8 +438,9 @@ def project_breach_plea_scene(
         "due_turn": int(todo.get("due_turn") or 0),
         "breach_kind": breach_kind,
         "criterion_text": str(todo.get("criterion_text") or label),
-        "origin_context": display,
-        "scene_text": display,
+        "commitment_title": str(meta.get("commitment_title") or ""),
+        "reason": str(meta.get("reason") or ""),
+        "absorbed_breach_kinds": list(meta.get("absorbed_breach_kinds") or []),
         "channel": "audience_pending",
     }
 
@@ -564,65 +527,6 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     return FOUNDATION_JUST_STARTED
 
 
-def _apply_halfway_national_setback(
-    db: Any, state: Any, *, title: str, reason: str, origin_ref: str,
-) -> Dict[str, object]:
-    """办到一半：国势倒退走 0014/auto_trigger 涌现缝（seed+event_to_issue+event_triggers）。
-
-    禁平行 insert_issue 直写。
-    """
-    from ming_sim.issues import event_to_issue
-
-    # 一锤子国势（SCORE_METRICS 内）
-    metrics_hit = dict(_HALFWAY_METRICS_HIT)
-    for key, delta in metrics_hit.items():
-        cur = int(state.metrics.get(key, 0) or 0)
-        state.metrics[key] = max(0, cur + int(delta))
-
-    ev = None
-    content = getattr(db, "content", None)
-    if content is not None:
-        by_id = getattr(content, "event_by_id", None) or {}
-        ev = by_id.get(HALFWAY_SETBACK_EVENT_ID)
-
-    issue_id = 0
-    if ev is not None:
-        # event_to_issue：写 situation + event_triggers 终态账（与 auto_trigger 同核）
-        created = event_to_issue(db, state, ev, commit=False)
-        if created is not None:
-            issue_id = int(created)
-            # 把承诺溯源记进 stage（可查）
-            db.advance_issue(
-                state,
-                issue_id,
-                trigger_kind="breach_plea_setback",
-                trigger_ref=origin_ref or f"breach:{title}",
-                delta_bar=0,
-                stage_text="国势倒退",
-                narrative=str(reason or "办到一半撤诺，沉没投入化为负累")[:400],
-                metric_delta={},
-                commit=False,
-            )
-        else:
-            # 已有 active 同源：仍记 metrics；issue 回指 active
-            existing = db.find_active_issue_by_origin(
-                "event_pool", HALFWAY_SETBACK_EVENT_ID,
-            )
-            if existing is not None:
-                issue_id = int(existing["id"])
-    else:
-        logger.warning(
-            "halfway setback seed missing id=%s; metrics applied only",
-            HALFWAY_SETBACK_EVENT_ID,
-        )
-
-    return {
-        "setback_issue_id": int(issue_id),
-        "metrics_delta": metrics_hit,
-        "event_id": HALFWAY_SETBACK_EVENT_ID if ev is not None else "",
-    }
-
-
 def reclaim_bundled_authorities(
     db: Any,
     state: Any,
@@ -674,12 +578,18 @@ def stop_origin_commitment_ticks(
     reason: str,
     extra_issue_ids: Optional[Sequence[int]] = None,
 ) -> List[int]:
-    """同源 active initiative 停 tick（与立即 revoke 路径同核）。"""
+    """同源承诺停 tick（与立即 revoke 路径同核）。
+
+    #1894：只停**承诺**（initiative）。撤令不是把该案卷下长出的世界局势一并
+    终结——局势的存废归世界段模型声明，代码不得无差别取消（0154 撤案不等于
+    事务自动了结）。
+    """
     stopped: List[int] = []
     if int(target_dossier_id or 0) > 0:
         origin_ref = f"dossier:{int(target_dossier_id)}"
         for iss in db.conn.execute(
-            "SELECT id FROM issues WHERE origin_ref=? AND status='active'",
+            "SELECT id FROM issues WHERE origin_ref=? AND status='active' "
+            "AND kind='initiative'",
             (origin_ref,),
         ).fetchall():
             iid = int(iss["id"])
@@ -693,9 +603,13 @@ def stop_origin_commitment_ticks(
         if iid <= 0 or iid in stopped:
             continue
         row_i = db.conn.execute(
-            "SELECT status FROM issues WHERE id=?", (iid,),
+            "SELECT status, kind FROM issues WHERE id=?", (iid,),
         ).fetchone()
-        if row_i is not None and str(row_i["status"]) == "active":
+        if (
+            row_i is not None
+            and str(row_i["status"]) == "active"
+            and str(row_i["kind"] or "") == "initiative"
+        ):
             db.cancel_issue(state, iid, narrative=reason, commit=False)
             stopped.append(iid)
     return stopped
@@ -708,14 +622,17 @@ def apply_persist_revoke_tail(
     target_dossier_id: int,
     reason: str,
     apply_0056: bool,
+    close_target: bool = True,
     commitment_ref: int = 0,
     authority_source_dossier_id: int = 0,
     revoke_dossier_id: int = 0,
 ) -> Dict[str, object]:
-    """坚持后落地 = 立即 revoke 路径效果 − 票面明文推迟项。
+    """撤旨落地唯一收尾：0056 毁约代价 + 捆带授权收回 + 同源承诺停 tick。
 
-    立即路径：0056 + 捆带授权收回 + 同源停 tick。
-    推迟项（当回合已做/不做）：顺颁即 breach+close 的当回合无损——此处补齐结账。
+    两个调用方（#1894）都传 ``close_target=False``：0056 只落名声账，案卷
+    结案留给执行格判官本月的 ``dossier_executions`` 判决——撤令与坚持撤都
+    不抢在模型声明前关案。``revoke_dossier_id`` 非零时另恢复该撤令案卷
+    带来的 pay_order override（见 pay_order.restore_pay_order_override）。
 
     返回 guofu_from_0056：本调用 0056 实际写出的辜负边人名
     （供 0079 撤人边去重；跨承诺/跨案卷同人边不在此集合）。
@@ -737,6 +654,7 @@ def apply_persist_revoke_tail(
         breach_applied = bool(
             db.breach_decree_dossier(
                 state, did, reason=reason, commit=False,
+                close_target=close_target,
             )
         )
         if breach_applied:
@@ -795,7 +713,15 @@ def finalize_persist(
     *,
     commit: bool = False,
 ) -> Dict[str, object]:
-    """坚持撤：根基分档落执行格 + 共享 revoke 收尾 + 条件触发 0056 + 消费 todo。"""
+    """坚持撤：落 0056 毁约代价 + 捆带授权收回 + 同源承诺停 tick + 消费 todo。
+
+    #1894 / ADR 0075:15：**不**由代码判根基档、生成执行格终值或造剧情后果。
+    「根基成了几分」由执行格判官（0057）按已投入与实际进度软判，其判决经
+    既有 ``dossier_executions`` 落账适配器进 ``apply_score_extraction`` 的
+    执行格段；本函数只做代码该做的账（0056 名声轨、授权收回、停 tick、
+    0079 信用边、消费 todo）。故 0056 传 ``close_target=False``：案卷留在
+    executing，等模型本月判决落地结案——代码不抢在模型声明前关案。
+    """
     meta = decode_plea_meta(todo.get("origin_context"))
     breach_kind = str(meta.get("breach_kind") or "")
     # merged meta 账目（#623 r2/r3）：
@@ -804,36 +730,14 @@ def finalize_persist(
     #   实写同人去重（tail.guofu_from_0056；origin 前缀 dossier:{id}:breach）。
     #   跨承诺/跨案卷同人边各落各账，UNIQUE 键含 origin 本就允许。
     kinds = plea_kind_set(meta)
-    reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")[:400]
+    reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")
     commitment_ref = int(todo["commitment_ref"])
     row = _issue_row(db, commitment_ref)
-    title = str(row["title"] if row is not None else meta.get("commitment_title") or "")
     origin_ref = str(row["origin_ref"] if row is not None else "")
     target_dossier_id = int(meta.get("target_dossier_id") or 0)
-    revoke_dossier_id = int(meta.get("revoke_dossier_id") or 0)
     if target_dossier_id <= 0:
         parsed = parse_dossier_id(origin_ref)
         target_dossier_id = int(parsed or 0)
-
-    tier = assess_foundation_tier(db, commitment_ref)
-    setback: Dict[str, object] = {}
-    exec_result: Dict[str, object] = {}
-
-    if tier == FOUNDATION_ROOTED:
-        outcome = "degraded"
-        note = f"根基已成而撤后续之诺，只失未兑现红利（{reason}）"[:200]
-        close = True
-    elif tier == FOUNDATION_HALFWAY:
-        outcome = "failed"
-        note = f"事废：办到一半松手，沉没投入与国势倒退（{reason}）"[:200]
-        close = True
-        setback = _apply_halfway_national_setback(
-            db, state, title=title, reason=reason, origin_ref=origin_ref,
-        )
-    else:
-        outcome = "failed"
-        note = f"刚起头撤，所费付诸东流（{reason}）"[:200]
-        close = True
 
     apply_0056 = bool(kinds & _BREACH_KINDS_TRIGGER_0056)
     tail = apply_persist_revoke_tail(
@@ -841,50 +745,10 @@ def finalize_persist(
         target_dossier_id=target_dossier_id,
         reason=reason,
         apply_0056=apply_0056,
+        close_target=False,
         commitment_ref=commitment_ref,
-        revoke_dossier_id=revoke_dossier_id,
     )
     breach_applied = bool(tail.get("breach_0056"))
-
-    # 执行格：经既有适配器落格（禁裸 SQL 宽吞）
-    if target_dossier_id > 0:
-        dossier = db.get_decree_dossier(int(target_dossier_id))
-        if dossier is not None and str(dossier.get("status") or "") == "executing":
-            db.record_dossier_execution(
-                int(target_dossier_id), outcome, note, int(state.turn),
-                close=close, commit=False,
-            )
-            if outcome in {"degraded", "failed", "transformed"}:
-                db.record_dossier_progress(
-                    int(target_dossier_id), int(state.turn), outcome, note,
-                    is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-                    commit=False,
-                )
-            exec_result = {
-                "dossier_id": int(target_dossier_id),
-                "outcome": outcome,
-                "close": close,
-            }
-        elif dossier is not None:
-            exec_result = {
-                "dossier_id": int(target_dossier_id),
-                "outcome": str(dossier.get("execution_outcome") or outcome),
-                "already_closed": True,
-            }
-            if not str(dossier.get("execution_outcome") or "").strip():
-                try:
-                    db.record_dossier_execution(
-                        int(target_dossier_id), outcome, note, int(state.turn),
-                        close=False, commit=False,
-                    )
-                    exec_result["outcome"] = outcome
-                except (TypeError, ValueError, KeyError) as exc:
-                    logger.warning(
-                        "record_dossier_execution backfill failed dossier=%s: %s",
-                        target_dossier_id, exc,
-                    )
-
     # 0079 信用事件：坚持=回绝哭谏
     # 所载含撤人 → 按主办集合落辜负；仅跳过本 finalize 0056 已实写同人
     # （不重复）；其它承诺/案卷同人边不在 already，不得吞（不遗漏）
@@ -922,13 +786,12 @@ def finalize_persist(
         "todo_id": int(todo["id"]),
         "commitment_ref": commitment_ref,
         "breach_kind": breach_kind,
-        "foundation_tier": tier,
-        "outcome": outcome,
-        "note": note,
         "breach_0056": breach_applied,
-        "setback": setback,
-        "execution": exec_result,
+        # 案卷终局（执行格 outcome/note、半途后果）不在此返回：那是执行格判官
+        # 本月的 dossier_executions 判决，经 apply_score_extraction 落账。
+        "target_dossier_id": int(target_dossier_id),
         "authority_reclaims": tail.get("authority_reclaims") or [],
+        "stopped_issue_ids": tail.get("stopped_issue_ids") or [],
         "consumed": bool(consumed),
     }
 
@@ -1124,10 +987,6 @@ def _scan_funding_cutoff(db: Any, state: Any) -> List[int]:
             breach_kind=BREACH_KIND_FUNDING,
             reason=reason,
             target_dossier_id=int(parse_dossier_id(origin) or 0),
-            display=(
-                f"主办哭谏：前诺「{row['title']}」月供已断，"
-                f"臣的信心一半是皇爷给的，请陛下复其供亿。"
-            ),
         )
         if tid:
             written.append(tid)
@@ -1176,10 +1035,6 @@ def _scan_misappropriation(db: Any, state: Any) -> List[int]:
             breach_kind=BREACH_KIND_MISAPPROPRIATION,
             reason=f"专款「{hit_account}」被挪作他用",
             target_dossier_id=int(parse_dossier_id(origin) or 0),
-            display=(
-                f"主办哭谏：专款「{hit_account}」本为「{row['title']}」所备，"
-                f"今见他流，臣的信心一半是皇爷给的，求陛下守约。"
-            ),
         )
         if tid:
             written.append(tid)
@@ -1217,24 +1072,19 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     if co is not None:
         current_office = str(co["office_title"] or current_office).strip() or current_office
 
-    # 承诺 roster 上记录的 role/office 快照
+    # 承诺 roster 上记录的 role/office 快照；腐坏响亮（#1897 E1）。
     expected = ""
-    try:
-        roster = json.loads(commitment_row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
-    if isinstance(roster, list):
-        for item in roster:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("character_id") or "").strip() != name:
-                continue
-            if item.get("tier") != "主办":
-                continue
-            expected = str(
-                item.get("office") or item.get("role") or item.get("office_title") or ""
-            ).strip()
-            break
+    from ming_sim.participant_roster import decode_durable_participant_roster
+    roster = decode_durable_participant_roster(commitment_row["participant_roster"])
+    for item in roster:
+        if str(item.get("character_id") or "").strip() != name:
+            continue
+        if item.get("tier") != "主办":
+            continue
+        expected = str(
+            item.get("office") or item.get("role") or item.get("office_title") or ""
+        ).strip()
+        break
 
     # 案卷 executor office 快照
     if not expected:
@@ -1242,21 +1092,14 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
             commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
         )
         if did is not None:
-            drow = db.conn.execute(
-                "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?",
-                (int(did),),
-            ).fetchone()
-            if drow is not None and str(drow["executor_id"] or "") == name:
-                try:
-                    payload = json.loads(drow["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    payload = {}
-                if isinstance(payload, dict):
-                    expected = str(
-                        payload.get("executor_office")
-                        or payload.get("office")
-                        or ""
-                    ).strip()
+            drow = db.get_decree_dossier(int(did))
+            if drow is not None and str(drow.get("executor_id") or "") == name:
+                payload = drow["payload"]
+                expected = str(
+                    payload.get("executor_office")
+                    or payload.get("office")
+                    or ""
+                ).strip()
 
     # office_change_records：有调任记录且当前 office 与最早/承诺侧不一致
     oc = db.conn.execute(
@@ -1330,10 +1173,6 @@ def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
             breach_kind=BREACH_KIND_REMOVE_SPONSOR,
             reason=f"主办{who}{kind_word}，人亡政息",
             target_dossier_id=int(parse_dossier_id(origin) or 0),
-            display=(
-                f"臣工哭谏：「{row['title']}」主办{who}已去，"
-                f"臣的信心一半是皇爷给的，人亡则政息，请陛下慎之。"
-            ),
             extra={
                 "removed_sponsors": removed,
                 "transferred_sponsors": transferred,
@@ -1347,8 +1186,10 @@ def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
 def scan_and_write_breach_pleas(
     db: Any, state: Any, *, commit: bool = False,
 ) -> List[int]:
-    """结算内扫描断供/挪用/撤人（改弦由 revoke/cancel 拦截缝直写）。
+    """结算内扫描断供/挪用/撤人。
 
+    #1894：明确撤旨不由此路产生——照常过外廷、当月落实，不写挽留 todo；
+    单纯松手而无撤令者不在该票废止范围。
     相反新旨：无可行机械判据（需语义对立），不静默缺省——见模块说明/送修上抛。
     """
     written: List[int] = []
@@ -1358,75 +1199,6 @@ def scan_and_write_breach_pleas(
     if commit and written:
         db.conn.commit()
     return written
-
-
-def try_defer_revoke_to_breach_plea(
-    db: Any,
-    state: Any,
-    *,
-    target_dossier_id: int,
-    target_issue_id: int = 0,
-    revoke_dossier_id: int = 0,
-    reason: str = "",
-    commit: bool = False,
-) -> Optional[Dict[str, object]]:
-    """改弦拦截：目标若挂 active 承诺，只写挽留 todo，返回 defer 信息；否则 None。"""
-    commitment_ids: List[int] = []
-    if target_dossier_id > 0:
-        origin_ref = f"dossier:{int(target_dossier_id)}"
-        for iss in db.conn.execute(
-            """
-            SELECT id FROM issues
-            WHERE origin_ref=? AND status='active' AND commitment_kind != ''
-            """,
-            (origin_ref,),
-        ).fetchall():
-            commitment_ids.append(int(iss["id"]))
-    if target_issue_id > 0:
-        row = db.conn.execute(
-            "SELECT id, status, commitment_kind FROM issues WHERE id=?",
-            (int(target_issue_id),),
-        ).fetchone()
-        if (
-            row is not None
-            and str(row["status"] or "") == "active"
-            and str(row["commitment_kind"] or "").strip()
-        ):
-            if int(row["id"]) not in commitment_ids:
-                commitment_ids.append(int(row["id"]))
-    if not commitment_ids:
-        return None
-    written: List[int] = []
-    for cid in commitment_ids:
-        issue = _issue_row(db, cid)
-        title = str(issue["title"] if issue is not None else "前诺")
-        tid = write_breach_plea_todo(
-            db, state,
-            commitment_ref=cid,
-            breach_kind=BREACH_KIND_POLICY_REVERSAL,
-            reason=str(reason or "撤回成命")[:400],
-            target_dossier_id=int(target_dossier_id or 0),
-            display=(
-                f"主办泣血陈情：皇上欲撤「{title}」之旨，"
-                f"臣的信心一半是皇爷给的，求陛下收回成命。"
-            ),
-            extra={
-                "deferred_revoke": True,
-                "revoke_dossier_id": int(revoke_dossier_id or 0),
-            },
-        )
-        if tid:
-            written.append(tid)
-    if not written:
-        # 不应再出现：write 并入后必返 id；仍空则非 deferred
-        return None
-    if commit:
-        db.conn.commit()
-    return {
-        "deferred": True,
-        "commitment_ids": commitment_ids,
-        "todo_ids": written,
-    }
 
 
 # ── 召对 extraction 真入口：反悔 / 坚持（既有键 only）──────────────────
@@ -1501,7 +1273,8 @@ def resolve_breach_pleas_from_extraction(
 
     坚持：cancels/close_issues 命中承诺（primary∪absorbed 含改弦即结该 merged 条）/
           revoke 类目标命中案卷 / dossier_executions failed
-    反悔：economy 续拨 / issue_advances 推进 / fiscal_creates 加拨本承诺
+    反悔：economy/fiscal 结构化资金事实（非零 delta / 增值）/ issue_advances 推进
+          / fiscal_creates 落格本承诺；禁 purpose/reason 散文词表捷径（#1834 F28）
     沉默：不在此函数出现 → pending 保留
     """
     if not isinstance(extracted, dict):
@@ -1561,11 +1334,11 @@ def resolve_breach_pleas_from_extraction(
             delta = int(it.get("delta") or 0)
         except (TypeError, ValueError):
             delta = 0
-        purpose = str(it.get("purpose") or "")
-        if delta != 0 or purpose in {"履行承诺", "续拨", "加拨"}:
+        # 只认非零 delta 结构化资金事实；不从 purpose 散文猜续拨/加拨。
+        if delta != 0:
             _note_funding_item(it)
 
-    # 反悔：fiscal_creates 加拨/复供本承诺
+    # 反悔：fiscal_creates 落格本承诺（结构化新建，不读 reason 散文）
     for it in extracted.get("fiscal_creates") or []:
         if not isinstance(it, dict):
             continue
@@ -1573,7 +1346,7 @@ def resolve_breach_pleas_from_extraction(
     for it in extracted.get("fiscal_changes") or []:
         if not isinstance(it, dict):
             continue
-        # 加拨：new_value > old_value 或 delta>0
+        # 只认 new_value>old_value 或 delta>0 的结构化增值；不从 reason 散文猜加拨。
         try:
             delta = int(it.get("delta") or 0)
         except (TypeError, ValueError):
@@ -1586,7 +1359,7 @@ def resolve_breach_pleas_from_extraction(
                     delta = max(delta, int(new_v) - int(old_v))
         except (TypeError, ValueError):
             pass
-        if delta > 0 or str(it.get("reason") or "") in {"加拨", "续拨", "复供"}:
+        if delta > 0:
             _note_funding_item(it)
 
     for todo in pending:

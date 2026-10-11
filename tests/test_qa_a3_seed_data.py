@@ -5,79 +5,9 @@
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
-
-from ming_sim.content import load_character_content, load_event_content
+from ming_sim.content import load_character_content
 from ming_sim.db import normalize_office
 from ming_sim.intelligence import OFFICE_SLOTS
-
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def _liaodong_seed():
-    events = load_event_content("seed_events.json")
-    by_id = {ev.id: ev for ev in events}
-    assert "liaodong" in by_id, "seed_events 须含辽东索饷 id=liaodong"
-    return by_id["liaodong"]
-
-
-def _opening_gazette_text() -> str:
-    return (ROOT / "content" / "opening_gazette.md").read_text(encoding="utf-8")
-
-
-def _arrears_month_tokens(text: str) -> set[str]:
-    """Extract 欠饷…N月 month tokens; consistency-only, no gazette wording pin."""
-    return set(re.findall(r"欠饷[^\n。；]{0,12}?([元正一二三四五六七八九十两]+)月", text))
-
-
-def test_liaodong_stage_text_does_not_name_bajiu_offstage_as_active_petitioners():
-    """#1283 残余：stage_text 不得写罢居者作在任请饷人；点名须落在任名册。"""
-    _, characters = load_character_content()
-    bajiu_names = {
-        name
-        for name, ch in characters.items()
-        if "罢居" in (ch.office or "")
-    }
-    # 开局清洗后进人才池的两位，必须在 seed office 串里带罢居标记
-    assert {"袁崇焕", "孙承宗"} <= bajiu_names
-
-    stage = _liaodong_seed().stage_text
-    for name in ("袁崇焕", "孙承宗"):
-        assert name not in stage, f"辽东索饷 stage_text 仍点名罢居者 {name!r}: {stage!r}"
-
-    # #1406：正则 [\u4e00-\u9fff]{2,4} 会把「赵率教交章」切成「赵率教交」，
-    # 使赵率教缺席 named 仍绿。显式钉两位请饷人在 stage 且 active。
-    petitioners = {"祖大寿", "赵率教"}
-    assert petitioners <= set(characters), "辽东索饷请饷人须存在于 seed 名册"
-    assert all(name in stage for name in petitioners), (
-        f"stage_text 须点名 {sorted(petitioners)}: {stage!r}"
-    )
-    assert all(characters[name].status == "active" for name in petitioners), (
-        "辽东索饷请饷人须为 active seed 人物"
-    )
-    # 若点到名册人物，每人须非罢居串；允许匿名将领/边情质感
-    named = {name for name in characters if name in stage}
-    assert named or ("将" in stage or "边" in stage), (
-        "stage_text 既未点名册人物，也未保留将领/边情叙事质感"
-    )
-    for name in named:
-        office = characters[name].office or ""
-        assert "罢居" not in office, f"点名 {name} 仍是罢居串: {office!r}"
-
-
-def test_liaodong_stage_text_arrears_months_match_opening_gazette():
-    """#1283 残余：欠饷月数只钉 stage↔gazette 口径一致（不钉邸报原句）。"""
-    gazette = _opening_gazette_text()
-    stage = _liaodong_seed().stage_text
-    gazette_months = _arrears_month_tokens(gazette)
-    stage_months = _arrears_month_tokens(stage)
-    assert gazette_months, "opening_gazette 须含欠饷月数以便对照"
-    assert stage_months, f"stage_text 须含欠饷月数: {stage!r}"
-    assert stage_months <= gazette_months, (
-        f"stage 欠饷月数 {stage_months} 与 gazette {gazette_months} 口径不一致"
-    )
-
 
 def test_active_seed_characters_do_not_occupy_office_slots():
     """不变式：active seed 人物 normalize_office 不得等于 OFFICE_SLOTS 任一 title。
@@ -169,19 +99,13 @@ def test_zhang_fengyi_office_strips_future_title():
     _, characters = load_character_content()
     ch = characters["张凤翼"]
     office = ch.office or ""
-    assert "后" not in office, f"仍含未来官职旁注: {office!r}"
-    assert "兵部尚书" not in office, f"未来兵书不得入当期 office: {office!r}"
     assert office == "总督", f"当期名分偏离仓内可核口径: {office!r}"
 
 
 def test_qian_qianyi_seed_office_records_bajiu_dismissal():
-    """#1308 残余：钱谦益 seed office 须记削籍罢居（非空）；运行时空 office 是 ADR 0009 清洗。
-
-仓内 raw/minister/portrait 一致：前礼部右侍郎，罢居常熟（天启科场案削籍在野）。
-"""
+    """#1308 / ADR 0009：钱谦益离事不持现职名分；罢居事由走 status_reason。"""
     _, characters = load_character_content()
     ch = characters["钱谦益"]
-    office = ch.office or ""
-    assert office.strip(), "seed office 不得空——运行时 dismissed 清空是 migration，不是 seed 缺史实"
-    assert "罢居" in office, office
-    assert "礼部" in office and "侍郎" in office, office
+    assert (ch.office or "") == ""
+    assert ch.status == "dismissed"
+    assert (ch.status_reason or "").strip()

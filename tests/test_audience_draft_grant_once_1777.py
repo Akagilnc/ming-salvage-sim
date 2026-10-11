@@ -12,12 +12,17 @@
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from types import SimpleNamespace
 
 import pytest
 
-from tests.test_army_pay_decree_1503 import _set_guanning_arrears
+from tests.army_pay_helpers import _set_guanning_arrears
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
+
+_translate_emperor: ContextVar[str] = ContextVar(
+    "audience_translate_emperor_1777", default="",
+)
 
 _EDICT = "着户部自国库拨银十五万两，专解关宁军前补发欠饷，不得加派于民。钦此。"
 _UTTERANCE = (
@@ -76,7 +81,6 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             and getattr(ch, "name", key) != "郭允厚"
         )
         agent = _HubuAgent()
-        game.session.registry.get = lambda _ch, **_kw: agent
         stub_scene_agent(monkeypatch, agent)
         if getattr(game.session, "llm_config", None) is not None:
             try:
@@ -90,11 +94,21 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         treasury_before = int(game.state.metrics["国库"])
         turn_before = int(game.state.turn)
 
-        # #1842：殿上 scene_chat 双桩——交办 grant+承办/期限 → pending；「准」→ promises。
+        import ming_sim.audience_translate as audience_translate
+
+        build_prompt = audience_translate.build_audience_translate_prompt
+
+        def _capture_emperor(*, emperor_message, **kwargs):
+            _translate_emperor.set(str(emperor_message or ""))
+            return build_prompt(emperor_message=emperor_message, **kwargs)
+
+        monkeypatch.setattr(
+            audience_translate, "build_audience_translate_prompt", _capture_emperor,
+        )
+
         def _translate(prompt, _cfg):
-            text = str(prompt or "")
             scene = offline_empty_audience_translate(prompt, _cfg)
-            if "【本轮皇帝】准" in text:
+            if _translate_emperor.get() == "准":
                 rows = [
                     r for r in game.db.list_pending_actions(game.state.turn)
                     if r.get("kind") == "directive" and r.get("status") == "pending"
@@ -131,7 +145,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
         client = TestClient(web_app.app)
         petition = client.post(
-            f"/api/ministers/{name}/chat",
+            "/api/audience/chat",
             json={"message": _UTTERANCE},
         )
         assert petition.status_code == 200, petition.text
@@ -157,7 +171,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             for p in pending
         )
 
-        confirm = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
+        confirm = client.post("/api/audience/chat", json={"message": "准"})
         assert confirm.status_code == 200, confirm.text
         game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)

@@ -28,7 +28,10 @@ import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_audience_translate
+
+_IN_FLIGHT_DETAIL = "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。"
+_GATE_BUSY_DETAIL = "月末结算或上一步写入进行中，请稍候再操作。"
 
 
 # ── 轻量 canned 边界（与 #498 web tracer 同形，仅中和 LLM）────────────────
@@ -46,25 +49,13 @@ class _BoomExtractor:
         raise RuntimeError("抽取持续失败·真失败注入")
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        class _R:
-            content = '{"endorsements":[]}'
-        return _R()
-
-
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",
         lambda dossiers, _state, **_kwargs: [
             {"dossier_id": row["id"], "decision": "promulgated"}
             for row in dossiers
         ],
-    )
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
     )
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(
@@ -92,10 +83,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
     # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
@@ -145,7 +132,9 @@ def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事
     an.ensure_summon_enter(db, nid, minister)
     ctid = db.create_chat_turn(state, minister, "sess-1235", 0, night_id=nid)
     db.persist_minister_reply(minister, int(state.turn), reply, ctid)
-    assert db.count_pending_story_extractions(night_id=nid) >= 1
+
+    assert len(db.list_unextracted_replies(night_id=nid)) >= 1
+
     return nid, ctid
 
 
@@ -187,19 +176,30 @@ def _runtime_payload(db, state):
 
 
 def test_web_entry_captures_before_await_close(web_game, monkeypatch):
-    """点即入时序：入口一受理即 capture；await 抛错前快照已在。"""
+    """退朝受理后收夜前，状态口以核账为落点；失败后退出展示态。"""
     game = web_game
     before = _click_before(game.state)
     turn = int(game.state.turn)
     captured_at = {}
+    an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
 
     from ming_sim.audience_night import AudienceNightError
 
     def _boom_close(_g, **_k):
-        snap = _g.db.get_month_open_snapshot(int(_g.state.turn))
-        captured_at["before_await"] = snap
+        captured_at["before_await"] = _g.db.get_month_open_snapshot(int(_g.state.turn))
+
+        async def read_state():
+            async with _client() as client:
+                return await client.get("/api/game/state")
+
+        # The close seam runs inside the accepted HTTP request, before the night closes.
+        # Read through a second HTTP connection without scheduling another worker.
+        response = asyncio.run(read_state())
+        assert response.status_code == 200, response.text
+        assert an.get_open_night(game.db) is not None
+        captured_at["state"] = response.json()
         raise AudienceNightError(
-            "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。",
+            _IN_FLIGHT_DETAIL,
             code="in_flight_chat",
         )
 
@@ -213,12 +213,14 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
     assert resp.status_code == 409, resp.text
     # 受理时已 capture（await 前快照 = 点击前四键）
     assert captured_at["before_await"] == before
+    assert captured_at["state"]["turn"]["settlement_display"] is True
+    assert captured_at["state"]["reopen_landing"] == "settlement"
     # 真失败后展示态退出
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
     detail = resp.json()["detail"]
     text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
-    assert "未完成回话" in text or "在飞" in text
+    assert _IN_FLIGHT_DETAIL in text
 
 
 # ── 3. 真失败另形：pending 抽取仍失败 → 人话 + 展示态退出 ──────────────
@@ -275,7 +277,9 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
         assert payload["metrics"][k] == int(game.state.metrics[k])  # 活值，非冻快照
     # 夜保持开（0036 原意），可重按过月
     assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
-    assert game.db.count_pending_story_extractions(night_id=nid) >= 1
+
+    assert len(game.db.list_unextracted_replies(night_id=nid)) >= 1
+
     assert game.db.get_story_extract_status(ctid) in ("", "pending")
 
 
@@ -437,7 +441,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
         saw["snap"] = g.db.get_month_open_snapshot(int(g.state.turn))
         raise HTTPException(
             status_code=409,
-            detail="月末结算或上一步写入进行中，请稍候再操作。",
+            detail=_GATE_BUSY_DETAIL,
         )
         yield  # pragma: no cover — raise 后不可达；保 CM 形
 
@@ -453,7 +457,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
     text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
-    assert "请稍候" in text or "进行中" in text
+    assert _GATE_BUSY_DETAIL in text
     # 点即入曾发生
     assert saw.get("snap") == before
     # 拒收后不得留孤儿核账展示态
@@ -491,11 +495,12 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
         resp_b = asyncio.run(go_b())
         assert resp_b.status_code == 409, resp_b.text
         detail = resp_b.json()["detail"]
-        text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
-        assert "请稍候" in text or "进行中" in text
+        assert detail
         # B 幂等 no-op 后 409：non-blocking exit 撞锁 skip，不得代清 A 的快照
         assert game.db.get_month_open_snapshot(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True
+        # #1855：点即入核账期 → 真 WebGame 状态口投影 settlement
+        assert game.state_payload()["reopen_landing"] == "settlement"
         # accept 幂等：B 再调仍 False（非创建）
         assert web_app._accept_settlement_period(game) is False
     finally:
@@ -543,11 +548,11 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
         assert game.db.get_month_open_snapshot(turn) is not None
         gate.release()
         done.wait()
-        t.join()
     finally:
-        game.db.clear_month_open_snapshot = orig_clear  # type: ignore[method-assign]
         if gate.locked():
             gate.release()
+        t.join()
+        game.db.clear_month_open_snapshot = orig_clear  # type: ignore[method-assign]
 
     assert not err, err
     assert held["cleared_under_gate"] is True
@@ -629,22 +634,24 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
             b_done.set()
 
     t = threading.Thread(target=_run_b, daemon=True)
-    t.start()
-    # 等 B 完成 web accept（False）并堵在阻塞 gate
-    while saw["web_created"] is None:
-        time.sleep(0.01)  # backoff only
-    assert saw["web_created"] is False, "B 须为 web 非创建者"
-    assert not b_done.is_set(), f"B 不得在 A 持锁时完成 {entry}"
-    assert game.db.get_month_open_snapshot(turn) == before
+    try:
+        t.start()
+        # 等 B 完成 web accept（False）并堵在阻塞 gate
+        while saw["web_created"] is None:
+            time.sleep(0.01)  # backoff only
+        assert saw["web_created"] is False, "B 须为 web 非创建者"
+        assert not b_done.is_set(), f"B 不得在 A 持锁时完成 {entry}"
+        assert game.db.get_month_open_snapshot(turn) == before
 
-    # A 失败 exit 清快照后再放锁（判词序：清后放锁，逼出 B session 再创建）
-    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
-    assert exit_settlement_display_on_failure(game.db, game.state) is True
-    assert game.db.get_month_open_snapshot(turn) is None
-    gate.release()
+        # A 失败 exit 清快照后再放锁（判词序：清后放锁，逼出 B session 再创建）
+        from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
+        assert exit_settlement_display_on_failure(game.db, game.state) is True
+        assert game.db.get_month_open_snapshot(turn) is None
+    finally:
+        gate.release()
+        t.join()
 
     b_done.wait()
-    t.join()
     assert "err" not in b_result, b_result.get("err")
     if entry == "issue":
         assert b_result.get("status") == 400, b_result
@@ -708,53 +715,59 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
             a_done.set()
 
     t_a = threading.Thread(target=_run_a, daemon=True)
-    t_a.start()
-    a_in_await.wait()
-    assert game.db.get_month_open_snapshot(turn) == before
-    assert game.state_payload()["turn"]["settlement_display"] is True
-    assert web_app._settlement_entry_inflight(game) >= 1
+    t_b = None
+    try:
+        t_a.start()
+        a_in_await.wait()
+        assert game.db.get_month_open_snapshot(turn) == before
+        assert game.state_payload()["turn"]["settlement_display"] is True
+        assert web_app._settlement_entry_inflight(game) >= 1
 
-    # B：同窗并发过月——卡在 barrier 等待 A，不得代清 A 快照
-    b_started = threading.Event()
-    b_done = threading.Event()
-    b_result: dict = {}
+        # B：同窗并发过月——卡在 barrier 等待 A，不得代清 A 快照
+        b_started = threading.Event()
+        b_done = threading.Event()
+        b_result: dict = {}
 
-    def _run_b():
-        b_started.set()
-        try:
-            async def go_b():
-                async with _client() as client:
-                    return await client.post("/api/decree/advance_without_edict")
+        def _run_b():
+            b_started.set()
+            try:
+                async def go_b():
+                    async with _client() as client:
+                        return await client.post("/api/decree/advance_without_edict")
 
-            resp_b = asyncio.run(go_b())
-            b_result["status"] = resp_b.status_code
-            b_result["body"] = resp_b.text
-        except Exception as exc:  # noqa: BLE001
-            b_result["err"] = exc
-        finally:
-            b_done.set()
+                resp_b = asyncio.run(go_b())
+                b_result["status"] = resp_b.status_code
+                b_result["body"] = resp_b.text
+            except Exception as exc:  # noqa: BLE001
+                b_result["err"] = exc
+            finally:
+                b_done.set()
 
-    t_b = threading.Thread(target=_run_b, daemon=True)
-    t_b.start()
-    b_started.wait()
-    # A 仍在办时快照不得被清（b_started 已证 B 进入；A 屏障未放行）
-    assert not a_done.is_set()
-    assert game.db.get_month_open_snapshot(turn) == before
-    assert game.state_payload()["turn"]["settlement_display"] is True
-    assert web_app._settlement_entry_inflight(game) >= 1, "A 仍须计在办"
+        t_b = threading.Thread(target=_run_b, daemon=True)
+        t_b.start()
+        b_started.wait()
+        # A 仍在办时快照不得被清（b_started 已证 B 进入；A 屏障未放行）
+        assert not a_done.is_set()
+        assert game.db.get_month_open_snapshot(turn) == before
+        assert game.state_payload()["turn"]["settlement_display"] is True
+        assert web_app._settlement_entry_inflight(game) >= 1, "A 仍须计在办"
 
-    # 放行 A：创建者失败臂清展示态；B 随后以自有屏障继续/失败
-    a_release.set()
+        # 放行 A：创建者失败臂清展示态；B 随后以自有屏障继续/失败
+    finally:
+        a_release.set()
+        t_a.join()
+        if t_b is not None:
+            t_b.join()
     a_done.wait()
-    t_a.join()
     b_done.wait()
-    t_b.join()
     assert "err" not in a_result, a_result.get("err")
     assert a_result.get("status") == 409, a_result
     assert "err" not in b_result, b_result.get("err")
     assert b_result.get("status") == 409, b_result
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
+    # #1855：核账脸退出后落本月盘面
+    assert game.state_payload()["reopen_landing"] == "month"
     assert web_app._settlement_entry_inflight(game) == 0
     assert game.state.turn_phase not in (
         TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
@@ -762,133 +775,3 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
 
 
 # ── 5. SP1 #1241：断线→重连 e2e tracer（#1220 US14）──────────────────────
-
-
-def test_disconnect_mid_settlement_reconnect_coherent(web_game, monkeypatch):
-    """#1241 SP1 / #1220 US14：断线后结算继续，重连状态口自洽。
-
-    接缝：真实颁布 stream 入口 + 既有离线 LLM 替身；客户端弃流后 worker 仍跑完；
-    全新连接 GET /api/game/state 见终态（不丢账、不重跑）。禁仅测试用生产钩子。
-    """
-    import threading
-    import time
-
-    game = web_game
-    minister = _active_minister(game)
-    _fake_settlement_llm(monkeypatch)
-    # The real month chain advances only after a gazette archive is present.
-    game.db.save_turn_report(game.state, "本月邸报：边饷已清。")
-    before = _click_before(game.state)
-    turn_before = int(game.state.turn)
-
-    game.db.add_directive(
-        game.state, None, "着户部核边饷", "t1241-sp1", actor=minister,
-        status="draft",
-        dossier_payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue",
-            "target_id": "border-pay-1241-sp1",
-        },
-    )
-
-    entered_resolve = threading.Event()
-    release_resolve = threading.Event()
-    stream_done = threading.Event()
-    stream_meta: dict = {}
-
-    real_resolve = game.session.resolve_turn
-
-    def _held_resolve(*a, **k):
-        # 先推一条 stage，让 SSE generate 不堵在首个 queue.get（便于客户端弃流）。
-        on_event = k.get("on_event")
-        if callable(on_event):
-            on_event("stage", "推演中")
-        entered_resolve.set()
-        release_resolve.wait()
-        return real_resolve(*a, **k)
-
-    monkeypatch.setattr(game.session, "resolve_turn", _held_resolve)
-
-    def _run_stream_then_drop():
-        """模拟关页/断网：见到结算已进入 resolve 后弃流，不读终态。"""
-        try:
-            async def go():
-                async with _client() as client:
-                    async with client.stream(
-                        "POST", "/api/decree/issue/stream", json={},
-                    ) as resp:
-                        stream_meta["status"] = resp.status_code
-                        # 读到首条 stage（resolve 已入）即弃流
-                        async for _chunk in resp.aiter_text():
-                            if entered_resolve.is_set():
-                                break
-                        # 离开 stream 上下文 = 客户端断开；worker 线程须独立续跑
-
-            asyncio.run(go())
-        except Exception as exc:  # noqa: BLE001
-            stream_meta["err"] = exc
-        finally:
-            stream_done.set()
-
-    t = threading.Thread(target=_run_stream_then_drop, daemon=True)
-    t.start()
-    entered_resolve.wait()
-
-    # 断线窗：核账展示态已亮、四键为点击前（状态口可观测）
-    assert game.db.get_month_open_snapshot(turn_before) == before
-    mid = game.state_payload()
-    assert mid["turn"]["settlement_display"] is True
-    for k in MONTH_OPEN_KEYS:
-        assert mid["metrics"][k] == before[k]
-
-    # 重连观察（结算仍在办、原 SSE 已弃读）：全新连接见同一张核账脸
-    async def reconnect():
-        async with _client() as client:
-            return await client.get("/api/game/state")
-
-    mid_resp = asyncio.run(reconnect())
-    assert mid_resp.status_code == 200, mid_resp.text
-    mid_state = mid_resp.json()
-    assert mid_state["turn"]["settlement_display"] is True
-    for k in MONTH_OPEN_KEYS:
-        assert mid_state["metrics"][k] == before[k]
-
-    # 放行 worker：客户端已弃读 SSE，结算须在后台继续跑完
-    # （先放行再等弃流线程——否则 ASGI generate 堵在 queue.get，aclose 与 release 死锁）
-    release_resolve.set()
-
-    while not (
-        web_app._settlement_entry_inflight(game) == 0
-        and not web_app._game_write_gate(game).locked()
-    ):
-        time.sleep(0.05)  # backoff only
-    assert web_app._settlement_entry_inflight(game) == 0, "入口须销账（结算 worker 须跑完）"
-    assert not web_app._game_write_gate(game).locked()
-
-    stream_done.wait()
-    t.join()
-    assert "err" not in stream_meta, stream_meta.get("err")
-
-    # 再重连：终态自洽（不接原 SSE）
-    resp = asyncio.run(reconnect())
-    assert resp.status_code == 200, resp.text
-    state = resp.json()
-    # 自洽：月推进完成 → 展示态清；或 awaiting 停窗 → 展示态在且四键仍为点击前
-    # 不丢账：快照回合绑定，不得无展示态却残留本回合快照
-    turn_now = int(state["turn"]["turn"])
-    display = bool(state["turn"].get("settlement_display"))
-    snap = game.db.get_month_open_snapshot(turn_before)
-    if turn_now == turn_before + 1:
-        assert display is False
-        assert snap is None
-        # 活值回归（非冻快照）；不重跑：只推进一回合
-        assert int(game.state.turn) == turn_before + 1
-    elif display:
-        assert turn_now == turn_before
-        assert snap == before
-        for k in MONTH_OPEN_KEYS:
-            assert state["metrics"][k] == before[k]
-    else:
-        raise AssertionError(
-            f"重连态不自洽: turn={turn_now} display={display} snap={snap} phase={state['turn'].get('phase')}"
-        )

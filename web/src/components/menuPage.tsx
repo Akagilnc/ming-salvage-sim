@@ -66,7 +66,7 @@ export function MenuPage({
       const response = await fetch("/api/menu/continue", { method: "POST" });
       const outcome = await consumeSettleStream(
         response,
-        { onStage: (update) => setBusy(update.content || "载入上次进度..."), onThinking: () => {}, onNarrative: () => {} },
+        { onStage: (update) => setBusy(update.content || "载入上次进度...") },
         { httpErrorLabel: "继续失败" },
       );
       if (outcome.kind === "error") {

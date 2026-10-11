@@ -14,12 +14,9 @@ from ming_sim.commitment_backlash import (
     SOURCE_DEFORMATION_EXPOSURE,
     backlash_origin_ref,
 )
-from ming_sim.due_review import (
-    apply_pending_due_reviews,
-    decide_due_review_verdict,
-)
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
-from ming_sim.simulation import _sanitize_module_output
+from ming_sim.due_review import apply_pending_due_reviews
+from ming_sim.issues import apply_score_extraction
+from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 
 
@@ -74,10 +71,12 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     return int(created["issue_id"])
 
 
-def _prime_and_apply_due_review(db, state, content, *, dossier_id: int, title: str):
+def _prime_and_apply_due_review(
+    db, state, content, *, dossier_id: int, title: str, stage_writer=_insert_final_stage,
+):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
-    _insert_final_stage(db, state, content, dossier_id=dossier_id, title=title)
+    stage_writer(db, state, content, dossier_id=dossier_id, title=title)
     write_due_staged_commitment_todos(db, state)
     db.conn.execute(
         "UPDATE next_audience_todos SET created_turn=?",
@@ -292,72 +291,6 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
     assert raw and all("beyond_intent" in dict(r) for r in raw)
 
 
-def test_s1_cleaner_passthrough_fiscal_beyond_intent_aliases(game, content):
-    """三 cleaner 透传已归一旨外键（含中文别名经 _sanitize_module_output）。"""
-    db, state, _ = game
-    did = _executing_policy(db, state, token="cl-1260")
-    origin = f"dossier:{did}"
-
-    # Create a disposable item so remove has a target
-    db.create_fiscal_item(
-        "别名透传税", "国库", "expense", "别名透传税", 4,
-        origin_ref=origin, turn=state.turn, commit=True,
-    )
-    rate_key = db.conn.execute(
-        "SELECT key FROM fiscal_config WHERE key LIKE '%_rate' "
-        "AND key NOT LIKE '%损耗%' ORDER BY key LIMIT 1"
-    ).fetchone()["key"]
-
-    raw = {
-        "fiscal_creates": [{
-            "键": "别名新立税",
-            "账户": "国库",
-            "方向": "收",
-            "初值": 8,
-            "原因": "别名新立",
-            "来源引用": origin,
-            "旨外": True,
-        }],
-        "fiscal_changes": [{
-            "键": rate_key,
-            "增量": 1,
-            "原因": "别名调率",
-            "来源引用": origin,
-            "旨外标记": 1,
-        }],
-        "fiscal_removes": [{
-            "键": "别名透传税",
-            "原因": "别名裁撤",
-            "来源引用": origin,
-            "旨外恶果": True,
-        }],
-    }
-    cleaned = _sanitize_module_output("internal", raw)
-    # Cleaners must preserve beyond_intent after alias canonicalization
-    assert cleaned["fiscal_creates"][0].get("beyond_intent") is True, cleaned
-    assert cleaned["fiscal_changes"][0].get("beyond_intent") == 1, cleaned
-    assert cleaned["fiscal_removes"][0].get("beyond_intent") is True, cleaned
-
-    applied = apply_score_extraction(db, state, cleaned, content=content)
-    assert applied["fiscal_creates"] and not applied["fiscal_creates"][0].get("rejected")
-    assert applied["fiscal_changes"] and not applied["fiscal_changes"][0].get("rejected")
-    assert applied["fiscal_removes"] and not applied["fiscal_removes"][0].get("rejected")
-    effects = db.list_fiscal_effects_for_dossier(did)
-    assert any(
-        r.get("effect_kind") == "create"
-        and str(r.get("key") or "").startswith("别名新立税")
-        and r["beyond_intent"] is True
-        for r in effects
-    ), effects
-    assert any(
-        r.get("effect_kind") == "change" and r["beyond_intent"] is True for r in effects
-    ), effects
-    assert any(
-        r.get("effect_kind") == "remove"
-        and str(r.get("key") or "").startswith("别名透传税")
-        and r["beyond_intent"] is True
-        for r in effects
-    ), effects
 
 
 def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
@@ -525,33 +458,6 @@ def test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash(game, conten
     ), hits
 
 
-def test_s2_decide_due_review_shape_unchanged_with_helper():
-    """红线：助手只供事实；decide_due_review_verdict 判定形状不改。"""
-    # Pure unit: fiscal-shaped durable effect with beyond_intent → transformed
-    verdict = decide_due_review_verdict({
-        "mid_stage": False,
-        "durable_effects": [
-            {"effect_kind": "create", "key": "x_base", "beyond_intent": True},
-        ],
-        "progress_reports": [],
-        "criterion_text": "新税见成",
-    })
-    assert verdict["outcome"] == "transformed"
-    assert verdict["close"] is True
-    assert "is_terminal" in verdict
-
-    # No beyond → fulfilled when effects present
-    verdict2 = decide_due_review_verdict({
-        "mid_stage": False,
-        "durable_effects": [
-            {"effect_kind": "create", "key": "y_base", "beyond_intent": False},
-        ],
-        "progress_reports": [],
-        "criterion_text": "正额",
-    })
-    assert verdict2["outcome"] == "fulfilled"
-
-
 # ── S3：嵌套通道别名 ────────────────────────────────────────────────
 
 
@@ -588,7 +494,7 @@ def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
         cancellable="decree",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
 
     rows = db.conn.execute(
         "SELECT beyond_intent, reason, delta FROM economy_ledger "

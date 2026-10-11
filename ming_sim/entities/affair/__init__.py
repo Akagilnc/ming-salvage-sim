@@ -3,7 +3,6 @@
 from ming_sim.entities.affair.store import (
     ATTACH_BIRTH,
     ATTACH_EXPERIENCE,
-    ATTACH_RESULT_CLOSE,
     Affair,
     AffairStore,
     UnauthorizedAffairOriginRef,
@@ -16,7 +15,6 @@ from ming_sim.entities.affair.store import (
 __all__ = (
     "ATTACH_BIRTH",
     "ATTACH_EXPERIENCE",
-    "ATTACH_RESULT_CLOSE",
     "Affair",
     "AffairStore",
     "UnauthorizedAffairOriginRef",

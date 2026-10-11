@@ -35,12 +35,6 @@ def main() -> int:
     )
     session = GameSession(ns.db, cfg)
 
-    def on_event(kind, data):
-        s = str(data)
-        if kind in ("simulator_chunk", "extractor_chunk"):
-            return
-        print(f"  [evt] {kind}: {s[:120]}")
-
     snap = session.begin_turn()
     before = dict(session.state.metrics)
     print(f"[turn] {session.state.year}年{session.state.period}月 turn={session.state.turn} "
@@ -56,28 +50,12 @@ def main() -> int:
     session.enter_review()
     t0 = time.monotonic()
     print("[resolve] 颁诏推演中（agy 调用，耐心等）...")
-    result = session.resolve_turn(decree=ns.decree, on_event=on_event)
+    result = session.resolve_turn(decree=ns.decree)
 
-    # HITL：推演若出决策点，自动选第一项，续跑 phase2（含 4 模块 extractor）。
-    # #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
-    # 首选项投影走 project_preferred_hitl_choice 唯一真源。
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
-
-    rounds = 0
-    while getattr(result, "awaiting", False):
-        rounds += 1
+    # HITL：脚本缺亲裁能力，停在 awaiting，不自动代裁（#1812 第9项 / #1834 F24）。
+    if getattr(result, "awaiting", False):
         decisions = session.pending_decisions()
-        print(f"[hitl] 第{rounds}轮决策点 {len(decisions)} 个，自动选第一项：")
-        choices = []
-        for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0)):
-            item = project_preferred_hitl_choice(d)
-            label = str(item.get("label") or "")
-            print(f"   - #{d.get('idx')} {str(d.get('title'))[:40]} → 选「{label[:40]}」")
-            choices.append(item)
-        report = session.submit_hitl_choices(
-            choices, write_gate=session._write_gate, on_event=on_event,
-        )
-        result = type("R", (), {"awaiting": False, "report": report})()
+        print(f"[hitl] 待裁 {len(decisions)} 个；脚本缺亲裁能力，不自动代裁。")
 
     report_text = result.report if hasattr(result, "report") else str(result)
     dt = time.monotonic() - t0

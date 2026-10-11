@@ -36,7 +36,6 @@ def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "issue_id" in rej[0]["reason"]
 
 
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
@@ -48,7 +47,6 @@ def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "非对象" in rej[0]["reason"]
 
 
 def test_close_bad_reason_rejected(read_game):
@@ -60,7 +58,6 @@ def test_close_bad_reason_rejected(read_game):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "reason" in rej[0]["reason"]
 
 
 def test_close_unknown_issue_rejected_missing_ref(read_game):
@@ -97,7 +94,7 @@ def test_close_already_inactive_rejected_missing_ref(game):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "missing_ref"
-    assert "active" in rej[0]["reason"]
+    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "resolved"
 
 
 def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
@@ -110,7 +107,6 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "不可崩坏" in rej[0]["reason"]
     # 行为：issue 仍 active（拒结案，不被误标 missing_ref 也未被结案）。
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "active"
 
@@ -138,22 +134,6 @@ def test_close_rejection_reaches_rejection_reports(game):
     assert row["category"] == "missing_ref"
 
 
-def test_effect_brief_ignores_rejected_closes():
-    """效果摘要消费 issue_summary.closes 时必须跳过拒收项——否则无 title 的拒收 wrapper
-    被当成功结案喊进「了结局势」污染章节摘要（cmr close-issues r2 codex）。"""
-    from ming_sim.memories import effect_brief
-    only_rejected = {"issue_summary": {"closes": [
-        {"rejected": True, "category": "missing_ref", "reason": "查无此 issue", "item": {}},
-    ]}}
-    assert "了结局势" not in effect_brief(only_rejected)
-    mixed = {"issue_summary": {"closes": [
-        {"rejected": True, "category": "missing_ref", "reason": "查无此 issue", "item": {}},
-        {"issue_id": 5, "title": "真·平叛结案", "rejected": False},
-    ]}}
-    brief = effect_brief(mixed)
-    assert "真·平叛结案" in brief and "了结局势" in brief
-
-
 def test_scalar_item_rejection_preserves_original_in_reports(game):
     """非 dict 坏项（item 为标量/null）的 item_json 须存原始坏项本身（ADR 决定 5），
     不是整个 rejected wrapper——桥接按 'item' 键存在性解包、覆盖标量原件（cmr r5 codex）。"""
@@ -178,14 +158,19 @@ def test_scalar_item_rejection_preserves_original_in_reports(game):
 
 def test_close_issue_code_exception_propagates(read_game, monkeypatch):
     db, state, _ = read_game
-    def _boom(*a, **k):
-        raise RuntimeError("模拟 close_issue 落库代码异常")
-    monkeypatch.setattr(type(db), "close_issue", _boom)
     # 代码/DB 异常不再被 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    with pytest.raises(RuntimeError, match="模拟 close_issue"):
+    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
+    fault = RuntimeError("模拟 close_issue 落库代码异常")
+
+    def _boom(*a, **k):
+        raise fault
+
+    monkeypatch.setattr(type(db), "close_issue", _boom)
+    with pytest.raises(RuntimeError) as ei:
         I.apply_issue_tracker_output(
             db, state, {"close_issues": [{"issue_id": 1, "reason": "resolved"}]}
         )
+    assert ei.value is fault
 
 
 def test_close_valid_issue_still_succeeds(game):

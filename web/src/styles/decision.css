@@ -97,23 +97,6 @@
   letter-spacing: 1px;
 }
 
-.decision-failure-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0 0 14px;
-}
-
-.decision-failure-item {
-  padding: 10px 12px;
-  border: 1px solid rgba(224, 88, 76, 0.56);
-  border-radius: 6px;
-  background: rgba(72, 18, 16, 0.45);
-  color: #ffd1c8;
-  font-size: 14px;
-  line-height: 1.55;
-}
-
 
 .decision-options {
   display: flex;
@@ -180,8 +163,8 @@
 
 .decision-hint-line { font-size: 13px; color: #9a8d6a; }
 
-/* 恢复入口横幅（ship-pre r4）：settling 重载后续跑结算
-   #1236：z-index 须高于 SettlementLock 装饰（40），保证必达三面不被遮。 */
+/* #1854 核账期统一恢复横幅：一行系统提示 +「重试」
+   #1236：保证必达批红面不被其他浮层遮住。 */
 .recovery-banner {
   position: fixed;
   top: 64px;
@@ -218,10 +201,5 @@
 
 .recovery-banner > button {
   flex: 0 0 auto;
-}
-
-.decision-recovery-banner {
-  border-color: #9b2c2c;
-  background: rgba(155, 44, 44, 0.12);
 }
 

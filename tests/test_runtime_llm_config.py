@@ -449,7 +449,6 @@ def test_cli_backend_active_total_on_unsupported_runner(monkeypatch):
     cfg = LLMConfig(api_key="cli-backend", base_url="", model="", channel="cli", cli_runner="bogus")
 
     assert cli_backend.cli_backend_active(cfg) is False
-    assert cli_backend._backend_label(cfg) == "agy"
 
 
 def test_create_chat_model_unsupported_cli_runner_raises_unavailable(monkeypatch):

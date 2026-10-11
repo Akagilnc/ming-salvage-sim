@@ -80,9 +80,9 @@
         prior_options_json append；CAS 含旧 revision_round
    c. 对「行上 choice 已与请求精确匹配且领域已应用」的行：跳过领域写与 CAS 覆写
    d. 任一条失败 → 回滚（含各行 choice 写入）
-   e. 禁 save/clear_pending_decisions 触碰 rescript_draft
+   e. 禁 save_pending_decisions 触碰 rescript_draft
    f. **禁止** 任何 resolve_context 键承载本批 choices 集合
-④ commit 后 → 既有 phase2（decision clear 纪律不变）
+④ commit 后 → 既有 phase2 续跑
    phase2 全程成功结束时：
    - return_revise 行：清空其 choice_json（或写 `consumed_epoch` 使精确匹配失效）
      → 下一轮对新 options 的新动作是新鲜提交

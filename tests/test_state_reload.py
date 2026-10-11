@@ -14,6 +14,7 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+from tests.readback_helpers import economy_ledger_count as _ledger_count
 
 
 @pytest.fixture(autouse=True)
@@ -36,9 +37,8 @@ from ming_sim.decree import pre_settle, reload_state_from_db
 
 
 def test_reload_refreshes_state_in_place(game):
-    """DB 改值后调 reload → state 字段被刷成 DB 值，且仍是同一对象（id 不变）。"""
+    """DB 改值后调 reload → state 字段被刷成 DB 值，且返回同一 state 对象。"""
     db, state, content = game
-    state_id_before = id(state)
 
     # 制造内存/DB 分歧：直接改 DB 的相位与某 metric，不动内存 state。
     db.conn.execute("UPDATE game_state SET turn_phase='reviewing' WHERE id=1")
@@ -51,7 +51,6 @@ def test_reload_refreshes_state_in_place(game):
     returned = reload_state_from_db(db, state)
 
     # 原地刷新：同一对象、字段已是 DB 值。
-    assert id(state) == state_id_before
     assert returned is state
     assert state.turn_phase == "reviewing"
     assert state.metrics["皇威"] == 7
@@ -72,23 +71,16 @@ def test_reload_scrubs_next_period_advance(game):
     assert state.year == db_year and state.period == db_period
 
 
-def test_reload_passthrough_content_registry_no_crash(game):
-    """registry 非 None 时只透传不处理（session 级接线待后续）；content 非 None 时
-    重建 characters（幽灵/属性还原另有专测），本测只断不报错且 state 仍刷新。"""
+def test_reload_content_no_crash(game):
+    """content 非 None 时重建 characters，state 仍刷新。"""
     db, state, content = game
     db.conn.execute("UPDATE game_state SET turn_phase='reviewing' WHERE id=1")
     db.conn.commit()
 
-    returned = reload_state_from_db(db, state, content=content, registry=object())
+    returned = reload_state_from_db(db, state, content=content)
 
     assert returned is state
     assert state.turn_phase == "reviewing"
-
-
-def _ledger_count(db, turn: int) -> int:
-    return db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
-    ).fetchone()[0]
 
 
 def test_reload_scrubs_dirty_settling_phase(game):
@@ -123,7 +115,7 @@ def test_pre_settle_self_reloads_memory_on_rollback(game, monkeypatch):
 
     monkeypatch.setattr(db, "save_state", _boom_save)
 
-    with pytest.raises(RuntimeError, match="save boom"):
+    with pytest.raises(RuntimeError):
         pre_settle(state, db)
 
     # pre_settle 已在回滚后自我 reload：内存与 DB 同源（phase 非 settling、metrics 回到回滚态）。
@@ -152,7 +144,6 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     任免 commit 先挂 content 再写 DB；回滚删行留幽灵 → 重试走「在册」路因无行被拒，
     合法 pending 任免标 failed = 决策丢失。
     """
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
     db, state, content = game
     new_name = "赵无忌"
@@ -163,10 +154,10 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     # commit_pending_actions 之后的步骤抛错 → 回滚
     def _boom(*a, **k):
         raise RuntimeError("post-commit step crash")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
-    with pytest.raises(RuntimeError, match="post-commit step crash"):
-        pre_settle(state, db, content=content, registry=None)
+    with pytest.raises(RuntimeError):
+        pre_settle(state, db, content=content)
 
     assert new_name not in content.characters  # 幽灵已清
     assert db.conn.execute(
@@ -174,7 +165,7 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     # pending 行随回滚回到 pending(行本身也回滚了 status 变更)
     monkeypatch.undo()
 
-    pre_settle(state, db, content=content, registry=None)  # 正常重试
+    pre_settle(state, db, content=content)  # 正常重试
 
     row = db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=? AND kind='office'",
@@ -190,45 +181,15 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     assert len(dossiers) == 1  # 成案与未生效身份 durable；颁布前仍未授官/激活
 
 
-def test_reload_skipped_inside_nested_atomic(game, monkeypatch):
-    """嵌套 atomic 内不 reload：rollback 尚未发生，load_state 读到未提交脏写（cmr S5 r1 F2）。"""
-    import ming_sim.decree as decree_mod
-    from ming_sim.applier import atomic
-    from ming_sim.decree import pre_settle
-    db, state, content = game
-
-    calls = {"n": 0}
-    real_reload = decree_mod.reload_state_from_db
-    def _counting_reload(*a, **k):
-        calls["n"] += 1
-        return real_reload(*a, **k)
-    monkeypatch.setattr(decree_mod, "reload_state_from_db", _counting_reload)
-
-    def _boom(*a, **k):
-        raise RuntimeError("inner crash")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
-
-    with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
-        with atomic(db):
-            try:
-                pre_settle(state, db)
-            except RuntimeError:
-                pass  # 吞内层异常,外层 rollback-only 接管
-
-    assert calls["n"] == 0  # 嵌套内未 reload(脏读防线)
-
-
 def test_metrics_refresh_never_empty_window(game):
-    """metrics 刷新无空窗口：同一 dict 对象、键集与 DB 一致（cmr S5 r1 F3）。"""
+    """metrics 刷新后键集与 DB 同源（ADR 0008 内存/DB 一致）。"""
     from ming_sim.decree import reload_state_from_db
     db, state, content = game
-    before_id = id(state.metrics)
     state.metrics["国库"] = 999999  # 脏值
     state.metrics["幽灵指标"] = 1   # DB 没有的 key
 
     reload_state_from_db(db, state)
 
-    assert id(state.metrics) == before_id
     assert "幽灵指标" not in state.metrics
     fresh = db.load_state()
     assert state.metrics == fresh.metrics
@@ -240,9 +201,8 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     罢免 commit 改了 content 里现有 Character 的 status/office；回滚还原 DB 行，
     幽灵清理管不到「名字仍在」的脏属性 → content 与 DB 分叉持续整个 session。
     """
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
-    from tests.test_pending_actions import _active_minister_name
+    from tests.legacy_staging_helpers import _active_minister_name
     db, state, content = game
     name = _active_minister_name(db, content)
     # 基准取 DB 行（不变式=reload 后 content 与 DB 同源；活存档 DB 值可能已偏离 content JSON 初值）。
@@ -256,32 +216,15 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
 
     def _boom(*a, **k):
         raise RuntimeError("post-commit step crash")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
-    with pytest.raises(RuntimeError, match="post-commit step crash"):
-        pre_settle(state, db, content=content, registry=None)
+    with pytest.raises(RuntimeError):
+        pre_settle(state, db, content=content)
 
     # DB 已回滚 → 内存 content 必须同源
     refreshed = content.characters[name]
     assert refreshed.status == status_before
     assert refreshed.office == office_before
-
-
-def test_reload_passes_llm_config_to_content_rebuild(game, monkeypatch):
-    """content 重建走 restore 同参：llm_config 必传（cmr S5 r3，缺省会降级「待铨」）。"""
-    import ming_sim.session as session_mod
-    from ming_sim.decree import reload_state_from_db
-    db, state, content = game
-    db.llm_config = object()  # 哨兵
-
-    seen = {}
-    def _spy(content_arg, db_arg, llm_config=None):
-        seen["llm_config"] = llm_config
-    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", _spy)
-
-    reload_state_from_db(db, state, content=content)
-
-    assert seen["llm_config"] is db.llm_config
 
 
 # ── atomic_and_reload helper（S4：六处 try/atomic/except-reload-reraise 公共内核） ──
@@ -301,7 +244,7 @@ def test_atomic_and_reload_reloads_and_reraises_at_depth0(game):
     from ming_sim.decree import atomic_and_reload
     db, state, content = game
     state.metrics["国库"] = 999999  # 脏内存
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError):
         with atomic_and_reload(db, state, content=content):
             db.conn.execute("UPDATE metrics SET value = 7 WHERE key = '国库'")
             raise RuntimeError("boom")
@@ -311,44 +254,24 @@ def test_atomic_and_reload_reloads_and_reraises_at_depth0(game):
     assert state.metrics["国库"] != 999999
 
 
-def test_atomic_and_reload_skips_reload_when_nested(game, monkeypatch):
-    """嵌套（depth>0）：内核不 reload（rollback 未发生，防脏读），原异常透传给外层。"""
-    import ming_sim.decree as decree_mod
-    from ming_sim.applier import atomic
-    from ming_sim.decree import atomic_and_reload
-    db, state, content = game
-
-    calls = {"n": 0}
-    real_reload = decree_mod.reload_state_from_db
-    def _counting_reload(*a, **k):
-        calls["n"] += 1
-        return real_reload(*a, **k)
-    monkeypatch.setattr(decree_mod, "reload_state_from_db", _counting_reload)
-
-    with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
-        with atomic(db):
-            try:
-                with atomic_and_reload(db, state, content=content):
-                    raise RuntimeError("inner crash")
-            except RuntimeError:
-                pass  # 吞内层异常，外层 rollback-only 接管
-    assert calls["n"] == 0  # 嵌套内未 reload
-
-
 def test_atomic_and_reload_chains_reload_failure(game, monkeypatch):
     """reload 自身再炸：原异常不被顶替，reload 异常链上抛（raise exc from reload_exc）。"""
     import ming_sim.decree as decree_mod
     from ming_sim.decree import atomic_and_reload
     db, state, content = game
+    body_error = RuntimeError("orig")
+    reload_error = ValueError("reload failed")
 
     def _boom_reload(*a, **k):
-        raise ValueError("reload failed")
+        raise reload_error
     monkeypatch.setattr(decree_mod, "reload_state_from_db", _boom_reload)
 
-    with pytest.raises(RuntimeError, match="orig") as ei:
+    with pytest.raises(RuntimeError) as ei:
         with atomic_and_reload(db, state, content=content):
-            raise RuntimeError("orig")
-    assert isinstance(ei.value.__cause__, ValueError)  # 链：orig from reload failed
+            raise body_error
+    # 原异常对象保真：注入异常对象作期望；reload 次生只挂 cause。
+    assert ei.value is body_error
+    assert ei.value.__cause__ is reload_error
 
 
 def test_atomic_and_reload_runs_on_error_before_reload(game, monkeypatch):

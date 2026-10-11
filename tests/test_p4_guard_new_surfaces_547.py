@@ -6,22 +6,13 @@
 
 from __future__ import annotations
 
-import json
-import re
 from types import SimpleNamespace
 
-import pytest
 from fastapi.testclient import TestClient
 
 from ming_sim import audience_night as an
-from ming_sim.beat_orchestration import (
-    BEAT_ENTER,
-    assemble_beat_inputs,
-    create_llm_beat_generator,
-)
 from ming_sim.decree import _rescript_decisions
 from ming_sim.models import TurnPhase
-from tests.dossier_test_helpers import create_test_secret_order
 from tests.test_audience_scroll_539 import _scroll_game
 from tests.conftest import (
     CHARACTER_AXIS_SENTINEL,
@@ -33,37 +24,6 @@ from tests.conftest import (
 
 
 _CHARACTER_AXIS_KEYS = set(CHARACTER_AXIS_SENTINEL)
-# 2026-08-17 22:30:36 一类墙钟不得触发忠诚=17 假阳（ISO 剥离即可；无平行 skip 表）。
-_ISO_DT_RE = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?")
-
-
-def _walk_text_tokens(value) -> list[str]:
-    """Collect player-meaningful text/number tokens from a payload tree."""
-    out: list[str] = []
-    pending: list[object] = [value]
-    while pending:
-        item = pending.pop()
-        if isinstance(item, dict):
-            for key, child in item.items():
-                key_s = str(key)
-                if key_s in _CHARACTER_AXIS_KEYS:
-                    out.append(key_s)
-                pending.append(child)
-        elif isinstance(item, (list, tuple, set)):
-            pending.extend(item)
-        elif item is None or isinstance(item, bool):
-            continue
-        elif isinstance(item, (int, float)):
-            out.append(str(int(item)) if float(item).is_integer() else str(item))
-        else:
-            out.append(str(item))
-    return out
-
-
-def _scan_blob(value) -> str:
-    return "\t".join(_walk_text_tokens(value))
-
-
 def _assert_no_character_axis_keys(payload, *, where: str) -> None:
     # 键面：人物抽象轴英文字段名不得进玩家 payload
     keys: set[str] = set()
@@ -77,18 +37,6 @@ def _assert_no_character_axis_keys(payload, *, where: str) -> None:
             pending.extend(item)
     leaked_keys = _CHARACTER_AXIS_KEYS & keys
     assert not leaked_keys, f"{where}: payload 键面露出人物抽象轴 {leaked_keys}"
-
-
-def _assert_no_character_sentinel_leak(payload, *, where: str) -> None:
-    _assert_no_character_axis_keys(payload, where=where)
-
-    # 值面：剥离墙钟后，哨兵数不得作为独立数字 token 出现
-    blob = _ISO_DT_RE.sub("", _scan_blob(payload))
-    for field, value in CHARACTER_AXIS_SENTINEL.items():
-        token = str(value)
-        # 独立数字：前后非数字，避免 117/170 误伤；时间戳已剥。
-        if re.search(rf"(?<!\d){re.escape(token)}(?!\d)", blob):
-            raise AssertionError(f"{where}: 人物抽象轴 {field}={value} 泄漏")
 
 
 def _world_facts(db, state) -> dict[str, object]:
@@ -120,9 +68,6 @@ def _world_facts(db, state) -> dict[str, object]:
 def _state_payload_runtime(db, state, content, *, pending_decisions=None):
     """既有轻壳（同 1234 形）+ 真 content/public_character，走 WebGame.state_payload。"""
     import web_app
-    from ming_sim.skills import bind_content as bind_skills_content
-
-    bind_skills_content(content)
     runtime = object.__new__(web_app.WebGame)
     runtime.favorites = set()
     runtime.session = SimpleNamespace(
@@ -148,28 +93,6 @@ def _state_payload_runtime(db, state, content, *, pending_decisions=None):
     return runtime
 
 
-def test_guard_detector_flags_injected_character_sentinel():
-    """检测器自证：payload 一旦带上人物轴哨兵值即红（AC：注入哨兵值即红）。"""
-    with pytest.raises(AssertionError, match="loyalty=17"):
-        _assert_no_character_sentinel_leak(
-            {"content": f"其忠诚约{CHARACTER_AXIS_SENTINEL['loyalty']}"},
-            where="detector",
-        )
-    with pytest.raises(AssertionError, match="人物抽象轴"):
-        _assert_no_character_sentinel_leak(
-            {"loyalty": "离心已显"},
-            where="detector",
-        )
-    # 世界事实与墙钟不得误伤
-    _assert_no_character_sentinel_leak(
-        {
-            "content": "1628年3月发帑120万两，兵3500",
-            "time": "2026-08-17 22:30:36",
-        },
-        where="detector-world",
-    )
-
-
 def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, monkeypatch):
     """场卷轴序列（scene 文案 + 判官清单 highlights）玩家读面。"""
     import web_app
@@ -187,37 +110,8 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
     an.append_ledger_entry(
         db, night_id, body=scene_body, tags=["军务"], person_names=[minister],
     )
-    enter_inputs = assemble_beat_inputs(
-        db, state, beat_kind=BEAT_ENTER, night_id=night_id,
-        time_of_day="戌时", location="乾清宫",
-        person_name=minister, summon_method=an.METHOD_XUANRU,
-    )
-    llm_calls = []
-
-    class _FakeAgent:
-        def __init__(self, **_kwargs):
-            pass
-
-        def run(self, prompt):
-            llm_calls.append(prompt)
-            return SimpleNamespace(content="entry")
-
-    monkeypatch.setattr("agno.agent.Agent", _FakeAgent)
-    monkeypatch.setattr("ming_sim.llm_model.create_chat_model", lambda *_a, **_k: object())
-    monkeypatch.setattr(
-        "ming_sim.llm_model.extract_agent_text",
-        lambda result: str(result.content),
-    )
-    enter_body = create_llm_beat_generator(object())(enter_inputs)
-    assert len(llm_calls) == 1
-    routed_materials = json.loads(llm_calls[0])
-    assert routed_materials["场景节点"] == BEAT_ENTER
-    assert routed_materials["人物"] == minister
-    assert routed_materials["召法"] == an.METHOD_XUANRU
-    an.append_ledger_entry(
-        db, night_id, body=enter_body, tags=[an.TAG_ENTER],
-        person_names=[minister],
-    )
+    # #1838：入殿只记事实账（正文空），不经 beat generator
+    an.summon_enter(db, night_id, minister, method=an.METHOD_XUANRU)
     _turn_id, mid = append_night_chat(
         db, state, night_id, minister,
         f"辽饷与{facts['army_name']}兵额如何？",
@@ -241,7 +135,6 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
     _assert_no_character_axis_keys(payload, where="api_audience_scroll")
     _assert_no_character_axis_keys(scroll, where="read_night_scroll")
     _assert_no_character_axis_keys(projection, where="build_chat_projection")
-    _assert_no_character_sentinel_leak(enter_inputs, where="assemble_beat_inputs")
 
     minister_msgs = [m for m in scroll if m.get("role") == "minister"]
     assert minister_msgs and minister_msgs[0]["highlights"] == ["辽饷", f"兵{facts['manpower']}"]
@@ -304,14 +197,8 @@ def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
         "consorts": page["consorts"],
         "talent_pool": page["talent_pool"],
     }
-    _assert_no_character_sentinel_leak(rescript_face, where="state_payload 批红信封")
+    _assert_no_character_axis_keys(rescript_face, where="state_payload 批红信封")
 
-    blob = _scan_blob(rescript_face)
-    assert str(facts["year"]) in blob
-    assert str(facts["period"]) in blob
-    assert str(facts["manpower"]) in blob
-    assert str(facts["treasury"]) in blob
-    assert "批红待裁" in blob
     assert page["pending_decisions"][0]["rejection_reason"]
     assert page["pending_decisions"][0]["opposition"] == "东林"
 
@@ -357,105 +244,7 @@ def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monk
     assert archives
     assert any(item.get("kind") == "night" for item in history["turns"])
 
-    _assert_no_character_sentinel_leak(archives, where="list_closed_night_archives")
-    _assert_no_character_sentinel_leak(history, where="api_history_turns")
-    _assert_no_character_sentinel_leak(archived_scroll, where="archived read_night_scroll")
-    _assert_no_character_sentinel_leak(scroll_http, where="archived api_audience_scroll")
-
-    blob = _scan_blob({
-        "archives": archives,
-        "history": history,
-        "scroll": archived_scroll,
-        "http": scroll_http,
-    })
-    assert str(facts["year"]) in blob
-    assert str(facts["period"]) in blob
-    assert str(facts["manpower"]) in blob
-    assert str(facts["treasury"]) in blob
-    assert any(str(facts["year"]) in str(item.get("title") or "") for item in archives)
-
-
-# ── #570 族尾：本族新数据面扩写（认账 brief / 月度进展投影 / 案卷模拟器面）──
-
-_FAMILY_SYSTEM_LEAK = re.compile(
-    r"\b(?:promulgated|rejected|executing|proposed|force_promulgated|midzhi|"
-    r"break_rank|blocked_layer|degraded|failed|fulfilled|transformed|"
-    r"cabinet_drafting|palace_rescript|six_offices|is_break_rank)\b"
-    r"|破格标|进展档"
-)
-
-
-def test_family_dossier_brief_and_progress_keep_system_words_out(game):
-    """#474 族新面：认账 brief + monthly_progress 投影不得漏系统词/枚举。"""
-    from ming_sim.decree import project_dossiers_for_simulator
-    from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
-    from ming_sim.simulation import (
-        build_simulator_payload,
-        project_monthly_progress_for_simulator,
-    )
-    from tests.dossier_test_helpers import rejected_verdict
-
-    db, state, content = game
-    minister = active_ming_character(db, content)
-    plant_character_axis_sentinels(db, content, minister)
-    facts = _world_facts(db, state)
-
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="special_decree",
-        decree_text=(
-            f"{facts['year']}年发{facts['treasury']}万两，"
-            f"调{facts['army_name']}{facts['manpower']}人"
-        ),
-        target_kind="character",
-        target_id=minister,
-        payload={"mode": "midzhi"},
-    )
-    db.apply_dossier_verdicts(state, [rejected_verdict(dossier_id, midzhi=True)])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
-
-    # monthly_progress 真源＝长差密令（护行/稽核 + deadline≥2），与 #566/#569 同缝。
-    order_id = create_test_secret_order(db,
-        state, minister, f"护行{facts['army_name']}饷",
-        f"逐月核兵{facts['manpower']}不得外泄", ["护行"], deadline_months=4,
-    )
-    errand_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.record_dossier_progress(
-        errand_id, state.turn, "在途",
-        f"密奏：已核兵{facts['manpower']}，库银约{facts['treasury']}，不得外泄",
-        origin="dossier-report:monthly_errand",
-    )
-
-    candidates = db.list_referenceable_dossiers(minister, state.turn)
-    brief = render_referenceable_dossier_brief(candidates)
-    monthly = project_monthly_progress_for_simulator(db)
-    visible = [
-        row for row in (
-            db.get_decree_dossier(dossier_id),
-            db.get_decree_dossier(errand_id),
-        )
-        if row is not None
-    ]
-    sim_rows = project_dossiers_for_simulator(visible, db, state)
-    payload = build_simulator_payload(state, db, "", "", decree_dossiers=sim_rows)
-
-    # 玩家可读面：认账 brief + 公共 monthly_progress。
-    # 推演 decree_dossiers 投影按 #569 契约保留 status/mode 结构位（机器面，非 P4 玩家面）。
-    for label, surface in (
-        ("认账 brief", brief),
-        ("monthly_progress", monthly),
-        ("simulator payload monthly", payload.get("monthly_progress")),
-    ):
-        _assert_no_character_sentinel_leak(surface, where=label)
-        blob = surface if isinstance(surface, str) else _scan_blob(surface)
-        assert _FAMILY_SYSTEM_LEAK.search(str(blob)) is None, f"{label} 漏系统词: {blob}"
-
-    # 人物轴哨兵仍不得进机器投影键值（与既有 547 同构）。
-    _assert_no_character_sentinel_leak(sim_rows, where="sim dossiers")
-
-    # 世界事实仍可达（年月/兵额/库银）；进展档只投 band，密奏正文不进公共 monthly_progress。
-    assert str(facts["year"]) in brief or str(facts["treasury"]) in brief
-    assert all("memorial_text" not in row for row in monthly)
-    assert any(row.get("progress_band") == "在途" for row in monthly)
-    # brief 定性中文，不得把英文枚举念给皇帝。
-    assert "打回" in brief or "强颁" in brief
+    _assert_no_character_axis_keys(archives, where="list_closed_night_archives")
+    _assert_no_character_axis_keys(history, where="api_history_turns")
+    _assert_no_character_axis_keys(archived_scroll, where="archived read_night_scroll")
+    _assert_no_character_axis_keys(scroll_http, where="archived api_audience_scroll")

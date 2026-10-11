@@ -118,7 +118,7 @@ TARGET_KINDS = frozenset({
 # ADR 0055 / #560: the single policy source for dossier admission and effect
 # timing.  Consumers must not infer these properties from ad-hoc action sets.
 # ``payload`` means a structured effect is materialized after promulgation;
-# ``narrative`` means the simulator/extractor owns the effect; ``immediate``
+# ``narrative`` means the month-chain world segment owns the effect; ``immediate``
 # is an exempt palace/private action already materialized at admission.
 _DOSSIER_NARRATIVE_ACTIONS = frozenset({
     "policy", "strategy_selection", "approve_reject", "special_decree",
@@ -167,7 +167,10 @@ def dossier_action_policy(action_type: object, payload=None):
     action = str(action_type or "")
     policy = dict(DOSSIER_ACTION_POLICY[action])
     if action == "grant_allocation":
-        payload = payload or {}
+        # 已解码可选对象权威；业务缺省 {} 在权威返回后由本调用方决定。
+        from ming_sim.db import GameDB
+
+        payload = GameDB.optional_object(payload, surface="dossier payload") or {}
         grant_action = str(payload.get("grant_action") or "").strip()
         cadence = str(payload.get("cadence") or "").strip()
         if grant_action in {"加衔", "荫叙"}:
@@ -211,47 +214,6 @@ DOSSIER_OUTCOME_CN = {
     "transformed": "变形",
 }
 
-# #622：奏报轨终值旁路——定性中文 band + 承办人假象，禁英文枚举/判官真值回填。
-# 系统词（变形/打折走样/分界 等）不得出现在 progress_band / memorial。
-# #629：测试本地禁词提升为生产单源（全族 P4 assert 哨兵共引）。
-# 汉语普通词（变形/分界/打折走样/烂尾）只进 assert 哨兵响亮拦截，
-# 不进运行时静默剥离——静默剜字会把 diegetic 朝语剜成病句。
-DEFORMATION_BANNED_PLAYER_TOKENS = (
-    "transformed", "degraded", "fulfilled", "failed", "executing",
-    "progress_band", "is_terminal", "beyond_intent",
-    "变形", "分界", "打折走样", "烂尾",
-)
-# 生产静默剥离子集：仅无歧义系统词（英文枚举/引擎键），零汉语普通词。
-DEFORMATION_STRIP_PLAYER_TOKENS = tuple(
-    token for token in DEFORMATION_BANNED_PLAYER_TOKENS
-    if not any("\u4e00" <= ch <= "\u9fff" for ch in token)
-)
-assert DEFORMATION_STRIP_PLAYER_TOKENS
-assert all(
-    token in DEFORMATION_BANNED_PLAYER_TOKENS
-    for token in DEFORMATION_STRIP_PLAYER_TOKENS
-)
-assert not any(
-    any("\u4e00" <= ch <= "\u9fff" for ch in token)
-    for token in DEFORMATION_STRIP_PLAYER_TOKENS
-)
-
-# #624/#629：真伪底/失真引擎词——urge_lever 与 due_review 共引叶模块，
-# 禁双份漂移；亦消 urge_lever↔due_review 顶层环边。
-URGE_TRUTH_BANNED_PLAYER_TOKENS = (
-    "truth", "grace_fake", "pretextual", "genuine",
-    "payload_json", "distortion_band", "urge_tightness",
-    "distortion_tendency", "unreasonable", "supervision_history",
-)
-_TERMINAL_REPORT_FACADE_BAND = {
-    "transformed": "已竣",
-    "degraded": "将结",
-}
-_TERMINAL_REPORT_FACADE_MEMORIAL = {
-    "transformed": "所委各节均已依限办结，并无违误。",
-    "degraded": "所委已有成数，余事容再陈。",
-}
-
 
 def format_public_progress_disclosure(progress_rows: object) -> str:
     """公开披露面：progress_band + memorial_text 的 join 渲染（#622 AC6 面2 单源）。"""
@@ -259,53 +221,6 @@ def format_public_progress_disclosure(progress_rows: object) -> str:
         f"【{item['progress_band']}】{item['memorial_text']}"
         for item in (progress_rows or [])
     )
-
-
-def terminal_report_facade(
-    outcome: object,
-    *,
-    prior_reports: object = None,
-) -> tuple[str, str]:
-    """终值奏报行的（progress_band, memorial_text）假象面。
-
-    变形案必须载承办人假象（奏报说兑现），不得回填判官真值；
-    progress_band 一律定性中文。
-    """
-    key = str(outcome or "").strip()
-    band = _TERMINAL_REPORT_FACADE_BAND.get(key, "办结")
-    memorial = _TERMINAL_REPORT_FACADE_MEMORIAL.get(
-        key, "所委诸事已有回奏。",
-    )
-    # 变形：优先复用末次非终值月报陈词作假象载体（仍须成功口径）。
-    if key == "transformed" and prior_reports:
-        for item in reversed(list(prior_reports)):
-            if not isinstance(item, dict):
-                continue
-            if item.get("is_terminal"):
-                continue
-            text = str(item.get("memorial_text") or "").strip()
-            if text:
-                memorial = text
-                break
-    return band, memorial
-
-SIM_DOSSIER_COMMON_KEYS = frozenset({
-    "id", "action_type", "status",
-    "decision", "outcome", "note",
-    "mode", "stigma", "participant_roster", "links", "execution_signal",
-    "due_turn", "created_turn", "promulgated_turn",
-    "target_kind", "target_id", "executor_kind", "executor_id",
-    # #613 执行侧任别读端（与 #569 固定键投影同面）
-    "appointment_tenure", "held_authorities", "authorization_ids",
-    "command_power_rank", "distortion_weight",
-    # #625 / ADR 0077 监督事实底只读注入（解 A）
-    "supervision_history", "loophole_exposures",
-    "transformation_tendency_facts",
-    # #651 monthly pay truth rides the existing dossier judge surface.
-    "army_pay_fact",
-})
-SIM_DOSSIER_NARRATIVE_KEYS = SIM_DOSSIER_COMMON_KEYS | {"decree_text"}
-SIM_DOSSIER_EXECUTION_KEYS = SIM_DOSSIER_COMMON_KEYS | {"execution_summary"}
 
 
 def qualitative_dossier_status(value: object) -> str:
@@ -398,15 +313,16 @@ def render_referenceable_dossier_brief(candidates) -> str:
     for row in candidates:
         if not isinstance(row, dict):
             continue
+        # Free prose title / execution_note: preserve raw; strip only emptiness (#1834 F16).
         title = str(
             row.get("secret_title") or row.get("decree_text") or row.get("action_type") or ""
-        ).strip()
+        )
         status_cn = qualitative_dossier_status(row.get("status"))
         decision_cn = qualitative_promulgation_slot(row)
         outcome_cn = qualitative_dossier_outcome(
             row.get("execution_outcome"), status=row.get("status"),
         )
-        note = str(row.get("execution_note") or "").strip()
+        note = str(row.get("execution_note") or "")
         markers = qualitative_midzhi_markers(row)
         facts = []
         if status_cn:
@@ -415,7 +331,7 @@ def render_referenceable_dossier_brief(candidates) -> str:
             facts.append(f"颁布：{decision_cn}")
         if outcome_cn:
             facts.append(f"执行：{outcome_cn}")
-        if note:
+        if note.strip():
             facts.append(f"说明：{note}")
         if markers:
             facts.append("标记：" + "、".join(markers))

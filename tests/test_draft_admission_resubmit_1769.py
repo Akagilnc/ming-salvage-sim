@@ -1,6 +1,7 @@
 """#1769 draft 成案拒收 → 结算路补交 / 耗尽留到下月。
 
-真实入口：POST /api/directives → POST /api/decree/issue/stream；
+真实入口：草稿落桌（#1849 后走现行 capture 核 + session.add_directive；
+独立手拟新增 Web 口已退役）→ POST /api/decree/issue/stream；
 下月供料经 session.write_decree → write_decree_with_agno 真实投影。
 断言 SSE 终态与 turn_directives / rejection_reports / dossier 结构化字段。
 
@@ -30,7 +31,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim.decree import write_decree_with_agno as _real_write_decree_with_agno
 from ming_sim.error_pack import latest_error_pack_for_turn
-from tests.test_army_pay_decree_1503 import _set_guanning_arrears
+from tests.army_pay_helpers import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import (
     _get_state,
     _post_issue_stream,
@@ -143,9 +144,16 @@ def _queue_backend(monkeypatch, captures: list) -> None:
     monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
 
 
-def _spy_resubmit_kwargs(monkeypatch) -> list[dict]:
-    """截获补交结构化入参（failure_reason / bad_payload），不扫 prompt 文本。"""
+def _spy_resubmit_kwargs(monkeypatch) -> tuple[list[dict], list[str]]:
+    """截获补交结构化入参与本轮产物失败事实（failure_reason 源），不扫 prompt。
+
+    返回 (calls, product_faults)：
+    - calls[i]["failure_reason"] = 实际回喂给 LLM 的诊断
+    - product_faults = 各次 resubmit 自身抛出的 ValueError 原文（carry_over 源）
+    来源保真：下一轮 failure_reason 必须等于对应 product_fault，不得只验非空/次数。
+    """
     calls: list[dict] = []
+    product_faults: list[str] = []
     real = cb.resubmit_draft_admission_payload
 
     def wrapper(decree_text, *, bad_payload, failure_reason, **kwargs):
@@ -154,15 +162,45 @@ def _spy_resubmit_kwargs(monkeypatch) -> list[dict]:
             "bad_payload": dict(bad_payload or {}),
             "decree_text": str(decree_text or ""),
         })
-        return real(
-            decree_text,
-            bad_payload=bad_payload,
-            failure_reason=failure_reason,
-            **kwargs,
-        )
+        try:
+            return real(
+                decree_text,
+                bad_payload=bad_payload,
+                failure_reason=failure_reason,
+                **kwargs,
+            )
+        except ValueError as exc:
+            product_faults.append(str(exc))
+            raise
 
     monkeypatch.setattr(cb, "resubmit_draft_admission_payload", wrapper)
-    return calls
+    return calls, product_faults
+
+
+def _spy_ensure_rejection_reasons(monkeypatch, game) -> list[list[tuple[int, str]]]:
+    """按轮截获 ensure_dossiers 拒因（directive_id, reason），作回喂源真值。"""
+    rounds: list[list[tuple[int, str]]] = []
+    real = game.db.ensure_dossiers_for_draft_directives
+
+    def wrapper(state, record_rejections=False):
+        result = real(state, record_rejections=record_rejections)
+        rounds.append([
+            (int(item["directive_id"]), str(item.get("reason") or ""))
+            for item in (result or [])
+            if item.get("directive_id") is not None
+        ])
+        return result
+
+    monkeypatch.setattr(game.db, "ensure_dossiers_for_draft_directives", wrapper)
+    return rounds
+
+
+def _reason_for_directive(
+    round_rows: list[tuple[int, str]], directive_id: int,
+) -> str:
+    matched = [reason for did, reason in round_rows if did == int(directive_id)]
+    assert matched, f"ensure 轮次无 directive#{directive_id} 拒因"
+    return matched[0]
 
 
 _ENSURE_FAULT_MARK = "simulated ensure code fault #1769"
@@ -200,9 +238,15 @@ def _finish_month_after_gazette(game, turn: int) -> None:
     assert int(game.state.turn) == int(turn) + 1
 
 
-def _post_directive(client, text: str) -> None:
-    resp = client.post("/api/directives", json={"text": text, "notes": ""})
-    assert resp.status_code == 200, resp.text
+def _post_directive(game, text: str) -> int:
+    """#1849：独立手拟新增 Web 口已退役；经现行 capture 核 + session 落草案。
+
+    与召对拟旨同一条 turn_directives 写入、同一拟旨抽取核，故下游成案准入断言
+    仍验的是真实落桌产物。
+    """
+    from tests.directive_seed_helpers import seed_manual_draft
+
+    return seed_manual_draft(game.session, text)
 
 
 def _latest_directive_id(game) -> int:
@@ -250,11 +294,12 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     game = admission_game
     # 原抽 + 重写1 仍坏；重写2 才成案（owner：总计 3）
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _GOOD_XIEANG])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     draft_id = _latest_directive_id(game)
     first_row = game.db.get_directive(draft_id)
@@ -268,16 +313,22 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     _post_issue_stream(client, expected_turn=turn, step="1769 resubmit")
     assert _turn_of(_get_state(client)) == turn + 1
 
-    # 两次 LLM 重写；入参含失败事实 + 原产物（结构化字段，不扫 prompt）
+    # 两次 LLM 重写；failure_reason 绑定本轮 ensure 拒因（写回成功无 carry）
     assert len(resubmit_calls) == 2
-    assert resubmit_calls[0]["failure_reason"]
+    assert len(ensure_rounds) >= 2
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], draft_id,
+    )
+    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[1], draft_id,
+    )
+    assert not product_faults  # 本路两轮写回成功，源=ensure 而非产物 ValueError
     assert resubmit_calls[0]["bad_payload"].get("dossier_action_type") == "pay_order_override"
     assert any(
         isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
         for e in (resubmit_calls[0]["bad_payload"].get("entries") or [])
     )
     assert resubmit_calls[0]["decree_text"] == _DECREE_TEXT
-    assert resubmit_calls[1]["failure_reason"]
     assert resubmit_calls[1]["decree_text"] == _DECREE_TEXT
 
     dossier = game.db.get_dossier_for_directive(draft_id)
@@ -307,11 +358,12 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     game = admission_game
     # 原抽 + 两次重写皆坏（总计 3）；变异把重写预算改回 1 时本案须红（calls==2）
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
     source_turn = int(game.db.get_directive(did)["turn"])
@@ -319,6 +371,15 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     body = _post_issue_stream(client, expected_turn=turn, step="1769 exhaust")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
+    assert len(ensure_rounds) >= 2
+    # 两轮写回成功：回喂源=各轮 ensure 拒因，丢源/替换不能假绿
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], did,
+    )
+    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[1], did,
+    )
+    assert not product_faults
     row = game.db.get_directive(did)
     assert row is not None and str(row["status"]) == "draft"
     assert game.db.get_dossier_for_directive(did) is None
@@ -336,23 +397,8 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     _finish_month_after_gazette(game, turn)
     assert source_turn < int(game.state.turn)
 
-    # 下月召对真实供料（验收 2「下次召对大臣可就此追问」，复用 A 路、无新通知）：
-    # 大臣本月奏对的组装输入里带该旨原文与「尚未入档」事实，回禀措辞由 LLM 自己长。
-    minister = next(
-        c for c in game.session.content.characters.values()
-        if c.office_type not in ("后宫",)
-    )
-    from ming_sim.materials import prepare_character_materials
-    audience_input = game.session._audience_prompt_for_message(
-        "卿有何事？", minister,
-        prepared=prepare_character_materials(game.db, game.state, minister),
-    )
-    assert str(row["text"] or "") in audience_input
-    assert str(did) in audience_input
-    # 反向（本回合新拟草案不得越界）归其契约本家：
-    # test_audience_background.py::test_audience_prompt_does_not_expose_unissued_draft_...
-
     # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
+    # （跨月未入档边界的外部可见契约；不直调私有 _carryover_drafts）
     payloads = _write_decree_capture_payloads(monkeypatch, game)
     assert payloads
     feed_item = next(
@@ -396,14 +442,15 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     _queue_backend(monkeypatch, [
         _GOOD_XIEANG, _BAD_PAY_ORDER, _BAD_UNKNOWN_PARTICIPANT,
     ])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, "准从国库见银拨关宁军饷十五万两即发。")
+    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。")
     wait_pending_writes(game)
     good_id = _latest_directive_id(game)
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     bad_id = _latest_directive_id(game)
     assert bad_id != good_id
@@ -419,10 +466,14 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     assert not _rejection_rows(game, good_id)
     # 名册产物错未被当成系统故障：无错误包、月已推进（上方断言）
     assert not latest_error_pack_for_turn(game.db.path, turn)
-    # 首轮拒因来自原产物；第二次重写听见的是第一次重写自己的失败事实
+    # 来源保真：首轮=ensure 原 pay_order 拒因；次轮=第一次重写自身产物失败事实
+    # （carry_over）。丢 carry / 旧拒因冒充 / 无关诊断替换须红；合法别名仍绿。
     assert len(resubmit_calls) == 2
-    assert _UNKNOWN_NAME not in resubmit_calls[0]["failure_reason"]
-    assert _UNKNOWN_NAME in resubmit_calls[1]["failure_reason"]
+    assert product_faults, "第一次重写须留下本轮产物失败事实"
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], bad_id,
+    )
+    assert resubmit_calls[1]["failure_reason"] == product_faults[0]
 
 
 def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monkeypatch):
@@ -435,7 +486,7 @@ def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monke
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, "准从国库见银拨关宁军饷十五万两即发。")
+    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。")
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
@@ -459,7 +510,7 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
@@ -495,11 +546,12 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     _queue_backend(monkeypatch, [
         _BAD_PAY_ORDER, _NO_INTENT_REWRITE, _NO_INTENT_REWRITE,
     ])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
     first = game.db.read_directive_dossier_payload(game.db.get_directive(did))
@@ -508,6 +560,12 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     _post_issue_stream(client, expected_turn=turn, step="1769 non-intent rewrite")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
+    # 两轮重写皆无拟旨意图 → 产物 ValueError；次轮须听见首轮自身失败事实
+    assert product_faults, "无拟旨意图重写须留下产物失败事实"
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], did,
+    )
+    assert resubmit_calls[1]["failure_reason"] == product_faults[0]
 
     row = game.db.get_directive(did)
     assert row is not None and str(row["status"]) == "draft"
@@ -530,7 +588,8 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     # pending 已带结构化坏载荷（召对核定前）；issue 时 confirm 翻 draft 后走 ensure+resubmit。
     # 模型供料只服务补交重写（原抽已在 payload 里）。
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -559,6 +618,15 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     assert body.get("_event") in (None, "done", "")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
+    assert len(ensure_rounds) >= 2
+    # pending 翻 draft 后走 ensure 源回喂；写回成功则源=ensure 拒因
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], did,
+    )
+    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[1], did,
+    )
+    assert not product_faults
 
     row = game.db.get_directive(did)
     assert row is not None
@@ -567,20 +635,20 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     assert len(_rejection_rows(game, did)) == 1
 
 
-def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
+def test_exhaust_zero_dossier_system_simulation_no_decree(
     admission_game, monkeypatch,
 ):
-    """类3：耗尽零成案 → source=system_simulation；不发 STAT_DECREES_ISSUED；陈旧 last_decree 不进 resolve。"""
+    """类3：耗尽零成案 → source=system_simulation；陈旧 last_decree 不进 resolve、不算本月已颁。"""
     game = admission_game
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(client, _DECREE_TEXT)
+    _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
 
-    # 陈旧拟诏稿：旧行为会把它当本月已颁送入 resolve（player_decree + Steam 误计）
+    # 陈旧拟诏稿：旧行为会把它当本月已颁送入 resolve（player_decree 误计）
     stale = "陈旧拟诏稿·不得视为本月已颁·#1769"
     game.session.last_decree = stale
     game.session._decree_draft_fingerprint = ((did, "stale"),)
@@ -598,7 +666,7 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
 
     monkeypatch.setattr(session_mod, "resolve_directives", spy_resolve)
 
-    body = _post_issue_stream(
+    _post_issue_stream(
         client, expected_turn=turn, step="1769 zero-exhaust system_simulation",
     )
     assert _turn_of(_get_state(client)) == turn + 1
@@ -611,17 +679,8 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
     assert call["source"] == Provenance.system_simulation
     assert call["directives_len"] == 0
     assert not (call["decree_text"] or "").strip()
-    assert (game.session.last_decree or "") != stale
-
-    steam = body.get("steam_events") or []
-    assert not any(
-        isinstance(e, dict) and e.get("name") == "STAT_DECREES_ISSUED"
-        for e in steam
-    ), f"零成案不得计已颁: {steam!r}"
-    assert any(
-        isinstance(e, dict) and e.get("name") == "STAT_TURNS_PLAYED"
-        for e in steam
-    ), f"邸报写成后应计过月: {steam!r}"
+    # #1769 真实能力：邸报写成即过月（上文 turn+1），且不得留下陈旧拟诏稿当本月已颁。
+    assert not (game.session.last_decree or "").strip()
 
 
 def test_pending_preview_turn_key_no_keyerror_on_issue(
@@ -686,10 +745,10 @@ def test_pending_preview_turn_key_no_keyerror_on_issue(
     ), f"当月 preview 误标上月未入档: {feed_dirs!r}"
 
 
-def test_advance_without_edict_vacuum_steam_no_decree_issued(
+def test_advance_without_edict_vacuum_no_decree_issued(
     admission_game, monkeypatch,
 ):
-    """类B：POST 真空退朝成功 → 有 TURNS_PLAYED/MAX_TURN，无 DECREES_ISSUED。"""
+    """类B：POST 真空退朝成功 → 月份真推进，且本月无旨（last_decree 仍空）。"""
     game = admission_game
     turn = int(game.state.turn)
     assert not (game.session.last_decree or "").strip()
@@ -701,14 +760,6 @@ def test_advance_without_edict_vacuum_steam_no_decree_issued(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body.get("awaiting_decision") is False
+    assert body.get("advanced") is True
     assert _turn_of(_get_state(client)) == turn + 1
-
-    steam = body.get("steam_events") or []
-    names = [
-        e.get("name") for e in steam if isinstance(e, dict)
-    ]
-    assert "STAT_TURNS_PLAYED" in names, f"邸报写成后应计过月: {steam!r}"
-    assert "STAT_MAX_TURN_REACHED" in names, f"邸报写成后应计最大月: {steam!r}"
-    assert "STAT_DECREES_ISSUED" not in names, (
-        f"真空退朝不得计已颁: {steam!r}"
-    )
+    assert not (game.session.last_decree or "").strip()

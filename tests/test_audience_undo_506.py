@@ -9,6 +9,7 @@
 """
 
 from __future__ import annotations
+from tests.conftest import open_hall_turn
 
 import json
 from typing import Callable, Dict, Mapping, Optional
@@ -16,7 +17,6 @@ from typing import Callable, Dict, Mapping, Optional
 import pytest
 
 from ming_sim import audience_night as an
-from ming_sim.audience_night import AudienceNightError
 from ming_sim.audience_translation import apply_audience_round_translation, mark_turn_translation_done
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
@@ -51,7 +51,7 @@ def _run_round(
     `declaration` 若给出则经现役转译入口落账；否则只推进空轮水位。
     """
     before = db.capture_chat_rollback_snapshot()
-    night_id, chat_id = an.attach_chat_turn_to_night(db, state, minister)
+    night_id, chat_id = open_hall_turn(db, state, minister)
     uid = db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content) "
         "VALUES (?, ?, 'emperor', ?)",
@@ -109,7 +109,7 @@ def test_undo_erases_round_from_night_ledger_and_presence(game):
     )
     # 轮内：该轮抽取账在册、入殿账使其在场
     assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
-    assert m in an.persons_present_tonight(db, night_id)
+    assert m in an.present_names_at(db, night_id)
 
     ledger_before = [e for e in an.list_ledger(db, night_id)
                      if e["source_chat_turn_id"] != chat_id and m not in e["person_names"]]
@@ -123,7 +123,7 @@ def test_undo_erases_round_from_night_ledger_and_presence(game):
     # 与「该轮未发生」等价：夜内其余账（开夜/员额框架）一字不动
     assert [e["id"] for e in ledger_after] == [e["id"] for e in ledger_before]
     # 在场推导：该轮入殿的人像没登场过
-    assert m not in an.persons_present_tonight(db, night_id)
+    assert m not in an.present_names_at(db, night_id)
     # 对话轮不再计入夜（undone 不返回给「按夜取数」）
     assert chat_id not in {int(t["id"]) for t in an.list_chat_turns_for_night(db, night_id)}
 
@@ -149,58 +149,6 @@ def test_undo_rejected_after_night_closed(game):
 # ── AC8：撤回终结异步残余——后台写入前校验目标轮存活，不写已撤/失败轮 ────────────
 
 
-# ── AC3：夜内真实盘面直写走可枚举白名单；越权直写被审计咬住 ──────────────────────
-
-
-def test_night_direct_write_whitelist_enumerates_authorized_items():
-    wl = an.NIGHT_DIRECT_WRITE_WHITELIST
-    # ADR 0038：①密令落地；②转译声明的当场实况（#1839 第四类，原入册/边事件并入）。
-    # 新增夜内直写仍须过设计审、显式扩表。
-    assert set(wl) == {"密令落地", "转译声明的当场实况"}
-    assert wl["密令落地"] == frozenset({"secret_orders", "secret_order_briefs"})
-    fourth = wl["转译声明的当场实况"]
-    assert {"characters", "character_offices", "relation_edge_events"} <= set(fourth)
-    assert {"textual_facts", "public_sayings", "story_ledger_entries"} <= set(fourth)
-
-
-def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
-    db, state, content = game
-    m = _active_minister(db, content)
-
-    # 合法夜：仅「密令落地」直写真实盘面 → 审计通过，报出观测到的白名单操作
-    def _land_secret(night_id: int, chat_id: int) -> None:
-        create_test_secret_order(db,
-            state, m, "密查盐引", "密查两淮盐引亏空", ["盐政"], importance=4,
-        )
-    legal_night, _ = _run_round(
-        db, state, m, writes=_land_secret,
-        declaration=_minister_declaration(m, "领旨。"),
-    )
-    assert "密令落地" in an.audit_night_direct_writes(db, legal_night)
-    an.close_night(db, state, night_id=legal_night)
-
-    # 越权夜：夜内直写 consort_traits（真实盘面、非白名单——本应走待确认暂存）→ 审计咬住
-    # （factions 已随 #1839 第四类并入人物状态副作用，不再作越权哨兵。）
-    def _rogue_direct_write(night_id: int, chat_id: int) -> None:
-        row = db.conn.execute("SELECT name FROM consort_traits LIMIT 1").fetchone()
-        if row is None:
-            db.conn.execute(
-                "INSERT INTO consort_traits (name, extra_skills, extra_traits, updated_turn) "
-                "VALUES ('审计越权探针妃', '越权', '', 0)"
-            )
-        else:
-            db.conn.execute(
-                "UPDATE consort_traits SET extra_skills = extra_skills || 'x' WHERE name = ?",
-                (str(row["name"]),),
-            )
-        db.conn.commit()
-    rogue_night, _ = _run_round(db, state, m, writes=_rogue_direct_write)
-    with pytest.raises(AudienceNightError) as ei:
-        an.audit_night_direct_writes(db, rogue_night)
-    assert ei.value.code == "unwhitelisted_night_write"
-    assert "consort_traits" in ei.value.detail.get("tables", [])
-
-
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────
 
 
@@ -223,7 +171,7 @@ def test_undo_removes_unlisted_person_registration(game):
     night_id, chat_id = _run_round(db, state, caller, writes=_register)
 
     assert db.get_character_status(newcomer)[0] == "active"
-    assert newcomer in an.persons_present_tonight(db, night_id)
+    assert newcomer in an.present_names_at(db, night_id)
 
     db.undo_chat_turn(chat_id)
 
@@ -235,7 +183,7 @@ def test_undo_removes_unlisted_person_registration(game):
         "SELECT 1 FROM character_offices WHERE character_name = ?", (newcomer,)
     ).fetchone() is None
     # 入殿账消失 → 在场推导里像没登场过
-    assert newcomer not in an.persons_present_tonight(db, night_id)
+    assert newcomer not in an.present_names_at(db, night_id)
 
 
 # ── AC6：kill+重开后撤回最近一轮仍完整逆转（撤销日志持久化）────────────────────
@@ -261,7 +209,7 @@ def test_undo_full_reversal_survives_kill_and_reopen(game):
         assert not any(
             e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db2, night_id)
         )
-        assert m not in an.persons_present_tonight(db2, night_id)
+        assert m not in an.present_names_at(db2, night_id)
     finally:
         db2.close()
 
@@ -280,17 +228,21 @@ def test_undo_pending_translation_leaves_no_orphan_retry(game):
     # 注意 _run_round 无 facts 分支会把水位推到 done——此处显式改回 pending 建待补态
     db.conn.execute("UPDATE chat_turns SET extract_status = 'pending' WHERE id = ?", (chat_id,))
     db.conn.commit()
-    assert db.count_pending_story_extractions(night_id=night_id) == 1
+
+    assert len(db.list_unextracted_replies(night_id=night_id)) == 1
+
 
     db.undo_chat_turn(chat_id)
 
     # 撤回后：该轮不再是待补重试真源（无孤儿重试入口），补跑不复活该轮账
-    assert db.count_pending_story_extractions(night_id=night_id) == 0
+
     assert db.list_unextracted_replies(night_id=night_id) == []
     # kill+重开后仍无重试入口（撤销持久）
     db2 = _reopen(db, content)
     try:
-        assert db2.count_pending_story_extractions(night_id=night_id) == 0
+
+        assert len(db2.list_unextracted_replies(night_id=night_id)) == 0
+
     finally:
         db2.close()
 
@@ -406,20 +358,18 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
         create_test_secret_order(db,
             state, m, "密核盐课", "密核长芦盐课隐没", ["盐政", "稽核"],
             importance=5, deadline_months=6,
-            excluded_names=[_active_minister(db, content, exclude={m})],
-            excluded_offices=["户部"],
         )
     night_id, chat_id = _run_round(
         db, state, m, writes=_land,
         declaration=_minister_declaration(m, "领旨。"),
     )
     order_id = int(db.conn.execute("SELECT id FROM secret_orders").fetchone()["id"])
-    # 落地时结构化字段（标题/期限/标签/排除名单/机构级映射）+ 简报（承办人/知情圈）齐备
+    # 落地时结构化字段（标题/期限/标签）+ 简报（承办人/知情圈）齐备
     row = db.conn.execute(
-        "SELECT title, due_turn, tags, excluded_names, excluded_targets "
+        "SELECT title, due_turn, tags "
         "FROM secret_orders WHERE id = ?", (order_id,)
     ).fetchone()
-    assert row["title"] and row["excluded_names"] != "[]" and row["excluded_targets"] != "{}"
+    assert row["title"] and json.loads(row["tags"])
     assert db.conn.execute(
         "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id = ?", (order_id,)
     ).fetchone()[0] == 1
@@ -503,7 +453,7 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
     m = _active_minister(db, content)
     an.open_night(db, state)
     night_id = int(an.get_open_night(db)["id"])
-    assert m not in an.persons_present_tonight(db, night_id)  # m 非常在员额
+    assert m not in an.present_names_at(db, night_id)  # m 非常在员额
     ledger_ids_before = {e["id"] for e in an.list_ledger(db, night_id)}
 
     orig_create = db.create_chat_turn
@@ -514,13 +464,13 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
     db.create_chat_turn = _boom
     try:
         with pytest.raises(RuntimeError):
-            an.attach_chat_turn_to_night(db, state, m)
+            open_hall_turn(db, state, m)
     finally:
         db.create_chat_turn = orig_create
 
     # atomic 回滚：账本零净增，无孤儿入殿账，在场未变
     assert {e["id"] for e in an.list_ledger(db, night_id)} == ledger_ids_before
-    assert m not in an.persons_present_tonight(db, night_id)
+    assert m not in an.present_names_at(db, night_id)
 
 
 def test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes(game):
@@ -539,94 +489,3 @@ def test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes(game):
                    for e in an.list_ledger(db, night_id))
 
 
-# ── 旧档升级路径：chat_turns.undone_at 缺列 → open 补列 → undo 逆转 ─────────────
-# undone_at 进 CREATE TABLE 晚于该表初版；缺 ensure_column 时旧档 undo 的
-# UPDATE ... SET undone_at 会 OperationalError（no such column）→ 整撤回回滚。
-
-
-def test_undo_survives_db_created_before_undone_at_column(game):
-    db, state, content = game
-    m = _active_minister(db, content)
-    night_id, chat_id = _run_round(db, state, m)
-
-    # 模拟旧档：chat_turns 建于 undone_at 进 CREATE 之前（列不存在）。
-    db.conn.execute("ALTER TABLE chat_turns DROP COLUMN undone_at")
-    db.conn.commit()
-    assert "undone_at" not in {
-        r["name"] for r in db.conn.execute("PRAGMA table_info(chat_turns)").fetchall()
-    }
-
-    # 重开 → GameDB 升级迁移必须补回该列（ensure_column），而非留待 undo 时炸。
-    db2 = _reopen(db, content)
-    try:
-        assert "undone_at" in {
-            r["name"] for r in db2.conn.execute("PRAGMA table_info(chat_turns)").fetchall()
-        }
-        db2.undo_chat_turn(chat_id)
-        row = db2.conn.execute(
-            "SELECT status, undone_at FROM chat_turns WHERE id = ?", (int(chat_id),)
-        ).fetchone()
-        assert row["status"] == "undone"
-        assert row["undone_at"]
-    finally:
-        db2.close()
-
-
-def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
-    """#672：ensure inactive office origin 绑 chat-turn；undo 按 typed source 清。"""
-    db, state, content = game
-    m = _active_minister(db, content)
-    night = an.open_night(db, state, empty_scaffold=True)
-    night_id = int(night["id"])
-
-    def _writes(_nid: int, chat_id: int) -> None:
-        pending_id = db.stage_pending_action(
-            int(state.turn), "office", "任命", m,
-            {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
-        )
-        an.ensure_inactive_office_summon(
-            db, int(pending_id), "袁崇焕",
-            night_id=night_id, origin_chat_turn_id=int(chat_id),
-        )
-
-    _nid, chat_id = _run_round(db, state, m, writes=_writes)
-    origin_rows = db.conn.execute(
-        "SELECT id, origin_ref, origin_chat_turn_id, tags FROM story_ledger_entries "
-        "WHERE origin_ref LIKE 'office:%'",
-    ).fetchall()
-    assert len(origin_rows) == 1
-    assert int(origin_rows[0]["origin_chat_turn_id"]) == int(chat_id)
-    assert "传召未结" not in json.loads(origin_rows[0]["tags"] or "[]")
-    entry_id = int(origin_rows[0]["id"])
-
-    db.undo_chat_turn(int(chat_id))
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE id=?", (entry_id,),
-    ).fetchone()[0] == 0
-
-
-def test_reject_pending_discards_inactive_office_summon_origin(game):
-    """#672：确认拒绝只清仍 inactive 的 office:<pending_id> origin。"""
-    db, state, content = game
-    m = _active_minister(db, content)
-    night = an.open_night(db, state, empty_scaffold=True)
-    pending_id = db.stage_pending_action(
-        int(state.turn), "office", "任命", m,
-        {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
-    )
-    an.ensure_inactive_office_summon(
-        db, int(pending_id), "袁崇焕",
-        night_id=int(night["id"]), origin_chat_turn_id=0,
-    )
-    origin = f"office:{int(pending_id)}"
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
-    ).fetchone()[0] == 1
-
-    dropped = db.drop_pending_actions_for_minister(
-        int(state.turn), m, action_ids=[int(pending_id)],
-    )
-    assert dropped == 1
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
-    ).fetchone()[0] == 0

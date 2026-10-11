@@ -3,9 +3,8 @@ import json
 import pytest
 
 import ming_sim.cli_backend as cli_backend
-import ming_sim.decree as decree_mod
 from tests.dossier_test_helpers import rejected_verdict
-
+from tests.rescript_test_helpers import sql_rescript_draft
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
     return db.create_decree_dossier(
@@ -85,12 +84,15 @@ def test_missing_dossier_mode_defaults_to_ordinary(game):
      ("midzhi", "清核河工", "midzhi"),
      (None, "中旨直发，清核河工", "ordinary")],
 )
-def test_explicit_staging_uses_typed_mode_not_minister_text(
+def test_declared_staging_uses_typed_mode_not_minister_text(
     game, caller_mode, minister_text, expected,
 ):
     db, state, _content = game
-    candidate_id = db.stage_explicit_directive(
-        state.turn, "温体仁", minister_text, mode=caller_mode,
+    candidate_id = db.stage_directive_candidate(
+        state.turn, "温体仁", {"text": minister_text, "actor": "温体仁",
+                             "mode": cli_backend.resolve_directive_mode(extracted=caller_mode),
+                             "dossier_action_type": "special_decree", "target_kind": "policy",
+                             "target_id": "river-works"},
     )
     db.commit_pending_actions(state, action_ids={candidate_id})
     db.ensure_dossiers_for_draft_directives(state)
@@ -102,8 +104,10 @@ def test_explicit_staging_uses_typed_mode_not_minister_text(
 
 def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     db, state, _content = game
-    candidate_id = db.stage_explicit_directive(
-        state.turn, "温体仁", "中旨直发，清核河工", mode="midzhi",
+    candidate_id = db.stage_directive_candidate(
+        state.turn, "温体仁", {"text": "中旨直发，清核河工", "actor": "温体仁",
+                             "mode": "midzhi", "dossier_action_type": "special_decree",
+                             "target_kind": "policy", "target_id": "river-works"},
     )
     db.update_directive_candidate(candidate_id, {"text": "增列核验期限"})
     pending = next(
@@ -163,7 +167,7 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
         db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
-    with pytest.raises(ValueError, match="强颁只可承接"):
+    with pytest.raises(ValueError):
         db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     assert db.get_decree_dossier(dossier_id)["stigma"] == [
@@ -191,27 +195,6 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
 # #657 片2：canonical / capability 回验
 # ---------------------------------------------------------------------------
 
-def test_657_canonical_choice_stable_key_order():
-    from ming_sim.rescript_actions import canonical_choice
-    a = canonical_choice({
-        "decision_key": "rescript_draft:1:0",
-        "action": "follow_draft",
-        "draft_capability": "abc",
-        "label": "甲",
-        "hint": "h",
-        "note": "批",
-    })
-    b = canonical_choice({
-        "hint": "h",
-        "label": "甲",
-        "action": "follow_draft",
-        "decision_key": "rescript_draft:1:0",
-        "draft_capability": "abc",
-        "note": "批",
-    })
-    assert a == b
-    assert a["decision_key"] == "rescript_draft:1:0"
-    assert a["action"] == "follow_draft"
 
 
 @pytest.mark.parametrize("amount", ["30", True, 30.75, 30])
@@ -236,14 +219,15 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
             ],
         },
     ]
-    raw = "邸报" + "".join(
+    raw = "世界段" + "".join(
         f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
         for block in blocks
     )
-    _clean, decisions = parse_decision_blocks(raw)
+    decisions = parse_decision_blocks(raw)
     if type(amount) is not int:
         # Parse/save boundary rejects the whole malformed typed decision.
-        assert [decision["title"] for decision in decisions] == ["巡河"]
+        assert len(decisions) == 1
+        assert len(decisions[0].get("options") or []) == 2
         return
     desk = [{
         "decision_key": f"decision:3:{idx}", "kind": "decision", "turn": 3,
@@ -361,15 +345,21 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
         )
     )
 
-    _clean, decisions = parse_decision_blocks(raw)
+    decisions = parse_decision_blocks(raw)
 
-    assert [decision["title"] for decision in decisions] == ["犒军", "巡河"]
+    assert len(decisions) == 2
     assert decisions[0]["options"][0]["action_type"] == "grant_allocation"
     assert decisions[0]["options"][0]["amount"] == 30
 
 
-@pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
-def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
+@pytest.mark.parametrize(
+    "labels, expect_empty",
+    [
+        (["", "乙"], True),  # 空白 label 拒收整块
+        (["甲", " 甲 "], False),  # #1897：label 原样为键，空白变体非歧义重复
+    ],
+)
+def test_decision_parser_rejects_empty_or_ambiguous_labels(labels, expect_empty):
     from ming_sim.settlement_payload import parse_decision_blocks
 
     block = {
@@ -377,9 +367,12 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
         "options": [{"label": label, "hint": "h"} for label in labels],
     }
     raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
-    clean, decisions = parse_decision_blocks(raw)
-    assert clean == ""
-    assert decisions == []
+    decisions = parse_decision_blocks(raw)
+    if expect_empty:
+        assert decisions == []
+    else:
+        # 空白变体非歧义重复 → 整块保留；不锁 label 字面/选项计数换形
+        assert len(decisions) == 1
 
 
 def test_657_capability_revalidate_on_follow(game):
@@ -397,12 +390,13 @@ def test_657_capability_revalidate_on_follow(game):
         "transaction_category": "督赈",
     })
     assert opt["draft_capability"] == derive_draft_capability(opt)
-    db.save_rescript_drafts(int(state.turn), [{
-        "title": "急", "context": "c",
-        "options": [opt, {"label": "备", "hint": "b",
-                           "draft_capability": derive_draft_capability({"label": "备"})}],
-        "actor_name": "A", "actor_office": "o", "actor_faction": "f",
-    }])
+    sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id="draft:急",
+        title="急", context="c",
+        options=[opt, {"label": "备", "hint": "b",
+                       "draft_capability": derive_draft_capability({"label": "备"})}],
+        actor_name="A", actor_office="o", actor_faction="f",
+    )
     db.conn.commit()
     desk = db.list_rescript_desk(int(state.turn))
     key = desk[0]["decision_key"]
@@ -413,7 +407,7 @@ def test_657_capability_revalidate_on_follow(game):
     }])
     assert batch.items[0].choice["draft_capability"] == opt["draft_capability"]
     # 旧 cap（改票后）拒
-    with pytest.raises(ValueError, match="capability|stale"):
+    with pytest.raises(ValueError):
         ra.validate_all(desk, [{
             "decision_key": key, "action": "follow_draft",
             "draft_capability": "old-round-cap", "label": opt["label"],

@@ -1,6 +1,6 @@
 """Issue #561 real-model promulgation gate.
 
-Runs the production ``resolve_directives`` judge/simulator assembly, the production
+Runs the production ``resolve_directives`` judge/rescript assembly, the production
 rescript hold transition, and the next-month production reconsideration rail.
 No model provider or production collaborator is replaced.
 
@@ -281,18 +281,31 @@ def _arm_pool_size(_cfg: LLMConfig, job_count: int) -> int:
     return int(job_count)
 
 
+def _judgments_at_turn(
+    db: GameDB, turn: int, dossier_ids: dict[str, int] | list[int] | tuple[int, ...],
+) -> list[dict]:
+    """Turn-scoped judgments from decree_dossier_decisions (live owner)."""
+    if isinstance(dossier_ids, dict):
+        id_list = sorted(int(v) for v in dossier_ids.values())
+    else:
+        id_list = sorted(int(v) for v in dossier_ids)
+    out: list[dict] = []
+    for dossier_id in id_list:
+        for row in db.list_decree_dossier_decisions(dossier_id):
+            if int(row["turn"]) == int(turn) and not row.get("rescript_action"):
+                out.append(row)
+    return out
+
+
 def _resolve_arm_verdicts(
     db: GameDB, *, resolve_turn: int, awaiting: bool, ids: dict[str, int],
 ) -> list[dict]:
-    """Pending while awaiting; else applied history at the pre-resolve turn."""
+    """Awaiting or settled: read applied/batch judgments at the pre-resolve turn."""
     if awaiting:
-        return db.get_pending_promulgation_verdicts(resolve_turn)
+        return _judgments_at_turn(db, resolve_turn, ids)
     verdicts = []
     for dossier_id in sorted(ids.values()):
-        history = [
-            row for row in db.list_decree_dossier_decisions(dossier_id)
-            if int(row["turn"]) == resolve_turn and not row.get("rescript_action")
-        ]
+        history = _judgments_at_turn(db, resolve_turn, [dossier_id])
         verdicts.append(_select_second_verdict(False, dossier_id, [], history))
     return verdicts
 
@@ -385,8 +398,7 @@ def _run_resolve_arm(
         proposed = db.list_decree_dossiers(status="proposed")
         context = build_promulgation_judge_context(db, state, proposed)
         label = decree_label or name
-        # Capture turn before resolve: non-awaiting settlement advances state.turn
-        # and consumes pending_promulgation_verdicts.
+        # Capture turn before resolve: non-awaiting settlement advances state.turn.
         resolve_turn = state.turn
         result = resolve_directives(
             state, db, agno, cfg, [object()], label, content=content,
@@ -395,7 +407,6 @@ def _run_resolve_arm(
         verdicts = _resolve_arm_verdicts(
             db, resolve_turn=resolve_turn, awaiting=awaiting, ids=ids,
         )
-        resolve_ctx = db.get_resolve_context(resolve_turn) or {}
         return {
             "name": name,
             "authority": authority,
@@ -403,7 +414,6 @@ def _run_resolve_arm(
             "context": context,
             "verdicts": verdicts,
             "awaiting": awaiting,
-            "resolve_context": resolve_ctx,
             "report": str(result.report or ""),
         }
     finally:
@@ -425,8 +435,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         if not first_result.awaiting:
             raise RuntimeError("real gate expected rejected dossiers to reach rescript")
         first_turn = state.turn
-        first_ctx = db.get_resolve_context(first_turn) or {}
-        first_verdicts = db.get_pending_promulgation_verdicts(first_turn)
+        first_verdicts = _judgments_at_turn(db, first_turn, ids)
         choices = _choose_rescripts(
             db, first_turn, ids["hostile"], ids["vital_midzhi"], ids["appointment"],
         )
@@ -442,25 +451,16 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         second_result = resolve_directives(
             state, db, agno, cfg, [], "留中案下月重判", content=content,
         )
-        second_pending = db.get_pending_promulgation_verdicts(second_turn)
-        second_history = [
-            row for row in db.list_decree_dossier_decisions(ids["hostile"])
-            if int(row["turn"]) == second_turn and not row.get("rescript_action")
-        ]
+        second_pending = _judgments_at_turn(db, second_turn, ids)
+        second_history = _judgments_at_turn(db, second_turn, [ids["hostile"]])
         second_verdict = _select_second_verdict(
             second_result.awaiting, ids["hostile"], second_pending, second_history,
-        )
-        second_ctx = db.get_resolve_context(second_turn) or {}
-        second_narrative = (
-            str(second_ctx.get("narrative") or "")
-            if second_result.awaiting else str(second_result.report or "")
         )
         return {
             "name": "low_hold_rail",
             "ids": ids,
             "first_context": first_context,
             "first_verdicts": first_verdicts,
-            "first_resolve_context": first_ctx,
             "first_turn": first_turn,
             "choices": choices,
             "held": held,
@@ -468,7 +468,6 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
             "text_after_hold": text_after_hold,
             "second_context": second_context,
             "second_verdict": second_verdict,
-            "second_narrative": second_narrative,
             "second_awaiting": bool(second_result.awaiting),
         }
     finally:
@@ -604,14 +603,6 @@ def main() -> int:
         gatekeeper_by_id = _by_id(gatekeeper["verdicts"])
         gk_names = _gatekeeper_names(gatekeeper["context"])
 
-        first_ctx = low["first_resolve_context"]
-        sent_payload = first_ctx.get("simulator_payload") or {}
-        sent_ids = {
-            int(row["id"]) for row in sent_payload.get("decree_dossiers", [])
-            if isinstance(row, dict)
-        }
-        first_narrative = str(first_ctx.get("narrative") or "")
-        forbidden = ("清丈已经完成", "清丈已完成", "太仓已交内廷", "旨意已生效")
         all_verdicts = (
             list(low["first_verdicts"])
             + list(high["verdicts"])
@@ -699,14 +690,9 @@ def main() -> int:
                 by_id[vital_midzhi]["decision"] == "rejected"
                 and by_id[vital_midzhi].get("midzhi_unpromulgatable") is True
             ),
-            "simulator_excludes_rejected_dossiers": not ({hostile, vital_midzhi} & sent_ids),
-            "simulator_instruction_from_production": "promulgation_instruction" in sent_payload,
-            "simulator_does_not_claim_rejected_effective": not any(
-                token in first_narrative for token in forbidden
-            ),
         }
         artifact = {
-            "gate": "issue-561-production-judge-rescript-and-simulator",
+            "gate": "issue-561-production-judge-rescript",
             "config": gate_evidence_config(args, cfg),
             "method": {
                 "runner": "resolve_directives",
@@ -803,12 +789,6 @@ def main() -> int:
             "judge_after_hold_and_board_change": {
                 "input": second_actual_input, "input_provenance": second_provenance,
                 "output": low["second_verdict"],
-            },
-            "simulator": {
-                "assembly": "resolve_directives production simulator_payload",
-                "input": sent_payload, "output": first_narrative,
-                "rejected_decree_texts": [HOSTILE_TEXT, VITAL_MIDZHI_TEXT],
-                "reconsideration_output": low["second_narrative"],
             },
             "checks": checks,
         }

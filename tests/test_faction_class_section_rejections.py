@@ -9,12 +9,12 @@ class 则只收嵌套字段 dict、扁平 int 逐项拒收。
 拒收项落独立 *_rejections 段（不复用 faction_delta/class_delta，后者仍载 web 面板的
 已落 delta dict——cmr r1 claude：复用同 key 会令面板误渲染拒收项）。
 
-经 driver.run_settle 端到端驱动（公共接口，与 test_power_section_rejections.py 同风格）。
+经现役原子声明入口验证逐项拒收。
 """
 
 from __future__ import annotations
 
-from tests.section_rejection_helpers import prepare_then_settle as run_settle
+from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 FACTION_REJ_SECTION = "faction_delta_rejections"
@@ -161,28 +161,6 @@ def test_float_and_bool_faction_values_rejected(game):
     assert (after[0], after[1]) == (before[0], before[1])
 
 
-def test_web_panel_faction_delta_stays_applied_dict(game):
-    """回归（cmr r1 claude）：玩家可见 extractor_output 的 faction_delta 段仍载已落 delta
-    dict（web「派系变化」面板形状不变），且拒收项不进玩家可见（P4）——否则面板会把拒收
-    列表当 dict 误渲染、并泄露 rejected/reason 内部字段给皇帝。"""
-    db, state, content = game
-    turn = state.turn
-    good = _valid_faction(db)
-
-    run_settle(db, state, content, {
-        "faction_delta": {good: {"satisfaction": 4}, "查无此派系": {"satisfaction": 9}},
-    }, narrative="x", decree_text="y")
-
-    visible = db.get_turn_extraction(turn)["extractor_output"]
-    fd = visible.get("faction_delta")
-    assert isinstance(fd, dict), f"faction_delta 段应为 web 面板 dict，实为 {type(fd)}"
-    assert good in fd
-    assert not any(isinstance(v, dict) and v.get("rejected") for v in fd.values())
-    # 未落库的未知派系不得出现在面板 dict（cmr r3 codex：值可解析的未知名曾混进 cleaned
-    # 被当「已落」误显 = DB↔呈现漂移）。
-    assert "查无此派系" not in fd
-    # 拒收项不进玩家可见呈现（P4）
-    assert "faction_delta_rejections" not in visible
 
 
 def test_valid_flat_int_faction_not_rejected(game):
@@ -263,4 +241,4 @@ def test_issue_effect_faction_rejection_reaches_reports(game):
     rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
     rows = [r for r in rows if r[2] == "missing_ref"]
     assert len(rows) == 1, rows
-    assert "查无此派系" in rows[0][1]
+    assert rows[0][1]

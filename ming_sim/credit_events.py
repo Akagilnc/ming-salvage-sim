@@ -45,7 +45,6 @@ assert _WRITE_KINDS <= CREDIT_EDGE_KINDS
 # dossier:{id}:credit:scapegoat:pawn:{name}
 # dossier:{id}:credit:scapegoat:car:{name}
 # dossier:{id}:credit:cover:{name}
-# issue:{id}:credit:grant_grace
 # issue:{id}:credit:reject_grace
 # issue:{id}:credit:reject_remonstrance
 
@@ -54,80 +53,6 @@ _PUNISH_STATUSES = frozenset({
     "dismissed", "imprisoned", "exiled", "dead", "retired", "offstage",
 })
 _DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
-_ISSUE_REF_RE = re.compile(r"^issue:([1-9][0-9]*)$")
-
-# 玩家可见面禁词（内部 origin 片段 + 机读键；全族终验归 #629）
-CREDIT_BANNED_PLAYER_TOKENS = (
-    "credit:fulfill",
-    "credit:back",
-    "credit:scapegoat",
-    "credit:cover",
-    "credit:grant_grace",
-    "credit:reject_grace",
-    "credit:reject_remonstrance",
-    "scapegoat_actor_kind",
-    "credit_events",
-    "CREDIT_EDGE_KINDS",
-)
-
-# 扫描面清单（与 #624/#622 同形；#629 收口全族）
-CREDIT_BANNED_SCAN_SURFACES = (
-    "scene_text",
-    "narrative",
-    "turn_report",
-    "knowledge_items",
-    "memorial_text",
-    "origin_context",
-    "criterion_text",
-)
-
-# 根基档/哭谏通道系统词（#623 场面投影剥离；#629 并入全族）
-FOUNDATION_BANNED_PLAYER_TOKENS = (
-    "foundation_tier",
-    "assess_foundation_tier",
-    "just_started",
-    "halfway",
-    "rooted",
-    "midcourse_breach_plea",
-)
-
-
-def _family_p4_banned_tokens() -> tuple[str, ...]:
-    """全族 P4 禁词并集——变形/真伪底/信用事件/钝化/根基档。"""
-    from ming_sim.commitment_backlash import BACKLASH_BANNED_PLAYER_TOKENS
-    from ming_sim.decree_vocabulary import (
-        DEFORMATION_BANNED_PLAYER_TOKENS,
-        URGE_TRUTH_BANNED_PLAYER_TOKENS,
-    )
-    from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
-
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for token in (
-        *DEFORMATION_BANNED_PLAYER_TOKENS,
-        *URGE_TRUTH_BANNED_PLAYER_TOKENS,
-        *SUPERVISION_BANNED_PLAYER_TOKENS,
-        *CREDIT_BANNED_PLAYER_TOKENS,
-        *BACKLASH_BANNED_PLAYER_TOKENS,
-        *FOUNDATION_BANNED_PLAYER_TOKENS,
-    ):
-        if token in seen:
-            continue
-        seen.add(token)
-        ordered.append(token)
-    return tuple(ordered)
-
-
-FAMILY_P4_BANNED_PLAYER_TOKENS = _family_p4_banned_tokens()
-
-
-def assert_no_family_p4_banned_tokens(text: object, *, surface: str) -> None:
-    """#629 全族 P4 哨兵：七扫描面共用。"""
-    raw = str(text or "")
-    for token in FAMILY_P4_BANNED_PLAYER_TOKENS:
-        if token in raw:
-            raise AssertionError(f"{surface} 裸露禁词：{token!r}")
-
 
 def scapegoat_actor_kind_from_origin(origin: object) -> Optional[str]:
     """方案 b 消费侧契约：由 origin 类型机械派生施弃方∈{皇帝,党魁}。
@@ -152,11 +77,6 @@ def _parse_dossier_ref(ref: object) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def _parse_issue_ref(ref: object) -> Optional[int]:
-    m = _ISSUE_REF_RE.match(str(ref or "").strip())
-    return int(m.group(1)) if m else None
-
-
 def _credit_origin(scope: str, scope_id: int, *parts: str) -> str:
     """唯一 origin 拼装器——禁第二拼装路径。"""
     tail = ":".join(str(p) for p in parts if str(p))
@@ -166,10 +86,13 @@ def _credit_origin(scope: str, scope_id: int, *parts: str) -> str:
 
 
 def _narrative_context(*parts: object) -> str:
-    """承接 extraction 真叙事字段；首个非空即用。禁固定句式模板。"""
+    """承接 extraction 真叙事字段；首个非空即用。禁固定句式模板。
+
+    局部副本判空；返回原文（#1834 F21：自由正文不得 strip 后再写入链）。
+    """
     for part in parts:
-        text = str(part or "").strip()
-        if text:
+        text = str(part or "")
+        if text.strip():
             return text
     return ""
 
@@ -211,15 +134,16 @@ def write_credit_event(
     """四字段薄记录写口：方向由 CREDIT_DIRECTION 决定，落 record_relation_edge_event。"""
     person = str(person or "").strip()
     kind = str(event_kind or "").strip()
-    context = str(context or "").strip()
-    origin = str(origin or "").strip()
+    # Free prose context/origin: preserve raw; emptiness on local copy (#1834 F16).
+    context = str(context or "")
+    origin = str(origin or "")
     if not person:
         raise ValueError("信用事件缺少当事人")
     if kind not in _WRITE_KINDS:
         raise ValueError(f"非本片信用事件类目: {kind!r}")
-    if not context:
+    if not context.strip():
         raise ValueError("信用事件语境不能为空")
-    if not origin:
+    if not origin.strip():
         raise ValueError("信用事件 origin 不能为空")
     direction = CREDIT_DIRECTION[kind]
     if direction == "emperor_to_person":
@@ -425,11 +349,11 @@ def _is_cover_change(item: Dict[str, object]) -> bool:
     if _is_punitive_change(item):
         return False
     action = str(item.get("动作") or item.get("action") or "").strip()
-    if action in {"任命", "调任", "册封"}:
+    if action in {"任命", "调任"}:
         return True
     if action == "处置":
         status = str(item.get("status") or "").strip()
-        return status in {"active", "candidate"} or not status
+        return status in {"active"} or not status
     return False
 
 
@@ -597,57 +521,6 @@ def resolve_disposition_credit_from_extraction(
     return out
 
 
-def _grace_purpose(text: object) -> bool:
-    s = str(text or "")
-    return any(tok in s for tok in ("宽限", "准宽限", "展限", "宽之"))
-
-
-def _issue_refs_strict(item: Dict[str, object]) -> Set[int]:
-    """资金项专用：只认 issue_id/commitment_ref/origin_ref/target_id，禁裸 id 误吞。"""
-    out: Set[int] = set()
-    for key in ("issue_id", "commitment_ref"):
-        raw = item.get(key)
-        if raw in (None, ""):
-            continue
-        try:
-            out.add(int(raw))
-        except (TypeError, ValueError):
-            continue
-    tid = str(item.get("target_id") or "").strip()
-    if tid.startswith("issue:"):
-        try:
-            out.add(int(tid.split(":", 1)[1]))
-        except (TypeError, ValueError):
-            pass
-    for key in ("origin_ref", "来源引用"):
-        iid = _parse_issue_ref(item.get(key))
-        if iid is not None:
-            out.add(iid)
-    return out
-
-
-def _collect_grant_issue_ids(extracted: Dict[str, object]) -> Set[int]:
-    """准宽限：显式宽限叙事 + 非负资金；issue_advances / 负 delta 不算准。"""
-    grant_ids: Set[int] = set()
-    for key in ("economy_moves", "fiscal_creates", "fiscal_changes"):
-        for it in extracted.get(key) or []:
-            if not isinstance(it, dict) or it.get("rejected"):
-                continue
-            purpose = str(
-                it.get("purpose") or it.get("reason") or it.get("category") or ""
-            )
-            if not _grace_purpose(purpose):
-                continue
-            try:
-                delta = int(it.get("delta") or 0)
-            except (TypeError, ValueError):
-                delta = 0
-            if delta < 0:
-                continue
-            grant_ids |= _issue_refs_strict(it)
-    return grant_ids
-
-
 def _collect_reject_issue_ids(extracted: Dict[str, object]) -> Set[int]:
     """拒/斥退：只认 cancels 显式信号；close_issues / 办砸终值不算。"""
     cancels = [
@@ -682,29 +555,11 @@ def _host_person_for_commitment(db: Any, cid: int) -> str:
     return str(host.get("name") or "").strip()
 
 
-def _urge_todo_context(todo: Dict[str, object], *, grant_hint: str = "") -> str:
+def _urge_todo_context(todo: Dict[str, object]) -> str:
     return _narrative_context(
-        grant_hint,
         todo.get("criterion_text"),
         todo.get("origin_context"),
     )
-
-
-def _grant_narrative_for_issue(
-    extracted: Dict[str, object], cid: int,
-) -> str:
-    for key in ("economy_moves", "fiscal_creates", "fiscal_changes"):
-        for it in extracted.get(key) or []:
-            if not isinstance(it, dict) or it.get("rejected"):
-                continue
-            if cid not in _issue_refs_strict(it):
-                continue
-            purpose = str(
-                it.get("purpose") or it.get("reason") or it.get("category") or ""
-            )
-            if _grace_purpose(purpose):
-                return _narrative_context(purpose, it.get("reason"), it.get("note"))
-    return ""
 
 
 def _resolve_one_urge_todo(
@@ -712,34 +567,26 @@ def _resolve_one_urge_todo(
     state: Any,
     todo: Dict[str, object],
     *,
-    grant_ids: Set[int],
     reject_ids: Set[int],
-    extracted: Dict[str, object],
 ) -> Optional[Dict[str, object]]:
+    """只认 cancels 等结构化拒信号；不从 purpose 散文猜准宽限（#1834 F28）。"""
     cid = int(todo["commitment_ref"])
     kind = str(todo.get("entry_kind") or "")
     person = _host_person_for_commitment(db, cid)
     if not person:
         return None
 
-    if cid in grant_ids and cid not in reject_ids:
-        decision = "准宽限"
-        event_kind = KIND_BACK
-        context = _urge_todo_context(
-            todo, grant_hint=_grant_narrative_for_issue(extracted, cid),
-        )
-        origin = _credit_origin("issue", cid, "grant_grace")
-    elif cid in reject_ids:
-        if kind == ENTRY_KIND_GRACE_PLEA:
-            decision = "拒宽限强催"
-            origin = _credit_origin("issue", cid, "reject_grace")
-        else:
-            decision = "斥退顶谏"
-            origin = _credit_origin("issue", cid, "reject_remonstrance")
-        event_kind = KIND_BETRAY
-        context = _urge_todo_context(todo)
-    else:
+    if cid not in reject_ids:
         return None
+
+    if kind == ENTRY_KIND_GRACE_PLEA:
+        decision = "拒宽限强催"
+        origin = _credit_origin("issue", cid, "reject_grace")
+    else:
+        decision = "斥退顶谏"
+        origin = _credit_origin("issue", cid, "reject_remonstrance")
+    event_kind = KIND_BETRAY
+    context = _urge_todo_context(todo)
 
     if not context:
         return None
@@ -769,23 +616,20 @@ def _resolve_one_urge_todo(
 def resolve_urge_credit_from_extraction(
     db: Any, state: Any, extracted: Dict[str, object], *, commit: bool = False,
 ) -> List[Dict[str, object]]:
-    """谏处置三型：准宽限→撑腰；拒宽限强催/斥退顶谏→辜负。识别后消费 todo。"""
+    """谏处置：cancels 结构化拒→辜负。不从资金 purpose 散文派生准宽限撑腰。"""
     if not isinstance(extracted, dict):
         return []
     pending = _pending_urge_todos(db, state)
     if not pending:
         return []
 
-    grant_ids = _collect_grant_issue_ids(extracted)
     reject_ids = _collect_reject_issue_ids(extracted)
 
     out: List[Dict[str, object]] = []
     for todo in pending:
         row = _resolve_one_urge_todo(
             db, state, todo,
-            grant_ids=grant_ids,
             reject_ids=reject_ids,
-            extracted=extracted,
         )
         if row is not None:
             out.append(row)

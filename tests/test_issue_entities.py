@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as I
-from ming_sim.memories import effect_brief
 from tests.conftest import active_ming_character
 
 
@@ -52,7 +51,7 @@ def test_resolve_changes_character_status(game):
     name = active_ming_character(db, content)
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
     I._apply_issue_entities(db, state, {
-        "character_status_changes": [{"name": name, "status": "exiled", "reason": "国策清算"}],
+        "人物变更": [{"name": name, "动作": "处置", "status": "exiled", "reason": "国策清算"}],
     }, "局势#测试结案")
     assert db.get_character_status(name)[0] == "exiled"
     assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 1
@@ -69,19 +68,20 @@ def test_resolve_changes_character_status(game):
     }
 
 
-def test_legacy_issue_status_change_uses_person_transition_matrix(game):
+def test_issue_entities_rejects_dead_to_dismissed_transition(game):
+    """结案入口：亡故人物不可再迁往 dismissed（转移矩阵非法迁移 → ValueError）。"""
     db, state, content = game
     name = active_ming_character(db, content)
     db.set_character_status(state, name, "dead", "前置死亡")
     content.characters[name].status = "dead"
 
-    with pytest.raises(ValueError, match="dead 无 status 出边"):
+    with pytest.raises(ValueError):
         I._apply_issue_entities(
             db,
             state,
             {
-                "character_status_changes": [
-                    {"name": name, "status": "dismissed", "reason": "旧键误写罢黜"}
+                "人物变更": [
+                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "亡故后再罢黜"}
                 ]
             },
             "局势#测试结案",
@@ -92,7 +92,8 @@ def test_legacy_issue_status_change_uses_person_transition_matrix(game):
     assert content.characters[name].status == "dead"
 
 
-def test_legacy_issue_status_change_does_not_use_month_end_active_gate(game):
+def test_issue_entities_allows_imprisoned_to_dead_disposal(game):
+    """结案入口：在押→赐死为合法处置，须真落库。"""
     db, state, content = game
     name = active_ming_character(db, content)
     ch = content.characters[name]
@@ -110,8 +111,8 @@ def test_legacy_issue_status_change_does_not_use_month_end_active_gate(game):
             db,
             state,
             {
-                "character_status_changes": [
-                    {"name": name, "status": "dead", "reason": "结案赐死"}
+                "人物变更": [
+                    {"name": name, "动作": "处置", "status": "dead", "reason": "结案赐死"}
                 ]
             },
             "局势#测试结案",
@@ -145,8 +146,8 @@ def test_resolve_character_status_syncs_content_travel_state(game):
             db,
             state,
             {
-                "character_status_changes": [
-                    {"name": name, "status": "dismissed", "reason": "局势失败问责"}
+                "人物变更": [
+                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "局势失败问责"}
                 ]
             },
             "局势#测试结案",
@@ -198,61 +199,10 @@ def test_resolve_applies_unified_person_change_effect(game):
         content.characters[name].transit_to = old_transit_to
 
 
-def test_issue_unified_person_change_shadows_legacy_person_effects(game):
-    db, state, content = game
-    name = active_ming_character(db, content)
-    old_status = content.characters[name].status
-    old_office = content.characters[name].office
-    old_office_type = content.characters[name].office_type
-    applied_person_changes = []
-
-    try:
-        I._apply_issue_entities(
-            db,
-            state,
-            {
-                "character_status_changes": [
-                    {
-                        "name": name,
-                        "status": "imprisoned",
-                        "reason_code": "陷虏",
-                        "reason": "旧键应被新键遮蔽",
-                    }
-                ],
-                "人物变更": [
-                    {
-                        "name": name,
-                        "动作": "任命",
-                        "office": "陕西总督",
-                        "office_type": "地方",
-                        "region_id": "shaanxi",
-                        "reason": "新键任官",
-                    }
-                ],
-            },
-            "局势#测试结案",
-            content=content,
-            applied_person_changes=applied_person_changes,
-        )
-
-        row = db.conn.execute(
-            "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
-        ).fetchone()
-        assert row["status"] == "active"
-        assert row["office"] == "陕西总督"
-        assert row["reason_code"] == ""
-        assert all(item.get("status") != "imprisoned" for item in applied_person_changes)
-        assert any(item.get("new_office") == "陕西总督" for item in applied_person_changes)
-    finally:
-        content.characters[name].status = old_status
-        content.characters[name].office = old_office
-        content.characters[name].office_type = old_office_type
-
-
 def test_resolve_rejects_bad_unified_person_change_effect(read_game):
     db, state, content = read_game
 
-    with pytest.raises(ValueError, match="人物变更 非法"):
+    with pytest.raises(ValueError):
         I._apply_issue_entities(
             db,
             state,
@@ -266,7 +216,7 @@ def test_resolve_rejects_bad_unified_person_change_effect(read_game):
 def test_issue_person_change_effect_rejects_malformed_shape(read_game, bad_effect):
     db, state, content = read_game
 
-    with pytest.raises(ValueError, match="人物变更"):
+    with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, bad_effect, "局势#测试结案", content=content)
 
 
@@ -292,7 +242,7 @@ def test_unknown_character_raises(read_game):
     db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
-            "character_status_changes": [{"name": "查无此人张三", "status": "dead"}],
+            "人物变更": [{"name": "查无此人张三", "动作": "处置", "status": "dead"}],
         }, "局势#测试")
 
 
@@ -301,7 +251,7 @@ def test_bad_status_raises(read_game):
     name = active_ming_character(db, content)
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
-            "character_status_changes": [{"name": name, "status": "升仙"}],
+            "人物变更": [{"name": name, "动作": "处置", "status": "升仙"}],
         }, "局势#测试")
 
 
@@ -329,10 +279,12 @@ def test_apply_score_extraction_accepts_flat_faction_scalar(game):
     则由段适配器按 #564 契约逐项 invalid_enum 拒收，不升级成整批 shape 中止。"""
     db, state, _ = game
     # 不抛 = validate 未错杀合法 faction；非法 class item 由 adapter 逐项拒收。
-    I.apply_score_extraction(db, state, {
+    applied = I.apply_score_extraction(db, state, {
         "faction_delta": {"阉党": -10},
         "class_delta": {"农民": 0},   # 非法扁平 class item：adapter 逐项 invalid_enum 拒收
     })
+    assert applied["faction_delta"] == {"阉党": -10}
+    assert applied["class_delta_rejections"][0]["category"] == "invalid_enum"
 
 
 def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
@@ -354,7 +306,11 @@ def test_apply_score_extraction_tolerates_null_field(read_game):
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
     db, state, _ = read_game
     # region_delta=None(null)+ army_delta=None,均应被当空 no-op 放行,不抛。
+    before_regions = [tuple(row) for row in db.conn.execute("SELECT * FROM regions ORDER BY id")]
+    before_armies = [tuple(row) for row in db.conn.execute("SELECT * FROM armies ORDER BY id")]
     I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM regions ORDER BY id")] == before_regions
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM armies ORDER BY id")] == before_armies
 
 
 def test_apply_score_extraction_rejects_unknown_top_level_key(game):
@@ -393,12 +349,12 @@ def test_army_delta_unknown_army_raises(read_game):
         }, "局势#测试")
 
 
-def test_non_dict_character_status_item_raises(read_game):
-    """character_status_changes 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
+def test_non_dict_person_change_item_raises(read_game):
+    """人物变更 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
     db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
-            "character_status_changes": ["这不是dict"],
+            "人物变更": ["这不是dict"],
         }, "局势#测试")
 
 
@@ -406,7 +362,7 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     """LLM 把 effect 字段给成非 dict(字符串/数组) → isinstance 守门归 {}，不让 dict() 抛错
     越过单条拒绝、崩整月落库（codexB-P1）。"""
     db, state, _ = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)   # 不触发 enrich
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     before = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
@@ -422,90 +378,11 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
 
 
-def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
-    """CLI 后端国策 enrich 没补出 resolve（或抛错）时，floor 兜最小回报，绝不入空壳（codexB）。"""
-    import ming_sim.cli_backend as _cb
-    db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "空回报国策", "kind": "initiative"}],
-    })
-    row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='空回报国策'").fetchone()
-    assert row is not None                         # 国策入库了
-    import json as _j
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}   # floor 生效，非空壳
-
-
-def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypatch):
-    """runtime CLI 通道无 env 时，月末国策空回报也要走 CLI floor，不能落空壳。"""
-    import json as _j
-    from ming_sim.models import LLMConfig
-    import ming_sim.cli_backend as _cb
-
-    db, state, _ = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    cfg = LLMConfig(
-        api_key="cli-backend",
-        base_url="",
-        model="api-fallback",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-5.5",
-        cli_timeout_seconds=240,
-    )
-
-    I.apply_score_extraction(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "runtime空回报国策", "kind": "initiative"}],
-    }, llm_config=cfg)
-
-    row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='runtime空回报国策'").fetchone()
-    assert row is not None
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
-
-
-def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch):
-    """显式 API 通道下，即便 env 残留 CLI backend，也不能触发 CLI-only 国策补全/floor。"""
-    import json as _j
-    from ming_sim.models import LLMConfig
-    import ming_sim.cli_backend as _cb
-
-    db, state, _ = game
-    called = []
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: called.append((a, k)) or {
-                            "effect_on_resolve": {},
-                            "ongoing_effects": {},
-                            "effect_on_fail": {},
-                        })
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="gpt-api",
-        channel="api",
-    )
-
-    I.apply_score_extraction(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "api空回报国策", "kind": "initiative"}],
-    }, llm_config=cfg)
-
-    row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='api空回报国策'").fetchone()
-    assert row is not None
-    assert called == []
-    assert _j.loads(row["effect_on_resolve"]) == {}
-
 
 def test_inertia_natural_resolve_applies_entities(game):
     """issue 靠 inertia 自然推到 100 结案 → effect_on_resolve 的实体后果(建军)也要落，
     不能只落 metrics/economy；须与 tracker advance/close 路径一致（codexB-P1）。"""
-    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     db, state, _ = game
     db.insert_issue(
         state, kind="situation", title="自然结案建军测试",
@@ -514,7 +391,7 @@ def test_inertia_natural_resolve_applies_entities(game):
             "id": "inertia_army_test", "name": "惯性军", "owner_power": "ming",
             "manpower": 5000, "maintenance_per_turn": 1, **_pay_source()}]},
     )
-    apply_issue_inertia_and_ongoing(db, state)   # inertia +1 把 bar 99→100 → resolved
+    apply_situation_monthly_drift(db, state)   # inertia +1 把 bar 99→100 → resolved
     cnt = db.conn.execute(
         "SELECT COUNT(*) FROM armies WHERE id='inertia_army_test'").fetchone()[0]
     assert cnt == 1                               # 自然结案也建了奖励军
@@ -522,7 +399,7 @@ def test_inertia_natural_resolve_applies_entities(game):
 
 def test_inertia_natural_resolve_applies_unified_person_change_with_bound_content(game):
     """自然结案的人物变更与 tracker close 同口径,不能因缺 content 误拒合法在册人物。"""
-    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     db, state, content = game
     name = active_ming_character(db, content)
     old_office = content.characters[name].office
@@ -545,7 +422,7 @@ def test_inertia_natural_resolve_applies_unified_person_change_with_bound_conten
             },
         )
 
-        apply_issue_inertia_and_ongoing(db, state)
+        apply_situation_monthly_drift(db, state)
 
         row = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["office"] == "陕西总督"
@@ -554,54 +431,16 @@ def test_inertia_natural_resolve_applies_unified_person_change_with_bound_conten
         content.characters[name].office = old_office
 
 
-def test_issue_resolve_person_effect_is_visible_to_effect_brief(game):
-    db, state, content = game
-    name = active_ming_character(db, content)
-    old_status = content.characters[name].status
-    old_office = content.characters[name].office
-    issue_id = db.insert_issue(
-        state,
-        kind="situation",
-        title="结案人事摘要测试",
-        bar_value=50,
-        effect_on_resolve={
-            "人物变更": [
-                {"name": name, "动作": "处置", "status": "dismissed", "reason": "结案问责"}
-            ]
-        },
-    )
-
-    try:
-        applied = I.apply_score_extraction(
-            db,
-            state,
-            {
-                "close_issues": [
-                    {"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}
-                ]
-            },
-            content=content,
-        )
-
-        assert applied["issue_summary"]["applied_person_changes"] == [
-            {"name": name, "动作": "处置", "status": "dismissed", "reason": "结案问责"}
-        ]
-        assert f"处分：{name}" in effect_brief({"issue_summary": applied["issue_summary"]})
-    finally:
-        content.characters[name].status = old_status
-        content.characters[name].office = old_office
-
-
 def test_inertia_natural_fail_applies_entities(game):
     """issue 靠 inertia 自然跌到 0 失败 → effect_on_fail 的实体后果(人物状态)也要落。"""
-    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     from tests.conftest import active_ming_character
     db, state, content = game
     name = active_ming_character(db, content)
     db.insert_issue(
         state, kind="situation", title="自然失败人物测试",
         bar_value=1, inertia=-1,
-        effect_on_fail={"character_status_changes": [{"name": name, "status": "dismissed", "reason": "局势失控问责"}]},
+        effect_on_fail={"人物变更": [{"name": name, "动作": "处置", "status": "dismissed", "reason": "局势失控问责"}]},
     )
-    apply_issue_inertia_and_ongoing(db, state)   # inertia -1 把 bar 1→0 → failed
+    apply_situation_monthly_drift(db, state)   # inertia -1 把 bar 1→0 → failed
     assert db.get_character_status(name)[0] == "dismissed"

@@ -3,7 +3,7 @@
 常绿验收（fix 后一直绿）：
 - done.payload.court_action == court_break
 - done 之后、end 之前，并发召对写入口不可再用（HTTP/SSE 外部可见拒）
-- end 之后夜 closed，且 exit/divider/closing 三拍均在
+- end 之后夜 closed（#1838：无 exit/divider/closing 收尾旁白三拍）
 - 复用 #1353 屏障票作玩家写入口外可见锁；不另造平行写队列
 
 D2/D3 是病因钉，修好后不要求常绿——本文件不收录。
@@ -30,12 +30,6 @@ class _CannedExtractor:
         return SimpleNamespace(content='{"facts":[]}')
 
 
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"endorsements":[]}')
-
-
-
 
 class _StreamFarewellAgent:
     def run(self, *_a, **_k):
@@ -52,21 +46,7 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    # stream worker 在 payload 前启动 _start_cli_action_intent → 真 classify LLM；
-    # 本测只钉写入口锁，动作意图分类确定性空返，禁真网。
-    monkeypatch.setattr(
-        session_mod.GameSession, "_start_cli_action_intent",
-        lambda self, *_a, **_k: None,
-    )
-    monkeypatch.setattr(
-        session_mod.GameSession, "_finish_cli_action_intent",
-        lambda self, *_a, **_k: None,
-    )
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     yield game
@@ -119,7 +99,6 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     agent = _StreamFarewellAgent()
-    game.session.registry.get = lambda _ch, **_kw: agent
     stub_scene_agent(monkeypatch, agent)
 
     statuses: dict[str, int] = {}
@@ -137,15 +116,10 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
                     async with _client() as client:
                         requests = {
                             "chat": client.post(
-                                f"/api/ministers/{minister}/chat",
+                                "/api/audience/chat",
                                 json={"message": "再问边饷？"},
                             ),
-                            "undo": client.post(f"/api/ministers/{minister}/chat/undo"),
-                            "secret_order": client.post(
-                                f"/api/ministers/{minister}/secret_order",
-                                json={"title": "边饷", "content": "速办边饷"},
-                            ),
-                            "withdraw": client.post("/api/pending_actions/1/withdraw"),
+                            "undo": client.post("/api/audience/chat/undo"),
                         }
                         return {
                             name: (await request).status_code
@@ -160,7 +134,7 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     async def _run_stream() -> list[dict]:
         async with _client() as client:
             resp = await client.post(
-                f"/api/ministers/{minister}/chat/stream",
+                "/api/audience/chat/stream",
                 json={"message": "退朝"},
             )
             assert resp.status_code == 200, resp.text
@@ -180,10 +154,8 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     assert statuses == {
         "chat": 409,
         "undo": 409,
-        "secret_order": 409,
-        "withdraw": 409,
     }
-    # end 后终态：夜 closed + 收尾三拍 + 告退轮仍在（未被 undo 抽空）。
+    # end 后终态：夜 closed；#1838 reopen 无 closing/exit/divider 收尾旁白三拍。
     row = game.db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),
     ).fetchone()
@@ -192,7 +164,7 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     assert an.get_open_night(game.db) is None
     scroll = an.read_night_scroll(game.db, night_id)
     beats = _named_scene_beats(scroll)
-    assert "exit" in beats and "divider" in beats and "closing" in beats, beats
+    assert "closing" not in beats and "coda" not in beats, beats
     # 告退轮仍在：undo 被拒，玩家发话与中性戏文仍归同一轮。
     user_turn_ids = {
         int(m["chat_turn_id"]) for m in scroll

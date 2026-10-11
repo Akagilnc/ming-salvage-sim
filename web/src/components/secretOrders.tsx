@@ -1,7 +1,7 @@
 import React from "react";
 import { Lock, MessageSquare, X } from "lucide-react";
 import { FullscreenModal } from "./hud";
-import type { SecretOrder } from "../types";
+import type { DossierProgressReport, SecretOrder } from "../types";
 
 export function SecretOrdersModal({
   orders,
@@ -12,24 +12,21 @@ export function SecretOrdersModal({
   onClose: () => void;
   onOpenMinister: (name: string) => void;
 }) {
-  const [tab, setTab] = React.useState<"active" | "done" | "failed" | "all">("active");
+  const [tab, setTab] = React.useState<"active" | "closed" | "all">("active");
   const [selectedOrder, setSelectedOrder] = React.useState<SecretOrder | null>(null);
   const statusLabel: Record<string, string> = {
     active: "进行中",
-    done: "已完成",
-    failed: "已失败",
+    closed: "已结案",
     cancelled: "已撤销",
   };
   const statusCls: Record<string, string> = {
     active: "so-active",
-    done: "so-done",
-    failed: "so-failed",
+    closed: "so-closed",
     cancelled: "so-cancelled",
   };
   const tabs: { key: typeof tab; label: string }[] = [
     { key: "active",         label: `进行中 (${orders.filter(o => o.status === "active").length})` },
-    { key: "done",           label: `已完成 (${orders.filter(o => o.status === "done").length})` },
-    { key: "failed",         label: `已失败 (${orders.filter(o => o.status === "failed").length})` },
+    { key: "closed",         label: `已结案 (${orders.filter(o => o.status === "closed").length})` },
     { key: "all",            label: `全部 (${orders.length})` },
   ];
   const visible = tab === "all" ? orders : orders.filter(o => o.status === tab);
@@ -101,6 +98,15 @@ export function SecretOrdersModal({
   );
 }
 
+function secretReportTitle(report: DossierProgressReport): string {
+  const band = report.progress_band ? ` · ${report.progress_band}` : "";
+  const base = (report.origin || "").split("+")[0];
+  if (report.is_terminal || base.endsWith(":execution_verdict")) return `结案${band}`;
+  if (base.endsWith(":rush")) return `催办${band}`;
+  if (base.endsWith(":review_claim")) return `核议${band}`;
+  return `第 ${report.turn} 回合月报${band}`;
+}
+
 function SecretOrderDetailDialog({
   order,
   statusLabel,
@@ -148,11 +154,10 @@ function SecretOrderDetailDialog({
             ))}
           </dl>
           <SecretOrderDetailBlock title="密令正文" text={order.content || "未记正文。"} />
-          {order.sim_note ? <SecretOrderDetailBlock title="月度动向" text={order.sim_note} tone="green" /> : null}
-          {(order.dossier_progress || []).map((report, index) => (
+          {(order.dossier_progress || []).map((report) => (
             <SecretOrderDetailBlock
               key={report.id}
-              title={`${report.is_terminal ? "结案密奏" : `第 ${index + 1} 月密奏`} · ${report.progress_band}`}
+              title={secretReportTitle(report)}
               text={report.memorial_text}
               tone="green"
             />

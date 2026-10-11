@@ -122,7 +122,8 @@ def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
         },
     )
 
-    issue_engine.apply_issue_inertia_and_ongoing(db, state)
+    from ming_sim.situation_drift import apply_situation_monthly_drift
+    apply_situation_monthly_drift(db, state)
 
     row = db.conn.execute("SELECT bar_value, status FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert (row["bar_value"], row["status"]) == (51, "active")
@@ -152,43 +153,11 @@ def test_fiscal_remove_keeps_durable_origin_tombstone(game):
         "SELECT key, origin_ref, reason FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",
         (origin,),
     ).fetchall()
-    assert [(r["key"], r["origin_ref"], r["reason"]) for r in rows] == [
-        ("待裁月费_base", origin, "奉旨裁撤"),
-        ("待裁月费_rate", origin, "奉旨裁撤"),
+    assert [(r["key"], r["origin_ref"]) for r in rows] == [
+        ("待裁月费_base", origin),
+        ("待裁月费_rate", origin),
     ]
 
-
-def test_legacy_economy_ledger_origin_backfill_uses_real_dossier_only(game, tmp_path):
-    db, state, content = game
-    valid_id = _promulgated_policy(db, state)
-    legacy_path = tmp_path / "legacy-origin.db"
-    db.conn.commit()
-    shutil.copy2(db.path, legacy_path)
-    conn = sqlite3.connect(legacy_path)
-    conn.execute("ALTER TABLE economy_ledger DROP COLUMN origin_ref")
-    conn.execute(
-        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "有效案卷", valid_id),
-    )
-    conn.execute(
-        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "悬空案卷", valid_id + 9999),
-    )
-    conn.commit()
-    conn.close()
-
-    migrated = GameDB(str(legacy_path), content)
-    try:
-        rows = migrated.conn.execute(
-            "SELECT reason, origin_ref FROM economy_ledger WHERE reason IN ('有效案卷','悬空案卷') ORDER BY reason"
-        ).fetchall()
-        assert {r["reason"]: r["origin_ref"] for r in rows} == {
-            "有效案卷": f"dossier:{valid_id}", "悬空案卷": "",
-        }
-    finally:
-        migrated.close()
 
 
 def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
@@ -311,24 +280,12 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
     db, state, content = game
     row = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()
     army_id = row["id"]
+    # 分源欠饷种子（省 3 + 中央 2）；hub 唯一路径。
     db.conn.execute(
         "UPDATE armies SET manpower=0, arrears=5, province_pay_arrears=3, central_pay_arrears=2 WHERE id=?",
         (army_id,),
     )
-    db.conn.execute(
-        "INSERT OR REPLACE INTO fiscal_config (key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',0,'meta','test legacy no-op')"
-    )
 
-    legacy_noop = issue_engine.apply_score_extraction(
-        db, state, {"army_delta": {army_id: {"manpower": 0}}}, content=content
-    )
-    assert legacy_noop["army_changes"] == []
-    assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 5
-
-    db.conn.execute(
-        "UPDATE fiscal_config SET value=1 WHERE key='__army_pay_source_cutover'"
-    )
     db.conn.execute("UPDATE armies SET owner_power='houjin' WHERE id=?", (army_id,))
     non_ming_noop = issue_engine.apply_score_extraction(
         db, state, {"army_delta": {army_id: {"manpower": 0}}}, content=content
