@@ -2,7 +2,7 @@
 
 代码异常 / extractor 失败中止结算时，自动落一份诊断包到 user-data 可写目录（frozen 下
 `data/` 相对路径不可写，必走 paths.py 的 user-data helper），供试玩者手动发回作者。
-包内五件：traceback / delta / resolve_context / 存档副本(SQLite backup API) / manifest。
+包内四件：traceback / resolve_context / 存档副本(SQLite backup API) / manifest。
 
 事务边界铁律：错误包**必须在回滚后、atomic 之外**写——db.backup_to 在 atomic 内会响亮拒绝
 （备份走同连接 pager 会带未提交脏页；守卫在 db.backup_to，flag 由 applier.atomic 置）。
@@ -79,13 +79,13 @@ def _read_version() -> str:
 
 
 _COMPLETE_PACK_FILES = frozenset({
-    "traceback.txt", "delta.json", "resolve_context.json",
+    "traceback.txt", "resolve_context.json",
     "save_backup.db", "manifest.json",
 })
 
 
 def _read_complete_pack_manifest(path: Path) -> Optional[Dict[str, object]]:
-    """完整五件包的 manifest 身份；残缺/坏 JSON/条目 stat OSError → None。complete/latest 共用。"""
+    """完整包的 manifest 身份；残缺/坏 JSON/条目 stat OSError → None。complete/latest 共用。"""
     try:
         if not path.is_dir() or not all(
             (path / name).is_file() for name in _COMPLETE_PACK_FILES
@@ -161,8 +161,6 @@ def write_error_pack(
     state: Any,
     *,
     exc: BaseException,
-    extracted: Optional[Dict[str, object]] = None,
-    resolve_ctx: Optional[Dict[str, object]] = None,
 ) -> str:
     """落一份错误包到 user-data 错误目录，返回包目录路径（绝对）。
 
@@ -171,13 +169,11 @@ def write_error_pack(
 
     内容：
       - traceback.txt        完整 traceback
-      - delta.json           当回合 delta（无则 {} + 说明）
       - resolve_context.json db.get_resolve_context(turn)（无则 null）
       - save_backup.db       SQLite 热备（conn.backup() API）
       - manifest.json        db 路径 / turn / 年月 / 版本 / attempt / 异常类型+消息 / 时间戳
 
-    extractor 失败（LLM 失败）也写包：delta 为空，但 traceback+manifest 有诊断价值；重试本就
-    要重跑贵调用，不存 delta 不损失什么（决定 6）。
+    诊断包不参与恢复；恢复规则见 #1846。
     """
     turn = int(getattr(state, "turn", 0))
     # exist_ok=False + 撞名重试：诊断孤本绝不静默覆盖（并发双失败 / 非连续目录撞名时
@@ -197,20 +193,9 @@ def write_error_pack(
     )
     (pack_dir / "traceback.txt").write_text(tb_text, encoding="utf-8")
 
-    # delta.json（无已提交的结构化产物时 extracted=None → {} + 说明）
-    if extracted is None:
-        delta_payload: Dict[str, object] = {
-            "_note": "本次失败无可记录的结构化产物；重试从已保存的月链进度接续。",
-        }
-    else:
-        delta_payload = extracted
-    (pack_dir / "delta.json").write_text(
-        safe_json_dumps(delta_payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
     # resolve_context.json（无则 null）
     (pack_dir / "resolve_context.json").write_text(
-        safe_json_dumps(resolve_ctx, ensure_ascii=False, indent=2), encoding="utf-8"
+        safe_json_dumps(db.get_resolve_context(turn), ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     # save_backup.db（仅 conn.backup() API；atomic 内会被 backup_to 拒绝）

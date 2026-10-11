@@ -30,12 +30,15 @@ def test_crash_reload_at_settling_no_double_fiscal_tick(game):
 
     db, state, content = game
     turn = state.turn
+    from ming_sim.decree import prepare_resolve_front_half
+    db.save_resolve_context(turn, "", {"month_chain": {}}, source="system_simulation")
 
-    auto = pre_settle(state, db)
+    auto = prepare_resolve_front_half(state, db, content=content)
     assert isinstance(auto, list)
     assert state.turn_phase == "settling"
     after_first = _ledger_count(db, turn)
     assert after_first > 0  # 财政确已落
+    assert db.get_resolve_context(turn)["simulator_payload"]["month_chain"] == {}
     db.conn.close()
 
     # 崩溃重载：新开 GameDB（落盘的 phase=settling 读回），重进 pre_settle 不重跑前半段。
@@ -43,8 +46,9 @@ def test_crash_reload_at_settling_no_double_fiscal_tick(game):
     try:
         state2 = db2.load_state()
         assert state2.turn_phase == "settling"  # 同事务落库，崩溃前已持久
-        auto2 = pre_settle(state2, db2)
-        assert auto2 == []  # 幂等守门：直接 return
+        auto2 = prepare_resolve_front_half(state2, db2, content=content)
+        assert auto2 == []
+        assert db2.get_resolve_context(turn)["simulator_payload"]["month_chain"] == {}
         assert _ledger_count(db2, turn) == after_first  # 财政只落一次
     finally:
         db2.conn.close()

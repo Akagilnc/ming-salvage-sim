@@ -1,7 +1,7 @@
 """S6 (ADR 0008 PR1) — 月链失败响亮中止与错误包。
 
 失败时上抛 SettlementAbort，不静默续跑；保存已完成步骤并供重试续接。
-错误包写入 user-data 目录（traceback + delta + resolve_context + 存档副本 + manifest），
+错误包写入 user-data 目录（traceback + resolve_context + 存档副本 + manifest），
 attempt 从目录文件数推导，中止提示自带路径指引。
 """
 
@@ -23,15 +23,18 @@ def test_attempt_derived_from_existing_dirs(game, monkeypatch, tmp_path):
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     exc = RuntimeError("boom")
+    db.save_resolve_context(state.turn, "", {"month_chain": {}}, source="system_simulation")
 
-    p1 = write_error_pack(db, state, exc=exc, extracted=None, resolve_ctx=None)
-    p2 = write_error_pack(db, state, exc=exc, extracted=None, resolve_ctx=None)
+    p1 = write_error_pack(db, state, exc=exc)
+    p2 = write_error_pack(db, state, exc=exc)
 
     m1 = json.loads((Path(p1) / "manifest.json").read_text(encoding="utf-8"))
     m2 = json.loads((Path(p2) / "manifest.json").read_text(encoding="utf-8"))
     assert m1["attempt"] == 1
     assert m2["attempt"] == 2
     assert Path(p1) != Path(p2)
+    context = json.loads((Path(p1) / "resolve_context.json").read_text(encoding="utf-8"))
+    assert context["simulator_payload"]["month_chain"] == {}
 
 def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path):
     """在 atomic 内写包 → backup_to 守卫响亮拒绝（钉住「包必须在 atomic 外」约束）。"""
@@ -42,8 +45,7 @@ def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path)
 
     with pytest.raises(RuntimeError):
         with atomic(db):
-            write_error_pack(db, state, exc=RuntimeError("x"),
-                             extracted=None, resolve_ctx=None)
+            write_error_pack(db, state, exc=RuntimeError("x"),)
 
 
 
@@ -156,8 +158,7 @@ def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp
     (root / f"turn{turn + 1}_attempt99").mkdir()   # 他 turn：不串号
     (root / f"turn{turn}_attempt9").write_text("")  # 同名文件非目录：忽略
 
-    p = write_error_pack(db, state, exc=RuntimeError("boom"),
-                         extracted=None, resolve_ctx=None)
+    p = write_error_pack(db, state, exc=RuntimeError("boom"),)
 
     m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
     assert m["attempt"] == 8  # 7+1，不被 X/99/文件项带偏
@@ -171,8 +172,7 @@ def test_version_read_failure_falls_back_to_unknown(game, monkeypatch, tmp_path)
     monkeypatch.setattr(ep, "bundled_path",
                         lambda name: str(tmp_path / "no-such-dir" / name))
 
-    p = ep.write_error_pack(db, state, exc=RuntimeError("boom"),
-                            extracted=None, resolve_ctx=None)
+    p = ep.write_error_pack(db, state, exc=RuntimeError("boom"),)
 
     m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
     assert m["version"] == "unknown"

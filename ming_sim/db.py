@@ -17575,7 +17575,7 @@ class GameDB:
                 code_fault = exc
             # atomic 已回滚；错误包须在事务外写（write_error_pack 约束）
             pack_path = write_error_pack(
-                self, state, exc=code_fault, extracted=None, resolve_ctx=None,
+                self, state, exc=code_fault,
             )
             raise SettlementAbort(
                 settlement_abort_message(pack_path),

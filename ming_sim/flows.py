@@ -47,7 +47,7 @@ def raise_fixed_period_flow_abort_if_needed(
         return
     if not db.owns_transaction():
         return
-    pack_path = write_error_pack(db, state, exc=exc, extracted=None, resolve_ctx=None)
+    pack_path = write_error_pack(db, state, exc=exc)
     raise SettlementAbort(
         settlement_abort_message(pack_path),
         turn=int(getattr(state, "turn", 0)),
