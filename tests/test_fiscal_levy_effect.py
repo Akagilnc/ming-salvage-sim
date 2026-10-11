@@ -3,7 +3,6 @@ import math
 import pytest
 from ming_sim.decree import pre_settle
 from ming_sim.exceptions import SettlementAbort
-import ming_sim.entities.fiscal.levy as fiscal_levy
 from ming_sim.entities.fiscal.levy import apply_historical_fiscal_rates
 import ming_sim.entities.issue.event_terminal as event_terminal
 import ming_sim.issues as issues
@@ -1201,7 +1200,7 @@ def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
 
 @pytest.mark.parametrize("bad_meta_key", ["剿饷基线", "练饷基线", "饷率田亩分母基线"])
 def test_fiscal_levy_bad_share_meta_fails_loud_without_partial_writes_then_retries(
-    game, monkeypatch, bad_meta_key
+    game, bad_meta_key
 ):
     db, state, content = game
     issues.bind_content(content)
@@ -1220,8 +1219,6 @@ def test_fiscal_levy_bad_share_meta_fails_loud_without_partial_writes_then_retri
     )
     fiscal = json.loads(original_shaanxi_fiscal)
     fiscal["settle"].setdefault("_meta", {})[bad_meta_key] = []
-    msgs = []
-    monkeypatch.setattr(fiscal_levy, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),

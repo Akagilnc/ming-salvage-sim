@@ -23,7 +23,6 @@ from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import _FixedFiscalAbort
 from ming_sim.models import _load_durable_json_object
 from ming_sim.models import Event, GameState
-from ming_sim.token_stats import tlog
 
 
 _FISCAL_LEVY_TARGET_ABS_TOL = 1e-9
@@ -214,29 +213,6 @@ def _fiscal_levy_land_denominator(
             ctx=f"{region_id}.settle._meta.{_SETTLE_META_LAND_DENOMINATOR_KEY}",
         )
     return parsed_total_land
-
-
-def _load_region_fiscal_for_fiscal_levy(
-    region_id: str, raw_fiscal: object
-) -> Optional[dict]:
-    if isinstance(raw_fiscal, dict):
-        return raw_fiscal
-    if raw_fiscal is None or raw_fiscal == "":
-        raw_fiscal = "{}"
-    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    try:
-        fiscal = json.loads(raw_fiscal)
-    except (TypeError, ValueError) as exc:
-        tlog(
-            f"[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}"
-        )
-        return None
-    if not isinstance(fiscal, dict):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    return fiscal
 
 
 def _fiscal_levy_share_seed(
