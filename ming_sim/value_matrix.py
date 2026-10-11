@@ -1,8 +1,4 @@
-"""ADR 0011-3 价值画像矩阵读口。
-
-单一真源：content/value_matrix.json（D3-8 build-upon：矩阵值落库为 content 静态配置）。
-本模块只校验闭集并提供读函数，不另立 42 格常量。
-"""
+"""ADR 0011-3 价值轴名归一（矩阵 JSON 读口已无生产消费者，随 F22-R 退役）。"""
 
 from __future__ import annotations
 

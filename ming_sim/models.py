@@ -29,47 +29,75 @@ from ming_sim.constants import (
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 
 
-def loads_persistent_json_object(
-    raw: object, *, surface: str = "payload_json",
-) -> Dict[str, object]:
-    """Durable object JSON: missing/empty → {}; corrupt or non-object raises.
+def _load_durable_json_list(raw: object, *, surface: str) -> list:
+    """Durable JSON array column: corrupt / wrong top-level fail loud (#1897 E1).
 
-    Leaf reader shared by effect columns, engine payloads, and exclusion targets.
+    SQL NULL may default to empty list; empty string / non-str / non-list must not
+    be falsy-washed into a legal empty array.
+    """
+    if isinstance(raw, list):
+        value = raw
+    else:
+        if raw is None:
+            text = "[]"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
+    if not isinstance(value, list):
+        raise ValueError(f"{surface} 须为列表，得 {type(value).__name__}")
+    return value
+
+
+def _load_durable_str_list(raw: object, *, surface: str) -> list:
+    """Durable string-array column: list + each member str (#1897 E1)."""
+    return _require_str_list_members(
+        _load_durable_json_list(raw, surface=surface), surface=surface,
+    )
+
+
+def _load_durable_json_object(raw: object, *, surface: str) -> dict:
+    """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1).
+
+    SQL NULL may default to empty object; empty string / non-str / non-object
+    must not be falsy-washed into a legal empty object.
     """
     if isinstance(raw, dict):
-        return dict(raw)
-    if raw is None:
-        return {}
-    text = str(raw).strip()
-    if not text or text == "{}":
-        return {}
-    try:
-        data = json.loads(text)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
-    if not isinstance(data, dict):
-        raise ValueError(f"{surface} 须为对象，得 {type(data).__name__}")
-    return dict(data)
+        value = raw
+    else:
+        if raw is None:
+            text = "{}"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
+    return value
 
 
-def loads_persistent_json_list(
-    raw: object, *, surface: str = "json_list",
-) -> list:
-    """Durable list JSON: missing/empty → []; corrupt or non-list raises."""
-    if isinstance(raw, list):
-        return list(raw)
-    if raw is None:
-        return []
-    text = str(raw).strip()
-    if not text or text == "[]":
-        return []
-    try:
-        data = json.loads(text)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
-    if not isinstance(data, list):
-        raise ValueError(f"{surface} 须为数组，得 {type(data).__name__}")
-    return list(data)
+def _require_str_list_members(values: list, *, surface: str) -> list:
+    """Each durable list member must already be str — no str() wash (#1897 E1)."""
+    out: list = []
+    for index, item in enumerate(values):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"{surface}[{index}] 须为字符串，得 {type(item).__name__}"
+            )
+        out.append(item)
+    return out
 
 
 def require_persistent_string_list(
@@ -102,17 +130,13 @@ def require_persistent_string_list(
 
 def loads_persistent_name_list(raw: object, *, surface: str = "name_list") -> list:
     """Durable JSON name list: missing/empty → []; corrupt/null member raises."""
-    data = loads_persistent_json_list(raw, surface=surface)
+    data = _load_durable_json_list(raw, surface=surface)
     return require_persistent_string_list(data, surface=surface, field="items")
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:
-    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）。
-
-    已是 dict → 原样；缺省/空 → {}；腐坏或非 dict → 响亮失败（ADR 0005）。
-    放 models（leaf）避免 db↔issues 循环。
-    """
-    return loads_persistent_json_object(raw, surface="effect_json")
+    """Single durable effect-object decoder; corrupt state fails loud."""
+    return _load_durable_json_object(raw, surface="effect_json")
 
 
 def _nonzero_int(raw: object) -> bool:
@@ -302,6 +326,7 @@ def _legacy_effect_has_work(raw: object) -> bool:
 
 def effect_dict_has_work(raw: object) -> bool:
     """Return whether an effect/ongoing payload has semantic work, not just a non-empty shell."""
+
     effect = loads_effect_dict(raw)
     if not effect:
         return False

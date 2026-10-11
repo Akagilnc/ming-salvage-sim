@@ -130,14 +130,14 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     # 连坐走既有挂载点
     assert len(_cost_liability(db, xf_id)) == 1
 
-    # 双轨：执行格记变形 × 实况效果在库；程序不代写终值奏报
+    # 双口径：角色自己的过程奏报留在奏报轨；执行格记变形；实况效果在库。
+    # 结案不再另造终值陈词。
     xf_progress = db.list_dossier_progress(xf_id)
-    assert not any(r.get("is_terminal") for r in xf_progress), xf_progress
-    assert any(str(r.get("memorial_text") or "").strip() for r in xf_progress)
+    assert not [r for r in xf_progress if r.get("is_terminal")]
+    assert len(xf_progress) == 1
     assert xf_dossier["execution_outcome"] == "transformed"
     assert db.list_economy_moves_for_dossier(xf_id)
-    bands = {r["progress_band"] for r in xf_progress}
-    assert "transformed" not in bands
+    # progress_band 是自由奏报面，不以英文执行格作禁词门（#1897 T1）。
 
     # AC4：restore 后旨外效果可溯源
     backup = tmp_path / "restore-622.db"
@@ -167,8 +167,8 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert deg_dossier["execution_outcome"] == "degraded"
     assert result_deg["verdict"]["outcome"] == "degraded"
     deg_progress = db.list_dossier_progress(deg_id)
-    assert not any(r.get("is_terminal") for r in deg_progress), deg_progress
-    assert any(str(r.get("memorial_text") or "").strip() for r in deg_progress)
+    assert not [r for r in deg_progress if r.get("is_terminal")]
+    assert len(deg_progress) == 1
     # 假进度尾部：再写奏报，世界 fingerprint 不变
     fp_before_fake = _world_fingerprint(db)
     db.record_dossier_progress(

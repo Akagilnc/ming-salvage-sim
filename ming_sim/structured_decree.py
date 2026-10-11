@@ -27,7 +27,6 @@ class StructuredDecreeCombinationError(ValueError):
     partial_result：抽取已解析但组合未过的首抽快照（含 participant_roster）；
     failed_fields：本不变式可修字段边界（单条）；
     field_failures：权威结构化失败事实（field/current/expected）；运输层只携带；
-    draft_failures：批抽 idx → 可修字段边界；
     heal 只从纠错轮采纳边界内字段，保留首抽名册与未失败结构。
     """
 
@@ -38,7 +37,6 @@ class StructuredDecreeCombinationError(ValueError):
         partial_result: Optional[Dict[str, Any]] = None,
         failed_fields: Optional[frozenset[str]] = None,
         field_failures: Optional[tuple[Dict[str, object], ...]] = None,
-        draft_failures: Optional[Dict[int, frozenset[str]]] = None,
     ) -> None:
         super().__init__(message)
         self.partial_result = partial_result
@@ -52,7 +50,6 @@ class StructuredDecreeCombinationError(ValueError):
             )
         else:
             self.failed_fields = frozenset(failed_fields or ())
-        self.draft_failures = dict(draft_failures or {})
 
 
 # 组合纠错可覆盖的结构字段（与 assemble/validate 核心键同集；名册/旨文不在此列）

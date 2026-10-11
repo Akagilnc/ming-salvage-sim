@@ -262,7 +262,7 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     assert payload.get("truth") in {"genuine", "pretextual"}
     assert "grace_fake" in payload
 
-    # The structured payload is not projected; supplied prose passes through unchanged.
+    # 结构化 payload 不得投影泄漏；不锁自由 origin_context/criterion 散文
     urge_scenes = list_urge_audience_scenes(db, state)
     assert urge_scenes, "grace pending 必须顶出召对面"
     assert all("payload_json" not in item for item in urge_scenes)
@@ -270,8 +270,7 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     assert "payload_json" not in grace_scene
     marked = dict(grace[0], origin_context="上奏 grace_fake 待议", criterion_text="求宽限 truth")
     projected = project_urge_audience_scene(marked)
-    assert projected["origin_context"] == marked["origin_context"]
-    assert projected["criterion_text"] == marked["criterion_text"]
+    assert "payload_json" not in projected
 
     # 最坏形态：带真伪底 payload 的 staged 条走真实 due-review 投影，断言零泄漏
     tid = db.insert_next_audience_todo(
@@ -349,7 +348,7 @@ def test_urge_history_restore_from_committed_pending_ac7(game):
     db2 = GameDB(path)
     hist = collect_urge_history(db2, commitment_ref=issue_id)
     assert len(hist) >= 1
-    assert hist[0]["reason"] == "restore-probe"
+    assert int(hist[0]["deadline_months"]) == 3  # restore 结构字段；不锁 reason 散文
 
 
 def test_rush_without_issue_fail_closed_no_remonstrance(game):
@@ -600,7 +599,6 @@ def test_commitment_rush_via_pending_actions_gate(game):
     hist = collect_urge_history(db, commitment_ref=issue_id)
     assert len(hist) >= 1
     assert hist[-1]["new_due"] == state.turn + 1
-    assert hist[-1]["reason"] == "闸门催"
     chosen = [
         t for t in db.list_next_audience_todos(commitment_ref=issue_id)
         if t["entry_kind"] in {ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_GRACE_PLEA}
@@ -630,4 +628,6 @@ def test_payload_json_corrupt_read_is_loud(game):
         )
     assert GameDB.parse_engine_payload_json(None) == {}
     assert GameDB.parse_engine_payload_json("{}") == {}
-    assert GameDB.parse_engine_payload_json("") == {}
+    # 空串是持久腐坏，不得洗成合法空对象（#1897 E1）。
+    with pytest.raises(ValueError):
+        GameDB.parse_engine_payload_json("")

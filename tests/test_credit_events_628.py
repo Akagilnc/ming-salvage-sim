@@ -172,7 +172,7 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
 
 
 def test_fulfill_back_and_urge_three_decisions(game):
-    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled/任命不落。"""
+    """兑付→兑现所托；撑完→撑腰；cancels 拒宽限·斥退→辜负；被拒 fulfilled/任命不落。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -285,23 +285,10 @@ def test_fulfill_back_and_urge_three_decisions(game):
     )
     assert len(_credit_edges(db)) == before_rd
 
-    # ── 谏处置三型（案卷主办=谏者，resolve_host 读案卷面）──
+    # ── 谏处置：cancels 结构化拒→辜负（不从 purpose 散文猜准宽限）──
     def _host_roster(name: str):
         return [{"character_id": name, "tier": "主办", "role": "承办"}]
 
-    # 准宽限
-    did_g = _executing_dossier(
-        db, state, token="grace-628", roster=_host_roster("倪元璐"),
-    )
-    cid_g = _insert_commitment(
-        db, state, title="乞宽限案", origin_ref=f"dossier:{did_g}", host="倪元璐",
-    )
-    db.insert_next_audience_todo(
-        commitment_ref=cid_g, stage_idx=0, due_turn=state.turn + 2,
-        criterion_text="乞恩宽限", origin_context="催紧",
-        entry_kind=ENTRY_KIND_GRACE_PLEA, created_turn=state.turn - 1,
-        payload_json={"kind": "grace_plea"}, commit=True,
-    )
     # 拒宽限
     did_rg = _executing_dossier(
         db, state, token="rej-grace-628", roster=_host_roster("徐光启"),
@@ -329,17 +316,9 @@ def test_fulfill_back_and_urge_three_decisions(game):
         payload_json={"kind": "rush_remonstrance"}, commit=True,
     )
 
-    grace_purpose = "准宽限加拨"
     apply_score_extraction(
         db, state,
         {
-            "economy_moves": [{
-                # 非负 delta + 显式宽限叙事；合法 origin 须落格（C1/C2）
-                "account": "国库", "delta": 5, "category": "军费",
-                "purpose": grace_purpose, "reason": "准宽限",
-                "origin_ref": "盘面自发",
-                "issue_id": cid_g,
-            }],
             "cancels": [
                 {"issue_id": cid_rg},
                 {"issue_id": cid_rr},
@@ -347,12 +326,6 @@ def test_fulfill_back_and_urge_three_decisions(game):
         },
         content=content,
     )
-    g_edges = [
-        e for e in _credit_edges(db, event_kind=KIND_BACK, target="倪元璐")
-        if f"issue:{cid_g}:credit:grant_grace" in str(e["origin"])
-    ]
-    assert g_edges, "准宽限须写撑腰"
-    assert g_edges[-1]["context"] in {grace_purpose, "准宽限", "乞恩宽限"}
 
     rg_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="徐光启")

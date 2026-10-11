@@ -405,12 +405,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])
         if result.proposed_directive is not None:
             _confirm_pending_directive(session, result.proposed_directive, character.name)
-        if result.appointed_minister:
-            print(f"【吏部铨选】{result.appointed_minister}已补入朝堂名册，本回合起可召见。\n")
-        if result.registered_minister:
-            print(f"【人物补档】{result.registered_minister}已补入人物档，本回合起可召见。\n")
-        if result.displaced_minister:
-            print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
         if result.court_action == "dismiss":
             # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
             return "dismiss"
@@ -443,8 +437,9 @@ def review_directives(session: GameSession) -> str:
                 print(f"{idx}. #{d.id}")
                 print(f"   {d.text}")
         elif not pending and not staged_directives:
-            print("（暂无指令。back 继续召见，或 add 新增。）")
-        print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | exit 退出")
+            print("（暂无指令。back 继续召见。）")
+        # #1812 第6项：手写拟诏台已删；旨意只从召对来。del 仍可清已有草案。
+        print("\n操作：issue 结束回合 | back 继续召见 | del N 删 | exit 退出")
         raw = input("诏书草案> ").strip()
         if not raw:
             continue
@@ -471,9 +466,13 @@ def review_directives(session: GameSession) -> str:
                 # 恢复态：上月结算未完成（崩溃/中止后），跳过拟诏直接续跑结算——
                 # resolve_turn 的恢复分流自己决定重放/重新推演/回放决策点
                 # （ship-pre r3：write_decree 在此态必拒，不开此口 CLI 永远够不到恢复入口）。
+                # #1812 第9项：未完成转译恢复保留。
                 print("\n检测到上月结算未完成，续跑结算……")
                 return "issue"
             return "issue"
+        if lowered in {"add", "新增", "edit", "改", "修改"} or raw == "新增":
+            print("CLI 已无手写拟诏入口；旨意只从召对来。")
+            continue
         # 变更器统一接 ValueError（FRONT_HALF_DONE 冻结期的指引消息）：打印后留在
         # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
         try:

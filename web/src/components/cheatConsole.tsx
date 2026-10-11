@@ -24,6 +24,7 @@ export function CheatConsole({
   }, [history]);
 
   const submit = () => {
+    // Free prose cheat_directive: preserve raw; trim only emptiness (#1834 F16).
     const text = draft;
     if (!text.trim()) return;
     onCommit(text);

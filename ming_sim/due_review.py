@@ -133,9 +133,7 @@ def resolve_due_review_branch(
 
 def _todo_origin_ref(todo: Dict[str, object], meta_origin: str = "") -> str:
     """#1783：案卷 due todo（commitment_ref=0）origin 在 payload；承诺 todo 仍读 issue。"""
-    from ming_sim.models import loads_persistent_json_object
-
-    payload = loads_persistent_json_object(todo.get("payload_json"), surface="turn_todos.payload_json")
+    payload = todo["payload_json"]
     raw = str(payload.get("origin_ref") or "").strip()
     if raw:
         return raw
@@ -161,7 +159,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     # 案卷 due 直挂：title/criterion 已在 todo；无 issue 段表 → 末段
     if commitment_ref <= 0 and not meta.get("title"):
         meta = dict(meta)
-        meta["title"] = str(todo.get("criterion_text") or "")
+        meta["title"] = str(todo.get("criterion_text") or "")  # #1897: no truncate
     stages = meta["stages"]
     origin_ref = _todo_origin_ref(todo, str(meta.get("origin_ref") or ""))
     branch = resolve_due_review_branch(db, origin_ref)
@@ -251,11 +249,11 @@ def project_due_review_scene(
 ) -> Dict[str, object]:
     """复命场面投影（ID-13 用词，P4 定性、无数字面板）。"""
     inp = review_input if review_input is not None else build_due_review_input(db, todo)
-    origin = str(inp.get("origin_context") or todo.get("origin_context") or "")
+    origin = str(inp.get("origin_context") or todo.get("origin_context") or "")  # #1897: verbatim
     mid = bool(inp.get("mid_stage"))
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
-    payload = todo.get("payload_json") or {}
+    payload = todo["payload_json"]
     reopened = scene_kind == "covert_levy_exposure" and bool(payload.get("shortfall_reopened"))
     if reopened:
         # A prohibition reminder is a fresh shortfall projection, not a replay
@@ -394,12 +392,14 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
+    # #1897：criterion/origin 自由正文原样嵌入判词，禁 strip（空白原文不得换成缺省）。
     criterion = str(review_input.get("criterion_text") or "") or "所约之事"
     origin = str(review_input.get("origin_context") or "")
 
     if mid:
         note = f"中段复核：{criterion}仍在办理"
-        if origin:
+        # Emptiness on strip copy; note embeds origin raw bytes (#1834 F16).
+        if origin.strip():
             note = f"中段复核（{origin}）：{criterion}仍在办理"
         return {
             "outcome": "executing",
@@ -423,7 +423,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     else:
         outcome = "failed"
         note = f"到期复核：{criterion}届期无实绩"
-    if origin:
+    if origin.strip():
         note = f"{note}（原诺：{origin}）"
     return {
         "outcome": outcome,
@@ -492,6 +492,7 @@ def _apply_dossier_verdict(
         "noop": False,
         "credit_events": credit_rows,
     }
+
 
 
 def apply_due_review_for_todo(

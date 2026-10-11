@@ -118,10 +118,72 @@ def test_undo_rejected_after_night_closed(game):
     assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
 
 
+# ── AC8：撤回终结异步残余——后台写入前校验目标轮存活，不写已撤/失败轮 ────────────
+
+
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────
 
 
+def test_undo_removes_unlisted_person_registration(game):
+    db, state, content = game
+    from ming_sim.models import Character
+
+    caller = _active_minister(db, content)
+    newcomer = "临时借调_算学郎中"  # 未在册者
+
+    def _register(night_id: int, chat_id: int) -> None:
+        # 白名单②「未在册人物入册」：被宣召的未在册者须即时建档才能开口。
+        db.add_character(state, Character(
+            name=newcomer, office="翰林院侍读", office_type="翰林院", faction="",
+            aliases=[], personal_skills=[], loyalty=60, ability=70,
+            integrity=60, courage=50, style="谨饬", power_id="ming",
+        ), source="宣召入册")
+        an.ensure_summon_enter(db, night_id, newcomer, origin_chat_turn_id=chat_id)
+
+    night_id, chat_id = _run_round(db, state, caller, writes=_register)
+
+    assert db.get_character_status(newcomer)[0] == "active"
+    assert newcomer in an.present_names_at(db, night_id)
+
+    db.undo_chat_turn(chat_id)
+
+    # 档案（characters/character_offices）消失
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name = ?", (newcomer,)
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name = ?", (newcomer,)
+    ).fetchone() is None
+    # 入殿账消失 → 在场推导里像没登场过
+    assert newcomer not in an.present_names_at(db, night_id)
+
+
 # ── AC6：kill+重开后撤回最近一轮仍完整逆转（撤销日志持久化）────────────────────
+
+
+def test_undo_full_reversal_survives_kill_and_reopen(game):
+    db, state, content = game
+    m = _active_minister(db, content)
+
+    def _land_secret(night_id: int, chat_id: int) -> None:
+        create_test_secret_order(db, state, m, "密查军资", "密查蓟镇军资挪用", ["军务"])
+    night_id, chat_id = _run_round(
+        db, state, m, writes=_land_secret,
+        declaration=_minister_declaration(m, "领旨。"),
+    )
+    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 1
+
+    db2 = _reopen(db, content)
+    try:
+        # 重开后撤销日志仍在 → 撤回照样完整逆转
+        db2.undo_chat_turn(chat_id)
+        assert db2.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 0
+        assert not any(
+            e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db2, night_id)
+        )
+        assert m not in an.present_names_at(db2, night_id)
+    finally:
+        db2.close()
 
 
 # ── AC7：撤回×待补——不重新生成该轮账、无孤儿重试入口 ─────────────────────────
@@ -145,8 +207,6 @@ def test_undo_pending_translation_leaves_no_orphan_retry(game):
     db.undo_chat_turn(chat_id)
 
     # 撤回后：该轮不再是待补重试真源（无孤儿重试入口），补跑不复活该轮账
-
-    assert len(db.list_unextracted_replies(night_id=night_id)) == 0
 
     assert db.list_unextracted_replies(night_id=night_id) == []
     # kill+重开后仍无重试入口（撤销持久）
@@ -270,20 +330,18 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
         create_test_secret_order(db,
             state, m, "密核盐课", "密核长芦盐课隐没", ["盐政", "稽核"],
             importance=5, deadline_months=6,
-            excluded_names=[_active_minister(db, content, exclude={m})],
-            excluded_offices=["户部"],
         )
     night_id, chat_id = _run_round(
         db, state, m, writes=_land,
         declaration=_minister_declaration(m, "领旨。"),
     )
     order_id = int(db.conn.execute("SELECT id FROM secret_orders").fetchone()["id"])
-    # 落地时结构化字段（标题/期限/标签/排除名单/机构级映射）+ 简报（承办人/知情圈）齐备
+    # 落地时结构化字段（标题/期限/标签）+ 简报（承办人/知情圈）齐备
     row = db.conn.execute(
-        "SELECT title, due_turn, tags, excluded_names, excluded_targets "
+        "SELECT title, due_turn, tags "
         "FROM secret_orders WHERE id = ?", (order_id,)
     ).fetchone()
-    assert row["title"] and json.loads(row["excluded_names"]) and json.loads(row["excluded_targets"])
+    assert row["title"] and json.loads(row["tags"])
     assert db.conn.execute(
         "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id = ?", (order_id,)
     ).fetchone()[0] == 1
@@ -375,36 +433,3 @@ def test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes(game):
 
     assert not any(an.TAG_ENTER in (e["tags"] or []) and m in e["person_names"]
                    for e in an.list_ledger(db, night_id))
-
-
-def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
-    """#672：ensure inactive office origin 绑 chat-turn；undo 按 typed source 清。"""
-    db, state, content = game
-    m = _active_minister(db, content)
-    night = an.open_night(db, state)
-    night_id = int(night["id"])
-
-    def _writes(_nid: int, chat_id: int) -> None:
-        pending_id = db.stage_pending_action(
-            int(state.turn), "office", "任命", m,
-            {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
-        )
-        an.ensure_inactive_office_summon(
-            db, int(pending_id), "袁崇焕",
-            night_id=night_id, origin_chat_turn_id=int(chat_id),
-        )
-
-    _nid, chat_id = _run_round(db, state, m, writes=_writes)
-    origin_rows = db.conn.execute(
-        "SELECT id, origin_ref, origin_chat_turn_id, tags FROM story_ledger_entries "
-        "WHERE origin_ref LIKE 'office:%'",
-    ).fetchall()
-    assert len(origin_rows) == 1
-    assert int(origin_rows[0]["origin_chat_turn_id"]) == int(chat_id)
-    assert "传召未结" not in json.loads(origin_rows[0]["tags"] or "[]")
-    entry_id = int(origin_rows[0]["id"])
-
-    db.undo_chat_turn(int(chat_id))
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE id=?", (entry_id,),
-    ).fetchone()[0] == 0

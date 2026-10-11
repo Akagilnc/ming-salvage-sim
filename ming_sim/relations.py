@@ -1,4 +1,4 @@
-"""关系账 S1：有向边事件的契约、校验和 0079 读侧适配。
+"""关系账 S1：有向边事件的契约与校验。
 
 本模块只负责边事件流水，不负责摘要酿制，也不改 0079 的写端。
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Iterable, Any
 
 EMPEROR_NODE = "皇帝"
 
@@ -144,8 +144,9 @@ def normalize_evidence(evidence: Any) -> bool:
 
 
 def bind_origin_round(origin: Any, turn: int) -> tuple[str, int]:
-    text = str(origin or "").strip()
-    if not text:
+    # Free prose origin: preserve raw; emptiness on local copy (#1834 F16).
+    text = str(origin or "")
+    if not text.strip():
         raise ValueError("边事件 origin 不能为空")
     match = _ROUND_RE.search(text) or _TURN_RE.search(text)
     if match:
@@ -289,3 +290,6 @@ def resolve_relation_edge_events_from_extraction(
                 "reason": str(exc), "item": dict(item),
             })
     return results
+
+
+# ── #633 结算口（ADR 0082）：邸报大臣互动 → 边事件当场落库 ──────────────

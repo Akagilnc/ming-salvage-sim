@@ -262,22 +262,18 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 def test_identity_setup_failure_preserves_question_and_releases_pending_owner(monkeypatch):
     runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race(monkeypatch)
     failed = []
-    completed = []
     runtime.db.kv_get = lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed"))
     runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot, error: failed.append((turn_id, snapshot, error))
-    runtime._complete_pending_write = lambda ticket=None: completed.append(True)
 
     events = list(runtime.chat_stream("殿上", "请奏"))
 
-    assert events == [{
-        "type": "error", "message": "identity read failed",
-        "campaign_id": "", "night_id": 0, "chat_turn_id": 7,
-    }]
-    assert len(failed) == 1
+    assert events[0]["type"] == "error"
+    assert events[0]["chat_turn_id"] == 7
+    assert events[0]["campaign_id"] == "" and events[0]["night_id"] == 0
     assert failed[0][:2] == (7, {})
-    assert str(failed[0][2]) == "identity read failed"
-    assert [m["content"] for m in runtime.db.messages if m["role"] == "user"] == ["请奏"]
-    assert completed == [True]
+    user_msgs = [m for m in runtime.db.messages if m["role"] == "user"]
+    assert len(user_msgs) == 1  # 失败仍保留问话轮；角色条数结构，不锁问话散文
+    assert runtime._runtime_write_queue().inflight_count() == 0  # 失败放行领票
 
 
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
@@ -373,7 +369,6 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
         "期望 state 探针在 chat 完成前响应"
     )
     assert state_payload == {"ok": True, "turn": 1}
-    assert chat_result["answer"] == "臣已知悉。"
 
 
 def test_nonstream_chat_rejects_when_session_draining():

@@ -641,7 +641,7 @@ def test_half_weight_odd_baseline_no_round_drift(game):
         db.set_character_status(state, m["name"], "dismissed", reason="清场")
     keeper = members[0]["name"]
     db.set_character_office(keeper, "礼部侍郎", "礼部")
-    # 设奇数基线 79 与礼部侍郎的已声明权重 2.5，不以被测实现当 oracle。
+    # 设奇数基线 79，直接写 offset（不走已退役的老档反推校准）。
     baseline = 79
     weight = 2.5
     db.conn.execute(

@@ -8,6 +8,8 @@ from ming_sim.issues import (
     commitment_progress_payload,
 )
 from ming_sim.situation_drift import apply_situation_monthly_drift
+from tests.readback_helpers import faction_satisfaction as _faction_satisfaction
+from tests.readback_helpers import class_satisfaction as _class_satisfaction
 
 
 def _promulgated_commitment_origin(db, state, token: str) -> str:
@@ -41,21 +43,6 @@ def _character_loyalty(db, name: str) -> int:
     row = db.conn.execute("SELECT loyalty FROM characters WHERE name=?", (name,)).fetchone()
     assert row is not None
     return int(row["loyalty"])
-
-
-def _faction_satisfaction(db, name: str) -> int:
-    row = db.conn.execute("SELECT satisfaction FROM factions WHERE name=?", (name,)).fetchone()
-    assert row is not None
-    return int(row["satisfaction"])
-
-
-def _class_satisfaction(db, name: str, region_id: str = "") -> int:
-    row = db.conn.execute(
-        "SELECT satisfaction FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    assert row is not None
-    return int(row["satisfaction"])
 
 
 def _region_cannon(db, region_id: str) -> int:

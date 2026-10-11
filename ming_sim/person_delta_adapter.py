@@ -6,6 +6,8 @@ from typing import Mapping
 
 
 PERSON_CHANGE_KEY = "人物变更"
+# Effect payload carriers, shared by the engine readers and material projection.
+PERSON_EFFECT_KEYS = (PERSON_CHANGE_KEY, "person_changes", "character")
 ACTION_KEY = "动作"
 
 

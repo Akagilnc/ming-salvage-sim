@@ -163,7 +163,6 @@ def test_partial_heal_single_source_pending_only_fresh(
     payload = _pending_api(db)
     api_ids = {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
     assert api_ids == {ctid_fresh}, api_ids
-    assert ctid_stale not in api_ids
 
 def test_close_retry_on_healed_cleanup_no_stale_ids(game, tmp_path, monkeypatch):
     """#1842：已愈待补收夜可成；不再发 close_retry / pending_extraction 双源。"""
@@ -381,8 +380,8 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     wt = threading.Thread(
         target=_worker_terminal, name="worker-terminal-1353", daemon=True,
     )
-    wt.start()
     try:
+        wt.start()
         # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
         # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
         an.wait_in_flight_clear(db, nid)
@@ -465,9 +464,15 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     game.retry_interrupted_reply("殿上", chat_turn_id)
     assert calls == ["退朝", "court_break"]
     assert game.reply_retries("殿上") == []
-    assert [r["content"] for r in game.db.conn.execute(
-        "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", ("殿上",)
-    )] == ["臣遵旨。"]
+    # 回话行水位：chat_turns.minister_message_id 挂接；不锁 content 正文（#1897 T1）。
+    mid = game.db.conn.execute(
+        "SELECT minister_message_id FROM chat_turns WHERE id=?", (int(chat_turn_id),),
+    ).fetchone()["minister_message_id"]
+    assert mid is not None
+    assert game.db.conn.execute(
+        "SELECT COUNT(*) c FROM chat_messages WHERE role='minister' AND minister_name=? AND id=?",
+        ("殿上", int(mid)),
+    ).fetchone()["c"] == 1
 
 def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monkeypatch):
     """#1849 reopen：唯一入口 stream——旧「stream/nonstream」入口轴随非流式路退役
@@ -486,13 +491,13 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     retries = game.pending_translation_retries(chat_turn_id=chat_turn_id)
     assert [r["chat_turn_id"] for r in retries] == [chat_turn_id]
     assert retries[0]["error_pack_path"]
-    assert [(m["role"], m["content"], m["chat_turn_id"]) for m in game.chat_projection("殿上")] == [
-        ("user", "边饷如何？", chat_turn_id), ("minister", "臣遵旨。", chat_turn_id)]
+    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection("殿上")] == [
+        ("user", chat_turn_id), ("minister", chat_turn_id)]
     stub_audience_translate(monkeypatch)
     game.retry_pending_translation(chat_turn_id)
     assert game.pending_translation_retries(chat_turn_id=chat_turn_id) == []
-    assert [(m["role"], m["content"]) for m in game.chat_projection("殿上")] == [
-        ("user", "边饷如何？"), ("minister", "臣遵旨。")]
+    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection("殿上")] == [
+        ("user", chat_turn_id), ("minister", chat_turn_id)]
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 

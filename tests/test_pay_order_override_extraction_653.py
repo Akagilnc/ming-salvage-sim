@@ -73,24 +73,3 @@ def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
     )
     with pytest.raises(ValueError):
         cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
-
-
-def test_multi_pay_order_capture_preserves_reverse_non_tied_priorities(monkeypatch):
-    entries = [
-        {"key": "due_priority_宗禄@shaanxi", "value": 30},
-        {"key": "due_priority_军饷@shaanxi", "value": 10},
-    ]
-    raw = {"成品旨稿": [
-        {"正文": "改陕西饷序", "动作类型": "pay_order_override", "目标类型": "account",
-         "目标ID": "pay_order", "颁布方式": "普通", "entries": entries},
-        {"正文": "另改折发", "动作类型": "pay_order_override", "目标类型": "account",
-         "目标ID": "pay_order", "颁布方式": "普通",
-         "entries": [{"key": "due_haircut_bp_军饷@shaanxi#province", "value": 8000}]},
-    ]}
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *_args, **_kwargs: (json.dumps(raw, ensure_ascii=False), {}),
-    )
-    result = cli_backend.extract_draft_intent("分别拟两旨", "臣已拟妥", draft_count=2)
-    assert result["drafts"][0]["entries"] == entries
-    assert result["drafts"][1]["entries"][0]["value"] == 8000

@@ -80,50 +80,6 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert json.loads(row["effect_on_resolve"]) == {}
 
 
-
-def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch):
-    """An authorized item in another account must not be deduplicated."""
-    db, state, content = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
-                    "kind": "initiative",
-                    "title": "每月拨西学经费",
-                    "stage_text": "太仓每月拨银五十万两办西学。",
-                    "ongoing_effects": {
-                        "economy": [
-                            {"account": "国库", "delta": -50, "category": "西学经费",
-                             "reason": "每月拨西学经费"}
-                        ]
-                    },
-                    "commitment_kind": "until_stop",
-                }
-            ],
-            "fiscal_creates": [
-                {
-                    "key": "neiku_dujiang_base",
-                    "origin_ref": "盘面自发",
-                    "account": "内库",  # 不同账户
-                    "direction": "expense",
-                    "init_value": 10,
-                    "display": "督江差役",
-                    "reason": "月支",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert db.get_fiscal_config()["neiku_dujiang_base"] == 10
-
-
 def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
     db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -906,47 +862,6 @@ def test_empty_json_stop_condition_allows_advance_to_resolved(game):
     assert advanced["bar_value"] == 100
     assert advanced["status"] == "resolved"
     assert advanced["closed_turn"] == state.turn
-
-
-def test_commitment_skips_cli_resolve_effect_enrich(game, monkeypatch):
-    import ming_sim.cli_backend as _cb
-
-    db, state, content = game
-    calls = []
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(
-        _cb,
-        "enrich_initiative_effects",
-        lambda *args, **kwargs: calls.append((args, kwargs))
-        or {"effect_on_resolve": {"metrics": {"民心": 9}}, "ongoing_effects": {}, "effect_on_fail": {}},
-    )
-
-    I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-arrears"),
-                    "kind": "initiative",
-                    "title": "每月补辽饷直到补齐",
-                    "ongoing_effects": {
-                        "economy": [
-                            {"account": "国库", "delta": -50, "category": "补饷承诺", "reason": "每月补辽饷"}
-                        ]
-                    },
-                    "stop_condition": {"army.guanning.arrears": "<=0"},
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    row = _issue_by_title(db, "每月补辽饷直到补齐")
-    assert calls == []
-    assert json.loads(row["effect_on_resolve"]) == {}
 
 
 def test_one_shot_appeasement_economy_move_does_not_create_commitment_issue(game, monkeypatch):

@@ -102,7 +102,7 @@ EMPEROR_SYSTEM_PROMPT = """你是崇祯帝，刚刚登基。你正在玩一个�
   - 同意入档：输 "可"（或 "准"、"准奏"、回车也可）。
   - 驳回让大臣重拟：输 "驳"（或 "不准"、"驳回"）。
 - 不要拼接其它意图（换人、退朝、quit），其它字眼会被判"未识别"，原地重问，浪费一步。
-- 想换个旨意：先驳回让大臣重拟，或入档/驳回后回到草案界面用 del 删旧条 + add 新增，不要在这里直接改。
+- 想换个旨意：先驳回让大臣重拟，或入档/驳回后回到草案界面用 del 删旧条；手写新增已退役，旨意只从召对来。
 - 入档完成回到"朕问："界面，再去说退下、传谁、quit。
 
 【月末等待】prompt 含 "按回车继续下一月"：
@@ -222,6 +222,7 @@ def parse_emperor_output(raw: str) -> tuple[str, str]:
     if not obj_match:
         raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw}")
     obj = json.loads(obj_match.group(0))
+    # 原件过手：reasoning/input 不 strip、不截首行（传话链保真）
     reasoning = str(obj.get("reasoning", ""))
     input_text = str(obj.get("input", ""))
     return reasoning, input_text
@@ -230,10 +231,11 @@ def parse_emperor_output(raw: str) -> tuple[str, str]:
 def ask_emperor(agent: Agent, cli_chunk: str, prompt_hint: str, progress: str = "") -> tuple[str, str]:
     # progress：本月进度提示（已问几轮/已下旨几条/还差啥）。num_history_runs 只留近 8 轮，
     # agent 看不到完整本月动作易盲凑、重复召见，故每步显式喂进度，让它知道走到哪、该收尾还是继续。
+    # CLI 对端原文整段转交，不截尾。
     payload = (
         f"{progress}\n\n" if progress else ""
     ) + (
-        f"CLI 当前输出（最新一段）：\n```\n{cli_chunk[-3500:]}\n```\n\n"
+        f"CLI 当前输出（最新一段）：\n```\n{cli_chunk}\n```\n\n"
         f"当前等待输入的 prompt 是：{prompt_hint}\n\n"
         f"请输出下一条键盘输入（严格 JSON）。"
     )

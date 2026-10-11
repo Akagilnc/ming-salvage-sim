@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from ming_sim.models import Character
 
@@ -47,7 +48,7 @@ def test_white_body_high_appointment_is_marked_but_regular_first_office_is_not(g
     from ming_sim.decree import build_promulgation_judge_context
 
     context = build_promulgation_judge_context(
-        db, state, [dict(db.conn.execute("SELECT * FROM decree_dossiers WHERE id=?", (high_id,)).fetchone())]
+        db, state, [db.get_decree_dossier(high_id)]
     )
     assert context["dossiers"][0]["break_rank"]["is_break_rank"] is True
 
@@ -96,10 +97,9 @@ def test_same_rank_demotion_and_two_band_promotion_follow_upward_formula(game):
 
 def test_restoration_and_displaced_third_state_use_latest_historical_office(game):
     db, state, _content = game
-    # #1843：离事且无现职不建空备档；无 archive 时按初仕高阶识别（不锁 status_reason 反推职衔）。
     _yuan_id, yuan = _appointment_dossier(db, state, "袁可立", "陕西巡抚")
-    assert yuan["break_rank"]["basis"] == "first_appointment_high_office"
-    assert yuan["break_rank"]["is_break_rank"] is True
+    assert yuan["break_rank"]["basis"] == "historical_office"
+    assert yuan["break_rank"]["is_break_rank"] is False
 
     _add(db, state, "起复甲", "礼部右侍郎", "礼部")
     db.set_character_status(state, "起复甲", "retired", "致仕")
@@ -140,6 +140,16 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     assert disp_jump["break_rank"]["is_break_rank"] is True
 
 
+
+
+
+
+
+
+
+
+
+
 def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(game):
     db, state, _content = game
     for index, (office, office_type, status) in enumerate((
@@ -157,7 +167,6 @@ def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(gam
 
 
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
-    """旧档 office_type 待铨/空时，任命案卷仍按历史实职识别破格（公开 break_rank）。"""
     db, state, _content = game
     name = "旧档实职"
     _add(db, state, name, "翰林院编修", "翰林院")
@@ -170,20 +179,31 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
     assert payload["break_rank"]["is_break_rank"] is True
 
 
+
 def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
-    """#1843：离事且无现职不建空备档；起复按初仕高阶，不从 status_reason 反推职衔。"""
     db, _state, _content = game
-    for name in ("袁可立", "胡廷宴"):
-        row = db.conn.execute(
-            "SELECT office_title FROM character_offices WHERE character_name=?",
-            (name,),
-        ).fetchone()
-        assert row is None
+    yuan = db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        ("袁可立",),
+    ).fetchone()
+    assert yuan is not None
+    assert "巡抚" in yuan["office_title"]
+    assert "罢居" not in yuan["office_title"]
+    assert not yuan["office_title"].startswith("前")
 
     _dossier_id, payload = _appointment_dossier(db, _state, "袁可立", "陕西巡抚")
-    assert payload["break_rank"]["basis"] == "first_appointment_high_office"
-    assert payload["break_rank"]["is_break_rank"] is True
+    assert payload["break_rank"]["basis"] == "historical_office"
+    assert payload["break_rank"]["is_break_rank"] is False
+    assert payload["break_rank"]["current_rank_band"] == 3
 
+    # 革职候勘 / 原任 污染也须在 seed 备档洗净，供起复读最近实职带。
+    hu = db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        ("胡廷宴",),
+    ).fetchone()
+    assert hu is not None
+    assert hu["office_title"] == "三边总督"
     _hid, hu_payload = _appointment_dossier(db, _state, "胡廷宴", "三边总督")
-    assert hu_payload["break_rank"]["basis"] == "first_appointment_high_office"
-    assert hu_payload["break_rank"]["is_break_rank"] is True
+    assert hu_payload["break_rank"]["basis"] == "historical_office"
+    assert hu_payload["break_rank"]["is_break_rank"] is False
+    assert hu_payload["break_rank"]["current_rank_band"] == 3

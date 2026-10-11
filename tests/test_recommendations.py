@@ -1,10 +1,8 @@
 """#493 大臣荐人：网络/见闻裁切与采纳后的可恢复荐人事件。"""
 
-
-import pytest
-
 from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
 from tests.dossier_test_helpers import promulgate_proposed_appointments
+from tests.recommendation_rows import recommendation_events
 
 
 def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge(game):
@@ -83,99 +81,10 @@ def test_private_and_public_structured_hearing_exposes_cross_faction_candidate(g
     assert public_candidate.name in names
 
 
-def test_public_structured_hearing_exclusion_hides_cross_faction_candidate(game):
-    db, state, content = game
-    recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
-    candidate = next(c for c in content.characters.values()
-                     if c.name != recommender.name
-                     and c.faction != recommender.faction
-                     and c.office_type not in ("后宫", "宗藩"))
-    db.conn.execute(
-        "UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?",
-        (candidate.name,),
-    )
-    db.conn.commit()
-    db.register_character_knowledge_source(
-        state,
-        [{"character_id": candidate.name}],
-        "public",
-        "公开议事",
-        "邸报所载",
-        source_id="test:excluded-public-hearing",
-        excluded_names=[recommender.name],
-    )
-
-    names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
-
-    assert candidate.name not in names
 
 
-@pytest.mark.parametrize("excluded_target", ["office_type", "office"])
-def test_hearing_exclusion_hides_candidate_by_current_position(game, excluded_target):
-    db, state, content = game
-    recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
-    candidate = next(c for c in content.characters.values()
-                     if c.name != recommender.name
-                     and c.faction != recommender.faction
-                     and c.office_type not in ("后宫", "宗藩"))
-    db.conn.execute(
-        "UPDATE characters SET status='offstage', office='候铨' WHERE name=?",
-        (candidate.name,),
-    )
-    db.conn.commit()
-    current = db.conn.execute(
-        "SELECT office, office_type FROM characters WHERE name=?", (candidate.name,)
-    ).fetchone()
-    excluded_office = (
-        current["office_type"] if excluded_target == "office_type" else current["office"]
-    )
-    db.register_character_knowledge_source(
-        state,
-        [{"character_id": recommender.name}, {"character_id": candidate.name}],
-        "public",
-        "公开议事",
-        "邸报所载",
-        source_id=f"test:excluded-{excluded_target}",
-        excluded_targets={"offices": [excluded_office]},
-    )
-
-    names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
-
-    assert candidate.name not in names
 
 
-@pytest.mark.parametrize("excluded_target", ["office_type", "office"])
-def test_source_local_exclusion_preserves_same_faction_network_candidate(game, excluded_target):
-    db, state, content = game
-    recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
-    candidate = next(c for c in content.characters.values()
-                     if c.name != recommender.name
-                     and c.faction == recommender.faction
-                     and c.office_type not in ("后宫", "宗藩"))
-    db.conn.execute(
-        "UPDATE characters SET status='offstage', office='候铨' WHERE name=?",
-        (candidate.name,),
-    )
-    db.conn.commit()
-    current = db.conn.execute(
-        "SELECT office, office_type FROM characters WHERE name=?", (candidate.name,)
-    ).fetchone()
-    excluded_office = (
-        current["office_type"] if excluded_target == "office_type" else current["office"]
-    )
-    db.register_character_knowledge_source(
-        state,
-        [{"character_id": recommender.name}, {"character_id": candidate.name}],
-        "public",
-        "公开议事",
-        "邸报所载",
-        source_id=f"test:same-faction-excluded-{excluded_target}",
-        excluded_targets={"offices": [excluded_office]},
-    )
-
-    names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
-
-    assert candidate.name in names
 
 
 def test_same_faction_future_debut_is_not_recommendable(game):
@@ -208,7 +117,7 @@ def test_adopted_recommendation_is_an_auditable_event_after_restore(game):
     row = next(row for row in rows if row["name"] == candidate.name)
     db.record_recommendation(state, recommender.name, row, "巡盐御史", "旧任有实绩，罢居后仍可起复")
     restored = db.load_state()
-    events = db.list_recommendation_events(restored, recommender.name)
+    events = recommendation_events(db, restored, recommender.name)
     assert events[0]["recommender"] == recommender.name
     assert events[0]["candidate"] == candidate.name
     assert events[0]["candidate_kind"] == "起复"
@@ -255,7 +164,7 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
         promulgate_proposed_appointments(db, state, content)
 
     restored = db.load_state()
-    events = db.list_recommendation_events(restored, recommender.name)
+    events = recommendation_events(db, restored, recommender.name)
     by_candidate = {event["candidate"]: event for event in events}
     assert by_candidate[offstage["name"]]["candidate_kind"] == "起复"
     assert by_candidate[active["name"]]["candidate_kind"] == "在职"

@@ -55,7 +55,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         title = str(obj.get("title") or "")
         raw_opts = obj.get("options")
-        if not title or not isinstance(raw_opts, list):
+        if not title.strip() or not isinstance(raw_opts, list):
             continue
         options: List[Dict[str, object]] = []
         for o in raw_opts:

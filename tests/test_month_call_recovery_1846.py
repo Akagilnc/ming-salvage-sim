@@ -274,8 +274,9 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
-    assert chain.get("world_text_ready") is True
+    # world() mock return "世界段已成文。" → month_chain.world_text 原样暂存
     assert chain.get("world_text") == "世界段已成文。"
+    assert chain.get("world_text_ready") is True
     assert not chain.get("world_committed")
     assert db.staged_declarations.is_settled(ref)
     rows_after_fail = _ningyuan_ledger_rows(db)
@@ -432,9 +433,9 @@ def test_settlement_recovery_projects_month_call_failure(
     chain_again = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
-    assert recovery_again.get("message") == (
-        (chain_again.get("call_failure") or {}).get("message")
-    )
+    failure_again = chain_again.get("call_failure") or {}
+    assert failure_again.get("kind") == "model_exhausted"
+    assert failure_again.get("escape_armed") is False
     web_game.session.close()
 
 def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(

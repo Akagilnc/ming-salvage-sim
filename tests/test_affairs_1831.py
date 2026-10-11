@@ -79,7 +79,12 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
 
 
 
-def test_same_name_affairs_are_not_merged_and_close_attach_is_not_a_birth(game):
+
+def test_same_name_affairs_are_not_merged_and_illegal_attach_is_rejected(game):
+    """Same display name does not merge; illegal attach enum/ref fails loud and does not write.
+
+    Keeps generic create_decree_dossiers negative only — no exclusive retired-close proof (F44).
+    """
     db, state, _ = game
     minister = _minister(db)
     first = db.affairs.open(
@@ -92,18 +97,7 @@ def test_same_name_affairs_are_not_merged_and_close_attach_is_not_a_birth(game):
     )
     assert first.id != second.id
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    # Top-level affair_declarations is retired; unknown keys are section-rejected
-    # and must not birth affairs.
-    retired = apply_score_extraction(
-        db, state, {"affair_declarations": [_declaration()]},
-        open_affair_ids_at_input=set(),
-    )
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
-    assert any(
-        row.get("report_section") == "affair_declarations"
-        for row in retired.get("validate_shape_rejections") or []
-    )
-    try:
+    with pytest.raises(ValueError):
         db.create_decree_dossiers(
             state,
             action_type="assignment",
@@ -117,10 +111,7 @@ def test_same_name_affairs_are_not_merged_and_close_attach_is_not_a_birth(game):
                 "affair_declaration": _declaration(attach="close", affair_id=first.id),
             },
         )
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("expected birth close attach to fail")
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
     assert db.affairs.get(first.id).status == "open"
 
 

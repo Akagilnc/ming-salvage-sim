@@ -118,11 +118,11 @@ def resolve_lead_executors(
             "coverage": coverage, "route": "named",
             "leads": [assignee], "signal": None,
         }
-    from ming_sim.participant_roster import participant_roster_entries
+    from ming_sim.participant_roster import decode_durable_participant_roster
 
     named: List[str] = []
     seen: set = set()
-    for entry in participant_roster_entries(participant_roster):
+    for entry in decode_durable_participant_roster(participant_roster):
         if str(entry.get("tier") or "").strip() != "主办":
             continue
         name = str(entry.get("character_id") or "").strip()

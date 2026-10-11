@@ -138,10 +138,6 @@ class ChatTurnResult:
     court_action: str = ""   # "" | dismiss | summon | court_break | handled
     next_minister: str = ""
     proposed_directive: Optional[DirectiveView] = None
-    appointed_minister: str = ""   # 吏部本轮铨选新任的人物姓名（已可召见）
-    registered_minister: str = ""  # 名册外史实/用户确认人物建档后可召见
-    displaced_minister: str = ""   # 因新任腾缺被罢黜（dismissed）的原任者姓名
-    refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
     pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
@@ -495,6 +491,9 @@ def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+
+
+
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。
     DB 是持久化真相；不要在这里修写 DB。"""
@@ -524,15 +523,14 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         office_type = infer_office_type_from_office(
             row["office"], row["office_type"], llm_config, use_llm=False
         )
-        from ming_sim.models import loads_persistent_json_object, loads_persistent_name_list
+        from ming_sim.models import _load_durable_json_object, loads_persistent_name_list
 
         aliases = loads_persistent_name_list(row["aliases"], surface="characters.aliases")
         personal_skills = loads_persistent_name_list(
             row["personal_skills"], surface="characters.personal_skills",
         )
-        seed_guilt = loads_persistent_json_object(
-            row["seed_guilt"], surface="characters.seed_guilt",
-        )
+        from ming_sim.covert_progress import _parse_seed_guilt
+        seed_guilt = _parse_seed_guilt(row["seed_guilt"])
         for guilt_key, guilt_value in seed_guilt.items():
             if not isinstance(guilt_value, str):
                 raise ValueError(
@@ -543,8 +541,8 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             office=row["office"],
             office_type=office_type,
             faction=row["faction"],
-            aliases=aliases,
-            personal_skills=personal_skills,
+            aliases=list(aliases),
+            personal_skills=list(personal_skills),
             loyalty=int(row["loyalty"]),
             ability=int(row["ability"]),
             integrity=int(row["integrity"]),
@@ -893,7 +891,7 @@ class GameSession:
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
-        """#526：同步识别现役收夜控制命令。纯封闭集匹配，无 Future/宽降级。"""
+        """#526：同步识别收夜口令。纯封闭集匹配，无 Future/宽降级。"""
         from ming_sim.audience_night import (
             normalize_audience_command_verdict,
             recognize_audience_command,
@@ -1027,6 +1025,7 @@ class GameSession:
         """
         from ming_sim.audience_night import (
             CMD_CLOSE_NIGHT,
+            CMD_NONE,
             SCENE_CHAT_SPEAKER,
             close_night,
             ensure_open_night_for_audience,
@@ -1036,6 +1035,7 @@ class GameSession:
         )
         from ming_sim.llm_model import extract_agent_text
 
+        # Free prose message: preserve raw; strip only emptiness (#1834 F16).
         message_text = str(message or "")
         if not message_text.strip():
             raise ValueError("问话不能为空。")
@@ -1274,12 +1274,20 @@ class GameSession:
         ctid = int(chat_turn_id or 0)
         if ctid <= 0:
             return
+        # 说话人是源轮上已落的结构化身份。空串会把查访/进展闸当成殿上整场放行。
+        minister_name = ""
+        if hasattr(self.db, "conn"):
+            row = self.db.conn.execute(
+                "SELECT minister_name FROM chat_turns WHERE id=?", (ctid,),
+            ).fetchone()
+            if row is not None:
+                minister_name = str(row["minister_name"] or "")
         result.pending_audience_translation = {
             "emperor_message": emperor_message,
             "reply": reply,
             "night_id": int(night_id or 0),
             "chat_turn_id": ctid,
-            "minister_name": "",
+            "minister_name": minister_name,
         }
 
     def schedule_pending_scene_translation(
@@ -1485,15 +1493,14 @@ class GameSession:
         else:
             outcomes = [_llm_one(jobs[0])]
 
-        # DB 相串行：产物 ValueError 耗尽该旨；其它异常错误包中止整月。
+        # DB 相串行：仅既有领域契约异常耗尽；未识别异常错误包中止（#1897 E1）。
+        from ming_sim.action_materialize import is_declaration_domain_error
+
         next_carry: Dict[int, Dict[str, object]] = {}
         for job, new_payload, exc in outcomes:
             did = int(job["directive_id"])
             if exc is not None:
-                if isinstance(exc, ValueError):
-                    # 本轮重写自身的产物错（含名册 escalate 归一）：DB 载荷未动，
-                    # 光靠下一轮 ensure 重探只会拿回旧拒因——把本轮失败事实带过去，
-                    # 否则同一句话问三遍（0150-D5-b：告诉 LLM 事实）。
+                if is_declaration_domain_error(exc):
                     logger.warning(
                         "[1769] draft#%s admission resubmit product exhaust: %s",
                         did, exc,
@@ -1520,18 +1527,17 @@ class GameSession:
                     dossier_payload=new_payload,
                     replace_payload=True,
                 )
-            except ValueError as write_exc:
-                # 写回被拒也是产物错：本次产物 + 本次写回拒因带进下一次重写，
-                # 否则下一轮只能拿 DB 里的旧载荷/旧拒因重问同一遍。
-                logger.warning(
-                    "[1769] draft#%s admission resubmit write-back rejected: %s",
-                    did, write_exc,
-                )
-                next_carry[did] = {
-                    "bad_payload": dict(new_payload),
-                    "reason": str(write_exc),
-                }
             except Exception as write_exc:
+                if is_declaration_domain_error(write_exc):
+                    logger.warning(
+                        "[1769] draft#%s admission resubmit write-back rejected: %s",
+                        did, write_exc,
+                    )
+                    next_carry[did] = {
+                        "bad_payload": dict(new_payload),
+                        "reason": str(write_exc),
+                    }
+                    continue
                 pack_path = write_error_pack(
                     self.db, self.state, exc=write_exc,
                     extracted=None, resolve_ctx=None,
@@ -1680,6 +1686,7 @@ class GameSession:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
+                # #1897：恢复原诏自由正文原样，禁 strip。
                 stored = str(ctx.get("decree_text") or "")
                 if stored:
                     self.last_decree = stored

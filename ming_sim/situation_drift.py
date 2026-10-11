@@ -49,7 +49,7 @@ from ming_sim.issues import (
 )
 from ming_sim.models import (
     GameState, loads_effect_dict,
-    loads_persistent_json_list, loads_persistent_json_object,
+    _load_durable_json_list, _load_durable_json_object,
 )
 from ming_sim.token_stats import tlog
 
@@ -380,17 +380,17 @@ def apply_situation_monthly_drift(
                 if new_row["status"] == "resolved":
                     effect = loads_effect_dict(new_row["effect_on_resolve"])
                     _apply_metric_dict(
-                        state, loads_persistent_json_object(
+                        state, _load_durable_json_object(
                             effect.get("metrics"), surface="issue_effect.metrics",
                         ), db=db,
                     )
                     inertia_rejections.extend(r for r in _apply_economy_list(
-                        db, state, loads_persistent_json_list(
+                        db, state, _load_durable_json_list(
                             effect.get("economy"), surface="issue_effect.economy",
                         ), origin_ref=parent_origin_ref,
                     ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
                     inertia_rejections.extend(_apply_faction_dict(
-                        db, loads_persistent_json_object(
+                        db, _load_durable_json_object(
                             effect.get("factions"), surface="issue_effect.factions",
                         ),
                     ).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
@@ -415,17 +415,17 @@ def apply_situation_monthly_drift(
                 elif new_row["status"] == "failed":
                     effect = loads_effect_dict(new_row["effect_on_fail"])
                     _apply_metric_dict(
-                        state, loads_persistent_json_object(
+                        state, _load_durable_json_object(
                             effect.get("metrics"), surface="issue_effect.metrics",
                         ), db=db,
                     )
                     inertia_rejections.extend(r for r in _apply_economy_list(
-                        db, state, loads_persistent_json_list(
+                        db, state, _load_durable_json_list(
                             effect.get("economy"), surface="issue_effect.economy",
                         ), origin_ref=parent_origin_ref,
                     ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
                     inertia_rejections.extend(_apply_faction_dict(
-                        db, loads_persistent_json_object(
+                        db, _load_durable_json_object(
                             effect.get("factions"), surface="issue_effect.factions",
                         ),
                     ).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）

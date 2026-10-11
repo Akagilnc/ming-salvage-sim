@@ -52,25 +52,6 @@ def _stable_json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, object]:
-    """验收探针的首选项投影：普通 decision 首 option 原样（补 decision_key）。"""
-    options = decision.get("options") or []
-    first = options[0] if options else {}
-    if not isinstance(first, dict):
-        first = {"label": str(first or "")}
-    item = dict(first)
-    dk = str(decision.get("decision_key") or "").strip()
-    if not dk:
-        kind = str(decision.get("kind") or "decision").strip() or "decision"
-        turn = decision.get("source_turn", decision.get("turn"))
-        idx = decision.get("idx")
-        if turn is not None and idx is not None:
-            dk = f"{kind}:{int(turn)}:{int(idx)}"
-    if dk:
-        item.setdefault("decision_key", dk)
-    return item
-
-
 def canonical_choice(raw: object) -> Dict[str, object]:
     """确定性规范化 choice：decision/0055 案头字段；旧急务专属键不接收。"""
     if not isinstance(raw, dict):
@@ -136,8 +117,6 @@ def _choices_equal(a: object, b: object) -> bool:
     return _stable_json(ca) == _stable_json(cb)
 
 
-
-
 @dataclass
 class ValidatedItem:
     decision_key: str
@@ -152,8 +131,6 @@ class ValidatedItem:
 @dataclass
 class ValidatedBatch:
     items: List[ValidatedItem] = field(default_factory=list)
-
-
 
 
 @dataclass
@@ -344,11 +321,7 @@ def apply_imperial_deliberation_push(
         raise ValueError(f"御笔强推目标案卷不存在：{did}")
     if str(row.get("status") or "") != "proposed":
         raise ValueError(f"御笔强推只接 proposed 案卷：{did}")
-    payload = row.get("payload")
-    if not isinstance(payload, dict):
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-    if not isinstance(payload, dict):
-        raise ValueError("案卷 payload 非对象")
+    payload = row["payload"]
     new_payload = dict(payload)
     # 0152 later-wins：合法御笔背书态写入；非 stalled 协议资格闸。
     new_payload["deliberation_state"] = "backed"

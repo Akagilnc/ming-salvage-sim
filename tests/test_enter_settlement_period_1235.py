@@ -572,8 +572,8 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
             b_done.set()
 
     t = threading.Thread(target=_run_b, daemon=True)
-    t.start()
     try:
+        t.start()
         # 等 B 完成 web accept（False）并堵在阻塞 gate
         while saw["web_created"] is None:
             time.sleep(0.01)  # backoff only
@@ -652,9 +652,9 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
             a_done.set()
 
     t_a = threading.Thread(target=_run_a, daemon=True)
-    t_a.start()
     t_b = None
     try:
+        t_a.start()
         a_in_await.wait()
         assert game.db.get_month_open_snapshot(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True
@@ -685,8 +685,9 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
         assert game.db.get_month_open_snapshot(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True
         assert web_app._settlement_entry_inflight(game) >= 1, "A 仍须计在办"
-    finally:
+
         # 放行 A：创建者失败臂清展示态；B 随后以自有屏障继续/失败
+    finally:
         a_release.set()
         t_a.join()
         if t_b is not None:

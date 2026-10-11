@@ -130,17 +130,6 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     assert not gate.locked()
 
 
-def test_get_main_db_path_prefers_active_db_over_launch_env(monkeypatch, tmp_path):
-    """#402 R1（Codex）：重启后 active_db.txt 必须压过启动 env，才能继续 new_game 切出的新主库。"""
-    env_db_path = str(tmp_path / "launch_env.db")
-    active_db_path = str(tmp_path / "active_from_new_game.db")
-    monkeypatch.setenv("MING_SIM_DB", env_db_path)
-    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
-        f.write(active_db_path)
-
-    assert web_app._get_main_db_path() == active_db_path
-
 
 def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_path):
     """#402 R1（Codex/CodeRabbit）：新局初始化失败时，不退休旧局、不丢旧主库指针。"""
@@ -439,9 +428,8 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
         target=lambda: web_app._drain_and_close_session(runtime),
         daemon=True,
     )
-    thread.start()
-
     try:
+        thread.start()
         # drain 先 seal 再领 barrier 并抢 gate；等 barrier 在册即 seal 已完成，
         # 再单次 claim 验拒新票。禁把 claim 放进 wait 谓词（成功票会泄漏成 prior）。
         wait_until(lambda: runtime._runtime_write_queue().has_open_barrier())

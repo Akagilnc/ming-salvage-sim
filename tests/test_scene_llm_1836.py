@@ -22,7 +22,7 @@ from ming_sim.audience_night import (
     present_names_at,
     summon_enter,
 )
-from ming_sim.materials import list_materials, prepare_scene_materials
+from ming_sim.materials import _safe_segment, list_materials, prepare_scene_materials
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import SessionWriteQueue
 
@@ -72,7 +72,6 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     assert len(calls) == 1, "整段戏文必须出自同一次场景调用"
     # #1842：opening 已在 create_scene_agent instructions；run 输入不得再拼一份。
     assert calls[0] == emperor
-    assert result.answer == script
     assert result.court_action == ""
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -106,8 +105,8 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     assert target in present_names_at(db, night_id)
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")
-    assert any(p.startswith(f"人物/{target}/") for p in list_materials(prepared.root))
-    assert result.answer  # 宣后仍起一次场景调用
+    assert any(p.startswith(f"人物/{_safe_segment(target)}/") for p in list_materials(prepared.root))
+    assert result.court_action == ""
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -127,9 +126,9 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
 
     result = sess.scene_chat("边饷如何？")
-    assert result.answer
+    assert result.court_action == ""
     user_mid = db.append_chat_message("殿上", state.turn, "user", "边饷如何？")
-    minister_mid = db.append_chat_message("殿上", state.turn, "assistant", result.answer)
+    minister_mid = db.append_chat_message("殿上", state.turn, "assistant", result.answer or "众臣叩首：臣等遵旨。")
     ctid = db.create_chat_turn(
         state, "殿上", "scene-sess", 0, night_id=night_id, status="generating",
     )

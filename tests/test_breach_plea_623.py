@@ -40,19 +40,14 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
 )
+from tests.readback_helpers import decree_cost_event_rows
 
 
 # ── fixtures（复用 #621 三拍/_cost_events 口径）────────────────────────
 
 
 def _cost_events(db, dossier_id, *, identity="breach"):
-    return [
-        dict(row)
-        for row in db.conn.execute(
-            "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-            (int(dossier_id), identity),
-        ).fetchall()
-    ]
+    return decree_cost_event_rows(db, dossier_id, identity)
 
 
 def _executing_policy_dossier(db, state, *, token: str = "breach-623", holder: str = ""):
@@ -150,7 +145,8 @@ def test_funding_cutoff_writes_plea_no_damage_same_turn(game):
     assert written
     pleas = _pending_pleas(db)
     assert len(pleas) == 1
-    assert pleas[0]["criterion_text"] == "断供"
+    meta = decode_plea_meta(pleas[0]["origin_context"])
+    assert meta.get("breach_kind") == BREACH_KIND_FUNDING
     assert int(pleas[0]["stage_idx"]) == int(state.turn)
     # 当回合无损
     assert db.get_decree_dossier(did)["status"] == "executing"
@@ -192,7 +188,11 @@ def test_misappropriation_writes_plea(game):
     written = scan_and_write_breach_pleas(db, state, commit=True)
     assert written
     pleas = _pending_pleas(db)
-    assert any(p["criterion_text"] == "挪用" for p in pleas)
+    assert any(
+        decode_plea_meta(p["origin_context"]).get("breach_kind")
+        == BREACH_KIND_MISAPPROPRIATION
+        for p in pleas
+    )
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
@@ -217,7 +217,11 @@ def test_remove_sponsor_writes_plea(game):
     written = scan_and_write_breach_pleas(db, state, commit=True)
     assert written
     pleas = _pending_pleas(db)
-    assert any(p["criterion_text"] == "撤人" for p in pleas)
+    assert any(
+        decode_plea_meta(p["origin_context"]).get("breach_kind")
+        == BREACH_KIND_REMOVE_SPONSOR
+        for p in pleas
+    )
     # 当回合承诺仍 active；0056 不落（撤人）
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
@@ -378,7 +382,6 @@ def test_audience_revoke_commission_stages_typed_revoke_decree(game):
     assert int(payload["revoke_target_dossier_id"]) == did
     assert payload["target_kind"] == "dossier"
     assert str(payload["target_id"]) == str(did)
-    assert payload["text"] == "前旨作废，撤回成命"
     # 原旨与撤令沿同一事务关联（ADR 0154）：暂存载荷承既有声明接缝，不另造推断
     assert payload["affair_declaration"] == {
         "attach": "existing", "affair_id": affair.id,
@@ -539,7 +542,8 @@ def test_revoke_target_identity_falls_back_to_dossier_row(game, monkeypatch):
     assert int(target["dossier_id"]) == did
     assert int(target["issue_id"]) == int(cid)
     assert int(target["paid"]) == 0
-    assert [item["progress_band"] for item in target["progress"]] == ["在办"]
+    assert len(target["progress"]) == 1
+    assert int(target["progress"][0]["turn"]) == int(state.turn)
 
     # 判前（逐旨推演）：本旨事实同一读口，行身份也进推演输入
     sess = _sess(db, state, content, monkeypatch, lambda request, config: {})
@@ -1159,7 +1163,11 @@ def test_misappropriation_via_tags_producer_pipeline(game):
     )
     written = scan_and_write_breach_pleas(db, state, commit=True)
     assert written
-    assert any(p["criterion_text"] == "挪用" for p in _pending_pleas(db))
+    assert any(
+        decode_plea_meta(p["origin_context"]).get("breach_kind")
+        == BREACH_KIND_MISAPPROPRIATION
+        for p in _pending_pleas(db)
+    )
 
 
 # ── #623 r2：merged 条 persist 链只认 primary 的三面 ──────────────────

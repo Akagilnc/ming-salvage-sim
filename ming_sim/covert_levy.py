@@ -93,7 +93,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
     for todo in db.list_next_audience_todos(status="pending"):
         if todo.get("entry_kind") != ENTRY_KIND:
             continue
-        payload = todo.get("payload_json") or {}
+        payload = todo["payload_json"]
         did = int(payload.get("dossier_id") or 0)
         # The same row remains the durable reminder only while the real gap exists.
         if payload.get("decision") == "禁摊派":
@@ -105,13 +105,12 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         if payload.get("decision"):
             continue
         origin = f"dossier:{did}"
-        from ming_sim.participant_roster import participant_roster_entries
+        from ming_sim.participant_roster import decode_durable_participant_roster
 
         dossier = db.get_decree_dossier(did) or {}
         actors = {str(dossier.get("executor_id") or "").strip()}
-        for participant in participant_roster_entries(
+        for participant in decode_durable_participant_roster(
             dossier.get("participant_roster") or [],
-            surface="decree_dossiers.participant_roster",
         ):
             if participant.get("tier") in {"主办", "协办"}:
                 actors.add(str(participant.get("character_id") or "").strip())

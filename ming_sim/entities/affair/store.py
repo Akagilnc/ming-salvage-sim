@@ -1,8 +1,4 @@
-"""Affair records: identity, birth, pointers (ADR 0154).
-
-Becoming past is not an LLM attach action; status=closed remains a readable
-world fact once the world-record seam marks it so.
-"""
+"""Affair records: identity, birth, pointers (ADR 0154). No declare-closed action."""
 
 from __future__ import annotations
 
@@ -10,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
-from ming_sim.strict_types import strict_int
+from ming_sim.strict_types import strict_sqlite_id
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
@@ -95,6 +91,7 @@ class AffairStore:
         turn: int,
         birth_key: str = "",
     ) -> Affair:
+        # Free prose name/origin on the materials board: preserve bytes.
         title = str(name or "")
         cause = str(origin or "")
         if not title.strip():
@@ -130,6 +127,11 @@ class AffairStore:
         if row is None:
             raise KeyError(f"事务不存在：{affair_id}")
         return _row_to_affair(row)
+
+    def list_all(self) -> tuple[Affair, ...]:
+        """Durable matters remain readable after closure."""
+        rows = self._conn.execute("SELECT * FROM affairs ORDER BY id").fetchall()
+        return tuple(_row_to_affair(row) for row in rows)
 
     def list_open(self) -> tuple[Affair, ...]:
         rows = self._conn.execute(
@@ -248,7 +250,6 @@ class AffairStore:
         if owns:
             self._conn.commit()
 
-
     def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)
         if label is None:
@@ -277,7 +278,6 @@ class AffairStore:
             }
             for row in rows
         )
-
 
     def assert_origin_matches_declaration(
         self, origin_ref: str, declaration: Mapping[str, object]
@@ -384,9 +384,10 @@ class AffairStore:
         return self.origin_ref(affair_id)
 
 
+
 def parse_positive_affair_id(raw: object) -> int:
-    """Affair identity: reject bool/float, keep integer-string compat, require >0."""
-    value = strict_int(raw, accept_numeric_strings=True)
+    """Affair identity: reject bool/float/超 SQLite 界, keep integer-string compat, require >0."""
+    value = strict_sqlite_id(raw, accept_numeric_strings=True)
     if value <= 0:
         raise ValueError("affair_id must be a positive integer")
     return value
@@ -405,6 +406,7 @@ def parse_affair_declaration(
     if attach not in permitted:
         raise ValueError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
+        # Affair name/origin are free prose on the materials board: preserve bytes.
         name = str(raw.get("name") or "")
         origin = str(raw.get("origin") or "")
         if not name.strip() or not origin.strip():
@@ -462,14 +464,18 @@ def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:
 
 
 def _row_to_affair(row: Any) -> Affair:
-    return Affair(
-        id=int(row["id"]),
-        name=str(row["name"]),
-        origin=str(row["origin"]),
-        status=str(row["status"]),
-        birth_key=str(row["birth_key"] or ""),
-        created_turn=int(row["created_turn"]),
-        created_year=int(row["created_year"]),
-        created_period=int(row["created_period"]),
-        closed_turn=int(row["closed_turn"] or 0),
-    )
+    """持久行解码：列损坏是账本故障（RuntimeError），不得被外层收成模型产物错。"""
+    try:
+        return Affair(
+            id=int(row["id"]),
+            name=str(row["name"]),
+            origin=str(row["origin"]),
+            status=str(row["status"]),
+            birth_key=str(row["birth_key"] or ""),
+            created_turn=int(row["created_turn"]),
+            created_year=int(row["created_year"]),
+            created_period=int(row["created_period"]),
+            closed_turn=int(row["closed_turn"] or 0),
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("affairs 持久行解码失败") from exc

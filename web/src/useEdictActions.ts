@@ -64,6 +64,7 @@ export function useEdictActions({
   };
 
   const saveDirective = async (directive: Directive) => {
+    // Free prose directive text: preserve raw; emptiness on local copy (#1834 F16).
     if (!editingDirectiveText.trim()) return;
     const text = editingDirectiveText;
     const ownership = ownershipRef.current;

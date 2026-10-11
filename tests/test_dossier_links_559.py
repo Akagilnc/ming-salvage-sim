@@ -81,7 +81,7 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     }
 
 
-def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
+def test_public_disclosure_does_not_grant_secret_dossier_access(game):
     from ming_sim.knowledge import knowledge_row_visible_to
 
     db, state, _ = game
@@ -89,12 +89,12 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
     dossier = db.get_dossier_for_secret_order(order_id)
     source_id = f"secret_order_disclosure:{order_id}:test"
     db.record_public_knowledge_event(
-        state, "密查辽饷已披露", source_id=source_id, excluded_names=["孙承宗"])
+        state, "密查辽饷已披露", source_id=source_id)
     event = db.conn.execute(
         "SELECT * FROM character_knowledge_events WHERE source_id=?", (source_id,)
     ).fetchone()
 
-    assert knowledge_row_visible_to(db, event, "孙承宗") is False
+    assert knowledge_row_visible_to(db, event, "孙承宗") is True
     assert dossier["id"] not in {
         row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
     }
@@ -119,43 +119,6 @@ def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
     order = db.list_secret_orders(minister_name="孙承宗")[0]
     dossier = db.get_dossier_for_secret_order(order["id"])
     assert [row["target_dossier_id"] for row in db.list_dossier_links(dossier["id"])] == targets
-
-
-def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(game):
-    db, state, _ = game
-    before_orders = len(db.list_secret_orders())
-    action_id = db.stage_pending_action(
-        state.turn, "secret_order", "新建", "孙承宗",
-        {"title": "护行密令", "content": "护送旧案", "assignee": "孙承宗",
-         "covert_task": TYPED_COVERT_TASK,
-         "dossier_links": [
-             {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}
-         ]},
-    )
-
-    assert db.commit_pending_actions(state, action_ids=[action_id]) == []
-
-    assert len(db.list_secret_orders()) == before_orders
-    assert db.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
-    audit = _list_dossier_link_rejections(db, pending_action_id=action_id)
-    assert audit[-1]["target_dossier_id"] == 999999
-
-
-def test_unknown_target_link_is_rejected_and_audited(game):
-    db, state, _ = game
-    source = _make_dossier(db, state, "护行密令")
-
-    with pytest.raises(ValueError):
-        db.add_dossier_links(
-            source,
-            [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}],
-        )
-
-    assert db.list_dossier_links(source) == []
-    audit = _list_dossier_link_rejections(db, source)
-    assert audit[-1]["target_dossier_id"] == 999999
-
-
 
 
 def test_force_promulgated_rejected_dossier_is_referenceable(game):

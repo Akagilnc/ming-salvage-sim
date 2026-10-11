@@ -161,8 +161,8 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
 ):
     """②三次瞬断耗尽 → 系统层终失败呈现、夜不封、可重发。
 
-    注入 = rc=0 空输出（既有可重试 typed llm_empty_output，与①同根）；耗尽后换出文
-    脚本重发即成。终失败只以系统层人话呈现（票面「系统层人话报错」/ ADR 0046）。
+    注入 = rc=0 空输出（可重试 typed 空输出，结构化路径）；耗尽后换出文脚本重发即成。
+    #1834 F26：不再用成功正文词表冒充认证/连接故障。
     """
     from ming_sim import audience_night as an
 
@@ -189,7 +189,6 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
         "retryable_fail", "retryable_fail", "terminal_fail",
     ], attempts
     assert script.calls == 3
-    # 空输出路径：delta 通道不得凭空出大臣正文
     deltas = "".join(
         str(payload.get("content") or "") for name, payload in events if name == "delta"
     )

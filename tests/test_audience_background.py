@@ -141,7 +141,7 @@ def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
     elif q is not None and hasattr(q, "inflight_count"):
         wait_until(lambda: int(q.inflight_count()) == 0)
     else:
-        wait_until(lambda: True)
+        wait_until(lambda: web_game._runtime_write_queue().inflight_count() == 0)
 
 
 

@@ -1,5 +1,6 @@
 import json
 import math
+from tests.readback_helpers import region_settle as _settle_payload
 
 import pytest
 
@@ -11,14 +12,6 @@ import ming_sim.issues as issues
 
 JIAO_NATIONAL_MONTHLY = 280.0 / 12.0
 LIAN_NATIONAL_MONTHLY = 730.0 / 12.0
-
-
-def _settle_payload(db, region_id):
-    row = db.conn.execute(
-        "SELECT fiscal FROM regions WHERE id = ?",
-        (region_id,),
-    ).fetchone()
-    return json.loads(str(row["fiscal"] or "{}"))["settle"]
 
 
 def _settled_region_ids(db):

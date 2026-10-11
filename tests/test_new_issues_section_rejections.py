@@ -270,8 +270,7 @@ def test_new_issue_valid_decree_still_creates(game):
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
-    row = db.conn.execute("SELECT title, status FROM issues WHERE id=?", (iid,)).fetchone()
-    assert row["title"] == "测试·新立局势"
+    row = db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()
     assert row["status"] == "active"
 
 
@@ -389,7 +388,6 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
 
 # --- tags 字段严格化（cmr ni r8）---
 # 缺省/null/空串→[]；present 须 list/tuple 且元素全 str。拒标量串拆字与非串元素静默落库。
-
 
 @pytest.mark.parametrize("bad_tags", ["募营", "单串标量"])
 def test_new_issue_scalar_string_tags_rejected(read_game, bad_tags):

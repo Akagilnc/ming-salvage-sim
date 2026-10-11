@@ -1,19 +1,22 @@
 """#314 — 确定性军心月度 tick（欠饷月数分档 +5/0/-5，ADR 0025 D2）。
 
 seam = 月末确定性结算 tick（apply_fixed_period_flows，现役 substrate_hub）。
-验收经真实 apply_fixed_period_flows 落库，不锁内部 helper 真值表。
+oracle：hub 路真实月度结算及忠诚日志。
 
 票面验收覆盖：
-① 满饷月 +5 回血
-② 欠饷第 1-2 月不掉（dead-band）
+① 满饷月 +5 回血（真实月度结算）
+② 欠饷第 1-2 月不掉（dead-band，oracle 单元）
 ③ 第 3 月起每月 -5（hub 落库）
-④ clamp 触底/触顶（落库侧 clamp 由 hub tick）
+④ clamp 触底/触顶（hub tick 落库）
 ⑤ 土司 / 非明 / 自养 / 零兵不被 tick 动（hub 路）
 """
 
 from __future__ import annotations
 
+import pytest
+
 from ming_sim.flows import apply_fixed_period_flows
+from tests.readback_helpers import army_loyalty as _loyalty_of
 
 KEG = "guanning"    # 火药桶/主测军（content 军，needed 可控）
 ELITE = "jingying"  # 精锐对照军
@@ -40,33 +43,34 @@ def _setup_army(db, aid, *, loyalty=50, arrears=0.0, manpower=10000,
     )
 
 
-def _loyalty_of(db, aid):
-    return int(db.conn.execute(
-        "SELECT loyalty FROM armies WHERE id=?", (aid,)).fetchone()["loyalty"])
-
-
 def _run_months(db, state, months, *, fund_fully=True):
     for _ in range(months):
         state.metrics["国库"] = 10 ** 9 if fund_fully else 0
         apply_fixed_period_flows(db, state)
 
 
-def test_substrate_hub_path_loyalty_tier(game):
-    # substrate_hub 路：欠 ≥3 月结算后 -5，且同事务写 army_logs loyalty 行。
+
+
+@pytest.mark.parametrize("arrears,loyalty,expected", [
+    (0, 50, 55), (0.5, 50, 50), (1, 50, 50), (2, 50, 50),
+    (3, 50, 45), (5, 50, 45), (3, 2, 0), (0, 98, 100),
+])
+def test_substrate_hub_path_loyalty_tier(game, arrears, loyalty, expected):
+    # 满饷、欠饷档与 clamp 均贯穿真实结算，同事务写忠诚日志。
     db, state, _ = game
     _silence_other_armies(db)
     db.conn.execute(
         "UPDATE armies SET province_pay_share=0, central_pay_share=1.0, "
         "province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (KEG,))
-    _setup_army(db, KEG, loyalty=50)
-    db.conn.execute("UPDATE armies SET central_pay_arrears=3.0 WHERE id=?", (KEG,))
+    _setup_army(db, KEG, loyalty=loyalty)
+    db.conn.execute("UPDATE armies SET central_pay_arrears=? WHERE id=?", (arrears, KEG))
     db.conn.commit()
     _run_months(db, state, 1)
-    assert _loyalty_of(db, KEG) == 45, "hub 路欠 3 月 → -5"
+    assert _loyalty_of(db, KEG) == expected
     log = db.conn.execute(
         "SELECT delta FROM army_logs WHERE army_id=? AND field='loyalty' "
         "ORDER BY id DESC LIMIT 1", (KEG,)).fetchone()
-    assert log is not None and int(log["delta"]) == -5, "hub 路同事务写 loyalty 日志"
+    assert log is not None and int(log["delta"]) == expected - loyalty
 
 
 def test_substrate_hub_pure_province_source_loyalty_regression(game):

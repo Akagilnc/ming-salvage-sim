@@ -33,6 +33,20 @@ class FieldSpec:
     populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
 
 
+# Free-prose string fields feed issues → materials; do not strip/rewrite (#1834 F16).
+# Machine keys / ids keep .strip() below.
+_FREE_PROSE_FIELD_NAMES = frozenset({
+    "new_content",
+    "title",
+    "stop_condition",
+    "ongoing_effects",
+    "stages",
+    "responsible_bodies",
+    "station",
+    "new_title",
+})
+
+
 @dataclass(frozen=True)
 class ActionCluster:
     label_zh: str

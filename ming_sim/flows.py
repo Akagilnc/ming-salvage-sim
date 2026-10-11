@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from ming_sim.models import loads_persistent_json_object
-
 import copy
-import json
 import math
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
@@ -22,7 +19,7 @@ from ming_sim.army_pay import (
 )
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import SCORE_METRICS as ISSUE_METRIC_KEYS, TURN_UNIT
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, _load_durable_json_object
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import GameState
@@ -92,7 +89,7 @@ def _as_settle_param_nonnegative_float(label: str, value: object) -> float:
     return amount
 
 
-def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True) -> Tuple[float, float]:
+def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]:
     """Salt and commerce taxes stay as central side-channel income under hub."""
     salt_total = 0.0
     commerce_total = 0.0
@@ -101,14 +98,10 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
     ).fetchall()
     for row in rows:
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         except (TypeError, ValueError) as exc:
-            if not strict:
-                continue
             raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路：{exc}") from exc
         if not isinstance(fiscal, dict):
-            if not strict:
-                continue
             raise ValueError(f"region {row['id']} fiscal 非字典，无法汇总盐商旁路")
         salt_total += _as_finite_nonnegative_float(
             f"region {row['id']} fiscal.salt_tax", fiscal.get("salt_tax", 0)
@@ -130,7 +123,7 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     for row in rows:
         region_id = str(row["id"])
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         except (TypeError, ValueError) as exc:
             raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运：{exc}") from exc
         if not isinstance(fiscal, dict):
@@ -404,13 +397,14 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
     ).fetchall()
     for row in rows:
-        fiscal = loads_persistent_json_object(
-            row["fiscal"], surface=f"regions[{row['id']}].fiscal",
-        )
+        # 持久财政读取故障响亮上抛；不得出列成「无需求」后照常出成功预算（ADR 0005）。
+        fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         settle = fiscal.get("settle")
-        p = settle.get("p") if isinstance(settle, dict) else None
-        if not isinstance(p, dict):
+        if settle is None:
             continue
+        if not isinstance(settle, dict) or not isinstance(settle.get("p"), dict):
+            raise ValueError(f"region {row['id']} settle.p 持久坏态，无法计京运补需求")
+        p = settle["p"]
         raw = p.get("拨付gross", 0)
         if raw is None:
             continue

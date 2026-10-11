@@ -146,9 +146,9 @@ def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_or
         subject_kind="army", subject_id=army,
     )
     assert [fact.body for fact in person_facts] == ["人物先记一事", "人物再记一事"]
+
+
     assert [fact.body for fact in army_facts] == ["军队先记一事", "军队再记一事"]
-
-
 def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -315,6 +315,28 @@ def test_world_segment_failure_rolls_back_only_current_segment(game):
         subject_kind="character", subject_id=person,
     )
     assert [fact.body for fact in facts] == ["前一段已落"]
+
+
+@pytest.mark.parametrize("invalid_output", ["not-json", None])
+def test_unparseable_month_segment_does_not_commit(game, monkeypatch, invalid_output):
+    from ming_sim.audience_translate import AudienceTranslateError
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    before = tuple(db.conn.iterdump())
+    treasury = state.metrics["国库"]
+    if invalid_output is None:
+        kwargs = {"translate_fn": lambda request, config: None}
+    else:
+        monkeypatch.setattr(
+            "ming_sim.cli_backend._run_json_extractor_for_config",
+            lambda *args, **kwargs: (invalid_output, ""),
+        )
+        kwargs = {}
+    with pytest.raises(AudienceTranslateError):
+        dispatch_month_segment(db, state, segment="世界段", **kwargs)
+    assert tuple(db.conn.iterdump()) == before
+    assert state.metrics["国库"] == treasury
 
 
 def test_world_segment_effects_use_frozen_visible_affairs(game):

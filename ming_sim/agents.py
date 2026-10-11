@@ -361,13 +361,14 @@ def _agent_run_accepts_stream(agent: object) -> bool:
 
 
 def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
+    """Decode agent JSON. Structural fence/outer/first-object only; never rewrite string bodies."""
     text = strip_json_fence(raw)
     # 试 1：原文直解
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         data = None
-    # 试 2：截 {...} 最外层再解
+    # 试 2：截 {...} 最外层再解（外围结构，不改正文）
     if data is None:
         start = text.find("{")
         end = text.rfind("}")

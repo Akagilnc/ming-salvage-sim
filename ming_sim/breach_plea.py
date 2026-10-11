@@ -24,10 +24,11 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ming_sim.models import (
     loads_effect_dict,
-    loads_persistent_json_object,
+    _load_durable_json_object,
     loads_persistent_name_list,
     require_persistent_string_list,
 )
+from ming_sim.participant_roster import decode_durable_participant_roster
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
@@ -105,7 +106,7 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     if not text.startswith(_META_PREFIX):
         return {}
     raw = text[len(_META_PREFIX):]
-    return loads_persistent_json_object(raw, surface="breach_plea.meta")
+    return _load_durable_json_object(raw, surface="breach_plea.meta")
 
 
 def commitment_natural_due_turn(row: Any) -> int:
@@ -144,12 +145,11 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
-    from ming_sim.participant_roster import participant_roster_entries
+    from ming_sim.db import GameDB
 
     names: List[str] = []
-    roster = participant_roster_entries(
-        row["participant_roster"], surface="issues.participant_roster",
-    )
+    # 承诺名册走共同权威；腐坏响亮，不 catch-to-[]（#1897 E1）。
+    roster = decode_durable_participant_roster(row["participant_roster"])
     for item in roster:
         if item.get("tier") == "主办":
             cid = str(item.get("character_id") or "").strip()
@@ -158,12 +158,12 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
     origin_ref = row["origin_ref"]
     did = parse_dossier_id(origin_ref)
     if did is not None:
+        # get_decree_dossier 已响亮解码名册；再消费其结构化列表。
         dossier = db.get_decree_dossier(int(did))
         if dossier is not None:
-            for item in participant_roster_entries(
+            for item in decode_durable_participant_roster(
                 dossier.get("participant_roster") or [],
-                surface="decree_dossiers.participant_roster",
-            ):
+                ):
                 if item.get("tier") == "主办":
                     cid = str(item.get("character_id") or "").strip()
                     if cid and cid not in names:
@@ -287,14 +287,12 @@ def _merge_plea_kind_into_todo(
             todo.get("commitment_ref"), todo.get("id"), primary, kind,
         )
     meta["absorbed_breach_kinds"] = absorbed_list
-    # 保留首类 primary；补充理由/案卷
-    if reason and not str(meta.get("reason") or "").strip():
-        meta["reason"] = str(reason)
-    elif reason:
+    # 保留首类 primary；补充理由/案卷（#1897：不按正文身份去重，只追加；
+    # 仅空白的既有 reason 也是原文，不得因 strip 判空而覆盖）。
+    if reason:
         prev = str(meta.get("reason") or "")
         add = str(reason)
-        if add and add not in prev:
-            meta["reason"] = f"{prev}；{add}"
+        meta["reason"] = f"{prev}；{add}" if prev else add
     if int(target_dossier_id or 0) > 0 and int(meta.get("target_dossier_id") or 0) <= 0:
         meta["target_dossier_id"] = int(target_dossier_id)
     if extra:
@@ -1051,22 +1049,18 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     if co is not None:
         current_office = str(co["office_title"] or current_office).strip() or current_office
 
-    # 承诺 roster 上记录的 role/office 快照
-    from ming_sim.participant_roster import participant_roster_entries
-
+    # 承诺 roster 上记录的 role/office 快照；腐坏响亮（#1897 E1）。
     expected = ""
-    roster = participant_roster_entries(
-        commitment_row["participant_roster"], surface="issues.participant_roster",
-    )
+    roster = decode_durable_participant_roster(commitment_row["participant_roster"])
     for item in roster:
-            if str(item.get("character_id") or "").strip() != name:
-                continue
-            if item.get("tier") != "主办":
-                continue
-            expected = str(
-                item.get("office") or item.get("role") or item.get("office_title") or ""
-            ).strip()
-            break
+        if str(item.get("character_id") or "").strip() != name:
+            continue
+        if item.get("tier") != "主办":
+            continue
+        expected = str(
+            item.get("office") or item.get("role") or item.get("office_title") or ""
+        ).strip()
+        break
 
     # 案卷 executor office 快照
     if not expected:
@@ -1074,14 +1068,9 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
             commitment_row["origin_ref"]
         )
         if did is not None:
-            drow = db.conn.execute(
-                "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?",
-                (int(did),),
-            ).fetchone()
-            if drow is not None and str(drow["executor_id"] or "") == name:
-                payload = loads_persistent_json_object(
-                    drow["payload_json"], surface="decree_dossiers.payload_json",
-                )
+            drow = db.get_decree_dossier(int(did))
+            if drow is not None and str(drow.get("executor_id") or "") == name:
+                payload = drow["payload"]
                 expected = str(
                     payload.get("executor_office")
                     or payload.get("office")
@@ -1259,7 +1248,8 @@ def resolve_breach_pleas_from_extraction(
 
     坚持：cancels/close_issues 命中承诺（primary∪absorbed 含改弦即结该 merged 条）/
           revoke 类目标命中案卷 / dossier_executions failed
-    反悔：economy 续拨 / issue_advances 推进 / fiscal_creates 加拨本承诺
+    反悔：economy/fiscal 结构化资金事实（非零 delta / 增值）/ issue_advances 推进
+          / fiscal_creates 落格本承诺；禁 purpose/reason 散文词表捷径（#1834 F28）
     沉默：不在此函数出现 → pending 保留
     """
     if not isinstance(extracted, dict):
@@ -1319,11 +1309,11 @@ def resolve_breach_pleas_from_extraction(
             delta = int(it.get("delta") or 0)
         except (TypeError, ValueError):
             delta = 0
-        purpose = str(it.get("purpose") or "")
-        if delta != 0 or purpose in {"履行承诺", "续拨", "加拨"}:
+        # 只认非零 delta 结构化资金事实；不从 purpose 散文猜续拨/加拨。
+        if delta != 0:
             _note_funding_item(it)
 
-    # 反悔：fiscal_creates 加拨/复供本承诺
+    # 反悔：fiscal_creates 落格本承诺（结构化新建，不读 reason 散文）
     for it in extracted.get("fiscal_creates") or []:
         if not isinstance(it, dict):
             continue
@@ -1331,7 +1321,7 @@ def resolve_breach_pleas_from_extraction(
     for it in extracted.get("fiscal_changes") or []:
         if not isinstance(it, dict):
             continue
-        # 加拨：new_value > old_value 或 delta>0
+        # 只认 new_value>old_value 或 delta>0 的结构化增值；不从 reason 散文猜加拨。
         try:
             delta = int(it.get("delta") or 0)
         except (TypeError, ValueError):
@@ -1344,7 +1334,7 @@ def resolve_breach_pleas_from_extraction(
                     delta = max(delta, int(new_v) - int(old_v))
         except (TypeError, ValueError):
             pass
-        if delta > 0 or str(it.get("reason") or "") in {"加拨", "续拨", "复供"}:
+        if delta > 0:
             _note_funding_item(it)
 
     for todo in pending:

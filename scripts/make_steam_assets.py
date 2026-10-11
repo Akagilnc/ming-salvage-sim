@@ -42,7 +42,6 @@ def stamp(draw, x, y, text, fnt, sw=7):
               stroke_width=sw, stroke_fill=DARK)
     draw.text((x, y), text, font=fnt, fill=GOLD)
 
-
 def text_size(draw, text, fnt):
     bb = draw.textbbox((0, 0), text, font=fnt)
     return bb[2] - bb[0], bb[3] - bb[1]

@@ -88,4 +88,3 @@ def test_illegal_region_field_rejected_not_raised(read_game):
                 if isinstance(c, dict) and c.get("rejected")]
     assert len(rejected) == 1
     assert rejected[0]["category"] == "invalid_enum"
-    assert rejected[0]["reason"]

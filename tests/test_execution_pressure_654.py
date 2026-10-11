@@ -12,20 +12,11 @@ from ming_sim.execution_pressure import (
 )
 
 
-def _dossiers_for_directive(db, directive_id):
-    """存储读面：已删 list_dossiers_for_directive → 同表 ORDER BY region_id, id。"""
-    rows = db.conn.execute(
-        "SELECT id FROM decree_dossiers WHERE directive_id=? "
-        "ORDER BY region_id, id",
-        (int(directive_id),),
-    ).fetchall()
-    return [int(r["id"]) for r in rows]
-
-
 @pytest.fixture
 def env(game):
     db, state, content = game
     return db, state, content
+
 
 
 def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
@@ -88,126 +79,9 @@ def test_region_zero_hit_fail_loud(env):
             regions_content=content.regions,
         )
 
+
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
-def test_national_creates_one_row_idempotent(env):
-    """#1778 决定 4：全国政令成一份案卷（region_id 空），重交不增行。"""
-    db, state, content = env
-    # 点将路径：assignee 落主办
-    payload = {
-        "target_kind": "policy",
-        "target_id": "清丈天下田亩",
-        "locality_scope": "national",
-        "dossier_action_type": "policy",
-        "assignee_id": "毕自严",
-        "transaction_category": "清丈",
-        "participant_roster": [
-            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-        ],
-    }
-    # 需 directive 行以挂复合键
-    cur = db.conn.execute(
-        """
-        INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, text, source, status,
-         notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            state.turn, state.year, state.period, None, "毕自严",
-            "清丈天下田亩", "test", "draft", "",
-            json.dumps(payload, ensure_ascii=False),
-        ),
-    )
-    directive_id = int(cur.lastrowid)
-    db.conn.commit()
-
-    ids = db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="清丈天下田亩",
-        target_kind="policy",
-        target_id="清丈天下田亩",
-        directive_id=directive_id,
-        payload=payload,
-        commit=True,
-    )
-    assert len(ids) == 1
-    row_ids = _dossiers_for_directive(db, directive_id)
-    assert len(row_ids) == 1
-    rows = [db.get_decree_dossier(i) for i in row_ids]
-    assert [r["region_id"] for r in rows] == [""]
-    # 点将：主办与 executor_* 同步（#654 named-lead 断根）
-    for r in rows:
-        leads = [
-            e["character_id"] for e in r["participant_roster"] if e.get("tier") == "主办"
-        ]
-        assert leads == ["毕自严"]
-        assert r["executor_kind"] == "character"
-        assert r["executor_id"] == "毕自严"
-
-    # 幂等重放
-    ids2 = db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="清丈天下田亩",
-        target_kind="policy",
-        target_id="清丈天下田亩",
-        directive_id=directive_id,
-        payload=payload,
-        commit=True,
-    )
-    assert ids2 == ids
-    assert len(_dossiers_for_directive(db, directive_id)) == 1
-
-def test_named_lead_bulk_single_region_syncs_executor(env):
-    """#654：非 fan-out 批量入口点将亦同步 executor_*（与 national 同根）。"""
-    db, state, _ = env
-    payload = {
-        "target_kind": "region",
-        "target_id": "shaanxi",
-        "locality_scope": "single",
-        "dossier_action_type": "policy",
-        "assignee_id": "毕自严",
-        "participant_roster": [
-            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-        ],
-    }
-    cur = db.conn.execute(
-        """
-        INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, text, source, status,
-         notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            state.turn, state.year, state.period, None, "毕自严",
-            "陕西清丈", "test", "draft", "",
-            json.dumps(payload, ensure_ascii=False),
-        ),
-    )
-    directive_id = int(cur.lastrowid)
-    db.conn.commit()
-
-    ids = db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="陕西清丈",
-        target_kind="region",
-        target_id="shaanxi",
-        directive_id=directive_id,
-        payload=payload,
-        commit=True,
-    )
-    assert len(ids) == 1
-    row = db.get_decree_dossier(_dossiers_for_directive(db, directive_id)[0])
-    assert row["region_id"] == "shaanxi"
-    leads = [
-        e["character_id"] for e in row["participant_roster"] if e.get("tier") == "主办"
-    ]
-    assert leads == ["毕自严"]
-    assert row["executor_kind"] == "character"
-    assert row["executor_id"] == "毕自严"
 
 def test_create_decree_dossier_int_abi_single_row(env):
     db, state, _ = env
@@ -223,46 +97,28 @@ def test_create_decree_dossier_int_abi_single_row(env):
     row = db.get_decree_dossier(did)
     assert row["region_id"] == ""
 
-def test_get_dossier_for_directive_existence_sentinel(env):
-    db, state, _ = env
-    payload = {
-        "target_kind": "region",
-        "target_id": "shaanxi",
-        "locality_scope": "single",
-        "dossier_action_type": "policy",
-        "assignee_id": "毕自严",
-    }
-    cur = db.conn.execute(
-        """
-        INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, text, source, status,
-         notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            state.turn, state.year, state.period, None, "毕自严",
-            "陕西清丈", "test", "draft", "",
-            json.dumps(payload, ensure_ascii=False),
-        ),
-    )
-    directive_id = int(cur.lastrowid)
-    db.conn.commit()
-    assert db.get_dossier_for_directive(directive_id) is None
-    db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="陕西清丈",
-        target_kind="region",
-        target_id="shaanxi",
-        directive_id=directive_id,
-        payload=payload,
-    )
-    assert db.get_dossier_for_directive(directive_id) is not None
-    listed_ids = _dossiers_for_directive(db, directive_id)
-    assert len(listed_ids) == 1
-    assert db.get_decree_dossier(listed_ids[0])["region_id"] == "shaanxi"
+
+def test_normalize_payload_rejects_invalid_locality_and_target_kind(env):
+    db, _, _ = env
+    with pytest.raises(ValueError):
+        db._normalize_directive_dossier_payload({
+            "dossier_action_type": "policy",
+            "target_kind": "not_a_kind",
+            "target_id": "x",
+            "mode": "ordinary",
+        })
+    with pytest.raises(ValueError):
+        db._normalize_directive_dossier_payload({
+            "dossier_action_type": "policy",
+            "target_kind": "policy",
+            "target_id": "x",
+            "locality_scope": "全省",
+            "mode": "ordinary",
+        })
+
 
 # ── #654 断根 tracer（外部行为）────────────────────────────────────
+
 
 def _insert_directive(db, state, *, text: str, payload: dict, status: str = "draft") -> int:
     cur = db.conn.execute(
@@ -281,144 +137,82 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     db.conn.commit()
     return int(cur.lastrowid)
 
-def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
-    """Validate-all：名单上的人不在名册 → 首个 INSERT 前整旨零行（#1778 决定 3）。"""
+
+def test_path1_conversational_draft_bad_roster_marks_failed(env):
+    """路 1 _commit_conversational_draft：成案零行 → pending failed、无案卷。"""
     db, state, _ = env
     payload = {
-        "target_kind": "policy",
-        "target_id": "清丈天下田亩",
-        "locality_scope": "national",
-        "dossier_action_type": "assignment",
-        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
-    }
-    did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
-    before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
-    with pytest.raises(ValueError):
-        db.create_decree_dossiers(
-            state,
-            action_type="assignment",
-            decree_text="清丈天下田亩",
-            target_kind="policy",
-            target_id="清丈天下田亩",
-            directive_id=did,
-            payload=payload,
-            commit=True,
-        )
-    after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
-    assert after == before
-    assert _dossiers_for_directive(db, did) == []
-
-def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
-    """路 2（#1769）：pending→confirm 只翻 draft；ensure 批缝产物错 → 零行 + 保持 draft。
-
-    旧合同 confirm 内 ensure 并标 rejected 已废；产物错不踢出批缝。
-    """
-    db, state, _ = env
-    payload = {
+        "text": "清丈天下田亩",
+        "actor": "毕自严",
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
         "locality_scope": "national",
         "dossier_action_type": "assignment",
         "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
         "mode": "ordinary",
+        "_canonical_pending_directive": True,
+        "_directive_status": "draft",
     }
-    did = _insert_directive(
-        db, state, text="清丈天下田亩", payload=payload, status="pending",
+    cur = db.conn.execute(
+        """
+        INSERT INTO pending_actions
+        (turn, minister_name, kind, action, target_id, payload_json, status)
+        VALUES (?,?,?,?,?,?,?)
+        """,
+        (
+            state.turn, "毕自严",
+            "directive", "拟旨", "清丈天下田亩",
+            json.dumps(payload, ensure_ascii=False), "pending",
+        ),
     )
-    db.confirm_directive(did, state)
-    row = db.conn.execute(
-        "SELECT status FROM turn_directives WHERE id=?", (did,),
-    ).fetchone()
-    assert row["status"] == "draft"
-    assert _dossiers_for_directive(db, did) == []
-
-    rejections = db.ensure_dossiers_for_draft_directives(state)
-    assert any(int(r["directive_id"]) == did for r in rejections)
-    row = db.conn.execute(
-        "SELECT status FROM turn_directives WHERE id=?", (did,),
-    ).fetchone()
-    assert row["status"] == "draft"
-    assert _dossiers_for_directive(db, did) == []
-
-def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
-    """路 3：locality 失败保持 draft；rejection 仅 directive_id（P6 不裁剪旨文）。"""
-    db, state, _ = env
-    long_text = "敕令陕西清丈田亩" + ("甲" * 120)
-    payload = {
-        "target_kind": "region",
-        "target_id": "shaanxi",
-        "locality_scope": "none",  # region∧none fail-loud
-        "dossier_action_type": "policy",
-        "mode": "ordinary",
-    }
-    did = _insert_directive(db, state, text=long_text, payload=payload, status="draft")
-    other_payload = {
-        "target_kind": "region",
-        "target_id": "henan",
-        "locality_scope": "single",
-        "dossier_action_type": "policy",
-        "assignee_id": "毕自严",
-        "mode": "ordinary",
-    }
-    other_id = _insert_directive(
-        db, state, text="河南清丈", payload=other_payload, status="draft",
+    pa_id = int(cur.lastrowid)
+    db.conn.commit()
+    pa = dict(db.conn.execute(
+        "SELECT * FROM pending_actions WHERE id=?", (pa_id,),
+    ).fetchone())
+    from ming_sim.applier import RejectionCollector
+    result = db._commit_conversational_draft(
+        state, pa, payload, content=db.content,
+        rejection_collector=RejectionCollector(),
     )
-    db.ensure_dossiers_for_draft_directives(state)
-    bad = db.conn.execute(
-        "SELECT status FROM turn_directives WHERE id=?", (did,),
+    assert result is None
+    st = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pa_id,),
     ).fetchone()
-    good = db.conn.execute(
-        "SELECT status FROM turn_directives WHERE id=?", (other_id,),
-    ).fetchone()
-    assert bad["status"] == "draft"  # 保持 draft
-    assert _dossiers_for_directive(db, did) == []
-    # 并列第二旨不受影响
-    assert good["status"] == "draft"
-    assert len(_dossiers_for_directive(db, other_id)) == 1
+    assert st["status"] == "failed"
+    # 回滚后不应残留 directive 案卷
+    n = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    # 允许他用例无关行；本 pending 名下必须为空
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers WHERE pending_action_id=?",
+        (pa_id,),
+    ).fetchone()["n"] == 0
 
-    rej = db.conn.execute(
-        "SELECT item_json, reason, category FROM rejection_reports "
-        "WHERE section='directive_locality' ORDER BY id DESC LIMIT 5",
-    ).fetchall()
-    assert rej, "应记 locality rejection"
-    matched = [json.loads(r["item_json"]) for r in rej]
-    hit = next(item for item in matched if item.get("directive_id") == did)
-    assert "text" not in hit
-    assert set(hit.keys()) == {"directive_id"}
-    # 旨文片段不得出现在 item_json
-    raw = next(r["item_json"] for r in rej if json.loads(r["item_json"]).get("directive_id") == did)
-    assert "敕令陕西" not in raw
-    assert "甲甲" not in raw
 
-# ── locality 矛盾与未知值负向矩阵 ──────────────────────────────
+# ── 8×3 locality 矩阵（参数化）──────────────────────────────────
+
 
 @pytest.mark.parametrize(
     "target_kind,scope",
     [
-        # policy/issue/account × single → fail
-        ("policy", "single"),
-        ("issue", "single"),
-        # character/office/army × national → fail
-        ("character", "national"),
-        ("office", "national"),
-        ("army", "national"),
-        # character/office/army × single → fail
-        ("character", "single"),
-        ("office", "single"),
-        ("army", "single"),
-        # region × national/none → fail
-        ("region", "national"),
-        ("region", "none"),
-        # dossier × single/national → fail
-        ("dossier", "single"),
-        ("dossier", "national"),
-        ("region", None),
-        # unknown
-        ("unknown", "none"),
-        ("policy", "全省"),
+        ('policy', 'single'),
+        ('issue', 'single'),
+        ('character', 'national'),
+        ('office', 'national'),
+        ('army', 'national'),
+        ('character', 'single'),
+        ('office', 'single'),
+        ('army', 'single'),
+        ('region', 'national'),
+        ('region', 'none'),
+        ('dossier', 'single'),
+        ('dossier', 'national'),
+        ('region', None),
+        ('unknown', 'none'),
+        ('policy', '全省'),
     ],
 )
-def test_locality_matrix_rejects_contradictions_and_unknown(env, target_kind, scope):
+def test_locality_matrix_rejects_invalid_combinations(env, target_kind, scope):
     db, _, content = env
     payload = {"target_kind": target_kind, "target_id": "shaanxi" if target_kind == "region" else "x"}
     if scope is not None:
@@ -447,6 +241,14 @@ def test_locality_fail_create_decree_dossiers_zero_rows(env):
         )
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
+
+
+def test_cli_target_kinds_invalid_fail_loud():
+    """法外 target_kind fail-loud（cli capture 合并口；不锁常量对象 identity）。"""
+    from ming_sim import cli_backend as cb
+    with pytest.raises(ValueError):
+        cb._coerce_draft_target_kind("not_a_real_kind")
+
 
 def test_revoke_decree_523_producer_durable_oracle_chain(env):
     """#523 producer→durable→oracle：dossier 目标恰落一条 region_id='' 案卷。
@@ -520,8 +322,9 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
 
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 
+
 def test_location_canonical_seed_and_write_seam(env):
-    """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud。"""
+    """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud；在途保全。"""
 
     db, state, content = env
     for name in ("乔允升", "许誉卿", "韩一良"):
@@ -554,5 +357,3 @@ def test_location_canonical_seed_and_write_seam(env):
     ).fetchone()["location"] == "beizhili"
     with pytest.raises(ValueError):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
-    # 写缝已钉未知非空 fail-loud。开档别名 migrate / 开档扫 location 已随
-    # _migrate_character_location_aliases 退役，不再造旧档副本期待写回。

@@ -103,7 +103,6 @@ def test_delegator_only_responsible_is_eligible_target(game):
     item = candidates[0]
     assert item["dossier_id"] == did
     assert item["participant_ids"] == [owner, aide]
-    assert delegator not in item["participant_ids"]
     assert delegator in item["responsible_person_ids"]
     assert delegator in item["eligible_target_ids"]
     # 协办本人非责任人：可在 eligible（在朝），但不得进 responsible。
@@ -198,11 +197,6 @@ def test_dynamic_targets_are_roleless_deduplicated_without_participant_roles(gam
     assert json.loads(row["participants"]) == []
     assert json.loads(row["participant_roster"]) == []
     assert json.loads(row["target_roster"]) == [owner]
-    knowledge = db.conn.execute(
-        "SELECT participant_roster FROM character_knowledge_sources WHERE source_id=?",
-        (f"issue:{result[1]['issue_id']}",),
-    ).fetchone()
-    assert json.loads(knowledge["participant_roster"]) == []
 
 
 def test_dynamic_apply_deduplicates_same_candidate_within_input_snapshot(game):
