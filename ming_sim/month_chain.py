@@ -259,10 +259,7 @@ def _month_fact_materials(
         # 空串/腐坏响亮，不得洗成空声明供料（#1897 E1/K2）。
         from ming_sim.db import GameDB
         try:
-            declaration = GameDB.parse_engine_payload_json(
-                row["declaration_json"],
-                surface=f"settled.declaration_json:{decree_ref}",
-            )
+            declaration = GameDB.parse_engine_payload_json(row["declaration_json"])
         except ValueError as exc:
             raise ValueError(
                 f"settled declaration_json 无效：{decree_ref}"
@@ -297,7 +294,7 @@ def _month_fact_materials(
         ):
             from ming_sim.db import GameDB
             item = GameDB.parse_engine_payload_json(
-                row["item_json"], surface="rejection_reports.item_json",
+                row["item_json"],
             )
             rejections.append({
                 "section": row["section"],
@@ -399,7 +396,7 @@ def run_gazette_text(
     import json
 
     from ming_sim.agents import create_gazette_author_agent, parse_agent_json, run_agent_text
-    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.exceptions import LLMContractError, LLMUnavailable
     from ming_sim.llm_transport import audience_transport_policy
     from ming_sim.materials import release_material_tree
 
@@ -419,20 +416,19 @@ def run_gazette_text(
     title = data.get("title")
     report = data.get("report")
     if not isinstance(title, str) or not title.strip():
-        raise LLMUnavailable("邸报缺少作者标题", stage="gazette")
+        raise LLMContractError("邸报缺少作者标题", raw_value=data)
     if not isinstance(report, str) or not report.strip():
-        raise LLMUnavailable("邸报缺少正文", stage="gazette")
+        raise LLMContractError("邸报缺少正文", raw_value=data)
     return title, report
 
 
 def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
     """核账期恢复投影只读：本月链上未消费的调用失败（无则 None）。"""
-    from ming_sim.db import GameDB
-
     chain = _load_chain(db, int(turn))
-    return GameDB.optional_object(
-        chain.get("call_failure"), surface="month_chain.call_failure",
-    )
+    failure = chain.get("call_failure")
+    if failure is not None and not isinstance(failure, dict):
+        raise TypeError(f"month_chain:{turn}.call_failure must be an object, got {failure!r}")
+    return failure
 
 
 def continue_world_after_answers(
@@ -782,11 +778,7 @@ def _consume_call_failure_for_retry(
     db: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
 ) -> None:
     """清失败标记，保留已存产物与落账进度。"""
-    from ming_sim.db import GameDB
-
-    failure = GameDB.optional_object(
-        chain.get("call_failure"), surface="month_chain.call_failure",
-    )
+    failure = chain.get("call_failure")
     if failure is None:
         return
     step = str(failure.get("step") or "")
@@ -1941,13 +1933,11 @@ def _advance_after_gazette(
     def _coalesce_declaration_outcome(
         *candidates: object,
     ) -> Optional[Dict[str, object]]:
-        """形状校验后保留合法空对象回落：``a or b or …``（{} 不抢下一位真源）。"""
+        """合并对象，合法空对象不抢下一位真源。"""
         for value in candidates:
             if value is None:
                 continue
-            checked = GameDB.optional_object(
-                value, surface="month_chain.declaration_outcome",
-            )
+            checked = {**value}
             if checked:  # 合法 {} 继续回落
                 return checked
         return None
@@ -2072,15 +2062,12 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
-    ctx = db.get_resolve_context(turn)
-    if ctx is None:
+    ctx = db.get_resolve_context(turn) or {}
+    payload = ctx.get("simulator_payload", {})
+    chain = payload.get(_CHAIN_KEY)
+    if chain is None:
         return {}
-    payload = ctx["simulator_payload"]
-    chain = _load_durable_json_object(payload.get(_CHAIN_KEY), surface="month_chain")
-    failure = chain.get("call_failure")
-    if failure is not None and not isinstance(failure, dict):
-        raise ValueError("month_chain.call_failure 须为对象")
-    return chain
+    return {**chain}
 
 
 def _save_chain(
@@ -2088,7 +2075,7 @@ def _save_chain(
     decree_text: str = "", source: Provenance = Provenance.system_simulation,
 ) -> None:
     ctx = db.get_resolve_context(turn) or {}
-    payload = _load_durable_json_object(ctx.get("simulator_payload"), surface="simulator_payload")
+    payload = {**ctx.get("simulator_payload", {})}
     payload[_CHAIN_KEY] = chain
     stored_source = ctx.get("source") or source
     source_value = stored_source.value if isinstance(stored_source, Provenance) else str(stored_source)

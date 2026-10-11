@@ -67,7 +67,7 @@ def _apply_surcharge_decrees(
             continue
         from ming_sim.db import GameDB
         fiscal = GameDB.parse_engine_payload_json(
-            row["fiscal"], surface=f"regions.fiscal:{region_id}",
+            row["fiscal"],
         )
         settle = fiscal.get("settle")
         if settle is None:
@@ -108,9 +108,7 @@ def _apply_surcharge_decrees(
         # Free prose surcharge reason: preserve raw; no length gate/crop (#1834 F16).
         reason = str(item.get("reason") or "")
         meta_raw = settle.get("_meta")
-        if meta_raw is not None and not isinstance(meta_raw, dict):
-            raise RuntimeError(f"surcharge_decrees {region_id!r} settle._meta 持久坏态（非对象）")
-        meta = dict(meta_raw or {})
+        meta = {} if meta_raw is None else {**meta_raw}
         old = max(0.0, float(meta.get(SETTLE_META_JIAPIAI_KEY, 0) or 0))
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
         meta[_SETTLE_META_JIAPIAI_KEY] = new

@@ -36,8 +36,8 @@ def apply(run):
             continue
         try:
             real_id = _parse_sqlite_id(raw_id)
-        except (TypeError, ValueError):
-            rejections.append(RejectedItem(item=item, reason="order_id 非整数或超界", category="invalid_enum", source=run.ctx.source))
+        except (TypeError, ValueError) as exc:
+            rejections.append(RejectedItem(item=item, reason=str(exc), category="invalid_enum", source=run.ctx.source))
             continue
         order = run.db.get_secret_order(real_id)
         if order is None:

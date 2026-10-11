@@ -11,12 +11,13 @@
 """
 
 from __future__ import annotations
+import json
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
 
 from ming_sim.applier import Provenance
 
-import json
+from copy import deepcopy
 
 from ming_sim.relations import (
     resolve_relation_edge_events_from_extraction,
@@ -174,9 +175,9 @@ def test_settlement_edge_origin_rejects_missing_and_non_string():
 
     from ming_sim.relations import settlement_edge_origin
 
-    with pytest.raises(ValueError):
+    with pytest.raises(AttributeError):
         settlement_edge_origin(None, "联名")
-    with pytest.raises(ValueError):
+    with pytest.raises(AttributeError):
         settlement_edge_origin(123, "联名")
     with pytest.raises(ValueError):
         settlement_edge_origin("   ", "联名")

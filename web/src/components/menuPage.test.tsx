@@ -941,7 +941,7 @@ describe("#1732 MenuPage · 就地消解", () => {
     await act(async () => {
       cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(calls.some((c) => String(c.url).includes("/api/menu/new_game"))).toBe(false);
+    expect(calls.some((c) => c.url.includes("/api/menu/new_game"))).toBe(false);
 
     await act(async () => {
       start!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -953,7 +953,7 @@ describe("#1732 MenuPage · 就地消解", () => {
       yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       for (let i = 0; i < 6; i++) await Promise.resolve();
     });
-    expect(calls.some((c) => String(c.url) === "/api/menu/new_game" && c.init?.method === "POST")).toBe(true);
+    expect(calls.some((c) => c.url === "/api/menu/new_game" && c.init?.method === "POST")).toBe(true);
     expect(enterGame).toHaveBeenCalled();
     cleanup();
   });

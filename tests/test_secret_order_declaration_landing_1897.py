@@ -334,9 +334,9 @@ def _late_revision_and_approval(
     stub_audience_translate(monkeypatch, translate)
 
     def _turn(words):
-        ctid = int(db.create_chat_turn(
+        ctid = db.create_chat_turn(
             state, minister, "s", 0, night_id=night_id, status="active",
-        ))
+        )
         reply = sess.scene_chat(words, chat_turn_id=ctid)
         return ctid, reply
 
@@ -619,9 +619,9 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
         )
 
     stub_audience_translate(monkeypatch, translate)
-    ctid = int(db.create_chat_turn(
+    ctid = db.create_chat_turn(
         state, minister, "s", 0, night_id=night_id, status="active",
-    ))
+    )
     reply = sess.scene_chat("应允查办。", chat_turn_id=ctid)
     fut = persist_and_schedule_scene(sess, db, reply, speaker=minister)
     assert fut is not None

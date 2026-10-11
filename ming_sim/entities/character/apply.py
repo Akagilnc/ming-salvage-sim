@@ -90,10 +90,7 @@ def allegiance_change_rejection(
         if error:
             return (str(error["reason"]), str(error["category"]))
         if str(origin_ref or "").startswith("dossier:"):
-            try:
-                dossier_id = _parse_sqlite_id(str(origin_ref).split(":", 1)[1])
-            except ValueError:
-                dossier_id = 0
+            dossier_id = _parse_sqlite_id(str(origin_ref).split(":", 1)[1])
             dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
             if dossier is not None:
                 action_type = str(dossier.get("action_type") or "").strip()
@@ -401,8 +398,8 @@ def apply_person_changes(
             # 别名归一已在动作分派前统一完成，确保任命与处置/行止/易主同口径。
             try:
                 appointment_tenure = appointment_tenure_from(item)
-            except ValueError:
-                rejections.append(rejected(item, "任别非白名单", "invalid_enum"))
+            except ValueError as exc:
+                rejections.append(rejected(item, str(exc), "invalid_enum"))
                 continue
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))

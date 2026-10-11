@@ -190,11 +190,9 @@ class StagedDeclarationStore:
             raw = row["questions_json"]
             if raw is None:
                 continue
-            from ming_sim.db import _load_durable_json_list
-            parsed = _load_durable_json_list(
-                raw, surface=f"staged_declarations.questions_json:{ref}",
-            )
-            questions.extend(parsed)
+            from ming_sim.db import _load_durable_json
+            parsed = _load_durable_json(raw, default='[]')
+            questions = questions + parsed
         return questions
 
     def forecast_text_for(self, decree_ref: str) -> str:
@@ -255,40 +253,25 @@ class StagedDeclarationStore:
 
 
 def _row_to_staged(row: Any) -> StagedDeclaration:
-    from ming_sim.db import (
-        GameDB,
-        _load_durable_json_list,
-        _load_durable_json_object,
-    )
-    # 可选列：仅 SQL NULL = 合法缺省；其余值复用既有持久 list/object 权威
-    # （JSON 文本 null/空串/非形一律响亮，禁平行 json.loads + 洗缺席，#1897 E1）。
+    from ming_sim.db import GameDB, _load_durable_json
+    # SQL NULL 是缺省；其它值原样解码，留给真实消费，不洗成缺席。
     decree_ref = str(row["decree_ref"])
     if "verdict_json" not in row.keys() or row["verdict_json"] is None:
         verdict = None
     else:
-        verdict = _load_durable_json_object(
-            row["verdict_json"],
-            surface=f"staged_declarations.verdict_json:{decree_ref}",
-        )
+        verdict = GameDB.parse_engine_payload_json(row["verdict_json"])
     if "questions_json" not in row.keys() or row["questions_json"] is None:
         questions = None
     else:
-        questions = _load_durable_json_list(
-            row["questions_json"],
-            surface=f"staged_declarations.questions_json:{decree_ref}",
-        )
+        questions = _load_durable_json(row["questions_json"], default='[]')
+        if not isinstance(questions, list):
+            raise TypeError(f"staged_declarations.questions_json:{decree_ref} must be a list, got {questions!r}")
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=decree_ref,
-        declaration=GameDB.parse_engine_payload_json(
-            row["declaration_json"],
-            surface=f"staged_declarations.declaration_json:{decree_ref}",
-        ),
+        declaration=GameDB.parse_engine_payload_json(row["declaration_json"]),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
-        visible_refs=GameDB.parse_engine_payload_json(
-            row["visible_refs_json"],
-            surface=f"staged_declarations.visible_refs_json:{decree_ref}",
-        ),
+        visible_refs=GameDB.parse_engine_payload_json(row["visible_refs_json"]),
         verdict=verdict,
         questions=questions,
         forecast_text=None if forecast_text is None else (

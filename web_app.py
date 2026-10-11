@@ -18,6 +18,7 @@ import random
 import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 import time
 import threading
@@ -29,13 +30,9 @@ from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
 # 日志滞后数分钟、结算中段 tail 看不见进度（#84）。强制行缓冲让 tlog + 各 print 近实时落盘；
 # TTY 下本就行缓冲、无变化。frozen 打包路径已由 launcher.py 处理，此处覆盖源码 uvicorn 路径。
-try:
-    if sys.stdout is not None:
-        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-    if sys.stderr is not None:
-        sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-except Exception as exc:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动；旁路留真因
-    logging.getLogger(__name__).warning("web stdout/stderr line-buffering setup failed: %s", exc)
+for stream in (sys.stdout, sys.stderr):
+    if stream is not None and hasattr(stream, "reconfigure"):
+        stream.reconfigure(line_buffering=True)
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,7 +40,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from ming_sim.db import _load_durable_json_list
+from ming_sim.db import _load_durable_str_list
 from ming_sim.applier import atomic
 from ming_sim.paths import (
     UnsafeSaveNameError,
@@ -108,7 +105,6 @@ from ming_sim.models import (
     TurnPhase,
     loads_effect_dict,
     _load_durable_json_object,
-    loads_persistent_name_list,
     reign_period_label,
 )
 logger = logging.getLogger(__name__)
@@ -384,13 +380,7 @@ def _verify_smoke_leg(config: LLMConfig, *, stage: str, prefix: str) -> Optional
         return None
     except LLMUnavailable as exc:
         exc.stage = stage
-        return HTTPException(status_code=400, detail=_llm_error_detail(exc, prefix))
-    except Exception as exc:  # noqa: BLE001
-        try:
-            exc.stage = stage
-        except (AttributeError, TypeError):
-            pass
-        return HTTPException(status_code=400, detail=_llm_error_detail(exc, prefix))
+        return HTTPException(status_code=400, detail=_exception_detail(exc, prefix))
 
 
 def _is_deterministic_provider_4xx(err: Optional[HTTPException]) -> bool:
@@ -459,70 +449,44 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         pool.shutdown(wait=False)
 
 
-def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
-    message = f"{prefix}{exc.message if hasattr(exc, 'message') else str(exc)}"
-    detail: Dict[str, Any] = {
-        "code": getattr(exc, "code", "llm_error"),
-        "message": message,
-        "provider_message": getattr(exc, "provider_message", str(exc)),
-        "status_code": getattr(exc, "status_code", None),
-    }
-    # #1465：统一 transport 的 attempt 账（有则透传；无键＝未走统一层）
-    attempts = getattr(exc, "transport_attempts", None)
-    if attempts is not None:
-        detail["transport_attempts"] = attempts
-    # #884：外呼阶段名（有则透传；无键＝未标阶段）
-    stage = getattr(exc, "stage", None)
-    if stage:
-        detail["stage"] = stage
+def _exception_detail(exc: BaseException, prefix: str = "") -> Dict[str, Any]:
+    """Project the actual failure; reuse existing diagnostic packs for HTTP and SSE."""
+    detail = {"message": f"{prefix}{str(exc) or type(exc).__name__}"}
+    if isinstance(exc, SettlementAbort):
+        detail.update(stage=exc.stage, error_pack_path=exc.error_pack_path, turn=exc.turn)
+    cause = exc
+    while cause.__cause__ is not None and not isinstance(cause, LLMUnavailable):
+        cause = cause.__cause__
+    detail["error_type"] = getattr(cause, "error_type", None) or type(cause).__name__
+    detail["reason"] = str(cause) or type(cause).__name__
+    if isinstance(cause, BaseExceptionGroup):
+        detail["reason"] = "；".join(str(sub) for sub in cause.exceptions)
+    if isinstance(cause, subprocess.CalledProcessError):
+        detail.update(
+            reason=str(cause.stderr or cause),
+            returncode=cause.returncode,
+            stderr=str(cause.stderr or ""),
+            stdout=str(cause.stdout or ""),
+        )
+    if isinstance(cause, LLMUnavailable):
+        detail.update(
+            reason=cause.provider_message or str(cause),
+            code=cause.code,
+            provider_message=cause.provider_message,
+            status_code=cause.status_code,
+        )
+        if cause.transport_attempts is not None:
+            detail["transport_attempts"] = cause.transport_attempts
+        if cause.stage and "stage" not in detail:
+            detail["stage"] = cause.stage
+    if not detail.get("error_pack_path"):
+        from ming_sim.audience_night import write_audience_error_pack
+
+        detail["error_pack_path"] = write_audience_error_pack(
+            kind="web", message=detail["message"], detail=detail, exc=exc,
+        )
     return detail
 
-
-def _settlement_abort_http_detail(exc: "SettlementAbort") -> Dict[str, Any]:
-    """SettlementAbort → 结构化 HTTP detail（stage/error_pack_path 为 typed 键）。"""
-    return {
-        "message": str(exc),
-        "stage": str(getattr(exc, "stage", "") or ""),
-        "error_pack_path": getattr(exc, "error_pack_path", None),
-        "turn": getattr(exc, "turn", None),
-    }
-
-
-def _settlement_sse_error_data(exc: BaseException) -> Any:
-    """结算 SSE 终失败 payload 单真源（issue/stream 与 resolve_decisions/stream）。
-
-    #1465 ②：message 保持人话标量；status_code/code/transport_attempts 在 SSE 外层；
-    不改 abort 文案与 error_pack。覆盖 LLMUnavailable 与
-    SettlementAbort.__cause__ is LLMUnavailable。
-    #1853 J5：不再附带以 pending_actions.status=failed 为源的专属失败载荷。
-    """
-    if isinstance(exc, LLMUnavailable):
-        detail = _llm_error_detail(exc)
-        payload = {
-            "message": detail["message"],
-            "code": detail.get("code"),
-            "provider_message": detail.get("provider_message"),
-            "status_code": detail.get("status_code"),
-        }
-        if "transport_attempts" in detail:
-            payload["transport_attempts"] = detail["transport_attempts"]
-        return payload
-    if isinstance(exc, SettlementAbort) and isinstance(exc.__cause__, LLMUnavailable):
-        detail = _llm_error_detail(exc.__cause__)
-        payload = {
-            "message": str(exc),  # abort 文案不动
-            "code": detail.get("code"),
-            "provider_message": detail.get("provider_message"),
-            "status_code": detail.get("status_code"),
-            "error_pack_path": getattr(exc, "error_pack_path", None) or "",
-            "stage": getattr(exc, "stage", "") or "",
-        }
-        if "transport_attempts" in detail:
-            payload["transport_attempts"] = detail["transport_attempts"]
-        return payload
-    if isinstance(exc, SettlementAbort):
-        return _settlement_abort_http_detail(exc)
-    return str(exc)
 
 # #1902：数值槽宽容取值与「是否真 key」判定都只在 llm_config 一处实现，
 # web 侧这两个名字保留为薄转发（多处读档投影沿用），不再各写一份规则。
@@ -759,10 +723,10 @@ class WebGame:
                 self.chat_history.setdefault(name, []).extend(msgs)
             _fav_raw = self.db.kv_get("favorites")
             self.favorites: set = (
-                set(_load_durable_json_list(_fav_raw, surface="kv.favorites"))
-                if _fav_raw else set(_DEFAULT_FAVORITES)
+                set(_load_durable_str_list(_fav_raw, surface="kv_store.favorites"))
+                if _fav_raw is not None else set(_DEFAULT_FAVORITES)
             )
-            if not _fav_raw:
+            if _fav_raw is None:
                 self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
             # #505／#1902 T4：启动恢复生命周期归会话共核；入口只调共核再启宿主后台补跑。
             self.session.reconcile_crashed_audience_turns()
@@ -779,9 +743,11 @@ class WebGame:
             elif session is not None:
                 try:
                     session.close()
-                except Exception:
+                except Exception as _caught_failure:
                     logger.exception(
-                        "WebGame init failed; session.close failed path=%s", db_path,
+                        "WebGame init failed; session.close failed path=%s error=%s",
+                        db_path,
+                        _caught_failure,
                     )
                     _handback_failed_runtime(self, db_path)
             raise
@@ -801,8 +767,8 @@ class WebGame:
             full = os.path.join(self.saves_dir(), fname)
             try:
                 st = os.stat(full)
-            except OSError:
-                continue
+            except FileNotFoundError:
+                continue  # A save may be deleted while its directory is being listed.
             out.append({
                 "name": fname[:-3],
                 "size": st.st_size,
@@ -837,9 +803,11 @@ class WebGame:
             if role == "executor" and op is not None:
                 try:
                     _drain_and_close_session(residual, entry=entry, close_op=op)
-                except Exception:
+                except Exception as _caught_failure:
                     logger.exception(
-                        "dispose rebuild residual drain failed path=%s", path,
+                        "dispose rebuild residual drain failed path=%s error=%s",
+                        path,
+                        _caught_failure,
                     )
                 ok = bool(op.done.is_set() and op.close_ok)
             elif role == "released_ok":
@@ -854,9 +822,11 @@ class WebGame:
                 try:
                     close_fn()
                     ok = True
-                except Exception:
+                except Exception as _caught_failure:
                     logger.exception(
-                        "dispose rebuild residual close failed path=%s", path,
+                        "dispose rebuild residual close failed path=%s error=%s",
+                        path,
+                        _caught_failure,
                     )
                     _handback_failed_runtime(residual, path or self.db_path)
                     ok = False
@@ -911,10 +881,10 @@ class WebGame:
                 chat_history.setdefault(name, []).extend(msgs)
             fav_raw = candidate.db.kv_get("favorites")
             favorites = (
-                set(_load_durable_json_list(fav_raw, surface="kv.favorites"))
-                if fav_raw else set(_DEFAULT_FAVORITES)
+                set(_load_durable_str_list(fav_raw, surface="kv.favorites"))
+                if fav_raw is not None else set(_DEFAULT_FAVORITES)
             )
-            if not fav_raw:
+            if fav_raw is None:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
             return chat_history, favorites
 
@@ -1237,7 +1207,7 @@ class WebGame:
                 "phase": row["phase"],
                 "stage_text": row["stage_text"],
                 "severity": int(row["severity"]),
-                "tags": loads_persistent_name_list(row["tags"], surface="legacies.tags"),
+                "tags": _load_durable_str_list(row["tags"], surface="legacies.tags"),
                 "inertia": int(row["inertia"] or 0),
                 "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
                 "fail_condition": _humanize_condition(row["fail_condition"] or ""),
@@ -1256,7 +1226,7 @@ class WebGame:
 
     def memorial_payloads(self) -> List[Dict[str, Any]]:
         """#1726 奏疏收件箱投影：进度奏报 + 派系检举；正文原样，已读位随存档。"""
-        return list(self.db.list_player_memorials())
+        return self.db.list_player_memorials()
 
     def mark_memorials_read(self, keys: List[str]) -> Dict[str, Any]:
         self.db.mark_memorials_read(keys)
@@ -1276,10 +1246,10 @@ class WebGame:
         }
         for row in self.db.list_active_legacies(self.state):
             eff = self.db.parse_engine_payload_json(
-                row["modifiers"], surface="legacies.modifiers",
+                row["modifiers"],
             )
             clear_gate = self.db.parse_engine_payload_json(
-                row["clear_gate"], surface="legacies.clear_gate",
+                row["clear_gate"],
             )
             remaining_months = self.db.legacy_remaining_months(row, self.state)
             clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")
@@ -1887,10 +1857,11 @@ class WebGame:
                             translation_dispatched=translation_scheduled,
                             court_action=str(getattr(result, "court_action", "") or ""),
                         )
-                except Exception:
+                except Exception as _caught_failure:
                     logger.exception(
-                        "retry adapter cleanup: fail_audience_chat_turn failed chat_turn_id=%s",
+                        "retry adapter cleanup: fail_audience_chat_turn failed chat_turn_id=%s error=%s",
                         chat_turn_id,
+                        _caught_failure,
                     )
                 raise
         finally:
@@ -2170,18 +2141,22 @@ class WebGame:
             if gate_held:
                 try:
                     write_gate.release()
-                except RuntimeError:
-                    pass
+                except RuntimeError as release_error:
+                    logger.exception(
+                        "stream prologue gate release failed error=%s",
+                        release_error,
+                    )
                 gate_held = False
             # ADR 0005 / #1408：清理二次失败记日志不宽吞；abandon / 终态写分 try，
             # 清理异常不覆盖原始错误、不阻断终态上抛。
             try:
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
-            except Exception:
+            except Exception as _caught_failure:
                 logger.exception(
-                    "stream prologue cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                    "stream prologue cleanup: fail_chat_turn/reload failed chat_turn_id=%s error=%s",
                     chat_turn_id,
+                    _caught_failure,
                 )
             self._complete_pending_write(pending_ticket)
             raise
@@ -2210,13 +2185,14 @@ class WebGame:
             try:
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
-            except Exception:
+            except Exception as _caught_failure:
                 logger.exception(
-                    "stream identity cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                    "stream identity cleanup: fail_chat_turn/reload failed chat_turn_id=%s error=%s",
                     chat_turn_id,
+                    _caught_failure,
                 )
             self._complete_pending_write(pending_ticket)
-            yield {"type": "error", "message": str(error), **identity}
+            yield {"type": "error", **_exception_detail(error), **identity}
             return
 
         def emit_delta(delta: str, *, replace: bool = False) -> None:
@@ -2358,10 +2334,11 @@ class WebGame:
                                     translation_dispatched=payload is not None,
                                     court_action=court_action,
                                 )
-                    except Exception:
+                    except Exception as _caught_failure:
                         logger.exception(
-                            "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                            "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s error=%s",
                             chat_turn_id,
+                            _caught_failure,
                         )
                         # 收口自身失败：不删问话/回话（无法证明未落），但本轮没有可交付的 payload。
                         reply_persisted = True
@@ -2375,10 +2352,11 @@ class WebGame:
                                 }
                                 for name, msgs in self.db.load_all_chat_history().items():
                                     self.chat_history.setdefault(name, []).extend(msgs)
-                        except Exception:
+                        except Exception as _caught_failure:
                             logger.exception(
-                                "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                                "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s error=%s",
                                 chat_turn_id,
+                                _caught_failure,
                             )
                         # #1465 ④：回话未成终失败 — 与重试起手同形无条件 replace，再 error
                         # （禁「只 put error 不 replace」；客户端已处理空 replace）
@@ -2386,13 +2364,13 @@ class WebGame:
                     if isinstance(error, LLMUnavailable):
                         ev_queue.put({
                             "type": "error",
-                            "detail": _llm_error_detail(error),
+                            "detail": _exception_detail(error),
                             **identity,
                         })
                     else:
                         ev_queue.put({
                             "type": "error",
-                            "message": str(error),
+                            **_exception_detail(error),
                             **identity,
                         })
                     ev_queue.put({"type": "end"})
@@ -2410,10 +2388,11 @@ class WebGame:
             try:
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
-            except Exception:
+            except Exception as _caught_failure:
                 logger.exception(
-                    "stream start cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                    "stream start cleanup: fail_chat_turn/reload failed chat_turn_id=%s error=%s",
                     chat_turn_id,
+                    _caught_failure,
                 )
             self._complete_pending_write(pending_ticket)
             raise
@@ -2456,37 +2435,12 @@ def _next_or_none(iterator):
 
 
 def _retryable_audience_close_http(exc: BaseException) -> HTTPException:
-    """Map audience-night / close dual-failure errors to retryable HTTP 409.
-
-    Shared converter for player-input boundaries (chat / reply-retry) and sync
-    decree endpoints (issue / advance_without_edict). AudienceNightError keeps
-    ``detail=str(exc)`` and walks ``__cause__`` so endorsement∥close-scene dual
-    failures still surface both nested diagnostics (CI5 dropped ExceptionGroup
-    bus; chain is primary from join). Legacy ExceptionGroup still flattened.
-    No new exception protocol — existing 409 only.
-    """
+    """Keep close failures retryable without dropping their cause or diagnostic pointer."""
     from ming_sim.audience_night import AudienceNightError
-    if isinstance(exc, AudienceNightError):
-        parts: list[str] = []
-        cur: BaseException | None = exc
-        seen: set[int] = set()
-        while cur is not None and id(cur) not in seen:
-            seen.add(id(cur))
-            text = str(cur).strip()
-            if text and text not in parts:
-                parts.append(text)
-            cur = cur.__cause__  # type: ignore[assignment]
-        return HTTPException(
-            status_code=409,
-            detail="；".join(parts) if parts else str(exc),
-        )
-    if isinstance(exc, ExceptionGroup):
-        parts = [str(sub) for sub in exc.exceptions]
-        return HTTPException(
-            status_code=409,
-            detail="；".join(parts) if parts else str(exc),
-        )
-    raise TypeError(f"not a retryable audience/close error: {type(exc)!r}")
+
+    if not isinstance(exc, (AudienceNightError, ExceptionGroup)):
+        raise TypeError(f"not a retryable audience/close error: {type(exc)!r}")
+    return HTTPException(status_code=409, detail=_exception_detail(exc))
 
 
 def _accept_settlement_period(game) -> bool:
@@ -2500,7 +2454,7 @@ def _accept_settlement_period(game) -> bool:
     if db is None or state is None:
         return False
     from ming_sim.month_open_snapshot import accept_settlement_period
-    return bool(accept_settlement_period(db, state))
+    return accept_settlement_period(db, state)
 
 
 def _settlement_entry_lock(game) -> threading.Lock:
@@ -2679,7 +2633,7 @@ class _NonBlockingWebWriteGate:
         self._lock.release()
 
     def locked(self) -> bool:
-        return bool(self._lock.locked())
+        return self._lock.locked()
 
     def __enter__(self) -> "_NonBlockingWebWriteGate":
         self.acquire()
@@ -2825,8 +2779,12 @@ def _read_active_db_path() -> str:
     try:
         with open(active_file, "r", encoding="utf-8") as f:
             return f.read().strip()
-    except Exception:
-        logger.exception("read active_db path failed path=%s", active_file)
+    except Exception as _caught_failure:
+        logger.exception(
+            "read active_db path failed path=%s error=%s",
+            active_file,
+            _caught_failure,
+        )
         raise
 
 
@@ -2841,8 +2799,12 @@ def _atomic_write_text(path: str, text: str) -> None:
         if os.path.exists(tmp_file):
             try:
                 os.remove(tmp_file)
-            except Exception:
-                logger.exception("cleanup atomic write tmp failed path=%s", tmp_file)
+            except Exception as _caught_failure:
+                logger.exception(
+                    "cleanup atomic write tmp failed path=%s error=%s",
+                    tmp_file,
+                    _caught_failure,
+                )
 
 
 def _write_active_db_path(db_path: str) -> None:
@@ -2858,8 +2820,12 @@ def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
         try:
             with open(active_file, "r", encoding="utf-8") as f:
                 active_value = f.read()
-        except Exception:
-            logger.exception("snapshot active_db read failed path=%s", active_file)
+        except Exception as _caught_failure:
+            logger.exception(
+                "snapshot active_db read failed path=%s error=%s",
+                active_file,
+                _caught_failure,
+            )
             raise
     return (
         "MING_SIM_DB" in os.environ,
@@ -2882,8 +2848,12 @@ def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
     elif os.path.exists(active_file):
         try:
             os.remove(active_file)
-        except Exception:
-            logger.exception("restore: remove stale active_db failed path=%s", active_file)
+        except Exception as _caught_failure:
+            logger.exception(
+                "restore: remove stale active_db failed path=%s error=%s",
+                active_file,
+                _caught_failure,
+            )
             raise
 
 
@@ -3178,9 +3148,13 @@ def _c7_try_fulfill_archive(path: str) -> bool:
             if not os.path.exists(norm):
                 moved_ok = True
             else:
-                moved_ok = bool(_archive_move_db_files(norm))
-        except Exception:
-            logger.exception("C7 archive execute failed path=%s", norm)
+                moved_ok = _archive_move_db_files(norm)
+        except Exception as _caught_failure:
+            logger.exception(
+                "C7 archive execute failed path=%s error=%s",
+                norm,
+                _caught_failure,
+            )
             moved_ok = False
         if not moved_ok:
             # pending 保持 True；holders/opening 未变，不 GC。
@@ -3270,8 +3244,12 @@ def _settle_close_result(
                     ):
                         registered.close_op = op
                     _note_close_result(registered, False, norm)
-    except Exception:
-        logger.exception("settle close note failed path=%s", path)
+    except Exception as _caught_failure:
+        logger.exception(
+            "settle close note failed path=%s error=%s",
+            path,
+            _caught_failure,
+        )
     finally:
         if op is not None:
             op.close_ok = close_ok
@@ -3290,8 +3268,12 @@ def _close_unregistered(
     try:
         _drain_close_body(game)
         close_ok = True
-    except Exception:
-        logger.exception("private close failed path=%s", norm)
+    except Exception as _caught_failure:
+        logger.exception(
+            "private close failed path=%s error=%s",
+            norm,
+            _caught_failure,
+        )
         close_ok = False
     finally:
         _settle_close_result(
@@ -3325,16 +3307,19 @@ def _discard_unpublished_candidate(
                     _drain_and_close_session(
                         runtime, entry=entry, close_op=op,
                     )
-                except Exception:
+                except Exception as _caught_failure:
                     logger.exception(
-                        "discard unpublished candidate drain failed path=%s",
+                        "discard unpublished candidate drain failed path=%s error=%s",
                         path,
+                        _caught_failure,
                     )
         else:
             _close_unregistered(runtime, path)
-    except Exception:
+    except Exception as _caught_failure:
         logger.exception(
-            "discard unpublished candidate failed path=%s", path,
+            "discard unpublished candidate failed path=%s error=%s",
+            path,
+            _caught_failure,
         )
 
 
@@ -3385,32 +3370,53 @@ def _archive_move_db_files(old_db_path: str) -> bool:
     saves_dir = user_data_path("saves")
     try:
         os.makedirs(saves_dir, exist_ok=True)
-    except Exception:
-        logger.exception("archive prep makedirs failed dir=%s", saves_dir)
+    except Exception as _caught_failure:
+        logger.exception(
+            "archive prep makedirs failed dir=%s error=%s",
+            saves_dir,
+            _caught_failure,
+        )
         return False
     target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
     try:
         shutil.move(old_db_path, target)
-    except Exception:
-        logger.exception("archive move failed path=%s → %s", old_db_path, target)
+    except Exception as _caught_failure:
+        logger.exception(
+            "archive move failed path=%s → %s error=%s",
+            old_db_path,
+            target,
+            _caught_failure,
+        )
         return False
     wal_path = old_db_path + "-wal"
     if os.path.exists(wal_path):
         try:
             shutil.move(wal_path, target + "-wal")
-        except Exception:
-            logger.exception("archive wal move failed path=%s", wal_path)
+        except Exception as _caught_failure:
+            logger.exception(
+                "archive wal move failed path=%s error=%s",
+                wal_path,
+                _caught_failure,
+            )
             try:
                 shutil.move(target, old_db_path)
-            except Exception:
-                logger.exception("archive rollback failed path=%s", old_db_path)
+            except Exception as _caught_failure:
+                logger.exception(
+                    "archive rollback failed path=%s error=%s",
+                    old_db_path,
+                    _caught_failure,
+                )
             return False
     shm_path = old_db_path + "-shm"
     if os.path.exists(shm_path):
         try:
             shutil.move(shm_path, target + "-shm")
-        except Exception:
-            logger.exception("archive shm move failed path=%s", shm_path)
+        except Exception as _caught_failure:
+            logger.exception(
+                "archive shm move failed path=%s error=%s",
+                shm_path,
+                _caught_failure,
+            )
             # shm 失败不回滚主库（与既有行为一致：仅 log）；主库已进 saves。
     return True
 
@@ -3426,14 +3432,20 @@ def _drain_close_body(game: Any) -> None:
     q = get_session_write_queue(game)
     try:
         _shared_drain(game)
-    except Exception:
+    except Exception as _caught_failure:
         # #1740 / ADR 0005：排空关库失败不得无痕 return——保留原异常上抛。
-        logger.exception("drain/close session failed")
+        logger.exception(
+            "drain/close session failed error=%s",
+            _caught_failure,
+        )
         if _runtime_restorable(game):
             try:
                 q.unseal()
-            except Exception:
-                logger.exception("unseal after drain/close failure failed")
+            except Exception as _caught_failure:
+                logger.exception(
+                    "unseal after drain/close failure failed error=%s",
+                    _caught_failure,
+                )
         raise
 
 
@@ -3493,8 +3505,12 @@ def _spawn_drain_close(
         try:
             _drain_close_body(game)
             close_ok = True
-        except Exception:
-            logger.exception("drain/close worker failed path=%s", path)
+        except Exception as _caught_failure:
+            logger.exception(
+                "drain/close worker failed path=%s error=%s",
+                path,
+                _caught_failure,
+            )
             close_ok = False
         finally:
             _settle_close_result(
@@ -3507,8 +3523,11 @@ def _spawn_drain_close(
 
     try:
         threading.Thread(target=_run, daemon=True).start()
-    except Exception:
-        logger.exception("spawn drain/close thread failed")
+    except Exception as _caught_failure:
+        logger.exception(
+            "spawn drain/close thread failed error=%s",
+            _caught_failure,
+        )
         _settle_close_result(
             op=op, close_ok=False, entry=entry,
             game=game if entry is None else None, path=path,
@@ -3536,6 +3555,11 @@ def _dependency_mismatch_detail(exc: DependencyMismatch) -> Dict[str, Any]:
         "requirement": exc.requirement,
         "message": exc.message,
     }
+
+
+@app.exception_handler(Exception)
+async def runtime_failure_handler(_request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"detail": _exception_detail(exc)})
 
 
 @app.exception_handler(DependencyMismatch)
@@ -3588,23 +3612,18 @@ def _parse_save_name(name: str) -> Dict[str, Any]:
 
 
 def _main_db_campaign_id() -> str:
-    """主库 campaign 身份只读。预期 IO/SQLite 错留真因后空串；未知代码错响亮失败。"""
+    """Read the main campaign identity; an absent file is not a corrupt database."""
     db_path = _get_main_db_path()
     if not os.path.isfile(db_path):
         return ""
+    conn = sqlite3.connect(db_path)
     try:
-        conn = sqlite3.connect(db_path)
-        try:
-            row = conn.execute(
-                "SELECT value FROM kv_store WHERE key='campaign_id'"
-            ).fetchone()
-            return str(row[0]).strip() if row and row[0] else ""
-        finally:
-            conn.close()
-    except (OSError, sqlite3.Error):
-        # ADR 0005：预期读失败必 log，不得静默空身份。
-        logger.exception("main db campaign_id read failed path=%s", db_path)
-        return ""
+        row = conn.execute(
+            "SELECT value FROM kv_store WHERE key='campaign_id'"
+        ).fetchone()
+        return str(row[0]).strip() if row and row[0] else ""
+    finally:
+        conn.close()
 
 
 def _scan_saves() -> List[Dict[str, Any]]:
@@ -3621,8 +3640,8 @@ def _scan_saves() -> List[Dict[str, Any]]:
         full = os.path.join(saves_dir, fname)
         try:
             st = os.stat(full)
-        except OSError:
-            continue
+        except FileNotFoundError:
+            continue  # A save may be deleted while its directory is being listed.
         meta = _parse_save_name(name)
         out.append({
             "name": name,
@@ -3807,7 +3826,7 @@ async def api_menu_new_game() -> Dict[str, Any]:
                 new_game = WebGame(fresh=True, db_path=new_db_path)
             except LLMUnavailable as exc:
                 _rollback_path_if_ours()
-                raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+                raise HTTPException(status_code=412, detail=_exception_detail(exc))
             except Exception:
                 _rollback_path_if_ours()
                 raise
@@ -3944,14 +3963,14 @@ async def api_menu_continue() -> StreamingResponse:
                     )
                 raise
         except _MenuCandidateCancelled as exc:
-            ev_queue.put(("__error__", {"message": str(exc)}))
+            ev_queue.put(("__error__", _exception_detail(exc)))
         except LLMUnavailable as exc:
-            ev_queue.put(("__error__", _llm_error_detail(exc)))
+            ev_queue.put(("__error__", _exception_detail(exc)))
         except DependencyMismatch as exc:
             ev_queue.put(("__error__", _dependency_mismatch_detail(exc)))
         except Exception as exc:  # noqa: BLE001 — SSE 终态收束，不让线程死掉
-            logger.exception("continue worker failed")
-            ev_queue.put(("__error__", {"message": str(exc)}))
+            logger.exception('continue worker failed')
+            ev_queue.put(("__error__", _exception_detail(exc)))
         finally:
             # 排空后任一失败/取消出口：仅摘本请求启动时已不可恢复的旧指针。
             if drain_attempted and not published:
@@ -4060,7 +4079,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                     _close_unregistered(
                         candidate, getattr(candidate, "db_path", "") or bound_path,
                     )
-                raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+                raise HTTPException(status_code=412, detail=_exception_detail(exc))
             except Exception:
                 if candidate is not None:
                     _close_unregistered(
@@ -4173,8 +4192,11 @@ async def api_menu_shutdown() -> Dict[str, Any]:
 
         try:
             await asyncio.get_running_loop().run_in_executor(None, _shutdown_close)
-        except Exception:
-            logger.exception("shutdown drain/close failed; continuing process exit")
+        except Exception as _caught_failure:
+            logger.exception(
+                "shutdown drain/close failed; continuing process exit error=%s",
+                _caught_failure,
+            )
     # 先返回响应，再异步终止进程。SIGTERM 在 *nix 走优雅退出；
     # Windows 无完整 SIGTERM 语义（pywebview 主线程也不收信号），直接 os._exit 兜底。
     def _kill_later() -> None:
@@ -4249,9 +4271,7 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     except HTTPException:
         raise
     except LLMUnavailable as exc:
-        raise HTTPException(status_code=400, detail=_llm_error_detail(exc)) from None
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail={"code": "llm_validation_failed", "message": str(exc)}) from None
+        raise HTTPException(status_code=400, detail=_exception_detail(exc)) from exc
     # 空 API 输入 → save_runtime_llm 保留已存 API 槽（ADR 0001）。
     save_runtime_llm(
         "",
@@ -4359,9 +4379,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     except HTTPException:
         raise
     except LLMUnavailable as exc:
-        raise HTTPException(status_code=400, detail=_llm_error_detail(exc)) from None
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail={"code": "llm_validation_failed", "message": str(exc)}) from None
+        raise HTTPException(status_code=400, detail=_exception_detail(exc)) from exc
     save_runtime_llm(
         normalized_base_url,
         model,
@@ -4410,7 +4428,7 @@ async def api_state() -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=_settlement_sse_error_data(exc)) from exc
+        raise HTTPException(status_code=500, detail=_exception_detail(exc)) from exc
 
 
 @app.post("/api/game/mechanical_tail/retry")
@@ -4623,7 +4641,7 @@ async def api_retry_audience_reply(chat_turn_id: int = Body(0, embed=True)) -> D
     try:
         return await run_in_threadpool(get_game().retry_interrupted_reply, SCENE_CHAT_SPEAKER, chat_turn_id or None)
     except AudienceNightError as exc:
-        raise _retryable_audience_close_http(exc) from None
+        raise _retryable_audience_close_http(exc) from exc
 
 
 @app.post("/api/audience/chat/undo")
@@ -4651,11 +4669,16 @@ async def api_retry_pending_translation(
 
 
 def _chat_stream_response(minister_name: str, request: ChatRequest) -> StreamingResponse:
+    iterator = iter(get_game().chat_stream(minister_name, request.message))
+
     async def generate() -> AsyncIterator[str]:
-        iterator = iter(get_game().chat_stream(minister_name, request.message))
         loop = asyncio.get_running_loop()
         while True:
-            item = await loop.run_in_executor(None, _next_or_none, iterator)
+            try:
+                item = await loop.run_in_executor(None, _next_or_none, iterator)
+            except Exception as exc:
+                yield sse_event("error", _exception_detail(exc))
+                return
             if item is None:
                 break
             item_type = str(item.get("type", "message"))
@@ -4685,7 +4708,7 @@ def _chat_stream_response(minister_name: str, request: ChatRequest) -> Streaming
                 yield sse_event("end", {})
                 break
             elif item_type == "error":
-                detail = item.get("detail") or {"message": item.get("message", "流式回复失败。")}
+                detail = item.get("detail") or item
                 payload = dict(detail) if isinstance(detail, dict) else {"message": str(detail)}
                 # #1902：结构化拒收的 code 必须过 SSE 终态（前端 normalizeApiError 与
                 # 测试都按它分流；旧非流式路由把它放在 HTTP detail 里，迁流式不得丢）。
@@ -4728,7 +4751,7 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
                 ],
             }
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
+        raise HTTPException(status_code=409, detail=_exception_detail(e)) from e
 
 
 @app.post("/api/decree/advance_without_edict")
@@ -4768,19 +4791,16 @@ def api_advance_without_edict(
     except HTTPException:
         raise
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
+        raise HTTPException(status_code=400, detail=_exception_detail(e)) from e
     except SettlementAbort as e:
         raise HTTPException(
             status_code=409,
-            detail=_settlement_abort_http_detail(e),
-        ) from None
+            detail=_exception_detail(e),
+        ) from e
     except (AudienceNightError, ExceptionGroup) as e:
-        raise _retryable_audience_close_http(e) from None
-    except Exception as e:  # noqa: BLE001
-        if isinstance(e, LLMUnavailable):
-            raise HTTPException(status_code=412, detail=_llm_error_detail(e)) from None
-        message = str(e) or "退朝结算失败，请重试。"
-        raise HTTPException(status_code=500, detail={"message": message}) from None
+        raise _retryable_audience_close_http(e) from e
+    except LLMUnavailable as e:
+        raise HTTPException(status_code=412, detail=_exception_detail(e)) from e
 
 
 # #1341/#1338：PATCH /api/decree 已删（web/src 零真实调用方；裸设总诏绕过 directives
@@ -4818,7 +4838,7 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
 # #1902：非流式 POST /api/decree/issue 退役——颁布只有流式一条入口
 # （/api/decree/issue/stream），两条同源入口把同一编排复制一份。此路由曾独有
 # 的 typed 失败面已补进 SSE 终态：SettlementAbort 带 status_code=409 + stage +
-# error_pack_path（_settlement_sse_error_data），LLM 死走既有 _llm_error_detail。
+# error_pack_path 与真实 LLM 原因统一经 _exception_detail。
 
 @app.post("/api/decree/issue/stream")
 async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
@@ -4858,7 +4878,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
-            ev_queue.put(("__error__", str(e)))
+            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
+            ev_queue.put(("__error__", _exception_detail(e)))
         except HTTPException as e:
             detail = e.detail
             if isinstance(detail, dict):
@@ -4871,7 +4892,10 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     {"message": str(detail), "status_code": e.status_code},
                 ))
         except Exception as e:  # noqa: BLE001
-            ev_queue.put(("__error__", _settlement_sse_error_data(e)))
+            # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
+            # #1465 ②：message 标量 + typed 键外层；与 resolve_decisions/stream 同真源。
+            # #1853 J5：真异常经本口上抛；不以 failed 行另造 pending_action_failures。
+            ev_queue.put(("__error__", _exception_detail(e)))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -4934,9 +4958,13 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
-            ev_queue.put(("__error__", str(e)))
+            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
+            ev_queue.put(("__error__", _exception_detail(e)))
         except Exception as e:  # noqa: BLE001
-            ev_queue.put(("__error__", _settlement_sse_error_data(e)))
+            # §5.4：无独立 HTTP/AudienceNight 分表；与 issue/stream 同真源。
+            # #1465 ②：SettlementAbort.__cause__ LLMUnavailable 亦外层保真 typed 键。
+            # #1853 J5：真异常经本口上抛；不以 failed 行另造 pending_action_failures。
+            ev_queue.put(("__error__", _exception_detail(e)))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)

@@ -2,7 +2,7 @@ import React from "react";
 import { AUDIENCE_SCENE_SPEAKER } from "./audienceScene";
 import { createRoot } from "react-dom/client";
 import { Crown, X } from "lucide-react";
-import { api } from "./api";
+import { api, ApiRequestError, normalizeApiError } from "./api";
 import { useAudienceChat } from "./useAudienceChat";
 import { useDurableProjection } from "./useDurableProjection";
 import { useEscClose } from "./useEscClose";
@@ -224,7 +224,7 @@ export function App() {
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-      throw new Error(err.detail || resp.statusText);
+      throw new ApiRequestError(normalizeApiError(err, resp.statusText), resp.statusText);
     }
     await loadState();  // 重新拉 state，新 portrait_id 流回卡片
   }, [loadState]);
@@ -557,14 +557,8 @@ export function App() {
   );
   const settleResumeMounted = state.turn.phase === "settling" || phase2Resume;
   const retryMechanicalTail = () => {
-    void fetch("/api/game/mechanical_tail/retry", { method: "POST" })
-      .then(async (response) => {
-        if (!response.ok) {
-          const body = await response.json().catch(() => null);
-          throw new Error(typeof body?.detail === "string" ? body.detail : response.statusText);
-        }
-        await loadState();
-      })
+    void api("/api/game/mechanical_tail/retry", { method: "POST" })
+      .then(() => loadState())
       .catch((error) => setError(error instanceof Error ? error.message : String(error)));
   };
 

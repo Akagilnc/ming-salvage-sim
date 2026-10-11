@@ -80,8 +80,8 @@ def _apply_bandit_absorptions(
         raw_req = item.get("requested_count")
         try:
             requested = _strict_int(raw_req, accept_numeric_strings=False)
-        except (TypeError, ValueError):
-            _reject("invalid_enum", f"bandit_absorptions requested_count 非整数：{raw_req!r}")
+        except (TypeError, ValueError) as exc:
+            _reject("invalid_enum", str(exc))
             continue
         if requested <= 0:
             _reject("invalid_enum", f"bandit_absorptions requested_count 须为正整数：{requested!r}")

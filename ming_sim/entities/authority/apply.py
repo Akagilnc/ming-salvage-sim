@@ -18,6 +18,10 @@ from ming_sim.models import GameState
 class AuthorityDataError(ValueError):
     """授权项本身不成立。不是读库或写库故障。"""
 
+    def __init__(self, message: str, *, category: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.category = category
+
 
 _AUTHORITY_GRANT_OPS = frozenset({"授予", "grant"})
 _AUTHORITY_REVOKE_OPS = frozenset({"收回", "revoke"})
@@ -31,8 +35,8 @@ def _prepare_authority_change_item(
         raise AuthorityDataError("missing_dossier_source")
     try:
         dossier_id = _parse_sqlite_id(item.get("dossier_id"))
-    except (TypeError, ValueError):
-        raise AuthorityDataError("missing_dossier_source") from None
+    except (TypeError, ValueError) as exc:
+        raise AuthorityDataError(str(exc), category="missing_dossier_source") from exc
     if dossier_id <= 0 or db.get_decree_dossier(dossier_id) is None:
         raise AuthorityDataError("missing_dossier_source")
     if not db.dossier_authorizes_effects(dossier_id):
@@ -101,8 +105,8 @@ def _prepare_authority_change_item(
 
     try:
         authority_id = _parse_sqlite_id(item.get("authority_id"))
-    except (TypeError, ValueError):
-        raise AuthorityDataError("unknown_authority_id") from None
+    except (TypeError, ValueError) as exc:
+        raise AuthorityDataError(str(exc), category="unknown_authority_id") from exc
     if authority_id <= 0:
         raise AuthorityDataError("unknown_authority_id")
     record = db.get_authority(authority_id)

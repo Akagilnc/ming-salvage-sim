@@ -75,10 +75,7 @@ def apply_army_delta_with_cannon_transfer(
     if "cannon_transfer_to" in payload:
         target_id = payload.pop("cannon_transfer_to")
         cannon_keys = [k for k in payload if ARMY_FIELD_ALIASES.get(k, k) == "cannon_equipment"]
-        try:
-            requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0
-        except (TypeError, ValueError):
-            requested = 0
+        requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0
         source_row = db.conn.execute(
             "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (army_id,)
         ).fetchone()

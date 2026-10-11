@@ -16,6 +16,7 @@ from ming_sim.session_write_queue import get_session_write_queue
 
 import json
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +24,6 @@ from fastapi.testclient import TestClient
 
 import web_app
 from ming_sim.exceptions import LLMUnavailable
-from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
 from tests.conftest import stub_audience_translate, stub_scene_agent
 
@@ -178,7 +178,7 @@ def test_issue_stream_llm_unavailable_is_structured_not_500(
 
     def _boom_resolve(**_k):
         raise LLMUnavailable(
-            CLI_RUNNER_PLAYER_MESSAGE,
+            "fixture unavailable",
             code="llm_error",
             provider_message=provider,
         )
@@ -316,7 +316,7 @@ def _provider_http_error_agent(status: int | None, message: str, *, http_hits: d
 
 def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, web_game):
     """#1452 B / #1465：真实 web 流入口——无 typed status 的 RunErrorEvent
-    → 一次不重试、系统层 typed 终失败、provider_message 保真。"""
+    → 一次不重试，原始原因进入系统错误出口。"""
     agent = _RunErrorAgent()
     _transport_web_game(agent, monkeypatch)
     calls = {"n": 0}
@@ -335,13 +335,11 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, web_
     assert events, response.text
     assert events[-1][0] == "error"
     detail = events[-1][1]
-    assert detail.get("code") == "llm_stream_error"
+    assert detail.get("error_type") == "RuntimeError"
+    assert detail.get("code") is None
     assert detail.get("message")
-    assert "Unknown model error" in str(detail.get("provider_message") or "")
+    assert detail.get("reason") == "Unknown model error"
     assert calls["n"] == 1
-    attempts = detail.get("transport_attempts") or []
-    assert len(attempts) == 1
-    assert attempts[0].get("outcome") == "terminal_fail"
 
 
 
@@ -503,12 +501,10 @@ def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, w
     events = _parse_sse(response.text)
     assert events[-1][0] == "error"
     detail = events[-1][1]
+    assert detail.get("error_type") == "LLMUnavailable"
     assert detail.get("code") == "llm_stream_error"
     assert detail.get("status_code") is None
     assert http_hits["n"] == 1
-    attempts = detail.get("transport_attempts") or []
-    assert len(attempts) == 1
-    assert attempts[0].get("outcome") == "terminal_fail"
 
 
 def test_chat_stream_typed_429_preserved(monkeypatch, web_game):
@@ -730,7 +726,7 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp(monkeypatch, web_gam
 def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     monkeypatch, web_game,
 ):
-    """#1465 ④：流终包 status=ERROR → 真入口 SSE typed code + 横幅不进 message。
+    """#1465 ④：流终包 status=ERROR → 真入口 SSE 保留运行错误原因。
 
     replace 序由 halfstream_terminal_fail_replaces_temp 承担。
     """
@@ -754,10 +750,11 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
     detail = events[-1][1]
-    assert detail.get("code") == "llm_run_error"
+    assert detail.get("error_type") == "RuntimeError"
+    assert detail.get("code") is None
     assert detail.get("message"), detail
-    assert provider not in detail["message"]
-    assert detail.get("provider_message") == provider
+    assert detail.get("reason") == provider
+    assert (Path(detail["error_pack_path"]) / "traceback.txt").is_file()
 
 
 def test_chat_stream_policy_max_attempts_override(monkeypatch, tmp_path, web_game):

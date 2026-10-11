@@ -133,7 +133,7 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
         return payload
     from ming_sim.db import GameDB
     return GameDB.parse_engine_payload_json(
-        row.get("payload_json"), surface="decree_dossiers.payload_json",
+        row.get("payload_json"),
     )
 
 
@@ -211,10 +211,8 @@ def build_promulgation_judge_context(
         "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
         "ORDER BY d.turn,d.dossier_id,d.id"
     ).fetchall():
-        from ming_sim.db import GameDB
-        payload = GameDB.parse_engine_payload_json(
-            item["payload_json"], surface="decree_dossiers.payload_json",
-        )
+        from ming_sim.db import _load_durable_json
+        payload = _load_durable_json(item["payload_json"])
         mode = str(payload.get("mode") or "ordinary")
         rescript_action = str(item["rescript_action"] or "")
         forced = rescript_action == "force_promulgated"
@@ -488,7 +486,7 @@ def validate_promulgation_verdicts(
         if not isinstance(payload, dict):
             from ming_sim.db import GameDB
             payload = GameDB.parse_engine_payload_json(
-                dossier.get("payload_json"), surface="decree_dossiers.payload_json",
+                dossier.get("payload_json"),
             )
         action_type = dossier.get("action_type")
         external_review = (

@@ -109,7 +109,7 @@ def _apply_existing_appointment_hit(
             ).fetchone()
             from ming_sim.db import GameDB
             stored = GameDB.parse_engine_payload_json(
-                current["payload_json"], surface="pending_actions.payload_json",
+                current["payload_json"],
             )
             stored.update(recommendation_fields)
             session.db.conn.execute(
@@ -252,7 +252,7 @@ def stage_punishment_candidate(
             linked_issue_id = int(issue_id)
         except (TypeError, ValueError) as exc:
             raise DecreeMaterializationValidationError(
-                f"惩处交办 issue_id 非法：{issue_id!r}",
+                str(exc),
                 failed_fields=("issue_id",),
             ) from exc
         if linked_issue_id <= 0:
@@ -269,15 +269,12 @@ def stage_punishment_candidate(
             return 0
         if disposition not in issue_dispositions_allowed():
             return 0
-        try:
-            roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (TypeError, ValueError) as exc:
-            # 持久名册腐坏：响亮上抛，不洗成交办声明拒收。
-            raise ValueError(
-                f"issues.target_roster 腐坏 JSON：{issue['target_roster']!r}"
-            ) from exc
-        if not isinstance(roster, list):
-            raise ValueError("持久弹劾名册须为数组")
+        # 已持久 target_roster 腐坏是内部故障，不得洗成声明 invalid_state（#1897 E1）。
+        from ming_sim.db import _load_durable_str_list
+
+        roster = _load_durable_str_list(
+            issue["target_roster"], surface=f"issues#{linked_issue_id}.target_roster",
+        )
         if not roster:
             return 0
         if disposition == "办人":
@@ -348,18 +345,8 @@ def stage_punishment_candidate(
         if not valid:
             return 0
         staged["transaction_category"] = category
-    # LLM 声明：缺席→0；在场脏→ValidationError。持久损坏另路上抛。
-    if amount in (None, ""):
-        n = 0
-    else:
-        try:
-            n = int(amount)
-        except (TypeError, ValueError) as exc:
-            raise DecreeMaterializationValidationError(
-                f"惩处交办 amount 非法：{amount!r}",
-                failed_fields=("amount",),
-            ) from exc
-    # #517 r2：罚俸 admission 要求正数 amount；缺/零不得成候选。
+    n = int(amount) if amount is not None and amount != "" else 0
+    # #517 r2：罚俸 admission 要求正数 amount；缺/零/非法不得成候选。
     if action == "罚俸":
         if n <= 0:
             return 0
@@ -437,7 +424,7 @@ def require_grant_allocation_shape(
     try:
         amt = strict_int(amount, accept_numeric_strings=True)
     except ValueError as exc:
-        raise ValueError(f"grant 金钱 amount 须为正整数，拒 {amount!r}") from exc
+        raise ValueError(str(exc)) from exc
     if amt <= 0:
         raise ValueError("grant 金钱缺正 amount")
     out["amount"] = amt
@@ -515,15 +502,18 @@ class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
         self,
         *,
         field_failures: list,
+        reason: str | None = None,
     ) -> None:
         # 权威 require_explicit_xiexang_fields 一次给出完整事实；此处只携带
         facts = tuple(dict(f) for f in field_failures)
         fields = tuple(str(f["field"]) for f in facts)
         self.field_failures = facts
         super().__init__(
-            "拨饷旨意缺少结构化字段："
-            + "/".join(str(f) for f in fields)
-            + "（不猜散文）",
+            reason if reason is not None else (
+                "拨饷旨意缺少结构化字段："
+                + "/".join(str(f) for f in fields)
+                + "（不猜散文）"
+            ),
             failed_fields=fields,
         )
 
@@ -541,15 +531,17 @@ def require_explicit_xiexang_fields(
     from ming_sim.strict_types import strict_int
 
     facts: list = []
+    amount_error = None
 
     def _note(field: str, *, current: object, expected: object) -> None:
         facts.append({"field": field, "current": current, "expected": expected})
 
     try:
         n = strict_int(amount, accept_numeric_strings=False)
-    except ValueError:
-        n = None
-    if n is None or n <= 0:
+    except ValueError as exc:
+        amount_error = exc
+        n = 0
+    if n <= 0:
         _note("amount", current=amount, expected={"type": "positive_int"})
     # #1620：太仓→国库唯一权威 resolve_grant_account；此处不再平行 if。
     canonical_account = resolve_grant_account(grant_action="协饷", account=account)
@@ -576,7 +568,9 @@ def require_explicit_xiexang_fields(
             expected=["一次性", "每月", ""],
         )
     if facts:
-        raise IncompleteXiexangPayloadError(field_failures=facts)
+        raise IncompleteXiexangPayloadError(
+            field_failures=facts, reason=str(amount_error) if amount_error is not None else None,
+        ) from amount_error
     return {
         "amount": n,
         "account": canonical_account,
@@ -632,10 +626,9 @@ def _parse_json_field(raw: object) -> Any:
     if not text.strip():
         return None
     try:
-        value = json.loads(text)
-    except (TypeError, ValueError):
-        return text
-    return value
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text  # responsible_bodies explicitly accepts delimited prose as well as JSON.
 
 
 def _assignment_absolute_end_turn(
@@ -648,14 +641,26 @@ def _assignment_absolute_end_turn(
     - 否则 0<end_turn≤turn → 视为相对月数 turn+end_turn
     LLM 声明：缺席→0；在场脏→ValidationError。
     """
-    try:
-        et = 0 if end_turn in (None, "") else int(end_turn)
-        months = 0 if deadline_months in (None, "") else int(deadline_months)
-    except (TypeError, ValueError) as exc:
-        raise DecreeMaterializationValidationError(
-            f"责成期限非法：end_turn={end_turn!r} deadline_months={deadline_months!r}",
-            failed_fields=("end_turn", "deadline_months"),
-        ) from exc
+    def _finite_int(raw: object, *, field: str, default: int) -> int:
+        if raw is None or raw == "":
+            return int(default)
+        if isinstance(raw, bool):
+            raise DecreeMaterializationValidationError(
+                f"{field} cannot be a boolean",
+                failed_fields=(field,),
+                category="invalid_shape",
+            )
+        try:
+            return int(raw)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise DecreeMaterializationValidationError(
+                str(exc),
+                failed_fields=(field,),
+                category="invalid_shape",
+            ) from exc
+
+    et = _finite_int(end_turn, field="end_turn", default=0)
+    months = _finite_int(deadline_months, field="deadline_months", default=0)
     cur = int(turn)
     if months > 0:
         return cur + months
@@ -745,7 +750,7 @@ def _list_pending_office_rows(
     """本夜/本回合 pending 人事候选（kind=office）。不另建索引。"""
     rows = list(pend_for_minister or [])
     if not rows:
-        rows = list(db.list_pending_actions(int(turn)))
+        rows = db.list_pending_actions(int(turn))
     out: List[Dict[str, Any]] = []
     for row in rows:
         if row.get("kind") != "office":
@@ -759,7 +764,7 @@ def _list_pending_office_rows(
 def _pending_action_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     from ming_sim.db import GameDB
     return GameDB.parse_engine_payload_json(
-        row.get("payload_json"), surface="pending_actions.payload_json",
+        row.get("payload_json"),
     )
 
 
@@ -989,15 +994,13 @@ def _parse_revoke_decree_target(
         raw = raw.split(":", 1)[1].strip()
     if not kind:
         kind = "dossier"
-    if raw in (None, ""):
-        return None
-    # LLM 声明脏 target → ValidationError；禁 except→None。
+    # 身份引用走 SQLite 64-bit 权威：超界/脏类型在查询前拒，不让 OverflowError 带走同批（#1897 C1）。
+    from ming_sim.strict_types import strict_sqlite_id
     try:
-        tid = int(raw)
+        tid = strict_sqlite_id(raw, accept_numeric_strings=True)
     except (TypeError, ValueError) as exc:
         raise DecreeMaterializationValidationError(
-            f"撤回成命目标标识非法：{raw!r}",
-            failed_fields=("target_id",),
+            str(exc), failed_fields=("target_id",),
         ) from exc
     if tid <= 0:
         return None
@@ -1155,11 +1158,11 @@ def stage_assignment_candidate(
         staged["commitment_kind"] = "until_stop"
     # #620 AC2 / #1890 / ADR 0142：分段里程碑是机械事实（到期判账），只承接
     # **显式结构化** stages——JSON 数组串或已结构化列表，一律走库层
-    # stages_to_json 的严格串行面：非 JSON 字符串响亮 ValueError（由交办分派
+    # normalize_commitment_stages 的严格准入面：非 JSON 字符串响亮 ValueError（由交办分派
     # 的既有 except 收成 durable 拒收）。全仓已无任何接缝从散文正则反推年诺。
-    from ming_sim.staged_commitment import stages_to_json
+    from ming_sim.staged_commitment import normalize_commitment_stages
     try:
-        stages_norm = json.loads(stages_to_json(stages))
+        stages_norm = normalize_commitment_stages(stages)
     except (TypeError, ValueError) as exc:
         # 声明侧 stages 脏值 → 类型化数据错误，供分派口拒收；非持久真源故障。
         raise DecreeMaterializationValidationError(

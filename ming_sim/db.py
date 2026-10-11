@@ -45,9 +45,7 @@ from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, _load_durable_json_list, _load_durable_json_object,
-    _load_durable_str_list, _require_str_list_members,
     require_persistent_string_list,
-    loads_persistent_name_list,
     monthly_amount, period_label, reign_period_label,
 )
 from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
@@ -501,7 +499,7 @@ def _coerce_deadline_months(
                 "持久字段 deadline_months：deadline_months must be a finite numeric type",
             ) from exc
         raise DecreeMaterializationValidationError(
-            "deadline_months must be a finite numeric type",
+            str(exc),
             failed_fields=("deadline_months",),
             category="invalid_shape",
         ) from exc
@@ -624,15 +622,11 @@ _OFFICES_TABLE: Optional[Dict[str, object]] = None
 _OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
 
 def _offices_table() -> Dict[str, object]:
-    """加载并缓存 content/offices.json；坏资产或代码异常按 ADR 0005 响亮。"""
+    """加载 content/offices.json（明代职官→office_type 参考表），缓存；加载失败原样交出。"""
     global _OFFICES_TABLE
     if _OFFICES_TABLE is None:
-        from ming_sim.assets import load_json_asset, require_dict, string_list
-        table = require_dict(load_json_asset("offices.json"), "offices.json")
-        allowed = table.get("allowed_types")
-        if allowed is not None:
-            string_list(allowed, "offices.json.allowed_types")
-        _OFFICES_TABLE = table
+        from ming_sim.assets import load_json_asset
+        _OFFICES_TABLE = load_json_asset("offices.json")
     return _OFFICES_TABLE
 
 def _office_type_from_table(text: str) -> str:
@@ -647,14 +641,8 @@ def _office_type_from_table(text: str) -> str:
 
 def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     """表查不中（生造/罕见官名）时，CLI 后端在场则交 LLM 判 office_type（取 allowed_types）。
-    否则返回 ''。结果按官名缓存，避免重复调用。
-
-    只对 typed LLMUnavailable 降级空串；import/schema/TypeError 等代码故障原样上抛，
-    且失败不得写入缓存当「已分类」（#1902 AUXILIARY-LLM-CODE-FAULTS）。
-    """
+    否则返回 ''。结果按官名缓存，避免重复调用。"""
     from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
-    from ming_sim.exceptions import LLMUnavailable
-
     if not cli_backend_active(llm_config):
         return ""
     if text in _OFFICE_TYPE_LLM_CACHE:
@@ -666,14 +654,10 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
         "只输出一个类型词（不要任何别的字），必须严格取自：" + "、".join(allowed) + "。\n"
         "官名：" + text + "\n类型："
     )
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
-        cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
-        out = cand if cand in allowed_set else ""
-    except LLMUnavailable as exc:
-        # 明确模型/宿主不可用 → 空串，上游落「待铨」；不缓存，免瞬时故障锁死分类。
-        logger.warning("office_type LLM 不可用，退空串 text=%r：%s", text, exc)
-        return ""
+    out = ""
+    raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
+    cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
+    out = cand if cand in allowed_set else ""
     _OFFICE_TYPE_LLM_CACHE[text] = out
     return out
 
@@ -770,62 +754,21 @@ def payload_declares_escort(payload: object) -> bool:
         str(name or "").strip() for name in escortees
     )
 
-def _optional_payload_str_list(
-    payload: Mapping[str, object], key: str, *, surface: str,
-) -> list:
-    """Staged payload optional str-list: absent/None → []; present non-list/non-str loud.
 
-    Do not use ``payload.get(key) or []`` — False/{} wash into legal empty.
-    """
-    if key not in payload or payload.get(key) is None:
-        return []
-    raw = payload.get(key)
-    if not isinstance(raw, list):
-        raise ValueError(
-            f"{surface} 须为列表，得 {type(raw).__name__}"
-        )
-    return _require_str_list_members(raw, surface=surface)
+def _load_durable_json(raw: object, *, default: str = "{}") -> Any:
+    """Decode stored JSON (or consume an already decoded value); NULL uses the column default."""
+    if isinstance(raw, (dict, list)):
+        return raw
+    return json.loads(default if raw is None else raw)
 
 
-def _durable_payload_endorsements(
-    payload: Mapping[str, object], *, surface: str,
-) -> list:
-    """Durable payload endorsements 容器：absent/None → []; present 非列表/非对象响亮.
+def _load_durable_str_list(raw: object, *, surface: str = "stored name list") -> list[str]:
+    """Name/identity lists are semantic data, including secrecy exclusions; never coerce members."""
+    values = _load_durable_json(raw, default="[]")
+    if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+        raise TypeError(f"{surface} must be a list of strings, got {values!r}")
+    return values
 
-    成员字段契约不在此复制——统一走 GameDB._normalize_endorsement_fields
-    （#1897 单一权威 / 禁平行验证器）。
-    """
-    if "endorsements" not in payload or payload.get("endorsements") is None:
-        return []
-    raw = payload.get("endorsements")
-    if not isinstance(raw, list):
-        raise ValueError(
-            f"{surface} 须为列表，得 {type(raw).__name__}"
-        )
-    out: list = []
-    for idx, item in enumerate(raw):
-        if not isinstance(item, Mapping):
-            raise ValueError(
-                f"{surface}[{idx}] 须为对象，得 {type(item).__name__}"
-            )
-        out.append(dict(item))
-    return out
-
-
-def _require_durable_prose(raw: object, *, field: str, required: bool = True) -> str:
-    """Durable free-text field: already str, no str() coercion (#1897 E1).
-
-    Matches declaration-side ``_declared_prose`` contract for transport fields.
-    Required empty / non-str on already-staged payload is schema fault, not
-    domain invalid_shape rejection.
-    """
-    if not isinstance(raw, str):
-        raise ValueError(
-            f"持久字段 {field} 须为字符串，得 {type(raw).__name__}"
-        )
-    if required and not raw.strip():
-        raise ValueError(f"持久字段 {field} 不得为空")
-    return raw
 
 
 class GameDB:
@@ -2527,7 +2470,7 @@ class GameDB:
             return 0
         touched = 0
         for row in self.conn.execute("SELECT id, fiscal FROM regions").fetchall():
-            fiscal: dict = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+            fiscal: dict = _load_durable_json(row["fiscal"], default='{}')
             old = int(fiscal.get(field, 0) or 0)
             if old <= 0:
                 continue
@@ -2584,7 +2527,7 @@ class GameDB:
                     actions_by_region.get(region_id, []),
                     p_overrides_by_region.get(region_id),
                 )
-            except (ValueError, FiscalConservationError) as exc:
+            except (AttributeError, KeyError, TypeError, ValueError, FiscalConservationError) as exc:
                 outcomes.append(ProvinceFiscalTickOutcome(region_id, None, exc))
                 continue
             outcomes.append(ProvinceFiscalTickOutcome(region_id, result, None))
@@ -2599,8 +2542,6 @@ class GameDB:
     ):
         from .fiscal_tick import settle_tick
 
-        if not isinstance(fiscal, dict):  # fiscal JSON 非 dict（null/list）→ ValueError，否则 .get 抛 AttributeError 逃逸隔离（cmr R3 gemini）
-            raise ValueError(f"region {region_id!r} fiscal 非字典")
         settle = fiscal.get("settle")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
@@ -2616,8 +2557,12 @@ class GameDB:
         overrides = resolve_pay_order_overrides(
             self.get_fiscal_config(), region_id, self._current_settle_turn()
         )
+        tick_p = settle["p"]
+        if p_overrides or overrides is not None:
+            tick_p = {**tick_p}
+        if p_overrides:
+            tick_p.update(p_overrides)
         if overrides is not None:
-            tick_p = dict(tick_p)
             tick_p["due_order"] = list(overrides.due_order)
             tick_p["arrears_order"] = list(overrides.arrears_order)
             if overrides.haircut_bp:
@@ -3283,7 +3228,7 @@ class GameDB:
         ).fetchall()
         for row in rows:
             try:
-                fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+                fiscal = _load_durable_json(row["fiscal"], default='{}')
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"region {row['id']} fiscal JSON 非法，无法校验军饷容器守恒：{exc}") from exc
             settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
@@ -3312,7 +3257,7 @@ class GameDB:
             if region is None or str(region["controlled_by"] or "") != "ming":
                 return False
             # 持久财政 JSON / settle 坏态响亮上抛，不洗成「不完整」而跳过守恒（ADR 0005）。
-            fiscal = _load_durable_json_object(region["fiscal"], surface="regions.fiscal")
+            fiscal = _load_durable_json(region["fiscal"], default='{}')
             settle = fiscal.get("settle")
             if settle is None:
                 return False
@@ -3457,7 +3402,7 @@ class GameDB:
             raise DeclarationDataError(f"army {army_id} pay_source_region 未入库：{pay_source_region}")
         if str(row["controlled_by"] or "") != "ming":
             raise DeclarationDataError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
-        fiscal = self.parse_engine_payload_json(row["fiscal"], surface="regions.fiscal")
+        fiscal = self.parse_engine_payload_json(row["fiscal"])
         settle = fiscal.get("settle")
         if settle is not None and not isinstance(settle, dict):
             raise ValueError("持久地区财政 settle 须为对象")
@@ -3902,11 +3847,7 @@ class GameDB:
         """逐军省份额为军饷唯一真源；无对应军份额的省旁账不另立。"""
         rows = self._army_pay_source_rows_for_region(region_id)
         p = settle.get("p")
-        if not isinstance(p, dict):
-            raise ValueError("settle.p 非法")
         due_obj = p.get("Due")
-        if not isinstance(due_obj, dict):
-            raise ValueError("settle.p.Due 非法")
         st = settle.get("st")
         if not isinstance(st, dict):
             raise ValueError("settle.st 非法")
@@ -3921,13 +3862,10 @@ class GameDB:
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
         ).fetchall()
         for row in rows:
-            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            fiscal = _load_durable_json(row["fiscal"], default='{}')
+            settle = fiscal.get("settle")
             if settle is None:
                 continue
-            if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
-                    or not isinstance(settle.get("p"), dict):
-                raise ValueError(f"region {row['id']} settle st/p 持久坏态")
             pay_rows = self._derive_region_army_pay_due(str(row["id"]), settle)
             if pay_rows:
                 self._reconcile_region_army_pay_container(str(row["id"]), settle)
@@ -3944,13 +3882,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return
-        fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+        fiscal = _load_durable_json(row["fiscal"], default='{}')
         settle = fiscal.get("settle")
         if settle is None:
             return
-        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
-                or not isinstance(settle.get("p"), dict):
-            raise ValueError(f"region {region_id} settle st/p 持久坏态")
         self._derive_region_army_pay_due(region_id, settle)
         self.conn.execute(
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -5259,12 +5194,14 @@ class GameDB:
         value = str(origin_ref or "").strip()
         valid = value == "盘面自发"
         unauthorized_batch = False
+        reason = None
         if value.startswith("dossier:"):
             raw_id = value.split(":", 1)[1]
             try:
                 dossier_id = strict_sqlite_id(raw_id)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
                 valid = False
+                reason = str(exc)
             else:
                 if dossier_id <= 0:
                     valid = False
@@ -5281,14 +5218,16 @@ class GameDB:
             )
             try:
                 kind, affair_id = parse_origin_ref(value)
-            except (OverflowError, TypeError, ValueError):
+            except (OverflowError, TypeError, ValueError) as exc:
                 valid = False
+                reason = str(exc)
             else:
                 if kind == "affair" and affair_id is not None:
                     try:
                         self.affairs.get(int(affair_id))
-                    except KeyError:
+                    except KeyError as exc:
                         valid = False
+                        reason = str(exc)
                     else:
                         authorized = getattr(
                             self, "_batch_authorized_open_affair_ids", None,
@@ -5363,8 +5302,8 @@ class GameDB:
                     if isinstance(value, bool) or isinstance(value, float):
                         raise ValueError("非整数 delta")
                     delta = int(value)
-                except (TypeError, ValueError):
-                    rejections.append(RejectedItem(item={"power_id": power_id, "field": str(raw_field), "value": value}, reason=f"power_updates '{raw_field}' 值非整数：{value!r}", category="invalid_enum", source=source))
+                except (TypeError, ValueError) as exc:
+                    rejections.append(RejectedItem(item={"power_id": power_id, "field": str(raw_field), "value": value}, reason=str(exc), category="invalid_enum", source=source))
                     continue
                 new_value = max(0, min(100, int(old_value) + delta))
                 actual_delta = new_value - int(old_value)
@@ -5620,8 +5559,8 @@ class GameDB:
                         if isinstance(value, bool) or isinstance(value, float):
                             raise ValueError("非整数 delta")
                         cannon_delta = int(value)
-                    except (TypeError, ValueError):
-                        rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=f"region_delta 'cannon'（地区 '{region_id}'）值非整数：{value!r}", category="invalid_enum", source=source))
+                    except (TypeError, ValueError) as exc:
+                        rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=str(exc), category="invalid_enum", source=source))
                         continue
                     old_value = int(row["cannon"])
                     if cannon_delta != 0 and require_origin:
@@ -5700,15 +5639,15 @@ class GameDB:
                         if isinstance(value, bool) or isinstance(value, float):
                             raise ValueError("非整数 delta")
                         value = int(value)
-                    except (TypeError, ValueError):
-                        rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=f"region_delta '{raw_field}'（地区 '{region_id}'）值非整数：{value!r}", category="invalid_enum", source=source))
+                    except (TypeError, ValueError) as exc:
+                        rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=str(exc), category="invalid_enum", source=source))
                         continue
 
                 # ── fiscal JSON 子字段（corruption 等）────────────────────────
                 if field in FISCAL_SCORE_FIELDS:
-                    fiscal: dict = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+                    fiscal: dict = _load_durable_json(row["fiscal"], default='{}')
                     old_value = fiscal.get(field, 50)
-                    delta = int(value)
+                    delta = value
                     # 帝国修正：该地区该字段若有 active 修正符，先放大/缩小 delta
                     net_pct = int(((self.legacy_modifiers(state).get("regions") or {})
                                    .get(region_id) or {}).get(field, 0) or 0)
@@ -5749,7 +5688,7 @@ class GameDB:
                 # ── 直接列字段 ────────────────────────────────────────────────
                 old_value = row[field]
                 if field in REGION_SCORE_FIELDS:
-                    delta = int(value)
+                    delta = value
                     # 遗产百分比修正：该地区该字段若有 active 遗产修正符，先放大/缩小 delta
                     net_pct = int(((self.legacy_modifiers(state).get("regions") or {})
                                    .get(region_id) or {}).get(field, 0) or 0)
@@ -5762,7 +5701,7 @@ class GameDB:
                     stored_new: object = new_value
                     log_delta: int | None = actual_delta
                 elif field in REGION_QUANTITY_FIELDS:
-                    delta = int(value)
+                    delta = value
                     new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
@@ -5865,7 +5804,7 @@ class GameDB:
             if raw_field == "fiscal":
                 if not isinstance(value, dict):
                     continue
-                fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+                fiscal = _load_durable_json(row["fiscal"])
                 for sub_field, sub_val in value.items():
                     if sub_field not in FISCAL_SCORE_FIELDS:
                         continue
@@ -6152,8 +6091,8 @@ class GameDB:
                         if isinstance(value, bool) or isinstance(value, float):
                             raise ValueError("非整数 delta")
                         value = int(value)
-                    except (TypeError, ValueError):
-                        rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason=f"army_delta '{raw_field}' 值非整数：{value!r}", category="invalid_enum", source=source))
+                    except (TypeError, ValueError) as exc:
+                        rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason=str(exc), category="invalid_enum", source=source))
                         continue
                 current_row = self.conn.execute(
                     "SELECT * FROM armies WHERE id = ?", (army_id,)
@@ -6168,7 +6107,7 @@ class GameDB:
                     continue
                 old_value = row[field]
                 if field == "arrears":
-                    delta = int(value)
+                    delta = value
                     if delta < 0:
                         rejections.append(RejectedItem(item={"army_id": army_id, "field": field, "value": value}, reason="army_delta.arrears 不接受负值核销；真补饷须走 economy_moves", category="invalid_enum", source=source))
                         continue
@@ -6233,7 +6172,7 @@ class GameDB:
                 elif field == "cannon_equipment":
                     # 随军大炮=红夷级重炮门数(非 0-100 饱和度)：野战带不动几门，clamp 0-12。
                     # 城防炮(城头红夷炮)另挂 region.cannon(上限 city_level×8)；佛郎机轻炮归 firearm_equipment。
-                    delta = int(value)
+                    delta = value
                     new_value = max(0, min(12, int(old_value) + delta))
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
@@ -6256,7 +6195,7 @@ class GameDB:
                                        .get(army_id) or {}).get(field, 0) or 0)
                         # #319：latched loyalty 以 post-modifier 实际方向为准（与 soft-adjust
                         # 同序先套 legacy pct）；legacy 翻负 / 净合计非正则静默 no-op。
-                        effect_delta = int(net_delta)
+                        effect_delta = net_delta
                         if net_pct:
                             effect_delta = self.apply_legacy_pct(effect_delta, net_pct)
                         if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
@@ -6276,7 +6215,7 @@ class GameDB:
                         stored_new = new_value
                         log_delta = actual_delta
                     else:
-                        delta = int(value)
+                        delta = value
                         # 遗产百分比修正：该军该字段若有 active 遗产修正符，先放大/缩小 delta
                         net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
                                        .get(army_id) or {}).get(field, 0) or 0)
@@ -6291,7 +6230,7 @@ class GameDB:
                         stored_new = new_value
                         log_delta = actual_delta
                 elif field == "manpower":
-                    delta = int(value)
+                    delta = value
                     new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
                     will_write_off_arrears = (
@@ -6439,7 +6378,6 @@ class GameDB:
                 # S6;issue 路历史即静默,容忍不升级——issue_strict=False,cmr S2 r1）。
                 rejections.append(RejectedItem(item={"raw_value": raw}, reason=f"new_armies 含非 dict 项：{raw!r}", category="invalid_enum", source=source))
                 continue
-            item = {POWER_FIELD_ALIASES.get(k, k) if False else k: v for k, v in raw.items()}
             # 规范键：复用 ARMY_FIELD_ALIASES（兼容中文）
             from ming_sim.constants import ARMY_FIELD_ALIASES as _AA
             item = {_AA.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
@@ -6469,9 +6407,9 @@ class GameDB:
                     if isinstance(manpower, (bool, float)):
                         raise ValueError("非整数")
                     delta = int(manpower)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as exc:
                     # ADR 0008 决定 1:扩军增量非整数 = LLM 脏数据,逐项拒收留痕。
-                    rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' manpower 非整数：{manpower!r}", category="invalid_enum", source=source))
+                    rejections.append(RejectedItem(item=raw, reason=str(exc), category="invalid_enum", source=source))
                     continue
                 if delta == 0:
                     continue
@@ -6508,34 +6446,33 @@ class GameDB:
             # 用 null 表「无」,sanitize_delta_shape 亦容忍 null 叶）；其余非整拒该项。
             # 守门集从字段表派生（cmr S2 r2,2/2:硬列漏 equipment/mobility/loyalty）
             # ——ARMY_SCORE_FIELDS 全量已含 arrears;字段表变守门自动跟。
-            _dirty_field = None
+            _dirty_reason = None
             for _f in ARMY_SCORE_FIELDS:
                 _v = item.get(_f)
                 if _f in item and _v is not None:
                     if isinstance(_v, (bool, float)):
-                        _dirty_field = (_f, _v)
+                        _dirty_reason = (
+                            f"new_armies '{aid}' 可选字段 '{_f}' 值非整数："
+                            f"{_v!r}（在场即须合法，缺省才走默认）"
+                        )
                         break
                     try:
-                        int(_v)
-                    except (TypeError, ValueError):
-                        _dirty_field = (_f, _v)
+                        item[_f] = int(_v)
+                    except (TypeError, ValueError) as exc:
+                        _dirty_reason = str(exc)
                         break
-            if _dirty_field is not None:
-                rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 可选字段 '{_dirty_field[0]}' 值非整数："
-                               f"{_dirty_field[1]!r}（在场即须合法，缺省才走默认）", category="invalid_enum", source=source))
+            if _dirty_reason is not None:
+                rejections.append(RejectedItem(item=raw, reason=_dirty_reason, category="invalid_enum", source=source))
                 continue
             # 上方已拒在场脏可选字段；此处只读缺省/已验整数，不再 except→默认洗白。
             def _score(field: str, default: int = 50) -> int:
-                raw = item.get(field, default)
-                if raw is None:
-                    raw = default
-                return max(0, min(100, int(raw)))
+                return max(0, min(100, item.get(field, default)))
             def _cannon() -> int:
-                raw = item.get("cannon_equipment", 0)
-                return max(0, min(12, int(raw or 0)))
+                # 随军大炮=门数 clamp 0-12；LLM 给非 int(如"几门")兜底 0，不让 int() 抛崩建军（PR codex）
+                return max(0, min(12, item.get("cannon_equipment", 0) or 0))
             def _arrears_init() -> int:
-                raw = item.get("arrears", 0)
-                return max(0, int(raw or 0))
+                # arrears 单位=累计欠饷万两，无上限；新军默认 0
+                return max(0, item.get("arrears", 0))
             initial_arrears = _arrears_init()
             if initial_arrears > 0:
                 rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 新军初始欠饷必须为 0；"
@@ -6938,16 +6875,7 @@ class GameDB:
                 sat_d = int(val.get("satisfaction") or 0)
                 lev_d = int(val.get("leverage") or 0)
             else:
-                try:
-                    sat_d = int(val)  # type: ignore[arg-type]
-                except (TypeError, ValueError):
-                    rejected.append(RejectedItem(
-                        item={faction: val},
-                        reason=f"faction_delta「{faction}」增量非整数：{val!r}",
-                        category="invalid_enum",
-                        source=source,
-                    ))
-                    continue
+                sat_d = int(val)  # type: ignore[arg-type]
                 lev_d = 0
             if sat_d == 0 and lev_d == 0:
                 continue
@@ -7048,9 +6976,7 @@ class GameDB:
     @staticmethod
     def _parse_highlights_json(raw: Any) -> List[str]:
         # 持久 highlights 字符串数组：腐坏响亮，不 catch-to-[]（#1897 E1）。
-        return _load_durable_str_list(
-            raw, surface="chat_messages.highlights_json",
-        )
+        return _load_durable_str_list(raw)
 
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
@@ -7959,9 +7885,7 @@ class GameDB:
                     self._discard_deleted_directive_forecast(target_id)
                 self._delete_row_in_tx(table, target_id)
             elif strategy in {"restore_row", "restore_deleted_row"}:
-                before_row = self.parse_engine_payload_json(
-                    item["before_json"], surface="chat_turn_rollback_items.before_json",
-                )
+                before_row = _load_durable_json(item["before_json"])
                 if table == "pending_actions" and before_row.get("kind") == "directive":
                     pending_id = int(before_row["id"])
                     restored_directive_ids.add(pending_id)
@@ -8068,10 +7992,7 @@ class GameDB:
             """
             ids: List[int] = []
             for raw in pa_ids:
-                try:
-                    pid = int(raw)  # type: ignore[arg-type]
-                except (TypeError, ValueError):
-                    continue
+                pid = int(raw)  # type: ignore[arg-type]
                 if pid > 0:
                     ids.append(pid)
             if not ids:
@@ -8098,12 +8019,8 @@ class GameDB:
         for item in items:
             if str(item["target_table"]) != "pending_actions":
                 continue
-            after_data = self.parse_engine_payload_json(
-                item["after_json"], surface="chat_turn_rollback_items.after_json",
-            )
-            before_data = self.parse_engine_payload_json(
-                item["before_json"], surface="chat_turn_rollback_items.before_json",
-            )
+            after_data = _load_durable_json(item["after_json"])
+            before_data = self.parse_engine_payload_json(item["before_json"])
             pa_id = after_data.get("id")
             if pa_id is None:
                 pa_id = before_data.get("id")
@@ -8304,9 +8221,9 @@ class GameDB:
         if row is None:
             return None
         # 结局 timeline 持久列表：腐坏响亮，不回空（#1897 E1）。
-        timeline = _load_durable_json_list(
-            row["timeline"], surface="ending_summary.timeline",
-        )
+        timeline = _load_durable_json(row["timeline"], default='[]')
+        if not isinstance(timeline, list):
+            raise TypeError(f"ending_summary.timeline must be a list, got {timeline!r}")
         return {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
@@ -8659,11 +8576,8 @@ class GameDB:
             if len(parts) != 3:
                 continue
             kind, turn_s, idx_s = parts
-            try:
-                turn_i, idx_i = int(turn_s), int(idx_s)
-            except (TypeError, ValueError):
-                continue
-            if kind not in {"decision", "rescript_draft"}:
+            turn_i, idx_i = int(turn_s), int(idx_s)
+            if kind not in {"rescript_draft", "decision"}:
                 continue
             r = self.conn.execute(
                 """
@@ -8682,13 +8596,8 @@ class GameDB:
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
     def _parse_origin_chat_message_id(
         self, payload: Optional[Mapping[str, object]],
-        *, durable: bool = False,
     ) -> Optional[int]:
-        """Parse pending/API ``origin_chat_message_id`` pin.
-
-        durable=False：API/声明侧宽松——坏值视作未钉（兼容旧调用）。
-        durable=True：已持久载荷 present 坏类型/非正整响亮，不得洗成无源（#1897 E1）。
-        """
+        """Read a durable origin pin without washing malformed values into absence."""
         if not payload:
             return None
         if "origin_chat_message_id" not in payload:
@@ -8696,21 +8605,11 @@ class GameDB:
         raw = payload.get("origin_chat_message_id")
         if raw is None:
             return None
-        if durable:
-            if isinstance(raw, bool) or not isinstance(raw, int):
-                raise ValueError(
-                    f"origin_chat_message_id 须为正整，得 {type(raw).__name__}"
-                )
-            if raw <= 0:
-                raise ValueError("origin_chat_message_id 须为正整")
-            return raw
-        try:
-            mid = int(raw)
-        except (TypeError, ValueError):
-            return None
-        # 在场损坏上抛；禁洗成缺席 None。
-        mid = int(raw)
-        return mid if mid > 0 else None
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            raise ValueError(f"origin_chat_message_id 须为正整，得 {type(raw).__name__}")
+        if raw <= 0:
+            raise ValueError("origin_chat_message_id 须为正整")
+        return raw
 
     def _resolve_secret_oral_pins(
         self,
@@ -8873,8 +8772,8 @@ class GameDB:
                     )
                 except ValueError as exc:
                     raise DecreeMaterializationValidationError(str(exc)) from exc
-                normalized["amount"] = int(shaped["amount"])
-                normalized["account"] = str(shaped["account"])
+                normalized["amount"] = shaped["amount"]
+                normalized["account"] = shaped["account"]
                 surface = str(
                     normalized.get("execution_surface") or "in_transit"
                 ).strip()
@@ -8955,9 +8854,7 @@ class GameDB:
             try:
                 aid = strict_int(raw_aid, accept_numeric_strings=True)
             except (TypeError, ValueError) as exc:
-                raise DecreeMaterializationValidationError(
-                    f"收权旨意 authority_id 非法：{raw_aid!r}"
-                ) from exc
+                raise DecreeMaterializationValidationError(str(exc)) from exc
             if aid <= 0:
                 raise DecreeMaterializationValidationError("收权旨意缺少 authority_id")
             normalized["authority_id"] = aid
@@ -8977,9 +8874,7 @@ class GameDB:
                 try:
                     grant_did = strict_int(raw_grant, accept_numeric_strings=True)
                 except (TypeError, ValueError) as exc:
-                    raise DecreeMaterializationValidationError(
-                        f"收权旨意 grant_dossier_id 非法：{raw_grant!r}"
-                    ) from exc
+                    raise DecreeMaterializationValidationError(str(exc)) from exc
                 if grant_did > 0:
                     normalized["grant_dossier_id"] = grant_did
             # 身份真源在 authority_records；禁保留并行 authorization_id(s)
@@ -9004,10 +8899,7 @@ class GameDB:
                         raw_revoke_iid, accept_numeric_strings=True,
                     )
             except (TypeError, ValueError) as exc:
-                raise DecreeMaterializationValidationError(
-                    f"撤回成命目标标识非法：dossier={normalized.get('revoke_target_dossier_id')!r} "
-                    f"issue={normalized.get('revoke_target_issue_id')!r}"
-                ) from exc
+                raise DecreeMaterializationValidationError(str(exc)) from exc
             if revoke_did <= 0 and revoke_iid <= 0:
                 kind = str(normalized.get("target_kind") or "").strip()
                 raw = raw_target
@@ -9092,10 +8984,7 @@ class GameDB:
                     else strict_int(raw_deadline, accept_numeric_strings=False)
                 )
             except (TypeError, ValueError) as exc:
-                raise DecreeMaterializationValidationError(
-                    f"军令期限非法：due_turn={raw_due_turn!r} "
-                    f"deadline_months={raw_deadline!r}"
-                ) from exc
+                raise DecreeMaterializationValidationError(str(exc)) from exc
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
             station = str(normalized.get("station") or "")  # Free prose place name F21
@@ -9147,10 +9036,7 @@ class GameDB:
                     if months > 0:
                         end_turn = int(current_turn) + months
             except (TypeError, ValueError) as exc:
-                raise DecreeMaterializationValidationError(
-                    f"下议期限非法：end_turn={raw_end!r} "
-                    f"deadline_months={normalized.get('deadline_months')!r}"
-                ) from exc
+                raise DecreeMaterializationValidationError(str(exc)) from exc
             if end_turn <= int(current_turn or 0):
                 raise DecreeMaterializationValidationError("下议缺少有效未来 end_turn/deadline_months")
             normalized["end_turn"] = end_turn
@@ -9252,9 +9138,7 @@ class GameDB:
             out["secret_order_id"] = int(out["secret_order_id"])
         out["rescript_pending"] = bool(out.get("rescript_pending"))
         try:
-            payload = _load_durable_json_object(
-                out.get("payload_json"), surface=f"案卷#{out['id']} payload_json",
-            )
+            payload = _load_durable_json(out.get("payload_json"))
         except ValueError as exc:
             raise ValueError(f"案卷#{out['id']} payload_json 无效：{exc}") from exc
         out["payload"] = payload
@@ -9263,14 +9147,14 @@ class GameDB:
                 payload["mode"] if "mode" in payload else "ordinary"
             )
         except DeclarationDataError as exc:
-            raise ValueError(f"案卷#{out['id']} 持久化模式无效") from exc
+            raise ValueError(str(exc)) from exc
         try:
-            stigma = _load_durable_json_list(
-                out.get("stigma_json"), surface=f"案卷#{out['id']} stigma_json",
-            )
+            stigma = _load_durable_json(out.get("stigma_json"), default='[]')
         except ValueError as exc:
             raise ValueError(f"案卷#{out['id']} stigma_json 无效：{exc}") from exc
         out["stigma"] = stigma
+        if not isinstance(stigma, list):
+            raise TypeError(f"decree_dossiers#{out['id']}.stigma_json must be a list, got {stigma!r}")
         # 与 project_execution_liability_parties / participant_roster_names 共权威（#1897 E1）。
         from ming_sim.participant_roster import decode_durable_participant_roster
         try:
@@ -9282,10 +9166,7 @@ class GameDB:
                 f"案卷#{out['id']} participant_roster 无效：{exc}"
             ) from exc
         try:
-            extension = _load_durable_json_object(
-                out.get("extension_json"),
-                surface=f"案卷#{out['id']} extension_json",
-            )
+            extension = _load_durable_json(out.get("extension_json"), default='{}')
         except ValueError as exc:
             raise ValueError(f"案卷#{out['id']} extension_json 无效：{exc}") from exc
         signal = extension.get("execution_signal")
@@ -9356,12 +9237,14 @@ class GameDB:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("密令奏报 id/turn 须为整数") from exc
-        band = _require_durable_prose(
-            item.get("progress_band"), field="progress_band",
-        )
-        text = _require_durable_prose(
-            item.get("memorial_text"), field="memorial_text",
-        )
+        band = item.get("progress_band")
+        text = item.get("memorial_text")
+        for field, value in (("progress_band", band), ("memorial_text", text)):
+            if not isinstance(value, str) or not value.strip():
+                raise TypeError(
+                    f"dossier#{dossier_id}.progress#{report_id}.{field} "
+                    f"must be nonempty text, got {value!r}"
+                )
         dossier_raw = item.get("dossier_id", dossier_id)
         try:
             dossier_val = strict_int(
@@ -9398,16 +9281,12 @@ class GameDB:
         if row is None:
             raise ValueError("密令不存在")
         surface = f"secret_orders#{int(order_id)} dossier_progress_json"
-        raw_reports = _load_durable_json_list(
-            row["dossier_progress_json"], surface=surface,
-        )
+        raw_reports = _load_durable_json(row["dossier_progress_json"], default='[]')
+        if not isinstance(raw_reports, list):
+            raise TypeError(f"{surface} must be a list, got {raw_reports!r}")
         # 读写共吃 _coerce_dossier_progress_row，坏 memorial_text 不得 str() 洗（#1897 E1）。
         reports: List[Dict[str, object]] = []
-        for index, item in enumerate(raw_reports):
-            if not isinstance(item, Mapping):
-                raise ValueError(
-                    f"{surface}[{index}] 须为对象，得 {type(item).__name__}"
-                )
+        for item in raw_reports:
             reports.append(
                 self._coerce_dossier_progress_row(
                     item, dossier_id=int(dossier_id),
@@ -9513,12 +9392,8 @@ class GameDB:
         """
         dossier = self.get_decree_dossier(int(dossier_id))
         # 写口正文：禁 str()/or 洗白；空陈词与坏类型按既有合同区分（#1897 J820-E1）。
-        raw_band = _require_durable_prose(
-            progress_band, field="progress_band", required=False,
-        )
-        text = _require_durable_prose(
-            memorial_text, field="memorial_text", required=False,
-        )
+        raw_band = progress_band
+        text = memorial_text
         if dossier is None:
             raise ValueError("案卷不存在")
         if not raw_band.strip() or not text.strip():
@@ -9558,15 +9433,11 @@ class GameDB:
                 f"secret_orders#{int(dossier['secret_order_id'])} "
                 f"dossier_progress_json"
             )
-            reports = _load_durable_json_list(
-                row["dossier_progress_json"], surface=surface,
-            )
+            reports = _load_durable_json(row["dossier_progress_json"], default='[]')
+            if not isinstance(reports, list):
+                raise TypeError(f"{surface} must be a list, got {reports!r}")
             out_rows: List[Dict[str, object]] = []
-            for index, item in enumerate(reports):
-                if not isinstance(item, Mapping):
-                    raise ValueError(
-                        f"{surface}[{index}] 须为对象，得 {type(item).__name__}"
-                    )
+            for item in reports:
                 out_rows.append(
                     self._coerce_dossier_progress_row(
                         item, dossier_id=int(dossier_id),
@@ -9697,8 +9568,6 @@ class GameDB:
             raise DeclarationDataError("合资格长差案卷缺少本月密奏")
         supplied: Dict[int, Dict[str, object]] = {}
         for item in generated:
-            if not isinstance(item, dict):
-                raise DeclarationDataError("长差月报格式无效")
             try:
                 dossier_id = strict_int(item.get("dossier_id", 0))
                 if dossier_id <= 0:
@@ -9706,12 +9575,8 @@ class GameDB:
             except (TypeError, ValueError) as exc:
                 raise ValueError("长差月报案卷编号无效") from exc
             # 月报正文进入写口前禁 str()/or 洗白（#1897 J820-E1）。
-            band = _require_durable_prose(
-                item.get("progress_band"), field="progress_band",
-            )
-            text = _require_durable_prose(
-                item.get("memorial_text"), field="memorial_text",
-            )
+            band = item.get("progress_band")
+            text = item.get("memorial_text")
             if dossier_id not in candidates or dossier_id in supplied:
                 raise ValueError("长差月报存在未知、重复或空白条目")
             supplied[dossier_id] = {**item, "progress_band": band, "memorial_text": text}
@@ -9737,7 +9602,6 @@ class GameDB:
         for dossier_id, item in supplied.items():
             # 派系同／敌只留在监督史。origin 只承接本条密奏里声明的行动。
             origin = self._monthly_report_origin(item)
-            # supply 已校验正文；写口再吃 _require_durable_prose，禁二次 str 洗（#1897 J820-E1）。
             self.record_dossier_progress(
                 dossier_id, int(turn), item["progress_band"], item["memorial_text"],
                 origin=origin,
@@ -9761,10 +9625,7 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False
-        payload = self.parse_engine_payload_json(
-            row["payload_json"],
-            surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
-        )
+        payload = self.parse_engine_payload_json(row["payload_json"])
         return payload_declares_escort(payload)
 
     # #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。
@@ -10281,10 +10142,7 @@ class GameDB:
         out: List[Dict[str, object]] = []
         for row in rows:
             den_id = int(row["id"])
-            payload = self.parse_engine_payload_json(
-                row["payload_json"],
-                surface=f"faction_denunciations#{den_id}.payload_json",
-            )
+            payload = self.parse_engine_payload_json(row["payload_json"])
             out.append({
                 "id": den_id,
                 "turn": int(row["turn"]),
@@ -10308,9 +10166,10 @@ class GameDB:
 
     def _memorial_read_keys(self) -> Set[str]:
         raw = self.kv_get(self.MEMORIAL_READS_KV_KEY)
-        if not raw:
+        if raw is None:
             return set()
-        return set(loads_persistent_name_list(raw, surface="kv_store.memorial_reads"))
+        data = _load_durable_str_list(raw, surface="kv_store.memorial_reads")
+        return {item for item in data if item.strip()}
 
     def mark_memorials_read(self, keys: Iterable[str]) -> None:
         """标记奏报已读；键=progress:{id}|denunciation:{id}，随存档（kv_store）持久化。"""
@@ -10588,14 +10447,11 @@ class GameDB:
             )
             if not accuser or not memorial.strip():
                 continue
-            try:
-                dossier_id = int(
-                    raw.get("target_dossier_id")
-                    if raw.get("target_dossier_id") is not None
-                    else raw.get("dossier_id") or 0
-                )
-            except (TypeError, ValueError):
-                continue
+            dossier_id = int(
+                raw.get("target_dossier_id")
+                if raw.get("target_dossier_id") is not None
+                else raw.get("dossier_id") or 0
+            )
             if dossier_id <= 0:
                 continue
 
@@ -10636,10 +10492,7 @@ class GameDB:
                 (accuser, dossier_id, origin),
             ).fetchone()
             if prior_row is not None:
-                prev_payload = self.parse_engine_payload_json(
-                    prior_row["payload_json"],
-                    surface="faction_denunciations.payload_json",
-                )
+                prev_payload = self.parse_engine_payload_json(prior_row["payload_json"])
                 if not denunciation_case_upgraded(prev_payload, fork_state):
                     continue
 
@@ -11121,13 +10974,13 @@ class GameDB:
             and int(declaration["affair_id"]) not in frozen
         ):
             raise UnauthorizedAffairOriginRef()
-        affair_id = int(self.affairs.resolve_declaration(
+        affair_id = self.affairs.resolve_declaration(
             declaration,
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),
             allowed=ATTACH_BIRTH,
-        ))
+        )
         working = getattr(self, "_batch_authorized_open_affair_ids", None)
         if declaration.get("attach") == "new" and working is not None:
             working.add(affair_id)
@@ -11517,7 +11370,7 @@ class GameDB:
             raise DecreeMaterializationValidationError(
                 "御笔标记须为布尔", failed_fields=("imperial",), category="invalid_item",
             )
-        cid = int(source_chat_turn_id)
+        cid = source_chat_turn_id
         dkey = decision_key.strip()
         kind, person = form.strip(), endorser_id.strip()
         is_imperial = imperial
@@ -11658,11 +11511,9 @@ class GameDB:
         did = int(dossier_id)
         if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
             raise KeyError(f"案卷不存在：{did}")
-        if not isinstance(payload, Mapping):
-            raise ValueError("案卷 payload 须为对象")
         self.conn.execute(
             "UPDATE decree_dossiers SET payload_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (json.dumps(dict(payload), ensure_ascii=False), did),
+            (json.dumps({**payload}, ensure_ascii=False), did),
         )
         if commit:
             self._commit_dossier_write(True, owns_transaction=owns_transaction)
@@ -11690,8 +11541,6 @@ class GameDB:
         if dossier is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         existing_raw = dossier.get("participant_roster") or []
-        if not isinstance(existing_raw, list):
-            raise ValueError(f"案卷#{dossier_id} participant_roster 非列表")
         existing = self._normalize_participant_roster(
             existing_raw, strict_structured=True, as_durable=True,
         )
@@ -11727,10 +11576,7 @@ class GameDB:
             raw_keys = (
                 raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None
             )
-            parsed_keys = _load_durable_str_list(
-                raw_keys,
-                surface=f"decree_dossiers#{int(dossier_id)}.office_archive_keys",
-            )
+            parsed_keys = _load_durable_str_list(raw_keys)
             archive_keys = set(parsed_keys)
             if str(dossier.get("action_type") or "") != "secret_order":
                 for item in added:
@@ -12000,10 +11846,7 @@ class GameDB:
                     or bool(row["was_force_promulgated"])
                     or int(row["id"]) in known_dossier_ids
                     or reader_archive_key in set(
-                        _load_durable_str_list(
-                            row["office_archive_keys"],
-                            surface=f"decree_dossiers#{int(row['id'])}.office_archive_keys",
-                        )
+                        _load_durable_str_list(row['office_archive_keys'])
                     )
                 )
             ) or (
@@ -12043,12 +11886,9 @@ class GameDB:
         normalized: List[Tuple[int, str, str]] = []
         rejection: Optional[Tuple[int, str, str, str]] = None
         for item in links:
-            try:
-                target_id = strict_sqlite_id(
-                    item.get("target_dossier_id"), accept_numeric_strings=False
-                )
-            except (AttributeError, ValueError):
-                target_id = 0
+            target_id = strict_sqlite_id(
+                item.get("target_dossier_id"), accept_numeric_strings=False
+            )
             relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
             # LLM 自由文本零删改（CLAUDE.md P6 / ADR 0142）：空白只在副本上判定，
             # 落库与拒收留痕一律存原文，不 strip。
@@ -12112,14 +11952,14 @@ class GameDB:
         if supplied.startswith("dossier:"):
             try:
                 dossier_id = int(supplied.split(":", 1)[1])
-            except (TypeError, ValueError):
-                raise KeyError("commitment origin_ref 案卷 id 非法")
+            except (TypeError, ValueError) as exc:
+                raise KeyError(str(exc)) from exc
             # 缺行/越界 id=模型坏引用→KeyError 逐项拒（同 effect_origin_rejection
             # 捕 OverflowError）；_dossier_row 解码故障 RuntimeError 穿透
             try:
                 dossier = self.get_decree_dossier(dossier_id)
             except OverflowError as exc:
-                raise KeyError("commitment origin_ref 案卷 id 非法") from exc
+                raise KeyError(str(exc)) from exc
             if dossier is None:
                 raise KeyError("commitment origin_ref 指向不存在案卷")
             return supplied
@@ -12128,12 +11968,12 @@ class GameDB:
         if is_secret_order_origin(supplied):
             try:
                 secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):])
-            except (TypeError, ValueError):
-                raise KeyError("commitment origin_ref 密令 id 非法")
+            except (TypeError, ValueError) as exc:
+                raise KeyError(str(exc)) from exc
             try:
                 dossier = self.get_dossier_for_secret_order(secret_order_id)
             except OverflowError as exc:
-                raise KeyError("commitment origin_ref 密令 id 非法") from exc
+                raise KeyError(str(exc)) from exc
             if dossier is None:
                 raise KeyError("commitment origin_ref 指向无案卷密令")
             return f"dossier:{int(dossier['id'])}"
@@ -12185,18 +12025,15 @@ class GameDB:
             item["id"] = int(item["id"])
             item["dossier_id"] = int(item["dossier_id"])
             item["turn"] = int(item["turn"])
-            item["primary_opponents"] = _load_durable_json_list(
-                item.pop("primary_opponents_json"),
-                surface="decree_dossier_decisions.primary_opponents_json",
-            )
-            item["criteria_snapshot"] = self.parse_engine_payload_json(
-                item.pop("criteria_snapshot_json"),
-                surface="decree_dossier_decisions.criteria_snapshot_json",
-            )
-            item["affected_parties"] = _load_durable_json_list(
-                item.pop("affected_parties_json"),
-                surface="decree_dossier_decisions.affected_parties_json",
-            )
+            item["primary_opponents"] = _load_durable_json(item.pop("primary_opponents_json"), default='[]')
+            item["criteria_snapshot"] = self.parse_engine_payload_json(item.pop("criteria_snapshot_json"))
+            item["affected_parties"] = _load_durable_json(item.pop("affected_parties_json"), default='[]')
+            for field in ("primary_opponents", "affected_parties"):
+                if not isinstance(item[field], list):
+                    raise TypeError(
+                        f"decree_dossier_decisions#{item['id']}.{field}_json "
+                        f"must be a list, got {item[field]!r}"
+                    )
             item["midzhi_unpromulgatable"] = bool(
                 item["midzhi_unpromulgatable"]
             )
@@ -12292,10 +12129,7 @@ class GameDB:
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            payload = self.parse_engine_payload_json(
-                row["payload_json"],
-                surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
-            )
+            payload = self.parse_engine_payload_json(row["payload_json"])
             if self._dossier_has_execution_surface(row["action_type"], payload):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
@@ -12466,7 +12300,9 @@ class GameDB:
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
         # 执行注正文：禁 str()/or 洗白（#1897 J820-E1）。
-        note_text = _require_durable_prose(note, field="execution_note", required=False)
+        note_text = note
+        if not isinstance(note_text, str):
+            raise TypeError(f"decree_dossiers#{dossier_id}.execution_note must be text, got {note_text!r}")
         self.conn.execute(
             """
             UPDATE decree_dossiers
@@ -12622,9 +12458,7 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise ValueError("强颁缺少当前回合 Judge affected_parties")
-        value = _load_durable_json_list(
-            row["affected_parties_json"], surface="decree_dossier_decisions.affected_parties_json",
-        )
+        value = _load_durable_json(row["affected_parties_json"], default='[]')
         if not value:
             raise ValueError("强颁当前回合 Judge affected_parties 必须为非空 typed 清单")
         validate_affected_parties(
@@ -12923,10 +12757,8 @@ class GameDB:
         fields = row if isinstance(row, Mapping) else {}
 
         def _id(key: str) -> int:
-            try:
-                return strict_int(source.get(key), accept_numeric_strings=True)
-            except (TypeError, ValueError):
-                return 0
+            raw = source.get(key)
+            return 0 if raw in (None, "") else strict_int(raw, accept_numeric_strings=True)
 
         target_dossier_id = _id("revoke_target_dossier_id")
         target_issue_id = _id("revoke_target_issue_id")
@@ -12942,10 +12774,7 @@ class GameDB:
                 kind, raw = "dossier", raw.split(":", 1)[1].strip()
             elif raw.startswith("issue:"):
                 kind, raw = "issue", raw.split(":", 1)[1].strip()
-            try:
-                tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
-            except (TypeError, ValueError):
-                tid = 0
+            tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
             if tid <= 0:
                 raise ValueError("撤回成命案卷缺少目标")
             if kind == "issue":
@@ -13173,9 +13002,7 @@ class GameDB:
                 failed_fields=("status",), category="invalid_item",
             )
         # 已持久候选解码响亮，不吞成空背书底（#1897 E1）。
-        payload = self.parse_engine_payload_json(
-            row["payload_json"], surface="pending_actions.payload_json",
-        )
+        payload = self.parse_engine_payload_json(row["payload_json"])
         # 新入：字段权威 + 暂存引用边界（尚无 dossier）。
         from ming_sim.action_materialize import DecreeMaterializationValidationError
         source_cid, form, endorser_id, imperial = self._validate_pending_endorsement_entry(
@@ -13185,9 +13012,11 @@ class GameDB:
             source_chat_turn_id=entry.get("source_chat_turn_id", 0),
         )
         # 已持久条目：容器 + 同一字段权威；契约腐坏升格 ValueError（#1897 E1）。
-        items = _durable_payload_endorsements(
-            payload, surface=f"pending_actions#{aid}.endorsements",
-        )
+        items = payload.get("endorsements")
+        if items is None:
+            items = []
+        if not isinstance(items, list):
+            raise TypeError(f"pending_actions#{aid}.endorsements must be a list, got {items!r}")
         key = (form, endorser_id, imperial, source_cid)
         kept = []
         for idx, raw in enumerate(items):
@@ -13226,12 +13055,12 @@ class GameDB:
     ) -> List[int]:
         """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
         owns = self.owns_transaction() if commit else False
-        if not isinstance(payload, Mapping):
-            return []
         # 容器解码 + add（内调字段权威/_validate）；持久边界 DMVE→ValueError（#1897 E1）。
-        raw_items = _durable_payload_endorsements(
-            payload, surface=f"dossier#{int(dossier_id)}.payload.endorsements",
-        )
+        raw_items = payload.get("endorsements")
+        if raw_items is None:
+            raw_items = []
+        if not isinstance(raw_items, list):
+            raise TypeError(f"decree_dossiers#{dossier_id}.payload.endorsements must be a list, got {raw_items!r}")
         if not raw_items:
             return []
         new_ids: List[int] = []
@@ -13520,10 +13349,7 @@ class GameDB:
         )
 
     def _discard_deleted_directive_forecast(self, target_id: object) -> None:
-        try:
-            pending_id = int(target_id)
-        except (TypeError, ValueError):
-            return
+        pending_id = int(target_id)
         row = self.conn.execute(
             "SELECT kind, version FROM pending_actions WHERE id=?",
             (pending_id,),
@@ -13542,7 +13368,7 @@ class GameDB:
             ).fetchone()
             if row is None:
                 return 0
-            version = int(row["version"] or 1)
+            version = row["version"] or 1
         from ming_sim.declaration_dispatch import (
             discard_staged_declaration, pending_action_decree_ref,
         )
@@ -13557,9 +13383,7 @@ class GameDB:
         """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
         旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态/待澄清闸（#502 L5）。"""
         # 已持久候选 JSON 腐坏响亮，不洗成空底丢控制键（#1897 E1）。
-        old = GameDB.parse_engine_payload_json(
-            existing_json, surface="pending_actions.payload_json",
-        )
+        old = _load_durable_json(existing_json)
         merged: Dict[str, object] = dict(new_payload or {})
         for k, v in old.items():
             if str(k).startswith("_") and k not in merged:
@@ -13574,7 +13398,7 @@ class GameDB:
         #658：普通 triad 与御笔 target 互斥生命周期——
         普通改草不得继承旧 target；纯强推改草不得继承旧 triad。
         """
-        old = self._decode_directive_dossier_payload(existing_json)
+        old = _load_durable_json(existing_json)
         incoming = dict(new_payload or {})
         roster = self.merge_decode_durable_participant_roster(
             old.get("participant_roster"), incoming.get("participant_roster"),
@@ -13675,28 +13499,26 @@ class GameDB:
         ):
             return {"classification": "invalid"}
         # 已持久候选 JSON 腐坏响亮上抛（#1897 E1）。
-        payload = self.parse_engine_payload_json(
-            pa.get("payload_json"), surface="pending_actions.payload_json",
-        )
+        payload = self.parse_engine_payload_json(pa.get("payload_json"))
         # 归一内真实查询／未分类故障原样上抛；仅 typed 领域拒收归 invalid
         # （与 _apply_pending_action / _commit_conversational_draft 同缝，#1897 E1）。
         from ming_sim.action_materialize import DecreeMaterializationValidationError
         try:
             normalized = self._normalize_directive_dossier_payload(
-                dict(payload), content=content, current_turn=int(state.turn),
+                payload, content=content, current_turn=int(state.turn),
             )
-        except DecreeMaterializationValidationError:
-            return {"classification": "invalid", "payload": payload}
+        except DecreeMaterializationValidationError as exc:
+            return {"classification": "invalid", "payload": payload, "reason": str(exc)}
         payload = normalized
         # 已持久正文：类型／空缺 schema 故障响亮，不记领域 invalid（#1897 E1）。
-        text = _require_durable_prose(payload.get("text"), field="text")
+        text = payload.get("text")
+        if not text.strip():
+            raise TypeError(f"pending_actions#{pa['id']}.payload.text must be nonempty text, got {text!r}")
         actor_raw = payload.get("actor", pa.get("minister_name") or "")
         if actor_raw is None:
             actor_raw = ""
         if not isinstance(actor_raw, str):
-            raise ValueError(
-                f"持久字段 actor 须为字符串，得 {type(actor_raw).__name__}"
-            )
+            raise ValueError(f"持久字段 actor 须为字符串，得 {type(actor_raw).__name__}")
         actor = actor_raw.strip()
         payload["text"] = text
         payload["actor"] = actor
@@ -13782,7 +13604,7 @@ class GameDB:
                         )
                         self._record_pending_domain_rejection(
                             rejection_collector, state, pa, prepared["payload"],
-                            reason="拟旨暂存领域校验未通过",
+                            reason=prepared["reason"],
                             category="invalid_shape",
                         )
                         if rejection_collector is not None:
@@ -13798,9 +13620,7 @@ class GameDB:
                     applied.append(committed)
                 continue
             # 已持久候选解码故障响亮，不洗成空载荷续 apply（#1897 E1）。
-            payload = self.parse_engine_payload_json(
-                pa.get("payload_json"), surface="pending_actions.payload_json",
-            )
+            payload = self.parse_engine_payload_json(pa.get("payload_json"))
             office_memory_key = None
             office_memory_before = None
             office_memory_had_key = False
@@ -13963,23 +13783,26 @@ class GameDB:
             if action == "新建":
                 # 自由文本零删改（CLAUDE.md P6）：判空在副本上做，存的仍是原文。
                 # 已持久散文：禁 str() 洗类型；空缺／非 str 响亮（#1897 E1）。
-                title = _require_durable_prose(payload.get("title"), field="title")
-                content_text = _require_durable_prose(
-                    payload.get("content"), field="content",
-                )
+                title = payload.get("title")
+                content_text = payload.get("content")
                 if "assignee" in payload and payload.get("assignee") is not None:
-                    assignee = _require_durable_prose(
-                        payload.get("assignee"), field="assignee",
-                    ).strip()
+                    assignee = payload.get("assignee").strip()
                 else:
                     assignee = str(pa["minister_name"] or "").strip()
                 if not assignee:
                     raise ValueError("持久字段 assignee 不得为空")
                 # 可选集合：缺省合法空；present 非 list/非 str 成员响亮（#1897 E1）。
                 # 禁 payload.get(key) or [] 的 falsy 洗空。
-                tags = _optional_payload_str_list(
-                    payload, "tags", surface="密令 tags",
-                )
+                lists = {}
+                for field in ("tags", "excluded_names", "excluded_offices"):
+                    value = payload.get(field)
+                    if value is None:
+                        value = []
+                    surface = f"pending_actions#{pa['id']}.payload.{field}"
+                    if not isinstance(value, list):
+                        raise TypeError(f"{surface} must be a list, got {value!r}")
+                    lists[field] = _load_durable_str_list(value, surface=surface)
+                tags = lists["tags"]
                 # 已持久期限：类型腐坏响亮，不伪装领域拒收（#1897 E1）。
                 deadline = _coerce_deadline_months(
                     payload.get("deadline_months"), default=0, durable=True,
@@ -13988,7 +13811,7 @@ class GameDB:
                 # decree; may differ from final assignee (跨人承办).
                 # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
                 origin_mid = self._parse_origin_chat_message_id(
-                    payload, durable=True,
+                    payload,
                 )
                 from ming_sim.covert_progress import (
                     CovertContractError,
@@ -14036,19 +13859,15 @@ class GameDB:
             # Non-create actions consume only explicit source pins.
             # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
             origin_mid = self._parse_origin_chat_message_id(
-                payload, durable=True,
+                payload,
             )
             if action == "更新":
                 deadline = _coerce_deadline_months(
                     payload.get("deadline_months"), default=0, durable=True,
                 )
                 # 已持久更新正文禁 str() 洗类型（#1897 E1）。
-                new_title = _require_durable_prose(
-                    payload.get("new_title"), field="new_title",
-                )
-                new_content = _require_durable_prose(
-                    payload.get("new_content"), field="new_content",
-                )
+                new_title = payload.get("new_title")
+                new_content = payload.get("new_content")
                 # No pin → update_secret_order_by_id preserves brief pins (no pure-public auto-capture).
                 return self.update_secret_order_by_id(
                     state, int(oid),
@@ -14062,9 +13881,7 @@ class GameDB:
                     payload.get("deadline_months", 1), default=1, durable=True,
                 )
                 # 已持久催办理由：空陈词合法；坏类型响亮（#1897 J820-E1）。
-                rush_reason = _require_durable_prose(
-                    payload.get("reason", ""), field="reason", required=False,
-                )
+                rush_reason = payload.get("reason", "")
                 self.rush_secret_order(
                     int(oid), state, deadline_months=deadline, reason=rush_reason)
                 if origin_mid is not None:
@@ -14078,9 +13895,7 @@ class GameDB:
                 return True
             if action == "提交核议":
                 # 已持久核议陈词：空串只缩期限；坏类型 schema 故障（#1897 J820-E1）。
-                claim = _require_durable_prose(
-                    payload.get("claim", ""), field="claim", required=False,
-                )
+                claim = payload.get("claim", "")
                 ok = self.submit_secret_order_for_review(
                     int(oid), claim)
                 if ok and origin_mid is not None:
@@ -14094,9 +13909,7 @@ class GameDB:
                 return ok
             if action == "记进展":
                 # 已持久进展正文：空串按写口合同不落条；坏类型响亮（#1897 J820-E1）。
-                note = _require_durable_prose(
-                    payload.get("note", ""), field="note", required=False,
-                )
+                note = payload.get("note", "")
                 ok = self.update_secret_order_progress(
                     int(oid), note)
                 if ok and origin_mid is not None:
@@ -14130,9 +13943,11 @@ class GameDB:
                 payload.get("deadline_months", 1), default=1, durable=True,
             )
             # 已持久催办理由：空陈词合法；坏类型响亮（#1897 J820-E1）。
-            commitment_reason = _require_durable_prose(
-                payload.get("reason", ""), field="reason", required=False,
-            )
+            commitment_reason = payload.get("reason", "")
+            if not isinstance(commitment_reason, str):
+                raise TypeError(
+                    f"pending_actions#{pa['id']}.payload.reason must be text, got {commitment_reason!r}"
+                )
             from ming_sim.urge_lever import rush_staged_commitment_stage
             result = rush_staged_commitment_stage(
                 self, state,
@@ -14167,15 +13982,10 @@ class GameDB:
                 payload = self._normalize_directive_dossier_payload(
                     payload, content=content, current_turn=int(state.turn),
                 )
-            # 已持久正文：与 prepare 共吃 _require_durable_prose，禁 str() 洗白（#1897 E1）。
-            text = _require_durable_prose(payload.get("text"), field="text")
+            text = payload.get("text")
             actor_raw = payload.get("actor", pa["minister_name"] or "")
             if actor_raw is None:
                 actor_raw = ""
-            if not isinstance(actor_raw, str):
-                raise ValueError(
-                    f"持久字段 actor 须为字符串，得 {type(actor_raw).__name__}"
-                )
             actor = actor_raw.strip()
             # actor FK → characters(name)：空串/非名册不得落库（SQLite FK 不接受空串）。
             if actor and self.conn.execute(
@@ -14218,7 +14028,7 @@ class GameDB:
                     "UPDATE decree_dossiers SET pending_action_id=? "
                     "WHERE directive_id=? AND (pending_action_id IS NULL "
                     "OR pending_action_id=0 OR pending_action_id=?)",
-                    (int(pa["id"]), int(did), int(pa["id"])),
+                    (int(pa["id"]), did, int(pa["id"])),
                 )
                 # #1842：载荷背书随成案继承到案卷（来源仍为声明轮）。
                 for dossier_id in dossier_ids or []:
@@ -14679,23 +14489,20 @@ class GameDB:
                     f"SELECT {columns} FROM {table} WHERE affair_id=? ORDER BY {order}", (target,),
                 ).fetchall()]
             for row in history["issues"]:
-                # Durable history supply: one authority per shape duty (F39).
-                # Bare json.loads washes wrong-shape values (e.g. effect '[]') into
-                # normal empty facts for material consumers — refuse here instead.
-                for field in (
-                    "tags", "participants", "participant_roster",
-                    "target_roster", "stages_json",
-                ):
-                    row[field] = _load_durable_json_list(
-                        row[field], surface=f"issues.{field}",
-                    )
+                for field in ("tags", "participants", "target_roster"):
+                    row[field] = _load_durable_str_list(row[field], surface=f"issues#{row['id']}.{field}")
+                from ming_sim.participant_roster import decode_durable_participant_roster
+                row["participant_roster"] = decode_durable_participant_roster(
+                    row["participant_roster"], require_tier=False,
+                )
+                row["stages_json"] = _load_durable_json(row["stages_json"], default='[]')
+                if not isinstance(row["stages_json"], list):
+                    raise TypeError(f"issues#{row['id']}.stages_json must be a list, got {row['stages_json']!r}")
                 for field in (
                     "ongoing_effects", "effect_on_resolve", "effect_on_fail",
                 ):
                     row[field] = loads_effect_dict(row[field])
-                row["cancel_cost"] = self.parse_engine_payload_json(
-                    row["cancel_cost"], surface="issues.cancel_cost",
-                )
+                row["cancel_cost"] = self.parse_engine_payload_json(row["cancel_cost"])
                 # The numeric stop gate is an execution detail, not a second
                 # explanation of the issue's human resolve/fail conditions.
                 row.pop("stop_condition", None)
@@ -14982,23 +14789,10 @@ class GameDB:
             (int(directive_id),),
         ).fetchone()
 
-    @staticmethod
-    def _decode_directive_dossier_payload(
-        raw: object, *, directive_id: Optional[int] = None,
-    ) -> Dict[str, object]:
-        label = f"旨稿#{directive_id}" if directive_id is not None else "既有旨稿"
-        # 与 parse_engine_payload_json / _load_durable_json_object 同一权威（#1897 E1）。
-        try:
-            return GameDB.parse_engine_payload_json(
-                raw, surface=f"{label}.dossier_payload_json",
-            )
-        except ValueError as exc:
-            raise ValueError(f"{label} 结构化载荷损坏") from exc
-
     def read_directive_dossier_payload(self, row: object) -> Dict[str, object]:
         """Strictly decode a durable turn_directives payload at the DB read seam."""
-        return self._decode_directive_dossier_payload(
-            row["dossier_payload_json"], directive_id=int(row["id"]),
+        return self.parse_engine_payload_json(
+            row["dossier_payload_json"],
         )
 
     def confirm_directive(self, directive_id: int) -> None:
@@ -15438,7 +15232,7 @@ class GameDB:
             if "petition" not in payload:
                 continue
             payload = self.parse_engine_payload_json(
-                raw, surface="event_triggers.choice_json",
+                raw,
             )
             petition = payload.get("petition")
             if not isinstance(petition, dict):
@@ -15592,43 +15386,13 @@ class GameDB:
         )
 
     @staticmethod
-    def parse_engine_payload_json(
-        raw: object, *, surface: str = "payload_json",
-    ) -> Dict[str, object]:
+    def parse_engine_payload_json(raw: object) -> Dict[str, object]:
         """#624 / ADR 0005 / #1897 E1：引擎侧持久对象解码单一权威。
 
-        与 ``_load_durable_json_object`` 同契约：SQL NULL/缺省 → {}；
-        空串/空白/非对象/腐坏 JSON → 响亮 ValueError（禁 falsy 洗空）。
+        SQL NULL/缺省 → {}；已解码对象直接复制；其余交给标准库解码。
         """
-        if isinstance(raw, dict):
-            return dict(raw)
-        try:
-            return _load_durable_json_object(raw, surface=surface)
-        except ValueError:
-            preview = repr(raw)[:80] if not isinstance(raw, str) else repr(raw[:80])
-            tlog(f"[{surface}] 持久 JSON 解码失败：{preview}")
-            raise
+        return {**_load_durable_json(raw)}
 
-
-    @staticmethod
-    def optional_object(value: object, *, surface: str) -> Optional[Dict[str, Any]]:
-        """已解码可选对象：None→None；dict（含合法空{}）→dict；非对象响亮。
-
-        业务空值回落（``{} or next``）由消费方决定；本权威只保形状。
-        """
-        if value is None:
-            return None
-        if isinstance(value, dict):
-            return dict(value)
-        tlog(f"[{surface}] 非对象，拒绝静默：{type(value).__name__}")
-        raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
-
-
-    @classmethod
-    def _parse_todo_payload_json(cls, raw: object) -> Dict[str, object]:
-        return cls.parse_engine_payload_json(
-            raw, surface="next_audience_todos.payload_json",
-        )
 
     def insert_next_audience_todo(
         self,
@@ -15712,7 +15476,7 @@ class GameDB:
                 "status": str(r["status"] or ""),
                 "entry_kind": str(r["entry_kind"] or ""),
                 "created_turn": int(r["created_turn"] or 0),
-                "payload_json": self._parse_todo_payload_json(r["payload_json"]),
+                "payload_json": self.parse_engine_payload_json(r["payload_json"]),
             }
             for r in rows
         ]
@@ -15737,12 +15501,7 @@ class GameDB:
             raise ValueError(f"next_audience_todos status 非法：{new_status}")
         patch: Dict[str, object] | None = None
         if payload_patch is not None:
-            if not isinstance(payload_patch, dict):
-                raise ValueError(
-                    "next_audience_todos payload_patch 须为对象，得 "
-                    f"{type(payload_patch).__name__}"
-                )
-            patch = dict(payload_patch)
+            patch = {**payload_patch}
         row = self.conn.execute(
             "SELECT id, status, payload_json FROM next_audience_todos WHERE id=?",
             (int(todo_id),),
@@ -15758,8 +15517,8 @@ class GameDB:
         if current != "pending":
             return False
         if patch is not None:
-            existing = self._parse_todo_payload_json(row["payload_json"])
-            merged = dict(existing)
+            existing = _load_durable_json(row["payload_json"])
+            merged = {**existing}
             merged.update(patch)
             payload_blob = self._coerce_todo_payload_json(merged)
             cur = self.conn.execute(
@@ -16142,7 +15901,7 @@ class GameDB:
         for lg in self.conn.execute(
             "SELECT modifiers FROM legacies WHERE status='active' ORDER BY id"
         ).fetchall():
-            eff = _load_durable_json_object(lg["modifiers"], surface="legacies.modifiers")
+            eff = _load_durable_json(lg["modifiers"], default='{}')
             for acc in ("国库", "内库", "民心", "皇威"):
                 v = eff.get(acc)
                 if v is not None:
@@ -16332,9 +16091,11 @@ class GameDB:
         origin = f"dossier:{did}"
         note_provided = note is not None
         note_value = (
-            _require_durable_prose(note, field="note", required=False)
+            note
             if note_provided else ""
         )
+        if not isinstance(note_value, str):
+            raise TypeError(f"dossier_actual_progress:{did}:{turn}.note must be text, got {note_value!r}")
         if note_provided:
             self.conn.execute(
                 """
@@ -16773,10 +16534,7 @@ class GameDB:
         out: List[int] = []
         seen: set = set()
         for raw in message_ids or ():
-            try:
-                mid = int(raw)
-            except (TypeError, ValueError):
-                continue
+            mid = int(raw)
             if mid > 0 and mid not in seen:
                 seen.add(mid)
                 out.append(mid)
@@ -16786,7 +16544,9 @@ class GameDB:
         self, raw: object, *, surface: str,
     ) -> List[int]:
         """Durable brief/pin message-id array: corrupt / non-int members fail loud."""
-        values = _load_durable_json_list(raw, surface=surface)
+        values = _load_durable_json(raw, default='[]')
+        if not isinstance(values, list):
+            raise TypeError(f"{surface} must be a list of message ids, got {values!r}")
         out: List[int] = []
         seen: set = set()
         for index, item in enumerate(values):
@@ -16828,9 +16588,9 @@ class GameDB:
                 out.update(pins)
         for row in pending_rows:
             payload = self.parse_engine_payload_json(
-                row["payload_json"], surface="pending_actions.payload_json",
+                row["payload_json"],
             )
-            mid = self._parse_origin_chat_message_id(payload, durable=True)
+            mid = self._parse_origin_chat_message_id(payload)
             if mid is not None and (not character_name or character_name != row["minister_name"]):
                 out.add(mid)
         if out:
@@ -16843,10 +16603,9 @@ class GameDB:
             ).fetchall()
             for turn in turns:
                 for raw in (turn["user_message_id"], turn["minister_message_id"]):
-                    try:
-                        mid = int(raw)
-                    except (TypeError, ValueError):
+                    if raw is None:
                         continue
+                    mid = int(raw)
                     if mid > 0:
                         out.add(mid)
         return out
@@ -17183,6 +16942,9 @@ class GameDB:
         if row is None or row["status"] != "active":
             return False
         persisted_title = title
+        for field, value in (("title", persisted_title), ("content", content)):
+            if not isinstance(value, str):
+                raise TypeError(f"secret_orders#{order_id}.{field} must be text, got {value!r}")
         if tags is not None:
             if not isinstance(tags, list):
                 raise ValueError(
@@ -17190,17 +16952,13 @@ class GameDB:
                     f"得 {type(tags).__name__}"
                 )
             tags_json = json.dumps(
-                _require_str_list_members(
-                    tags, surface=f"secret_orders#{int(order_id)} tags",
-                ),
+                tags,
                 ensure_ascii=False,
             )
         else:
             # 保留原标签：空串/腐坏响亮，不 or "[]" 洗（#1897 E1）。
             tags_json = json.dumps(
-                _load_durable_str_list(
-                    row["tags"], surface=f"secret_orders#{int(order_id)} tags",
-                ),
+                _load_durable_str_list(row['tags']),
                 ensure_ascii=False,
             )
         deadline = max(0, min(int(deadline_months or 0), 36))
@@ -17261,9 +17019,7 @@ class GameDB:
                 "minister_name": r["minister_name"],
                 "title": r["title"],
                 "content": r["content"],
-                "tags": _load_durable_str_list(
-                    r["tags"], surface=f"secret_orders#{int(r['id'])} tags",
-                ),
+                "tags": _load_durable_str_list(r['tags']),
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",
@@ -17301,16 +17057,14 @@ class GameDB:
                 # #1897 / ADR0005：在办密令缺必需案卷是内部故障，不得半截结案。
                 raise ValueError("密令进展缺少对应案卷")
             # 结案正文：禁 str()/or 洗白；空串合法（#1897 J820-E1）。
-            close_text = _require_durable_prose(
-                result, field="result", required=False,
-            )
+            close_text = result
+            if not isinstance(close_text, str):
+                raise TypeError(f"secret_orders#{order_id}.result must be text, got {close_text!r}")
             # execution_note=None＝缺省空串合同；已提供则须为字符串。
             if execution_note is None:
                 exec_note_text = ""
             else:
-                exec_note_text = _require_durable_prose(
-                    execution_note, field="execution_note", required=False,
-                )
+                exec_note_text = execution_note
             self.conn.execute(
                 """
                 UPDATE secret_orders
@@ -17369,7 +17123,7 @@ class GameDB:
         正文原样入库。判空只用副本。调用方持有事务。
         """
         # 已持久/调用方正文：禁 str()/or 洗白；空陈词不落条（#1897 J820-E1）。
-        raw = _require_durable_prose(text, field="text", required=False)
+        raw = text
         if not raw.strip():
             return False
         row = self.conn.execute(
@@ -17401,7 +17155,7 @@ class GameDB:
         if not row or row["status"] != "active":
             return False
         current_turn = self._current_game_turn(int(row["turn_issued"] or 0))
-        claim_text = _require_durable_prose(claim, field="claim", required=False)
+        claim_text = claim
         with atomic(self):
             self.conn.execute(
                 """
@@ -17432,7 +17186,7 @@ class GameDB:
         同月再报替换同一条月度奏报。正文里的日期不另立月份。
         坏类型 schema 故障，不洗成空串领域拒收（#1897 J820-E1）。
         """
-        note = _require_durable_prose(progress_note, field="note", required=False)
+        note = progress_note
         if commit:
             with atomic(self):
                 ok = self._note_secret_order_report(
@@ -17480,7 +17234,9 @@ class GameDB:
         record_dossier_actual_progress：note is None 才保留已存正文。
         坏类型 schema 故障，禁 str()/or 洗白（#1897 J820-E1）。
         """
-        raw = _require_durable_prose(sim_note, field="sim_note", required=False)
+        raw = sim_note
+        if not isinstance(raw, str):
+            raise TypeError(f"secret_orders#{order_id}.sim_note must be text, got {raw!r}")
         row = self.conn.execute(
             "SELECT id FROM secret_orders WHERE id=? AND status='active'",
             (int(order_id),),
@@ -17552,16 +17308,13 @@ class GameDB:
                 category="not_active",
                 item={"order_id": int(order_id), "status": row["status"]},
             )
-        try:
-            months = max(0, min(int(deadline_months or 0), 36))
-        except (TypeError, ValueError):
-            months = 1
-        else:
-            months = max(0, min(int(deadline_months), 36))
+        months = max(0, min(int(deadline_months or 0), 36))
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
         # #1897 J820-E1：催办理由已是/须是字符串；坏类型响亮；仅真正空串回落缺省。
-        raw_reason = _require_durable_prose(reason, field="reason", required=False)
+        raw_reason = reason
+        if not isinstance(raw_reason, str):
+            raise TypeError(f"secret_orders#{order_id}.rush.reason must be text, got {raw_reason!r}")
         why = raw_reason if raw_reason else "奉旨加急"
         with atomic(self):
             if months <= 0:
@@ -17585,7 +17338,7 @@ class GameDB:
                     """,
                     (
                         due_turn,
-                        max(int(due_turn) - int(state.turn), 0),
+                        max(due_turn - int(state.turn), 0),
                         int(order_id),
                     ),
                 )
@@ -17853,10 +17606,7 @@ class GameDB:
             # 故障注入验收缝（庭裁 r3 F1①）：摘要已写、事务未提交即崩→整体回滚，
             # pending 仍在、摘要读回＝崩前旧值。
             if owns:
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    logger.exception("rollback failed; preserving primary failure")
+                self.conn.rollback()
             raise
 
     def mark_relation_brew_pending(
@@ -17886,10 +17636,7 @@ class GameDB:
                 self.conn.commit()
         except Exception:
             if owns:
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    logger.exception("rollback failed; preserving primary failure")
+                self.conn.rollback()
             raise
 
     def claim_relation_brew_targets(self, *, year: int, period: int) -> int:
@@ -18012,10 +17759,7 @@ class GameDB:
                 self.conn.commit()
         except Exception:
             if owns:
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    logger.exception("rollback failed; preserving primary failure")
+                self.conn.rollback()
             raise
 
     def apply_faction_brew_result(
@@ -18066,10 +17810,7 @@ class GameDB:
             # 故障注入验收缝（与 apply_relation_brew_result 同构）：摘要已写、
             # 事务未提交即崩→整体回滚，pending 仍在、摘要读回＝崩前旧值。
             if owns:
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    logger.exception("rollback failed; preserving primary failure")
+                self.conn.rollback()
             raise
 
     def close(self) -> None:

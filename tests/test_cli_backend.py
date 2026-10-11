@@ -184,7 +184,6 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
 
 def test_run_codex_stderr_banner_does_not_become_body(monkeypatch):
     """stdout 空时 stderr 日志／banner 不得冒充正文；走既有空输出失败契约。"""
-    from ming_sim.exceptions import LLMUnavailable
 
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     _capture_run(
@@ -261,11 +260,9 @@ def test_clichat_invoke_code_fault_traced_and_reraised(monkeypatch):
 
 def test_clichat_invoke_typed_unavailable_traced_and_reraised(monkeypatch):
     """#1299/#1310：已 typed 的宿主/模型失败原样上浮；trace 记 provider 原文。"""
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import cli_runner_unavailable
 
     host = RuntimeError("cli down")
-    typed = cli_runner_unavailable(host, backend="agy")
+    typed = LLMUnavailable("typed host failure", code="llm_error", provider_message=str(host))
     cc = cb.CliChat(id="cli-test", backend="agy")
     monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(typed))
     traced = {}
@@ -297,10 +294,11 @@ def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
     from tests.cli_process_doubles import install_fake_cli_runner
 
     script = install_fake_cli_runner(monkeypatch, [{"returncode": 1}])
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(cb.subprocess.CalledProcessError) as caught:
         cb.CliChat(id="cli-test", backend="agy").invoke(
             [Message(role="user", content="p")], Message(role="assistant"),
         )
+    assert caught.value.returncode == 1
     assert len(script.processes) == 1
 
 
@@ -312,18 +310,18 @@ def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
     ],
 )
 def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, proc):
-    from ming_sim.exceptions import LLMUnavailable
 
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     _capture_run(monkeypatch, proc)
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(cb.subprocess.CalledProcessError) as caught:
         cb.CliChat(id="cli-test", backend=runner).invoke(
             [Message(role="user", content="p")], Message(role="assistant"),
         )
+    assert caught.value.returncode == 1
+    assert caught.value.stderr == proc.stderr
 
 def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
     """rc=0 但零输出 = 可重试 typed 空输出（交 transport 再试），不是确定性失败。"""
-    from ming_sim.exceptions import LLMUnavailable
 
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     _capture_run(monkeypatch, _P(stdout="", stderr="", returncode=0))

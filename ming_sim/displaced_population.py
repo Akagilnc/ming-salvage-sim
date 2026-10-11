@@ -19,7 +19,7 @@ from typing import Dict, List, Tuple
 from ming_sim.constants import (
     LEVY_DISPLACEMENT_RATE,
 )
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, _load_durable_json
 from ming_sim.applier import Provenance
 from ming_sim.entities.population.apply import _apply_population_transfers
 
@@ -59,22 +59,15 @@ def apply_levy_driven_transfers(
     for row in rows:
         region_id = str(row["id"])
         try:
-            from ming_sim.db import GameDB
-            fiscal = GameDB.parse_engine_payload_json(
-                row["fiscal"], surface=f"regions.fiscal:{region_id}",
-            )
+            fiscal = _load_durable_json(row["fiscal"])
         except ValueError as exc:
             raise ValueError(f"{region_id}.fiscal 持久 JSON 损坏，无法结算加派账") from exc
         # 财政月效的动态成员只包括已有 settle 基座的明省；legacy/内容扩展中
         # 合法的无基座省自然出列，不能让任意 delta apply 因此失败。
-        settle = GameDB.optional_object(
-            fiscal.get("settle"), surface=f"{region_id}.fiscal.settle",
-        )
+        settle = fiscal.get("settle")
         if settle is None:
             continue
-        meta = GameDB.optional_object(
-            settle.get("_meta"), surface=f"{region_id}.fiscal.settle._meta",
-        )
+        meta = settle.get("_meta")
         raw = meta.get(SETTLE_META_JIAPIAI_KEY, 0) if meta is not None else 0
         if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(float(raw)):
             raise ValueError(f"{region_id}.settle._meta.{SETTLE_META_JIAPIAI_KEY} 必须是有限数值")

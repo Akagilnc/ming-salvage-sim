@@ -86,13 +86,7 @@ _API_NUMERIC_FIELDS = {
 def _slot_number(value: object, caster, default):
     if value is None or (isinstance(value, str) and not value.strip()):
         return default
-    try:
-        return caster(value)
-    except (TypeError, ValueError):
-        try:
-            return caster(float(value))  # "4096.0" / 含小数的字符串兜底
-        except (TypeError, ValueError):
-            return default
+    return caster(value)
 
 
 def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
@@ -132,9 +126,9 @@ def cli_idle_timeout_seconds(data: Dict[str, object]) -> float:
     cli = data.get("cli") if isinstance(data, dict) else None
     source = cli if isinstance(cli, dict) else {}
     value = _slot_number(source.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS)
-    if not (isinstance(value, (int, float)) and value > 0):
+    if not value > 0:
         value = CLI_DEFAULT_TIMEOUT_SECONDS
-    return float(value)
+    return value
 
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
@@ -517,34 +511,11 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
 
 
 def load_runtime_llm() -> Dict[str, object]:
-    """读 data/runtime_llm.json。
-
-    缺档／合法空 → {}（入口可按既有契约回落）。
-    读／解析失败与缺档分判：保留真实原因并明示后，仍回落 {}——不另立 fail-fast，
-    也不新增整档校验／修档／迁移或第二配置。
-    不做 isfile 等元数据预判：预判失败会把权限等真读故障洗成缺档。
-    """
+    """读 runtime_llm.json。未配置返回空 dict；读写或解析故障原样交出。"""
     try:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except FileNotFoundError:
-        # 真缺档：合法空，不挂故障。
-        return {}
-    except (OSError, json.JSONDecodeError) as exc:
-        # 坏档／读失败 ≠ 缺档：保留真实异常对象明示后再回落，禁无痕洗成空配置。
-        logger.warning(
-            "runtime_llm load failed path=%s", RUNTIME_LLM_PATH,
-            exc_info=(type(exc), exc, exc.__traceback__),
-        )
-        return {}
-    if not isinstance(data, dict):
-        err = TypeError(
-            f"runtime_llm top-level {type(data).__name__}, expected dict"
-        )
-        logger.warning(
-            "runtime_llm load failed path=%s", RUNTIME_LLM_PATH,
-            exc_info=(type(err), err, None),
-        )
         return {}
     return _normalize_runtime_llm(data)
 

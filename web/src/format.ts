@@ -24,7 +24,7 @@ const ARMY_QUALITATIVE_WORDS: Record<string, [string, string, string, string, st
 
 export const qualitativeArmyStat = (field: string, value: number) => {
   const words = ARMY_QUALITATIVE_WORDS[field] || ["极低", "偏低", "中等", "尚可", "优良"];
-  const n = Number(value || 0);
+  const n = (value || 0);
   if (n >= 80) return words[4];
   if (n >= 60) return words[3];
   if (n >= 40) return words[2];

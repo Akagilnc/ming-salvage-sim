@@ -544,11 +544,8 @@ def _strategic_event_result_preflight_error(
                         current_tenure = str(row["appointment_tenure"] or "真除")
                         try:
                             target_tenure = appointment_tenure_from(item)
-                        except ValueError:
-                            return (
-                                f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
-                                f"{name}{action} 任别非白名单"
-                            )
+                        except ValueError as exc:
+                            return str(exc)
                         if (
                             target_office == current_office
                             and target_type == current_type
@@ -833,10 +830,7 @@ def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> 
         delta = item.get("delta")
         if delta is None:
             return False
-        try:
-            return int(delta) != 0
-        except (TypeError, ValueError):
-            return bool(delta)
+        return int(delta) != 0
     return False
 
 
@@ -864,9 +858,7 @@ def sanitize_delta_shape(
         DECLARATION_EFFECT_FIELDS,
     )
 
-    if not isinstance(extracted, dict):
-        raise ValueError(f"delta 必须是 object(dict)，实得 {type(extracted).__name__}")
-    cleaned = dict(extracted)
+    cleaned = {**extracted}
     rejections: list[tuple[str, RejectedItem]] = []
 
     def _shape_reject(section: str, item: dict, reason: str) -> None:

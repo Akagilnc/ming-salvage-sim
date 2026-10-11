@@ -54,20 +54,20 @@ def _apply_economy_list(
         # bool/float，与 faction/region/army 同约）。no-op（可解析的 0/缺额）行无钱动 → 静默跳，
         # 不论 account（空占位行不当拒收，免噪声 + 假玩家提示，#14 cmr r1 线上 codex）。
         raw_delta = move.get("delta")
+        delta_error = None
         try:
             delta = 0 if raw_delta in (None, "") else _strict_int(raw_delta)
-            bad_delta = False
-        except (TypeError, ValueError):
-            delta, bad_delta = 0, True
-        if not bad_delta and delta == 0:
+        except (TypeError, ValueError) as exc:
+            delta, delta_error = 0, str(exc)
+        if delta_error is None and delta == 0:
             continue
         account = str(move.get("account") or "")
         if account not in ("国库", "内库"):
             # 账户非法不再静默丢——逐项拒收留痕（#14 ADR0008 决定1，统一拒收契约）。
             rejections.append(RejectedItem(item=move, reason=f"economy_moves 账户非法（须 国库/内库）：{account!r}", category="invalid_enum", source=source))
             continue
-        if bad_delta:
-            rejections.append(RejectedItem(item=move, reason=f"economy_moves delta 非整数：{raw_delta!r}", category="invalid_enum", source=source))
+        if delta_error is not None:
+            rejections.append(RejectedItem(item=move, reason=delta_error, category="invalid_enum", source=source))
             continue
         category_raw = move.get("category")
         if category_raw is None or not str(category_raw).strip():

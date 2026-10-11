@@ -8,7 +8,7 @@ function isCheatConsoleTarget(target: EventTarget | null): boolean {
 function decisionKeyOf(d: PendingDecision, fallbackIdx: number): string | undefined {
   if (d.decision_key) return String(d.decision_key);
   if (!d.kind) return undefined;
-  const kind = String(d.kind || "decision");
+  const kind = (d.kind || "decision");
   const turn = d.source_turn ?? d.turn ?? 0;
   return `${kind}:${turn}:${d.idx ?? fallbackIdx}`;
 }

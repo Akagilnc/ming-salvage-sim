@@ -7,6 +7,8 @@ code / outcome / message_id / 夜未封 / 子进程调用次数。受控时钟�
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import threading
 from types import SimpleNamespace
 from typing import Callable, Dict, Optional
@@ -232,9 +234,11 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, web_game, 
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
     detail = events[-1][1]
-    assert detail.get("code") == "llm_cli_claude", detail
-    attempts = detail.get("transport_attempts") or []
-    assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
+    assert detail["error_type"] == "CalledProcessError"
+    assert detail["returncode"] == 1
+    assert detail["stderr"] == "error: unknown model\n"
+    assert detail["reason"] == detail["stderr"]
+    assert (Path(detail["error_pack_path"]) / "traceback.txt").is_file()
     assert script.calls == 1
 
 
@@ -285,16 +289,12 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
     detail = events[-1][1]
     attempts = detail.get("transport_attempts") or []
     assert script.calls == 1, (script.calls, detail)
-    if isinstance(stdin_fault, OSError):
-        # 已确证宿主 I/O：typed 终失败，一次不重试。
-        assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
-        assert detail.get("code") == "llm_cli_claude", detail
-        assert "stdin" in str(detail.get("provider_message") or ""), detail
-    else:
-        # 未知代码异常原件上浮：不得包装成 typed 宿主失败或 idle 重试。
-        # 现役外部 SSE：code=null、transport_attempts=[]（与 typed terminal_fail 分流）。
-        assert detail.get("code") is None, detail
-        assert attempts == [], attempts
+    # Native I/O and code faults are not invented typed host failures.
+    assert detail["error_type"] == type(stdin_fault).__name__
+    assert detail["reason"] == str(stdin_fault)
+    assert detail.get("code") is None
+    assert attempts == []
+    assert (Path(detail["error_pack_path"]) / "traceback.txt").is_file()
 
 
 def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, web_game, tmp_path):

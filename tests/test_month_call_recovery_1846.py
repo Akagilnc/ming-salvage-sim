@@ -335,7 +335,6 @@ def test_settlement_recovery_projects_month_call_failure(web_game, monkeypatch):
 
     assert state.turn_phase == TurnPhase.SETTLING.value
     recovery = web_game.state_payload().get("settlement_recovery")
-    assert isinstance(recovery, dict)
     assert recovery.get("retryable") is True
     assert recovery.get("error_pack_path")
     assert "核账期可见原文" in str(recovery.get("message") or "")
@@ -355,7 +354,6 @@ def test_settlement_recovery_projects_month_call_failure(web_game, monkeypatch):
         session.resolve_turn(allow_empty_decree=True)
 
     recovery_again = web_game.state_payload().get("settlement_recovery")
-    assert isinstance(recovery_again, dict)
     assert recovery_again.get("error_pack_path") == ""
     chain_again = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},

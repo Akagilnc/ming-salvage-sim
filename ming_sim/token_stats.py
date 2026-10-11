@@ -58,14 +58,8 @@ def _record_usage(model_id: str, usage: object, caller_tag: str = "?") -> None:
 
 def _get_client_base_url(self_client_holder: object) -> str:
     """从 openai Completions self 拿 client.base_url。"""
-    try:
-        client = getattr(self_client_holder, "_client", None)
-        if client is None:
-            return ""
-        base = getattr(client, "base_url", "")
-        return str(base) if base else ""
-    except Exception as exc:
-        tlog(f"[TOKEN] client base_url lookup failed: {type(exc).__name__}: {exc}")
+    client = getattr(self_client_holder, "_client", None)
+    if client is None:
         return ""
     base = getattr(client, "base_url", "")
     return str(base) if base else ""
@@ -109,11 +103,7 @@ def install_token_stats_patch() -> None:
     with _TOKEN_PATCH_LOCK:
         if _TOKEN_PATCH_INSTALLED:
             return
-        try:
-            from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
-        except Exception as exc:
-            tlog(f"[TOKEN] install patch skipped: {type(exc).__name__}: {exc}")
-            return
+        from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
         orig_create = Completions.create
         orig_acreate = AsyncCompletions.create
 
@@ -122,13 +112,8 @@ def install_token_stats_patch() -> None:
             if is_dashscope_base_url(base_url):
                 _inject_dashscope_cache_mark(kwargs)
             resp = orig_create(self, *args, **kwargs)
-            try:
-                model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                # caller 只认显式诊断；不对 system/user 自由戏文猜来源。
-                _record_usage(model_id, getattr(resp, "usage", None), "?")
-            except Exception as exc:
-                # 遥测失败不得冒充成功：落真因后仍交回正文（usage 与 completion 正文分判）。
-                tlog(f"[TOKEN] record_usage failed: {type(exc).__name__}: {exc}")
+            model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
+            _record_usage(model_id, getattr(resp, "usage", None), "?")
             return resp
 
         async def patched_acreate(self, *args, **kwargs):
@@ -136,11 +121,8 @@ def install_token_stats_patch() -> None:
             if is_dashscope_base_url(base_url):
                 _inject_dashscope_cache_mark(kwargs)
             resp = await orig_acreate(self, *args, **kwargs)
-            try:
-                model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                _record_usage(model_id, getattr(resp, "usage", None), "?")
-            except Exception as exc:
-                tlog(f"[TOKEN] record_usage failed: {type(exc).__name__}: {exc}")
+            model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
+            _record_usage(model_id, getattr(resp, "usage", None), "?")
             return resp
 
         Completions.create = patched_create  # type: ignore

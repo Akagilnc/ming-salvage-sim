@@ -19,7 +19,6 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 from ming_sim.models import (
     loads_effect_dict,
     _load_durable_json_object,
-    loads_persistent_name_list,
     require_persistent_string_list,
 )
 from ming_sim.participant_roster import decode_durable_participant_roster
@@ -93,18 +92,12 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     text = str(origin_context or "")
     if not text.startswith(_META_PREFIX):
         return {}
-    raw = text[len(_META_PREFIX):]
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        raise ValueError("持久哭谏元数据须为对象")
-    return data
+    from ming_sim.db import GameDB
+    return GameDB.parse_engine_payload_json(text[len(_META_PREFIX):])
 
 
 def commitment_natural_due_turn(row: Any) -> int:
-    """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。
-
-    issues 行契约列在 CREATE 内；合法空 stages/end_turn=0 非缺列回落。
-    """
+    """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
     stages = normalize_commitment_stages(row["stages_json"])
     if stages:
         return max(int(s["due_turn"]) for s in stages)
@@ -119,7 +112,7 @@ def _issue_row(db: Any, commitment_ref: int) -> Any:
 
 
 def list_active_commitments(db: Any) -> List[Any]:
-    return list(db.conn.execute(
+    return db.conn.execute(
         """
         SELECT * FROM issues
         WHERE status='active'
@@ -127,7 +120,7 @@ def list_active_commitments(db: Any) -> List[Any]:
           AND commitment_kind != ''
         ORDER BY id
         """
-    ).fetchall())
+    ).fetchall()
 
 
 def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
@@ -139,17 +132,14 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
-
     names: List[str] = []
-    roster = json.loads(row["participant_roster"] or "[]")
-    if not isinstance(roster, list):
-        raise ValueError("持久承诺参与人须为列表")
-    if isinstance(roster, list):
-        for item in roster:
-            if isinstance(item, dict) and item.get("tier") == "主办":
-                cid = str(item.get("character_id") or "").strip()
-                if cid:
-                    names.append(cid)
+    # 承诺名册走共同权威；腐坏响亮，不 catch-to-[]（#1897 E1）。
+    roster = decode_durable_participant_roster(row["participant_roster"])
+    for item in roster:
+        if item.get("tier") == "主办":
+            cid = item["character_id"]
+            if cid:
+                names.append(cid)
     origin_ref = row["origin_ref"] or ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
@@ -184,14 +174,12 @@ def _dedicated_accounts(row: Any) -> List[str]:
             seen.add(acc)
             accounts.append(acc)
 
-    tags = json.loads(row["tags"] or "[]")
-    if not isinstance(tags, list):
-        raise ValueError("持久承诺标签须为列表")
-    if isinstance(tags, list):
-        for tag in tags:
-            t = str(tag or "").strip()
-            if t.startswith("专款:"):
-                _add(t.split(":", 1)[1].strip())
+    from ming_sim.db import _load_durable_str_list
+    tags = _load_durable_str_list(row["tags"], surface="issues.tags")
+    for tag in tags:
+        t = tag.strip()
+        if t.startswith("专款:"):
+            _add(t.split(":", 1)[1].strip())
 
     ongoing = loads_effect_dict(row["ongoing_effects"] or "{}")
     economy = ongoing.get("economy") if isinstance(ongoing, dict) else None
@@ -488,10 +476,7 @@ def stop_origin_commitment_ticks(
             db.cancel_issue(state, iid, narrative=reason, commit=False)
             stopped.append(iid)
     for raw in extra_issue_ids or ():
-        try:
-            iid = int(raw)
-        except (TypeError, ValueError):
-            continue
+        iid = int(raw)
         if iid <= 0 or iid in stopped:
             continue
         row_i = db.conn.execute(
@@ -543,11 +528,9 @@ def apply_persist_revoke_tail(
             reason=reason,
         )
     if apply_0056 and did > 0:
-        breach_applied = bool(
-            db.breach_decree_dossier(
+        breach_applied = db.breach_decree_dossier(
                 state, did, reason=reason, commit=False,
             )
-        )
         if breach_applied:
             # 0056 写 origin=dossier:{id}:breach；bind_origin_round 附 |round:T
             # 只收本调用刚落的边（breach_applied 门控 = 本调用实写）
@@ -923,21 +906,16 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
 
     # 承诺 roster 只读结构化 office 身份；role 是自由职分，腐坏名册响亮。
     expected = ""
-    roster = json.loads(commitment_row["participant_roster"] or "[]")
-    if not isinstance(roster, list):
-        raise ValueError("持久承诺参与人须为列表")
-    if isinstance(roster, list):
-        for item in roster:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("character_id") or "").strip() != name:
-                continue
-            if item.get("tier") != "主办":
-                continue
-            expected = str(
-                item.get("office") or item.get("role") or item.get("office_title") or ""
-            ).strip()
-            break
+    roster = decode_durable_participant_roster(commitment_row["participant_roster"])
+    for item in roster:
+        if item["character_id"] != name:
+            continue
+        if item.get("tier") != "主办":
+            continue
+        expected = str(
+            item.get("office") or item.get("role") or item.get("office_title") or ""
+        ).strip()
+        break
 
     # 案卷 executor office 快照（结构化 office 字段，非自由 role）
     if not expected:
@@ -948,7 +926,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
                 (int(did),),
             ).fetchone()
             if drow is not None and str(drow["executor_id"] or "") == name:
-                payload = db.parse_engine_payload_json(drow["payload_json"], surface="sponsor office snapshot")
+                payload = db.parse_engine_payload_json(drow["payload_json"])
                 if isinstance(payload, dict):
                     expected = str(
                         payload.get("executor_office")
@@ -1079,17 +1057,11 @@ def _extract_ref_ids(items: object, *, prefixes: Sequence[str]) -> Set[int]:
             # issue walker 的裸 id 可能与 dossier_id 键冲突时仅在对应 prefix 下启用
             if key in {"id"} and "issue" not in prefixes:
                 continue
-            try:
-                out.add(int(raw))
-            except (TypeError, ValueError):
-                continue
+            out.add(int(raw))
         tid = str(it.get("target_id") or "").strip()
         for p in prefixes:
             if tid.startswith(f"{p}:"):
-                try:
-                    out.add(int(tid.split(":", 1)[1]))
-                except (TypeError, ValueError):
-                    pass
+                out.add(int(tid.split(":", 1)[1]))
         for key in ("origin_ref", "来源引用"):
             ref = str(it.get(key) or "").strip()
             for p in prefixes:

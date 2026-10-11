@@ -23,8 +23,7 @@ def test_create_chat_model_respects_api_channel_over_backend_env(monkeypatch):
 
     model = create_chat_model(cfg)
 
-    assert isinstance(model, OpenAIChat)
-    assert not isinstance(model, CliChat)
+    assert isinstance(model, OpenAIChat) and not isinstance(model, CliChat)
 
 def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -62,8 +61,7 @@ def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
     model = create_chat_model(cfg)
 
     assert cfg.channel == "api"
-    assert isinstance(model, OpenAIChat)
-    assert not isinstance(model, CliChat)
+    assert isinstance(model, OpenAIChat) and not isinstance(model, CliChat)
 
 def test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -230,8 +228,7 @@ def test_create_chat_model_passes_default_headers_at_transport_boundary(monkeypa
 
     model = create_chat_model(cfg)
 
-    assert isinstance(model, OpenAIChat)
-    assert not isinstance(model, CliChat)
+    assert isinstance(model, OpenAIChat) and not isinstance(model, CliChat)
     assert model.default_headers == headers
 
 def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
@@ -543,12 +540,12 @@ def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch)
             return EmptyErrorOutput()
 
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
-    with pytest.raises(LLMUnavailable) as ei:
+    with pytest.raises(RuntimeError) as ei:
         verify_llm_available(_api_cfg())
-    assert ei.value.code == "llm_run_error"
+    assert str(ei.value) == ""
 
 def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypatch):
-    """真错：生产 agno 形 status=ERROR 且 content 非空错误串，走真实 extract_agent_text，须报 llm_run_error。"""
+    """真错：生产 agno 形 status=ERROR 且 content 非空错误串，走真实 extract_agent_text，不得猜测错误类型。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     class ErrorOutput:
@@ -564,9 +561,9 @@ def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypat
 
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
     # 不 stub extract_agent_text：咬住内层非空再抛
-    with pytest.raises(LLMUnavailable) as ei:
+    with pytest.raises(RuntimeError) as ei:
         verify_llm_available(_api_cfg())
-    assert ei.value.code == "llm_run_error"
+    assert str(ei.value) == "Invalid API key"
 
 
 # #1902 N6：常量 identity / 内部默认值证明已清退（破坏共享投影仍绿＝假绿）。

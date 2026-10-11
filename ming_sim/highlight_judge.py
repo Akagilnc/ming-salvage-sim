@@ -8,11 +8,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any, List
 
+from ming_sim.audience_night import write_audience_error_pack
 from ming_sim.exceptions import LLMContractError
 from ming_sim.llm_model import extract_agent_text
+
+logger = logging.getLogger(__name__)
 
 # 几秒级上限（ADR 0045：非流式折窗的封顶；超时即回话先行无高亮）
 DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S = 8.0
@@ -27,7 +31,11 @@ def parse_highlight_judge_output(raw: str) -> List[str]:
 
     try:
         data = parse_agent_json(text, "高亮判官")
-    except (LLMContractError, json.JSONDecodeError):
+    except (LLMContractError, json.JSONDecodeError) as exc:
+        pack_path = write_audience_error_pack(
+            kind="highlight", message=str(exc), detail={"raw": raw}, exc=exc,
+        )
+        logger.exception("highlight output rejected diagnostic=%s", pack_path)
         # 票面授权：模型坏输出降级为空清单。TypeError/ValueError 是代码故障，不洗成成功。
         return []
     # 顶层 object 由 parse_agent_json 保证；此处只验业务字段 highlights。
@@ -56,10 +64,7 @@ def run_highlight_judge(
     reply = str(minister_reply or "")
     if not reply.strip():
         return []
-    try:
-        timeout = float(timeout_s)
-    except (TypeError, ValueError):
-        timeout = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S
+    timeout = float(timeout_s)
     if timeout <= 0:
         timeout = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S
 
@@ -94,6 +99,11 @@ def run_highlight_judge(
         done, _not_done = wait((future,), timeout=timeout)
         if future not in done:
             future.cancel()
+            exc = TimeoutError(f"highlight judge wait exceeded {timeout} seconds")
+            pack_path = write_audience_error_pack(
+                kind="highlight", message=str(exc), detail={"timeout_seconds": timeout}, exc=exc,
+            )
+            logger.warning("highlight judge timed out diagnostic=%s", pack_path)
             return []
         return list(future.result())
     finally:

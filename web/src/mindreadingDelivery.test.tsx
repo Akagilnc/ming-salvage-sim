@@ -111,7 +111,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     const endGate = new Promise<void>((resolve) => { resolveEnd = resolve; });
     const releaseEnd = () => { ended = true; resolveEnd(); };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (String(url).includes("/api/audience/scroll")) {
+      if (url.includes("/api/audience/scroll")) {
         scrollCalls += 1;
         return jsonResp({
           night_id: 24,
@@ -154,7 +154,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
   it("accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮", async () => {
     let scrollCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (String(url).includes("/api/audience/scroll")) {
+      if (url.includes("/api/audience/scroll")) {
         scrollCalls += 1;
         return jsonResp(scrollCalls === 1 ? { night_id: 0, messages: [] } : {
           night_id: 24,
@@ -185,7 +185,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
   it("accepted 后普通流中断会移除未持久化的半段回话", async () => {
     let scrollCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (String(url).includes("/api/audience/scroll")) {
+      if (url.includes("/api/audience/scroll")) {
         scrollCalls += 1;
         return jsonResp({ night_id: 24, protagonist: "", roster: [], translation_pending: false, messages: scrollCalls > 1
           ? [{ role: "user", speaker: "朕", content: "请奏", chat_turn_id: 8 }]
@@ -215,7 +215,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     let call = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       call += 1;
-      if (call === 1 && String(url).includes("/api/audience/scroll")) return jsonResp({
+      if (call === 1 && url.includes("/api/audience/scroll")) return jsonResp({
         night_id: 23,
         protagonist: "", roster: [], translation_pending: false, messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
       });
@@ -312,7 +312,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     const oldGate = new Promise<void>((r) => { releaseOld = r; });
     let call = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (String(url).includes("/chat")) {
+      if (url.includes("/chat")) {
         call += 1;
         if (call === 1) { await oldGate; return jsonResp({ minister: MINISTER, history: [U("问1", 10), M("答1", 10)], suggestions: [], can_undo_last_chat: false }); }
         return jsonResp({ minister: MINISTER, history: [U("问1", 10), M("答1", 10), U("问2", 11), M("答2", 11)], suggestions: [], can_undo_last_chat: false });

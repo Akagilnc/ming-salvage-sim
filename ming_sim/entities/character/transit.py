@@ -49,8 +49,8 @@ def admit_transit_departure(
         return None, ("transit_to 地区不存在", "missing_ref")
     try:
         tone = normalize_travel_tone(item.get("行程语气"))
-    except DeclarationDataError:
-        return None, ("行程语气不在闭合枚举", "invalid_enum")
+    except DeclarationDataError as exc:
+        return None, (str(exc), "invalid_enum")
     previous_destination = str(row.get("transit_to") or "")
     if previous_destination and previous_destination != transit_to:
         return None, ("在途人物不可改道", "invalid_transition")

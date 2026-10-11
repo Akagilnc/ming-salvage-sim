@@ -17,7 +17,7 @@ from ming_sim.constants import (
     TURN_UNIT,
 )
 from ming_sim.db import (
-    GameDB,
+    GameDB, _load_durable_json,
 )
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import _FixedFiscalAbort
@@ -317,33 +317,23 @@ def _apply_fiscal_levy_targets(
     region_entries: List[Dict[str, object]] = []
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
-        fiscal = GameDB.parse_engine_payload_json(
-            row["fiscal"], surface=f"regions.fiscal:{region_id}",
-        )
+        fiscal = _load_durable_json(row["fiscal"])
         settle = fiscal.get("settle")
         if settle is None:  # 合法无基座省：不入饷率分母
             continue
         # 显式持久坏态＝账本故障：真因上抛、本轮中止，不出列成「分母不全」后照常出成功（ADR 0005 / 0021 决定9）。
         try:
-            if not isinstance(settle, dict):
-                raise ValueError(f"{region_id}.settle 非字典")
-            p = settle.get("p")
+            p = {**settle.get("p")}
             st = settle.get("st")
-            if not isinstance(p, dict):
-                raise ValueError(f"{region_id}.settle.p 非字典")
-            if not isinstance(st, dict):
-                raise ValueError(f"{region_id}.settle.st 非字典")
             meta_raw = settle.get("_meta")
             if meta_raw is None:
                 meta_raw = {}
-            if not isinstance(meta_raw, dict):
-                raise ValueError(f"{region_id}.settle._meta 非字典")
-            meta = dict(meta_raw)
+            meta = {**meta_raw}
             liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
             land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
             base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
             _validate_fiscal_levy_share_meta(meta, region_id)
-        except ValueError as exc:
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
             raise _FixedFiscalAbort(
                 f"[fiscal-levy] {region_id} settle 持久坏态，本{TURN_UNIT}饷率通道中止：{exc}"
             ) from exc
@@ -367,8 +357,8 @@ def _apply_fiscal_levy_targets(
         p = item["p"]
         meta_raw = item["meta_raw"]
         meta = item["meta"]
-        liao_seed = float(item["liao_seed"])
-        land = float(item["land"])
+        liao_seed = item["liao_seed"]
+        land = item["land"]
         land_denominator = _fiscal_levy_land_denominator(
             meta,
             total_land,
@@ -392,7 +382,7 @@ def _apply_fiscal_levy_targets(
             _LIAN_LEVY_NATIONAL_MONTHLY,
             region_id,
         )
-        base_transport = float(item["base_transport"])
+        base_transport = item["base_transport"]
         # 辽饷在征与否直接读目录（#1899）：目录在征才征，罢后残值不再被当复征证据。
         # 「准」的重新开征已在上方经真写口重立目录，故此处无需任何时序比较或 tie-break。
         if liao_in_force:

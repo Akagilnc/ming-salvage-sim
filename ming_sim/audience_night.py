@@ -12,15 +12,17 @@ from __future__ import annotations
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 from ming_sim.applier import Provenance
 
-from ming_sim.models import _load_durable_str_list
+from ming_sim.db import _load_durable_str_list
 
 import contextlib
 import json
 import logging
 import re
 import time
+import tempfile
 import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -44,10 +46,7 @@ _INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"
 
 def _character_field(character: object, field: str) -> object:
     if isinstance(character, Mapping) or hasattr(character, "keys"):
-        try:
-            return character[field]  # type: ignore[index]
-        except (KeyError, IndexError, TypeError):
-            return ""
+        return character[field] if field in character.keys() else ""  # type: ignore[attr-defined,index]
     return getattr(character, field, "")
 
 
@@ -135,8 +134,8 @@ def _travel_tone_tag(value: object) -> str:
 def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
     from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
     tones = [
-        normalize_travel_tone(str(tag)[len(_SUMMON_TRAVEL_TONE_PREFIX):])
-        for tag in tags if str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX)
+        normalize_travel_tone(tag[len(_SUMMON_TRAVEL_TONE_PREFIX):])
+        for tag in tags if tag.startswith(_SUMMON_TRAVEL_TONE_PREFIX)
     ]
     return max(tones or ["常行"], key=TRAVEL_SPEED_BY_TONE.__getitem__)
 _SUMMON_ORIGIN_PREFIX = "传召源#"
@@ -240,35 +239,42 @@ def write_audience_error_pack(
     db: Any = None,
     exc: Optional[BaseException] = None,
 ) -> str:
-    """落一份夜域错误包到 user-data error_packs（响亮、可发包）。"""
-    root = error_packs_root()
-    root.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    pack_dir = root / f"audience_{kind}_{stamp}"
-    suffix = 0
-    while pack_dir.exists():
-        suffix += 1
-        pack_dir = root / f"audience_{kind}_{stamp}_{suffix}"
-    pack_dir.mkdir(parents=True, exist_ok=False)
-    payload = {
-        "kind": kind,
-        "message": message,
-        "detail": detail or {},
-        "written_at": _now_iso(),
-    }
-    (pack_dir / "manifest.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    (pack_dir / "message.txt").write_text(message + "\n", encoding="utf-8")
-    if exc is not None:
-        (pack_dir / "traceback.txt").write_text(
-            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+    """诊断尽力落盘；失败另记日志及 detail，返回空路径，不截断原报错或善后。"""
+    location = "user-data/error_packs"
+    try:
+        root = error_packs_root()
+        location = str(root)
+        root.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        pack_dir = Path(tempfile.mkdtemp(dir=root, prefix=f"audience_{kind}_{stamp}_"))
+        location = str(pack_dir)
+        payload = {
+            "kind": kind,
+            "message": message,
+            "detail": detail or {},
+            "written_at": _now_iso(),
+        }
+        (pack_dir / "manifest.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    if db is not None:
-        db.backup_to(str(pack_dir / "save_backup.db"))
-    return str(pack_dir.resolve())
+        (pack_dir / "message.txt").write_text(message + "\n", encoding="utf-8")
+        if exc is not None:
+            (pack_dir / "traceback.txt").write_text(
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                encoding="utf-8",
+            )
+        if db is not None:
+            db.backup_to(str(pack_dir / "save_backup.db"))
+        return str(pack_dir.resolve())
+    except Exception as diagnostic_exc:
+        logger.exception("diagnostic write failed path=%s original=%s", location, message)
+        if detail is not None:
+            detail.update(
+                diagnostic_path=location,
+                diagnostic_error=f"{type(diagnostic_exc).__name__}: {diagnostic_exc}",
+            )
+        return ""
 
 
 def resolve_standing_roster(db: Any) -> List[str]:
@@ -497,7 +503,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             content = str(row["content"] or "")
             # #544：只走 GameDB._parse_highlights_json 唯一真源（SELECT 已点名该列）
             hl: List[str] = (
-                list(db._parse_highlights_json(row["highlights_json"]))
+                db._parse_highlights_json(row["highlights_json"])
                 if role == "minister"
                 else []
             )
@@ -587,7 +593,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     events.sort(key=lambda item: (item[0], item[1]))
     return [item[2] for item in events]
 def _allocate_seq(db: Any, night_id: int) -> int:
-    return int(db.allocate_night_seq(int(night_id)))
+    return db.allocate_night_seq(int(night_id))
 
 
 def _character_status(db: Any, name: str) -> str:
@@ -804,11 +810,8 @@ def open_night(
         if owns:
             db.conn.commit()
     except Exception:
-        try:
-            db.conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
-            db.conn.execute(f"RELEASE SAVEPOINT {sp}")
-        except Exception:
-            logger.exception("open_night rollback failed")
+        db.conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+        db.conn.execute(f"RELEASE SAVEPOINT {sp}")
         raise
 
     night = get_night(db, night_id)
@@ -1082,8 +1085,9 @@ def close_night(
         night = get_night(db, night_id)
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
+    night_id = night["id"]
     if night["status"] == NIGHT_STATUS_CLOSED:
-        return {"closed": True, "night_id": int(night_id), "already": True}
+        return {"closed": True, "night_id": night_id, "already": True}
 
     # #1898：同次收夜只补跑一次。OPEN 分支在冻结 CLOSING 前补跑；进来时已是
     # CLOSING 的崩溃恢复口在 on_closing 后补跑（那是另一次收夜尝试）。两条分支
@@ -1094,7 +1098,7 @@ def close_night(
             db, night_id, write_gate=write_gate,
         )
         _catch_up_night_translations(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            db, night_id, llm_config=llm_config, write_gate=write_gate,
             game_state=state, translate_fn=translate_fn, write_queue=write_queue,
         )
         with gate:
@@ -1111,7 +1115,7 @@ def close_night(
                 on_closing()
             night = get_night(db, night_id) or night
         _catch_up_night_translations(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            db, night_id, llm_config=llm_config, write_gate=write_gate,
             game_state=state, translate_fn=translate_fn, write_queue=write_queue,
         )
 
@@ -1119,21 +1123,21 @@ def close_night(
 
     def _advance(step: int) -> None:
         nonlocal cursor
-        _set_night_fields(db, night_id, close_commit_cursor=int(step))
-        cursor = int(step)
+        _set_night_fields(db, night_id, close_commit_cursor=step)
+        cursor = step
         if on_step is not None:
             on_step(step, get_night(db, night_id) or {})
-        if crash_after_step is not None and int(crash_after_step) == int(step):
+        if crash_after_step is not None and int(crash_after_step) == step:
             raise AudienceNightError(
                 f"收夜提交崩溃注入：step={step}",
                 code="close_crash",
-                detail={"night_id": int(night_id), "step": int(step)},
+                detail={"night_id": night_id, "step": step},
             )
 
     # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
     with gate:
         _commit_night_approved(
-            db, state, int(night_id),
+            db, state, night_id,
             kinds=_CLOSE_COMMIT_KINDS_OFFICE,
             content=content,
         )
@@ -1141,7 +1145,7 @@ def close_night(
             _advance(CLOSE_STEP_COMMIT_OFFICE)
 
         _commit_night_approved(
-            db, state, int(night_id),
+            db, state, night_id,
             kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
             content=content,
             directive_status="draft",
@@ -1154,21 +1158,21 @@ def close_night(
         night = get_night(db, night_id) or night
         cursor = int(night["close_commit_cursor"] or 0)
         if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
-            fault_cursor = int(cursor)
+            fault_cursor = cursor
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
             raise AudienceNightError(
-                f"收夜案卷前提未落定（night_id={int(night_id)}, cursor={fault_cursor}）",
+                f"收夜案卷前提未落定（night_id={night_id}, cursor={fault_cursor}）",
                 code="close_prerequisites_incomplete",
-                detail={"night_id": int(night_id), "cursor": fault_cursor},
+                detail={"night_id": night_id, "cursor": fault_cursor},
             )
         if cursor < CLOSE_STEP_FINALIZE:
             commit_fresh_summons_for_night(
-                db, state, int(night_id), content=content,
+                db, state, night_id, content=content,
             )
-            publish_night_directives(db, int(night_id))
+            publish_night_directives(db, night_id)
             # #1838 reopen：不写收夜旁白账与代码兜底句；收讫以 status=closed 为准。
             _set_night_fields(
                 db, night_id,
@@ -1180,7 +1184,7 @@ def close_night(
 
     return {
         "closed": True,
-        "night_id": int(night_id),
+        "night_id": night_id,
         "already": False,
         "night": final,
         "auto": bool(auto),
@@ -1258,20 +1262,20 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:
             continue
         origin = next(
-            (str(tag)[len(_SUMMON_ORIGIN_PREFIX):] for tag in tags
-             if str(tag).startswith(_SUMMON_ORIGIN_PREFIX)),
+            (tag[len(_SUMMON_ORIGIN_PREFIX):] for tag in tags
+             if tag.startswith(_SUMMON_ORIGIN_PREFIX)),
             "",
         )
         names = _load_durable_str_list(row["person_names"], surface="story_ledger_entries.person_names")
         if not origin or not names:
             continue
-        person_name = str(names[0])
+        person_name = names[0]
         projected.append({
             "entry_id": int(row["id"]), "night_id": int(row["night_id"]),
             "person_name": person_name, "origin_id": origin,
             "kind": _project_unsettled_summon_kind(db, tags, person_name),
             **({"travel_tone": _travel_tone_from_tags(tags)}
-               if any(str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX) for tag in tags)
+               if any(tag.startswith(_SUMMON_TRAVEL_TONE_PREFIX) for tag in tags)
                else {}),
         })
     return projected
@@ -1409,7 +1413,7 @@ def settle_summon_origin(
 def retire_unsettled_summons_for_inactive(db: Any) -> List[str]:
     """人物已非 active 时确定性结清其全部未结传召（ADR 0096 / ADR 0009）。"""
     settled: List[str] = []
-    for item in list(list_unsettled_summons(db)):
+    for item in list_unsettled_summons(db):
         row = db.conn.execute(
             "SELECT status FROM characters WHERE name=?",
             (item["person_name"],),
@@ -1434,7 +1438,7 @@ def settle_unsettled_summons_for_person(
     if not name:
         return []
     settled: List[str] = []
-    for item in list(list_unsettled_summons(db)):
+    for item in list_unsettled_summons(db):
         if item["person_name"] != name:
             continue
         origin = str(item["origin_id"])
@@ -1871,7 +1875,7 @@ def presence_roster(db: Any, night_id: int) -> List[Dict[str, Any]]:
     seen: set[str] = set()
     for entry in list_ledger(db, int(night_id)):
         delta = _presence_delta(entry)
-        names = [str(name) for name in entry.get("person_names") or []]
+        names = entry.get("person_names") or []
         if delta == PRESENCE_ENTER:
             for name in names:
                 if name not in seen:

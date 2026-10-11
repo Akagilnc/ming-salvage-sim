@@ -1,6 +1,6 @@
 import React from "react";
 import { Loader2, Trash2 } from "lucide-react";
-import { api, normalizeApiError } from "../api";
+import { ApiRequestError, api, normalizeApiError } from "../api";
 import { cliRunnerOptions } from "../cliRunners";
 import { resolveReasoningSupported } from "../reasoningSupport";
 import { consumeSettleStream } from "../settleStream";
@@ -71,9 +71,7 @@ export function MenuPage({
         { httpErrorLabel: "继续失败" },
       );
       if (outcome.kind === "error") {
-        const data = outcome.data;
-        const message = typeof data === "string" ? data : (data?.message || "继续失败。");
-        throw new Error(message);
+        throw new ApiRequestError(normalizeApiError(outcome.data, "继续失败。"), "继续失败。");
       }
       await onEnterGame();
     });
@@ -274,12 +272,12 @@ export function ApiSettingsModal({
       if (!response.ok) {
         const payload = await response.json().catch(() => ({ detail: response.statusText }));
         const detail = normalizeApiError(payload, response.statusText);
-        setErr(`code: ${detail.code || "unknown"}\nmessage: ${detail.message || response.statusText}`);
+        setErr(new ApiRequestError(detail, response.statusText).message);
         return;
       }
       await onSaved();
     } catch (e: any) {
-      setErr(`code: request_failed\nmessage: ${e?.message || String(e)}`);
+      setErr(e?.message || String(e));
     } finally {
       setBusy(false);
     }

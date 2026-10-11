@@ -1176,8 +1176,9 @@ def _dispatch_commissions(
                 continue
             try:
                 origin_id = strict_sqlite_id(strategy.get("source_chat_turn_id"))
-            except (TypeError, ValueError):
-                origin_id = 0
+            except (TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
             target_id = strategy.get("target_id")
             if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 0:
                 _reject(rejected, item, "点策交办须有正文、目标和陈策源轮", "invalid_shape", source)
@@ -1221,8 +1222,9 @@ def _dispatch_commissions(
                 continue
             try:
                 order_id = strict_sqlite_id(progress.get("order_id"))
-            except (TypeError, ValueError):
-                order_id = 0
+            except (TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
             note = progress.get("note")
             target = _active_secret_order(db, order_id)
             assignee = _scene_secret_assignee(minister_name, target)
@@ -1254,8 +1256,9 @@ def _dispatch_commissions(
                 continue
             try:
                 order_id = strict_sqlite_id(update.get("order_id"))
-            except (TypeError, ValueError):
-                order_id = 0
+            except (TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
             target = _active_secret_order(db, order_id)
             assignee = _scene_secret_assignee(minister_name, target)
             content_text = update.get("content")
@@ -1318,8 +1321,9 @@ def _dispatch_commissions(
                 continue
             try:
                 order_id = strict_sqlite_id(review.get("order_id"))
-            except (TypeError, ValueError):
-                order_id = 0
+            except (TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
             claim = review.get("claim")
             if not isinstance(claim, str):
                 _reject(rejected, item, "密令核议陈词须为原文", "invalid_shape", source)
@@ -1982,8 +1986,9 @@ def _dispatch_endorsements(
     for item in items:
         try:
             action_id = strict_sqlite_id(item.get("action_id"))
-        except (TypeError, ValueError):
-            action_id = 0
+        except (TypeError, ValueError) as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
         if action_id <= 0:
             _reject(
                 rejected, item,
@@ -2220,9 +2225,9 @@ def _dispatch_inquiries(
             from ming_sim.strict_types import strict_sqlite_id
             try:
                 order_id = strict_sqlite_id(raw_order)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
                 _reject(
-                    rejected, item, "查访 order_id 须为整数",
+                    rejected, item, str(exc),
                     "invalid_shape", source,
                 )
                 continue
@@ -2290,8 +2295,9 @@ def _dispatch_rushes(
         try:
             raw_tid = item.get("target_id")
             target_id = 0 if raw_tid in (None, "") else strict_sqlite_id(raw_tid)
-        except (TypeError, ValueError):
-            target_id = 0
+        except (TypeError, ValueError) as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
         if target_kind not in {"commitment", "secret_order"} or target_id <= 0:
             _reject(
                 rejected, item,
@@ -2332,8 +2338,8 @@ def _dispatch_rushes(
                 continue
             try:
                 stage_idx = strict_int(item["stage_idx"], accept_numeric_strings=False)
-            except (KeyError, TypeError, ValueError):
-                _reject(rejected, item, "催办缺目标分段索引", "invalid_shape", source)
+            except (KeyError, TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
                 continue
             from ming_sim.staged_commitment import normalize_commitment_stages
             stages = normalize_commitment_stages(row["stages_json"])
@@ -2457,8 +2463,9 @@ def _dispatch_promises(
         try:
             # SQLite 身份权威：bool/float/超 64-bit 在查询前即 ValueError（#1897 C1）。
             action_id = strict_sqlite_id(item.get("action_id"))
-        except (TypeError, ValueError):
-            action_id = 0
+        except (TypeError, ValueError) as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
         decision = str(item.get("decision") or "").strip()
         if action_id <= 0 or decision not in {"应允", "拒绝", "修改", "留中"}:
             _reject(
@@ -2511,10 +2518,8 @@ def _dispatch_promises(
             ):
                 _reject(rejected, item, "只有新建密令可用非空 typed new_content 修改", "invalid_shape", source)
                 continue
-            from ming_sim.db import GameDB
-            payload = GameDB.parse_engine_payload_json(
-                row["payload_json"], surface="pending_actions.payload_json",
-            )
+            from ming_sim.db import _load_durable_json
+            payload = _load_durable_json(row["payload_json"])
             payload["content"] = new_content
             db.conn.execute(
                 "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
@@ -2573,10 +2578,8 @@ def _dispatch_promises(
             else:
                 changed = False
                 if kind == "directive" and declared_mode is not None:
-                    from ming_sim.db import GameDB
-                    payload = GameDB.parse_engine_payload_json(
-                        row["payload_json"], surface="pending_actions.payload_json",
-                    )
+                    from ming_sim.db import _load_durable_json
+                    payload = _load_durable_json(row["payload_json"])
                     if payload.get("mode", "ordinary") != declared_mode:
                         payload["mode"] = declared_mode
                         if int(row["night_approved"] or 0):
@@ -2650,38 +2653,33 @@ def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
     return "invalid_shape"
 
 
-def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, str | None]:
-    """把 item 里可选的 existing-only 事务声明解成事务 id；(affair_id, error_category)。
-
-    无声明 → (None, None)；声明合法 → (affair_id, None)；引用不存在事务 →
-    (None, "hallucinated_id")；声明本身形状坏 → (None, "invalid_shape")。
-    解析期领域失败进拒收；peek/get 真故障原样上抛（#1897 C1 / ADR0005）。
-    """
+def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, str | None, str | None]:
+    """Return the affair id, refusal category and original reason; storage faults raise."""
     try:
         raw_affair = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
-    except DeclarationDataError:
-        return None, "invalid_shape"
+    except DeclarationDataError as exc:
+        return None, "invalid_shape", str(exc)
     if raw_affair is None:
-        return None, None
+        return None, None, None
     # 声明形检已完成；peek/get 持久损坏上抛，不洗 invalid_shape（F39）。
     try:
         affair_id = db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_EXPERIENCE)
-    except DeclarationReferenceError:
-        return None, "hallucinated_id"
-    except DeclarationDataError:
-        return None, "invalid_shape"
-    return affair_id, None
+    except DeclarationReferenceError as exc:
+        return None, "hallucinated_id", str(exc)
+    except DeclarationDataError as exc:
+        return None, "invalid_shape", str(exc)
+    return affair_id, None, None
 
 
-def _resolve_affair_origin_ref(db: Any, item: Mapping[str, object]) -> Tuple[str, str | None]:
+def _resolve_affair_origin_ref(db: Any, item: Mapping[str, object]) -> Tuple[str, str | None, str | None]:
     """同 :func:`_peek_affair_id`，但给需要 origin_ref 字符串（而非事务 id）的
     落库口用（textual_facts / public_sayings / presence / scene_facts）。"""
-    affair_id, error_category = _peek_affair_id(db, item)
+    affair_id, error_category, reason = _peek_affair_id(db, item)
     if error_category is not None:
-        return "", error_category
+        return "", error_category, reason
     if affair_id is None:
-        return "", None
-    return db.affairs.origin_ref(affair_id), None
+        return "", None, None
+    return db.affairs.origin_ref(affair_id), None, None
 
 
 def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None:
@@ -2714,9 +2712,9 @@ def _dispatch_textual_facts(
         except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
-        origin_ref, error_category = _resolve_affair_origin_ref(db, item)
+        origin_ref, error_category, reason = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
-            _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
+            _reject(rejected, item, reason, error_category, source)
             continue
         try:
             fact = db.textual_facts.append(
@@ -2773,9 +2771,9 @@ def _dispatch_public_sayings(
         except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
-        affair_ref, error_category = _resolve_affair_origin_ref(db, item)
+        affair_ref, error_category, reason = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
-            _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
+            _reject(rejected, item, reason, error_category, source)
             continue
         try:
             saying_id = record_public_saying(
@@ -2809,9 +2807,9 @@ def _dispatch_on_scene_facts(
         if source_turn_error is not None:
             _reject(rejected, item, source_turn_error, "missing_ref", source)
             continue
-        affair_id, error_category = _peek_affair_id(db, item)
+        affair_id, error_category, reason = _peek_affair_id(db, item)
         if error_category is not None:
-            _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
+            _reject(rejected, item, reason, error_category, source)
             continue
         origin_ref = (
             db.affairs.origin_ref(affair_id) if affair_id is not None else "转译声明"
@@ -2910,9 +2908,9 @@ def _dispatch_presence(
         except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
-        origin_ref, error_category = _resolve_affair_origin_ref(db, item)
+        origin_ref, error_category, reason = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
-            _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
+            _reject(rejected, item, reason, error_category, source)
             continue
         try:
             entry_id = append_ledger_entry(
@@ -2979,9 +2977,9 @@ def _dispatch_scene_facts(
             except DeclarationReferenceError as exc:
                 _reject(rejected, item, str(exc), "hallucinated_id", source)
                 continue
-        origin_ref, error_category = _resolve_affair_origin_ref(db, item)
+        origin_ref, error_category, reason = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
-            _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
+            _reject(rejected, item, reason, error_category, source)
             continue
         try:
             entry_id = append_ledger_entry(
@@ -3049,9 +3047,9 @@ def _dispatch_edge_events(
         except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
-        affair_id, error_category = _peek_affair_id(db, item)
+        affair_id, error_category, reason = _peek_affair_id(db, item)
         if error_category is not None:
-            _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
+            _reject(rejected, item, reason, error_category, source)
             continue
         try:
             with item_savepoint_scope(db, f"edge_event_{int(state.turn)}_{id(item)}"):
@@ -3141,9 +3139,9 @@ def _dispatch_registrations(
                 "invalid_shape", source,
             )
             continue
-        affair_id, error_category = _peek_affair_id(db, item)
+        affair_id, error_category, reason = _peek_affair_id(db, item)
         if error_category is not None:
-            _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
+            _reject(rejected, item, reason, error_category, source)
             continue
         # 缺省忠诚可落 55；显式脏值（含非有限）不得洗成缺省成功（#1897 C1）。
         if "loyalty" not in item or item.get("loyalty") is None:

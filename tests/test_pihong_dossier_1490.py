@@ -325,7 +325,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game, monkeypatch):
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, title='旧强推')
     did = int(stalled['id'])
-    dir_id = int(db.add_directive(state, None, '着即强推', 'test-658-edit', dossier_payload={'target_dossier_id': did}))
+    dir_id = db.add_directive(state, None, '着即强推', 'test-658-edit', dossier_payload={'target_dossier_id': did})
     db.update_directive_text(dir_id, '着清核河工', dossier_payload={'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'})
     row = db.conn.execute('SELECT dossier_payload_json FROM turn_directives WHERE id=?', (dir_id,)).fetchone()
     payload = json.loads(str(row['dossier_payload_json'] or '{}'))

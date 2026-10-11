@@ -44,7 +44,7 @@ describe("全局 ESC 关闭抽屉（stale closure 回归）", () => {
     ["官员任免", "right-drawer-appointment"],
   ])("打开 %s 抽屉后按 ESC 可关闭", async (navLabel, drawerClass) => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -73,7 +73,7 @@ describe("全局 ESC 关闭抽屉（stale closure 回归）", () => {
 describe("全局 ESC 关闭抽屉的交互面", () => {
   it("打开时仅当前抽屉可交互，ESC 后恢复 inert 且 DOM 常驻", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -131,7 +131,7 @@ describe("全局 ESC 关闭结局页（endingDismissed）", () => {
       },
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });

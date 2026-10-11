@@ -57,10 +57,8 @@ def _set_tail_status(
     from ming_sim import month_chain
 
     chain = month_chain._load_chain(db, int(closed_turn))
-    tail = GameDB.optional_object(
-        chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
-    )
-    if not tail:
+    tail = chain.get("mechanical_tail")
+    if tail is None or not tail.keys():
         return
     tail["status"] = status
     if status != _TAIL_STATUS_FAILED:
@@ -245,7 +243,7 @@ def _run_tail_body(
         session, closed_turn=closed_turn, settled_year=settled_year,
         settled_period=settled_period, queue=queue, ticket=ticket,
     )
-    if ending_outcome and ending_outcome.get("status"):
+    if ending_outcome is not None and ending_outcome.get("status"):
         summary = generate_ending_summary_for_tail(
             db, closed_state, ending_outcome,
             llm_config=getattr(session, "llm_config", None),
@@ -277,10 +275,8 @@ def _submit_tail(
 
         def still_pending() -> bool:
             chain = month_chain._load_chain(session.db, int(closed_turn))
-            tail = GameDB.optional_object(
-                chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
-            )
-            return bool(tail) and tail.get("status") == _TAIL_STATUS_PENDING
+            tail = chain.get("mechanical_tail")
+            return tail is not None and tail.get("status") == _TAIL_STATUS_PENDING
 
         try:
             # 扫描见到 pending 之后，上一张票可能已经终结。写闸内再读，
@@ -381,9 +377,7 @@ def _pending_mechanical_tails(
     pending: list[tuple[int, Dict[str, Any]]] = []
     for turn in _resolve_context_turns(db):
         chain = month_chain._load_chain(db, turn)
-        tail = GameDB.optional_object(
-            chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
-        )
+        tail = chain.get("mechanical_tail")
         if tail is not None and tail.get("status") == _TAIL_STATUS_PENDING:
             pending.append((turn, tail))
     return pending
@@ -394,10 +388,7 @@ def failed_mechanical_tail(db: Any) -> Optional[tuple[int, Dict[str, Any]]]:
     from ming_sim import month_chain
 
     for turn in _resolve_context_turns(db):
-        tail = GameDB.optional_object(
-            month_chain._load_chain(db, turn).get("mechanical_tail"),
-            surface="month_chain.mechanical_tail",
-        )
+        tail = month_chain._load_chain(db, turn).get("mechanical_tail")
         if tail is not None and tail.get("status") == _TAIL_STATUS_FAILED:
             return turn, tail
     return None
@@ -412,9 +403,9 @@ def retry_failed_mechanical_tail(session: Any) -> bool:
     # 在读取失败时不得被 _set_tail_status 洗失。
     settled_year = int(tail.get("settled_year") or 0)
     settled_period = int(tail.get("settled_period") or 0)
-    ending_outcome = GameDB.optional_object(
-        tail.get("ending_outcome"), surface="month_chain.mechanical_tail.ending_outcome",
-    )
+    ending_outcome = tail.get("ending_outcome")
+    if ending_outcome is not None:
+        ending_outcome = {**ending_outcome}
     _set_tail_status(session.db, turn, _TAIL_STATUS_PENDING,
                      source=Provenance.system_simulation)
     return _submit_tail(
@@ -431,10 +422,7 @@ def ending_summary_pending(db: Any, state: Any) -> bool:
     if not bool(getattr(state, "ended", False)):
         return False
     for _turn, tail in _pending_mechanical_tails(db):
-        outcome = GameDB.optional_object(
-            tail.get("ending_outcome"),
-            surface="month_chain.mechanical_tail.ending_outcome",
-        )
+        outcome = tail.get("ending_outcome")
         if outcome is not None and outcome.get("status"):
             return True
     return False

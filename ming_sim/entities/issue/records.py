@@ -130,10 +130,7 @@ def _commitment_remaining_from_gate(
         val = issues._eval_gate_key(str(key), state.metrics, db)
         if val is None:
             continue
-        try:
-            val_num = float(val)
-        except (TypeError, ValueError):
-            continue
+        val_num = float(val)
         op, target = m.group(1), int(m.group(2))
         if op == "<=":
             need = max(0.0, val_num - target)
@@ -158,18 +155,13 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
     from ming_sim.models import _load_durable_json_object
     for row in rows:
         payload = GameDB.parse_engine_payload_json(
-            row["metric_delta"], surface="economy_flows.metric_delta",
+            row["metric_delta"],
         )
         # No progress field on this advance → keep scanning (legal absence → final 0).
         if "commitment_progress" not in payload:
             continue
         progress = payload.get("commitment_progress")
         # Present but not an object = durable shape fault; do not skip-wash to 0 (F39).
-        if not isinstance(progress, dict):
-            raise ValueError(
-                "commitment_progress 须为对象，"
-                f"得 {type(progress).__name__}: {progress!r}"
-            )
         # Missing/empty paid_total → 0 (legal default). Present non-int is shape fault.
         raw = progress.get("paid_total", 0)
         if raw is None or raw == "":

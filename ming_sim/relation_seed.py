@@ -46,15 +46,13 @@ def pregame_turn(year: int, period: int) -> int:
 def _as_int(value: Any, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{label}必须为整数，得 {value!r}")
-    return int(value)
+    return value
 
 
 def _non_empty_str(value: Any, label: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{label}必须为字符串，得 {type(value).__name__}")
     # strip 只作非空谓词；存储值原样（含首尾空白与换行，零归一零 clamp）。
-    if not value.strip():
-        raise ValueError(f"{label}不能为空")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label}须为非空字符串，得 {value!r}")
     return value
 
 
@@ -68,15 +66,13 @@ def _identifier(value: Any, label: str) -> str:
 def validate_seed_document(
     doc: Any, *, opening_year: int, opening_period: int
 ) -> Dict[str, Any]:
-    """fail-closed 校验并归一 seed 文档；任何违约整份 ValueError 拒收。
+    """fail-closed 校验并归一 seed 文档；任何违约整份拒收。
 
     文档形状：{"events": [...], "summaries": [...]}（events 必须为非空列表，
     summaries 可缺省为空表）。events 项＝有向对（source/target）＋受控词表
     event_kind＋一句故事级语境 context＋origin 回指＋开局前时间戳 year/period
     （严格早于开局）＋字面布尔 evidence。summaries
     项＝关系对＋founding_lines 字符串列表（奠基段初始素材）。"""
-    if not isinstance(doc, dict):
-        raise ValueError(f"seed 文档顶层必须是 object，得 {type(doc).__name__}")
     opening = (_as_int(opening_year, "开局年份"), _as_int(opening_period, "开局月份"))
 
     if "events" not in doc:
@@ -86,8 +82,6 @@ def validate_seed_document(
         raise ValueError("seed 文档 events 必须是非空列表")
     events: List[Dict[str, Any]] = []
     for index, item in enumerate(raw_events):
-        if not isinstance(item, dict):
-            raise ValueError(f"seed events[{index}] 必须是 object")
         source = _identifier(item.get("source"), f"seed events[{index}].source")
         target = _identifier(item.get("target"), f"seed events[{index}].target")
         if source == target:
@@ -130,8 +124,6 @@ def validate_seed_document(
     summaries: List[Dict[str, Any]] = []
     summary_pairs = set()
     for index, item in enumerate(raw_summaries):
-        if not isinstance(item, dict):
-            raise ValueError(f"seed summaries[{index}] 必须是 object")
         source = _identifier(item.get("source"), f"seed summaries[{index}].source")
         target = _identifier(item.get("target"), f"seed summaries[{index}].target")
         if source == target:

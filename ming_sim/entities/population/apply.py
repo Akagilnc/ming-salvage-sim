@@ -102,8 +102,8 @@ def _apply_population_transfers(
             # 数量契约＝严格 int（含拒无损整数串）：extractor 提示明令直接输出数字，
             # 转移账不沿用 fiscal 的整数串宽容（#649 票面：amount 非 int 即拒）。
             amount = _strict_int(raw_amount, accept_numeric_strings=False)
-        except (TypeError, ValueError):
-            _reject("invalid_enum", f"population_transfers amount 非整数：{raw_amount!r}")
+        except (TypeError, ValueError) as exc:
+            _reject("invalid_enum", str(exc))
             continue
         if amount <= 0:
             _reject("invalid_enum", f"population_transfers amount 须为正整数：{amount!r}")

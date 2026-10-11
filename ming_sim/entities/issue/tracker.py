@@ -75,8 +75,8 @@ def apply_issue_tracker_output(
             # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit → ValueError（含 10**100 这类
             # int() 过得了但绑定 SQLite 抛 OverflowError 的脏 id，避免上抛崩整月，同 close_issues）。
             issue_id = strict_types._parse_sqlite_id(adv.get("issue_id"))
-        except (TypeError, ValueError):
-            entity_rejections.append(RejectedItem(item=adv, reason=f"advances issue_id 非法（非整数或超 SQLite 范围）：{adv.get('issue_id')!r}", category="invalid_enum", source=source))
+        except (TypeError, ValueError) as exc:
+            entity_rejections.append(RejectedItem(item=adv, reason=str(exc), category="invalid_enum", source=source))
             continue
         try:
             # delta_bar/inertia_delta 用 _strict_int（拒 bool/float/inf/非数）：原裸 int() 在此 try
@@ -667,8 +667,8 @@ def apply_issue_tracker_output(
             # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit 范围 → ValueError（含 10**100
             # 这类 int() 过得了但绑定 SQLite 抛 OverflowError 的脏 id，避免上抛崩整月，codex r1）。
             issue_id = strict_types._parse_sqlite_id(cl.get("issue_id"))
-        except (TypeError, ValueError):
-            entity_rejections.append(RejectedItem(item=cl, reason=f"close_issues issue_id 非法（非整数或超 SQLite 范围）：{cl.get('issue_id')!r}", category="invalid_enum", source=source))
+        except (TypeError, ValueError) as exc:
+            entity_rejections.append(RejectedItem(item=cl, reason=str(exc), category="invalid_enum", source=source))
             continue
         reason = str(cl.get("reason") or "").strip().lower()
         if reason not in ("resolved", "failed", "acknowledged"):
@@ -788,10 +788,7 @@ def apply_issue_tracker_output(
 
     # 4) cancels
     for cn in tracker_output.get("cancels", []) or []:
-        try:
-            issue_id = int(cn.get("issue_id"))
-        except (TypeError, ValueError):
-            continue
+        issue_id = int(cn.get("issue_id"))
         row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
             continue

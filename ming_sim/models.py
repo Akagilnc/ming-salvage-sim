@@ -38,10 +38,7 @@ def loads_effect_dict(raw: object) -> Dict[str, object]:
 def _nonzero_int(raw: object) -> bool:
     if raw in (None, "") or isinstance(raw, (bool, float)):
         return False
-    try:
-        return int(raw) != 0  # type: ignore[arg-type]
-    except (TypeError, ValueError, OverflowError):
-        return False
+    return int(raw) != 0  # type: ignore[arg-type]
 
 
 def _nonempty_text(raw: object) -> bool:
@@ -700,13 +697,6 @@ def _load_durable_json_list(raw: object, *, surface: str) -> list:
     return value
 
 
-def _load_durable_str_list(raw: object, *, surface: str) -> list:
-    """Durable string-array column: list + each member str (#1897 E1)."""
-    return _require_str_list_members(
-        _load_durable_json_list(raw, surface=surface), surface=surface,
-    )
-
-
 def _load_durable_json_object(raw: object, *, surface: str) -> dict:
     """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1).
 
@@ -731,18 +721,6 @@ def _load_durable_json_object(raw: object, *, surface: str) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
     return value
-
-
-def _require_str_list_members(values: list, *, surface: str) -> list:
-    """Each durable list member must already be str — no str() wash (#1897 E1)."""
-    out: list = []
-    for index, item in enumerate(values):
-        if not isinstance(item, str):
-            raise ValueError(
-                f"{surface}[{index}] 须为字符串，得 {type(item).__name__}"
-            )
-        out.append(item)
-    return out
 
 
 def require_persistent_string_list(
@@ -771,9 +749,3 @@ def require_persistent_string_list(
             raise ValueError(f"{surface}.{field}[{index}] 不得为空")
         out.append(text)
     return out
-
-
-def loads_persistent_name_list(raw: object, *, surface: str = "name_list") -> list:
-    """Durable JSON name list: missing/empty → []; corrupt/null member raises."""
-    data = _load_durable_json_list(raw, surface=surface)
-    return require_persistent_string_list(data, surface=surface, field="items")

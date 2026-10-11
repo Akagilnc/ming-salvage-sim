@@ -405,7 +405,7 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert "暗渠新项_base" not in db.get_fiscal_config()
-    assert list(db.list_fiscal_effects_for_dossier(did)) == before
+    assert db.list_fiscal_effects_for_dossier(did) == before
     tombstones = db.conn.execute(
         "SELECT key FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",
         (f"dossier:{prohibition}",),

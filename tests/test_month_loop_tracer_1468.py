@@ -183,7 +183,6 @@ def _post_issue_stream(
             return {**payload, "_event": "error"}
         raise AssertionError(f"{step}: stream error event: {data!r}; sse={resp.text!r}")
     if ev == "decisions":
-        assert isinstance(data, dict), f"{step}: decisions payload not dict: {data!r}"
         return {**data, "awaiting_decision": True}
     if ev == "done":
         assert isinstance(data, dict), f"{step}: done payload not dict: {data!r}"

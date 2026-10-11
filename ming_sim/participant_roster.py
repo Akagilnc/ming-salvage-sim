@@ -83,20 +83,14 @@ def decode_durable_participant_roster(
     require_tier=True（案卷/连坐）：每项必有合法机械档；''/False/0 不得洗空跳过。
     require_tier=False（knowledge 取人名）：缺档可过；**一旦 present** 类型/闭集仍响亮。
     """
-    from ming_sim.db import _load_durable_json_list
+    from ming_sim.db import _load_durable_json
 
-    roster = _load_durable_json_list(raw, surface="participant_roster")
+    roster = _load_durable_json(raw, default='[]')
+    if not isinstance(roster, list):
+        raise ValueError("participant_roster must be a list of participants")
     out: list = []
     for item in roster:
-        if not isinstance(item, dict):
-            raise ValueError("participant_roster 每项须为对象")
-        entry = dict(item)
-        for field in ("role", "delegator_id"):
-            value = entry.get(field)
-            if value is not None and not isinstance(value, str):
-                raise ValueError(
-                    f"参与人 {field} 须为字符串，得 {type(value).__name__}"
-                )
+        entry = {**item}
         # 人物主键：案卷/连坐必非空 str；knowledge 取名可回落 name 键。
         cid_raw = entry.get("character_id")
         if cid_raw is None and not require_tier:
@@ -118,10 +112,6 @@ def decode_durable_participant_roster(
             continue
         # present 档：类型与闭集响亮；输出规范化枚举，投影与校验同值（#1897 E1）。
         tier_raw = entry.get("tier")
-        if not isinstance(tier_raw, str):
-            raise ValueError(
-                f"参与人机械档非法：{type(tier_raw).__name__}"
-            )
         tier = tier_raw.strip()
         if tier not in PARTICIPANT_TIERS:
             raise ValueError(f"参与人机械档非法：{tier_raw!r}")
@@ -140,9 +130,9 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
         dossier.get("participant_roster"),
     )
     for entry in roster:
-        if str(entry.get("tier") or "").strip() != "主办":
+        if entry["tier"] != "主办":
             continue
-        name = str(entry.get("character_id") or "").strip()
+        name = entry["character_id"]
         if name:
             return name
     executor_id = str(dossier.get("executor_id") or "").strip()
@@ -160,7 +150,7 @@ def participant_roster_names(raw: object) -> set[str]:
     """
     names: set[str] = set()
     for item in decode_durable_participant_roster(raw, require_tier=False):
-        name = str(item.get("character_id") or item.get("name") or "").strip()
+        name = (item.get("character_id") or item.get("name") or "").strip()
         if name:
             names.add(name)
     return names
@@ -184,7 +174,7 @@ def project_execution_liability_parties(
         if item.get("tier") != "主办":
             continue
         # character_id 已在 decode 验为非空 str；不再 str(id or '') 过滤（#1897 E1）。
-        lead = str(item["character_id"])
+        lead = item["character_id"]
         if lead not in seen_primary:
             seen_primary.add(lead)
             primary_ids.append(lead)

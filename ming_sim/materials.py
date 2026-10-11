@@ -9,7 +9,6 @@ live agent session.
 
 from __future__ import annotations
 
-from ming_sim.models import loads_persistent_name_list
 
 import hashlib
 import json
@@ -299,14 +298,8 @@ def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
     Missing issue (KeyError) is not a link. Corrupt durable ``issues.affair_id``
     raises from AffairStore.affair_id_for_issue (F39) — never wash into unlinked.
     """
-    try:
-        iid = int(issue_id)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0
-    try:
-        return int(db.affairs.affair_id_for_issue(iid))
-    except KeyError:
-        return 0
+    iid = int(issue_id)  # type: ignore[arg-type]
+    return db.affairs.affair_id_for_issue(iid)
 
 
 def _own_affair_lines(
@@ -412,10 +405,7 @@ def _own_affair_lines(
     textual_facts = db.textual_facts
     lines: list[tuple[str, str, str, str, bool]] = []
     for affair_id in candidate_ids:
-        try:
-            affair = store.get(affair_id)
-        except KeyError:
-            continue
+        affair = store.get(affair_id)
         facts = tuple(fact for fact in store.current_situation(textual_facts, affair_id)
                       if origin_visible_to(db, fact.origin_ref, character_name))
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
@@ -697,10 +687,7 @@ def _write_textual_fact_files(
     for dir_key, title, _directory_text, _opening_text, _is_handling in matter_lines:
         if not str(dir_key).startswith("affair-"):
             continue
-        try:
-            affair_id = int(str(dir_key).split("-", 1)[1])
-        except (TypeError, ValueError, IndexError):
-            continue
+        affair_id = int(str(dir_key).split("-", 1)[1])
         if affair_id > 0:
             subjects.append(("affair", str(affair_id), str(title or affair_id)))
     index: list[str] = []
@@ -1823,7 +1810,7 @@ def _scene_present_rows(db: Any) -> list[tuple[str, str]]:
 def _json_list_field(raw: object) -> list[str]:
     """DB 人物 aliases/personal_skills：腐坏响亮，不 catch-to-[]（#1897 E1）。"""
     from ming_sim.db import _load_durable_str_list
-    return _load_durable_str_list(raw, surface="characters.json_list_field")
+    return _load_durable_str_list(raw)
 
 
 def _character_projection_from_db_row(row: Any) -> Any:

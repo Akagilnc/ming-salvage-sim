@@ -40,8 +40,8 @@ def apply(run):
             prepared = _prepare_authority_change_item(run.db, run.state, item)
         except AuthorityDataError as exc:
             reason = str(exc)
-            rejections.append(RejectedItem(item=item, reason=reason, category=reason if reason in _KNOWN_CATEGORIES
-                else "invalid_authority_change", source=run.ctx.source))
+            rejections.append(RejectedItem(item=item, reason=reason, category=exc.category or (reason if reason in _KNOWN_CATEGORIES
+                else "invalid_authority_change"), source=run.ctx.source))
             continue
         applied = prepared.get("applied")
         if applied is None:

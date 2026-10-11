@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import TYPE_CHECKING, Dict, List
 
 from ming_sim.models import effect_dict_has_work
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ming_sim.db import GameDB
@@ -54,7 +57,11 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
     for m in _DECISION_RE.finditer(text or ""):
         try:
             obj = json.loads(m.group(1))
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            from ming_sim.audience_night import write_audience_error_pack
+            pack = write_audience_error_pack(kind="decision_admission", message=str(exc),
+                detail={"block_span": m.span(), "input": m.group(1)}, exc=exc)
+            logger.exception("decision block rejected diagnostic=%s", pack)
             continue
         if not isinstance(obj, dict):
             continue
@@ -76,7 +83,11 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             })
         try:
             bind_decision_options(options)
-        except ValueError:
+        except ValueError as exc:
+            from ming_sim.audience_night import write_audience_error_pack
+            pack = write_audience_error_pack(kind="decision_admission", message=str(exc),
+                detail={"block_span": m.span(), "input": m.group(1)}, exc=exc)
+            logger.exception("decision block rejected diagnostic=%s", pack)
             continue
         if len(options) < 2:  # 至少给 2 个选项才算有效抉择
             continue

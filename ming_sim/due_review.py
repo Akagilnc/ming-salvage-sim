@@ -121,7 +121,7 @@ def _todo_origin_ref(todo: Dict[str, object], meta_origin: str = "") -> str:
     if raw:
         return raw
     did = payload.get("dossier_id")
-    if did is not None and int(did) > 0:
+    if int(did or 0) > 0:
         return f"dossier:{int(did)}"
     return str(meta_origin or "").strip()
 
@@ -157,12 +157,10 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     if branch["dossier_id"] is not None:
         # 读端方法属 GameDB 契约面：抛错=代码/schema bug，响亮上抛（ADR 0005），
         # 不得吞成「空证据」误导裁决。催办/监督缺源仍按空列表降级。
-        progress_reports = list(db.list_dossier_progress(int(branch["dossier_id"])))
+        progress_reports = db.list_dossier_progress(int(branch["dossier_id"]))
         # #1260：durable_effects 合并单源（economy+fiscal）。
-        durable_effects = list(
-            db.list_dossier_durable_effects(int(branch["dossier_id"]))
-        )
-        # #625：监督事实底只读注入（解 A）。
+        durable_effects = db.list_dossier_durable_effects(int(branch["dossier_id"]))
+        # #625：监督事实底只读注入（解 A）；不改 decide_due_review_verdict。
         supervision_pack = unpack_supervision_surface(
             db.build_supervision_judge_surface(int(branch["dossier_id"]))
         )

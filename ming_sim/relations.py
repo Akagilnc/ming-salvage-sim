@@ -62,8 +62,6 @@ def settlement_edge_origin(origin_ref: object, kind: str) -> str:
     只作非空谓词（与 F1 context 同一纪律）。bind_origin_round 在写口内再附
     ``|round:N``（N=当前回合），TD-1 的 origin 回指由既有绑定机制承担，此处
     不重复拼 round。禁在调用侧另拼第二套 origin。"""
-    if not isinstance(origin_ref, str):
-        raise DeclarationDataError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
     if not origin_ref.strip():
         raise DeclarationDataError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
     return f"{origin_ref}:relation:{validate_edge_kind(kind)}"

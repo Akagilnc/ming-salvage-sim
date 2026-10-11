@@ -553,10 +553,10 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         office_type = infer_office_type_from_office(
             row["office"], row["office_type"], llm_config, use_llm=False
         )
-        from ming_sim.models import _load_durable_json_object, loads_persistent_name_list
+        from ming_sim.db import _load_durable_str_list
 
-        aliases = loads_persistent_name_list(row["aliases"], surface="characters.aliases")
-        personal_skills = loads_persistent_name_list(
+        aliases = _load_durable_str_list(row["aliases"], surface="characters.aliases")
+        personal_skills = _load_durable_str_list(
             row["personal_skills"], surface="characters.personal_skills",
         )
         from ming_sim.covert_progress import _parse_seed_guilt
@@ -2077,10 +2077,7 @@ class GameSession:
         carried = dict(carry_over or {})
         jobs: List[Dict[str, object]] = []
         for item in rejections or []:
-            try:
-                did = int(item.get("directive_id"))
-            except (TypeError, ValueError):
-                continue
+            did = int(item.get("directive_id"))
             if self.db.get_dossier_for_directive(did) is not None:
                 continue
             row = self.db.get_directive(did)
@@ -2392,7 +2389,7 @@ class GameSession:
             dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
                 self.state, record_rejections=is_last,
             )
-        dossiered_directives = list(self.db.list_dossiered_draft_directives(self.state))
+        dossiered_directives = self.db.list_dossiered_draft_directives(self.state)
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids stay distinct from durable turn_directives ids.
         pending_directives = self.db.preview_pending_directives(
@@ -2530,29 +2527,25 @@ class GameSession:
     def victory(self) -> Dict[str, object]:
         return victory_status(self.db)
 
-    def auto_save(self, tag: str) -> Optional[str]:
+    def auto_save(self, tag: str) -> str:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。失败静默（自动存档不应阻断游戏）。"""
-        try:
-            import os as _os
-            saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
-            saves_dir = _os.path.dirname(saves_dir)
-            campaign_id = (self.db.kv_get("campaign_id") or "").strip()
-            if not campaign_id:
-                campaign_id = uuid.uuid4().hex[:12]
-                self.db.kv_set("campaign_id", campaign_id)
-            fname = (
-                f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
-                f"{self.state.period:02d}_t{self.state.turn:04d}_{tag}.db"
-            )
-            target = _os.path.join(saves_dir, fname)
-            self.db.backup_to(target)
-            prune_auto_saves(saves_dir, campaign_id)
-            return target
-        except Exception:
-            logger.exception("auto_save failed tag=%s", tag)
-            return None
+        不碰用户手动存档。备份失败原样交出，不伪装成已经存档。"""
+        import os as _os
+        saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
+        saves_dir = _os.path.dirname(saves_dir)
+        campaign_id = (self.db.kv_get("campaign_id") or "").strip()
+        if not campaign_id:
+            campaign_id = uuid.uuid4().hex[:12]
+            self.db.kv_set("campaign_id", campaign_id)
+        fname = (
+            f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
+            f"{self.state.period:02d}_t{self.state.turn:04d}_{tag}.db"
+        )
+        target = _os.path.join(saves_dir, fname)
+        self.db.backup_to(target)
+        prune_auto_saves(saves_dir, campaign_id)
+        return target
 
     def save_to(self, name: str) -> Dict[str, object]:
         """手动存档到 ``saves/<name>.db``（#1902：两端共用；入口只管取名与呈现）。

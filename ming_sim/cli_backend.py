@@ -221,23 +221,18 @@ def _login_shell_path() -> Optional[str]:
         return _DISCOVERED_LOGIN_PATH or None
     discovered = ""
     shell = os.environ.get("SHELL") or "/bin/zsh"
-    try:
-        # 用 printenv 取已导出的 PATH（shell 无关）：不靠 "$PATH" 展开——fish 把 $PATH
-        # 当 list、双引号里展开成空格分隔，会破后面的冒号切分（gemini r2 G-R1）。
-        # printenv 是外部命令，读到的是登录 shell 导出的 env PATH（恒冒号分隔）。
-        # flag 分开传 -l -i -c：组合形式 -lic 在 fish 等 shell 报错（不支持组合单字符
-        # 选项）；分开形式各 shell 通吃，仍由外层 try 兜底（gemini PR#115 high）。
-        # 硬规9：禁 subprocess.run(timeout=…)——超时路径会 SIGKILL。登录 PATH 探测无期限杀。
-        proc = _RAW_RUN(
-            [shell, "-l", "-i", "-c", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
-            capture_output=True, text=True,
-        )
-        m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
-        if m:
-            discovered = m.group(1).strip()
-    except Exception:
-        logger.exception("login shell PATH discovery failed")
-        discovered = ""
+    # 用 printenv 取已导出的 PATH（shell 无关）：不靠 "$PATH" 展开——fish 把 $PATH
+    # 当 list、双引号里展开成空格分隔，会破后面的冒号切分（gemini r2 G-R1）。
+    # printenv 是外部命令，读到的是登录 shell 导出的 env PATH（恒冒号分隔）。
+    # flag 分开传 -l -i -c：组合形式 -lic 在 fish 等 shell 报错（不支持组合单字符
+    # 选项）；分开形式各 shell 通吃，执行失败原样交出（gemini PR#115 high）。
+    proc = _RAW_RUN(
+        [shell, "-l", "-i", "-c", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
+        capture_output=True, text=True,
+    )
+    m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
+    if m:
+        discovered = m.group(1).strip()
     _DISCOVERED_LOGIN_PATH = discovered
     return discovered or None
 
@@ -398,7 +393,6 @@ def _iter_cli_process_lines(
     cwd: Optional[str] = None,
     clock: Optional[Callable[[], float]] = None,
     outcome: Optional[_CliProcessOutcome] = None,
-    backend: str = "cli",
 ) -> Iterator[str]:
     """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
 
@@ -499,30 +493,12 @@ def _iter_cli_process_lines(
     }
     pending_out = ""
 
-    host = str(backend or "cli").strip() or "cli"
-
     def _raise_recorded_thread_fault() -> None:
-        """工作线程已记录的故障立刻升格：不等另一管道 EOF，也不让 idle 改写真因。
-
-        stream_error / stdin_error 同一交接：OSError 族 → typed 宿主 I/O 终失败；
-        其余代码/控制异常原样上浮。不得因槽非空改写成可重试空转。
-        """
-        err = result.stream_error
-        if err is not None:
-            if isinstance(err, OSError):
-                from ming_sim.llm_model import cli_runner_unavailable
-                host_exc = RuntimeError(f"CLI 管道读取失败：{err}")
-                raise cli_runner_unavailable(host_exc, backend=host) from err
-            raise err
-        err = result.stdin_error
-        if err is not None:
-            if isinstance(err, OSError):
-                from ming_sim.llm_model import cli_runner_unavailable
-                host_exc = RuntimeError(
-                    f"{host} 调用失败（prompt 未能写入子进程 stdin）：{err}"
-                )
-                raise cli_runner_unavailable(host_exc, backend=host) from err
-            raise err
+        """Surface recorded native faults before EOF/idle can replace their cause."""
+        if result.stream_error is not None:
+            raise result.stream_error
+        if result.stdin_error is not None:
+            raise result.stdin_error
 
     def _has_recorded_thread_fault() -> bool:
         return result.stream_error is not None or result.stdin_error is not None
@@ -822,9 +798,9 @@ def _iter_cli_runner_text(
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
     - 静默超预算 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
     - 空输出 → llm_empty_output（可重试）
-    - stdin 未送达（线程已记故障，父环 idle 前升格）/ 未知非零退出 →
-      cli_runner_unavailable（typed 确定性失败，一次不重试；禁从 stderr 散文抠状态；
-      仅此已确证宿主 I/O／退出接缝翻 typed）
+    - stdin 未送达：线程原始 I/O 故障在父环 idle 前上抛，一次不重试。
+    - 非零退出：CalledProcessError 保留退出码与 stdout/stderr，一次不重试；
+      禁从 stderr 散文抠状态。
     - 宿主未暴露结构化鉴权状态时如实按正文／退出码处理，不另造词表（宿主缺口）
 
 
@@ -852,16 +828,13 @@ def _iter_cli_runner_text(
         for line in _iter_cli_process_lines(
                 cmd, stdin_text=stdin_text, env=env,
                 cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
-                clock=clock, outcome=outcome, backend=runner,
+                clock=clock, outcome=outcome,
             ):
             if json_events:
                 stripped = line.strip()
                 if not stripped:
                     continue
-                try:
-                    obj = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
+                obj = json.loads(stripped)
                 delta = _codex_event_text(obj)
                 if delta:
                     pieces.append(delta)
@@ -883,13 +856,9 @@ def _iter_cli_runner_text(
         # #1902 T2 / 锚定宪法：交付保留宿主原正文，不以 strip 改写呈现；
         # 空产出只以「去空白后是否为空」作判定，不把裁剪结果当交付物。
         primary = stdout_text if stdout_text.strip() else final_text
-        # 已确证非零退出 → typed 确定性失败（#1780 / ADR 0142）；禁从 stderr 词面分类。
+        # 已确证非零退出 → 原始确定性失败（#1780 / ADR 0142）；禁从 stderr 词面分类。
         if returncode != 0:
-            from ming_sim.llm_model import cli_runner_unavailable
-            host_exc = RuntimeError(
-                f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}"
-            )
-            raise cli_runner_unavailable(host_exc, backend=runner) from host_exc
+            raise subprocess.CalledProcessError(returncode, cmd, output=stdout_text, stderr=stderr)
         if not primary.strip():
             raise transport_failure_unavailable(
                 empty_output_failure(), attempts=1, exhausted=False,
@@ -1316,7 +1285,7 @@ class CliChat(OpenAIChat):
         # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
         # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
         # codex 走结构化 --json 事件流边到边出；纯文本 runner 判活后一次交全。
-        # 无 Exception→cli_runner_unavailable 宽包装：已 typed 的宿主/瞬断由
+        # 无未知异常宽包装：已 typed 的宿主/瞬断由
         # runner 接缝上浮；未知代码异常保真（同 invoke / #1902）。
         stream = _iter_cli_runner_text(
             self.backend,

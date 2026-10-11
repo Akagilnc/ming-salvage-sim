@@ -271,7 +271,7 @@ def prepare_pay_order_entries(
         else:
             if isinstance(until_raw, bool) or not isinstance(until_raw, int) or until_raw <= 0:
                 raise PayOrderKeyError(f"override 键 {key!r} 期限 until_turn 须为正整数：{until_raw!r}")
-            until = int(until_raw)
+            until = until_raw
         if parsed.region:
             row = db.conn.execute(
                 "SELECT 1 FROM regions WHERE id = ?", (parsed.region,)
@@ -279,7 +279,7 @@ def prepare_pay_order_entries(
             if row is None:
                 # r4：不新增 alias、不造虚拟 region——幻影 region_id fail-loud 拒写整道旨
                 raise PayOrderKeyError(f"override 键 {key!r}：region_id {parsed.region!r} 不存在（禁 alias/虚拟 region）")
-        prepared.append((key, int(value), until))
+        prepared.append((key, value, until))
     return prepared
 
 

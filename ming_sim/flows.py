@@ -17,7 +17,7 @@ from ming_sim.army_pay import (
     settle_hub_central_army_pay,
 )
 from ming_sim.constants import TURN_UNIT
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, _load_durable_json
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import GameState
@@ -96,7 +96,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
     ).fetchall()
     for row in rows:
-        fiscal = db.parse_engine_payload_json(row["fiscal"], surface="salt commerce fiscal")
+        fiscal = db.parse_engine_payload_json(row["fiscal"])
         salt_total += _as_finite_nonnegative_float(
             f"region {row['id']} fiscal.salt_tax", fiscal.get("salt_tax", 0)
         )
@@ -117,17 +117,14 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     for row in rows:
         region_id = str(row["id"])
         try:
-            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+            fiscal = _load_durable_json(row["fiscal"], default='{}')
         except (TypeError, ValueError) as exc:
             raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运：{exc}") from exc
         if not isinstance(fiscal, dict):
             raise ValueError(f"region {region_id!r} fiscal 非字典，无法投影起运")
         if "settle" not in fiscal:
             continue
-        settle = fiscal.get("settle")
-        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
-                or not isinstance(settle.get("p"), dict):
-            raise ValueError(f"region {region_id!r} 无 settle 财政基座，无法投影起运")
+        settle = fiscal["settle"]
         result = settle_tick(copy.deepcopy(settle["st"]), copy.deepcopy(settle["p"]), [])
         remittance_total += float((result.breakdown or {}).get("起运到京", 0.0) or 0.0)
     return remittance_total
@@ -390,13 +387,12 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
     ).fetchall()
     for row in rows:
-        fiscal = db.parse_engine_payload_json(row["fiscal"], surface="jingyun fiscal")
+        # 持久财政读取故障响亮上抛；不得出列成「无需求」后照常出成功预算（ADR 0005）。
+        fiscal = _load_durable_json(row["fiscal"], default='{}')
         settle = fiscal.get("settle")
         p = settle.get("p") if isinstance(settle, dict) else None
         if not isinstance(p, dict):
             continue
-        if not isinstance(settle, dict) or not isinstance(settle.get("p"), dict):
-            raise ValueError(f"region {row['id']} settle.p 持久坏态，无法计京运补需求")
         p = settle["p"]
         raw = p.get("拨付gross", 0)
         if raw is None:

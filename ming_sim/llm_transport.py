@@ -49,7 +49,7 @@ _typed_provider_status: ContextVar[Optional[int]] = ContextVar(
 # 提供方层抛出的 transport typed 失败（空转/空输出/瞬断/HTTP）。SDK 层把异常吞成
 # RunErrorEvent(content=str(e)) 后 typed 语义只剩散文；本 ContextVar 在 model 调用
 # 边界原样记住分类结果，供事件映射还原——不从 content 散文抠语义（ADR 0142）。
-_typed_provider_failure: ContextVar[Optional["ClassifiedFailure"]] = ContextVar(
+_typed_provider_failure: ContextVar[Optional["ClassifiedFailure | BaseException"]] = ContextVar(
     "ming_sim_transport_typed_failure", default=None,
 )
 
@@ -447,21 +447,13 @@ def empty_output_failure() -> ClassifiedFailure:
 
 
 def run_error_event_failure(
-    content: object = None, status_code: object = None,
+    content: object, status_code: int,
 ) -> ClassifiedFailure:
     """RunErrorEvent → 分类唯一构造。无 typed status 时不洗成瞬断（#1452）。"""
     pmsg = str(content or "")
     if not pmsg.strip():
         pmsg = "stream error"
     status_i = _coerce_status(status_code)
-    if status_i is None:
-        return ClassifiedFailure(
-            retryable=False,
-            code="llm_stream_error",
-            status_code=None,
-            provider_message=pmsg,
-            message=f"LLM 流式调用失败：{pmsg}",
-        )
     return ClassifiedFailure(
         retryable=_status_retryable(status_i),
         code=f"llm_http_{status_i}",
@@ -482,6 +474,8 @@ def take_remembered_typed_failure() -> Optional[ClassifiedFailure]:
         return None
     _typed_provider_failure.set(None)
     _typed_provider_status.set(None)
+    if isinstance(remembered, BaseException):
+        raise remembered
     return remembered
 
 
@@ -509,6 +503,10 @@ def map_run_error_event(event: Any) -> Optional[BaseException]:
         )
     status = _typed_status_from_run_error_event(event)
     _typed_provider_status.set(None)
+    if status is None:
+        error = RuntimeError(getattr(event, "content", None) or "")
+        error.error_type = getattr(event, "error_type", None)
+        return error
     return transport_failure_unavailable(
         run_error_event_failure(
             getattr(event, "content", None), status_code=status,

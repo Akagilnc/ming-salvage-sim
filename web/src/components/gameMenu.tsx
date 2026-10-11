@@ -1,6 +1,6 @@
 import React from "react";
 import { Check, Loader2, LogOut, Power, Save, Settings, Trash2, Upload, X } from "lucide-react";
-import { ApiRequestError, api } from "../api";
+import { api } from "../api";
 import { cliRunnerOptions } from "../cliRunners";
 import { resolveReasoningSupported } from "../reasoningSupport";
 import type { LLMConfigInfo, SaveEntry } from "../types";
@@ -110,8 +110,7 @@ export function SaveTab() {
       setName("");
       await refresh();
     } catch (e) {
-      const detail = e instanceof ApiRequestError ? e.detail : null;
-      setErr(detail ? `code: ${detail.code || "unknown"}\nmessage: ${detail.message || (e instanceof Error ? e.message : String(e))}` : e instanceof Error ? e.message : String(e));
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -504,8 +503,7 @@ export function LLMConfigTab() {
       setAdvancedApiKey("");
       setMsg("已生效并写入 data/runtime_llm.json。");
     } catch (e) {
-      const detail = e instanceof ApiRequestError ? e.detail : null;
-      setErr(detail ? `code: ${detail.code || "unknown"}\nmessage: ${detail.message || (e instanceof Error ? e.message : String(e))}` : e instanceof Error ? e.message : String(e));
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }

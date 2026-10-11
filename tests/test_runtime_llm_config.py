@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 
+import pytest
+
 from ming_sim import llm_config
 
 
@@ -28,24 +30,20 @@ def test_load_runtime_llm_missing_file_keeps_empty_dict_contract(tmp_path, monke
     assert _warning_exc_types(caplog) == set()
 
 
-
-def test_load_runtime_llm_malformed_json_surfaces_fault_then_falls_back(
-    tmp_path, monkeypatch, caplog,
-):
-    """坏 JSON：与缺档分判——WARNING 挂真实 JSONDecodeError 后仍可按契约回落 {}。"""
+def test_load_runtime_llm_malformed_json_fails_loud(tmp_path, monkeypatch):
+    """已配置文件的语法故障不能被洗成尚未配置。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text("{not valid json,,,", encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
 
-    with caplog.at_level(logging.WARNING, logger="ming_sim.llm_config"):
-        assert llm_config.load_runtime_llm() == {}
-    assert json.JSONDecodeError in _warning_exc_types(caplog)
-
+    with pytest.raises(json.JSONDecodeError) as failure:
+        llm_config.load_runtime_llm()
+    assert failure.value.pos == 1
 
 
 def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypatch):
     """#53 _slot_number:旧存档把 timeout_seconds 存成字符串时,load 归一回数值
-    (covers caster(value) / caster(float(value)) 兜底 / garbage→default 三分支)。"""
+    （直接沿字段的标准数值转换）。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "channel": "api",
@@ -59,9 +57,8 @@ def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypat
     assert "max_tokens" not in out["api"]
 
 
-
-def test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default(tmp_path, monkeypatch):
-    """#53 _slot_number:不可解析的数值字段回落默认(timeout=180.0)。"""
+def test_load_runtime_llm_garbage_numeric_fields_fail_loud(tmp_path, monkeypatch):
+    """不可解析的已配置数值由标准库报错，不冒用默认值。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "channel": "api",
@@ -69,9 +66,8 @@ def test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default(tmp_path, 
                 "timeout_seconds": "xyz"},
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-    out = llm_config.load_runtime_llm()
-    assert out["api"]["timeout_seconds"] == 180.0
-    assert "max_tokens" not in out["api"]
+    with pytest.raises(ValueError):
+        llm_config.load_runtime_llm()
 
 
 
@@ -98,19 +94,14 @@ def test_load_runtime_llm_ignores_legacy_max_tokens_key(tmp_path, monkeypatch):
     assert "max_tokens" not in out
 
 
-
-def test_load_runtime_llm_non_dict_payload_surfaces_fault_then_falls_back(
-    tmp_path, monkeypatch, caplog,
-):
-    """合法 JSON 但顶层非 dict：与缺档分判，WARNING 挂 TypeError 后仍可回落 {}。"""
+def test_load_runtime_llm_non_dict_payload_fails_loud(tmp_path, monkeypatch):
+    """非配置对象不能冒用尚未配置。"""
     for payload in ("[1, 2, 3]", '"just a string"', "42"):
         path = tmp_path / "runtime_llm.json"
         path.write_text(payload, encoding="utf-8")
         monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-        caplog.clear()
-        with caplog.at_level(logging.WARNING, logger="ming_sim.llm_config"):
-            assert llm_config.load_runtime_llm() == {}, f"payload={payload!r} 应回落空 dict"
-        assert TypeError in _warning_exc_types(caplog)
+        with pytest.raises(AttributeError):
+            llm_config.load_runtime_llm()
 
 
 
@@ -369,7 +360,6 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
     assert "max_tokens" not in saved["api"]
     assert saved["api"]["timeout_seconds"] == 150
     assert isinstance(saved["api"]["timeout_seconds"], (int, float))
-    assert not isinstance(saved["api"]["timeout_seconds"], str)
     assert saved["api"]["thinking_level"] == "minimal"
     assert saved["cli"] == {
         "runner": "codex",

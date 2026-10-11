@@ -11,11 +11,11 @@ import re
 
 from ming_sim.models import (
     _load_durable_json_object,
-    loads_persistent_name_list,
     require_persistent_string_list,
 )
 from typing import Any, Dict
 
+from ming_sim.db import _load_durable_str_list
 from ming_sim.participant_roster import participant_roster_names
 from ming_sim.public_sayings import public_layer_events
 
@@ -70,10 +70,7 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     names: set[str] = set()
     for idx, name in enumerate(raw):
         if not isinstance(name, str):
-            raise TypeError(
-                f"event {origin_ref!r} audiences[{idx}] must be str, "
-                f"got {type(name).__name__}"
-            )
+            raise TypeError(f"event {origin_ref!r} audiences[{idx}] must be str, got {type(name).__name__}")
         stripped = name.strip()
         if stripped:
             names.add(stripped)
@@ -291,10 +288,7 @@ def _issue_audience_case_events(
         source_id = f"issue:{int(issue['id'])}"
         if source_id in known:
             continue
-        try:
-            stage = _prose(issue["stage_text"])
-        except (KeyError, IndexError, TypeError):
-            stage = ""
+        stage = _prose(issue["stage_text"])
         if not origin_visible_to(db, issue["origin_ref"], character_name):
             continue
         if not str(stage).strip() or not _reader_in_issue_audience(db, issue, character_name):
@@ -364,10 +358,7 @@ def build_character_knowledge(
         if not origin_visible_to(db, issue["origin_ref"], character_name):
             continue
         source_id = f"issue:{issue['id']}"
-        try:
-            participants = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            participants = set()
+        participants = participant_roster_names(issue["participant_roster"])
         if participants and character_name not in participants:
             continue
         if not knowledge_row_visible_to(
@@ -379,7 +370,7 @@ def build_character_knowledge(
         if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         else:
-            target_roster = loads_persistent_name_list(
+            target_roster = _load_durable_str_list(
                 issue["target_roster"], surface="issues.target_roster",
             )
         visible_issues.append({

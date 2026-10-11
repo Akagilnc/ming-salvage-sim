@@ -1,5 +1,5 @@
 import React from "react";
-import { ApiRequestError, api } from "./api";
+import { ApiRequestError, api, normalizeApiError } from "./api";
 import { consumeSettleStream } from "./settleStream";
 import {
   needsPhase2Resume,
@@ -301,7 +301,7 @@ export function useSettlementFlow({
     const periodLabel = next?.previous_reign_period_label
       || embedded?.previous_reign_period_label
       || "";
-    if (report.trim() || String(attendantMessage || "").trim()) {
+    if (report.trim() || (attendantMessage || "").trim()) {
       receipt.setGazetteReading({
         report,
         attendantMessage: attendantMessage || undefined,
@@ -326,8 +326,8 @@ export function useSettlementFlow({
       // 作弊项是自由正文：原串透传，判空由后端观察副本完成。
       const cheatPayload = cheatDirective;
       const body: Record<string, unknown> = { cheat: cheatPayload };
-      if (expectedTurn != null && Number.isFinite(Number(expectedTurn))) {
-        body.expected_turn = Number(expectedTurn);
+      if (expectedTurn != null && Number.isFinite(expectedTurn)) {
+        body.expected_turn = expectedTurn;
       }
       const response = await fetch("/api/decree/issue/stream", {
         method: "POST",
@@ -345,7 +345,7 @@ export function useSettlementFlow({
           Number(errData?.status_code) === 409
           && expectedTurn != null
           && Number.isFinite(serverTurn)
-          && serverTurn > Number(expectedTurn)
+          && serverTurn > expectedTurn
         ) {
           receipt.reload();
           return;
@@ -353,7 +353,7 @@ export function useSettlementFlow({
         // #1808 B 同类：phase-1 呈现先响亮落地；其后 loadState / pending 消费链 reject 不得吞掉已写告警。
         // #1700 / #1418 r2：loadState 使 settling 续跑面可挂上（best-effort）。
         // 欠账耗尽走失败单源（#1353 fold-in），无补写 CTA；不以已退役的 failed 载荷分流。
-        const errMsg = typeof outcome.data === "string" ? outcome.data : (errData.message || "颁诏失败。");
+        const errMsg = new ApiRequestError(normalizeApiError(outcome.data, "颁诏失败。"), "颁诏失败。").message;
         receipt.surfaceFailure(errMsg);
         await refreshBestEffort(receipt);
         receipt.setBusy("");
@@ -416,7 +416,7 @@ export function useSettlementFlow({
         // #1620：loadState 刷新合法 pending 时 route 不碰 stream error；pending 保留 → picks 仍在。
         // #1888：失败先响亮落地，收尾（清 busy）不挂在次级刷新成败上——刷新再失败也不得
         // 把批红台锁死在核账面。次级真因由 refreshBestEffort 另留痕。
-        const msg = typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。");
+        const msg = new ApiRequestError(normalizeApiError(outcome.data, "结算失败。"), "结算失败。").message;
         receipt.setPausedDecisionError(msg);
         receipt.setError(msg);
         receipt.setBusy("");
@@ -472,8 +472,8 @@ export function useSettlementFlow({
         {
           method: "POST",
           body: JSON.stringify(
-            expectedTurn != null && Number.isFinite(Number(expectedTurn))
-              ? { expected_turn: Number(expectedTurn) }
+            expectedTurn != null && Number.isFinite(expectedTurn)
+              ? { expected_turn: expectedTurn }
               : {},
           ),
         },
@@ -508,7 +508,7 @@ export function useSettlementFlow({
         Number(detail?.status_code) === 409
         && expectedTurn != null
         && Number.isFinite(serverTurn)
-        && serverTurn > Number(expectedTurn)
+        && serverTurn > expectedTurn
       ) {
         receipt.reload();
         return;

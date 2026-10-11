@@ -268,6 +268,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     from types import SimpleNamespace
     import ming_sim.decree as decree
     import web_app
+    from fastapi.testclient import TestClient
 
     db, state, content = game
     turn = state.turn

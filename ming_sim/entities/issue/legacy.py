@@ -23,7 +23,7 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     cleared: List[str] = []
     for row in rows:
         gate = GameDB.parse_engine_payload_json(
-            row["clear_gate"], surface="legacies.clear_gate",
+            row["clear_gate"],
         )
         if not gate:
             continue

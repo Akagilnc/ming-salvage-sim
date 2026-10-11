@@ -596,6 +596,11 @@ export type ChatUndoResponse = {
 };
 
 export type ApiErrorDetail = {
+  reason?: string;
+  error_type?: string;
+  error_pack_path?: string;
+  diagnostic_path?: string;
+  diagnostic_error?: string;
   code?: string;
   message?: string;
   provider_message?: string;

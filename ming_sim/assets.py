@@ -78,7 +78,7 @@ def require_list(data: object, path: str) -> List[object]:
 def string_list(value: object, path: str) -> List[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise SystemExit(f"设定字段应为字符串数组：{path}")
-    return [str(item) for item in value]
+    return list(value)
 
 
 def int_field(data: Dict[str, object], key: str, path: str) -> int:

@@ -279,20 +279,20 @@ def canonicalize_delivery_unit(unit: object, target: object) -> tuple[str, float
     raw = str(unit or "").strip()
     try:
         qty = float(target)
-    except (TypeError, ValueError):
-        raise CovertContractError("密令确认缺少可数交付目标") from None
+    except (TypeError, ValueError) as exc:
+        raise CovertContractError(str(exc)) from exc
     if qty <= 0.0:
         raise CovertContractError("密令确认交付目标必须为正数")
     if raw not in CANONICAL_UNITS:
         raise CovertContractError("密令确认交付单位须为万两/人犯/万亩")
-    return raw, float(qty)
+    return raw, qty
 
 
 def _require_effect_sign(raw: object) -> int:
     try:
         sign = int(raw)
-    except (TypeError, ValueError):
-        raise CovertContractError("密令确认缺少效果符号") from None
+    except (TypeError, ValueError) as exc:
+        raise CovertContractError(str(exc)) from exc
     if sign not in (-1, 1):
         raise CovertContractError("密令确认效果符号须为 +1 或 -1")
     return sign
@@ -378,12 +378,12 @@ def build_covert_task_contract(
     if inv_target.strip():
         try:
             qty = float(delivery_target_units)
-        except (TypeError, ValueError):
-            raise CovertContractError("密令确认缺少可数交付目标") from None
+        except (TypeError, ValueError) as exc:
+            raise CovertContractError(str(exc)) from exc
         if qty <= 0.0:
             raise CovertContractError("密令确认交付目标必须为正数")
         delivery = {
-            "target_units": float(qty),
+            "target_units": qty,
             "effect_sign": _require_effect_sign(effect_sign),
             "canonical_fields": [],
             "investigation_target": inv_target,
@@ -596,7 +596,7 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
             qty = float(delivery.get("target_units"))
         except (TypeError, ValueError) as exc:
             raise CovertContractError(
-                "持久 covert_task_contract：target_units 非法",
+                str(exc),
             ) from exc
         if qty <= 0.0:
             _reject("target_units 须为正")
@@ -607,12 +607,9 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
         if str(delivery.get("investigation_target") or "").strip() != inv_target:
             _reject("investigation_target 不一致")
         return copy.deepcopy(dict(raw))
-    try:
-        unit, target = canonicalize_delivery_unit(
-            delivery.get("unit"), delivery.get("target_units"),
-        )
-    except CovertContractError as exc:
-        raise CovertContractError(f"持久 covert_task_contract：{exc}") from exc
+    unit, target = canonicalize_delivery_unit(
+        delivery.get("unit"), delivery.get("target_units"),
+    )
     if delivery.get("effect_sign") not in (-1, 1):
         _reject("effect_sign 非法")
     if list(delivery.get("canonical_fields") or []) != canonical_fields_for_delivery(unit=unit):
@@ -653,12 +650,10 @@ def require_covert_task_contract(dossier: Mapping[str, object] | None) -> Dict[s
 
 def contract_target_units(contract: Mapping[str, object]) -> float:
     delivery = contract.get("delivery")
-    if not isinstance(delivery, Mapping):
-        raise CovertContractError("typed contract 缺少 delivery")
     try:
         target = float(delivery.get("target_units"))
     except (TypeError, ValueError) as exc:
-        raise CovertContractError(f"typed contract delivery.target_units 非数值：{exc}") from exc
+        raise CovertContractError(str(exc)) from exc
     if target <= 0.0:
         raise CovertContractError("typed contract 目标必须为正数")
     return target
@@ -726,10 +721,7 @@ def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
 
 
 def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
-    try:
-        delta = float(item.get("delta") or 0)
-    except (TypeError, ValueError):
-        return False
+    delta = float(item.get("delta") or 0)
     sign = int(delivery.get("effect_sign") or 0)
     if sign < 0 and delta >= 0:
         return False
@@ -798,7 +790,7 @@ def _is_seed_guilt_fact_key(target: str, fact_key: str) -> bool:
 
 
 def _seed_guilt_severity(db: Any, target: str) -> str:
-    from ming_sim.db import GameDB
+    from ming_sim.db import _load_durable_json
 
     row = db.conn.execute(
         "SELECT seed_guilt FROM characters WHERE name=?",
@@ -824,8 +816,6 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
     lanes: List[Dict[str, object]] = []
     seen: set[str] = set()
     for idx, item in enumerate(raw):
-        if not isinstance(item, Mapping):
-            raise ValueError(f"fact_lanes[{idx}] 须为对象")
         key = str(item.get("fact_key") or "").strip()
         if not key:
             raise ValueError(f"fact_lanes[{idx}] 缺 fact_key")
@@ -1056,7 +1046,7 @@ def investigation_fact_difficulty(
             ability = float(ability_row["ability"])
             # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零，
             # 不另立「能力为零则拒绝」的闸，也不把前置因子覆盖成常数。
-            # 解析失败或非有限值仍按参考能力（乘子为 1）。
+            # 非有限值仍按参考能力（乘子为 1）；解析失败原样交出。
             if math.isfinite(ability) and ability >= 0.0:
                 difficulty *= (
                     math.inf if ability == 0.0 else _ABILITY_REFERENCE / ability
@@ -1679,10 +1669,7 @@ def originated_quantity_this_turn(
                 continue
             if not _delivery_matches_economy(item, delivery):
                 continue
-            try:
-                qty += abs(float(item.get("delta") or 0))
-            except (TypeError, ValueError):
-                continue
+            qty += abs(float(item.get("delta") or 0))
     if "人物变更" in fields:
         action = str(delivery.get("person_action") or "").strip()
         rows = db.conn.execute(
@@ -1716,10 +1703,7 @@ def _selection_map(raw_selections: object) -> Dict[int, Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id", item.get("密令编号"))
-        try:
-            oid = int(raw_id)
-        except (TypeError, ValueError):
-            continue
+        oid = int(raw_id)
         mapping[oid] = item
     return mapping
 
@@ -2041,10 +2025,8 @@ def _apply_investigation_selection(
     # 写口前禁 str() 洗白；坏类型沿既有写口响亮（#1897 J820-E1）。
     memorial_note: Optional[str] = None
     if raw_note is not None:
-        from ming_sim.db import _require_durable_prose
-        memorial_note = _require_durable_prose(
-            raw_note, field="note", required=False,
-        )
+
+        memorial_note = raw_note
     row = db.record_dossier_actual_progress(
         did, turn, units=units, fidelity_state="", floor_state="",
         note=None, commit=False,
@@ -2106,9 +2088,9 @@ def settle_due_secret_orders(
             actual = investigation_lane_actual_units(db, did)
             target = contract_target_units(contract)
         else:
-            actual = float(db.sum_dossier_actual_progress_units(did))
+            actual = db.sum_dossier_actual_progress_units(did)
             target = contract_target_units(contract)
-        reports = list(db.list_dossier_progress(did))
+        reports = db.list_dossier_progress(did)
         verdict = decide_secret_order_settlement({
             "actual_units": actual,
             "target_units": target,

@@ -14,7 +14,7 @@ export function ReportModal({
   periodLabel?: string;
 }) {
   // P6 / ADR 0142：官方邸报原文直写 DOM，trim 仅用于递话判空
-  const rawAttendant = String(attendantMessage || "");
+  const rawAttendant = (attendantMessage || "");
   const masthead = periodLabel || "邸报";
   return (
     <FullscreenModal title="邸报" subtitle={masthead} bgClass="modal-bg-gazette" onClose={onClose} hideTitle>

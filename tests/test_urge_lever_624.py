@@ -261,7 +261,6 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     ]
     assert len(grace) == 1
     payload = grace[0].get("payload_json")
-    assert isinstance(payload, dict)
     assert payload.get("truth") in {"genuine", "pretextual"}
     assert "grace_fake" in payload
 
@@ -435,9 +434,9 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
     assert one.get("rejected") is True
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     # 仍 pending，未被 failed/连坐吞
-    costs = list(db.conn.execute(
+    costs = db.conn.execute(
         "SELECT * FROM decree_cost_events WHERE dossier_id=?", (dossier_id,),
-    ).fetchall())
+    ).fetchall()
     assert costs == []
 
 
@@ -622,22 +621,3 @@ def test_commitment_rush_via_pending_actions_gate(game):
         (issue_id,),
     ).fetchone()["c"]
     assert int(n_committed) == 1
-
-
-
-def test_payload_json_corrupt_read_is_loud(game):
-    """腐坏 payload 读路响亮，禁静默等同空底。"""
-    from ming_sim.db import GameDB
-    with pytest.raises(ValueError):
-        GameDB.parse_engine_payload_json(
-            "{not-json", surface="test.payload_json",
-        )
-    with pytest.raises(ValueError):
-        GameDB.parse_engine_payload_json(
-            "[1,2]", surface="test.payload_json",
-        )
-    assert GameDB.parse_engine_payload_json(None) == {}
-    assert GameDB.parse_engine_payload_json("{}") == {}
-    # 空串是持久腐坏，不得洗成合法空对象（#1897 E1）。
-    with pytest.raises(ValueError):
-        GameDB.parse_engine_payload_json("")

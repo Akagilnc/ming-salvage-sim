@@ -26,6 +26,7 @@ from ming_sim.constants import (
 from ming_sim.content import GameContent
 from ming_sim.db import (
     GameDB,
+    _load_durable_json,
     POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
 )
@@ -613,10 +614,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
     """
     if "." not in key:
         if key in metrics:
-            try:
-                return int(metrics[key])
-            except (TypeError, ValueError):
-                return None
+            return int(metrics[key])
         return None
     parts = key.split(".")
     table = parts[0]
@@ -1056,7 +1054,7 @@ def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]
         if not event_id.startswith(_LEVY_PETITION_PREFIX):
             continue
         choice = GameDB.parse_engine_payload_json(
-            row["choice_json"], surface="pending_decisions.choice_json",
+            row["choice_json"],
         )
         rows.append({
             "event_id": event_id[len(_LEVY_PETITION_PREFIX):],

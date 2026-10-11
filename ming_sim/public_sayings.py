@@ -9,7 +9,6 @@ from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
 from ming_sim.models import (
     _load_durable_json_object,
-    loads_persistent_name_list,
     require_persistent_string_list,
 )
 
@@ -81,11 +80,9 @@ def public_layer_events(db: Any) -> list[dict[str, object]]:
 
 
 def _json_name_list(raw: object) -> list[str]:
-    values = json.loads(raw or "[]")
-    if not isinstance(values, list) or any(not isinstance(name, str) for name in values):
-        raise ValueError("持久说法人物名单须为字符串列表")
-    return [str(name) for name in values if str(name).strip()]
-
+    # 与 db 持久 list 权威同缝；腐坏响亮，不 catch-to-[]（#1897 E1）。
+    from ming_sim.db import _load_durable_str_list
+    return _load_durable_str_list(raw)
 
 
 

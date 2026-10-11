@@ -1314,7 +1314,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
     const buttons = Array.from(host.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
     await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
-    expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
+    expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31", { headers: { "Content-Type": "application/json" } });
     expect(host.querySelector(".chat-message.user, .turn-segment.user")).not.toBeNull();
 
     expect(host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')?.value).toBe("");
@@ -1372,8 +1372,12 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
         expect(host.querySelector("[data-testid=history-attendant]")).not.toBeNull();
       });
     });
-    expect(fetchMock).toHaveBeenCalledWith("/api/history/turns");
-    expect(fetchMock).toHaveBeenCalledWith("/api/history/turn/7");
+    expect(fetchMock).toHaveBeenCalledWith("/api/history/turns", {
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/history/turn/7", {
+      headers: { "Content-Type": "application/json" },
+    });
     const section = host.querySelector("[data-testid=history-attendant]");
     // trim 仅判空；DOM 写原文（含空白与 markdown 标记）
     expect(section!.querySelector("pre")).not.toBeNull();
