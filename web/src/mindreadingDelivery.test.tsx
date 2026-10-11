@@ -121,7 +121,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
       if (String(url).includes("/api/audience/scroll")) {
         scrollCalls += 1;
         return jsonResp({
-          night_id: 24,
+          night_id: 24, reply_retries: [],
           protagonist: "温体仁",
           roster: [{ name: "温体仁", present: true }],
           messages: !ended ? [] : [
@@ -154,7 +154,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await tick();
 
     expect(scrollCalls).toBe(callsBeforeEnd + 1);
-
+    expect(document.body.textContent).toContain("新落账场景");
   });
 
   it("accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮", async () => {
@@ -162,8 +162,8 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (String(url).includes("/api/audience/scroll")) {
         scrollCalls += 1;
-        return jsonResp(scrollCalls === 1 ? { night_id: 0, messages: [] } : {
-          night_id: 24,
+        return jsonResp(scrollCalls === 1 ? { night_id: 0, reply_retries: [], messages: [] } : {
+          night_id: 24, reply_retries: [],
           protagonist: "", roster: [], translation_pending: false, messages: [
             { role: "user", speaker: "圣上", content: "失败问话", chat_turn_id: 8, status: "generating" },
             { role: "user", speaker: "圣上", content: "保留问话", chat_turn_id: 7 },
@@ -176,14 +176,16 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
         { event: "error", data: { message: "回话失败", campaign_id: "", night_id: 24, chat_turn_id: 8 } },
       ]);
     }));
-    const { hookRef } = mount();
+    const { hookRef, rows } = mount();
     await tick();
 
     await act(async () => { await hookRef.current!.sendChat("温体仁", "失败问话", noCbs); });
     await tick();
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "", night_id: 24, chat_turn_id: 8 });
-
+    expect(rows()).toContain("user:失败问话");
+    expect(rows()).toContain("user:保留问话");
+    expect(rows()).toContain("minister:保留答复");
   });
 
   it("accepted 后普通流中断会移除未持久化的半段回话", async () => {
@@ -191,7 +193,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (String(url).includes("/api/audience/scroll")) {
         scrollCalls += 1;
-        return jsonResp({ night_id: 24, protagonist: "", roster: [], translation_pending: false, messages: scrollCalls > 1
+        return jsonResp({ night_id: 24, reply_retries: [], protagonist: "", roster: [], translation_pending: false, messages: scrollCalls > 1
           ? [{ role: "user", speaker: "朕", content: "请奏", chat_turn_id: 8 }]
           : [] });
       }
@@ -200,7 +202,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
         { event: "delta", data: { content: "未完成回话" } },
       ]);
     }));
-    const { hookRef } = mount(true);
+    const { hookRef, rows } = mount(true);
     await tick();
 
     let failedTurn: unknown;
@@ -211,7 +213,9 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
     expect(failedTurn).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
-    // 中断后未持久化回话：短暂态与可见性均已清理（不匹配正文）。
+    expect(rows()).toContain("user:请奏");
+    expect(rows()).not.toContain(":未完成回话");
+    // 中断后未持久化回话：短暂态与可见性均已清理。
     expect(hookRef.current!.streamingMinisterMessage).toBe("");
     expect(document.querySelector(".chat-log .scene.beat-dialogue")).toBeNull();
 
@@ -222,7 +226,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       call += 1;
       if (call === 1 && String(url).includes("/api/audience/scroll")) return jsonResp({
-        night_id: 23,
+        night_id: 23, reply_retries: [],
         protagonist: "", roster: [], translation_pending: false, messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
       });
       return sse([
@@ -230,15 +234,16 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
         { event: "error", data: { message: "回话失败" } },
       ]);
     }));
-    const { hookRef } = mount();
+    const { hookRef, rows } = mount();
     await tick();
     expect(hookRef.current!.currentNightId).toBe(0);
+    expect(rows()).not.toContain("minister:旧夜他臣");
 
     await act(async () => {
       await hookRef.current!.sendChat("温体仁", "开启新场", noCbs);
     });
     expect(hookRef.current!.currentNightId).toBe(24);
-
+    expect(rows()).not.toContain("minister:旧夜他臣");
   });
 
   it("持久后果在 done 到手即消费：end 延后期间起新轮，旧轮后果不被丢弃", async () => {
@@ -322,7 +327,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
         if (call === 1) { await oldGate; return jsonResp({ minister: MINISTER, history: [U("问1", 10), M("答1", 10)], suggestions: [], can_undo_last_chat: false }); }
         return jsonResp({ minister: MINISTER, history: [U("问1", 10), M("答1", 10), U("问2", 11), M("答2", 11)], suggestions: [], can_undo_last_chat: false });
       }
-      return jsonResp({ night_id: 0, messages: [] });
+      return jsonResp({ night_id: 0, reply_retries: [], messages: [] });
     }));
 
     const chatRows = () => hookRef.current!.chat.map((m) => `${m.role}:${m.content}`);
@@ -346,7 +351,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     const doneGate = new Promise<void>((r) => { releaseDone = r; });
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (String(url).includes("/api/audience/scroll")) {
-        return jsonResp({ night_id: 0, messages: [] });
+        return jsonResp({ night_id: 0, reply_retries: [], messages: [] });
       }
       const enc = new TextEncoder();
       return new Response(
@@ -407,7 +412,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
           night_id: 1,
         });
       }
-      return jsonResp({ night_id: 0, messages: [] });
+      return jsonResp({ night_id: 0, reply_retries: [], messages: [] });
     }));
     const { hookRef, switchMinister } = mount();
     const chatRows = () => hookRef.current!.chat.map((m) => `${m.role}:${m.content}`);

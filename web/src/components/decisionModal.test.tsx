@@ -148,6 +148,7 @@ describe("DecisionModal", () => {
     act(() => confirm!.click());
 
     expect(document.activeElement).toBe(document.querySelector<HTMLButtonElement>(".decision-option"));
+    expect(document.querySelector(".decision-document-section h3")?.textContent).toBe("河工修治");
     cleanup();
   });
 

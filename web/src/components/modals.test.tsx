@@ -432,6 +432,8 @@ describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
     await vi.waitFor(() => expect(document.querySelectorAll(".chat-message.scene")).toHaveLength(2));
 
     expect(document.querySelector(".chat-system-note")).toBeNull();
+    expect(document.querySelector(".scene.beat-entrance")?.textContent).toContain("入殿");
+    expect(document.querySelector(".scene.beat-exit")?.textContent).toContain("告退");
   });
 });
 
@@ -465,6 +467,8 @@ describe("ChatModal — placeholder switches on character type", () => {
       (node) => node.textContent === "重试",
     );
     expect(retryButtons).toHaveLength(2);
+    expect(document.querySelector('[data-testid="reply-retry-12"]')?.textContent).toContain("剿抚孰先？");
+    expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("/tmp/post-reply-pack");
     act(() => retryButtons[0]?.click());
     expect(retry).toHaveBeenCalledWith("殿上", 12, undefined);
     act(() => retryButtons[1]?.click());
@@ -574,7 +578,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     expect(replyFailure?.closest('[data-audience-turn-id="12"]')).not.toBeNull();
     const translationFailure = host.querySelector('[data-testid="translation-retry-1"]');
     expect(translationFailure?.closest('[data-audience-turn-id="1"]')).not.toBeNull();
-
+    expect(translationFailure?.textContent).toContain("/tmp/audience-turn-1");
   });
 });
 
@@ -841,6 +845,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       .find((node) => node.textContent?.includes("臣请奏边务"));
     expect(streamed?.classList.contains("scene")).toBe(true);
     expect(streamed?.querySelector("span")).toBeNull();
+    expect(document.body.textContent).toContain("杨嗣昌御前低语");
   });
 
   it("attributes the thinking row to the selected minister", async () => {
@@ -1354,6 +1359,8 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     expect(host.querySelector("textarea, input, .chat-composer")).toBeNull();
+    expect(host.textContent).toContain("场次32");
+    expect(host.textContent).toContain("群臣奏对");
     await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item.active")?.click(); });
 
     const filter = host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')!;
@@ -1367,6 +1374,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const buttons = Array.from(host.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
     await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
+    expect(host.textContent).toContain("场次31");
   });
 
   it("#671 史册月档经 HistoryModal fetch 呈现独立递话原文", async () => {

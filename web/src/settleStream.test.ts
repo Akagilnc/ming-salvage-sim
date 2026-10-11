@@ -61,7 +61,7 @@ describe("consumeSettleStream HTTP errors", () => {
   it("uses custom httpErrorLabel on non-OK responses", async () => {
     await expect(
       consumeSettleStream(streamResponse([], false), silent, { httpErrorLabel: "继续失败" }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("继续失败");
   });
 
   it("includes server JSON detail on non-OK responses", async () => {
@@ -75,7 +75,7 @@ describe("consumeSettleStream HTTP errors", () => {
     } as unknown as Response;
     await expect(
       consumeSettleStream(response, silent, { httpErrorLabel: "继续失败" }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("无上次进度可继续，请先新游戏或加载存档。");
   });
 
 });

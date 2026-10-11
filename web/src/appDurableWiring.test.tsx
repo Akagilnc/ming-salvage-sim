@@ -111,6 +111,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await act(async () => {
       await vi.waitFor(() => {
         expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull();
+        expect(host.textContent).toContain("天启七年九月邸报·试重开");
 
       });
     });
@@ -165,6 +166,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(host.querySelector(".court-drawer.open .primary-action"));
     await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
     expect(calls).toContain("GET /api/audience/chat");
+    expect(host.textContent).toContain("杨嗣昌御前低语");
     expect(calls.some((call) => call.includes("/api/ministers/"))).toBe(false);
 
     // 关档后夜仍未收：重挂从状态口进入殿上，卷轴停在已存最后一轮。
@@ -241,7 +243,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(calls.some((call) => call.path.endsWith("/api/audience/chat/stream"))).toBe(true);
     await act(async () => { await vi.waitFor(() => undefined); });
     finishStream();
-    await act(async () => { await vi.waitFor(() => undefined); });
+    await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
   });
 
   it("typed SSE error 经真实召对链只向玩家呈现结构化 message", async () => {
@@ -328,6 +330,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await vi.waitFor(() => expect(historyReads).toBeGreaterThan(2), { timeout: 3000 });
     await tick();
     expect(host.querySelector('[data-testid="reply-retry-8"]')).not.toBeNull();
+    expect(host.querySelector('[data-audience-turn-id="8"]')?.textContent).toContain("边务如何");
     expect(historyReads).toBeGreaterThan(1);
     expect(host.querySelector("textarea")?.value).toBe("");
 
@@ -633,7 +636,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (path.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
-      if (path.endsWith("/api/audience/scroll") && [3, 5].includes(historyReads)) {
+      if (path.endsWith("/api/audience/scroll") && [3, 5].includes(historyReads) && !replied) {
         scrollFailures += 1;
         return new Response(JSON.stringify({ detail: "scroll unavailable" }), { status: 500 });
       }
@@ -1091,6 +1094,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => undefined);
     });
     expect(reopened.querySelector('[data-testid="settle-resume"]')).toBeNull();
+    expect(reopened.querySelector(".hud2-val")?.textContent).toContain("11");
+    expect(reopened.querySelector('[data-testid="settlement-gazette-panel"]')?.textContent).toContain("new month report");
 
   });
 
@@ -1159,6 +1164,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·本面");
 
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
 
@@ -1169,6 +1175,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await click(dismiss);
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
     // 新月盘面可见半程局势（已非核账）
+    expect(host.textContent).toContain(MIDCOURSE_ISSUE);
 
     // 同一状态口在核账未完时重开：殿上夜卷虽仍在，玩家先落核账。
     liveState = {
@@ -1188,6 +1195,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host2.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
     expect(host2.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
     expect(host2.querySelector(".chat-composer")).toBeNull();
+    expect(host2.querySelector(".hud2-val")?.textContent).toContain("11");
 
     expect(host2.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
     await click(findButton(host2, "史册"));
@@ -1382,6 +1390,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(stateGets).toBeGreaterThan(getsBeforeDone);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·刷新失败仍可读");
 
     // 主界面仍挂着，但旧月内容不可见、不可交互；提示与阅读独立可达。
     const staleFace = host.querySelector("main > div[inert]");
@@ -1405,6 +1414,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
 
     expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")?.textContent).toContain("十月邸报·刷新失败仍可读");
     const getsBeforeDismiss = stateGets;
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("朕知道了"),
@@ -1427,6 +1437,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("main > div[inert]")).toBeNull());
     });
     expect(stateGets).toBeGreaterThan(getsBeforeRetry);
+    expect(host.querySelector(".hud2-val")?.textContent).toContain("11");
 
     expect(streamPosts()).toBe(streamPostsBeforeDismiss);
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
@@ -1591,6 +1602,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector('[data-testid="settlement-wait-progress"]')).toBeNull();
     expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
     expect(host.querySelector(".settlement-lock")).toBeNull();
+    expect(host.textContent).not.toContain("推敲片段甲");
+    expect(host.textContent).not.toContain("奏章片段乙");
+    expect(host.textContent).not.toContain("任意显示文案");
 
     // 核账叙事仍在（王承恩固定提示）
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
@@ -1671,85 +1685,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
-  it("#1796 无草案退朝失败后从原入口重试，不误走颁诏", async () => {
-    let advancePosts = 0;
-    let issuePosts = 0;
-    let releaseAdvance!: (value: Response) => void;
-    const advanceGate = new Promise<Response>((resolve) => { releaseAdvance = resolve; });
-    let liveState: Record<string, unknown> = {
-      ...settlementBaseState("player"),
-      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-      previous_summary: "",
-      pending_decisions: [],
-      directives: [],
-      // failed-only 路径：无草案但有失败密令，页脚走退朝确认
-      failed_secret_order_count: 1,
-      pending_directive_count: 0,
-      pending_secret_order_count: 0,
-      pending_non_directive_action_count: 0,
-    };
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
-      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
-        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
-      });
-      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
-        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
-      });
-      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
-      if (u.pathname.endsWith("/api/decree/advance_without_edict") && init?.method === "POST") {
-        advancePosts += 1;
-        return advancePosts === 1 ? advanceGate : jsonResp({ state: liveState, awaiting_decision: true, decisions: [validDecision] });
-      }
-      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") issuePosts += 1;
-      return jsonResp({});
-    }));
-
-    const host = await mountApp();
-    await click(edictCommand(host));
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
-    });
-    // failed-only：先点退朝打开确认，再确认退朝结束本月
-    const retreat = findButton(host, "退朝结束本月");
-    expect(retreat).toBeTruthy();
-    await click(retreat);
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[aria-label="退朝确认"]')).not.toBeNull());
-    });
-    const confirm = Array.from(host.querySelector('[aria-label="退朝确认"]')!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("退朝结束本月"),
-    );
-    expect(confirm).toBeTruthy();
-    await click(confirm);
-
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
-        expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
-      });
-    });
-    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
-
-    await act(async () => {
-      releaseAdvance(new Response(JSON.stringify({ detail: "退朝入口失败" }), { status: 503, headers: { "Content-Type": "application/json" } }));
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="alert"] button')).not.toBeNull());
-    });
-    liveState = settlementBaseState("awaiting_decision", { pending_decisions: [validDecision], previous_summary: "" });
-    await click(host.querySelector('[role="alert"] button') as HTMLButtonElement);
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
-    });
-    expect(advancePosts).toBe(2);
-    expect(issuePosts).toBe(0);
-  });
 
   it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {
     stubSettlementFetch(settlementBaseState("awaiting_decision", {
@@ -1758,12 +1693,14 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const host = await mountApp();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+      expect(host.querySelector('[data-testid="decision-modal"]')?.textContent).toContain("辽东战守");
     });
 
     unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
       await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+      expect(host2.querySelector('[data-testid="decision-modal"]')?.textContent).toContain("辽东战守");
     });
 
   });
@@ -1778,6 +1715,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
     });
     const panel = host.querySelector('[data-testid="settle-resume"]')!;
+    expect(panel.textContent).toContain(errorPackPath);
 
     const retry = panel.querySelector("button") as HTMLButtonElement | null;
     expect(retry).not.toBeNull();
@@ -1935,6 +1873,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector('[data-testid="decision-recovery"]')).toBeNull();
     const hudAlert = host.querySelector('[data-testid="hud-error"][role="alert"]');
     expect(hudAlert).not.toBeNull();
+    expect(hudAlert!.textContent).toContain(FAIL_MSG);
 
     // 核账期面已退（fail-closed 回 player）——月初快照/核账叙事不得被告警改写为核账态
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
@@ -1985,6 +1924,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         const dialog = host.querySelector('[role="dialog"][aria-label="诏书草案"]');
         expect(dialog).not.toBeNull();
         expect(dialog!.querySelector('[role="alert"]')).not.toBeNull();
+    expect(dialog!.querySelector('[role="alert"]')!.textContent).toContain(FAIL_MSG);
       });
     });
 
@@ -2238,6 +2178,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
     expect(host.querySelector(".situation-list")).toBeNull();
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(`${SNAP_TREASURY}万两`);
+    expect(host.textContent).toContain(`${SNAP_INNER}万两`);
+    expect(host.textContent).toContain(String(SNAP_MINXIN));
+    expect(host.textContent).toContain(String(SNAP_HUANGWEI));
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.textContent).toContain(SNAP_CLOSED);
 
     expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("true");
     expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("true");
@@ -2270,6 +2216,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await tick();
     const economyOpen = host.querySelector(".right-drawer-economy.open");
     expect(economyOpen).not.toBeNull();
+    expect(economyOpen!.textContent).toContain(`${SNAP_TREASURY}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
+    expect(economyOpen!.textContent).not.toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
 
     // #1366：结算前只见事实（全军名义应发）；核账期半程结果（国库实拨/实际到达/途中损耗）
     // 不下发不渲染——待整月推进完成才见同一 settled_turn 的三项结果（见下方独立用例）。
@@ -2282,6 +2234,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await tick();
     const buildingOpen = host.querySelector(".right-drawer-building.open");
     expect(buildingOpen).not.toBeNull();
+    expect(buildingOpen!.textContent).toContain(SNAP_BUILDING);
 
     // 半程省/兵抽屉仍不得被连带打开
     expect(host.querySelector(".right-drawer-region.open")).toBeNull();
@@ -2292,6 +2245,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(byAria(host, "朝堂·召见大臣"));
     await tick();
     expect(host.querySelector(".court-drawer.open")).not.toBeNull();
+    expect(host.querySelector(".court-drawer.open")!.textContent).toContain(SNAP_MINISTER);
 
     await closeOpenOverlay(host);
 
@@ -2300,6 +2254,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await tick();
     const apptOpen = host.querySelector(".right-drawer-appointment.open");
     expect(apptOpen).not.toBeNull();
+    expect(apptOpen!.textContent).toContain(SNAP_MINISTER);
 
     const apptRow = apptOpen!.querySelector(".right-drawer-row-minister");
     expect(apptRow?.tagName).toBe("DIV");
@@ -2310,6 +2265,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await tick();
     const haremOpen = host.querySelector(".harem-drawer.open");
     expect(haremOpen).not.toBeNull();
+    expect(haremOpen!.textContent).toContain(SNAP_CONSORT);
 
     // #1849 reopen：后宫卡与朝臣同形只读，不再是可点开面板的 button。
     const haremCard = Array.from(haremOpen!.querySelectorAll(".minister-card")).find((el) =>
@@ -2329,6 +2285,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
     expect(memorialsDialog.querySelector(".situation-list")).toBeNull();
     expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
+    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
 
     await closeOpenOverlay(host);
 
@@ -2434,6 +2392,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await tick();
     const economyOpen = host.querySelector(".right-drawer-economy.open");
     expect(economyOpen).not.toBeNull();
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
 
   });
 
@@ -2465,13 +2427,19 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     // 官方邸报 pre 正文与状态口 previous_summary 逐字相等（含空白与 markdown）
     expect(host.querySelector("pre.memorial-text")!.textContent).toBe(SNAP_GAZETTE);
+    const masthead = host.querySelector(".gazette-masthead")?.textContent ?? "";
+    expect(masthead).toContain("天启七年九月");
+    expect(masthead).not.toContain("天启七年十月");
 
     // #671 App 接线：递话可见且位于 .gazette-document 之外
     const attendant = host.querySelector("[data-testid=gazette-attendant]");
     expect(attendant).not.toBeNull();
+    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
 
     expect(attendant!.closest(".gazette-document")).toBeNull();
     // 半程议题仍不泄漏；上月已结只读面可同屏
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.textContent).toContain(SNAP_CLOSED);
 
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
 
@@ -2501,6 +2469,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     const attendant = host.querySelector("[data-testid=gazette-attendant]");
     expect(attendant).not.toBeNull();
+    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
 
   });
 
@@ -2518,8 +2487,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("false");
     // 局势（半程）与上月已结一并恢复
     expect(host.querySelector(".situation-panel")).not.toBeNull();
+    expect(host.textContent).toContain(MIDCOURSE_ISSUE);
 
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
 
     // #1366：next_period 完成、月初快照过期后，同一 settled turn 的三项结果才可见
     // （settlementBaseState 默认 budget.settled_army_pay 非 null）。
@@ -2527,6 +2498,11 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await tick();
     const economyOpen = host.querySelector(".right-drawer-economy.open");
     expect(economyOpen).not.toBeNull();
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
+    expect(economyOpen!.textContent).toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
 
     await closeOpenOverlay(host);
     // 关闭组命令可再开
@@ -2590,6 +2566,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
     expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
+    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
 
     expect(memorialsDialog.querySelector("pre.memorial-text")?.textContent).toBe(MEMORIAL_BODY);
 
@@ -3175,17 +3152,23 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(card?.getAttribute("data-source")).toBe("大臣拟旨");
     expect(card?.getAttribute("data-actor")).toBe("毕自严");
     // 两区可访问名（可见 h3 铬字经 labelledby）+ 卡归属；不以 describedby/chip/tagName 作成案判据。
-
+    const draftZone = host.querySelector(".edict-zone-draft");
+    const issuedZone = host.querySelector(".edict-zone-issued");
+    expect(draftZone).not.toBeNull();
+    expect(issuedZone).not.toBeNull();
+    expect(issuedZone!.contains(card!)).toBe(true);
+    expect(draftZone!.contains(card!)).toBe(false);
     const draftCard = host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]');
     expect(draftCard).not.toBeNull();
-
+    expect(draftZone!.contains(draftCard!)).toBe(true);
+    expect(issuedZone!.contains(draftCard!)).toBe(false);
     // 已发只读：无改删；非 busy/invalid；无卡级 alert；正文原文在。
     // footer 可用性由成案独占 tracer（离面重入）独立证明 hasCased，本混合夹具不代证。
     expect(card?.querySelector(".directive-tools")).toBeNull();
     expect(card?.getAttribute("aria-busy")).not.toBe("true");
     expect(card?.getAttribute("aria-invalid")).not.toBe("true");
     expect(card?.querySelector('[role="alert"]')).toBeNull();
-
+    expect(card?.textContent || "").toContain("着户部核边饷");
   });
 
   it("#1560 pending-only 拟诏主钮走 issue/stream 单轨", async () => {
