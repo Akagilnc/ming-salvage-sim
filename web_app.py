@@ -5021,12 +5021,10 @@ def api_history_turns() -> Dict[str, Any]:
 async def api_history_turn(turn: int) -> Dict[str, Any]:
     """某回合玩家历史：只交付邸报、诏书、已颁草案与独立递话原文。"""
     db = get_game().db
-    # #671：一次读 turn_reports；year/period 在 extraction/directives 皆无时回落存档行
     archive = db.get_turn_report_archive(turn)
     report = str((archive or {}).get("report") or "")
     attendant_message = str((archive or {}).get("attendant_message") or "")
     # #1843 reopen：本月诏书改读月链常驻的 pending_resolve_context.decree_text
-    # （旧 turn_extractions 只由旧 settle 后半段写，新档恒空）。
     resolve_ctx = db.get_resolve_context(turn) or {}
     decree_text = str(resolve_ctx.get("decree_text") or "")
     directives = db.list_directives_by_turn(turn)

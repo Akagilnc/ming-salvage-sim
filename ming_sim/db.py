@@ -76,11 +76,7 @@ from ming_sim.token_stats import tlog
 
 logger = logging.getLogger(__name__)
 
-# ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
-# 同刻度）；存档口径判别持久化在 DB 内（save_meta 表），新档 seed 落「人」标，
-# #1812/#1835：人口口径唯一为「人」；旧档万人平行架构退出，无标亦走现役。
 POPULATION_UNIT_PERSONS = "人"
-_POPULATION_UNIT_KEY = "population_unit"
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
 # create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
@@ -2246,16 +2242,6 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # #648（ADR 0088）/ #1835：存档级持久元数据；新档落 population_unit=人。
-        # 现役唯一口径为人；无标不再分流万人路径。
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS save_meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-            """
-        )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
             "ON decree_dossiers(executor_kind, executor_id, status)"
@@ -2948,20 +2934,6 @@ class GameDB:
             ),
         )
 
-    @property
-    def population_unit(self) -> str:
-        """本档人口存储单位口径：现役唯一「人」（#1812 无历史包袱；#1835 旧档支路退出）。
-
-        仍写 save_meta 标记供新档重开识别；无标或旧标不再分流万人路径。"""
-        return POPULATION_UNIT_PERSONS
-
-    def _mark_population_unit_persons(self) -> None:
-        """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
-        self.conn.execute(
-            "INSERT OR REPLACE INTO save_meta (key, value) VALUES (?, ?)",
-            (_POPULATION_UNIT_KEY, POPULATION_UNIT_PERSONS),
-        )
-
     def seed_static_data(self) -> None:
         self._ensure_office_type_parents()
 
@@ -3063,8 +3035,6 @@ class GameDB:
                     (faction.name, faction.satisfaction, faction.leverage, faction.agenda),
                 )
         if not self.table_has_rows("classes"):
-            # ADR 0088/#648：classes 首次 seed = 新档 cutover 点，落持久人口单位标「人」。
-            self._mark_population_unit_persons()
             for cls in self.content.classes.values():
                 self.conn.execute(
                     """

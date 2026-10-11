@@ -149,10 +149,6 @@ ITEM_FIELD_ALIASES = {
 def _declared_effect_fields() -> Dict[str, object]:
     """声明效果字段契约：键集来自有序登记表，容器类型仍在本处声明。
 
-    ADR 0150 决定 4：本表是登记表的派生视图，不双写——
-    键集若在此另写一份，登记表新增段就会静默缩键（无主字段被 ``sanitize_delta_shape``
-    拒收，且不留任何痕迹）。故键集一律从登记表派生。
-
     容器类型不在此派生：登记条目登记的是「哪个段吃这个字段」，不是「这个字段是
     list 还是 dict」——后者是声明形状契约，由 :func:`_effect_field_container` 声明。
     两者分层，避免把形状知识塞进段登记表。

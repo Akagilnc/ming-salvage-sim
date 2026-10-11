@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Dict, List, Tuple
 from ming_sim.applier import RejectedItem, Provenance
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.models import GameState
 from ming_sim.constants import BANDIT_ABSORPTION_FIELDS, BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
 from ming_sim.strict_types import strict_int as _strict_int
@@ -26,7 +26,7 @@ def _apply_bandit_absorptions(
 
     LLM 只产 typed 请求；本核：actual=min(requested, 省池)→扣流民池（无农民对端，
     0087 兵源出口单侧出池）→仅 actual>0 允许实力正增（δ=actual//换算率，0–100 clamp
-    走 apply_power_deltas）。超池/非法 id/零池正请求 → 逐项拒收留痕。
+    走 apply_power_deltas）。非法 id/零池正请求 → 逐项拒收留痕。
     返回 (applied_absorptions, rejections, power_changes)。
     """
     applied: List[Dict[str, object]] = []
@@ -122,7 +122,7 @@ def _apply_bandit_absorptions(
             "actual_count": actual,
             "strength_delta": strength_delta,
             "origin_ref": origin_ref,
-            "population_unit": db.population_unit,
+            "population_unit": POPULATION_UNIT_PERSONS,
         }
         if strength_delta > 0:
             landed, refused = db.apply_power_deltas(

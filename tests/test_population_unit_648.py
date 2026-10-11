@@ -5,14 +5,13 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双�
 - F2：机面 TSV 裸人 / 玩家面 LLM 输入投影「约N万口」（正向 prompt，零删改）；
 - F3：流民冻结 seed 表（陕西15万/河南5万/内地其余省0；#659 辽东/东江边镇切片0；
       全国=省级求和派生；satisfaction 基线30 陕西20 河南25 / leverage 5 / agenda 冻结句）；
-- F4/#1835 C1：现役唯一人口径「人」；新档落持久标，无标亦判「人」（旧档万人分叉退出）；
 - AC4：classes/regions seed ×10⁴ 与 events effect 人口径 mutation。
 """
 
 from __future__ import annotations
 
 
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.issues import bind_content
 
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -93,15 +92,6 @@ def test_new_save_regions_seed_persons_scale(game):
         "SELECT population FROM regions WHERE id='beizhili'"
     ).fetchone()
     assert row["population"] == BEIZHILI_POP_PERSONS
-
-def test_new_save_persistent_population_unit_marker(game):
-    """F4：新档 DB 落持久单位标「人」；判别只读存档 DB，不读 content 元信息。"""
-    db, _, _ = game
-    assert db.population_unit == POPULATION_UNIT_PERSONS
-    row = db.conn.execute(
-        "SELECT value FROM save_meta WHERE key='population_unit'"
-    ).fetchone()
-    assert row is not None and row["value"] == POPULATION_UNIT_PERSONS
 
 # ── F1：class 写面只收 satisfaction/leverage ────────────────────────────────
 

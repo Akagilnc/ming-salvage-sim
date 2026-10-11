@@ -960,7 +960,7 @@ def pre_settle(
     ADR 0008 S4：整段（暂存动作 commit + 固定财政 + 到期密令呈递）包成
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
     落中间相位 settling（写 state.turn_phase + save_state）：只意味着「前半段已完成，不再
-    重跑 pre_settle」，不意味着后半段就绪（恢复入口的消费分流是 S7 的活，本切片只立相位机械）。
+    重跑 pre_settle」，不意味着后半段就绪。
     settling 相位用 models.TurnPhase.SETTLING（单一真源已下沉 models，无循环）。settling 已是入口态时直接 return（幂等守门）：
     「不再重跑前半段」正是 settling 的语义，恢复后重进 pre_settle 不二次落财政。
 

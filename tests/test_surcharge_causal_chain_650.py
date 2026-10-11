@@ -60,7 +60,6 @@ def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):
     return item
 
 def _settle_month(state, db, delta, *, before_turn, content, monkeypatch, narrative="邸报"):
-    """只替换世界段模型缝；财政、效果和月末均经玩家过月事务。"""
     assert state.turn == before_turn
     session = _prepare_player_month(
         db, state, content, monkeypatch,
@@ -322,15 +321,12 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
 
     free_body = "陕西流民渐起，关中贼势暗流潜滋。"
     second_turn = state.turn
-    # 此处 narrative 代表既有 player-facing simulator 的自由输出；archive writer 未替换。
     _settle_month(
         state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)]},
         before_turn=second_turn, content=content, monkeypatch=monkeypatch, narrative=free_body,
     )
     assert db.get_turn_report(second_turn) == free_body
     assert _gazette_projection_body(db, state, "温体仁", second_turn) == free_body
-
-# ── legacy 万口径档：折算随存档单位换算，sub-万不可表达 ────────────────────────
 
 def test_e2e_surcharge_and_stop_share_month_open_snapshot(game, monkeypatch):
     db, state, content = game

@@ -18,7 +18,7 @@ def _apply_population_transfers(
     canonical 段形＝转移记录 list；每条记录**同时表达两条腿**（源阶级减 N、目标阶级
     增 N），本核读一条合法记录后在同一事务内机械完成两次写——LLM 不提交双腿，
     系统不建配平器（单记录双写从形状上消灭合法路径的单侧变动）。两侧更新复用调用方
-    事务边界（settle 后半段 atomic）。本核不提交。
+    事务边界。本核不提交。
 
     校验分层（ADR 0015，r4 终态）：section 非 list 已由 sanitize_delta_shape 拒段；
     list 内坏记录逐项拒收留痕（非 dict 项按 0015 F1 {'raw_value':…} 包装），好记录照落。
@@ -34,11 +34,11 @@ def _apply_population_transfers(
         POPULATION_TRANSFER_FIELDS,
         POPULATION_TRANSFER_REASONS,
     )
+    from ming_sim.db import POPULATION_UNIT_PERSONS
 
     applied: List[Dict[str, object]] = []
     rejected: List[RejectedItem] = []
     items = transfers if isinstance(transfers, list) else []
-    population_unit = db.population_unit
     for item in items:
         if not isinstance(item, dict):
             rejected.append(RejectedItem(item={"raw_value": item}, reason="population_transfers 项必须是 object(dict)", category="invalid_shape", source=source))
@@ -176,8 +176,7 @@ def _apply_population_transfers(
             # #649 F2（判词）：省名随 applied 记录入摘要——applied 记录省名
             # 而非裸 region_id；真源＝既有 regions 表，不另建映射。
             "region_name": region_name,
-            # 落档口径随存档持久标（F3）：下游对账以此为唯一单位解释。
-            "population_unit": population_unit,
+            "population_unit": POPULATION_UNIT_PERSONS,
         })
     return applied, rejected
 
