@@ -443,7 +443,7 @@ class ReignStateStore:
 
     def memorial_read_keys(self) -> set[str]:
         raw = self.kv_get(self.MEMORIAL_READS_KV_KEY)
-        if not raw:
+        if raw is None:
             return set()
         data = load_stored_list(raw, label="memorial_reads")
         return {str(item) for item in data if str(item or "").strip()}

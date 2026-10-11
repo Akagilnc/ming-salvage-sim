@@ -14,10 +14,15 @@ from ming_sim.entities.column_write import bind_affair_once, checked_columns
 
 
 def _decision_json_fields(row: Any) -> Tuple[list, object, list]:
-    """pending_decisions 三列 JSON。空白是空名单 / 未选；在场损坏即拒。"""
+    """pending_decisions：名单列须为 JSON；choice 的空白标记表示未选。"""
     options = load_stored_list(row["options_json"], label="options_json")
     prior = load_stored_list(row["prior_options_json"], label="prior_options_json")
-    choice = load_stored_json(row["choice_json"], label="choice_json", blank=None)
+    raw_choice = row["choice_json"]
+    # schema 的 DEFAULT '' 及票拟重置写口以空白标记未选，不是 JSON 文档。
+    choice = load_stored_json(
+        None if isinstance(raw_choice, str) and not raw_choice.strip() else raw_choice,
+        label="choice_json", blank=None,
+    )
     return options, choice, prior
 
 

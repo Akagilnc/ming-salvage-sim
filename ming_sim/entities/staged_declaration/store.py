@@ -16,11 +16,6 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 
 from ming_sim.applier import atomic, connection_owns_transaction
-from ming_sim.applier import (
-    atomic,
-    connection_owns_transaction,
-    load_stored_list,
-)
 
 
 _TABLE_SQL = """
@@ -261,13 +256,6 @@ class StagedDeclarationStore:
             "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
             params,
         ).fetchall()
-
-
-def _load_questions(raw: object) -> list[dict]:
-    questions = load_stored_list(raw, label="questions_json")
-    if any(not isinstance(question, dict) for question in questions):
-        raise ValueError("questions_json 成员须为对象")
-    return questions
 
 
 def _row_to_staged(row: Any) -> StagedDeclaration:

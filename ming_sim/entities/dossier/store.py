@@ -624,6 +624,8 @@ class DossierStore:
             raise ValueError(
                 f"next_audience_todos.payload_json 类型非法：{type(payload_json).__name__}"
             )
+        if isinstance(payload_json, str) and not payload_json.strip():
+            payload_json = None  # 可选写入参数缺省；落库仍为合法 '{}' 文档。
         data = load_stored_object(payload_json, label="next_audience_todos.payload_json")
         return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
