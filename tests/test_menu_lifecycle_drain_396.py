@@ -406,9 +406,10 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
     finally:
         gate.release()
         thread.join()
+        if done.is_set():
+            wait_until(lambda: bool(killed))
 
     assert closed == [1]
-    wait_until(lambda: bool(killed))
 
 
 def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch):
@@ -421,9 +422,10 @@ def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda *_args: None)
 
     result = asyncio.run(web_app.api_menu_shutdown())
-
-    assert result == {"ok": True}
-    wait_until(lambda: bool(killed))
+    try:
+        assert result == {"ok": True}
+    finally:
+        wait_until(lambda: bool(killed))
 
 
 def test_drain_rejects_late_pending_write_before_gate_acquire():
