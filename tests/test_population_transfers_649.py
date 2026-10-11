@@ -6,7 +6,7 @@ canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5；#1843
 - class_delta 写 population 由静默忽略升格逐项拒收；两轴分立（数据拒收不中止事务）；
 - 单位＝「人」（#1835 C1 现役唯一口径）；
 - restore 后流民池从 classes 只读 DB 无损接续。
-主测缝：apply_score_extraction 落账及恢复后的 DB 状态。
+主测缝：settle_delta 落账及恢复后的 DB 状态。
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def test_transfer_two_legs_same_transaction_conservation(game):
     assert _global_population(db) == total_before  # 全局守恒
 
 def test_all_inflow_reasons_positive_cases_land(game):
-    """入池五因（加派/摊派/灾害/兵灾/逃亡）各 ≥1 正例经 apply_score_extraction 落账。
+    """入池五因（加派/摊派/灾害/兵灾/逃亡）各 ≥1 正例经 settle_delta 落账。
 
     #652：`回流` 不再由 extractor 受理，出池落账由 test_refugee_loop_652 经
     #652 的回流出池由独立过月案验证，本测不平行私核直落。

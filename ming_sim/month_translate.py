@@ -151,7 +151,7 @@ def _candidate_contract_block(candidates: Mapping[str, object]) -> str:
         '在 effects.new_issues 声明 {"origin_kind": "event_pool", "id": 事件 id, '
         '"title": 该事件题名}。判定不发生、时机未到或前提已被玩家化解的候选一律不声明。\n'
         # #1893 + ADR 0014：只有 strategic_foreign 的 node/ending 战事有「世界状态主账
-        # ＋事件结局」这条既有归属契约（issues._preflight_declared_event_groups 只接这
+        # ＋事件结局」这条既有归属契约（settlement.preflight._preflight_declared_event_groups 只接这
         # 一类）。其余人物事件不绑 event_id，其战果按普通效果写，否则整份声明被拒。
         # 结局标签取该候选事实的 outcome_labels（空集即不写），不得自造标签。
         "- 候选事件里 event_type 不是 situation 且 trigger_class 是 strategic_foreign 的"

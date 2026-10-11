@@ -5,7 +5,7 @@ canonical＝ADR 0087 + #662 票庭判词（run 01a02d40-244d-7e4c-8386-5af682d58
   活跃局势 issue）及阶级余额与人口单位；代码侧只守物理不变量，禁引擎侧自动触发（无双驱动）；
 - origin 分立＝reason 枚举「灾害」／「兵灾」（落库字段即 reason，无第二 origin 字段）；
 - 与加派/摊派入口合流同一本账：同一 classes 省级行池＋同一原语，下游只认账不认来源；
-主测缝＝apply_score_extraction 的人口守恒落账。
+主测缝＝settle_delta 的人口守恒落账。
 """
 
 from __future__ import annotations

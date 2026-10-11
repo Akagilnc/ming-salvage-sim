@@ -361,16 +361,53 @@ def test_real_revoke_restores_override_same_month_with_active_commitment(game):
     )}
     assert origins == {f"dossier:{revoke}"}
 
-def test_golden7_replay_determinism(game):
-    """⑦restore 后任意月重放结果一致；纯函数同输入同输出。"""
-    db, state, _content = game
-    settle = _opening_settle(db, "shaanxi")
-    a = settle_tick(settle["st"], settle["p"], [])
-    b = settle_tick(settle["st"], settle["p"], [])
-    assert a.new_st == b.new_st
-    assert a.breakdown == b.breakdown
+@pytest.mark.parametrize("gross,claim_debt", [(0.0, 0.0), (100.0, 7.0)])
+def test_golden7_replay_determinism(game, gross, claim_debt):
+    """现役省级 batch 读取颁准偿还序／折发，欠债流量与余额同档可重开。"""
+    import json
+    from ming_sim.db import GameDB
 
-# ═══════════════ 桥集成：结算按新序/系数付账 ═══════════════
+    db, state, content = game
+    region = "shaanxi"
+    st, params = _board(gross=gross)
+    params["正赋应征"] = params["三饷应征"] = 0.0
+    st["官俸欠"] = st["宗禄欠"] = claim_debt
+    fiscal = json.loads(db.conn.execute("SELECT fiscal FROM regions WHERE id=?", (region,)).fetchone()[0])
+    fiscal["settle"] = {"st": st, "p": params}
+    # Give one army the entire provincial pay source; other armies are exempt.
+    db.conn.execute("UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, central_pay_share=0, pay_source_region='', province_pay_arrears=0, central_pay_arrears=0, arrears=0")
+    db.conn.execute("UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', manpower=10000, salary_rate=18, province_pay_share=1, pay_source_region=?, province_pay_arrears=20, arrears=20 WHERE id='shaanxi_army'", (region,))
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id=?", (json.dumps(fiscal), region))
+    did = _override_dossier(db, state, [
+        {"key": "due_priority_军饷@shaanxi", "value": 40},
+        {"key": "due_haircut_bp_宗禄@shaanxi", "value": 5000},
+    ])
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    overrides = resolve_pay_order_overrides(db.get_fiscal_config(), region, state.turn)
+    params.update(due_order=list(overrides.due_order), arrears_order=list(overrides.arrears_order), due_haircut_bp=dict(overrides.haircut_bp))
+    expected = settle_tick(copy.deepcopy(st), copy.deepcopy(params), [])
+    outcome = next(o for o in db.settle_ming_province_substrate_ticks() if o.region_id == region)
+    assert outcome.error is None
+    result = outcome.result
+    assert result.new_st == expected.new_st
+    assert result.breakdown == expected.breakdown
+    expected_flows = {
+        (f"settle_{claim}_{flow}", sign * float(source[claim]))
+        for flow, source, sign in (("NewDebt", result.breakdown["NewDebt"], 1), ("Repaid", result.breakdown["Repaid"], -1))
+        for claim in ("官俸欠", "宗禄欠") if abs(float(source[claim])) > 1e-9
+    }
+    rows = [tuple(r) for r in db.conn.execute(
+        "SELECT field, delta, turn, region_id, actor, origin_ref FROM region_logs WHERE region_id=? AND field LIKE 'settle_%' ORDER BY id", (region,),
+    )]
+    assert {(r[0], r[1]) for r in rows} == expected_flows
+    assert all(r[2:] == (state.turn, region, "户部", f"region:{region}:settle_tick") for r in rows)
+    db.conn.commit()
+    restored = GameDB(db.path, content)
+    try:
+        assert [tuple(r) for r in restored.conn.execute("SELECT field, delta, turn, region_id, actor, origin_ref FROM region_logs WHERE region_id=? AND field LIKE 'settle_%' ORDER BY id", (region,))] == rows
+        assert _opening_settle(restored, region)["st"] == result.new_st
+    finally:
+        restored.close()
 
 
 def _opening_settle(db, region_id):

@@ -5,7 +5,7 @@
 单一领域分派与唯一世界记录写口归 #1815／#1835／#1889／#1813，本模块不另造派发。
 回流单核住 `entities.population.recovery`，本模块不并行持有。
 
-- 「加派基线」键名在此单定义：下旨写入口（`issues._apply_surcharge_decrees`）与
+- 「加派基线」键名在此单定义：下旨写入口（`entities.surcharge.apply._apply_surcharge_decrees`）与
   月初消费口（本模块）共用同一真源名，不各持一份字面量。
 - 幂等由调用方月链保证（月初旧账只消费一次 `opening_levy_done`；回流按
   (dossier_id, turn) 去重），本模块不另持恢复生命周期（ADR 0157）。

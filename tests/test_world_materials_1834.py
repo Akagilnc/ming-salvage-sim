@@ -15,6 +15,8 @@ import os
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from ming_sim.db import GameDB
 from ming_sim.materials import (
     list_materials, prepare_world_materials, read_material,
@@ -41,6 +43,12 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     prepared = prepare_world_materials(db, state, dest_root=dest)
 
     names = list_materials(prepared.root)
+    outside = prepared.root.parent / "outside.txt"
+    outside.write_text("outside material", encoding="utf-8")
+    with pytest.raises(ValueError):
+        read_material(prepared.root, "../outside.txt")
+    with pytest.raises(ValueError):
+        read_material(prepared.root, str(outside.resolve()))
     assert "INDEX.txt" in names
     assert "盘面/全局.txt" in names
     denunciation = json.loads(read_material(prepared.root, "盘面/派系检举事实.txt"))

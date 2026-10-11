@@ -1,7 +1,7 @@
 """#641 人物固有层 `性情` 写核 + 召对人物上下文接关系账。
 
 验收锚（owner A / 大理寺 continue）：
-1. apply_score_extraction 后 DB / content / person_logs 一致
+1. settle_delta 后 DB / content / person_logs 一致
 2. 同事务后段故障 → DB+运行态旧 style；提交后 reload 可读新 style
 3. 查无人物、空/非字符串 style 结构化拒收
 4. character_context_with_db 含自身 style，关系仅经 project_relation_ledger(viewer=name)

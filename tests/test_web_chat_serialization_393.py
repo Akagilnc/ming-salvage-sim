@@ -216,38 +216,45 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     assert next(stream) == {"type": "delta", "content": "臣已知悉。"}
 
     settlement_thread = threading.Thread(target=settlement)
+    done_thread = None
     settlement_thread.start()
-    settlement_attempting.wait()
-    settlement.holding.wait()
-
-    done_box: list = []
-    done_collected = threading.Event()
-
-    def _take_done() -> None:
-        while True:
-            item = next(stream)
-            if item.get("type") == "done":
-                done_box.append(item)
-                done_collected.set()
-                return
-
-    threading.Thread(target=_take_done, daemon=True).start()
-    allow_finish.set()
     try:
+        settlement_attempting.wait()
+        settlement.holding.wait()
+
+        done_box: list = []
+        done_collected = threading.Event()
+
+        def _take_done() -> None:
+            try:
+                for item in stream:
+                    if item.get("type") == "done":
+                        done_box.append(item)
+                        return
+            finally:
+                done_collected.set()
+
+        done_thread = threading.Thread(target=_take_done, daemon=True)
+        done_thread.start()
+        allow_finish.set()
         assert settlement.holding.is_set(), "settlement released before epilogue"
         assert not done_collected.is_set(), "done arrived before settlement released gate"
-    finally:
         settlement.release_event.set()
-    done_collected.wait()
-    done = done_box[0]
-    settlement_thread.join()
+        done_collected.wait()
+        done = done_box[0]
+        settlement_thread.join()
 
-    assert done["type"] == "done"
-    assert runtime.db.overlapped_minister_commit is False
-    minister_messages = [msg for msg in runtime.db.messages if msg["role"] == "minister"]
-    assert minister_messages and minister_messages[-1]["turn"] == 1
-    assert runtime.state.turn == 2
-
+        assert done["type"] == "done"
+        assert runtime.db.overlapped_minister_commit is False
+        minister_messages = [msg for msg in runtime.db.messages if msg["role"] == "minister"]
+        assert minister_messages and minister_messages[-1]["turn"] == 1
+        assert runtime.state.turn == 2
+    finally:
+        allow_finish.set()
+        settlement.release_event.set()
+        settlement_thread.join()
+        if done_thread is not None:
+            done_thread.join()
 
 def test_identity_setup_failure_preserves_question_and_releases_pending_owner(monkeypatch):
     runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race(monkeypatch)
@@ -366,8 +373,10 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
 
         async def tick():
             await asyncio.to_thread(entered.wait)
-            events.append("tick")
-            release.set()
+            try:
+                events.append("tick")
+            finally:
+                release.set()
 
         first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
         return first_event

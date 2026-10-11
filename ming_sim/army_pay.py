@@ -1,7 +1,7 @@
 """军饷的**世界后果**计算：应发欠饷核销、优先序补欠、欠饷转士气与哗变（#1901，军饷腿）。
 
 从 `flows.py` 领域旧大块按职责拆出。归属边界：调度与事务归属不变——调用方
-（`flows.apply_fixed_period_flows` / `flows._apply_economy_list`）仍在同一事务内
+（`flows.apply_fixed_period_flows` / `entities.economy.apply._apply_economy_list`）仍在同一事务内
 驱动本模块，本模块不另起调度、不另造派发；本模块内的直接落库（欠饷实拨、
 哗变 latch 与 army_logs 审计）是从 `flows` 原样搬来的既有真账写口，未新增
 任何写口，唯一世界记录写口的收口归 #1889／#1813。

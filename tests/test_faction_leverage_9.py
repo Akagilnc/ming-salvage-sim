@@ -548,7 +548,7 @@ def test_whitelist_faction_delta_routes_to_offset_survives_reconcile(game):
 
 def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
     """#9 cmr R7 端到端：白名单派系的 LLM faction_delta.leverage 经【整条真实结算路】
-    玩家月链（pre_settle → 世界段转译 → apply_score_extraction → adjust_factions 注 offset
+    玩家月链（pre_settle → 世界段转译 → settle_delta → adjust_factions 注 offset
     → 结算尾 recompute_all_faction_leverage → next_period）跑一回合后仍保留——证明 R5 修的 HIGH 集成 bug（offset 穿过结算尾 reconcile）
     在生产路径上真闭环，而非仅单元层直调 adjust_factions+recompute 能过。
     与上面的 test_whitelist_faction_delta_routes_to_offset_survives_reconcile（直调单元路）
@@ -560,7 +560,7 @@ def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
 
     # faction_delta payload 真实 schema：顶层 key=faction_delta（canonical 英文；
     # 中文「派系变化」亦可，canonicalize 等价），value={派系名: {"leverage": 增量}}。
-    # 经玩家世界段转译 → apply_score_extraction(faction_delta) → _apply_faction_dict
+    # 经玩家世界段转译 → settle_delta(faction_delta) → _apply_faction_dict
     # 识别 dict 形态的 leverage 项 → adjust_factions 把白名单 +8 注入 leverage_offset。
     from tests.test_month_chain_1843 import _prepare_player_month
     session = _prepare_player_month(

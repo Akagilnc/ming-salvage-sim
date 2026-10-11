@@ -105,31 +105,37 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
     assert char_row["office"] != "巡盐御史"
 
 
-def test_replay_same_event_with_changed_reason_stays_two_rows(game):
+@pytest.mark.parametrize("candidate_kind", ["荐起复", "荐在职"])
+def test_replay_same_event_with_changed_reason_stays_two_rows(game, candidate_kind):
     """r1 F2：幂等身份只锚稳定 origin（recommendation:{id}:{腿别}+|round 口径），
     不含可变 context——同 event_id 换荐词重放，恒 2 行且原文不被改写。"""
     from ming_sim.recommendations import record_recommendation_edges
 
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = db.list_recommendation_candidates(state, recommender.name)[0]
-    reason1 = "旧任有实绩，罢居后仍可起复"
-    grace1, zhiyu1 = record_recommendation_edges(
-        db, state, recommender.name, row["name"], 501, reason1)
+    row = next(r for r in db.list_recommendation_candidates(state, recommender.name)
+               if r["candidate_kind"] == candidate_kind)
+    reason = "  旧任有实绩，罢居后仍可起复。\r\n "
+    action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
+    _commit_and_promulgate(db, state, content, action_id)
+    event = db.conn.execute("SELECT * FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()
+    assert (event["candidate"], event["candidate_kind"], event["reason"]) == (
+        row["name"], {"荐起复": "起复", "荐在职": "在职"}[candidate_kind], reason,
+    )
+    legs = _recommendation_origins(db)
+    assert {(e["source"], e["target"], e["event_kind"], e["context"]) for e in legs} == {
+        (recommender.name, row["name"], "恩义", reason),
+        ("皇帝", recommender.name, "知遇", reason),
+    }
+    assert content.characters[row["name"]].office == "巡盐御史"
 
-    # 换 reason、甚至跨回合重放同一事件 id。
-    state.turn = int(state.turn) + 3
-    reason2 = "改口：边才可用，堪当巡盐"
-    grace2, zhiyu2 = record_recommendation_edges(
-        db, state, recommender.name, row["name"], 501, reason2)
-
-    assert (grace1, zhiyu1) == (grace2, zhiyu2)
-    legs = [e for e in db.get_relation_edge_events()
-            if str(e["origin"]).startswith("recommendation:501:")]
-    assert len(legs) == 2
-    assert {e["event_kind"] for e in legs} == {"恩义", "知遇"}
-    # 原 context 不被重放改写。
-    assert all(e["context"] == reason1 for e in legs)
+    # Same durable event, changed reason and turn: no duplicate or rewritten edges.
+    state.turn += 3
+    record_recommendation_edges(db, state, recommender.name, row["name"], event["id"], "改口")
+    db.load_state()
+    assert tuple(db.conn.execute("SELECT * FROM recommendation_events WHERE id=?", (event["id"],)).fetchone()) == tuple(event)
+    assert _recommendation_origins(db) == legs
+    assert content.characters[row["name"]].office == "巡盐御史"
 
 
 def test_appointment_without_recommendation_writes_no_edges(game):
@@ -152,7 +158,3 @@ def test_appointment_without_recommendation_writes_no_edges(game):
     _commit_and_promulgate(db, state, content, action_id)
 
     assert _recommendation_origins(db) == []
-
-
-# ---------------------------------------------------------------------------
-# PR #1519 庭裁 Y1/Y2/Y3：工具受理点唯一准入 + 生产链逐字透传真入口回归。

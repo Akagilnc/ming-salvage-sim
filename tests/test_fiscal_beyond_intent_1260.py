@@ -7,7 +7,6 @@ S3 嵌套通道「旨外恶果」别名 → ledger=1
 
 from __future__ import annotations
 
-import json
 
 from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.situation_drift import apply_situation_monthly_drift
@@ -71,23 +70,6 @@ def _prime_and_apply_due_review(
     assert results and results[0].get("branch") == "dossier"
     assert results[0].get("consumed") is True
     return results[0]
-
-
-def _insert_commitment(db, state, *, title: str, origin_ref: str, bar_value: int = 45):
-    issue_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title=title,
-        origin_kind="decree",
-        origin_ref=origin_ref,
-        bar_value=bar_value,
-        inertia=0,
-        stage_text="在办",
-        end_turn=int(state.turn) + 50,
-        commitment_kind="until_stop",
-        cancellable="decree",
-    )
-    return int(issue_id)
 
 
 # ── S1：三族写端 tracer + 负向 ──────────────────────────────────────

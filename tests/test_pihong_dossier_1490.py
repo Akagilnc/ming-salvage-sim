@@ -1905,19 +1905,25 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
         entry_ended.set()
     publisher = threading.Thread(target=_publish_phase1)
     publisher.start()
-    state._race_armed = True
-    crossed = asyncio.run(_get_state())
-    publisher.join()
-    assert not publisher.is_alive()
-    assert crossed['turn']['phase'] == TurnPhase.SETTLING.value
-    assert crossed['settlement_entry_inflight'] is True
-    assert crossed['pending_decisions'] == []
-    assert crossed['resume_phase2'] is False
-    durable = asyncio.run(_get_state())
-    assert durable['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
-    assert durable['settlement_entry_inflight'] is False
-    assert durable['pending_decisions'] == desk_holder['desk']
-    assert durable['resume_phase2'] is False
+    try:
+        state._race_armed = True
+        crossed = asyncio.run(_get_state())
+        publisher.join()
+        assert not publisher.is_alive()
+        assert crossed['turn']['phase'] == TurnPhase.SETTLING.value
+        assert crossed['settlement_entry_inflight'] is True
+        assert crossed['pending_decisions'] == []
+        assert crossed['resume_phase2'] is False
+        durable = asyncio.run(_get_state())
+        assert durable['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
+        assert durable['settlement_entry_inflight'] is False
+        assert durable['pending_decisions'] == desk_holder['desk']
+        assert durable['resume_phase2'] is False
+    finally:
+        phase_sampled.set()
+        phase_published.set()
+        entry_ended.set()
+        publisher.join()
 
 def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     """#1625：在飞 phase2 吃空案头时 GET 不得 resume_phase2。
@@ -1958,17 +1964,22 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
         resolve_begun.set()
     beginner = threading.Thread(target=_begin_and_empty_desk)
     beginner.start()
-    crossed = asyncio.run(_get_state())
-    beginner.join()
-    assert not beginner.is_alive()
-    assert crossed['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
-    assert crossed.get('resume_phase2') is False
-    assert crossed.get('pending_decisions') or crossed.get('settlement_entry_inflight') is True
-    monkeypatch.setattr(web_game.session, 'pending_decisions', original_pending)
-    while web_app._settlement_entry_inflight(web_game) > 0:
-        web_app._end_settlement_entry(web_game)
-    db.conn.execute("UPDATE pending_decisions SET status='decided', choice_json=? WHERE kind=? AND turn=? AND idx=?", (choice_json, kind, int(turn_s), int(idx_s)))
-    db.conn.commit()
+    try:
+        crossed = asyncio.run(_get_state())
+        beginner.join()
+        assert not beginner.is_alive()
+        assert crossed['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
+        assert crossed.get('resume_phase2') is False
+        assert crossed.get('pending_decisions') or crossed.get('settlement_entry_inflight') is True
+        monkeypatch.setattr(web_game.session, 'pending_decisions', original_pending)
+        while web_app._settlement_entry_inflight(web_game) > 0:
+            web_app._end_settlement_entry(web_game)
+        db.conn.execute("UPDATE pending_decisions SET status='decided', choice_json=? WHERE kind=? AND turn=? AND idx=?", (choice_json, kind, int(turn_s), int(idx_s)))
+        db.conn.commit()
+    finally:
+        desk_read.set()
+        resolve_begun.set()
+        beginner.join()
     entered = threading.Event()
     release = threading.Event()
 
@@ -1983,19 +1994,23 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
         result['r'] = asyncio.run(_post_resolve([]))
     t = threading.Thread(target=_run)
     t.start()
-    entered.wait()
-    payload = asyncio.run(_get_state())
-    assert payload['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
-    assert payload.get('resume_phase2') is False
-    assert payload.get('settlement_entry_inflight') is True
-    assert payload.get('pending_decisions') == []
-    release.set()
-    t.join()
-    assert not t.is_alive()
-    assert result['r'].status_code == 200
-    done = asyncio.run(_get_state())
-    assert done.get('resume_phase2') is False
-    assert done.get('settlement_entry_inflight') is False
+    try:
+        entered.wait()
+        payload = asyncio.run(_get_state())
+        assert payload['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
+        assert payload.get('resume_phase2') is False
+        assert payload.get('settlement_entry_inflight') is True
+        assert payload.get('pending_decisions') == []
+        release.set()
+        t.join()
+        assert not t.is_alive()
+        assert result['r'].status_code == 200
+        done = asyncio.run(_get_state())
+        assert done.get('resume_phase2') is False
+        assert done.get('settlement_entry_inflight') is False
+    finally:
+        release.set()
+        t.join()
 
 def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
     """crash 后 desk 空 pending：state_payload.resume_phase2；空 POST stream 完成 phase2。"""

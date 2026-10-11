@@ -2,7 +2,7 @@
 
 seam = apply_army_deltas 内字段效果门（与 #318 owner adapter 同缝）；
      + economy_moves 真钱补饷跨相位 oracle；
-     + apply_score_extraction 集成对照（证明无需第二门）。
+     + settle_delta 集成对照（证明无需第二门）。
 """
 from __future__ import annotations
 

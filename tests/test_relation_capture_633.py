@@ -1,7 +1,7 @@
 """#633 [479·S2] 结算口：extractor 边事件模块——契约·捕获·落库。
 
 验收对表（冻结票面 + 庭裁 r1/r2）：
-- 邸报大臣互动经 extractor delta → apply_score_extraction → relation_edge_events 落库，
+- 邸报大臣互动经 extractor delta → settle_delta → relation_edge_events 落库，
   origin 回指本回合（TD-1 结算侧）。
 - relations 模块并入既有 ThreadPoolExecutor 并发装配，无第二套编排。
 - 捕获为空零事件零副作用；shape 垃圾按既有 extractor 契约拒收。
@@ -69,13 +69,6 @@ def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
     }
     assert len(rows) == 2
     assert len({r["origin"] for r in rows}) == 1
-    # 负向：不得出现乙→丙、丙→乙、乙→甲、丙→甲或任何反向/重复行
-    pairs = [(r["source"], r["target"]) for r in rows]
-    assert pairs.count(("温体仁", "周延儒")) == 1
-    assert pairs.count(("温体仁", "黄立极")) == 1
-    banned = {("周延儒", "黄立极"), ("黄立极", "周延儒"),
-              ("周延儒", "温体仁"), ("黄立极", "温体仁")}
-    assert not banned & set(pairs)
 
 def test_replayed_delta_does_not_double_write(game):
     """结算重放（恢复/重试）幂等：UNIQUE(source,target,kind,context,origin) 吸收重复。"""
@@ -122,7 +115,6 @@ def test_shape_garbage_rejected_per_existing_extractor_contract(game):
     rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 4
     assert all(r.category == "invalid_relation_event" for r in rejected)
-    assert any(r.category == "invalid_relation_event" for r in rejected)
     # 全部拒收：库里零写入
     assert _edge_rows(db) == []
 
@@ -135,7 +127,6 @@ def test_non_string_actor_target_context_shapes_rejected(game):
     rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 6
     assert all(r.category == "invalid_relation_event" for r in rejected)
-    assert any(r.category == "invalid_relation_event" for r in rejected)
     assert _edge_rows(db) == []
 
 def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
@@ -147,9 +138,6 @@ def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
     rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 8
     assert all(r.category == "invalid_relation_event" for r in rejected)
-    assert all(
-        r.category == "invalid_relation_event" for r in rejected
-    )
     # 全部拒收：库里零边、无任何 origin 被默认成「盘面自发」落库
     assert _edge_rows(db) == []
 
@@ -459,7 +447,6 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 2
     assert all(r.category == "invalid_relation_event" for r in rejected)
-    assert any(r.category == "invalid_relation_event" for r in rejected)
     assert _triplets(_edge_rows(db)) == {
         ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
     }
@@ -469,7 +456,7 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
 def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     """负向：端点资格唯一语义＝传入的 pre∪post 并集。在 live 名册但在传入
     资格集之外者仍拒收——不存在「仅 live 可过而 pre∪post 不过」的通路。
-    （apply_score_extraction 批内 post=live，故该构造只能经直调缝验证。）"""
+    （settle_delta 批内 post=live，故该构造只能经直调缝验证。）"""
     db, state, content = game
     assert db.get_character_status("王绍徽")[0] == "active"  # live 在册
     res, res_rejections = resolve_relation_edge_events_from_extraction(

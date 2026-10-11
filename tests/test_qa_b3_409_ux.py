@@ -276,9 +276,9 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
 
     t_resolve = threading.Thread(target=_run_resolve, daemon=True)
     t_resolve.start()
-    body_ready.wait()
-
     try:
+        while t_resolve.is_alive() and not body_ready.is_set():
+            t_resolve.join(0.05)
         with pytest.raises(HTTPException) as ei:
             asyncio.run(web_app.api_load_save("存档"))
         assert ei.value.status_code == 409

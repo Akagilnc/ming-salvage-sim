@@ -5,7 +5,7 @@ canonical＝ADR 0089（明渠）＋0087（人口守恒转移）＋#650 票面（
 结算按账机械驱动农民→流民入池（量级 clamp，0087 applier 机械转移）→
 → 停加派/蠲免后入池止（出口回流归 S5 #652）。
 
-主测缝：apply_score_extraction / 玩家过月 /
+主测缝：settle_delta / 玩家过月 /
 apply_historical_fiscal_rates（饷率 effect 通道）。
 """
 

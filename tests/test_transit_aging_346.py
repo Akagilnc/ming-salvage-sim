@@ -44,7 +44,7 @@ def _set_full_transit(db, content, name: str, *, dest: str, start_turn: int, spe
 # ── 行止 apply 写启程账 ──────────────────────────────────────────────────────
 
 def test_行止_sets_transit_start_turn(game):
-    """apply_score_extraction 处理 行止 时，写入 transit_to 同时记录 transit_start_turn=当前回合。"""
+    """settle_delta 处理 行止 时，写入 transit_to 同时记录 transit_start_turn=当前回合。"""
     db, state, content = game
     name = active_ming_character(db, content)
     _set_departure_origin(db, content, name)

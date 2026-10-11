@@ -3,7 +3,7 @@
 原先：坏 issue_id 裸 continue 无留痕、非 dict 项 adv.get 抛 AttributeError 崩整月、delta_bar/
 inertia_delta 裸 int() 在 try 外脏值（int("高")/int(1e309)）逃逸成 SettlementAbort、advance_issue
 回 None（issue 不存在/已非 active）裸 continue 无留痕。改为：脏数据逐项拒收留痕（同 close/
-new_issues 段，进 advances 列表、桥接收进 rejection_reports），advance_issue 代码/DB 异常上抛。
+new_issues 段，经 canonical RejectedItem 落 rejection_reports），advance_issue 代码/DB 异常上抛。
 """
 
 from ming_sim.entities.issue.tracker import apply_issue_tracker_output

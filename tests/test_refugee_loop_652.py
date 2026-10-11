@@ -1,6 +1,6 @@
 """#652：流民环闭合——投贼吃池顶 + 赈济/招抚回流 + 唯一判官成色链。
 
-主测缝：apply_score_extraction /
+主测缝：settle_delta /
 advance_without_decree（可控 LLM seam 真实月结）。
 owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不动。
 """

@@ -1,14 +1,6 @@
-"""PR2-S3(ADR 0008 决定 1,#91)——apply_score_extraction 的 fiscal 三段迁拒收契约。
-
-fiscal_removes / fiscal_creates / fiscal_changes 三段原先 LLM 脏项要么 print 静默跳、
-要么静默归 0/continue。改为:裁撤不存在 key、create 重复 key/非法枚举、changes 未知 key
-或脏 delta → 逐项拒收留痕(返回列表含 {rejected,reason,category,item}),好项照落、坏一项
-不带走整批;桥接 _collect_inline_rejections 自动收进 rejection_reports。
-
-「在场即须合法」vs「缺省走默认」:fiscal_creates 的 init_value 缺省 0 合法、在场脏值拒;
-fiscal_changes 的 delta 显式给 0 = 无操作不记拒。
-
-从现役原子声明入口验证逐项拒收。
+"""财政声明逐项拒收：坏项经 canonical RejectedItem 落 rejection_reports，
+独立好项照落。init_value 缺省 0 合法，在场脏值拒收；delta 显式 0 不记拒收。
+由现役原子声明入口验证。
 """
 
 from __future__ import annotations

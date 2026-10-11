@@ -374,20 +374,23 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
         sess.resolve_turn()
     assert state.turn == turn  # 未推进，拟旨不孤儿
 
-def test_skip_refused_at_front_half_done(game):
-    """#1274 r1：decree.advance_without_edict 空壳已删；跳过结算的快路名缺席。
-
-    FRONT_HALF_DONE 恢复/亲裁由 session.resolve_turn 真缝承担（settling 恢复 /
-    awaiting 幂等返回决策），不再经独立退朝壳拒绝。
-    """
-
+def test_skip_refused_at_front_half_done(game, monkeypatch):
+    """恢复窗口冻结现役草案改删，已落财政行与回合不变。"""
     from ming_sim.decree import pre_settle
 
-
     db, state, content = game
-    turn = state.turn
+    directive_id = db.add_directive(state, None, "原草案", source="minister", status="draft")
     pre_settle(state, db, content=content)
+    turn = state.turn
     rows_before = _ledger_count(db, turn)
-    # settling 已提交前半：turn 不因「缺壳」而推进；财政行保留
+    before = [tuple(row) for row in db.conn.execute("SELECT * FROM turn_directives")]
+    sess = _recovery_session(db, state, content, monkeypatch)
+    for call in (
+        lambda: sess.update_directive(directive_id, "改"),
+        lambda: sess.delete_directive(directive_id),
+    ):
+        with pytest.raises(ValueError):
+            call()
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM turn_directives")] == before
     assert state.turn == turn
     assert _ledger_count(db, turn) == rows_before

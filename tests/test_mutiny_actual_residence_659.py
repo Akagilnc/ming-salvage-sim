@@ -30,10 +30,6 @@ def _pop(db: GameDB, name: str, region_id: str) -> int:
     return int(row[0]) if row else 0
 
 
-def _global_population(db: GameDB) -> int:
-    return int(db.conn.execute("SELECT COALESCE(SUM(population),0) FROM classes").fetchone()[0])
-
-
 def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
     db.conn.execute(
         "UPDATE armies SET province_pay_arrears=?, central_pay_arrears=?, arrears=? WHERE id=?",
@@ -47,35 +43,6 @@ def _pseudo_event(title: str = "调防") -> Event:
         id="test_659", title=title, kind="圣旨", summary="",
         urgency=0, severity=0, credibility=100, interests=[], audiences=[],
     )
-
-
-def _executing_dossier(db, state, region_id: str) -> int:
-    did = db.create_decree_dossier(
-        state,
-        action_type="assignment",
-        decree_text=f"属地差务@{region_id}",
-        target_kind="issue",
-        target_id=f"errand-{region_id}",
-        payload={
-            "target_kind": "issue",
-            "target_id": f"errand-{region_id}",
-            "locality_scope": "none",
-            "assignee_id": "毕自严",
-            "transaction_category": "清丈",
-            "participant_roster": [
-                {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-            ],
-        },
-        participants=[
-            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-        ],
-    )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='executing', region_id=? WHERE id=?",
-        (region_id, int(did)),
-    )
-    db.conn.commit()
-    return int(did)
 
 
 def test_redeploy_moves_fact_region_keeps_pay_source(game):

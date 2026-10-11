@@ -19,6 +19,7 @@ import web_app
 from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
+from tests.test_enter_settlement_period_1235 import web_game
 
 class _RecordingDB:
     def __init__(self):
@@ -256,17 +257,10 @@ def test_advance_without_edict_refused_by_phase(monkeypatch):
     assert ei.value.status_code == 409
     assert game.db.writes == []
 
-def test_advance_without_edict_refused_when_gate_held(monkeypatch):
+def test_advance_without_edict_refused_when_gate_held(web_game):
     """相位尚未落定但结算 worker 已持锁时，退朝端点不得阻塞事件循环等锁。"""
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    game.directive_rows = lambda: []
-
-    def _should_not_run(**_k):
-        game.db.writes.append("advance_without_decree")
-        return None
-
-    game.session.advance_without_decree = _should_not_run
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
+    game = web_game
+    before = [tuple(row) for row in game.db.conn.execute("SELECT * FROM pending_actions")]
     game._write_gate.acquire()
     result: dict[str, object] = {}
 
@@ -281,32 +275,24 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
     worker = threading.Thread(target=_run_call)
     worker.start()
     try:
-        worker.join()
+        worker.join(2)
         assert result.get("done") is True, "advance_without_edict blocked waiting for the write gate"
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)
         assert exc.status_code == 409
-        assert game.db.writes == []
+        assert [tuple(row) for row in game.db.conn.execute("SELECT * FROM pending_actions")] == before
     finally:
         game._write_gate.release()
         worker.join()
 
-def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
+def test_advance_short_hold_409_when_gate_taken_after_admit(web_game, monkeypatch):
     """#1353 r12：删预探后，真实短持接缝被占 → 409 不挂死。
 
     事件握手：advance 已过 accept 进入 auto_close 前夕，对端占闸；
     短持 non-blocking acquire 须立即 409（禁阻塞等闸）。
     """
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    game.directive_rows = lambda: []
-
-    def _should_not_run(**_k):
-        game.db.writes.append("advance_without_decree")
-        return None
-
-    game.session.advance_without_decree = _should_not_run
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-
+    game = web_game
+    before = [tuple(row) for row in game.db.conn.execute("SELECT * FROM pending_actions")]
     at_short_hold = threading.Event()
     gate_held_by_peer = threading.Event()
     real_auto = web_app._auto_close_open_night_gate_free
@@ -339,12 +325,12 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
         )
         assert game._write_gate.acquire(blocking=False), "gate should be free at admit→short-hold window"
         gate_held_by_peer.set()
-        worker.join()
+        worker.join(2)
         assert result.get("done") is True, "advance blocked on short-hold after peer took gate"
         exc = result.get("exc")
         assert isinstance(exc, HTTPException), result
         assert exc.status_code == 409
-        assert game.db.writes == []
+        assert [tuple(row) for row in game.db.conn.execute("SELECT * FROM pending_actions")] == before
     finally:
         gate_held_by_peer.set()  # 解 worker 侧 wait，避免 finally 再挂
         if game._write_gate.locked():

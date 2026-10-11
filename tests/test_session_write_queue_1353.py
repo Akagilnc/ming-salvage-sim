@@ -57,41 +57,48 @@ def test_queue_order_early_claim_late_finish_before_barrier():
         q.complete(t_trail)
 
     th = threading.Thread(target=trail, name="trail-late", daemon=True)
+    bt = None
     th.start()
-    trail_ready.wait()
+    try:
+        trail_ready.wait()
 
-    def barrier_body() -> str:
-        barrier_entered.set()
-        order.append("barrier")
-        return "ok"
+        def barrier_body() -> str:
+            barrier_entered.set()
+            order.append("barrier")
+            return "ok"
 
-    result_box: dict = {}
+        result_box: dict = {}
 
-    def run_barrier() -> None:
-        barrier_may_start.wait()
-        result_box["r"] = q.barrier(barrier_body)
-        barrier_done.set()
+        def run_barrier() -> None:
+            barrier_may_start.wait()
+            result_box["r"] = q.barrier(barrier_body)
+            barrier_done.set()
 
-    bt = threading.Thread(target=run_barrier, name="barrier", daemon=True)
-    bt.start()
-    # 主线程：先确认 trail 在飞、再放 barrier 线程去 claim——barrier 必见 open prior。
-    barrier_may_start.set()
-    # barrier 在 trail 完成前不得进入 body：用「barrier_done 未置且 order 无 barrier」
-    # 的握手——等 trail 仍 open 时 barrier 应阻塞在 wait_prior。
-    assert q.inflight_count() >= 1
-    # 确定性：在放行 trail 前 barrier body 不得跑。
-    assert not barrier_entered.is_set()
-    assert "barrier" not in order
+        bt = threading.Thread(target=run_barrier, name="barrier", daemon=True)
+        bt.start()
+        # 主线程：先确认 trail 在飞、再放 barrier 线程去 claim——barrier 必见 open prior。
+        barrier_may_start.set()
+        # barrier 在 trail 完成前不得进入 body：用「barrier_done 未置且 order 无 barrier」
+        # 的握手——等 trail 仍 open 时 barrier 应阻塞在 wait_prior。
+        assert q.inflight_count() >= 1
+        # 确定性：在放行 trail 前 barrier body 不得跑。
+        assert not barrier_entered.is_set()
+        assert "barrier" not in order
 
-    release_trail.set()
-    barrier_done.wait()
-    bt.join()
-    th.join()
-    assert not bt.is_alive() and not th.is_alive()
-    assert result_box.get("r") == "ok"
-    assert order == ["trail_write", "barrier"], order
-    assert q.inflight_count() == 0
-
+        release_trail.set()
+        barrier_done.wait()
+        bt.join()
+        th.join()
+        assert not bt.is_alive() and not th.is_alive()
+        assert result_box.get("r") == "ok"
+        assert order == ["trail_write", "barrier"], order
+        assert q.inflight_count() == 0
+    finally:
+        barrier_may_start.set()
+        release_trail.set()
+        th.join()
+        if bt is not None:
+            bt.join()
 
 def test_barrier_waits_multiple_prior_tickets():
     """屏障钉：多张先领票全清后屏障才跑。"""
@@ -109,27 +116,38 @@ def test_barrier_waits_multiple_prior_tickets():
         order.append(name)
         q.complete(ticket)
 
-    threading.Thread(target=fin, args=("a", a), daemon=True).start()
-    threading.Thread(target=fin, args=("b", b), daemon=True).start()
-    both_waiting.wait()
+    ta = threading.Thread(target=fin, args=("a", a), daemon=True)
+    tb = threading.Thread(target=fin, args=("b", b), daemon=True)
+    ta.start()
+    bt = None
+    tb.start()
+    try:
+        both_waiting.wait()
 
-    started = threading.Event()
-    done = threading.Event()
+        started = threading.Event()
+        done = threading.Event()
 
-    def br() -> None:
-        started.set()
-        q.barrier(lambda: order.append("barrier") or None)
-        done.set()
+        def br() -> None:
+            started.set()
+            q.barrier(lambda: order.append("barrier") or None)
+            done.set()
 
-    threading.Thread(target=br, daemon=True).start()
-    started.wait()
-    # 放行前 barrier 不得完成
-    assert not done.is_set()
-    release.set()
-    done.wait()
-    assert order[-1] == "barrier"
-    assert set(order[:2]) == {"a", "b"}
-
+        bt = threading.Thread(target=br, daemon=True)
+        bt.start()
+        started.wait()
+        # 放行前 barrier 不得完成
+        assert not done.is_set()
+        release.set()
+        done.wait()
+        assert order[-1] == "barrier"
+        assert set(order[:2]) == {"a", "b"}
+    finally:
+        both_waiting.abort()
+        release.set()
+        ta.join()
+        tb.join()
+        if bt is not None:
+            bt.join()
 
 def test_fail_vacate_lets_barrier_through():
     """失败钉：腿失败票据空放行，屏障不卡死。"""
@@ -165,31 +183,37 @@ def test_post_barrier_claim_run_waits_for_barrier():
     bt = threading.Thread(
         target=lambda: q.barrier(barrier_body), name="barrier", daemon=True,
     )
+    th = None
     bt.start()
-    barrier_entered.wait()
+    try:
+        barrier_entered.wait()
 
-    t_trail = q.claim(key=("turn", 1))
-    assert t_trail is not None
+        t_trail = q.claim(key=("turn", 1))
+        assert t_trail is not None
 
-    def trail() -> None:
-        trail_blocked.set()
-        q.run(t_trail, lambda: order.append("trail_write"))
-        q.complete(t_trail)
+        def trail() -> None:
+            trail_blocked.set()
+            q.run(t_trail, lambda: order.append("trail_write"))
+            q.complete(t_trail)
 
-    th = threading.Thread(target=trail, name="trail-post", daemon=True)
-    th.start()
-    trail_blocked.wait()
-    # 屏障未放行前尾随不得写
-    assert "trail_write" not in order
-    assert order == ["barrier_start"]
+        th = threading.Thread(target=trail, name="trail-post", daemon=True)
+        th.start()
+        trail_blocked.wait()
+        # 屏障未放行前尾随不得写
+        assert "trail_write" not in order
+        assert order == ["barrier_start"]
 
-    barrier_hold.set()
-    bt.join()
-    th.join()
-    assert not bt.is_alive() and not th.is_alive()
-    assert order == ["barrier_start", "barrier_end", "trail_write"], order
-    assert q.inflight_count() == 0
-
+        barrier_hold.set()
+        bt.join()
+        th.join()
+        assert not bt.is_alive() and not th.is_alive()
+        assert order == ["barrier_start", "barrier_end", "trail_write"], order
+        assert q.inflight_count() == 0
+    finally:
+        barrier_hold.set()
+        bt.join()
+        if th is not None:
+            th.join()
 
 def test_cancel_key_vacates_and_blocks_run():
     """撤回钉：按 key 取消在飞票据；run 见取消不写库。"""
@@ -247,31 +271,38 @@ def test_post_barrier_claim_cannot_cross_barrier_write():
         barrier_done.set()
 
     bt = threading.Thread(target=run_barrier, daemon=True)
+    lt = None
     bt.start()
-    barrier_in_body.wait()
+    try:
+        barrier_in_body.wait()
 
-    late = q.claim(key=("turn", 99))
-    assert late is not None
-    late_claimed.set()
+        late = q.claim(key=("turn", 99))
+        assert late is not None
+        late_claimed.set()
 
-    def late_writer() -> None:
-        q.run(late, lambda: order.append("late_write") or late_wrote.set())
-        q.complete(late)
+        def late_writer() -> None:
+            q.run(late, lambda: order.append("late_write") or late_wrote.set())
+            q.complete(late)
 
-    lt = threading.Thread(target=late_writer, daemon=True)
-    lt.start()
-    # 确定性：屏障未放行前 late 不得写入（order 握手，不靠 sleep）
-    assert "late_write" not in order
-    assert not late_wrote.is_set()
-    assert not barrier_done.is_set()
+        lt = threading.Thread(target=late_writer, daemon=True)
+        lt.start()
+        # 确定性：屏障未放行前 late 不得写入（order 握手，不靠 sleep）
+        assert "late_write" not in order
+        assert not late_wrote.is_set()
+        assert not barrier_done.is_set()
 
-    release_barrier.set()
-    barrier_done.wait()
-    late_wrote.wait()
-    lt.join()
-    bt.join()
-    assert order == ["barrier_write", "late_write"], order
-
+        release_barrier.set()
+        barrier_done.wait()
+        late_wrote.wait()
+        lt.join()
+        bt.join()
+        assert order == ["barrier_write", "late_write"], order
+    finally:
+        late_claimed.set()
+        release_barrier.set()
+        if lt is not None:
+            lt.join()
+        bt.join()
 
 def test_barrier_waits_healthy_slow_worker_terminal():
     """K10a：健康工人仍 open 时屏障不得越过；工人终态后屏障续跑（终态顺序，非 elapsed 熔断）。"""
@@ -302,16 +333,24 @@ def test_barrier_waits_healthy_slow_worker_terminal():
         q.barrier(lambda: order.append("barrier") or None)
         barrier_done.set()
 
-    threading.Thread(target=slow_worker, daemon=True).start()
-    worker_started.wait()
-    threading.Thread(target=run_barrier, daemon=True).start()
-    wait_prior_entered.wait()  # barrier reached wait_prior, not merely claimed ticket
-    assert not barrier_done.is_set(), "barrier crossed before worker terminal"
-    release_worker.set()
-    barrier_done.wait()
-    assert order == ["worker_terminal", "barrier"], order
-    assert q.inflight_count() == 0
-
+    wt = threading.Thread(target=slow_worker, daemon=True)
+    bt = None
+    wt.start()
+    try:
+        worker_started.wait()
+        bt = threading.Thread(target=run_barrier, daemon=True)
+        bt.start()
+        wait_prior_entered.wait()  # barrier reached wait_prior, not merely claimed ticket
+        assert not barrier_done.is_set(), "barrier crossed before worker terminal"
+        release_worker.set()
+        barrier_done.wait()
+        assert order == ["worker_terminal", "barrier"], order
+        assert q.inflight_count() == 0
+    finally:
+        release_worker.set()
+        wt.join()
+        if bt is not None:
+            bt.join()
 
 def test_barrier_proceeds_after_worker_fail_vacate():
     """可控失败终态：工人 vacate 后屏障放行（无 elapsed 伪失败）。"""
@@ -332,11 +371,17 @@ def test_barrier_proceeds_after_worker_fail_vacate():
         q.barrier(lambda: order.append("barrier") or None)
         done.set()
 
-    threading.Thread(target=failing_worker, daemon=True).start()
-    threading.Thread(target=run_barrier, daemon=True).start()
-    done.wait()
-    assert order == ["fail_vacate", "barrier"], order
-
+    wt = threading.Thread(target=failing_worker, daemon=True)
+    wt.start()
+    bt = threading.Thread(target=run_barrier, daemon=True)
+    bt.start()
+    try:
+        done.wait()
+        assert order == ["fail_vacate", "barrier"], order
+    finally:
+        started.set()
+        wt.join()
+        bt.join()
 
 def test_run_exclusive_serializes_writes():
     """write_gate 并入队列：run_exclusive 互斥。"""
@@ -360,23 +405,29 @@ def test_run_exclusive_serializes_writes():
         target=lambda: (q.run_exclusive(slow), slow_done.set()),
         daemon=True,
     )
+    th2 = None
     th.start()
-    in_critical.wait()
-    th2 = threading.Thread(
-        target=lambda: q.run_exclusive(fast),
-        daemon=True,
-    )
-    th2.start()
-    # fast 在 slow 持锁期间不得完成
-    assert not fast_done.is_set()
-    assert "fast" not in order
-    hold.set()
-    slow_done.wait()
-    fast_done.wait()
-    th.join()
-    th2.join()
-    assert order == ["slow", "fast"], order
-
+    try:
+        in_critical.wait()
+        th2 = threading.Thread(
+            target=lambda: q.run_exclusive(fast),
+            daemon=True,
+        )
+        th2.start()
+        # fast 在 slow 持锁期间不得完成
+        assert not fast_done.is_set()
+        assert "fast" not in order
+        hold.set()
+        slow_done.wait()
+        fast_done.wait()
+        th.join()
+        th2.join()
+        assert order == ["slow", "fast"], order
+    finally:
+        hold.set()
+        th.join()
+        if th2 is not None:
+            th2.join()
 
 def test_write_turn_orders_cs_not_whole_leg_llm():
     """#1353 r10 / 66nU P5：wait_write_turn 只排写段——先票 LLM 中时后票可进材料读/写。
@@ -420,18 +471,22 @@ def test_write_turn_orders_cs_not_whole_leg_llm():
     mt = threading.Thread(target=mind_leg, name="mind", daemon=True)
     et.start()
     mt.start()
-    mind_read_done.wait()
-    assert "mind_read" in order
-    assert "extract_llm_exit" not in order  # still inside extract LLM
-    release_extract_llm.set()
-    et.join()
-    mt.join()
-    assert not et.is_alive() and not mt.is_alive()
-    assert order.index("extract_read") < order.index("extract_llm_enter")
-    assert order.index("mind_read") < order.index("extract_llm_exit")
-    assert "extract_write" in order and "mind_write" in order
-    assert q.inflight_count() == 0
-
+    try:
+        mind_read_done.wait()
+        assert "mind_read" in order
+        assert "extract_llm_exit" not in order  # still inside extract LLM
+        release_extract_llm.set()
+        et.join()
+        mt.join()
+        assert not et.is_alive() and not mt.is_alive()
+        assert order.index("extract_read") < order.index("extract_llm_enter")
+        assert order.index("mind_read") < order.index("extract_llm_exit")
+        assert "extract_write" in order and "mind_write" in order
+        assert q.inflight_count() == 0
+    finally:
+        release_extract_llm.set()
+        et.join()
+        mt.join()
 
 def test_write_turn_still_blocks_on_open_barrier():
     """写段序仍尊重开放屏障：后票 ticketed gate 不得越过 barrier body。"""
@@ -449,28 +504,34 @@ def test_write_turn_still_blocks_on_open_barrier():
     bt = threading.Thread(
         target=lambda: q.barrier(barrier_body), name="barrier", daemon=True,
     )
+    lt = None
     bt.start()
-    barrier_in.wait()
+    try:
+        barrier_in.wait()
 
-    late = q.claim(key=("turn", 9))
-    assert late is not None
+        late = q.claim(key=("turn", 9))
+        assert late is not None
 
-    def late_writer() -> None:
-        with q.ticketed_gate(late):
-            order.append("late")
-        q.complete(late)
-        late_done.set()
+        def late_writer() -> None:
+            with q.ticketed_gate(late):
+                order.append("late")
+            q.complete(late)
+            late_done.set()
 
-    lt = threading.Thread(target=late_writer, daemon=True)
-    lt.start()
-    assert "late" not in order
-    assert not late_done.is_set()
-    release_barrier.set()
-    late_done.wait()
-    bt.join()
-    lt.join()
-    assert order == ["barrier", "late"], order
-
+        lt = threading.Thread(target=late_writer, daemon=True)
+        lt.start()
+        assert "late" not in order
+        assert not late_done.is_set()
+        release_barrier.set()
+        late_done.wait()
+        bt.join()
+        lt.join()
+        assert order == ["barrier", "late"], order
+    finally:
+        release_barrier.set()
+        bt.join()
+        if lt is not None:
+            lt.join()
 
 def test_no_elapsed_timeout_api_on_barrier():
     """The public queue API rejects the retired timeout option."""

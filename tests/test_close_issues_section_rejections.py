@@ -2,7 +2,7 @@
 
 原先：坏 issue_id 静默 continue、坏 reason print[WARN]+continue、close_issue 抛异常 print[WARN]+
 continue、未找到（None）静默 continue——LLM 脏数据/陈旧引用无声蒸发，代码/DB 异常被 WARN 吞。
-改为：脏数据（坏 id/reason/陈旧引用）逐项拒收留痕（进 closes 列表、S0 桥接收进 rejection_reports），
+改为：脏数据（坏 id/reason/陈旧引用）逐项拒收留痕（经 canonical RejectedItem 落 rejection_reports），
 db.close_issue 的代码/DB 异常上抛（ADR 0005 fail-loud）。
 """
 

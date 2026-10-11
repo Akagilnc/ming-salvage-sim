@@ -1,7 +1,7 @@
 """ADR 0009 person archive contract — exercised through the person-delta applier.
 
 #1185: drop constant-matrix self-checks. Keep transition/reason rules that
-surface as apply_score_extraction outcomes (reason_code aliases, title-kind
+surface as settle_delta outcomes (reason_code aliases, title-kind
 normalization, reason-override priority).
 """
 
@@ -24,7 +24,7 @@ def _active_names(db, content, *, exclude=()):
 
 
 def test_reason_code_aliases_and_missing_via_person_delta(game):
-    """reason_code aliases + missing≠unknown land through apply_score_extraction."""
+    """reason_code aliases + missing≠unknown land through settle_delta."""
     db, state, content = game
     name_alias, name_unknown, name_missing = _active_names(db, content)[:3]
 

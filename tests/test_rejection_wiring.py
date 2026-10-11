@@ -198,8 +198,7 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
 
 def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeypatch, tmp_path):
     """rejection_reports.item_json = 原始 delta 项(ADR 决定 5「原 item 原样保留」)
-    ——S1-S3 producers 已在 wrapper 里带原件('item' 键),桥接应解包而非存整个
-    wrapper(嵌套结构破坏重放分析消费形状,ship-pre r3 codex)。"""
+    canonical RejectedItem.item 直接持有原件，不把运输包装存作 item。"""
     import json as _json
 
     db, state, content = game

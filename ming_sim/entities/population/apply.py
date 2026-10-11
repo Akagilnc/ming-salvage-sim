@@ -29,8 +29,6 @@ def _apply_population_transfers(
 
     返回 (applied list, rejections list)：前者供当前声明落账反馈，
     后者为 canonical RejectedItem，由段适配器并入 SectionResult.rejected。
-    不复用 DeltaApplyResult（其 applied 声明为 dict、文档限定 faction/class）；
-    本核 applied 为转移记录 list，直接声明窄类型（#649 C2）。
     """
     from ming_sim.constants import (
         POPULATION_TRANSFER_FIELDS,

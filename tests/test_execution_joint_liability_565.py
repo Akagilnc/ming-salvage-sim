@@ -2,6 +2,8 @@
 
 
 
+import pytest
+
 from ming_sim.strict_types import validate_affected_parties
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
@@ -10,7 +12,7 @@ def _roster():
     """主办倪元璐←委派徐光启（协办位，仅次责）；另有协办黄道周、知情王承恩。
 
     委派人须同案主办/协办（db._validate_dossier_delegations）。徐光启占协办位，
-    专测次责降档路径；双角色（委派人兼主办）见 test_dual_role_*。
+    主次责任、已故及双角色的核算由同一真实结算案验证。
     """
     return [
         {
@@ -72,22 +74,50 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
     assert db.get_relation_edge_events(event_kind="连坐") == []
 
 
-def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):
+@pytest.mark.parametrize("outcome,lead_tier,lead_status,lead_delta,delegator_delta", [
+    ("failed", "主办", "active", -8, -4),
+    ("transformed", "主办", "active", -8, -4),
+    ("degraded", "主办", "active", -4, 0),
+    ("failed", "协办", "active", 0, -4),
+    ("failed", "主办", "dead", 0, -4),
+    ("failed", "主办", "dual", -8, -8),
+])
+def test_adapter_replay_is_idempotent_on_joint_liability_rows(
+    game, outcome, lead_tier, lead_status, lead_delta, delegator_delta,
+):
     db, state, content = game
-    dossier_id = _executing_dossier(db, state)
-    _close_via_adapter(db, state, content, dossier_id, "failed", note="初结")
+    roster = _roster()
+    roster[0]["tier"] = lead_tier
+    if lead_status == "dual":
+        roster[1]["tier"] = "主办"
+    dossier_id = _executing_dossier(db, state, roster=roster)
+    if lead_status == "dead":
+        db.set_character_status(state, "倪元璐", "dead", reason="已故")
+    before = {f: _sat(db, f) for f in ("东林", "西学", "皇党")}
+    _close_via_adapter(db, state, content, dossier_id, outcome, note="初结")
+    assert {f: _sat(db, f) for f in before} == {
+        "东林": max(0, before["东林"] + lead_delta),
+        "西学": max(0, before["西学"] + delegator_delta),
+        "皇党": before["皇党"],
+    }
+    assert {(r["target_id"], r["delta"]) for r in _sat_events(db, dossier_id)} == {
+        (f, d) for f, d in (("东林", lead_delta), ("西学", delegator_delta)) if d
+    }
     first = _cost_events(db, dossier_id)
     first_edges = [
         e for e in db.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     ]
-    assert first  # 确有连坐落账
+    assert {e["target"] for e in first_edges} == {
+        name for name, delta in (("倪元璐", lead_delta), ("徐光启", delegator_delta)) if delta
+    }
+    assert db.get_decree_dossier(dossier_id)["execution_note"] == "初结"
 
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing' WHERE id=?", (dossier_id,),
     )
     db.conn.commit()
-    _close_via_adapter(db, state, content, dossier_id, "failed", note="重结")
+    _close_via_adapter(db, state, content, dossier_id, outcome, note="重结")
 
     assert _cost_events(db, dossier_id) == first
     second_edges = [
