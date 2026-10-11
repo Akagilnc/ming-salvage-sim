@@ -15,17 +15,20 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import time
 from types import SimpleNamespace
 
 import httpx
 import pytest
+from tests.wait_utils import wait_until
 
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
 from tests.conftest import stub_audience_translate
+
+
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
 
 @pytest.fixture
@@ -485,7 +488,6 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
         assert not done.is_set(), "exit 不得在 write_gate 仍被他持时无门完成"
         assert game.db.get_month_open_snapshot(turn) is not None
         gate.release()
-        done.wait()
     finally:
         if gate.locked():
             gate.release()
@@ -569,8 +571,7 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     try:
         t.start()
         # 等 B 完成 web accept（False）并堵在阻塞 gate
-        while saw["web_created"] is None:
-            time.sleep(0.01)  # backoff only
+        wait_until(lambda: saw["web_created"] is not None or not t.is_alive())
         assert saw["web_created"] is False, "B 须为 web 非创建者"
         assert not b_done.is_set(), "B 不得在 A 持锁时完成过月"
         assert game.db.get_month_open_snapshot(turn) == before
@@ -583,7 +584,6 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         gate.release()
         t.join()
 
-    b_done.wait()
     assert "err" not in b_result, b_result.get("err")
     assert b_result.get("status") == 200, b_result
     assert "error" in (b_result.get("body") or "")
@@ -643,7 +643,8 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
     t_b = None
     try:
         t_a.start()
-        a_in_await.wait()
+        wait_until(lambda: a_in_await.is_set() or not t_a.is_alive())
+        assert a_in_await.is_set(), "worker exited before a_in_await"
         assert game.db.get_month_open_snapshot(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True
         assert web_app._settlement_entry_inflight(game) >= 1
@@ -670,7 +671,8 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
 
         t_b = threading.Thread(target=_run_b, daemon=True)
         t_b.start()
-        b_started.wait()
+        wait_until(lambda: b_started.is_set() or not t_b.is_alive())
+        assert b_started.is_set(), "worker exited before b_started"
         # A 仍在办时快照不得被清（b_started 已证 B 进入；A 屏障未放行）
         assert not a_done.is_set()
         assert game.db.get_month_open_snapshot(turn) == before
@@ -683,8 +685,6 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
         t_a.join()
         if t_b is not None:
             t_b.join()
-    a_done.wait()
-    b_done.wait()
     assert "err" not in a_result, a_result.get("err")
     assert a_result.get("status") == 409, a_result
     assert "err" not in b_result, b_result.get("err")

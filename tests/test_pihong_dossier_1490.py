@@ -20,6 +20,7 @@ import json
 import threading
 import httpx
 import pytest
+from tests.wait_utils import wait_until
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
@@ -27,6 +28,9 @@ import web_app
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import rejected_verdict
 from tests.rescript_test_helpers import sql_rescript_draft
+
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+
 
 @pytest.fixture
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
@@ -2053,9 +2057,11 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     with ThreadPoolExecutor(max_workers=2) as pool:
         try:
             f1 = pool.submit(_post)
-            started.wait()
+            wait_until(lambda: started.is_set() or f1.done())
+            assert started.is_set(), f1.result()
             f2 = pool.submit(_post)
-            second_arrived.wait()
+            wait_until(lambda: second_arrived.is_set() or f2.done())
+            assert second_arrived.is_set(), f2.result()
         finally:
             release.set()
         results = [f.result() for f in (f1, f2)]
@@ -2084,9 +2090,11 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
             if name == 'turn_phase' and super().__getattribute__('_race_armed'):
                 super().__setattr__('_race_armed', False)
                 phase_sampled.set()
-                phase_published.wait()
+                wait_until(lambda: phase_published.is_set() or not publisher.is_alive())
+                assert phase_published.is_set(), "publisher exited before publication"
                 if not entry_lock.locked():
-                    entry_ended.wait()
+                    wait_until(lambda: entry_ended.is_set() or not publisher.is_alive())
+                    assert entry_ended.is_set(), "publisher exited before entry cleanup"
             return value
     state = PhaseRaceState(**original_state.__dict__)
     state.turn_phase = TurnPhase.SETTLING.value
@@ -2150,7 +2158,8 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     def _pending_with_reverse_race():
         desk_read.set()
         if not entry_lock.locked():
-            resolve_begun.wait()
+            wait_until(lambda: resolve_begun.is_set() or not beginner.is_alive())
+            assert resolve_begun.is_set(), "resolve worker exited before publication"
         return original_pending()
     monkeypatch.setattr(web_game.session, 'pending_decisions', _pending_with_reverse_race)
 
@@ -2192,7 +2201,8 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     t = threading.Thread(target=_run)
     try:
         t.start()
-        entered.wait()
+        wait_until(lambda: entered.is_set() or not t.is_alive())
+        assert entered.is_set(), "worker exited before entered"
         payload = asyncio.run(_get_state())
         assert payload['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
         assert payload.get('resume_phase2') is False

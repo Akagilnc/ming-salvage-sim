@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from tests.wait_utils import wait_until
+
 import asyncio
 import threading
 from types import SimpleNamespace
@@ -9,6 +12,9 @@ from tests.web_audience_test_doubles import (
     HallAdmissionSessionMixin, open_audience_night_conn,
 )
 from ming_sim.session_write_queue import SessionWriteQueue
+
+
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
 
 class _RunContent:
@@ -206,8 +212,10 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 
     try:
         settlement_thread.start()
-        settlement_attempting.wait()
-        settlement.holding.wait()
+        wait_until(lambda: settlement_attempting.is_set() or not settlement_thread.is_alive())
+        assert settlement_attempting.is_set(), "worker exited before settlement_attempting"
+        wait_until(lambda: settlement.holding.is_set() or not settlement_thread.is_alive())
+        assert settlement.holding.is_set(), "worker exited before settlement.holding"
 
         done_box: list = []
         done_collected = threading.Event()
@@ -232,7 +240,7 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
         if consumer is not None:
             consumer.join()
         stream.close()
-    done_collected.wait()
+    assert done_collected.is_set(), "consumer exited without done"
     done = done_box[0]
 
     assert done["type"] == "done"

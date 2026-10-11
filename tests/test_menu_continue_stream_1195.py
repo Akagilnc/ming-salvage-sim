@@ -1,6 +1,8 @@
 """#1195: POST /api/menu/continue 分阶段 SSE 反馈（stage → done/error）。"""
 from __future__ import annotations
 
+import pytest
+
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 from types import SimpleNamespace
@@ -18,6 +20,9 @@ _reset_path_leases = reset_menu_path_leases
 # #1902 F7：SSE 解析真源在 tests.sse_helpers（仓内只此一份，含 tuple 投影）。
 # 本文件不再自带第二份实现。
 _parse_sse = parse_sse_event_pairs
+
+
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
 
 def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
@@ -128,7 +133,8 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     thread = threading.Thread(target=run_continue, daemon=True)
     try:
         thread.start()
-        started.wait()
+        wait_until(lambda: started.is_set() or not thread.is_alive())
+        assert started.is_set(), "worker exited before started"
 
         exit_result = asyncio.run(web_app.api_menu_exit())
         assert exit_result == {"ok": True}
@@ -142,7 +148,6 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     events = results["events"]
     assert events and events[-1][0] == "error"
     assert web_app.web_game is None, "stale continue must not publish over exit"
-    wait_until(lambda: closed == ["stale"])
     assert closed == ["stale"]
 
 
@@ -193,7 +198,8 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     thread = threading.Thread(target=run_continue, daemon=True)
     try:
         thread.start()
-        started.wait()
+        wait_until(lambda: started.is_set() or not thread.is_alive())
+        assert started.is_set(), "worker exited before started"
 
         monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
         new_result = asyncio.run(web_app.api_menu_new_game())
@@ -208,5 +214,4 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     assert results.get("status") == 200
     assert results["events"][-1][0] == "error"
     assert web_app.web_game is settled
-    wait_until(lambda: closed == ["stale"])
     assert closed == ["stale"]

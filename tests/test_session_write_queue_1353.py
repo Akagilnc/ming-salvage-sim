@@ -10,6 +10,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+from tests.wait_utils import wait_until
 
 from ming_sim.session_write_queue import (
     SessionWriteQueue,
@@ -17,6 +18,9 @@ from ming_sim.session_write_queue import (
     WriteTicket,
     get_session_write_queue,
 )
+
+
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
 
 def wait_pending_writes(game, *, timeout_s: float | None = None) -> None:
@@ -49,17 +53,20 @@ def test_queue_order_early_claim_late_finish_before_barrier():
     assert t_trail is not None
 
     def trail() -> None:
-        trail_ready.set()
-        release_trail.wait()
-        # 生产 seam：按票序写
-        q.run(t_trail, lambda: order.append("trail_write"))
-        q.complete(t_trail)
+        try:
+            trail_ready.set()
+            release_trail.wait()
+            # 生产 seam：按票序写
+            q.run(t_trail, lambda: order.append("trail_write"))
+        finally:
+            q.complete(t_trail)
 
     th = threading.Thread(target=trail, name="trail-late", daemon=True)
     bt = None
     try:
         th.start()
-        trail_ready.wait()
+        wait_until(lambda: trail_ready.is_set() or not th.is_alive())
+        assert trail_ready.is_set(), "worker exited before trail_ready"
 
         def barrier_body() -> str:
             barrier_entered.set()
@@ -90,7 +97,7 @@ def test_queue_order_early_claim_late_finish_before_barrier():
         th.join()
         if bt is not None:
             bt.join()
-    barrier_done.wait()
+    assert barrier_done.is_set(), "worker exited without barrier_done"
     assert not bt.is_alive() and not th.is_alive()
     assert result_box.get("r") == "ok"
     assert order == ["trail_write", "barrier"], order
@@ -105,14 +112,9 @@ def test_barrier_waits_multiple_prior_tickets():
     b = q.claim()
     assert a is not None and b is not None
     release = threading.Event()
-    both_waiting = threading.Barrier(3)  # a, b, main
 
     def fin(name: str, ticket: WriteTicket) -> None:
         try:
-            try:
-                both_waiting.wait()
-            except threading.BrokenBarrierError:
-                return  # Main failed before its rendezvous; release the owned ticket.
             release.wait()
             order.append(name)
         finally:
@@ -120,13 +122,10 @@ def test_barrier_waits_multiple_prior_tickets():
 
     at = threading.Thread(target=fin, args=("a", a), daemon=True)
     bt = barrier_thread = None
-    rendezvous_complete = False
     try:
         at.start()
         bt = threading.Thread(target=fin, args=("b", b), daemon=True)
         bt.start()
-        both_waiting.wait()
-        rendezvous_complete = True
 
         started = threading.Event()
         done = threading.Event()
@@ -138,19 +137,18 @@ def test_barrier_waits_multiple_prior_tickets():
 
         barrier_thread = threading.Thread(target=br, daemon=True)
         barrier_thread.start()
-        started.wait()
+        wait_until(lambda: started.is_set() or not barrier_thread.is_alive())
+        assert started.is_set(), "worker exited before started"
         # 放行前 barrier 不得完成
         assert not done.is_set()
     finally:
         release.set()
-        if not rendezvous_complete:
-            both_waiting.abort()
         at.join()
         if bt is not None:
             bt.join()
         if barrier_thread is not None:
             barrier_thread.join()
-    done.wait()
+    assert done.is_set(), "worker exited without done"
     assert order[-1] == "barrier"
     assert set(order[:2]) == {"a", "b"}
 
@@ -192,19 +190,23 @@ def test_post_barrier_claim_run_waits_for_barrier():
     th = None
     try:
         bt.start()
-        barrier_entered.wait()
+        wait_until(lambda: barrier_entered.is_set() or not bt.is_alive())
+        assert barrier_entered.is_set(), "worker exited before barrier_entered"
 
         t_trail = q.claim(key=("turn", 1))
         assert t_trail is not None
 
         def trail() -> None:
-            trail_blocked.set()
-            q.run(t_trail, lambda: order.append("trail_write"))
-            q.complete(t_trail)
+            try:
+                trail_blocked.set()
+                q.run(t_trail, lambda: order.append("trail_write"))
+            finally:
+                q.complete(t_trail)
 
         th = threading.Thread(target=trail, name="trail-post", daemon=True)
         th.start()
-        trail_blocked.wait()
+        wait_until(lambda: trail_blocked.is_set() or not th.is_alive())
+        assert trail_blocked.is_set(), "worker exited before trail_blocked"
         # 屏障未放行前尾随不得写
         assert order == ["barrier_start"]
 
@@ -277,15 +279,18 @@ def test_post_barrier_claim_cannot_cross_barrier_write():
     lt = None
     try:
         bt.start()
-        barrier_in_body.wait()
+        wait_until(lambda: barrier_in_body.is_set() or not bt.is_alive())
+        assert barrier_in_body.is_set(), "worker exited before barrier_in_body"
 
         late = q.claim(key=("turn", 99))
         assert late is not None
         late_claimed.set()
 
         def late_writer() -> None:
-            q.run(late, lambda: order.append("late_write") or late_wrote.set())
-            q.complete(late)
+            try:
+                q.run(late, lambda: order.append("late_write") or late_wrote.set())
+            finally:
+                q.complete(late)
 
         lt = threading.Thread(target=late_writer, daemon=True)
         lt.start()
@@ -300,8 +305,8 @@ def test_post_barrier_claim_cannot_cross_barrier_write():
         bt.join()
         if lt is not None:
             lt.join()
-    barrier_done.wait()
-    late_wrote.wait()
+    assert barrier_done.is_set(), "worker exited without barrier_done"
+    assert late_wrote.is_set(), "worker exited without late_wrote"
     assert order == ["barrier_write", "late_write"], order
 
 
@@ -325,10 +330,12 @@ def test_barrier_waits_healthy_slow_worker_terminal():
     q.wait_prior = observe_wait_prior  # type: ignore[method-assign]
 
     def slow_worker() -> None:
-        worker_started.set()
-        release_worker.wait()  # hold open until barrier is inside wait_prior
-        order.append("worker_terminal")
-        q.complete(t)
+        try:
+            worker_started.set()
+            release_worker.wait()  # hold open until barrier is inside wait_prior
+            order.append("worker_terminal")
+        finally:
+            q.complete(t)
 
     def run_barrier() -> None:
         q.barrier(lambda: order.append("barrier") or None)
@@ -338,17 +345,19 @@ def test_barrier_waits_healthy_slow_worker_terminal():
     barrier_thread = None
     try:
         worker.start()
-        worker_started.wait()
+        wait_until(lambda: worker_started.is_set() or not worker.is_alive())
+        assert worker_started.is_set(), "worker exited before worker_started"
         barrier_thread = threading.Thread(target=run_barrier, daemon=True)
         barrier_thread.start()
-        wait_prior_entered.wait()  # barrier reached wait_prior, not merely claimed ticket
+        wait_until(lambda: wait_prior_entered.is_set() or not barrier_thread.is_alive())
+        assert wait_prior_entered.is_set(), "barrier exited before wait_prior"
         assert not barrier_done.is_set(), "barrier crossed before worker terminal"
     finally:
         release_worker.set()
         worker.join()
         if barrier_thread is not None:
             barrier_thread.join()
-    barrier_done.wait()
+    assert barrier_done.is_set(), "worker exited without barrier_done"
     assert order == ["worker_terminal", "barrier"], order
     assert q.inflight_count() == 0
 
@@ -359,18 +368,15 @@ def test_barrier_proceeds_after_worker_fail_release():
     t = q.claim(key=("turn", 2))
     assert t is not None
     order: list[str] = []
-    started = threading.Event()
-    done = threading.Event()
 
     def failing_worker() -> None:
-        started.set()
-        order.append("fail_vacate")
-        q.complete(t)  # 失败空放行
+        try:
+            order.append("fail_vacate")
+        finally:
+            q.complete(t)
 
     def run_barrier() -> None:
-        started.wait()
         q.barrier(lambda: order.append("barrier") or None)
-        done.set()
 
     worker = threading.Thread(target=failing_worker, daemon=True)
     barrier_thread = None
@@ -378,7 +384,6 @@ def test_barrier_proceeds_after_worker_fail_release():
         worker.start()
         barrier_thread = threading.Thread(target=run_barrier, daemon=True)
         barrier_thread.start()
-        done.wait()
     finally:
         worker.join()
         if barrier_thread is not None:
@@ -404,32 +409,38 @@ def test_write_turn_orders_cs_not_whole_leg_llm():
 
     def extract_leg() -> None:
         # 首碰共享 conn：短持写段
-        with q.ticketed_gate(t_extract):
-            order.append("extract_read")
-        order.append("extract_llm_enter")
-        extract_in_llm.set()
-        release_extract_llm.wait()
-        order.append("extract_llm_exit")
-        with q.ticketed_gate(t_extract):
-            order.append("extract_write")
-        q.complete(t_extract)
+        try:
+            with q.ticketed_gate(t_extract):
+                order.append("extract_read")
+            order.append("extract_llm_enter")
+            extract_in_llm.set()
+            release_extract_llm.wait()
+            order.append("extract_llm_exit")
+            with q.ticketed_gate(t_extract):
+                order.append("extract_write")
+        finally:
+            q.complete(t_extract)
 
     def mind_leg() -> None:
-        extract_in_llm.wait()
-        # 此时 extract 仍 open 且在 LLM——材料读不得被整票 wait_prior 串行化
-        with q.ticketed_gate(t_mind):
-            order.append("mind_read")
-        mind_read_done.set()
-        with q.ticketed_gate(t_mind):
-            order.append("mind_write")
-        q.complete(t_mind)
+        try:
+            wait_until(lambda: extract_in_llm.is_set() or not et.is_alive())
+            assert extract_in_llm.is_set(), "worker exited before extract_in_llm"
+            # 此时 extract 仍 open 且在 LLM——材料读不得被整票 wait_prior 串行化
+            with q.ticketed_gate(t_mind):
+                order.append("mind_read")
+            mind_read_done.set()
+            with q.ticketed_gate(t_mind):
+                order.append("mind_write")
+        finally:
+            q.complete(t_mind)
 
     et = threading.Thread(target=extract_leg, name="extract", daemon=True)
     mt = threading.Thread(target=mind_leg, name="mind", daemon=True)
     try:
         et.start()
         mt.start()
-        mind_read_done.wait()
+        wait_until(lambda: mind_read_done.is_set() or not mt.is_alive())
+        assert mind_read_done.is_set(), "worker exited before mind_read_done"
         assert "mind_read" in order
         assert "extract_llm_exit" not in order  # still inside extract LLM
     finally:
@@ -463,16 +474,19 @@ def test_write_turn_still_blocks_on_open_barrier():
     lt = None
     try:
         bt.start()
-        barrier_in.wait()
+        wait_until(lambda: barrier_in.is_set() or not bt.is_alive())
+        assert barrier_in.is_set(), "worker exited before barrier_in"
 
         late = q.claim(key=("turn", 9))
         assert late is not None
 
         def late_writer() -> None:
-            with q.ticketed_gate(late):
-                order.append("late")
-            q.complete(late)
-            late_done.set()
+            try:
+                with q.ticketed_gate(late):
+                    order.append("late")
+                late_done.set()
+            finally:
+                q.complete(late)
 
         lt = threading.Thread(target=late_writer, daemon=True)
         lt.start()
@@ -483,7 +497,7 @@ def test_write_turn_still_blocks_on_open_barrier():
         bt.join()
         if lt is not None:
             lt.join()
-    late_done.wait()
+    assert late_done.is_set(), "worker exited without late_done"
     assert order == ["barrier", "late"], order
 
 

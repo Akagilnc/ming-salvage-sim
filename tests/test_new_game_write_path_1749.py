@@ -23,7 +23,6 @@ from tests.test_month_loop_tracer_1468 import (
 )
 from tests.sse_helpers import parse_sse_events as _parse_sse
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
-from tests.wait_utils import wait_until
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 
@@ -105,7 +104,7 @@ def _capture_spawns(monkeypatch) -> list:
 
 
 def _wait_spawns(spawns: list, start: int) -> None:
-    wait_until(lambda: len(spawns) > start)
+    assert len(spawns) > start, "request returned without starting drain"
     for c in spawns[start:]:
         c.done.wait()
         assert c.close_ok is True
@@ -368,7 +367,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     c2 = rec2["campaign_id"]
     assert c2 != c1
 
-    wait_until(lambda: not os.path.exists(p1))
+    assert not os.path.exists(p1)
     old_arch = next(
         s for s in (_db_snapshot(str(p)) for p in _drained(ud))
         if s["campaign_id"] == c1
@@ -581,7 +580,7 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
         n_before = len(spawns)
         assert client.post("/api/menu/exit_to_menu").status_code == 200
         assert web_app.web_game is None
-        wait_until(lambda: len(spawns) > n_before)
+        assert len(spawns) > n_before, "exit returned without starting drain"
         completion = spawns[n_before]
         completion.done.wait()
         assert completion.close_ok is False
@@ -593,7 +592,7 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
         g1 = web_app.web_game
         assert g1 is not None
         # 失败 close 挡归档：旧文件仍在，c0 未进 drained
-        wait_until(lambda: completion.done.is_set())
+        assert completion.done.is_set()
         assert os.path.isfile(old_path)
         assert all(
             _db_snapshot(str(p))["campaign_id"] != c0

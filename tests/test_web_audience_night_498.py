@@ -394,21 +394,13 @@ def _parse_sse(text: str) -> list[dict]:
     return parse_sse_events(text)
 
 
-async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
-    """成功事件或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。
-
-    事件与 task 同时终态时仍消费 task 异常——不得因 ev 先置位而吞掉 worker 失败。
-    """
-    while not ev.is_set() and not task.done():
+async def _await_progress_or_task(ready, task: asyncio.Task) -> None:
+    """进度或 worker 终态均可唤醒；终态异常原样传播，正常早退也须报红。"""
+    while not ready() and not task.done():
         await asyncio.sleep(0)
     if task.done():
-        exc = task.exception()
-        if exc is not None:
-            raise exc
-        if not ev.is_set():
-            raise AssertionError("worker finished without expected success event")
-        return
-    # ev 已置位且 task 仍在跑（如 started 后 hang on allow）——成功会合。
+        await task
+        assert ready(), "worker finished without expected progress"
 
 
 async def _drain_tasks(*tasks: asyncio.Task) -> None:
@@ -428,10 +420,6 @@ async def _drain_tasks(*tasks: asyncio.Task) -> None:
         task.exception()
 
 
-async def _wait_for(pred) -> None:
-    """轮询真实状态直至成立；永久不成立 → CI job 终线。"""
-    while not pred():
-        await asyncio.sleep(0)
 
 
 async def _start_hanging_chat(game, client, minister, monkeypatch):
@@ -450,7 +438,7 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
         client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
     try:
         # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
-        await _await_event_or_task(started, task)
+        await _await_progress_or_task(started.is_set, task)
     except BaseException:
         # 移交前失败：释放 allow 并排空；已终态则 drain 只消费，不替换原错。
         allow.set()
@@ -488,10 +476,13 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
                 chat_task = asyncio.create_task(
                     client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
-                await _wait_for(lambda: game._runtime_write_queue().inflight_count() > 0)
+                await _await_progress_or_task(
+                    lambda: game._runtime_write_queue().inflight_count() > 0, chat_task,
+                )
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
             finally:
                 game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
+                await _drain_tasks(chat_task)
             return _parse_sse((await chat_task).text)
 
     events = asyncio.run(scenario())
@@ -591,9 +582,9 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
 
                 issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
                 # 屏障见票或 issue 终态；失败不挂死。
-                await _await_event_or_task(observed_ticket_inflight, issue_task)
+                await _await_progress_or_task(observed_ticket_inflight.is_set, issue_task)
                 allow.set()                                   # 放行回话落档 + 放票
-                await _await_event_or_task(observed_ticket_clear, issue_task)
+                await _await_progress_or_task(observed_ticket_clear.is_set, issue_task)
 
                 chat_resp = await chat_task
                 issue_resp = await issue_task
@@ -750,7 +741,7 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
                 issue_task = asyncio.create_task(
                     issue_client.post("/api/decree/issue/stream", json={})
                 )
-                await _await_event_or_task(observed_ticket_inflight, issue_task)
+                await _await_progress_or_task(observed_ticket_inflight.is_set, issue_task)
                 assert not issue_task.done(), (
                     "issue must wait for chat ticket, not forge elapsed 409"
                 )

@@ -32,6 +32,9 @@ from ming_sim.session_write_queue import SessionWriteQueue
 from tests.test_no_edict_full_settlement_1274 import _canned_full_settlement
 from tests.conftest import stub_audience_translate
 
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+
+
 def _close_with_gate(db, state, *, night_id, translate_fn=None, llm_config=object(), **extra):
     q = SessionWriteQueue()
     return an.close_night(
@@ -210,11 +213,12 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     # 确定性握手：主线程入轮询 → worker 发终态 → 主线程因终态返回
     # （禁 sleep 毫秒窗；禁把 SUT 包进 waiter 线程 try/finally 吞异常假绿）
     waiter_polling = threading.Event()
-    worker_published = threading.Event()
     real_list = an.list_in_flight_chat_turns
 
     def _list_tracking(db_arg, night_id_arg):
+        worker_ended = not wt.is_alive()
         rows = real_list(db_arg, night_id_arg)
+        assert not worker_ended or not rows, "worker exited before publishing the chat terminal state"
         waiter_polling.set()
         return rows
 
@@ -226,7 +230,6 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
             "UPDATE chat_turns SET status='active' WHERE id=?", (ctid,)
         )
         db.conn.commit()
-        worker_published.set()
 
     wt = threading.Thread(
         target=_worker_terminal, name="worker-terminal-1353", daemon=True,
@@ -236,7 +239,6 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
         # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
         # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
         an.wait_in_flight_clear(db, nid)
-        worker_published.wait()
     finally:
         waiter_polling.set()
         wt.join()
