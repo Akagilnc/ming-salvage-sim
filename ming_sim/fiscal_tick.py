@@ -42,16 +42,15 @@ def regular_assessment(official_land: float, p: Dict[str, Any]) -> float:
 
 
 def _resolve_order_param(p: Dict[str, Any], key: str, default: tuple) -> tuple:
-    """#653 override 序参（p[key]）验形：缺省=祖制默认序；在位必须是合法排列，
-    否则 ValueError（fail-loud）。返回定长 tuple 供结算与 oracle 同源消费。"""
+    """#653 override 序参：缺省为祖制默认序，否则须为合法排列。"""
     raw = p.get(key)
     if raw is None:
         return default
-    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, (list, tuple)):
         raise ValueError(f"param {key} 非 list/tuple")
     if any(not isinstance(item, str) for item in raw):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
-    if len(raw) != len(default) or set(raw) != set(default) or len(set(raw)) != len(raw):
+    if len(raw) != len(default) or set(raw) != set(default):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
     return tuple(raw)
 
@@ -109,12 +108,12 @@ def _oracle_order(p: Dict[str, Any], key: str, default: tuple) -> tuple:
     raw = p.get(key)
     if raw is None:
         return tuple(default)
-    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, (list, tuple)):
         raise ValueError(f"param {key} 非 list/tuple")
     if any(not isinstance(item, str) for item in raw):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
     items = tuple(raw)
-    if len(items) != len(default) or set(items) != set(default) or len(set(items)) != len(items):
+    if len(items) != len(default) or set(items) != set(default):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
     return items
 

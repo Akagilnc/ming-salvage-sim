@@ -107,7 +107,6 @@ def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game
     }
     assert all(
         isinstance(row["leverage"], str)
-        and not isinstance(row["leverage"], bool)
         and row["leverage"] in IMPERIAL_AUTHORITY_BANDS
         for row in context["factions"]
     )
