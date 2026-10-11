@@ -667,6 +667,8 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
 
     night, issue_events, chat_events = asyncio.run(scenario())
     assert night is not None
+    assert "done" in {event["event"] for event in chat_events}, chat_events
+    assert "error" not in {event["event"] for event in chat_events}, chat_events
     assert chat_events[-1]["event"] == "end"
     # 非伪造 in-flight：等待期间 issue 未完成（scenario 内）；工人终态后续跑成功。
     assert issue_events[-1]["event"] == "done", issue_events
@@ -697,18 +699,23 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
             t = None
             adv_task = None
             try:
-                t = asyncio.create_task(ticker())
                 adv_task = asyncio.create_task(
                     adv_client.post("/api/decree/advance_without_edict")
                 )
-                # 等待期间 event loop 须继续跑 ticker（端点已 offload）
-                while ticks < 5:
-                    await asyncio.sleep(0)
+                # advance 的屏障票与 chat 票同时在飞后才开始观察；
+                # 假体超时使 advance 提前返回，不算等待期间的响应。
+                q = game._runtime_write_queue()
+                await _wait_for(lambda: q.inflight_count() > 1 or adv_task.done())
+                assert not adv_task.done()
+                t = asyncio.create_task(ticker())
+                await _wait_for(lambda: ticks >= 5)
+                assert not chat_task.done()
+                assert not adv_task.done()
                 mid_ticks = ticks
                 allow.set()
-                await chat_task
+                chat_resp = await chat_task
                 resp = await adv_task
-                return mid_ticks, ticks, resp.status_code
+                return mid_ticks, ticks, resp.status_code, _parse_sse(chat_resp.text)
             finally:
                 # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
                 allow.set()
@@ -716,9 +723,12 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
                     t.cancel()
                 await _drain_tasks(chat_task, adv_task, t)
 
-    mid_ticks, ticks, status = asyncio.run(scenario())
+    mid_ticks, ticks, status, chat_events = asyncio.run(scenario())
     assert mid_ticks >= 5, f"event loop 被同步端点冻结（mid_ticks={mid_ticks}）"
     assert ticks >= mid_ticks
+    assert "done" in {event["event"] for event in chat_events}, chat_events
+    assert "error" not in {event["event"] for event in chat_events}, chat_events
+    assert chat_events[-1]["event"] == "end"
     # #1353 K10a：工人终态后继续，不按在飞 elapsed 造 409
     assert status == 200, f"advance after chat terminal expected 200, got {status}"
 
