@@ -17,7 +17,6 @@ from typing import Callable, Dict, Mapping, Optional
 import pytest
 
 from ming_sim import audience_night as an
-from ming_sim.audience_night import AudienceNightError
 from ming_sim.audience_translation import apply_audience_round_translation, mark_turn_translation_done
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order

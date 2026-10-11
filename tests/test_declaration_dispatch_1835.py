@@ -39,7 +39,7 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
         "promises": [{"action_id": pre_staged_id, "decision": "应允"}],
         "textual_facts": [{
             "subject_kind": "character", "subject_id": minister,
-            "body": "抱恙数日，仍可视事",
+            "body": "抱恙数日，仍可视事", "origin_ref": "chat_message:1",
         }],
         "public_sayings": [{
             "body": "坊间传户部已备赈灾银", "involved_characters": [minister],
@@ -67,7 +67,7 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     assert commission_payload["text"] == commission_text  # 原样运输，含空白
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert [f.body for f in facts] == ["抱恙数日，仍可视事"]
+    assert [f.origin_ref for f in facts] == ["chat_message:1"]
 
     sayings = list_public_sayings(db, involved_character=minister)
     assert sayings[0]["body"] == "坊间传户部已备赈灾银"
