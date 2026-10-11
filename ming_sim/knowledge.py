@@ -264,8 +264,8 @@ def _role_roster(db: Any, office_type: str, state: Any) -> str:
     return f"{office_type}本职在册：{roster}。"
 
 
-def _source_archive_rows(db: Any, upto_turn: int) -> list[Dict[str, object]]:
-    """Source-scoped archives retain rosters instead of synthesized deny lists."""
+def _knowledge_source_rows(db: Any, upto_turn: int) -> list[Dict[str, object]]:
+    """Read current source records with their durable participant rosters."""
     return [dict(row) for row in db.conn.execute(
         "SELECT turn, year, period, kind, title, body, source_id, participant_roster "
         "FROM character_knowledge_sources WHERE turn <= ? ORDER BY turn, id",
@@ -430,7 +430,7 @@ def build_character_knowledge(
     world, scope = _world(db, state, character_name, office_name, office_type)
     events = db._character_knowledge_events(character_name)
     public_events = db._character_knowledge_events("")
-    public_events.extend(_source_archive_rows(db, int(state.turn)))
+    public_events.extend(_knowledge_source_rows(db, int(state.turn)))
     # Issued directives are public by their nature.  Read them here so old
     # saves and the normal decree path need no second write hook.
     for directive in db.list_issued_directives():
@@ -447,30 +447,8 @@ def build_character_knowledge(
     # versions and roster-scoped sources are the sole knowledge inputs.
     visible_public = [dict(row) for row in public_events
                       if knowledge_row_visible_to(db, row, character_name)]
-    # Identity is the durable source_id.  Same prose, overlapping prose, or the
-    # same turn does not make two sources one record.  An empty source_id has
-    # no identity to collapse.  A repeated non-empty source_id is one record.
-    # An explicit public event is the authoritative payload for that source
-    # (the same priority knowledge_items_for_turn already uses on the write
-    # side): it replaces an earlier projection, and a later non-public row
-    # must not replace it.
-    deduped_public = []
-    index_by_source: dict[str, int] = {}
-    for row in visible_public:
-        source_id = str(row.get("source_id") or "")
-        if not source_id:
-            deduped_public.append(row)
-            continue
-        slot = index_by_source.get(source_id)
-        if slot is None:
-            index_by_source[source_id] = len(deduped_public)
-            deduped_public.append(row)
-            continue
-        if str(row.get("kind") or "") == "public":
-            deduped_public[slot] = row
-    # Independently persisted public sayings never enter the archive
-    # aggregation/dedup rules above.  Append the authoritative public-layer
-    # projection after those rules, then join its layer prose.
+    # Public versions have their own durable records; registered sources are
+    # read directly, without an archival mirror or payload precedence rule.
     public_saying_events = [
         {
             key: (_prose(value) if key == "body" else value)
@@ -483,14 +461,14 @@ def build_character_knowledge(
             character_name,
         )
     ]
-    visible_public = [*deduped_public, *public_saying_events]
     public_bodies = [
         _prose(item.get("body") or item.get("title") or "")
-        for item in deduped_public
+        for item in visible_public
         if (item.get("body") or item.get("title"))
         and not str(item.get("source_id") or "").startswith("opening:")
     ]
     public_bodies.extend(public_layer_prose(item) for item in public_saying_events)
+    visible_public.extend(public_saying_events)
     world["public"] = "\n".join(public_bodies) or world["public"]
     known_source_ids = {
         str(row.get("source_id") or "")

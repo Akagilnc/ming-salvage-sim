@@ -295,26 +295,6 @@ def test_issue_write_path_projects_participants_across_restore(game):
     assert before["events"] == after["events"]
 
 
-def test_disclosed_secret_source_keeps_its_public_projection(game):
-    """A later public disclosure must not be replaced by the private source payload."""
-    db, state, content = game
-    excluded = next(c for c in content.characters.values() if c.office_type == "户部")
-    order = create_test_secret_order(db,
-        state, "毕自严", "暗查亏空", "查户部旧账", [],
-
-    )
-    disclosure_id = f"secret_order_disclosure:{order}:{state.turn}"
-    db.record_public_knowledge_event(
-        state, "密查公开", "该案已奉明发", source_id=disclosure_id,
-    )
-
-    items = db.knowledge_items_for_turn(state.turn)
-
-    disclosed = next(item for item in items if item["source_id"] == disclosure_id)
-    assert disclosed["title"] == "密查公开"
-    assert disclosed["body"] == "该案已奉明发"
-
-
 def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
     db, state, content = game
     reader = next(iter(content.characters.values()))
@@ -522,137 +502,52 @@ def test_knowledge_titles_restore_without_persistence_truncation(game):
 # ── archive / source_scope contracts (moved from test_knowledge.py, #1185 wave1) ──
 
 
-def test_knowledge_projects_public_events_without_leaking_private_matters(game):
-    """邸报含密事时，人物知识面只投影其有权知道的公开事件。"""
-    db, state, content = game
-    ministers = [
-        character for character in content.characters.values()
-        if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
-    ]
-    knower, excluded = ministers[:2]
-    public_marker = "公开事项标记"
-    secret_marker = "不得知密事标记"
-
-    db.register_character_knowledge_source(
-        state, [{"character_id": knower.name}], "private_matter", "密查",
-        secret_marker, source_id="test:mixed-source",
-    )
-    db.record_public_knowledge_event(
-        state, "公开事项", public_marker, source_id="test:mixed-public",
-    )
-    db.save_turn_report(state, f"{public_marker}；{secret_marker}")
-
-    excluded_ids = {
-        item.get("source_id")
-        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
-    }
-    knower_ids = {
-        item.get("source_id")
-        for item in db.get_character_knowledge(state, knower.name)["public_events"]
-    }
-
-    assert "test:mixed-public" in excluded_ids
-    assert "test:mixed-public" in knower_ids
-    assert "test:mixed-source" not in excluded_ids
-    assert "test:mixed-source" in knower_ids
-
 def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
-    """受限事项来自 source 表时，聚合邸报仍保留公开事项但不泄密。"""
+    """归档不冻结来源；后续登记立即可读，独立公开版本不授予秘密权限。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
         if character.office_type not in ("后宫", "宗藩")
         and db.get_character_status(character.name)[0] == "active"
     ]
-    knower, excluded = ministers[:2]
-    public_marker = "source表公开事项"
-    secret_marker = "source表不得知密事"
+    knower, outsider = ministers[:2]
+    public_body = "source表公开事项"
+    initial_body = "source表不得知密事"
 
     db.register_character_knowledge_source(
         state,
         [{"character_id": knower.name, "tier": "主办"}],
         "private_matter",
         "密查",
-        secret_marker,
+        initial_body,
         source_id="test:durable-secret",
-
     )
     db.record_public_knowledge_event(
-        state, "公开事项", public_marker, source_id="test:durable-public",
+        state, "公开事项", public_body, source_id="test:durable-public",
     )
-    db.save_turn_report(state, f"{public_marker}；{secret_marker}")
-
-    excluded_ids = {
-        item.get("source_id")
-        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
-    }
-    knower_ids = {
-        item.get("source_id")
-        for item in db.get_character_knowledge(state, knower.name)["public_events"]
-    }
-
-    assert "test:durable-public" in excluded_ids
-    assert "test:durable-public" in knower_ids
-    assert "test:durable-secret" not in excluded_ids
-    assert "test:durable-secret" in knower_ids
-
-def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
-    """邸报正文不是受限事项的来源边界；保存后仍不可向排除者泄露。"""
-    db, state, content = game
-    ministers = [
-        character for character in content.characters.values()
-        if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
-    ]
-    knower, excluded = ministers[:2]
+    db.save_turn_report(state, public_body)
+    updated_body = "后续登记的完整正文\r\n保留原样。"
     db.register_character_knowledge_source(
-        state,
-        [{"character_id": knower.name, "tier": "主办"}],
-        "private_matter",
-        "密查",
-        "原始密事",
-        source_id="test:rewritten-secret",
-
-    )
-    db.save_turn_report(state, "聚合邸报改写：有人暗中安排了不应知晓的事务。")
-
-    excluded_ids = {
-        item.get("source_id")
-        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
-    }
-    assert "test:rewritten-secret" not in excluded_ids
-
-
-def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
-    """归档写入混入无来源改写后，已登记的公开来源仍以 source_id 留在读者可见结果里。"""
-    db, state, content = game
-    reader = next(
-        character for character in content.characters.values()
-        if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
-    )
-    state.turn += 1  # Isolate this source boundary from the seeded opening sources.
-    public_marker = "已立来源的邸报公开事项"
-    unscoped_marker = "无来源的邸报改写"
-    db.record_public_knowledge_event(
-        state, "公开事项", public_marker, source_id="test:report-source-bound-public",
+        state, [{"character_id": knower.name, "tier": "主办"}],
+        "private_matter", "密查续报", updated_body,
+        source_id="test:durable-secret",
     )
 
-    db.save_turn_report(
-        state, f"{public_marker}；{unscoped_marker}",
-        knowledge_items=db.knowledge_items_for_turn(state.turn),
-    )
+    outsider_rows = db.get_character_knowledge(state, outsider.name)["public_events"]
+    knower_rows = db.get_character_knowledge(state, knower.name)["public_events"]
+    outsider_ids = {item["source_id"] for item in outsider_rows}
+    knower_ids = {item["source_id"] for item in knower_rows}
 
-    visible_ids = {
-        item.get("source_id")
-        for bucket in ("public_events", "events")
-        for item in db.get_character_knowledge(state, reader.name)[bucket]
-    }
-    assert "test:report-source-bound-public" in visible_ids
-    # The shared archive must carry the independently supplied public source,
-    # not the caller's unrelated presentation aggregate. No prose classification.
-    assert db.get_turn_report_archive(state.turn)["report"] == public_marker
+    assert "test:durable-public" in outsider_ids
+    assert "test:durable-public" in knower_ids
+    assert "test:durable-secret" not in outsider_ids
+    assert "test:durable-secret" in knower_ids
+    visible_source = next(
+        item for item in knower_rows
+        if item["source_id"] == "test:durable-secret"
+    )
+    assert (visible_source["title"], visible_source["body"]) == ("密查续报", updated_body)
+
 
 def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     db, state, content = game
@@ -666,7 +561,7 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     )
     db.record_public_knowledge_event(state, "公开事项", public, source_id="public:test-write-boundary")
 
-    db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
+    db.save_turn_report(state, f"{public}；{secret}", public_body=public)
 
     assert db.get_turn_report_archive(state.turn)["report"] == public
     outsider = next(name for name in content.characters if name != participant)
@@ -693,7 +588,7 @@ def test_character_added_after_archive_cannot_read_old_participant_source(game):
         source_id="restricted:test-late-reader-boundary",
     )
     db.save_turn_report(
-        state, f"聚合转述：{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn),
+        state, f"聚合转述：{secret}", public_body="",
     )
 
     late_reader = "归档后新入仕者"
@@ -716,7 +611,7 @@ def test_character_added_after_archive_cannot_read_old_participant_source(game):
     }
     assert "restricted:test-late-reader-boundary" not in visible_ids
 
-def test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge(game):
+def test_raw_aggregate_does_not_authorize_knowledge(game):
     db, state, content = game
     db.conn.execute(
         "INSERT INTO turn_reports(turn, year, period, report) VALUES (?, ?, ?, ?)",

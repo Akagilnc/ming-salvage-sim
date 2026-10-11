@@ -1075,11 +1075,7 @@ def _omit_secret_order_audience(entries: Sequence[dict], secret_turn_ids: set[in
 def _is_gazette_public_event(item: dict) -> bool:
     """Turn-report gazette rows have their own directory carrier; exclude from 公开说法."""
     source_id = str(item.get("source_id") or "")
-    return (
-        source_id.startswith("projection:turn_report:")
-        or (source_id.startswith("turn_report:") and source_id.endswith(":public"))
-        or (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
-    )
+    return source_id.startswith("turn_report:") and source_id.endswith(":public")
 
 
 def _write_public_by_month(
@@ -1184,11 +1180,7 @@ def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, obj
     """
     rows: list[dict[str, object]] = []
     for item in public_events or []:
-        source_id = str(item.get("source_id") or "")
-        if not (
-            source_id.startswith("projection:turn_report:")
-            or (source_id.startswith("turn_report:") and source_id.endswith(":public"))
-        ):
+        if not _is_gazette_public_event(item):
             continue
         body = str(item.get("body") or "")
         if not body.strip():

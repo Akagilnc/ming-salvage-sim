@@ -469,7 +469,7 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
     public = knowledge.get("public_events") or []
     assert all(row.get("kind") != "chapter_summary" for row in public)
     assert any(
-        str(row.get("source_id") or "").startswith("projection:turn_report:")
+        row.get("source_id") == f"turn_report:{state.turn}:public"
         for row in public
     )
 

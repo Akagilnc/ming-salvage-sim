@@ -97,7 +97,7 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
     session = _prepare_player_month(db, state, content, monkeypatch)
     session.llm_config = object()  # enable the month-chain's exhausted forecast branch
     session.resolve_turn(allow_empty_decree=True)
-    db.save_turn_report(state, "邸报", knowledge_items=[], attendant_message="")
+    db.save_turn_report(state, "邸报", attendant_message="")
     session.resolve_turn(allow_empty_decree=True)
 
     assert state.turn == before_turn + 1

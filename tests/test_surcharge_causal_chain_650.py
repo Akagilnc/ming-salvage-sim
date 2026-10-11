@@ -358,9 +358,9 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
 
 # ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
 
-def _gazette_projection_source_present(db, state, name, turn) -> bool:
-    """公开读链是否有 projection:turn_report:<turn> 来源行（身份，不取 body）。"""
-    source_id = f"projection:turn_report:{turn}"
+def _gazette_public_source_present(db, state, name, turn) -> bool:
+    """公开读链是否有 turn_report:<turn>:public 来源行（身份，不取 body）。"""
+    source_id = f"turn_report:{turn}:public"
     return any(
         str(item.get("source_id") or "") == source_id
         for item in db.get_character_knowledge(state, name)["public_events"]
@@ -368,7 +368,7 @@ def _gazette_projection_source_present(db, state, name, turn) -> bool:
 
 
 def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it(game, monkeypatch):
-    """自由邸报按 projection:turn_report 入公开读链；钉 turn 行与投影行身份，不锁正文。"""
+    """自由邸报按独立公开版本入读链；钉 turn 行与公开来源身份，不锁正文。"""
     db, state, content = game
     first_turn = state.turn
     first_body = "陕西加派月报。"
@@ -379,7 +379,7 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert db.conn.execute(
         "SELECT turn FROM turn_reports WHERE turn=?", (first_turn,)
     ).fetchone() is not None
-    assert _gazette_projection_source_present(db, state, "温体仁", first_turn)
+    assert _gazette_public_source_present(db, state, "温体仁", first_turn)
 
     free_body = "陕西流民渐起，关中贼势暗流潜滋。"
     second_turn = state.turn
@@ -391,7 +391,7 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert db.conn.execute(
         "SELECT turn FROM turn_reports WHERE turn=?", (second_turn,)
     ).fetchone() is not None
-    assert _gazette_projection_source_present(db, state, "温体仁", second_turn)
+    assert _gazette_public_source_present(db, state, "温体仁", second_turn)
 
 
 

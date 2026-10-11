@@ -8731,7 +8731,6 @@ class GameDB:
 
     def save_turn_report(
         self, state: GameState, report: str,
-        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
         public_body: Optional[str] = None,
         *,
         attendant_message: str = "",
@@ -8740,29 +8739,11 @@ class GameDB:
     ) -> None:
         """每回合月末奏报单独存档（turn_reports）。
 
-        ``report`` is a presentation aggregate and is not used for access
-        control.  Producers that mix public and restricted material may pass
-        the source-scoped ``knowledge_items`` projection; each item is then
-        durable independently for character reads.
-
+        ``report`` 是呈现正文；``public_body`` 可独立提供公开版本。
+        来源记录由原账本持有，本档案不复制来源、不生成权限快照。
         ``attendant_message``（#671）是王承恩独立递话，与官方 report 分栏同原子写。
         """
-        self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
-        items = [item for item in self.knowledge_items_for_turn(state.turn)
-                 if not str(item.get("source_id") or "").startswith("turn_report:")]
-        # An explicit source snapshot is projected separately. A public author
-        # report is transported unchanged, regardless of unrelated private events.
-        source_snapshot_supplied = knowledge_items is not None
-        if public_body is None:
-            public_report = (
-                "\n".join(str(item.get("body") or item.get("title") or "")
-                          for item in items if item.get("kind") == "public")
-                if source_snapshot_supplied else str(report or "")
-            )
-        else:
-            public_report = str(public_body or "")
-        # #976: no text-filter strip. Public archives trust the producer path
-        # (public LLMs never preload secrets; private briefs are not knowledge_items).
+        public_report = str((report if public_body is None else public_body) or "")
         self.conn.execute(
             """
             INSERT INTO turn_reports (turn, year, period, report, attendant_message, title)
@@ -8785,7 +8766,7 @@ class GameDB:
             ),
         )
         # Publish only the public counterpart; the private monthly report
-        # and source-scoped facts remain separate records.
+        # and source-scoped facts remain in their own ledgers.
         if public_report:
             self.record_public_knowledge_event(
                 state, "邸报", sanitize_sqlite_text(public_report),
@@ -8839,67 +8820,6 @@ class GameDB:
              "title": str(row["title"] or "")}
             for row in rows
         ]
-
-    def persist_knowledge_items_for_turn(
-        self,
-        state: GameState,
-        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
-        *,
-        default_title: str = "邸报事项",
-        commit: bool = True,
-    ) -> None:
-        """Materialize every turn source before any aggregate archive is read.
-
-        The gazette is derived prose, not an authorization boundary.
-        Persisting the public projection of both unscoped and participant-scoped
-        source rows first gives the read model an independent item boundary.  The
-        operation is idempotent by ``(character_name, kind, source_id)`` and is
-        deliberately callable from the real settlement transaction before the
-        aggregate writers run.
-        """
-        items = knowledge_items
-        if items is None:
-            items = self.knowledge_items_for_turn(state.turn)
-        for item in items:
-            source_id = str(item.get("source_id") or "")
-            existing_public = self.conn.execute(
-                "SELECT 1 FROM character_knowledge_events "
-                "WHERE character_name='' AND source_id=? AND kind='public' LIMIT 1",
-                (source_id,),
-            ).fetchone()
-            # An explicit disclosure is the authoritative event for this
-            # provenance.  Archive materialization may fill a missing ledger
-            # row, but must never downgrade public back to roster-scoped.
-            # The lookup names kind='public': another row of this source may
-            # be returned first when the query does not.
-            if existing_public is not None:
-                continue
-            self.record_public_knowledge_event(
-                state,
-                str(item.get("title") or default_title),
-                str(item.get("body") or ""),
-                source_id=source_id,
-                kind="source_projection",
-                commit=commit,
-            )
-
-    def knowledge_items_for_turn(self, turn: int) -> List[Dict[str, object]]:
-        """Archives preserve source identity/kind; no copied exclusion snapshots."""
-        by_source = {}
-        for row in self.conn.execute(
-            "SELECT title, body, source_id, kind FROM character_knowledge_events "
-            "WHERE character_name='' AND turn=? ORDER BY id", (int(turn),),
-        ):
-            item = dict(row)
-            if item["kind"] == "public" or item["source_id"] not in by_source:
-                by_source[item["source_id"]] = item
-        for row in self.conn.execute(
-            "SELECT title, body, source_id, kind FROM character_knowledge_sources "
-            "WHERE turn=? ORDER BY id", (int(turn),),
-        ):
-            by_source.setdefault(row["source_id"], dict(row))
-        return list(by_source.values())
-
 
     # ── 结局总结 ──
 
@@ -19067,10 +18987,6 @@ class GameDB:
         ).fetchall()
         result = []
         for row in rows:
-            source_id = str(row["source_id"] or "")
-            if (not character_name and
-                    source_id.startswith("turn_report:") and not source_id.endswith(":public")):
-                continue
             item = {"turn": int(row["turn"]), "year": int(row["year"]), "period": int(row["period"]),
                     "kind": row["kind"], "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
             result.append(item)

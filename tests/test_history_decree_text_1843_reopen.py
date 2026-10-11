@@ -11,7 +11,7 @@ def test_history_turn_reads_decree_text_from_resolve_context(game, monkeypatch):
         decree_text="着宁远补饷三十万两",
         simulator_payload={},
     )
-    db.save_turn_report(state, "邸报正文", knowledge_items=[], attendant_message="")
+    db.save_turn_report(state, "邸报正文", attendant_message="")
     row = db.conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='turn_extractions'"
     ).fetchone()
