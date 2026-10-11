@@ -1279,7 +1279,8 @@ def test_invalid_rescript_action_shapes_refused_before_any_write(game, bad_optio
     before = db.conn.total_changes
     with pytest.raises(ValueError):
         session.submit_hitl_choices(
-            [{**bad_option, "decision_key": urgent["decision_key"], "action": "midzhi"}],
+            [{"participant_roster": _roster(_ROSTER_LEAD), **bad_option,
+              "decision_key": urgent["decision_key"], "action": "midzhi"}],
             write_gate=nullcontext(),
         )
     assert db.conn.total_changes == before
