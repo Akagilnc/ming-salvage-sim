@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
+from tests.readback_helpers import non_ming_power_id as _valid_power_id
 
 def run_settle(db, state, content, extracted, **kwargs):
     """These rejection tests model canonical spontaneous extractor envelopes."""
@@ -20,13 +21,6 @@ def run_settle(db, state, content, extracted, **kwargs):
         if isinstance(item, dict):
             item.setdefault("origin_ref", "盘面自发")
     return run_declaration(db, state, content, extracted)
-
-def _valid_power_id(db):
-    """取一个非 ming 的合法 power id,供「好项照落」对照。"""
-    row = db.conn.execute(
-        "SELECT id FROM powers WHERE id != 'ming' LIMIT 1").fetchone()
-    assert row is not None, "probe.db 需至少一个非明势力"
-    return row[0]
 
 def test_unknown_power_id_rejected_good_item_lands(game):
     """power_updates 引用未入库势力 → 该项逐项拒收留痕(不再 print 静默跳),
@@ -118,9 +112,8 @@ def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeyp
     assert ei.value is fault
 
 
-
 def test_dirty_power_value_rejected_sibling_field_lands(game):
-    """白名单字段的脏值(null/"3成")= LLM 脏数据,逐项拒收——validate_delta_shape
+    """白名单字段的脏值(null/"3成")= LLM 脏数据,逐项拒收——sanitize_delta_shape
     只验容器、明文容忍 null 叶,裸 int(value) 会让一个脏值崩整月(cmr S1 r1,2/2)。
     同一势力的兄弟好字段照落。"""
     db, state, content = game

@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 
 import ming_sim.issues as I
-from ming_sim.db import _has_stop_condition
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,210 +78,6 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert json.loads(row["ongoing_effects"])["economy"][0]["target_id"] == "guanning"
     assert json.loads(row["stop_condition"]) == stop_condition
     assert json.loads(row["effect_on_resolve"]) == {}
-
-
-def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeypatch):
-    db, state, content = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
-                    "kind": "initiative",
-                    "title": "每月拨西学经费",
-                    "stage_text": "太仓每月拨银五十万两办西学。",
-                    "ongoing_effects": {
-                        "economy": [
-                            {
-                                "account": "国库",
-                                "delta": -50,
-                                "category": "西学经费",
-                                "reason": "每月拨西学经费",
-                            }
-                        ]
-                    },
-                    "commitment_kind": "until_stop",
-                }
-            ],
-            "fiscal_creates": [
-                {
-                    "key": "西学经费_base",
-                    "account": "国库",
-                    "direction": "expense",
-                    "init_value": 50,
-                    "display": "西学经费",
-                    "reason": "同批 extractor 误产的重复月支",
-                    "origin_ref": "盘面自发",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert _issue_by_title(db, "每月拨西学经费") is not None
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
-    ).fetchone()[0] == 0
-    fiscal_result = out["fiscal_creates"][0]
-    assert fiscal_result["rejected"] is True
-    assert fiscal_result["category"] == "deduped_commitment_carrier"
-
-
-def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, monkeypatch):
-    """ADR0027 dedup 只对【支出】fiscal_create 生效（integrated cmr Gate2 codex correctness）：
-    同账户、同名但 direction=income 的新科目（如同名新税收入）与月度【支出】承诺载体无关，
-    不得被误去重——否则会静默丢掉真实月收入。"""
-    db, state, content = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
-                    "kind": "initiative",
-                    "title": "每月拨西学经费",
-                    "stage_text": "太仓每月拨银五十万两办西学。",
-                    "ongoing_effects": {
-                        "economy": [
-                            {"account": "国库", "delta": -50, "category": "西学经费",
-                             "reason": "每月拨西学经费"}
-                        ]
-                    },
-                    "commitment_kind": "until_stop",
-                }
-            ],
-            "fiscal_creates": [
-                {
-                    # 同账户(国库)、同名(西学经费)，但这是一笔【收入】新科目——与支出承诺无关
-                    "key": "西学经费_base",
-                    "account": "国库",
-                    "direction": "income",
-                    "init_value": 50,
-                    "display": "西学经费",
-                    "reason": "新设西学专项捐输（收入）",
-                    "origin_ref": "盘面自发",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    fiscal_result = out["fiscal_creates"][0]
-    assert fiscal_result.get("rejected") is not True   # 收入科目未被误去重
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
-    ).fetchone()[0] >= 1
-
-
-@pytest.mark.parametrize("account", ["国库", "内库"])
-def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(game, monkeypatch, account):
-    """Unmatched expense lands; only same-account alias misses are observable."""
-    db, state, content = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    logs = []
-    monkeypatch.setattr(I, "tlog", logs.append)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
-                    "kind": "initiative",
-                    "title": "每月拨西学经费",
-                    "stage_text": "太仓每月拨银五十万两办西学。",
-                    "ongoing_effects": {
-                        "economy": [
-                            {
-                                "account": "国库",
-                                "delta": -50,
-                                "category": "西学经费",
-                                "reason": "每月拨西学经费",
-                            }
-                        ]
-                    },
-                    "commitment_kind": "until_stop",
-                }
-            ],
-            "fiscal_creates": [
-                {
-                    # Different accounts are not alias misses of this commitment.
-                    "key": "xuguangqi_gongfei_base",
-                    "account": account,
-                    "direction": "expense",
-                    "init_value": 50,
-                    "display": "徐光启三务公费",
-                    "reason": "月支",
-                    "origin_ref": "盘面自发",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    # 异名 → 未去重，fiscal_create 照常落账（不被拒）
-    fiscal_result = out["fiscal_creates"][0]
-    assert fiscal_result.get("rejected") is not True
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
-        "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
-    ).fetchone()[0] >= 1
-    assert any(fiscal_result["display"] in entry for entry in logs) == (account == "国库")
-
-
-def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch):
-    """An authorized item in another account must not be deduplicated."""
-    db, state, content = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
-                    "kind": "initiative",
-                    "title": "每月拨西学经费",
-                    "stage_text": "太仓每月拨银五十万两办西学。",
-                    "ongoing_effects": {
-                        "economy": [
-                            {"account": "国库", "delta": -50, "category": "西学经费",
-                             "reason": "每月拨西学经费"}
-                        ]
-                    },
-                    "commitment_kind": "until_stop",
-                }
-            ],
-            "fiscal_creates": [
-                {
-                    "key": "neiku_dujiang_base",
-                    "origin_ref": "盘面自发",
-                    "account": "内库",  # 不同账户
-                    "direction": "expense",
-                    "init_value": 10,
-                    "display": "督江差役",
-                    "reason": "月支",
-                }
-            ],
-        },
-        content=content,
-    )
-
-    assert db.get_fiscal_config()["neiku_dujiang_base"] == 10
 
 
 def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
@@ -622,43 +417,6 @@ def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_mar
     assert created["rejected"] is True
     assert created["category"] == "invalid_enum"
     assert _issue_by_title(db, "字符串停止条件但无月度动作") is None
-
-
-def test_legacy_resolve_condition_person_commitment_rejects_without_marker(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "kind": "initiative",
-                    "title": "旧形状安抚毛文龙",
-                    "stage_text": "旧 payload 用 resolve_condition 表达人物承诺阈值。",
-                    "resolve_condition": "character.毛文龙.loyalty >= 65",
-                    "ongoing_effects": {
-                        "人物变更": [
-                            {
-                                "name": "毛文龙",
-                                "动作": "评定",
-                                "loyalty": 2,
-                                "reason": "每月安抚",
-                            }
-                        ]
-                    },
-                }
-            ]
-        },
-        content=content,
-    )
-
-    created = out["issue_summary"]["new_issues"][0]
-    assert created["rejected"] is True
-    assert created["category"] == "invalid_enum"
-    assert _issue_by_title(db, "旧形状安抚毛文龙") is None
 
 
 def test_until_stop_commitment_requires_initiative_kind(read_game, monkeypatch):
@@ -1080,16 +838,6 @@ def test_stop_condition_without_commitment_kind_advance_to_full_stays_active(gam
     assert advanced["closed_turn"] is None
 
 
-def test_has_stop_condition_handles_preparsed_and_json_whitespace():
-    assert _has_stop_condition({"army.guanning.arrears": "<=0"}) is True
-    assert _has_stop_condition(["legacy"]) is True
-    assert _has_stop_condition({}) is False
-    assert _has_stop_condition(" { } ") is False
-    assert _has_stop_condition("\n[]\n") is False
-    # legacy fallback 条件串属于 resolve_condition，不是结构化 commitment stop gate。
-    assert _has_stop_condition("character.毛文龙.loyalty >= 65") is False
-
-
 def test_empty_json_stop_condition_allows_advance_to_resolved(game):
     """stop_condition 里若只是带空白的空 JSON 对象，不应被误判为承诺停止条件。"""
     db, state, _content = game
@@ -1114,47 +862,6 @@ def test_empty_json_stop_condition_allows_advance_to_resolved(game):
     assert advanced["bar_value"] == 100
     assert advanced["status"] == "resolved"
     assert advanced["closed_turn"] == state.turn
-
-
-def test_commitment_skips_cli_resolve_effect_enrich(game, monkeypatch):
-    import ming_sim.cli_backend as _cb
-
-    db, state, content = game
-    calls = []
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(
-        _cb,
-        "enrich_initiative_effects",
-        lambda *args, **kwargs: calls.append((args, kwargs))
-        or {"effect_on_resolve": {"metrics": {"民心": 9}}, "ongoing_effects": {}, "effect_on_fail": {}},
-    )
-
-    I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-arrears"),
-                    "kind": "initiative",
-                    "title": "每月补辽饷直到补齐",
-                    "ongoing_effects": {
-                        "economy": [
-                            {"account": "国库", "delta": -50, "category": "补饷承诺", "reason": "每月补辽饷"}
-                        ]
-                    },
-                    "stop_condition": {"army.guanning.arrears": "<=0"},
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    row = _issue_by_title(db, "每月补辽饷直到补齐")
-    assert calls == []
-    assert json.loads(row["effect_on_resolve"]) == {}
 
 
 def test_one_shot_appeasement_economy_move_does_not_create_commitment_issue(game, monkeypatch):

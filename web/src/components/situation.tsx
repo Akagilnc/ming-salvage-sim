@@ -19,14 +19,16 @@ export function groupIssues(issues: Issue[]) {
 }
 
 function commitmentProgressText(issue: Issue) {
-  const text = issue.commitment_progress_text?.trim();
-  if (text) return text;
+  // #1834 F16：判空用 trim 副本；展示/供料取原文（禁 trim 后当正文）。
+  const text = issue.commitment_progress_text ?? "";
+  if (text.trim()) return text;
   return issue.commitment_progress ? "未知进度" : "";
 }
 
 /** 空串不渲染括号端标（#626：硬门可留空 bar，web 不画『达成（）』/空进度端）。 */
 function barLabel(text: string | undefined | null): string {
-  return (text || "").trim();
+  const raw = text || "";
+  return raw.trim() ? raw : "";
 }
 
 function outcomeHead(kind: "达成" | "失败", meaning: string | undefined | null): string {
@@ -192,41 +194,5 @@ export function SituationDetailModal({ issue, onClose }: { issue: Issue; onClose
       </div>
     </div>,
     document.body
-  );
-}
-
-export function IssueGroup({ title, issues }: { title: string; issues: Issue[] }) {
-  if (!issues.length) return null;
-  return (
-    <div className="issue-group">
-      <h3>{title}</h3>
-      <div className="issue-list">
-        {issues.map((issue) => {
-          const progressText = commitmentProgressText(issue);
-          return (
-            <article className={`issue-line ${issueTone(issue.bar_value)}`} key={issue.id}>
-              <div className="issue-head">
-                <b>#{issue.id} {issue.title}</b>
-                <span>{issue.phase} · {issue.bar_value}</span>
-              </div>
-              <div className="issue-progress" aria-label={`${issue.title}进度 ${issue.bar_value}`}>
-                <span>{barLabel(issue.bar_bad_meaning)}</span>
-                <div>
-                  <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
-                </div>
-                <span>{barLabel(issue.bar_good_meaning)}</span>
-              </div>
-              {progressText ? <p className="issue-commitment-progress">{progressText}</p> : null}
-              <p>{issue.stage_text}</p>
-              {issue.tags.length ? (
-                <div className="issue-tags">
-                  {issue.tags.map((tag) => <small key={tag}>{tag}</small>)}
-                </div>
-              ) : null}
-            </article>
-          );
-        })}
-      </div>
-    </div>
   );
 }

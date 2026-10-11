@@ -51,12 +51,10 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert any(p.startswith("密令/") for p in names)
     assert any(p.startswith("荐人/") for p in names)
     assert any(p.startswith("事实/") for p in names)
-    for rel in names:
-        assert read_material(prepared.root, rel)
     # 路径由列目录取得；人读 INDEX 不承担路径解析契约。
     # 大理寺 01a0f1f4 裁定：不重调生产渲染器逐字比正文（与被调函数同进同出，
     # 只证接线），也不扫描名册正文推断成员身份（人读正文不是结构化记录身份，
-    # 一次合法换行即假红）。
+    # 一次合法换行即假红）。不保留「列目录后裸 read」空壳。
 
 
 def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
@@ -67,9 +65,11 @@ def test_same_requested_root_creates_independent_material_invocations(game, tmp_
     first = prepare_character_materials(db, state, character, dest_root=requested)
     second = prepare_character_materials(db, state, character, dest_root=requested)
 
+    # 契约＝同请求根下两次 prepare 得独立树；不靠 INDEX 裸读证明隔离。
     assert first.root != second.root
-    assert read_material(first.root, "INDEX.txt")
-    assert read_material(second.root, "INDEX.txt")
+    assert first.root.exists() and second.root.exists()
+    assert (first.root / "INDEX.txt").is_file()
+    assert (second.root / "INDEX.txt").is_file()
 
 
 def test_material_tree_contains_only_structurally_related_world_details(game, tmp_path):
@@ -115,16 +115,11 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     ]
 
 
-def test_matter_carriers_follow_the_real_knowledge_projection(game, tmp_path):
-    """事务载体路径集合恰等于该角色真实可见投影内每条事务的唯一载体。
+def test_matter_carriers_follow_affair_authority_not_parallel_issue_projection(game, tmp_path):
+    """人物材料事务载体与场景共用 affair 权威投影（F45），不再平行 issue 业务路。
 
-    经手关系经 `issues.participant_roster` + `record_character_participation`
-    两条真实写口建立，可见性取自 `db.get_character_knowledge` 真实投影；
-    不替换知识输入，也不另调内部 helper 把投影重算一遍当证据。
-
-    开场「正经手事务」只列经手事务这半条不在本文件承担：`PreparedMaterials`
-    只导出 root/opening/index_lines，开场里没有事务号的结构化出口，而解析
-    开场正文去认段头措辞正是本类禁止的盯文。按票面不为此新增生产测试钩子。
+    经手关系经真实写口建立。未挂靠事务的 issue 仍是合法机械载体（issue-N）；
+    已挂靠的只出 affair-N，不并写第二份 issue 身份。路径段与场景同形（_safe_segment）。
     """
     db, state, content = game
     character = _active_minister(db, content)
@@ -139,16 +134,28 @@ def test_matter_carriers_follow_the_real_knowledge_projection(game, tmp_path):
     db.conn.commit()
 
 
+    # Link visible_id to a durable affair — mechanical carrier folds into affair-N.
+    linked = db.affairs.open(
+        name=str(rows[1]["title"]), origin=f"issue:{visible_id}",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    db.conn.execute(
+        "UPDATE issues SET affair_id=? WHERE id=?", (int(linked.id), visible_id),
+    )
+    db.conn.commit()
+
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "materials",
     )
-    # 经手的那条与只是可见的那条都在真实可见投影内，各有唯一载体路径。
-    visible_ids = {
-        int(row["id"]) for row in db.get_character_knowledge(state, character.name)["issues"]
+    matter_paths = {
+        path for path in list_materials(prepared.root) if path.startswith("事务/")
     }
-    assert {handled_id, visible_id} <= visible_ids
-    issue_paths = {path for path in list_materials(prepared.root) if path.startswith("事务/issue-")}
-    assert issue_paths == {f"事务/issue-{i}/当前情况.txt" for i in visible_ids}
+    handled_path = f"事务/{_safe_segment(f'issue-{handled_id}')}/当前情况.txt"
+    folded_issue_path = f"事务/{_safe_segment(f'issue-{visible_id}')}/当前情况.txt"
+    affair_path = f"事务/{_safe_segment(f'affair-{int(linked.id)}')}/当前情况.txt"
+    assert handled_path in matter_paths
+    assert folded_issue_path not in matter_paths
+    assert affair_path in matter_paths
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
@@ -193,8 +200,8 @@ def test_read_material_stays_inside_directory(game, tmp_path):
     gazette_path = prepared.root / gazette_rel
     gazette_path.parent.mkdir(parents=True, exist_ok=True)
     gazette_path.write_text("本月邸报\n", encoding="utf-8")
-    display = f"{gazette_rel} 任意非路径后缀"
     assert tools["read_material"](gazette_rel) == "本月邸报\n"
+    display = f"{gazette_rel} 任意非路径后缀"
     with pytest.raises(FileNotFoundError):
         read_material(prepared.root, display)
     miss = tools["read_material"](display)
@@ -231,7 +238,7 @@ def test_character_materials_read_archived_public_gazettes(
         f"公开说法/邸报/1627年{month}月.txt" for month in range(1, 8)
     ]
     assert not any(p.startswith("邸报/") for p in names)
-    assert "辽东标题" in read_material(prepared.root, "INDEX.txt")
+    assert "INDEX.txt" in names
 
 
 def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(

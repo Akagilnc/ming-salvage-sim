@@ -73,8 +73,6 @@ def test_edge_event_kind_and_evidence_are_fail_closed(game):
     assert "round:" in row["origin"]
 
 
-
-
 def test_relation_edges_survive_restore(game, tmp_path):
     """R1：边事件 + 关系摘要双表面经关闭重开逐字段一致（#642 扩摘要面）。"""
     db, state, content = game

@@ -3,14 +3,11 @@ from __future__ import annotations
 import pytest
 
 import asyncio
-import json
 import threading
 from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-from tests.wait_utils import wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
 
 
@@ -236,31 +233,37 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     assert next(stream) == {"type": "delta", "content": "臣已知悉。"}
 
     settlement_thread = threading.Thread(target=settlement)
-    settlement_thread.start()
-    settlement_attempting.wait()
-    settlement.holding.wait()
-
-    done_box: list = []
-    done_collected = threading.Event()
-
-    def _take_done() -> None:
-        while True:
-            item = next(stream)
-            if item.get("type") == "done":
-                done_box.append(item)
-                done_collected.set()
-                return
-
-    threading.Thread(target=_take_done, daemon=True).start()
-    allow_finish.set()
+    consumer = None
     try:
+        settlement_thread.start()
+        settlement_attempting.wait()
+        settlement.holding.wait()
+
+        done_box: list = []
+        done_collected = threading.Event()
+
+        def _take_done() -> None:
+            while True:
+                item = next(stream)
+                if item.get("type") == "done":
+                    done_box.append(item)
+                    done_collected.set()
+                    return
+
+        consumer = threading.Thread(target=_take_done, daemon=True)
+        consumer.start()
+        allow_finish.set()
         assert settlement.holding.is_set(), "settlement released before epilogue"
         assert not done_collected.is_set(), "done arrived before settlement released gate"
     finally:
+        allow_finish.set()
         settlement.release_event.set()
+        settlement_thread.join()
+        if consumer is not None:
+            consumer.join()
+        stream.close()
     done_collected.wait()
     done = done_box[0]
-    settlement_thread.join()
 
     assert done["type"] == "done"
     assert runtime.db.overlapped_minister_commit is False
@@ -272,10 +275,8 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 def test_identity_setup_failure_preserves_question_and_releases_pending_owner(monkeypatch):
     runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race(monkeypatch)
     failed = []
-    completed = []
     runtime.db.kv_get = lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed"))
     runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot, error: failed.append((turn_id, snapshot, error))
-    runtime._complete_pending_write = lambda ticket=None: completed.append(True)
 
     events = list(runtime.chat_stream("殿上", "请奏"))
 
@@ -285,7 +286,7 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(mo
     assert failed[0][:2] == (7, {})
     user_msgs = [m for m in runtime.db.messages if m["role"] == "user"]
     assert len(user_msgs) == 1  # 失败仍保留问话轮；角色条数结构，不锁问话散文
-    assert completed == [True]
+    assert runtime._runtime_write_queue().inflight_count() == 0  # 失败放行领票
 
 
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
@@ -312,7 +313,11 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
             events.append("tick")
             release.set()
 
-        first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
+        try:
+            first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
+        finally:
+            entered.set()
+            release.set()
         return first_event
 
     first = asyncio.run(drive_first_event())
@@ -360,10 +365,14 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
                 allow_finish.set()
             return payload
 
-        chat_result, state_payload = await asyncio.gather(
-            web_app.api_audience_chat(web_app.ChatRequest(message="边饷如何？")),
-            state_probe(),
-        )
+        try:
+            chat_result, state_payload = await asyncio.gather(
+                web_app.api_audience_chat(web_app.ChatRequest(message="边饷如何？")),
+                state_probe(),
+            )
+        finally:
+            chat_entered.set()
+            allow_finish.set()
         return chat_result, state_payload
 
     chat_result, state_payload = asyncio.run(drive_concurrent_state_probe())
@@ -394,4 +403,4 @@ def test_nonstream_chat_rejects_when_session_draining():
 
     events = list(runtime.chat_stream("殿上", "边饷如何？"))
     assert events and events[0].get("type") == "error"
-    assert runtime._pending_writes_count == 0
+    assert runtime._runtime_write_queue().inflight_count() == 0

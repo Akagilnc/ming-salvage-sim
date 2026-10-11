@@ -27,6 +27,16 @@ from ming_sim.highlight_judge import (
 # ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
 
 
+def _highlights(db, message_id):
+    """消息高亮落库值（读端直查 chat_messages 行；单读口已退休）。"""
+    row = db.conn.execute(
+        "SELECT highlights_json FROM chat_messages WHERE id = ?", (int(message_id),),
+    ).fetchone()
+    if row is None:
+        return []
+    return db._parse_highlights_json(row["highlights_json"])
+
+
 def test_run_highlight_judge_timeout_and_exception_degrade_silently():
     release = threading.Event()
 
@@ -220,7 +230,7 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     next(e for e in events if e["type"] == "done")
     # 回话已落库且高亮为空
     mid = int(db.get_last_active_chat_turn("殿上", state.turn)["minister_message_id"])
-    assert db.get_message_highlights(mid) == []
+    assert _highlights(db, mid) == []
     _drain(web_game)
 
 
@@ -247,28 +257,32 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
     events: List[Dict[str, Any]] = []
     done_seen = False
     hl_before_done = False
-    for item in stream:
-        events.append(item)
-        if item.get("type") == "highlights" and not done_seen:
-            hl_before_done = True
-        if item.get("type") == "done":
-            done_seen = True
-            release.set()
+    try:
+        for item in stream:
+            events.append(item)
+            if item.get("type") == "highlights" and not done_seen:
+                hl_before_done = True
+            if item.get("type") == "done":
+                done_seen = True
+                release.set()
 
-    types = [e.get("type") for e in events]
-    assert types.index("done") < types.index("highlights")
-    assert types.index("highlights") < types.index("end")
-    assert not hl_before_done
-    hl = next(e for e in events if e["type"] == "highlights")
-    assert hl["highlights"] == ["军务"]
-    assert len(seen_reply) == 1
-    mid = int(hl.get("message_id") or 0)
-    assert mid > 0
-    assert db.get_message_highlights(mid) == ["军务"]
-    # 投影读端
-    proj = db.build_chat_projection("殿上")
-    assert any(m.get("highlights") == ["军务"] for m in proj if m["role"] == "minister")  # night 下 殿上轮
-    _drain(web_game)
+        types = [e.get("type") for e in events]
+        assert types.index("done") < types.index("highlights")
+        assert types.index("highlights") < types.index("end")
+        assert not hl_before_done
+        hl = next(e for e in events if e["type"] == "highlights")
+        assert hl["highlights"] == ["军务"]
+        assert len(seen_reply) == 1
+        mid = int(hl.get("message_id") or 0)
+        assert mid > 0
+        assert _highlights(db, mid) == ["军务"]
+        # 投影读端
+        proj = db.build_chat_projection("殿上")
+        assert any(m.get("highlights") == ["军务"] for m in proj if m["role"] == "minister")  # night 下 殿上轮
+    finally:
+        release.set()
+        stream.close()
+        _drain(web_game)
 
 
 def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
@@ -302,7 +316,7 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
         row = db.get_last_active_chat_turn("殿上", state.turn)
         mid = int((row or {}).get("minister_message_id") or 0)
     assert mid > 0
-    assert db.get_message_highlights(mid) == ["辽饷"]
+    assert _highlights(db, mid) == ["辽饷"]
 
 
 def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypatch):
@@ -348,7 +362,7 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
         row = db.get_last_active_chat_turn("殿上", state.turn)
         mid = int((row or {}).get("minister_message_id") or 0)
         if mid > 0:
-            assert db.get_message_highlights(mid) == []
+            assert _highlights(db, mid) == []
         # 生产 timeout_s 输入保留；旁侧 elapsed 墙钟证据删除（接缝无「N 秒内完成」契约）。
         assert DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S > 0
     finally:

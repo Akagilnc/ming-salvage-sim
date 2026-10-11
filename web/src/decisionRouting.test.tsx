@@ -69,7 +69,6 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     const route = routeRefreshDecisions("settling", []);
     expect(route.pendingDecisions).toBeNull();
     expect(route.error).toBeNull();
-    expect(route.error).not.toBe(PAUSED_DECISION_MSG);
   });
 
   it("skips routing when phase is not awaiting_decision on refresh", () => {
@@ -159,7 +158,6 @@ describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-
     expect(route.pendingDecisions).toBeNull();
     // 禁 error:"" 当成功清横幅——改 resumePhase2 信号接到 settle-resume
     expect(route.error).toBeNull();
-    expect(route.error).not.toBe("");
     expect(route.resumePhase2).toBe(true);
   });
 

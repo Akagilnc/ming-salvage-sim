@@ -14,6 +14,7 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+from tests.readback_helpers import economy_ledger_count as _ledger_count
 
 
 @pytest.fixture(autouse=True)
@@ -80,12 +81,6 @@ def test_reload_content_no_crash(game):
 
     assert returned is state
     assert state.turn_phase == "reviewing"
-
-
-def _ledger_count(db, turn: int) -> int:
-    return db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
-    ).fetchone()[0]
 
 
 def test_reload_scrubs_dirty_settling_phase(game):

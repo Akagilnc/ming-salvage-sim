@@ -55,7 +55,7 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
 
     _commit_and_promulgate(db, state, content, action_id)
 
-    events = db.list_recommendation_events(state, recommender.name)
+    events = recommendation_events(db, state, recommender.name)
     assert len(events) == 1
     event = events[0]
     assert event["candidate"] == row["name"]
@@ -105,7 +105,7 @@ def test_unapproved_appointment_writes_zero_edges(game):
     with pytest.raises(ValueError):
         _commit_and_promulgate(db, state, content, action_id)
 
-    assert db.list_recommendation_events(state, recommender.name) == []
+    assert recommendation_events(db, state, recommender.name) == []
     assert _recommendation_origins(db) == []
 
 
@@ -119,7 +119,7 @@ def test_empty_reason_fails_loud_and_rolls_back_everything(game):
     with pytest.raises(ValueError):
         _commit_and_promulgate(db, state, content, action_id)
 
-    assert db.list_recommendation_events(state, recommender.name) == []
+    assert recommendation_events(db, state, recommender.name) == []
     assert _recommendation_origins(db) == []
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
@@ -145,7 +145,7 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
         _commit_and_promulgate(db, state, content, action_id)
 
     # 全回滚零残留：不落任命、不落荐人事件、零边。
-    assert db.list_recommendation_events(state, recommender.name) == []
+    assert recommendation_events(db, state, recommender.name) == []
     assert db.get_relation_edge_events() == []
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
@@ -209,3 +209,4 @@ import json
 
 from ming_sim.models import CourtContext
 from ming_sim.session import GameSession
+from tests.recommendation_rows import recommendation_events

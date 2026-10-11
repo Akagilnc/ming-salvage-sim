@@ -67,7 +67,6 @@ def test_settlement_interaction_lands_directed_edge_with_origin_round(game):
     # TD-1：origin 回指本回合
     assert row["turn"] == state.turn
     assert row["origin_round"] == state.turn
-    assert f"|round:{state.turn}" in row["origin"]
     assert row["origin"] == settlement_edge_origin("盘面自发", "使绊") + f"|round:{state.turn}"
     # 反向无边（写端不做对称翻倍）
     assert _edge_rows(db, source="王绍徽", target="毕自严") == []

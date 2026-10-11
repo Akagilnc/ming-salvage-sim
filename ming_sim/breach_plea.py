@@ -92,6 +92,8 @@ def encode_plea_meta(meta: Dict[str, object]) -> str:
 
 
 def decode_plea_meta(origin_context: object) -> Dict[str, object]:
+    from ming_sim.db import GameDB
+
     text = str(origin_context or "").strip()
     if not text.startswith(_META_PREFIX):
         return {}
@@ -154,6 +156,8 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
+    from ming_sim.db import GameDB
+
     names: List[str] = []
     # 承诺名册走共同权威；腐坏响亮，不 catch-to-[]（#1897 E1）。
     from ming_sim.participant_roster import decode_durable_participant_roster
@@ -1090,7 +1094,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
         if did is not None:
             drow = db.get_decree_dossier(int(did))
             if drow is not None and str(drow.get("executor_id") or "") == name:
-                payload = drow.get("payload") if isinstance(drow.get("payload"), dict) else {}
+                payload = drow["payload"]
                 expected = str(
                     payload.get("executor_office")
                     or payload.get("office")
@@ -1269,7 +1273,8 @@ def resolve_breach_pleas_from_extraction(
 
     坚持：cancels/close_issues 命中承诺（primary∪absorbed 含改弦即结该 merged 条）/
           revoke 类目标命中案卷 / dossier_executions failed
-    反悔：economy 续拨 / issue_advances 推进 / fiscal_creates 加拨本承诺
+    反悔：economy/fiscal 结构化资金事实（非零 delta / 增值）/ issue_advances 推进
+          / fiscal_creates 落格本承诺；禁 purpose/reason 散文词表捷径（#1834 F28）
     沉默：不在此函数出现 → pending 保留
     """
     if not isinstance(extracted, dict):
@@ -1329,11 +1334,11 @@ def resolve_breach_pleas_from_extraction(
             delta = int(it.get("delta") or 0)
         except (TypeError, ValueError):
             delta = 0
-        purpose = str(it.get("purpose") or "")
-        if delta != 0 or purpose in {"履行承诺", "续拨", "加拨"}:
+        # 只认非零 delta 结构化资金事实；不从 purpose 散文猜续拨/加拨。
+        if delta != 0:
             _note_funding_item(it)
 
-    # 反悔：fiscal_creates 加拨/复供本承诺
+    # 反悔：fiscal_creates 落格本承诺（结构化新建，不读 reason 散文）
     for it in extracted.get("fiscal_creates") or []:
         if not isinstance(it, dict):
             continue
@@ -1341,7 +1346,7 @@ def resolve_breach_pleas_from_extraction(
     for it in extracted.get("fiscal_changes") or []:
         if not isinstance(it, dict):
             continue
-        # 加拨：new_value > old_value 或 delta>0
+        # 只认 new_value>old_value 或 delta>0 的结构化增值；不从 reason 散文猜加拨。
         try:
             delta = int(it.get("delta") or 0)
         except (TypeError, ValueError):
@@ -1354,7 +1359,7 @@ def resolve_breach_pleas_from_extraction(
                     delta = max(delta, int(new_v) - int(old_v))
         except (TypeError, ValueError):
             pass
-        if delta > 0 or str(it.get("reason") or "") in {"加拨", "续拨", "复供"}:
+        if delta > 0:
             _note_funding_item(it)
 
     for todo in pending:

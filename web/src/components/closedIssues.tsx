@@ -18,8 +18,10 @@ export function ClosedIssuesModal({ items, onClose }: { items: ClosedIssue[]; on
 }
 
 function closedBarLabel(cls: string, item: ClosedIssue): string {
+  // #1834 F16：判空用 trim 副本；端标正文保原文。
   const raw = cls === "resolved" ? item.bar_good_meaning : item.bar_bad_meaning;
-  return (raw || "").trim();
+  const text = raw || "";
+  return text.trim() ? text : "";
 }
 
 function ClosedGroup({ title, items, cls }: { title: string; items: ClosedIssue[]; cls: string }) {

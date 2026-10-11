@@ -7,7 +7,6 @@ directive capture (#1279 / QA A-2) and night-archive involved_people projection
 
 from __future__ import annotations
 
-import json
 from typing import Dict, List, Mapping
 
 # ADR 0053 机械三档闭集（唯一真源）：归一缝、票拟层 A shape 与 prompt 契约共引，
@@ -70,23 +69,9 @@ def decode_durable_participant_roster(
     require_tier=True（案卷/连坐）：每项必有合法机械档；''/False/0 不得洗空跳过。
     require_tier=False（knowledge 取人名）：缺档可过；**一旦 present** 类型/闭集仍响亮。
     """
-    if isinstance(raw, list):
-        roster = raw
-    else:
-        if raw is None:
-            text = "[]"
-        elif not isinstance(raw, str):
-            raise ValueError(
-                f"participant_roster 须为 JSON 文本，得 {type(raw).__name__}"
-            )
-        else:
-            text = raw
-        try:
-            roster = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("participant_roster 腐坏 JSON") from exc
-    if not isinstance(roster, list):
-        raise ValueError("participant_roster 须为列表")
+    from ming_sim.db import _load_durable_json_list
+
+    roster = _load_durable_json_list(raw, surface="participant_roster")
     out: list = []
     for item in roster:
         if not isinstance(item, dict):

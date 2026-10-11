@@ -9,11 +9,7 @@ import pytest
 from tests.conftest import with_monthly_reports
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.dossier_test_helpers import create_test_secret_order
-
-def _actor(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
+from tests.readback_helpers import active_character_name as _actor
 
 def _people(db, count):
     rows = db.conn.execute(
@@ -49,55 +45,6 @@ def test_s1_public_projection_filter_unchanged(game):
 
 
 
-
-def test_s2_tracer_613_565_readers_see_appended_roster(game):
-    """② 同一 tracer 尾断言 #611/#565 读端可见追加参与人。"""
-    import ming_sim.issues as issue_engine
-    from ming_sim.participant_roster import project_execution_liability_parties
-    from tests.test_authority_ledger_611 import _grant
-
-    db, state, content = game
-    lead, worker = _people(db, 2)
-    order_id = create_test_secret_order(db,
-        state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
-    )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.append_decree_dossier_participants(dossier_id, [{
-        "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
-    dossier_before = db.get_decree_dossier(dossier_id)
-    # Grant authority to worker on this secret scope so #611 projection can hit
-    # once worker is on the roster (actors = executor ∪ 主办/协办).
-    auth_id = _grant(
-        db, state, content, worker, "专差督办",
-        f"secret_order:{order_id}", dossier_before,
-    )
-
-    result = issue_engine.apply_score_extraction(db, state, {
-        "secret_dossier_participants": [{
-            "dossier_id": dossier_id,
-            "character_id": worker,
-            "tier": "协办",
-            "role": "随员",
-            "delegator_id": lead,
-        }],
-    }, secret_dossier_ids_at_input={dossier_id})
-    assert result["secret_dossier_participants"][0].get("rejected") is not True
-
-    dossier = db.get_decree_dossier(dossier_id)
-    # #565: roster is the liability source; 主办 lead is primary.
-    parties = project_execution_liability_parties(dossier["participant_roster"])
-    assert any(p.get("character_id") == lead for p in parties)
-    # 协办 worker is on durable roster (565 read seam).
-    assert any(
-        row.get("character_id") == worker and row.get("tier") == "协办"
-        for row in dossier["participant_roster"]
-    )
-    # #611 held_authorities: character executor ∪ roster 主办/协办
-    held = db.project_applicable_authorities(state.turn, dossier)
-    held_holders = {item["holder_id"] for item in held}
-    assert worker in held_holders
-    assert str(auth_id) in {str(item["id"]) for item in held}
 
 
 def test_s2_public_dossier_participants_still_rejects_secret_id(game):

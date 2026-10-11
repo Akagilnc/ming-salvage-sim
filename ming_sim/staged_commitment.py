@@ -253,9 +253,7 @@ def list_due_grant_report_dossiers_for_scan(
         dossier = db.get_decree_dossier(did)
         if dossier is None:
             raise ValueError(f"案卷不存在：{did}")
-        payload = dossier.get("payload") or {}
-        if not isinstance(payload, dict):
-            raise ValueError(f"案卷#{did} payload_json 非对象")
+        payload = dossier["payload"]  # get_decree_dossier 经权威解码，必为 dict
         # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         due_turn = int(row["due_turn"] or 0)
         # #1897：due 扫描写入待办的自由字段原样透传，禁 strip。

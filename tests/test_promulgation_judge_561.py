@@ -376,9 +376,6 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     assert fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
         str(authority_id),
     ]
-    assert "fresh-authorization" not in (
-        fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
 
 def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
     """Non-awaiting arms must read applied history at the pre-resolve turn."""
@@ -415,7 +412,6 @@ def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatc
         result["ids"].values()
     )
     assert all(row["decision"] == "promulgated" for row in result["verdicts"])
-
 def test_gatekeeper_successor_removes_donglin_block_posture(game):
     """TD-9 successor must be registered and not recreate the 东林 block."""
     from scripts.promulgation_gate_561 import (
@@ -509,6 +505,7 @@ def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
         "force_promulgated"
     )
 
+
 def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
     """TD-1 / ADR 0055 S6: ordinary class planted dossiers must all pass or the arm fails."""
     from scripts.promulgation_gate_561 import _ordinary_class_all_promulgated
@@ -530,6 +527,7 @@ def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
     assert _ordinary_class_all_promulgated([
         ({"hostile": 2}, {2: {"decision": "rejected"}}),
     ]) is False
+
 
 def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     """TD-9: 安抚首领 = 东林 agenda posture; 许誉卿 stays; no 钱谦益 roster swap."""
@@ -559,6 +557,8 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     )
 
     # Gatekeeper bench unchanged — 安抚首领 ≠ 换把关人.
+    # Member anchor is independent of before/after list equality: both sides
+    # omitting 许誉卿 would still pass equality-only checks (#1834 F3).
     assert "许誉卿" in _gatekeeper_names(after)
     assert _gatekeeper_names(after) == _gatekeeper_names(before)
     assert after["gatekeepers"] == before["gatekeepers"]

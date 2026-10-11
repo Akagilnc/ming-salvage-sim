@@ -246,7 +246,10 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     issues.apply_issue_tracker_output(db, state, {"cancels": [cancel]})
 
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "dropped"
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+    # #1894 / #1834 F37：0056 只落名声账，不抢先关原案卷；终值留给执行格声明。
+    after = db.get_decree_dossier(dossier_id)
+    assert after["status"] in {"promulgated", "executing"}
+    assert not str(after["execution_outcome"] or "")
     assert state.metrics["皇威"] == max(0, authority - 5)
     assert state.metrics["民心"] == popular_support
     events = _cost_events(db, dossier_id)
@@ -310,9 +313,6 @@ def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
             str(r.get("decision") or "")
             for r in db.list_decree_dossier_decisions(dossier_id)
         }
-
-
-
 
 def test_commit_true_breach_reloads_state_when_failure_follows_authority_mutation(game, monkeypatch):
     db, state, _ = game
@@ -405,15 +405,10 @@ def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, mo
 
 
 def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued(game):
-    """#564×#623：active 承诺 cancel 先入挽留；坚持后 0056 仍可认领已闭但曾颁发案卷。
+    """#564×#1894：active 承诺明确 cancel 当月走既有撤旨写口；0056 认领已闭但曾颁发案卷。
 
-    未颁发案卷仍不得作 canonical origin 毁约。
+    未颁发案卷仍不得作 canonical origin 毁约。不再强制次回合挽留（#1834 F37）。
     """
-    from ming_sim.breach_plea import (
-        ENTRY_KIND_BREACH_PLEA,
-        finalize_persist,
-    )
-
     db, state, _ = game
     issued = _dossier(db, state)
     db.apply_dossier_promulgation(state, issued, "promulgated")
@@ -431,28 +426,19 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
     excluded = db.insert_issue(state, kind="initiative", title="未发之旨", origin_kind="decree",
                                origin_ref=f"dossier:{never}", cancellable="decree", commitment_kind="funding")
 
-    # #623：cancel 承诺 → 当回合只写挽留，不即时 0056
-    issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]})
-    assert _cost_events(db, issued) == []
-    plea = next(
-        t for t in db.list_next_audience_todos(status="pending")
-        if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
-        and int(t["commitment_ref"]) == int(active)
-    )
-    # 坚持撤 → 0056 认领已闭但曾颁发案卷
-    finalize_persist(db, state, plea, commit=True)
+    # 明确 cancel → 当月 0056 认领已闭但曾颁发案卷；不写 deferred 挽留
+    out = issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]})
+    hit = [c for c in (out.get("cancels") or []) if int(c.get("issue_id") or 0) == int(active)]
+    assert hit and hit[0].get("rejected") is False
+    assert not hit[0].get("deferred_breach_plea")
     assert any(x["cost_kind"] == "breach" for x in _cost_events(db, issued))
     assert db.get_decree_dossier(issued)["closed_turn"] == closed_turn
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (active,),
+    ).fetchone()["status"] != "active"
 
-    # 未颁发案卷：cancel 可写挽留，但坚持时 0056 不得落（无合法颁发源）
+    # 未颁发案卷：cancel 不得对 never 落 0056
     issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]})
-    never_pleas = [
-        t for t in db.list_next_audience_todos(status="pending")
-        if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
-        and int(t["commitment_ref"]) == int(excluded)
-    ]
-    if never_pleas:
-        finalize_persist(db, state, never_pleas[0], commit=True)
     assert _cost_events(db, never) == []
 
 

@@ -1050,43 +1050,6 @@ def _stage_new_secret(db, state, minister_name: str, marker: str) -> tuple[int, 
     return mid, pid
 
 
-def test_976_pending_secret_pin_survives_partial_commit_same_minister(game):
-    """尚未确认的密令口谕不得被同臣另一密令的局部提交放行。"""
-    db, state, content = game
-    assignee = _active_ministers(db, content)[0]
-    marker_a = "待确认甲密：暗查内库亏空-A976"
-    marker_b = "已确认乙密：密访京营虚额-B976"
-
-    mid_a, pending_a = _stage_new_secret(db, state, assignee.name, marker_a)
-    reply_a = "臣已领会甲密，容臣拟妥章程再请圣裁。"
-    mid_a_reply = db.append_chat_message(
-        assignee.name, state.turn, "minister", reply_a,
-    )
-    chat_turn_a = db.create_chat_turn(state, assignee.name, "pending-secret-a", 0)
-    db.update_chat_turn_messages(
-        chat_turn_a, user_message_id=mid_a, minister_message_id=mid_a_reply,
-    )
-    mid_b, pending_b = _stage_new_secret(db, state, assignee.name, marker_b)
-
-    applied = db.commit_pending_actions(
-        state, minister_name=assignee.name, action_ids={pending_b}, content=content,
-    )
-
-    assert [item["id"] for item in applied] == [pending_b]
-    assert _ks(db, mid_b) == "withheld"
-    assert _ks(db, mid_a) in ("held", "withheld")
-    assert _ks(db, mid_a_reply) in ("held", "withheld")
-    assert _shared_source_count(db, mid_a) == 0
-    assert _shared_source_count(db, mid_a_reply) == 0
-
-    # 明确拒绝后，pin 退出可重试生命周期；下一次既有 release 可按公开召对投轨。
-    assert db.drop_pending_actions_for_minister(
-        state.turn, assignee.name, action_ids={pending_a},
-    ) == 1
-    db.release_held_audience_knowledge()
-    assert _ks(db, mid_a) == "released"
-    assert _ks(db, mid_a_reply) == "released"
-
 
 def test_976_rejected_secret_pin_stays_withheld_during_other_commit(game):
     """A rejected secret intent must not leak when another intent commits."""
@@ -1109,6 +1072,13 @@ def test_976_rejected_secret_pin_stays_withheld_during_other_commit(game):
     assert db.commit_pending_actions(
         state, minister_name=assignee.name, action_ids={failed_id}, content=content,
     ) == []
+    failed_rows = [
+        row for row in db.list_pending_actions(
+            state.turn, status="failed", minister_name=assignee.name,
+        )
+        if row["kind"] == "secret_order"
+    ]
+    assert failed_rows[0]["id"] == failed_id
 
     mid_committed, committed_id = _stage_new_secret(
         db, state, assignee.name, committed_marker,

@@ -185,7 +185,7 @@ export function ChatModal({
           characters: data.characters || [],
           translationPending: data.translation_pending,
           translationRetries: data.translation_retries || [],
-          replyRetries: data.reply_retries,
+          replyRetries: data.reply_retries || [],
           refreshError: false,
         } : { kind: "none" });
         keepPolling = !!data.translation_pending;

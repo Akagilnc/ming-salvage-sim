@@ -22,7 +22,7 @@ from ming_sim.audience_night import (
     present_names_at,
     summon_enter,
 )
-from ming_sim.materials import list_materials, prepare_scene_materials
+from ming_sim.materials import _safe_segment, list_materials, prepare_scene_materials
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import SessionWriteQueue
 
@@ -105,7 +105,7 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     assert target in present_names_at(db, night_id)
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")
-    assert any(p.startswith(f"人物/{target}/") for p in list_materials(prepared.root))
+    assert any(p.startswith(f"人物/{_safe_segment(target)}/") for p in list_materials(prepared.root))
     assert result.court_action == ""
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

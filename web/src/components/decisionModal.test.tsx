@@ -547,8 +547,6 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     // P7：decree_text 回退 label——必须保留所选 option 的 LLM 文案，禁结构钮文泄漏
     expect(choice.label).toBe("加衔恩赏");
     expect(choice.hint).toBe("荣誉");
-    expect(choice.label).not.toBe("另旨·中旨");
-    expect(String(choice.hint || "")).not.toBe("中旨直发");
     expect(choice.action_type).toBe("grant_allocation");
     expect(choice.grant_action).toBe("加衔");
     expect(choice.target_kind).toBe("character");

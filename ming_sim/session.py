@@ -148,10 +148,6 @@ class ChatTurnResult:
     court_action: str = ""   # "" | dismiss | summon | court_break | handled
     next_minister: str = ""
     proposed_directive: Optional[DirectiveView] = None
-    appointed_minister: str = ""   # 吏部本轮铨选新任的人物姓名（已可召见）
-    registered_minister: str = ""  # 名册外史实/用户确认人物建档后可召见
-    displaced_minister: str = ""   # 因新任腾缺被罢黜（dismissed）的原任者姓名
-    refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
@@ -368,7 +364,6 @@ def _appointment_intent_is_current_office_noop(
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
     归一到在册原始名，再查当前 office。"""
-    # #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
     if not clean_name or not desired:
@@ -483,6 +478,9 @@ def apply_appointment(
     if row:
         character.portrait_id = str(row["portrait_id"])
     return (name, displaced)
+
+
+
 
 
 
@@ -933,13 +931,14 @@ class GameSession:
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
-        """同步识别显式退朝口令。纯封闭集匹配，无 Future/宽降级。"""
+        """#526：同步识别收夜口令。纯封闭集匹配，无 Future/宽降级。"""
         from ming_sim.audience_night import (
             normalize_audience_command_verdict,
             recognize_audience_command,
         )
 
         return normalize_audience_command_verdict(recognize_audience_command(message))
+
 
     def close_night_after_chat_if_needed(
         self,
@@ -1066,6 +1065,7 @@ class GameSession:
         """
         from ming_sim.audience_night import (
             CMD_CLOSE_NIGHT,
+            CMD_NONE,
             SCENE_CHAT_SPEAKER,
             close_night,
             ensure_open_night_for_audience,
@@ -1075,8 +1075,9 @@ class GameSession:
         )
         from ming_sim.llm_model import extract_agent_text
 
-        message_text = str(message or "").strip()
-        if not message_text:
+        # Free prose message: preserve raw; strip only emptiness (#1834 F16).
+        message_text = str(message or "")
+        if not message_text.strip():
             raise ValueError("问话不能为空。")
         from ming_sim.decree_forecast import bind_forecast_owner
         bind_forecast_owner(self)
@@ -1090,27 +1091,30 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
-        # 显式退朝口令：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收。
-        # 留侍／含糊收夜词表已退役——走普通场景演绎与转译。
+        # 收夜口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
+        # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
+        # - #1812 §5 / #1834 F18：旧「留下听着」「今日就到这里吧」不再代码裁断；
+        #   走下方场景调用＋统一转译。
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
-        if audience_command_verdict == CMD_CLOSE_NIGHT:
+        if audience_command_verdict and audience_command_verdict != CMD_NONE:
             ctid = int(chat_turn_id or 0)
-            # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
-            # ctid==0 的当场收夜分支随同步转译一并删除。
-            if ctid > 0:
-                self._mark_control_turn_translation_done(ctid)
+            if audience_command_verdict == CMD_CLOSE_NIGHT:
+                # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
+                # ctid==0 的当场收夜分支随同步转译一并删除。
+                if ctid > 0:
+                    self._mark_control_turn_translation_done(ctid)
+                    result.court_action = "court_break"
+                    return result
+                close_night(
+                    self.db, self.state,
+                    content=getattr(self, "content", None),
+                    llm_config=getattr(self, "llm_config", None),
+                    write_gate=getattr(self, "_write_gate", None),
+                    write_queue=self._write_queue,
+                )
                 result.court_action = "court_break"
                 return result
-            close_night(
-                self.db, self.state,
-                content=getattr(self, "content", None),
-                llm_config=getattr(self, "llm_config", None),
-                write_gate=getattr(self, "_write_gate", None),
-                write_queue=self._write_queue,
-            )
-            result.court_action = "court_break"
-            return result
 
         # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
         xuan_fragment = recognize_xuan_command(message_text)
@@ -1229,7 +1233,7 @@ class GameSession:
 
         """场景 agent 的 transport 流式核——零动作工具；材料只读工具不进 court_action。"""
 
-        from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
+        from ming_sim.llm_model import extract_agent_text
         from ming_sim.llm_transport import (
             bind_transport_sdk_budget,
             empty_output_failure,
@@ -1269,8 +1273,6 @@ class GameSession:
                 extracted = extract_agent_text(run_output)
                 if not answer:
                     answer = extracted
-            else:
-                fail_if_llm_error(answer, "LLM 调用")
             if not answer:
                 raise transport_failure_unavailable(
                     empty_output_failure(), attempts=1, exhausted=False,
@@ -1511,6 +1513,8 @@ class GameSession:
             row = self.db.get_directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
+            # 持久读失败是代码/账本故障，不得 continue 进补交耗尽空返回（F39）。
+            # 与同方法写回 Exception 分支同出口：错误包 + SettlementAbort。
             try:
                 bad_payload = self.db.read_directive_dossier_payload(row)
             except ValueError as durable_exc:

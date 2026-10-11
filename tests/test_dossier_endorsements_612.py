@@ -9,12 +9,7 @@ from ming_sim import audience_night as an
 from ming_sim.audience_translation import apply_audience_round_translation
 from ming_sim.db import GameDB
 from ming_sim.decree import build_promulgation_judge_context
-
-
-def _minister(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
+from tests.readback_helpers import active_character_name as _minister
 
 
 def _extract(db, *, chat_turn_id, night_id, fact, **_ignored):

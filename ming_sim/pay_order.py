@@ -405,13 +405,8 @@ def restore_pay_order_override(
             f"恢复 override 的 revoke 案卷 dossier:{int(revoke_dossier_id)} "
             f"未过合法颁布门（顺颁/强颁），禁删 config"
         )
-    payload = target.get("payload")
-    if payload is None:
-        payload = target.get("payload_json")
-    if isinstance(payload, str):
-        import json
-        payload = json.loads(payload)
-    entries = payload.get("entries") if isinstance(payload, dict) else None
+    # get_decree_dossier 已给规范 payload；禁止旁路 payload_json 再解码。
+    entries = target["payload"].get("entries")
     prepared = prepare_pay_order_entries(db, entries)
     target_origin = f"dossier:{int(target_dossier_id)}"
     origin = f"dossier:{int(revoke_dossier_id)}"
@@ -459,27 +454,6 @@ def restore_pay_order_override(
             )
         written.append({"key": key, "old": old, "new": _default_of(key), "exited": True})
     return written
-
-
-def revoke_pay_order_decree(
-    db: Any,
-    *,
-    turn: int,
-    keys: List[str],
-    origin_ref: str,
-    reason: str = "",
-    commit: bool = True,
-) -> List[Dict[str, Any]]:
-    """撤销旨＝写回默认值的新 config change（r2：old/new provenance 链即审计账）。
-    到期路径（until_turn）不删键，读取端按 turn 判退出；撤销把值钉回默认基准。"""
-    entries = [
-        {"key": key, "value": _default_of(key)}
-        for key in keys
-    ]
-    return materialize_pay_order_decree(
-        db, turn=turn, entries=entries, origin_ref=origin_ref,
-        reason=reason or "撤销 override 旨，恢复祖制默认序/系数", commit=commit,
-    )
 
 
 def dossier_override_still_in_force(db: Any, dossier_id: int) -> bool:

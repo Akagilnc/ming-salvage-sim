@@ -2,7 +2,7 @@
 （fail_chat_turn）并释放写路径——否则留下 active 且无大臣回复的孤儿轮，后续召对/drain 永久卡住。
 
 #1185: observe public fail/error events + serial write-path availability (drain /
-_serialized_web_write), not private _write_gate.locked() / _pending_writes_count pins.
+_serialized_web_write), not private _write_gate.locked() / _runtime_write_queue() count pins.
 
 #1452: 非流式 chat/decree LLMUnavailable → 非 500 结构化；流式 RunErrorEvent → 结构化 SSE。
 #1465: 召对 API transport 统一重试（attempt 预算/分类/系统层终失败/独立空转）。
@@ -24,7 +24,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_scene_agent
 
 def _query_conn_no_user_message():
     """生产 _fail_chat_turn_and_reload 直调 db.conn SELECT；负向夹具只给查询协作面。
@@ -233,8 +233,9 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         )
     finally:
         allow_other_exit.set()
+        for other in other_thread_holder:
+            other.join()
     assert other_thread_holder, "foreign writer thread was not started"
-    other_thread_holder[0].join()
     assert not other_thread_holder[0].is_alive()
     assert other_completed_ok == [True], (
         "foreign holder could not complete its own serialized write"

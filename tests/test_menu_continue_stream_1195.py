@@ -139,15 +139,17 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
         results["events"] = _parse_sse(response.text)
 
     thread = threading.Thread(target=run_continue, daemon=True)
-    thread.start()
-    started.wait()
+    try:
+        thread.start()
+        started.wait()
 
-    exit_result = asyncio.run(web_app.api_menu_exit())
-    assert exit_result == {"ok": True}
-    assert web_app.web_game is None
+        exit_result = asyncio.run(web_app.api_menu_exit())
+        assert exit_result == {"ok": True}
+        assert web_app.web_game is None
 
-    release.set()
-    thread.join()
+    finally:
+        release.set()
+        thread.join()
     assert not thread.is_alive(), "continue stream thread hung"
     assert results.get("status") == 200
     events = results["events"]
@@ -202,17 +204,19 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
         results["events"] = _parse_sse(response.text)
 
     thread = threading.Thread(target=run_continue, daemon=True)
-    thread.start()
-    started.wait()
+    try:
+        thread.start()
+        started.wait()
 
-    monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
-    new_result = asyncio.run(web_app.api_menu_new_game())
-    assert new_result["state"]["from"] == "new-game"
-    settled = web_app.web_game
-    assert settled is not None and settled.state_payload()["from"] == "new-game"
+        monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
+        new_result = asyncio.run(web_app.api_menu_new_game())
+        assert new_result["state"]["from"] == "new-game"
+        settled = web_app.web_game
+        assert settled is not None and settled.state_payload()["from"] == "new-game"
 
-    release.set()
-    thread.join()
+    finally:
+        release.set()
+        thread.join()
     assert not thread.is_alive()
     assert results.get("status") == 200
     assert results["events"][-1][0] == "error"

@@ -369,11 +369,11 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert secret_did not in seen["opening_dossiers"]
     assert seen["treasury_options"]["public_only"] is True
     from ming_sim.materials import _safe_segment
-    fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
-    # 供料键在目录中；不锁事实/经历正文子串（#1897 T1）
-    assert fact_rel in seen["author_files"]
-    assert f"人物/{_safe_segment(minister)}/经历.txt" in seen["author_files"]
-    # 作者返回题名／正文原样进归档（自由字段原样运输，非正文关键词哨兵）
+    fact_rel = f"人物/{_safe_segment(minister)}/按月实况.txt"
+    assert _PUBLIC_FACT in seen["author_files"][fact_rel]
+    assert _PLAIN_DOSSIER_FACT in seen["author_files"][fact_rel]
+    # 独立写入的普通低语仍须完整搬运，不从筛选 helper 重建经历正文。
+    assert _PRIVATE_KEEP in seen["author_files"][f"人物/{_safe_segment(minister)}/经历.txt"]
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT

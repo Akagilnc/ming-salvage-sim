@@ -1,10 +1,9 @@
 
 import pytest
 
-from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
-from tests.web_audience_test_doubles import HallAdmissionSessionMixin
-from web_app import WebGame
+from ming_sim.action_materialize import DecreeMaterializationValidationError
+
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -48,16 +47,6 @@ def test_only_confirmed_narrowed_references_are_persisted(game):
 
     assert [row["target_dossier_id"] for row in db.list_dossier_links(protection)] == [liaodong]
     assert db.list_dossier_links(xuanda, direction="incoming") == []
-
-
-
-
-
-
-
-
-
-
 
 
 def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
@@ -119,43 +108,6 @@ def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
     assert [row["target_dossier_id"] for row in db.list_dossier_links(dossier["id"])] == targets
 
 
-def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(game):
-    db, state, _ = game
-    before_orders = len(db.list_secret_orders())
-    action_id = db.stage_pending_action(
-        state.turn, "secret_order", "新建", "孙承宗",
-        {"title": "护行密令", "content": "护送旧案", "assignee": "孙承宗",
-         "covert_task": TYPED_COVERT_TASK,
-         "dossier_links": [
-             {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}
-         ]},
-    )
-
-    assert db.commit_pending_actions(state, action_ids=[action_id]) == []
-
-    assert len(db.list_secret_orders()) == before_orders
-    assert db.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
-    audit = db.list_dossier_link_rejections(pending_action_id=action_id)
-    assert audit[-1]["target_dossier_id"] == 999999
-
-
-def test_unknown_target_link_is_rejected_and_audited(game):
-    db, state, _ = game
-    source = _make_dossier(db, state, "护行密令")
-
-    with pytest.raises(ValueError):
-        db.add_dossier_links(
-            source,
-            [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}],
-        )
-
-    assert db.list_dossier_links(source) == []
-    audit = db.list_dossier_link_rejections(source)
-    assert audit[-1]["target_dossier_id"] == 999999
-
-
-
-
 def test_force_promulgated_rejected_dossier_is_referenceable(game):
     db, state, _ = game
     dossier_id = _make_dossier(db, state, "中旨强颁的旧旨")
@@ -178,15 +130,20 @@ def test_withdrawn_rejected_dossier_is_not_referenceable(game):
     assert dossier_id not in {row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)}
 
 
-def test_pending_rejection_does_not_follow_reused_rolled_back_source_id(game):
+def test_unknown_target_link_is_rejected_and_audited(game):
     db, state, _ = game
-    action_id = db.stage_pending_action(
-        state.turn, "secret_order", "新建", "孙承宗",
-        {"title": "坏引用", "content": "坏引用", "assignee": "孙承宗",
-         "covert_task": TYPED_COVERT_TASK, "dossier_links": [
-            {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}]},
-    )
-    assert db.commit_pending_actions(state, action_ids=[action_id]) == []
-    reused_id = _make_dossier(db, state, "后建案卷")
-    assert db.list_dossier_link_rejections(reused_id) == []
-    assert db.list_dossier_link_rejections(pending_action_id=action_id)
+    source = _make_dossier(db, state, "护行密令")
+
+    with pytest.raises(DecreeMaterializationValidationError) as caught:
+        db.add_dossier_links(
+            source,
+            [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}],
+        )
+
+    assert db.list_dossier_links(source) == []
+    assert caught.value.category == "hallucinated_id"
+    audit = db.conn.execute(
+        "SELECT target_dossier_id FROM decree_dossier_link_rejections WHERE source_dossier_id=? ORDER BY id",
+        (source,),
+    ).fetchall()
+    assert audit[-1]["target_dossier_id"] == 999999

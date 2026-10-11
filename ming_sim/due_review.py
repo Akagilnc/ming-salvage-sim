@@ -135,17 +135,16 @@ def resolve_due_review_branch(
 
 def _todo_origin_ref(todo: Dict[str, object], meta_origin: str = "") -> str:
     """#1783：案卷 due todo（commitment_ref=0）origin 在 payload；承诺 todo 仍读 issue。"""
-    payload = todo.get("payload_json") or {}
-    if isinstance(payload, dict):
-        raw = str(payload.get("origin_ref") or "").strip()
-        if raw:
-            return raw
-        did = payload.get("dossier_id")
-        try:
-            if int(did or 0) > 0:
-                return f"dossier:{int(did)}"
-        except (TypeError, ValueError):
-            pass
+    payload = todo["payload_json"]
+    raw = str(payload.get("origin_ref") or "").strip()
+    if raw:
+        return raw
+    did = payload.get("dossier_id")
+    try:
+        if int(did or 0) > 0:
+            return f"dossier:{int(did)}"
+    except (TypeError, ValueError):
+        pass
     return str(meta_origin or "").strip()
 
 
@@ -249,7 +248,7 @@ def project_due_review_scene(
     mid = bool(inp.get("mid_stage"))
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
-    payload = todo.get("payload_json") or {}
+    payload = todo["payload_json"]
     reopened = scene_kind == "covert_levy_exposure" and bool(payload.get("shortfall_reopened"))
     if reopened:
         # A prohibition reminder is a fresh shortfall projection, not a replay
@@ -394,7 +393,8 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
 
     if mid:
         note = f"中段复核：{criterion}仍在办理"
-        if origin:
+        # Emptiness on strip copy; note embeds origin raw bytes (#1834 F16).
+        if origin.strip():
             note = f"中段复核（{origin}）：{criterion}仍在办理"
         return {
             "outcome": "executing",
@@ -418,7 +418,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     else:
         outcome = "failed"
         note = f"到期复核：{criterion}届期无实绩"
-    if origin:
+    if origin.strip():
         note = f"{note}（原诺：{origin}）"
     return {
         "outcome": outcome,

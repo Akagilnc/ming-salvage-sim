@@ -1,15 +1,11 @@
 """#489 角色见闻：职位裁切、公开事件与参与留痕。"""
 
 import json
-import sqlite3
 
 import pytest
-from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import (
     list_materials,
     prepare_character_materials,
-    read_material,
-    release_material_tree,
 )
 from tests.dossier_test_helpers import create_test_secret_order
 
@@ -676,9 +672,6 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         "WHERE office_type='六科' ORDER BY name LIMIT 1"
     ).fetchone()
     assert keke_lead is not None
-    assert db._office_archive_key(
-        keke_lead["office"], keke_lead["office_type"],
-    ) == "central:六科"
     keke_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="KEKE_ARCHIVE",
         target_kind="issue", target_id="keke-admin",
@@ -699,7 +692,6 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         "SELECT name FROM characters WHERE office_type='外臣' ORDER BY name LIMIT 2"
     ).fetchall()
     if len(foreign) >= 2:
-        assert db._office_archive_key("朝鲜国王", "外臣") == ""
         wai_id = db.create_decree_dossier(
             state, action_type="assignment", decree_text="WAI_LEAK",
             target_kind="issue", target_id="wai-admin",

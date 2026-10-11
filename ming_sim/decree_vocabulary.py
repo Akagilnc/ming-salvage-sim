@@ -167,7 +167,10 @@ def dossier_action_policy(action_type: object, payload=None):
     action = str(action_type or "")
     policy = dict(DOSSIER_ACTION_POLICY[action])
     if action == "grant_allocation":
-        payload = payload or {}
+        # 已解码可选对象权威；业务缺省 {} 在权威返回后由本调用方决定。
+        from ming_sim.db import GameDB
+
+        payload = GameDB.optional_object(payload, surface="dossier payload") or {}
         grant_action = str(payload.get("grant_action") or "").strip()
         cadence = str(payload.get("cadence") or "").strip()
         if grant_action in {"加衔", "荫叙"}:
@@ -310,9 +313,10 @@ def render_referenceable_dossier_brief(candidates) -> str:
     for row in candidates:
         if not isinstance(row, dict):
             continue
+        # Free prose title / execution_note: preserve raw; strip only emptiness (#1834 F16).
         title = str(
             row.get("secret_title") or row.get("decree_text") or row.get("action_type") or ""
-        ).strip()
+        )
         status_cn = qualitative_dossier_status(row.get("status"))
         decision_cn = qualitative_promulgation_slot(row)
         outcome_cn = qualitative_dossier_outcome(
@@ -327,7 +331,7 @@ def render_referenceable_dossier_brief(candidates) -> str:
             facts.append(f"颁布：{decision_cn}")
         if outcome_cn:
             facts.append(f"执行：{outcome_cn}")
-        if note:
+        if note.strip():
             facts.append(f"说明：{note}")
         if markers:
             facts.append("标记：" + "、".join(markers))

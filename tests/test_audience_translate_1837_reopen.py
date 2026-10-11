@@ -22,6 +22,7 @@ from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from tests.month_chain_helpers import make_light_session
+from tests.recommendation_rows import recommendation_events
 
 
 def _hong(db, content) -> str:
@@ -305,7 +306,7 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
         "SELECT office FROM characters WHERE name=?", (same_faction.name,),
     ).fetchone()
     assert appointed["office"] == "巡盐御史"
-    events = db.list_recommendation_events(state, recommender.name)
+    events = recommendation_events(db, state, recommender.name)
     assert any(e["candidate"] == same_faction.name for e in events)
 
 
@@ -425,11 +426,12 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
     summon_enter(db, int(night["id"]), attendant.name)
     prepared = prepare_scene_materials(db, state)
     try:
-        from ming_sim.materials import list_materials
-        carrier = f"人物/{attendant.name}/经历.txt"
+        from ming_sim.materials import _safe_segment, list_materials
+        carrier = f"人物/{_safe_segment(attendant.name)}/经历.txt"
         assert carrier in list_materials(prepared.root)
         assert carrier in prepared.index_lines
-        assert not any(line.startswith(f"密令/查访月报/") for line in prepared.index_lines)
+        assert not any("/密令/查访月报/" in line or line.startswith("密令/查访月报/")
+                       for line in prepared.index_lines)
     finally:
         release_material_tree(prepared.root)
 
@@ -492,6 +494,7 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     assert {item.category for item in result.inquiries.rejected} == {
         "hallucinated_id", "invalid_shape",
     }
+    from ming_sim.materials import _safe_segment
     rel = f"密令/查访月报/{visible}.txt"
     character_tree = prepare_character_materials(db, state, attendant)
     try:
@@ -507,10 +510,11 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     summon_enter(db, int(night["id"]), attendant.name)
     scene_tree = prepare_scene_materials(db, state)
     try:
-        scene_rel = f"人物/{attendant.name}/密令/查访月报/{visible}.txt"
+        person_seg = _safe_segment(attendant.name)
+        scene_rel = f"人物/{person_seg}/密令/查访月报/{visible}.txt"
         assert scene_rel in scene_tree.index_lines
-        assert f"人物/{attendant.name}/密令/查访月报/{hidden}.txt" not in scene_tree.index_lines
-        assert f"人物/{attendant.name}/密令/查访月报/{own}.txt" not in scene_tree.index_lines
+        assert f"人物/{person_seg}/密令/查访月报/{hidden}.txt" not in scene_tree.index_lines
+        assert f"人物/{person_seg}/密令/查访月报/{own}.txt" not in scene_tree.index_lines
         assert (Path(scene_tree.root) / scene_rel).is_file()
     finally:
         release_material_tree(scene_tree.root)

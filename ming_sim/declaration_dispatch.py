@@ -60,6 +60,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
+from ming_sim.db import GameDB
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
     _assignment_absolute_end_turn,
@@ -930,8 +931,8 @@ def _commission_grant_payload(
         GRANT_ACTIONS,
         require_grant_allocation_shape,
         resolve_grant_account,
-        write_locality_scope_for_target_kind,
     )
+    from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 
     grant_action = str(grant.get("grant_action") or grant.get("action") or "").strip()
     # 兼容 C0 旧形：未写 grant_action 但给了协饷五字段 → 视作协饷。
@@ -1005,8 +1006,9 @@ def _commission_grant_payload(
         "locality_scope": write_locality_scope_for_target_kind(target_kind),
         "mode": "ordinary",
     }
-    purpose = str(grant.get("purpose") or "").strip()
-    if purpose:
+    # Free prose purpose: preserve raw; emptiness on local copy (#1834 F21).
+    purpose = str(grant.get("purpose") or "")
+    if purpose.strip():
         payload["purpose"] = purpose
     _attach_commission_escort(db, grant, payload)
     return payload
@@ -1238,6 +1240,7 @@ def _dispatch_commissions(
                     )
                 )
             except KeyError as exc:
+                # Missing target / no matching exposure scene — business state.
                 _reject(rejected, item, str(exc), "invalid_state", source)
             except DecreeMaterializationValidationError as exc:
                 _reject(
@@ -1553,11 +1556,14 @@ def _dispatch_commissions(
                 _reject(rejected, item, "责成交办缺正文", "invalid_shape", source)
                 continue
             from ming_sim.action_materialize import stage_assignment_candidate
+
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
             roster = assignment.get("participant_roster")
             if roster is not None:
                 try:
                     from ming_sim.cli_backend import normalize_draft_person_roster
+                    # normalize 内模型形/名册契约抛 DecreeMaterializationValidationError；
+                    # DB 解码/引擎 TypeError·RuntimeError 原样上抛（F39）。
                     roster = normalize_draft_person_roster(
                         roster, db=db, content=db.content,
                     )
@@ -1615,6 +1621,7 @@ def _dispatch_commissions(
                 _reject(rejected, item, "撤令交办缺正文", "invalid_shape", source)
                 continue
             from ming_sim.action_materialize import stage_revoke_decree_candidate
+
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
             # 与其它交办载荷同缝：原旨与撤令沿同一事务关联（ADR 0154）。
             payload: Dict[str, Any] = {}
@@ -2062,24 +2069,17 @@ def _dispatch_endorsements(
             action_id = strict_sqlite_id(item.get("action_id"))
         except (TypeError, ValueError):
             action_id = 0
-        form = str(item.get("form") or "").strip()
-        endorser_id = str(item.get("endorser_id") or "").strip()
-        if action_id <= 0 or form not in {"会签", "当面站台", "御笔手敕"}:
+        if action_id <= 0:
             _reject(
                 rejected, item,
-                "背书须含正 action_id 与 会签|当面站台|御笔手敕",
+                "背书须含正 action_id",
                 "invalid_shape", source,
             )
             continue
-        imperial = form == "御笔手敕"
-        if imperial:
-            endorser_id = ""
-        elif not endorser_id:
-            _reject(
-                rejected, item, "会签/当面站台必须具名背书人",
-                "invalid_shape", source,
-            )
-            continue
+        form = item.get("form")
+        endorser_id = item.get("endorser_id", "")
+        # The declaration has a form, not a separate imperial flag.
+        imperial = isinstance(form, str) and form.strip() == "御笔手敕"
         row = db.conn.execute(
             "SELECT id, night_id, status, payload_json FROM pending_actions "
             "WHERE id=? AND turn=?",
@@ -2099,6 +2099,8 @@ def _dispatch_endorsements(
         }
         status = str(row["status"] or "")
         if status == "pending":
+            # The write boundary owns field/reference validation. Durable payload
+            # faults still raise rather than becoming model rejections.
             try:
                 db.attach_pending_action_endorsement(
                     action_id, entry, commit=False,
@@ -2186,6 +2188,13 @@ def _stage_prohibit_covert_levy(
         dossier_id = strict_sqlite_id(item["target_id"])
     except (KeyError, TypeError, ValueError):
         raise KeyError("禁摊派交办缺场面案卷 id") from None
+    body = _declared_prose(item.get("text"))
+    if body is None:
+        # LLM item shape — not a durable read fault (F39 ownership split).
+        raise DecreeMaterializationValidationError(
+            "禁摊派交办缺正文", failed_fields=("text",),
+        )
+    # Durable todo/dossier payload faults raise from list_due_review_scenes (F39).
     if not any(
         scene.get("kind") == "covert_levy_exposure"
         and not scene.get("decision")
@@ -2770,6 +2779,7 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
         return None, "invalid_shape"
     if raw_affair is None:
         return None, None
+    # 声明形检已完成；peek/get 持久损坏上抛，不洗 invalid_shape（F39）。
     try:
         affair_id = db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_EXPERIENCE)
     except KeyError:

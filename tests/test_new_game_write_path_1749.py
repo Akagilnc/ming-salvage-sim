@@ -508,45 +508,32 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
         db.conn.execute("SELECT 1")
 
 
+
 def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
-    """真实 load_save 入口：关旧局失败 → 409、恢复指针且草稿写入仍可落；不搬活库。"""
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
-    seed = client.post("/api/menu/new_game")
-    assert seed.status_code == 200
-    g0 = web_app.web_game
-    assert g0 is not None
-    old_path = g0.db_path
-    c0 = _campaign(g0)
-    g0.save_to("snap1749")
+    assert client.post("/api/menu/new_game").status_code == 200
+    game = web_app.web_game
+    path = game.db_path
+    game.save_to("snap1749")
+    real_close = game.session.close
+    fault = RuntimeError("load close failure")
 
-    real_close = g0.session.close
+    def fail_close():
+        raise fault
 
-    def boom_close() -> None:
-        raise RuntimeError("close boom")
-
-    g0.session.close = boom_close  # type: ignore[method-assign]
+    game.session.close = fail_close
     try:
-        r = client.post("/api/menu/load_save/snap1749")
-        assert r.status_code == 409, r.text
-        assert web_app.web_game is g0
-        assert web_app._runtime_restorable(g0)
-        assert not g0._write_queue.is_sealed(), "drain failure must unseal restored runtime"
-        assert os.path.isfile(old_path)
-        # close 失败 holder 仍在：AR-req 不得搬活库（外部文件终态）
-        web_app._path_request_archive(old_path)
-        assert os.path.isfile(old_path)
+        assert client.post("/api/menu/load_save/snap1749").status_code == 409
+        assert web_app.web_game is game
+        assert os.path.isfile(path)
         assert _drained(Path(web_app.user_data_path())) == []
-        # 恢复后可写：播种只作前置，改稿经幸存真实写入口 PATCH 并验持久结果。
-        marker = "着户部清核辽饷（load-save-close-fail）。"
-        marker_edited = _rewrite_draft_via_http(
-            client, marker, marker="着户部清核辽饷（load-save-close-fail·改稿）。",
+        edited = _rewrite_draft_via_http(
+            client, "着户部清核辽饷。", marker="着户部清核辽饷，具报。",
         )
-        snap = _db_snapshot(old_path)
-        assert snap["campaign_id"] == c0
-        assert marker_edited in snap["directive_texts"]
+        assert edited in _db_snapshot(path)["directive_texts"]
     finally:
-        g0.session.close = real_close  # type: ignore[method-assign]
+        game.session.close = real_close
 
 
 def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypatch):

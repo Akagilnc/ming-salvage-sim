@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+from ming_sim.constants import TURN_UNIT
 from ming_sim.assets import load_json_asset
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
@@ -116,17 +117,11 @@ def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
 
 
 # 地区/军队名称匹配实现在 matching.py；此处提供绑定 GameContent 的便捷封装。
-from ming_sim.matching import army_aliases, compact_name, region_aliases  # noqa: E402,F401
-from ming_sim.matching import match_army_id_from_text as _match_army
 from ming_sim.matching import match_region_id_from_text as _match_region
 
 
 def match_region_id_from_text(text: str) -> Optional[str]:
     return _match_region(text, _ctx().regions)
-
-
-def match_army_id_from_text(text: str) -> Optional[str]:
-    return _match_army(text, _ctx().armies)
 
 
 def _identity_bucket(value: object) -> str:
@@ -151,7 +146,9 @@ def minister_dossier(character: Character) -> str:
     # 存在性用 strip 探测；选用时传原串（禁把裁剪值当正文，P6 / ADR 0142）。
     style_present = bool(raw_style.strip())
     if dossier is None:
-        identity = (character.summary or "").strip() or "未有专门 dossier，以官职、性情和任事处作通用特征化"
+        # Free prose summary → 供料 identity：preserve raw; emptiness on copy (#1834 F21).
+        summary_raw = character.summary or ""
+        identity = summary_raw if summary_raw.strip() else "未有专门 dossier，以官职、性情和任事处作通用特征化"
         temperament = raw_style if style_present else "以官职与任事处推知其处世分寸"
         skills = "、".join(character.personal_skills) or "未留专长档案"
         motivation = f"在{character.office or '所任官署'}任事并完成本分"

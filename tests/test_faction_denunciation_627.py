@@ -90,65 +90,6 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     )
     db.conn.commit()
 
-def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
-    """公开材料只列入有奏报且与旨外或执行格分叉的案；密令案与未分叉案不入。"""
-    import json
-    from ming_sim.materials import prepare_world_materials, read_material
-
-    db, state, content = game
-    owner = next(iter(_chars_by_faction(db).values()))[0]["name"]
-
-    def _report(dossier_id: int, token: str) -> None:
-        db.record_dossier_progress(
-            dossier_id, state.turn, "已竣", f"奏称{token}已完",
-            is_terminal=False, commit=True,
-        )
-
-    def _beyond(dossier_id: int, token: str) -> None:
-        db.record_issue_economy_move(
-            state, "国库", 5, "浮收", f"借旨行私{token}",
-            origin_ref=f"dossier:{dossier_id}", beyond_intent=True, commit=True,
-        )
-
-    def _outcome(dossier_id: int, outcome: str) -> None:
-        db.conn.execute(
-            "UPDATE decree_dossiers SET execution_outcome=? WHERE id=?",
-            (outcome, dossier_id),
-        )
-        db.conn.commit()
-
-    beyond_executing = _subject_dossier(db, state, owner=owner, token="beyond-exec")
-    _report(beyond_executing, "beyond-exec")
-    _beyond(beyond_executing, "beyond-exec")
-    _outcome(beyond_executing, "executing")
-
-    report_transformed = _subject_dossier(db, state, owner=owner, token="report-xf")
-    _report(report_transformed, "report-xf")
-    _outcome(report_transformed, "transformed")
-
-    report_fulfilled = _subject_dossier(db, state, owner=owner, token="report-ok")
-    _report(report_fulfilled, "report-ok")
-    _outcome(report_fulfilled, "fulfilled")
-
-    silent_beyond = _subject_dossier(db, state, owner=owner, token="silent")
-    _beyond(silent_beyond, "silent")
-    _outcome(silent_beyond, "transformed")
-
-    order_id = create_test_secret_order(db, state, owner, "密查", "查账", [])
-    secret_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.conn.execute("UPDATE decree_dossiers SET status='executing' WHERE id=?", (secret_id,))
-    db.conn.commit()
-    _make_forked(db, state, secret_id)
-
-    prepared = prepare_world_materials(
-        db, state, dest_root=tmp_path / "gazette",
-        exclude_secret_order_dossiers=True,
-    )
-    facts = json.loads(read_material(prepared.root, "盘面/派系检举事实.txt"))
-    assert {item["dossier_id"] for item in facts["forked_dossiers"]} == {
-        beyond_executing,
-        report_transformed,
-    }
 
 def _make_transformed_no_fork(db, state, dossier_id: int):
     """变形但无奏报分叉（无私货/无旨外）——fork 读端为假。"""
@@ -203,10 +144,12 @@ def test_ac2_scripted_accept_and_clamp(game):
     hit = hits[0]
     assert hit["accuser_name"] == accuser
     assert int(hit["target_dossier_id"]) == did
+    assert hit["memorial_text"] == body
     assert origin_has_mark(hit["origin"], ORIGIN_MARK_DENUNCIATION_TRUE)
 
     rows = db.list_faction_denunciations(turn=state.turn, target_dossier_id=did)
     assert len(rows) == 1
+    assert rows[0]["memorial_text"] == body
 
     # 所指案卷不存在 → 拒
     missing = db.accept_faction_denunciations(
@@ -394,6 +337,10 @@ def test_ac5_zero_template_exposure_and_622(game):
         commit=True,
     )
     assert hits
+    for h in hits:
+        # 正文即 LLM/scripted 原文，非引擎模板壳
+        assert h["memorial_text"] == body
+
     # 暴露落条目自身，不写 loophole、不回注知识轨、不改世界状态
     assert hits[0]["payload"].get("fork_exposure", {}).get("fork") is True
     assert db.list_loophole_exposures(did) == loophole_before

@@ -362,7 +362,7 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     """LLM 把 effect 字段给成非 dict(字符串/数组) → isinstance 守门归 {}，不让 dict() 抛错
     越过单条拒绝、崩整月落库（codexB-P1）。"""
     db, state, _ = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)   # 不触发 enrich
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     before = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
@@ -377,85 +377,6 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     assert new and not new[0].get("rejected")
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
 
-
-def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
-    """CLI 后端国策 enrich 没补出 resolve（或抛错）时，floor 兜最小回报，绝不入空壳（codexB）。"""
-    import ming_sim.cli_backend as _cb
-    db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "空回报国策", "kind": "initiative"}],
-    })
-    row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='空回报国策'").fetchone()
-    assert row is not None                         # 国策入库了
-    import json as _j
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}   # floor 生效，非空壳
-
-
-def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypatch):
-    """runtime CLI 通道无 env 时，月末国策空回报也要走 CLI floor，不能落空壳。"""
-    import json as _j
-    from ming_sim.models import LLMConfig
-    import ming_sim.cli_backend as _cb
-
-    db, state, _ = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    cfg = LLMConfig(
-        api_key="cli-backend",
-        base_url="",
-        model="api-fallback",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-5.5",
-        cli_timeout_seconds=240,
-    )
-
-    I.apply_score_extraction(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "runtime空回报国策", "kind": "initiative"}],
-    }, llm_config=cfg)
-
-    row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='runtime空回报国策'").fetchone()
-    assert row is not None
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
-
-
-def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch):
-    """显式 API 通道下，即便 env 残留 CLI backend，也不能触发 CLI-only 国策补全/floor。"""
-    import json as _j
-    from ming_sim.models import LLMConfig
-    import ming_sim.cli_backend as _cb
-
-    db, state, _ = game
-    called = []
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: called.append((a, k)) or {
-                            "effect_on_resolve": {},
-                            "ongoing_effects": {},
-                            "effect_on_fail": {},
-                        })
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="gpt-api",
-        channel="api",
-    )
-
-    I.apply_score_extraction(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "api空回报国策", "kind": "initiative"}],
-    }, llm_config=cfg)
-
-    row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='api空回报国策'").fetchone()
-    assert row is not None
-    assert called == []
-    assert _j.loads(row["effect_on_resolve"]) == {}
 
 
 def test_inertia_natural_resolve_applies_entities(game):

@@ -15,14 +15,7 @@ import pytest
 
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.public_sayings import list_public_sayings
-
-
-def _minister(db):
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    return str(row["name"])
+from tests.readback_helpers import active_character_name as _minister
 
 
 def _army_id(db) -> str:

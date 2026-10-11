@@ -172,7 +172,7 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
 
 
 def test_fulfill_back_and_urge_three_decisions(game):
-    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled/任命不落。"""
+    """兑付→兑现所托；撑完→撑腰；cancels 拒宽限·斥退→辜负；被拒 fulfilled/任命不落。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -196,7 +196,9 @@ def test_fulfill_back_and_urge_three_decisions(game):
     assert fulfill_edges, "兑付须写兑现所托"
     fe = fulfill_edges[-1]
     assert fe["target"] == "皇帝"
+    assert fe["context"] == note_f  # 承接 extraction 真叙事
     assert f"dossier:{did_f}:credit:fulfill" in str(fe["origin"])
+    assert fe["context"].strip()
 
     # ── 撑完承诺（承催压后兑付）──
     did_b = _executing_dossier(
@@ -226,6 +228,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
         if f"dossier:{did_b}:credit:back" in str(e["origin"])
     ]
     assert back_edges, "撑完承诺须写撑腰"
+    assert back_edges[-1]["context"] == note_b
     assert any(
         f"dossier:{did_b}:credit:fulfill" in str(e["origin"])
         for e in _credit_edges(db, event_kind=KIND_FULFILL, source="毕自严")
@@ -282,23 +285,10 @@ def test_fulfill_back_and_urge_three_decisions(game):
     )
     assert len(_credit_edges(db)) == before_rd
 
-    # ── 谏处置三型（案卷主办=谏者，resolve_host 读案卷面）──
+    # ── 谏处置：cancels 结构化拒→辜负（不从 purpose 散文猜准宽限）──
     def _host_roster(name: str):
         return [{"character_id": name, "tier": "主办", "role": "承办"}]
 
-    # 准宽限
-    did_g = _executing_dossier(
-        db, state, token="grace-628", roster=_host_roster("倪元璐"),
-    )
-    cid_g = _insert_commitment(
-        db, state, title="乞宽限案", origin_ref=f"dossier:{did_g}", host="倪元璐",
-    )
-    db.insert_next_audience_todo(
-        commitment_ref=cid_g, stage_idx=0, due_turn=state.turn + 2,
-        criterion_text="乞恩宽限", origin_context="催紧",
-        entry_kind=ENTRY_KIND_GRACE_PLEA, created_turn=state.turn - 1,
-        payload_json={"kind": "grace_plea"}, commit=True,
-    )
     # 拒宽限
     did_rg = _executing_dossier(
         db, state, token="rej-grace-628", roster=_host_roster("徐光启"),
@@ -326,17 +316,9 @@ def test_fulfill_back_and_urge_three_decisions(game):
         payload_json={"kind": "rush_remonstrance"}, commit=True,
     )
 
-    grace_purpose = "准宽限加拨"
     apply_score_extraction(
         db, state,
         {
-            "economy_moves": [{
-                # 非负 delta + 显式宽限叙事；合法 origin 须落格（C1/C2）
-                "account": "国库", "delta": 5, "category": "军费",
-                "purpose": grace_purpose, "reason": "准宽限",
-                "origin_ref": "盘面自发",
-                "issue_id": cid_g,
-            }],
             "cancels": [
                 {"issue_id": cid_rg},
                 {"issue_id": cid_rr},
@@ -344,23 +326,18 @@ def test_fulfill_back_and_urge_three_decisions(game):
         },
         content=content,
     )
-    g_edges = [
-        e for e in _credit_edges(db, event_kind=KIND_BACK, target="倪元璐")
-        if f"issue:{cid_g}:credit:grant_grace" in str(e["origin"])
-    ]
-    assert g_edges, "准宽限须写撑腰"
 
     rg_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="徐光启")
         if f"issue:{cid_rg}:credit:reject_grace" in str(e["origin"])
     ]
-    assert rg_edges
+    assert rg_edges and rg_edges[-1]["context"] == "乞恩宽限"
 
     rr_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="黄道周")
         if f"issue:{cid_rr}:credit:reject_remonstrance" in str(e["origin"])
     ]
-    assert rr_edges
+    assert rr_edges and rr_edges[-1]["context"] == "期限过急，恐难如期"
 
 
 # ── ③ 处置映射正负 ───────────────────────────────────────────────────
@@ -394,6 +371,8 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     assert len(sg_edges) == before_sg + 2
     by_target = {e["target"]: e for e in sg_edges if f"dossier:{did_sg}" in str(e["origin"])}
     assert set(by_target) == {"倪元璐", "徐光启"}
+    assert by_target["倪元璐"]["context"] == reason_sg
+    assert by_target["徐光启"]["context"] == reason_sg
     assert by_target["倪元璐"]["source"] == "皇帝"
     for e in by_target.values():
         assert scapegoat_actor_kind_from_origin(e["origin"]) == "皇帝"
@@ -419,6 +398,7 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
         if f"dossier:{did_cv}:credit:cover" in str(e["origin"])
     ]
     assert cover_edges, "包庇须写撑腰给被包庇者"
+    assert cover_edges[-1]["context"] == reason_cv
 
     # ── 查办：依法惩主办 → 不记事件（负向）──
     did_pr = _transformed_dossier(
@@ -615,6 +595,11 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
     assert len(edges_b) == 2
     assert {e["target"] for e in edges_b} == {"倪元璐", "徐光启"}
 
+    # 叙事语境（非固定模板）
+    for e in edges_once:
+        assert e["context"] == reason_a
+        assert e["context"].strip()
+
     # restore 后可考古
     backup = tmp_path / "credit-628.db"
     db.backup_to(str(backup))
@@ -628,6 +613,6 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
             ).fetchall()
         ]
         assert len(r_edges) == 2
-        assert {r["target"] for r in r_edges} == {"倪元璐", "徐光启"}
+        assert all(str(r["context"] or "").strip() for r in r_edges)
     finally:
         restored.close()

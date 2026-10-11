@@ -43,9 +43,6 @@ def stamp(draw, x, y, text, fnt, sw=7):
               stroke_width=sw, stroke_fill=DARK)
     draw.text((x, y), text, font=fnt, fill=GOLD)
 
-def hline(draw, cx, y, half_w, color=(210, 170, 55), width=2):
-    draw.line([(cx - half_w, y), (cx + half_w, y)], fill=color, width=width)
-
 def text_size(draw, text, fnt):
     bb = draw.textbbox((0, 0), text, font=fnt)
     return bb[2] - bb[0], bb[3] - bb[1]
