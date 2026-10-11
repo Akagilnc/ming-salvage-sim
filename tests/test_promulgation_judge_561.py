@@ -1,14 +1,12 @@
+from ming_sim.settlement.dossier import apply_dossier_verdicts
 import json
 
 import pytest
 
-import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 from ming_sim.exceptions import LLMContractError
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
-from ming_sim.models import LLMConfig
-from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
 from tests.dossier_test_helpers import rejected_verdict
 
@@ -180,7 +178,7 @@ def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatc
             {"dossier_id": int(row["id"]), "decision": "promulgated"}
             for row in dossiers
         ]
-        db.apply_dossier_verdicts(state, verdicts, content=content)
+        apply_dossier_verdicts(db, state, verdicts, content=content)
         # Settlement advances turn — the bug surface (pending batch writer retired).
         state.turn += 1
         db.save_state(state)

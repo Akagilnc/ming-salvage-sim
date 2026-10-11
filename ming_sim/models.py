@@ -372,7 +372,8 @@ def is_vassal_prince(character: "Character") -> bool:
     - session: can_summon（召对 choke）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
     - session: can_summon（召对 choke，覆盖 session/web/CLI choose_minister 三路）
-    - db: create_secret_order（密令唯一 DB 写口 choke）/ _commit_office_action 罢免（玩家罢免）
+    - db: create_secret_order（密令唯一 DB 写口 choke）
+    - settlement.dossier: _commit_office_action 罢免（玩家罢免）
     roster 类同时排 后宫/未仕，用 office_type in ('后宫','宗藩','未仕')；本 helper 只判宗藩这一面。
 
     **规则边界（玩家动作 vs 世界事件，cmr R7 拍）**：守的是「皇帝把宗室当朝堂命官来召见/任免/

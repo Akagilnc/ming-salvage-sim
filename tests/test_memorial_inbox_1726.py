@@ -5,9 +5,9 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
-import threading
 
 from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
@@ -24,7 +24,7 @@ def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
         executor_id=owner,
         participants=[{"character_id": owner, "tier": "主办"}],
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
+    apply_dossier_promulgation(db, state, did, "promulgated")
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,),
     )
@@ -225,7 +225,7 @@ def test_progress_without_owner_uses_diegetic_fallback(game):
         target_kind="issue",
         target_id="land-orphan-1726",
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
+    apply_dossier_promulgation(db, state, did, "promulgated")
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing', executor_id='', executor_kind='', "
         "participant_roster='[]' WHERE id=?",

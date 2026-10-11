@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_verdicts
 import json
 
 from ming_sim.declaration_dispatch import dispatch_declaration
@@ -568,7 +569,7 @@ def _promulgate_assignment(game, label: str, *, text: str, **assignment_fields):
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(int(directive["id"]))
     assert dossier is not None, "拟旨没成案卷"
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )

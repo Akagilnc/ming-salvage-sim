@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
 
 import pytest
@@ -420,7 +421,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
             "locality_scope": "none",
         },
     )
-    db.apply_dossier_promulgation(state, target_id, "promulgated")
+    apply_dossier_promulgation(db, state, target_id, "promulgated")
 
     # 1) #523 真实 producer
     pending_id = stage_revoke_decree_candidate(

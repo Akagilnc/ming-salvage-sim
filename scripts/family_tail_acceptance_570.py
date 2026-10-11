@@ -25,16 +25,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
+from ming_sim.agents import bind_content as bind_agent_content
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -312,7 +313,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         by_id = {int(v["dossier_id"]): v for v in verdicts}
 
         # Apply verdicts so force / stigma / costs can be exercised on structured path.
-        db.apply_dossier_verdicts(state, verdicts)
+        apply_dossier_verdicts(db, state, verdicts)
 
         cabinet_v = by_id[planted["cabinet"]]
         bare_v = by_id[planted["bare"]]
@@ -337,7 +338,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         if bare_reject_ok and bare_v.get("midzhi_unpromulgatable") is not True:
             bare_force_attempted = True
             try:
-                db.apply_dossier_promulgation(
+                apply_dossier_promulgation(db,
                     state, planted["bare"], "force_promulgated", content=content,
                 )
             except Exception as exc:  # noqa: BLE001 — evidence path; counted failed
@@ -371,7 +372,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         if midzhi_decision == "rejected" and not midzhi_unpromulgatable:
             midzhi_force_attempted = True
             try:
-                db.apply_dossier_promulgation(
+                apply_dossier_promulgation(db,
                     state, planted["midzhi"], "force_promulgated", content=content,
                 )
             except Exception as exc:  # noqa: BLE001 — counted failed

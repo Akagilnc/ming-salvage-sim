@@ -1,3 +1,4 @@
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
 
 import pytest
@@ -341,7 +342,7 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
         "SELECT office FROM characters WHERE name=?", (minister,)
     ).fetchone()["office"] == before
 
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier["id"], "promulgated", content=content
     )
     dossier = db.get_decree_dossier(dossier["id"])
@@ -403,7 +404,7 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
             "reason": "奉旨赈济", "execution_surface": "immediate",
         },
     )
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [_rejected_verdict(dossier_id)]
     )
     assert state.metrics["国库"] == before
@@ -411,7 +412,7 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert rejected["promulgation_blocked_layer"] == "six_offices"
     assert rejected["promulgation_reason"] == "科臣封驳。"
 
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}]
     )
     dossier = db.get_decree_dossier(dossier_id)
@@ -442,7 +443,7 @@ def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
     assert dossier["action_type"] == "assignment"
     assert dossier["executor_id"] == assignee
 
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )
@@ -517,7 +518,7 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
     assert dossier["executor_id"] == (assignee if expected_executor_kind else "")
 
     if action_type == "military_order":
-        db.apply_dossier_verdicts(
+        apply_dossier_verdicts(db,
             state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
             content=content,
         )
@@ -579,10 +580,10 @@ def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(
         target_kind="issue",
         target_id="narrative-irrigation",
     )
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, structured_id, "promulgated", content=content,
     )
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, narrative_id, "promulgated", content=content,
     )
 
@@ -699,8 +700,8 @@ def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_
         state, action_type="policy", decree_text="强颁赈济",
         target_kind="issue", target_id="forced-relief",
     )
-    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_verdicts(db, state, [_rejected_verdict(dossier_id)])
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
     before = state.metrics["国库"]
 
     result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': '赈济已毕'}], 'economy_moves': [{'account': '国库', 'delta': -3, 'category': '强颁赈济', 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
@@ -808,12 +809,12 @@ def test_manual_directive_capture_reaches_structured_dossier(
         assert dossier["action_type"] in {"secret_investigation", "protection"}
         if dossier["action_type"] == "secret_investigation":
             assert dossier["target_id"] == "granary-corruption"
-        db.apply_dossier_promulgation(state, dossier["id"], "promulgated")
+        apply_dossier_promulgation(db, state, dossier["id"], "promulgated")
         assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
         assert db.get_decree_dossier(dossier["id"])["execution_outcome"] == ""
         return
 
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier["id"], "promulgated", content=content,
     )
     if case == "allocation":
@@ -1109,7 +1110,7 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
         row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
     }
     with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(
+        apply_dossier_verdicts(db,
             state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
         )
     state.next_period()
@@ -1117,7 +1118,7 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
     assert dossier_id in {
         row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
     }
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{
             "dossier_id": dossier_id, "decision": "promulgated",
         }],
@@ -1131,7 +1132,7 @@ def test_interim_verdict_rejects_reserved_legal_reason_code(game):
         target_kind="issue", target_id="frontier-pay",
     )
     with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(state, [{
+        apply_dossier_verdicts(db, state, [{
             "dossier_id": dossier_id, "decision": "rejected",
             "legal_reason_code": "statute-42",
         }])
@@ -1262,7 +1263,7 @@ def test_directive_edit_replaces_mechanical_payload_before_submission(game):
     dossier = db.get_dossier_for_directive(directive_id)
     assert json.loads(dossier["payload_json"])["amount"] == 100
 
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
     )
     assert state.metrics["国库"] == before - 100
@@ -1311,7 +1312,7 @@ def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
         },
     )
 
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
 
     dossier = db.get_decree_dossier(dossier_id)
     assert state.metrics["国库"] == 0
@@ -1333,7 +1334,7 @@ def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
         },
     )
 
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
 
     dossier = db.get_decree_dossier(dossier_id)
     assert state.metrics["国库"] == 0
@@ -1519,7 +1520,7 @@ def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
             "locality_scope": "single",
         },
     )
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
     )
     state.turn += 1
@@ -1612,7 +1613,7 @@ def test_allocation_candidate_edit_preserves_mechanical_payload(game):
     assert payload["amount"] == 10
     assert payload["account"] == "国库"
     assert dossier["decree_text"] == "改稿拨帑赈济"
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
     )
     assert state.metrics["国库"] == before - 10
@@ -1668,7 +1669,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     assert [row["delta"] for row in db.list_economy_moves_for_dossier(dossier_id)] == (
         [] if expected_actual == 0 else [expected_actual]
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
 
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == status
@@ -1708,7 +1709,7 @@ def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
     dossier = db.get_dossier_for_directive(directive_id)
     assert dossier is not None
     assert dossier["target_id"] == character.name
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )
@@ -1758,7 +1759,7 @@ def test_in_transit_allocation_requires_execution_verdict(game):
             "target_id": "shaanxi",
         },
     )
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
     )
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
@@ -1830,7 +1831,7 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
     verdict = _rejected_verdict(dossier_id)
     verdict["gatekeeper_id"] = _active_minister(db)
     verdict["criteria_snapshot"]["endorsement_entry_ids"] = [1]
-    db.apply_dossier_verdicts(state, [verdict])
+    apply_dossier_verdicts(db, state, [verdict])
 
     restored = GameDB(db.path, content=content)
     try:
@@ -1853,7 +1854,7 @@ def test_rejection_verdict_defaults_omitted_midzhi_marker_to_false(game):
     verdict = _rejected_verdict(dossier_id)
     assert "midzhi_unpromulgatable" not in verdict
 
-    db.apply_dossier_verdicts(state, [verdict])
+    apply_dossier_verdicts(db, state, [verdict])
 
     row = db.list_decree_dossier_decisions(dossier_id)[-1]
     assert row["midzhi_unpromulgatable"] is False
@@ -1870,7 +1871,7 @@ def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
     verdict = _rejected_verdict(dossier_id)
     verdict.pop(missing)
     with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(state, [verdict])
+        apply_dossier_verdicts(db, state, [verdict])
 
 @pytest.mark.parametrize(("field", "bad_value"), [
     ("primary_opponents", [{"kind": "faction", "key": "not-a-real-faction"}]),
@@ -1887,7 +1888,7 @@ def test_rejection_runtime_contract_rejects_unknown_references(game, field, bad_
     verdict = _rejected_verdict(dossier_id)
     verdict[field] = bad_value
     with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(state, [verdict])
+        apply_dossier_verdicts(db, state, [verdict])
 
 @pytest.mark.parametrize(("field", "bad_value"), [
     ("imperial_authority_band", "low"),
@@ -1905,7 +1906,7 @@ def test_rejection_snapshot_rejects_malformed_typed_values(game, field, bad_valu
     verdict = _rejected_verdict(dossier_id)
     verdict["criteria_snapshot"][field] = bad_value
     with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(state, [verdict])
+        apply_dossier_verdicts(db, state, [verdict])
 
 @pytest.mark.parametrize("contamination", [
     {"primary_opponents": [{"kind": "faction", "key": 1}]},
@@ -1927,7 +1928,7 @@ def test_rejection_contract_rejects_numeric_contamination_without_history(
     verdict.update(contamination)
 
     with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(state, [verdict])
+        apply_dossier_verdicts(db, state, [verdict])
 
     assert db.list_decree_dossier_decisions(dossier_id) == []
     assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
@@ -1991,7 +1992,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
     assert (payload["amount"], payload["account"], payload["mode"]) == (
         25, "国库", "ordinary",
     )
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier["id"], "promulgated", content=content,
     )
     assert state.metrics["国库"] == before - 25

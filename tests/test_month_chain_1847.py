@@ -6,6 +6,7 @@ LLM 外缝可打；续推函数本身保持真实实现。
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
 import sqlite3
 
@@ -1543,7 +1544,7 @@ def _supervise(db, state, *, auditor: str, subject_id: int, token: str) -> None:
         executor_id=auditor,
         participants=[{"character_id": auditor, "tier": "主办"}],
     )
-    db.apply_dossier_promulgation(state, audit_id, "promulgated")
+    apply_dossier_promulgation(db, state, audit_id, "promulgated")
     db.add_dossier_links(audit_id, [{
         "target_dossier_id": int(subject_id),
         "relation_type": "稽核",

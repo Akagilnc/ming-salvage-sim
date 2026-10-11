@@ -8,31 +8,26 @@ Seams:
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
-import threading
 from types import SimpleNamespace
 
 import pytest
 
-import ming_sim.agents as agents_mod
 import ming_sim.audience_translate as audience_translate
 from ming_sim.audience_night import (
-    AudienceNightError,
     close_night,
     engine_command_mingfa_publication_ids,
-    list_chat_turns_for_night,
     list_ledger,
     open_night,
 )
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
-from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
     note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
-    stub_scene_agent,
 )
 
 
@@ -492,11 +487,11 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
         db.save_state(state)
         for d in grant_dossiers:
-            db.apply_dossier_promulgation(
+            apply_dossier_promulgation(db,
                 state, int(d["id"]), decision="promulgated", content=content,
             )
         if str(appt["status"]) == "proposed":
-            db.apply_dossier_promulgation(
+            apply_dossier_promulgation(db,
                 state, int(appt["id"]), decision="promulgated", content=content,
             )
 

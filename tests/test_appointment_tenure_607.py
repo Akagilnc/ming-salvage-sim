@@ -1,11 +1,11 @@
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
 
 import pytest
 
-from ming_sim import issues as issue_engine
 import ming_sim.entities.character.appointment as office_appointment
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import section, view
+from ming_sim.settlement.views import section
 
 VALID_TENURES = ("真除", "署理", "兼署", "加衔")
 
@@ -28,7 +28,7 @@ def _promulgate_appointment(db, state, content, name, office, tenure=None):
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
     )
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier["id"], "promulgated", content=content,
     )
     return db.get_decree_dossier(dossier["id"])
@@ -132,7 +132,7 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
         office_appointment, "_displace_duplicate_offices", fail_after_office_write
     )
     try:
-        db.apply_dossier_promulgation(
+        apply_dossier_promulgation(db,
             state, dossier_id, "promulgated", content=content,
         )
         raise AssertionError("dossier materialization failure did not propagate")
@@ -155,7 +155,7 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
     assert dict(db.get_decree_dossier(dossier_id)) == before_dossier
 
     monkeypatch.undo()
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier_id, "promulgated", content=content,
     )
     audit = db.conn.execute(

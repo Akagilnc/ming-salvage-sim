@@ -1,3 +1,4 @@
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
 
 import pytest
@@ -61,7 +62,7 @@ def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(
 def test_predeclared_midzhi_promulgation_persists_stigma(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["stigma"] == [{
         "kind": "midzhi", "reason": "predeclared", "turn": state.turn,
         "source_action": "promulgated",
@@ -133,13 +134,13 @@ def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
 def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳",
     )
     db.record_dossier_decision(dossier_id, "hold")
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣再驳",
     )
 
@@ -164,11 +165,11 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     dossier_id = _make_midzhi_dossier(db, state)
 
     for _ in range(2):
-        db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+        apply_dossier_verdicts(db, state, [_rejected_verdict(dossier_id)])
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
     with pytest.raises(ValueError):
-        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+        apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
     assert db.get_decree_dossier(dossier_id)["stigma"] == [
         {"kind": "midzhi", "reason": "predeclared", "turn": state.turn,
@@ -182,8 +183,8 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
         state, action_type="policy", decree_text="清核河工",
         target_kind="issue", target_id="river-works", payload={"mode": "ordinary"},
     )
-    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_verdicts(db, state, [_rejected_verdict(dossier_id)])
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
     assert db.get_decree_dossier(dossier_id)["stigma"] == [{
         "kind": "midzhi", "reason": "rescript", "turn": state.turn,

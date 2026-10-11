@@ -1,4 +1,5 @@
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import pytest
 
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
@@ -171,8 +172,8 @@ def test_force_promulgated_rejected_dossier_is_referenceable(game):
     db, state, _ = game
     dossier_id = _make_dossier(db, state, "中旨强颁的旧旨")
 
-    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_verdicts(db, state, [_rejected_verdict(dossier_id)])
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["promulgation_decision"] == "rejected"

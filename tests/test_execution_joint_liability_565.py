@@ -2,6 +2,7 @@
 
 
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import pytest
 
 from ming_sim.strict_types import validate_affected_parties
@@ -30,7 +31,7 @@ def _executing_dossier(db, state, *, roster=None):
         target_kind="issue", target_id="land-survey-565",
         participants=roster if roster is not None else _roster(),
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id
 
@@ -143,7 +144,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
         },
         participants=_roster(),
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
 
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["execution_outcome"] == "failed"

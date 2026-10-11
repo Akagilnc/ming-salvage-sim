@@ -12,7 +12,7 @@ Seams:
 
 from __future__ import annotations
 
-import json
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 
 from ming_sim.db import GameDB
 from ming_sim.supervision import (
@@ -67,7 +67,7 @@ def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
         executor_id=owner,
         participants=[{"character_id": owner, "tier": "主办"}],
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
+    apply_dossier_promulgation(db, state, did, "promulgated")
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,),
     )

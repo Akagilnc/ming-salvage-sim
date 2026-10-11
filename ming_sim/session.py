@@ -207,7 +207,7 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
     后宫人物不在此查。返回在册原始 key，无则 None。
 
     吃「在册身份归一」(_is_ming_court_minister_character)，**含宗藩/未仕**——五处解析
-    （本函数 / db._commit_office_action / create_secret_order / apply_office_appointment 别名归一 /
+    （本函数 / settlement.dossier._commit_office_action / create_secret_order / apply_office_appointment 别名归一 /
     转译入册）共吃，禁与可召谓词混用（#1317 r2）。
     power_id 用 db.resolve_power_id 惰性入参（DB 权威，#125）：招抚归明者可召即可罢/可任；
     外藩(皇太极) resolve≠ming 仍不接。"""

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import concurrent.futures
 import json
 from dataclasses import dataclass, field
@@ -1341,7 +1342,7 @@ def apply_rescript_batch(
                         if not dossier_action_policy(
                             "grant_allocation", payload,
                         )["external_review"]:
-                            db.apply_dossier_promulgation(
+                            apply_dossier_promulgation(db,
                                 state, dossier_id, "promulgated", content=content,
                             )
                 # decision 行：写 choice + decided（#1490 / 普通 HITL）

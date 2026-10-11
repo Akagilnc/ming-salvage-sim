@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
 
 import pytest
@@ -28,7 +29,7 @@ def _executing_assignment(db, state, *, text="清丈畿辅田亩", target="land-
         target_kind="issue",
         target_id=target,
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "executing"
     assert row.get("secret_order_id") in (None, 0)

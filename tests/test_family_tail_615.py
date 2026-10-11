@@ -1,11 +1,11 @@
 """#615 473·S9 族尾收口：贯通 tracer + 密令 0055 豁免 + 接缝核对。"""
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
 
 import pytest
 
 import ming_sim.decree as decree_mod
-from ming_sim import issues as issue_engine
 from ming_sim.db import GameDB
 from ming_sim.models import Character
 from tests.dossier_test_helpers import _cost_events, _sat
@@ -157,7 +157,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
             },
         ],
     }
-    restored.apply_dossier_verdicts(
+    apply_dossier_verdicts(restored,
         restored_state, [verdict], content=content,
     )
     rejected = restored.get_decree_dossier(dossier_id)
@@ -195,7 +195,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
     # 玩家三选接缝已由 test_month_chain_1847 从真实月链覆盖；此处只验
     # 同一案卷读档后的领域判决和成本，不再编造旧结算后半段。
     settle_turn = restored_state.turn
-    restored.apply_dossier_promulgation(
+    apply_dossier_promulgation(restored,
         restored_state, dossier_id, decision, content=content,
     )
 

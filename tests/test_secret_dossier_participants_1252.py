@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 
 import pytest
 
-from tests.conftest import with_monthly_reports
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -50,7 +49,6 @@ def test_s1_public_projection_filter_unchanged(game):
 
 def test_s2_tracer_613_565_readers_see_appended_roster(game):
     """② 同一 tracer 尾断言 #611/#565 读端可见追加参与人。"""
-    import ming_sim.issues as issue_engine
     from ming_sim.participant_roster import project_execution_liability_parties
     from tests.test_authority_ledger_611 import _grant
 
@@ -91,7 +89,6 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
 
 def test_s2_public_dossier_participants_still_rejects_secret_id(game):
     """③ 公共 dossier_participants 对密令 id 仍拒（571:389 不得放松）。"""
-    import ming_sim.issues as issue_engine
 
     db, state, _content = game
     lead, worker = _people(db, 2)
@@ -110,7 +107,6 @@ def test_s2_public_dossier_participants_still_rejects_secret_id(game):
 
 def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     """④ 私字段对非本批密令 id 及公共案卷 id 拒。"""
-    import ming_sim.issues as issue_engine
 
     db, state, _content = game
     lead, worker = _people(db, 2)
@@ -155,7 +151,7 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
         state, action_type="policy", decree_text="公开案",
         target_kind="issue", target_id="plain-secret-auth-1252",
     )
-    db.apply_dossier_promulgation(state, plain_id, "promulgated")
+    apply_dossier_promulgation(db, state, plain_id, "promulgated")
     db.append_decree_dossier_participants(plain_id, [{
         "character_id": lead, "tier": "主办", "role": "承办",
     }], state=state)
@@ -210,7 +206,6 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
 @pytest.mark.parametrize("authority", [None, set()])
 def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority):
     """⑤ 私授权 None/空集不重建。"""
-    import ming_sim.issues as issue_engine
 
     db, state, _content = game
     lead, worker = _people(db, 2)

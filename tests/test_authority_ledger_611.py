@@ -1,5 +1,6 @@
 """#611 authority ledger: production slot, projection, restore, revoke facts."""
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import pytest
 
 from ming_sim.db import GameDB
@@ -362,7 +363,7 @@ def test_promulgation_payload_does_not_write_authority_records(game):
             "mode": "ordinary",
         },
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     rows = db.conn.execute(
         "SELECT * FROM authority_records WHERE dossier_id=?",
         (int(dossier_id),),

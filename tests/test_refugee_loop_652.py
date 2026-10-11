@@ -7,6 +7,7 @@ owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不�
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
 import sqlite3
 
@@ -50,7 +51,7 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
             "execution_surface": "immediate", "cadence": cadence,
         },
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     return dossier_id
 
 
@@ -216,7 +217,7 @@ def test_non_recovery_grant_no_回流(game, monkeypatch):
             "execution_surface": "immediate", "cadence": "一次性",
         },
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "fulfilled"
     assert db.list_economy_moves_for_dossier(dossier_id)
     before = _pop(db, "流民", "shaanxi")
@@ -266,7 +267,7 @@ def _in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag
             "cadence": "一次性",
         },
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "executing"
     assert row["execution_outcome"] in ("", None)
@@ -331,8 +332,8 @@ def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi
             "cadence": "一次性",
         },
     )
-    db.apply_dossier_verdicts(state, [rejected_verdict(dossier_id)])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_verdicts(db, state, [rejected_verdict(dossier_id)])
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "executing"
     assert str(row["execution_outcome"] or "") == ""

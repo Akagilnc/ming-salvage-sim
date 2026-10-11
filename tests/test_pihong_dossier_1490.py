@@ -11,6 +11,7 @@ A. bind 对无能力字段的 dossier: 前缀解绑；due-commitment 同形不�
 D. 命中 allowed 后从服务端 option 重建 label/hint/能力字段，客户端只留 note。
 """
 from __future__ import annotations
+from ming_sim.settlement.dossier import apply_dossier_verdicts
 import asyncio
 import json
 import threading
@@ -964,7 +965,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         created = after_rows[-1]
         if promulgate:
             verdict = {'dossier_id': int(created['id']), 'decision': 'promulgated'}
-            db.apply_dossier_verdicts(state, [verdict], content=content)
+            apply_dossier_verdicts(db, state, [verdict], content=content)
             created = next((d for d in db.list_decree_dossiers() if int(d['id']) == int(created['id'])))
         return created
     p = ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': '责成督赈', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'assignee_name': '', 'participant_roster': _roster(_ROSTER_LEAD)}, db=db, content=content, state=state)
@@ -1578,7 +1579,7 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
     mid = next((d for d in db.list_decree_dossiers() if d.get('mode') == 'midzhi'))
     before_f = _sat(db, 'factions', '东林')
     before_c = _sat(db, 'classes', '士绅')
-    db.apply_dossier_verdicts(state, [{'dossier_id': int(mid['id']), 'decision': 'promulgated', 'affected_parties': [{'kind': 'faction', 'key': '东林', 'direction': 'negative', 'intensity': 'strong'}, {'kind': 'class', 'key': '士绅', 'direction': 'negative', 'intensity': 'strong'}]}], content=content)
+    apply_dossier_verdicts(db, state, [{'dossier_id': int(mid['id']), 'decision': 'promulgated', 'affected_parties': [{'kind': 'faction', 'key': '东林', 'direction': 'negative', 'intensity': 'strong'}, {'kind': 'class', 'key': '士绅', 'direction': 'negative', 'intensity': 'strong'}]}], content=content)
     assert _sat(db, 'factions', '东林') == before_f
     assert _sat(db, 'classes', '士绅') == before_c
     stored = db.conn.execute('SELECT affected_parties_json FROM decree_dossier_decisions WHERE dossier_id=? ORDER BY id DESC LIMIT 1', (int(mid['id']),)).fetchone()

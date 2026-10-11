@@ -1,4 +1,5 @@
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.entities.character.appointment import apply_office_appointment
 from ming_sim.applier import Provenance, RejectedItem
 import shutil
@@ -174,7 +175,7 @@ def test_status_exit_clears_complete_transit_ledger(game, exit_path):
             state, action_type="dismiss_assignment", decree_text="罢免", target_kind="character", target_id=name,
             payload={"name": name, "_office_action": "罢免"},
         )
-        db.apply_dossier_promulgation(state, dossier_id, "promulgated", content=content)
+        apply_dossier_promulgation(db, state, dossier_id, "promulgated", content=content)
 
     row = db.conn.execute(
         "SELECT status, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "

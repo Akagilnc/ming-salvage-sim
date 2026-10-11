@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_verdicts
 import ming_sim.settlement.run as settlement_run
 
 from ming_sim.applier import Provenance
@@ -1213,7 +1214,7 @@ def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game
         (person.name, "行止"),
     ).fetchone()["n"])
 
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state,
         [{"dossier_id": row["id"], "decision": "promulgated"} for row in dossiers],
         content=content,

@@ -1363,12 +1363,21 @@ def test_create_secret_order_allows_returned_defector(game):
     oid = create_test_secret_order(db, state, defector, "密查", "着尔暗中查访", [])
     assert oid > 0  # DB 已归明 → 不被资格闸拒
 
-def test_pending_dismiss_rejects_vassal_prince(read_game):
-    """pending 罢免落库（_commit_office_action 罢免路）拒宗藩——宗室非朝臣，不可作朝臣罢免（cmr R6）。"""
-    db, state, content = read_game
+def test_pending_dismiss_rejects_vassal_prince(game):
+    """Dismissal through the verdict entry rejects a vassal prince atomically."""
+    from ming_sim.settlement.dossier import apply_dossier_promulgation
+
+    db, state, content = game
     name = _materialize_active_prince(db, state, content)
-    ok = db._commit_office_action(state, {"action": "罢免"}, {"name": name}, content)
-    assert ok == set()
+    dossier_id = db.create_decree_dossier(
+        state, action_type="dismiss_assignment", decree_text="罢免",
+        target_kind="character", target_id=name,
+        executor_kind="character", executor_id=name,
+        payload={"name": name, "_office_action": "罢免"},
+    )
+    with pytest.raises(ValueError):
+        apply_dossier_promulgation(db, state, dossier_id, "promulgated", content=content)
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
     assert db.get_character_status(name)[0] == "active"  # 未被罢、状态不变
 
 def test_person_log_normalized_not_truncated(game):

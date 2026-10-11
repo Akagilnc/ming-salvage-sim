@@ -1,3 +1,4 @@
+from ming_sim.settlement.dossier import apply_dossier_verdicts
 # #1504 typed covert-task contract fixtures (applier-native 万亩 / 实务事功).
 LIAO_PAY_COVERT_TASK = {
     "kind": "核发辽饷",
@@ -104,4 +105,4 @@ def promulgate_proposed_appointments(db, state, content):
         for row in db.list_decree_dossiers(status="proposed")
         if row["action_type"] == "appointment"
     ]
-    db.apply_dossier_verdicts(state, verdicts, content=content)
+    apply_dossier_verdicts(db, state, verdicts, content=content)

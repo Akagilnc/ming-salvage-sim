@@ -12,6 +12,7 @@ Seams:
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 
 from ming_sim.applier import Provenance
@@ -44,7 +45,6 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
 )
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import view
 
 
 # ── fixtures（复用 #621 三拍/_cost_events 口径）────────────────────────
@@ -79,7 +79,7 @@ def _executing_policy_dossier(db, state, *, token: str = "breach-623", holder: s
         ],
         payload={"mode": "ordinary", "text": token},
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id, holder
 
@@ -950,7 +950,7 @@ def test_policy_reversal_revoke_takes_effect_same_month(game):
             "text": "前旨作废，撤回成命",
         },
     )
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state,
         [{"dossier_id": revoke_id, "decision": "promulgated"}],
         content=content,
@@ -991,7 +991,7 @@ def test_policy_reversal_revoke_model_verdict_lands_same_month(game):
         target_id=str(did),
         payload={"revoke_target_dossier_id": did, "text": "前旨作废，撤回成命"},
     )
-    db.apply_dossier_verdicts(
+    apply_dossier_verdicts(db,
         state, [{"dossier_id": revoke_id, "decision": "promulgated"}], content=content,
     )
     out = settle_delta(state, db, {"dossier_executions": [{

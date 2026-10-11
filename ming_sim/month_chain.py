@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdict_metadata
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -848,7 +849,7 @@ def _settle_edicts(
                     db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
                     try:
                         with atomic(db):
-                            db.apply_dossier_promulgation(
+                            apply_dossier_promulgation(db,
                                 state, int(dossier["id"]), str(verdict["decision"]),
                                 blocked_layer=str(verdict.get("blocked_layer") or ""),
                                 reason=str(verdict.get("reason") or ""),
@@ -858,7 +859,7 @@ def _settle_edicts(
                                 criteria_snapshot=verdict.get("criteria_snapshot") or {},
                                 content=session.content,
                             )
-                            db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
+                            apply_dossier_verdict_metadata(db, state, int(dossier["id"]), verdict)
                     finally:
                         db.conn._recommendation_snapshots_prevalidated = previous
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
@@ -1746,7 +1747,7 @@ def _apply_decided_triad(
     ).strip()
     if decision not in {"force_promulgated", "withdrawn", "hold"}:
         return
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier_id, decision, content=content,
     )
 

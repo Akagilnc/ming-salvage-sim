@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.applier import Provenance
 
 import json
@@ -37,7 +38,7 @@ def _executing_policy(db, state, *, token: str):
             {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
         ],
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id
 

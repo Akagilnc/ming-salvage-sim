@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.applier import Provenance
 
 from ming_sim.breach_plea import (
@@ -50,7 +51,7 @@ def _executing_dossier(db, state, *, token: str, roster=None):
         target_id=token,
         participants=roster,
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
+    apply_dossier_promulgation(db, state, did, "promulgated")
     assert db.get_decree_dossier(did)["status"] == "executing"
     return did
 
