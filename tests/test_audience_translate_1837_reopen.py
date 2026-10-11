@@ -122,7 +122,6 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     """Drive the player month entry with only model outputs supplied offline."""
     from tests.month_chain_helpers import empty_rescript_response
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
-    import threading
     import ming_sim.month_chain as month_chain
     from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
 
@@ -412,7 +411,7 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
     known = db.get_character_knowledge(state, attendant.name)
     report_events = [event for event in known["events"]
                      if event["source_id"] in {r["source_id"] for r in sources}]
-    assert len(report_events) == 1
+    assert [event["body"] for event in report_events] == [query]
     assert report_events[0]["kind"] == "inquiry_assignment"
     other = next(c.name for c in content.characters.values() if c.name != attendant.name)
     assert not any(e["source_id"] in {r["source_id"] for r in sources}

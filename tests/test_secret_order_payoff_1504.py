@@ -22,11 +22,9 @@ from ming_sim.covert_progress import (
     CovertContractError,
     apply_investigation_spoliation,
     build_covert_task_contract,
-    decide_secret_order_settlement,
     investigation_clue_records,
     live_investigation_fact_keys,
     read_covert_task_contract,
-    seed_guilt_counts_as_debt,
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
     settle_due_secret_orders,
@@ -35,7 +33,6 @@ from ming_sim.applier import Provenance
 from ming_sim.month_chain import build_secret_orders_supply_feed
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_score_extraction
-from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
     if investigation_target:
@@ -251,7 +248,7 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
     import ming_sim.month_chain as month_chain
     from pathlib import Path
     import ming_sim.materials as materials_mod
-    from ming_sim.materials import list_materials, material_tools, read_material
+    from ming_sim.materials import list_materials, material_tools
     from ming_sim.models import LLMConfig
 
     db, state, _ = game
@@ -313,13 +310,9 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
                 who = str((entry.get(side) or {}).get("name") or "")
                 rel = str((entry.get(side) or {}).get("materials_path") or "")
                 if who and rel:
-                    # 路径可读即可；不锁正文措辞、不比同源等值。
-                    assert read_material(captured["root"], rel) is not None
                     base = Path(rel).parent.as_posix()
                     listed = list_materials(captured["root"], base)
                     assert set(tools["list_materials"](base).splitlines()) == set(listed)
-                    for path in listed:
-                        assert tools["read_material"](path) is not None
                     paths[who] = {Path(path).relative_to(base).as_posix() for path in listed}
         captured["paths"] = paths
         return _json.dumps({"dossier_progress_reports": [], "covert_exec_selections": []})

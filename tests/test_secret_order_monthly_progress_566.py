@@ -39,6 +39,7 @@ def test_monthly_report_keeps_its_turn_and_text(game):
 
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
     report = emperor_order["dossier_progress"][-1]
+    assert report["memorial_text"] == marker
     assert int(report["turn"]) == int(state.turn)
     assert report.get("is_terminal") is False
 
@@ -55,19 +56,20 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
     })
     assert not any(str(item.get("source_id") or "").startswith(
         f"secret_order_disclosure:{order_id}:"
-    ) for item in db._character_knowledge_events(""))
+    ) for item in db.get_character_knowledge(state, _actor(db))["public_events"])
 
     apply_score_extraction(db, state, {"secret_order_updates": [{
         "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
     }]}, content=content)
-    public = db._character_knowledge_events("")
+    public = db.get_character_knowledge(state, _actor(db))["public_events"]
     disclosure = next(
         item for item in public
         if str(item.get("source_id") or "").startswith(
             f"secret_order_disclosure:{order_id}:"
         )
     )
-    assert disclosure["source_id"]
+    assert marker in disclosure["body"]
+    assert "该案已经明发廷议" in disclosure["body"]
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):

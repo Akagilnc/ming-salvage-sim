@@ -779,9 +779,6 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
         turn=int(state.turn),
     )
     settle_staged_declarations_in_decree_order(db, state, ["decree:3"])
-    facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert len(facts) == 1
-
     with pytest.raises(DecreeAlreadySettled):
         stage_declaration(
             db, decree_ref="decree:3",

@@ -350,16 +350,11 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
-@pytest.mark.parametrize("model_text,tail_status,visible", [
-    ("\n 史评 \n", "done", "\n 史评 \n"),
-    ("  ", "done", "  "),
-])
+@pytest.mark.parametrize("model_text", ["\n 史评 \n", "  "])
 def test_ending_summary_runs_in_mechanical_tail_after_advance(
-    game, monkeypatch, model_text, tail_status, visible,
+    game, monkeypatch, model_text,
 ):
     """过月入口：模型原文落总评。"""
-    from ming_sim.cli.terminal import _printed_ending_summary
-
     db, state, content = game
     closed_turn = int(state.turn)
     _forbid_extractor(monkeypatch)
@@ -428,18 +423,13 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     assert tail_reads_under_gate
     assert all(tail_reads_under_gate)
     tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
-    assert tail["status"] == tail_status
+    assert tail["status"] == "done"
     ending = db.get_ending_summary()
     landed = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
     assert landed is not None
     assert landed["summary_pending"] is False
-    printed = _printed_ending_summary(session)  # 观察打印面；不锁 summary 字面
-    if visible:
-        assert ending is not None
-    else:
-        assert ending is None
-        assert landed["summary"] == ""
-        assert printed in (None, "")
+    assert ending["summary"] == model_text
+    assert landed["summary"] == model_text
 
 
 def test_chapter_memory_retired_from_three_readers(game, monkeypatch):

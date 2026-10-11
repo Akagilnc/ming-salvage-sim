@@ -338,17 +338,8 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
 
 # ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
 
-def _gazette_projection_source_present(db, state, name, turn) -> bool:
-    """公开读链是否有 projection:turn_report:<turn> 来源行（身份，不取 body）。"""
-    source_id = f"projection:turn_report:{turn}"
-    return any(
-        str(item.get("source_id") or "") == source_id
-        for item in db.get_character_knowledge(state, name)["public_events"]
-    )
-
-
 def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it(game, monkeypatch):
-    """自由邸报按 projection:turn_report 入公开读链；钉 turn 行与投影行身份，不锁正文。"""
+    """给定自由邸报经真实归档与公开读链原样运输；精确加派账不冒充奏报。"""
     db, state, content = game
     first_turn = state.turn
     first_body = "陕西加派月报。"
@@ -356,10 +347,6 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
         state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=10.0)]},
         before_turn=first_turn, content=content, monkeypatch=monkeypatch, narrative=first_body,
     )
-    assert db.conn.execute(
-        "SELECT turn FROM turn_reports WHERE turn=?", (first_turn,)
-    ).fetchone() is not None
-    assert _gazette_projection_source_present(db, state, "温体仁", first_turn)
 
     free_body = "陕西流民渐起，关中贼势暗流潜滋。"
     second_turn = state.turn
@@ -368,10 +355,13 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
         state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)]},
         before_turn=second_turn, content=content, monkeypatch=monkeypatch, narrative=free_body,
     )
-    assert db.conn.execute(
-        "SELECT turn FROM turn_reports WHERE turn=?", (second_turn,)
-    ).fetchone() is not None
-    assert _gazette_projection_source_present(db, state, "温体仁", second_turn)
+    public = {
+        row["source_id"]: row["body"]
+        for row in db.get_character_knowledge(state, "温体仁")["public_events"]
+    }
+    for turn, body in ((first_turn, first_body), (second_turn, free_body)):
+        assert db.get_turn_report(turn) == body
+        assert public[f"projection:turn_report:{turn}"] == body
 
 
 # ── non-substrate fiscal engine：加派入口不消费 ─────────────────────────────

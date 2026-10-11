@@ -152,7 +152,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     assert held.advanced is False
     assert int(state.turn) == closed_turn
     assert _pop(db, "流民", "shaanxi") == pool_before
-    assert any(len(row.get("options") or []) >= 2 for row in held.decisions)
+    assert any(row["title"] == "是否加赈" for row in held.decisions)
 
     # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
     from ming_sim.decree_forecast import decree_ref_for_dossier
@@ -166,7 +166,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     # 仍停在待裁；幂等回读案头，不二跑世界段。
     held_again = session.resolve_turn(allow_empty_decree=True)
     assert held_again.awaiting is True
-    assert any(len(row.get("options") or []) >= 2 for row in held_again.decisions)
+    assert [row["decision_key"] for row in held_again.decisions] == [row["decision_key"] for row in held.decisions]
     assert int(state.turn) == closed_turn
 
     # 亲裁答复后清请旨，主链才能进邸报交接。
@@ -334,7 +334,6 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     from ming_sim.declaration_dispatch import (
         held_dossier_decree_ref, pending_action_decree_ref, stage_declaration,
     )
-    from types import SimpleNamespace
     from ming_sim.decree_forecast import decree_ref_for_dossier
     from ming_sim.month_chain import _settle_edicts
 

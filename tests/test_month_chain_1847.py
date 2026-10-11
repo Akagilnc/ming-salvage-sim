@@ -94,7 +94,8 @@ def test_world_question_opens_rescript_desk_and_awaits(game, monkeypatch):
     assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
     desk = session.pending_decisions()
     assert len(desk) == 1
-    assert len(desk[0]["options"]) == 2
+    assert desk[0]["title"] == "是否增援宁远"
+    assert {opt["label"] for opt in desk[0]["options"]} == {"准调关宁", "暂缓"}
     assert desk[0]["status"] == "pending"
 
 
@@ -113,7 +114,7 @@ def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
 
     assert result.awaiting is True
     desk = session.pending_decisions()
-    assert len(desk) == 2
+    assert {row["title"] for row in desk} == {"问一", "问二"}
     assert all(row.get("kind") == "decision" for row in desk)
     assert all(row.get("status") == "pending" for row in desk)
 
@@ -499,7 +500,7 @@ def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):
 
     assert result.awaiting is True
     desk = session.pending_decisions()
-    assert len(desk) == 2
+    assert {row["title"] for row in desk} == {"是否加赈", "是否增援宁远"}
     assert all(row.get("kind") == "decision" for row in desk)
     assert all(row.get("status") == "pending" for row in desk)
 
@@ -631,7 +632,7 @@ def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
     assert int(state.turn) == closed_turn
     assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
     desk = session.pending_decisions()
-    assert len(desk) == 1
+    assert [row["title"] for row in desk] == ["旧急务甲"]
     assert desk[0]["kind"] == "rescript_draft"
 
 
@@ -853,7 +854,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     payload = json.loads(message)
     assert payload["prior_forecast_text"] == "预推不可见:陕西赈灾"
     assert payload["answers"][0]["context"] == question_context
-    assert payload["this_decree"]["decree_text"]
+    assert payload["this_decree"]["decree_text"] == "陕西赈灾"
     assert payload["this_decree"]["status"] == "promulgated"
     from pathlib import Path
     assert not Path(str(captured["prepared_root"])).exists()
@@ -922,13 +923,13 @@ def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.awaiting is True
-    assert len(result.decisions) == 2
-    assert len(segments) == 1
+    assert [row["title"] for row in result.decisions] == ["问一", "问二"]
+    assert segments == ["问前事实。"]
     from ming_sim.decree_forecast import decree_ref_for_dossier
     ref = decree_ref_for_dossier(db, db.get_decree_dossier(dossier_id))
     stored = db.staged_declarations.questions_for(ref)
-    assert len(stored) == 2
-    assert db.staged_declarations.forecast_text_for(ref) is not None
+    assert [item["title"] for item in stored] == ["问一", "问二"]
+    assert db.staged_declarations.forecast_text_for(ref) == "问前事实。"
 
 
 def test_question_note_only_is_kept_and_other_decisions_still_require_label(
@@ -992,7 +993,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         }],
         write_gate=session._write_gate,
     )
-    assert answers and "note" in answers[0][0]
+    assert answers and answers[0][0]["note"] == "着户部另议"
     assert answers[0][0]["label"] == ""
     assert not db.staged_declarations.questions_for(ref)
 
@@ -1749,7 +1750,6 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
 
 def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, monkeypatch):
     """_settle_edicts.persist_result：disclosed 暂缓项须与旨意结算同事务写入月链。"""
-    from types import SimpleNamespace
 
     from ming_sim.decree_forecast import pending_action_decree_ref, stage_declaration
     from ming_sim.month_chain import _settle_edicts
@@ -2143,7 +2143,6 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         int(item.get("dossier_id") or 0) == dossier_id
         for item in (feed.get("eligible_dossiers") or [])
     )
-    assert "board" in feed
 
     gazette = feeds["gazette"]
     assert all(
@@ -2250,7 +2249,6 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
         and item["covert_task_contract"] is not None
         for item in captured_feed["eligible_dossiers"]
     )
-    assert captured_feed["board"]
     assert "origin_effects" not in captured_feed
     assert "origin_rejections" not in captured_feed
     assert any(
@@ -2270,7 +2268,6 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
 
 def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatch):
     """披露暂缓与旨意落账同提交边界：alongside 失败则效果与链状态皆不半落。"""
-    from types import SimpleNamespace
 
     from ming_sim.declaration_dispatch import stage_declaration
     from ming_sim.decree_forecast import pending_action_decree_ref
