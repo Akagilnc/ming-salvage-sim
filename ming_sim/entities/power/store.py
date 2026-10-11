@@ -92,30 +92,9 @@ class PowerStore:
             tuple(row.get(column) for column in _NAME_LOG_COLUMNS),
         )
 
-    def read_load_pending_gate_power_shadow_rows(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, leverage, military_strength, supply FROM powers', params).fetchall()
-
-    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id FROM powers WHERE id=?', params).fetchone()
-
-    def read_apply_issue_entities(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT 1 FROM powers WHERE id=?', params).fetchone()
-
-    def read_strategic_event_result_preflight_error(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT 1 FROM powers WHERE id = ? LIMIT 1', params).fetchone()
-
-    def read_apply_power_rename(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM powers WHERE id = ?', params).fetchone()
-
     def display_name(self, power_id: str) -> str:
         row = self.read_power_display_name((str(power_id),))
         return str(row["name"]) if row else str(power_id)
 
     def read_power_display_name(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name FROM powers WHERE id = ?', params).fetchone()
-
-    def read_find_pacification_target(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT kind, leader, stance FROM powers WHERE id=?', params).fetchone()
-
-    def read_apply_character_power_changes(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id FROM powers', params).fetchall()

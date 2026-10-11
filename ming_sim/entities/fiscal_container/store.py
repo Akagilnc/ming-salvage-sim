@@ -61,6 +61,3 @@ class FiscalContainerStore:
         values = {key: 0.0 for key in keys}
         values.update({str(row["key"]): float(row["value"] or 0.0) for row in rows})
         return values
-
-    def read_treasury_hub_result(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            SELECT key, value FROM fiscal_containers\n            WHERE key IN ('hub_京运实拨', 'hub_中央军饷实拨', 'hub_京运损耗')\n            ", params).fetchall()

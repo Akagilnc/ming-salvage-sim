@@ -34,7 +34,6 @@ import re
 import sqlite3
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Set, Tuple
 
-from ming_sim.applier import atomic, connection_owns_transaction, safe_json_dumps
 from ming_sim.applier import (
     StoredDocumentError, atomic, connection_owns_transaction,
     coerce_beyond_intent_flag,
@@ -75,9 +74,7 @@ from ming_sim.entities.dossier import (
     hydrate_dossier_row,
     normalize_dossier_mode,
 )
-from ming_sim.matching import match_region_id_from_text
 from ming_sim.schema import ensure_core_schema
-from ming_sim.exceptions import OfficeAppointmentRejection
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, _load_durable_json_list, _load_durable_json_object,
@@ -86,7 +83,6 @@ from ming_sim.models import (
 )
 from ming_sim.participant_roster import (
     PARTICIPANT_TIERS,
-    decode_durable_participant_roster,
     decode_durable_participant_roster,
     participant_roster_names,
     project_execution_liability_parties,
@@ -123,10 +119,6 @@ logger = logging.getLogger(__name__)
 
 # 结构化 id 字段入库前归一（trim）；其余 TEXT 字段（灾情/状况/番号等）原值入库。
 _STRUCTURED_ID_FIELDS = frozenset({"controlled_by", "station_region", "owner_power"})
-
-# ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
-# 同刻度）。#1843：双单位/save_meta 标已退役，读口恒为「人」。
-POPULATION_UNIT_PERSONS = "人"
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
 # create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
@@ -13404,66 +13396,6 @@ class GameDB:
             self.conn.backup(dest)
         finally:
             dest.close()
-
-
-
-    # --- restored orchestration (needs GameDB collaborators) ---
-    def build_chat_projection(self, minister_name: str, night_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """当前召对夜的 turn-identified 投影：user/minister 逐条带 chat_turn_id。
-
-        单一真源：以 chat_messages（与 load_all_chat_history 同基）为骨架，join
-        chat_turns 打 turn 身份。前端据此一投影渲染。
-        """
-        if night_id is None:
-            open_night = self.conn.execute(
-                "SELECT id FROM audience_nights WHERE status='open' ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            night_id = int(open_night["id"]) if open_night else 0
-        turns = self.conn.execute(
-            "SELECT id, user_message_id, minister_message_id FROM chat_turns "
-            "WHERE minister_name=? AND night_id=?",
-            (minister_name, int(night_id)),
-        ).fetchall()
-        message_ids = [
-            int(message_id)
-            for turn in turns
-            for message_id in (turn["user_message_id"], turn["minister_message_id"])
-            if message_id is not None
-        ]
-        if message_ids:
-            placeholders = ",".join("?" for _ in message_ids)
-            msgs = self.conn.execute(
-                f"SELECT id, role, content, highlights_json FROM chat_messages "
-                f"WHERE id IN ({placeholders}) ORDER BY id",
-                message_ids,
-            ).fetchall()
-        else:
-            msgs = []
-        msg_turn: Dict[int, int] = {}
-        for t in turns:
-            tid = int(t["id"])
-            if t["user_message_id"] is not None:
-                msg_turn[int(t["user_message_id"])] = tid
-            if t["minister_message_id"] is not None:
-                msg_turn[int(t["minister_message_id"])] = tid
-        projection: List[Dict[str, Any]] = []
-        for m in msgs:
-            mid = int(m["id"])
-            turn_id = msg_turn.get(mid, 0)
-            role = m["role"]
-            # #544：只大臣气泡携带判官清单；帝侧恒 []（SELECT 已点名 highlights_json）
-            highlights = (
-                self.chat_messages.parse_highlights(m["highlights_json"])
-                if role == "minister"
-                else []
-            )
-            projection.append({
-                "role": role,
-                "content": m["content"],
-                "chat_turn_id": turn_id,
-                "highlights": highlights,
-            })
-        return projection
 
     def mark_pending_night_approved(
         self, action_ids: Iterable[int], *, night_id: Optional[int] = None,

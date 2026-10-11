@@ -81,12 +81,6 @@ class FactionStore:
             [(row["leverage"], row["leverage_offset"], row["name"]) for row in rows],
         )
 
-    def read_snapshot_person_write_state(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name, leverage, leverage_offset FROM factions', params).fetchall()
-
-    def read_recompute_faction_leverage(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT leverage_offset FROM factions WHERE name=?', params).fetchone()
-
     def read_faction_satisfaction(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT satisfaction FROM factions WHERE name = ?', params).fetchone()
 
@@ -101,15 +95,6 @@ class FactionStore:
         row = self.read_faction_leverage((faction,))
         return int(row["leverage"]) if row else 50
 
-
-    def read_adjust_factions(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT satisfaction, leverage FROM factions WHERE name = ?', params).fetchone()
-
-    def read_build_faction_denunciation_facts(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name FROM factions ORDER BY name', params).fetchall()
-
-    def read_build_promulgation_judge_context(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name,leverage,agenda FROM factions ORDER BY name', params).fetchall()
 
     def read_names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name FROM factions', params).fetchall()

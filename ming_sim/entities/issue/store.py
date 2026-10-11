@@ -112,23 +112,8 @@ class IssueStore:
     def set_affair_id_if_unbound(self, issue_id: int, affair_id: int) -> int:
         return bind_affair_once(self._conn, "issues", int(issue_id), affair_id)
 
-    def read_assert_commission_grant_target_exists(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT 1 FROM issues WHERE id=?', params).fetchone()
-
-    def read_dispatch_rushes(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, status, stages_json FROM issues WHERE id=?', params).fetchone()
-
     def read_event_issue_refs(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT origin_ref FROM issues WHERE origin_kind='event_pool'", params).fetchall()
-
-    def read_apply_issue_tracker_output(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status FROM issues WHERE id=?', params).fetchone()
-
-    def read_apply_score_extraction_body(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT ongoing_effects FROM issues WHERE id=?', params).fetchone()
-
-    def read_gather_impeachment_surge_candidates(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT 1 FROM issues WHERE origin_kind='impeachment_surge' AND origin_ref=? AND faction_hint=? LIMIT 1", params).fetchone()
 
     def read_list_commitments_for_dossier(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM issues WHERE origin_ref=? ORDER BY id', params).fetchall()
@@ -142,75 +127,29 @@ class IssueStore:
     def read_find_any_issue_by_origin(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM issues WHERE origin_kind=? AND origin_ref=? LIMIT 1', params).fetchone()
 
-    def read_trigger_commitment_backlashes(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, title, closed_turn, commitment_kind, origin_ref FROM issues WHERE id=?', params).fetchone()
-
-    def read_trigger_commitment_backlashes_title(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT title FROM issues WHERE id=?', params).fetchone()
-
-    def read_apply_punishment_verdict_effect(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status,origin_kind,faction_hint,target_roster FROM issues WHERE id=?', params).fetchone()
-
-    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id, title, stages_json FROM issues WHERE status='active' ORDER BY id", params).fetchall()
-
-    def read_apply_imperial_deliberation_push(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id, status FROM issues WHERE origin_ref=? AND status='active' LIMIT 1", params).fetchone()
-
-    def read_apply_deliberate(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id FROM issues WHERE origin_ref=? LIMIT 1', params).fetchone()
-
     def read_list_due_stages_for_scan(self, params: Any = ()) -> Any:
         return self._conn.execute("\n        SELECT id, title, stages_json, origin_ref, origin_turn, stage_text\n        FROM issues\n        WHERE status='active'\n          AND commitment_kind != ''\n          AND stages_json IS NOT NULL\n          AND stages_json != ''\n          AND stages_json != '[]'\n        ORDER BY id\n        ", params).fetchall()
 
     def read_list_active_commitments(self, params: Any = ()) -> Any:
         return self._conn.execute("\n        SELECT * FROM issues\n        WHERE status='active'\n          AND kind='initiative'\n          AND commitment_kind != ''\n        ORDER BY id\n        ", params).fetchall()
 
-    def read_stop_origin_commitment_ticks(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id FROM issues WHERE origin_ref=? AND status='active' AND kind='initiative'", params).fetchall()
-
     def read_issue_exists(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id FROM issues WHERE id=?', params).fetchone()
-
-    def read_rush_staged_commitment_stage(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, stages_json, status, commitment_kind FROM issues WHERE id=?', params).fetchone()
-
-    def read_rush_staged_commitment_stage_origin_ref(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT origin_ref FROM issues WHERE id=?', params).fetchone()
-
-    def read_resolve_host_character(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT participants, participant_roster FROM issues WHERE id=?', params).fetchone()
 
     def read_issue_for_dossier(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id FROM issues WHERE origin_ref=? ORDER BY id LIMIT 1', params).fetchone()
 
-    def read_list_due_commitments(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n        SELECT * FROM issues\n        WHERE status='active'\n          AND commitment_kind != ''\n          AND end_turn > 0\n          AND end_turn <= ?\n        ORDER BY id\n        ", params).fetchall()
-
     def read_issue_meta(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id, title, origin_ref, stages_json, stage_text FROM issues WHERE id=?', params).fetchone()
-
-    def read_stalled_deliberation_push_facts(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id, title FROM issues WHERE origin_ref=? AND status='active' LIMIT 1", params).fetchone()
 
     def read_commitment_ids_for_dossier(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id FROM issues WHERE origin_ref=?', params).fetchall()
 
-    def read_stage_punishment_candidate(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT origin_kind,status,target_roster FROM issues WHERE id=?', params).fetchone()
-
     def write_canonicalize_existing_fiscal_levy_terminal_reason(self, params: Any = ()) -> Any:
         return self._conn.execute('UPDATE event_triggers SET terminal_reason=? WHERE event_id=?', params)
 
-    def read_latest_commitment_paid_total(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC', params).fetchall()
-
     def read_event_terminal_states(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT event_id, terminal_state FROM event_triggers', params).fetchall()
-
-    def read_event_terminal_records(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT event_id, terminal_state, terminal_reason FROM event_triggers', params).fetchall()
-
 
     def write_ensure_event_parent(self, params: Any = ()) -> Any:
         return self._conn.execute('\n            INSERT OR IGNORE INTO events\n            (id, title, kind, summary, urgency, severity, credibility, interests, audiences)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ', params)
@@ -245,9 +184,6 @@ class IssueStore:
 
     def read_has_event_terminal_state(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state=? LIMIT 1', params).fetchone()
-
-    def read_ensure_event_parent(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT 1 FROM events WHERE id=?', params).fetchone()
 
     def read_issue_audience_names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT audiences FROM events WHERE id=?', params).fetchone()

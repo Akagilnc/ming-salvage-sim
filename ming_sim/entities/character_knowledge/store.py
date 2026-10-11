@@ -752,18 +752,6 @@ class CharacterKnowledgeStore:
             params,
         )
 
-    def read_restore_secret_order_brief_projection_in_tx(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT turn_issued,year_issued,period_issued,minister_name,title,content FROM secret_orders WHERE id=?', params).fetchone()
-
-
-
-
-    def read_submit_secret_order_for_review(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status, turn_issued FROM secret_orders WHERE id = ?', params).fetchone()
-
-    def read_rush_secret_order(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, title, status, result, due_turn FROM secret_orders WHERE id = ?', params).fetchone()
-
     def write_rush_secret_order(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "UPDATE secret_orders SET due_turn = ?, deadline_span = 0, "
@@ -777,24 +765,6 @@ class CharacterKnowledgeStore:
             "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             params,
         )
-
-    def read_auto_submit_due_secret_orders(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            SELECT id, title, result FROM secret_orders\n            WHERE status = 'active' AND due_turn > 0 AND due_turn <= ?\n            ORDER BY id\n            ", params).fetchall()
-
-
-
-    def read_create_secret_order(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT COUNT(*) FROM secret_orders WHERE status='active'", params).fetchone()
-
-    def read_interrupt_dossiers_for_character(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status,result FROM secret_orders WHERE id=?', params).fetchone()
-
-    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id", params).fetchall()
-
-
-
-
 
     def write_record_public_saying_public_sayings(self, params: Any = ()) -> Any:
         return self._conn.execute('UPDATE public_sayings SET source_id=? WHERE id=?', params)

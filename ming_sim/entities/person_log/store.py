@@ -157,9 +157,6 @@ class PersonLogStore:
             total += int(cur.rowcount)
         return total
 
-    def read_record_relation_edge_event(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n            SELECT id FROM relation_edge_events\n            WHERE source = ? AND target = ? AND event_kind = ? AND context = ? AND origin = ?\n            ', params).fetchone()
-
     def read_guofu_targets_of_0056(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT DISTINCT target FROM relation_edge_events WHERE source='皇帝' AND event_kind='辜负' AND turn=? AND origin LIKE ?", params).fetchall()
 

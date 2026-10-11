@@ -134,10 +134,6 @@ class TextualFactStore:
         ).fetchall()
         return tuple(_row_to_fact(row) for row in rows)
 
-    def read_write_world_textual_fact_files(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT DISTINCT subject_kind, subject_id FROM textual_facts WHERE subject_kind IN ('character', 'army', 'region') ORDER BY subject_kind, subject_id", params).fetchall()
-
-
 def _row_to_fact(row: Any) -> TextualFact:
     return TextualFact(
         id=int(row["id"]),
