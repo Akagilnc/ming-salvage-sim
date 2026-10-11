@@ -98,8 +98,9 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     if not text.startswith(_META_PREFIX):
         return {}
     # 有前缀的机读元数据：腐坏 JSON/非对象响亮，不 catch-to-{}（#1897 E1）。
-    from ming_sim.db import _load_durable_json
-    return _load_durable_json(text[len(_META_PREFIX):], default='{}')
+    return GameDB.parse_engine_payload_json(
+        text[len(_META_PREFIX):], surface="breach_plea.origin_context.meta",
+    )
 
 
 def commitment_natural_due_turn(row: Any) -> int:

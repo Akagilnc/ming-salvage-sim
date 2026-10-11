@@ -57,7 +57,7 @@ def _set_tail_status(
 
     chain = month_chain._load_chain(db, int(closed_turn))
     tail = chain.get("mechanical_tail")
-    if not tail:
+    if tail is None or not tail.keys():
         return
     tail["status"] = status
     if status != _TAIL_STATUS_FAILED:
@@ -244,7 +244,7 @@ def _run_tail_body(
         session, closed_turn=closed_turn, settled_year=settled_year,
         settled_period=settled_period, queue=queue, ticket=ticket,
     )
-    if ending_outcome and ending_outcome.get("status"):
+    if ending_outcome is not None and ending_outcome.get("status"):
         summary = generate_ending_summary_for_tail(
             db, closed_state, ending_outcome,
             llm_config=getattr(session, "llm_config", None),
@@ -278,7 +278,7 @@ def _submit_tail(
         def still_pending() -> bool:
             chain = month_chain._load_chain(session.db, int(closed_turn))
             tail = chain.get("mechanical_tail")
-            return bool(tail) and tail.get("status") == _TAIL_STATUS_PENDING
+            return tail is not None and tail.get("status") == _TAIL_STATUS_PENDING
 
         try:
             # 扫描见到 pending 之后，上一张票可能已经终结。写闸内再读，
@@ -407,6 +407,8 @@ def retry_failed_mechanical_tail(session: Any) -> bool:
     settled_year = int(tail.get("settled_year") or 0)
     settled_period = int(tail.get("settled_period") or 0)
     ending_outcome = tail.get("ending_outcome")
+    if ending_outcome is not None:
+        ending_outcome = {**ending_outcome}
     _set_tail_status(session.db, turn, _TAIL_STATUS_PENDING,
                      source=Provenance.system_simulation)
     return _submit_tail(

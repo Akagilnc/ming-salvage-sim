@@ -259,11 +259,15 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
     if "verdict_json" not in row.keys() or row["verdict_json"] is None:
         verdict = None
     else:
-        verdict = _load_durable_json(row["verdict_json"], default='{}')
+        verdict = GameDB.parse_engine_payload_json(
+            row["verdict_json"], surface=f"staged_declarations.verdict_json:{decree_ref}",
+        )
     if "questions_json" not in row.keys() or row["questions_json"] is None:
         questions = None
     else:
         questions = _load_durable_json(row["questions_json"], default='[]')
+        if not isinstance(questions, list):
+            raise TypeError(f"staged_declarations.questions_json:{decree_ref} must be a list, got {questions!r}")
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=decree_ref,

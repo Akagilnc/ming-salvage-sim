@@ -669,11 +669,13 @@ def build_character_knowledge(
             target_roster = []
         else:
             # 已持久 target_roster 腐坏响亮，不洗成空名单改准入（#1897 E1）。
-            from ming_sim.db import _load_durable_json
+            from ming_sim.db import _load_durable_str_list
 
-            target_roster = _load_durable_json(issue["target_roster"], default='[]')
+            target_roster = _load_durable_str_list(
+                issue["target_roster"], surface=f"issues#{issue['id']}.target_roster",
+            )
             target_roster = [
-                str(target).strip() for target in target_roster if str(target).strip()
+                target.strip() for target in target_roster if target.strip()
             ]
         visible_issues.append({
             "id": int(issue["id"]), "kind": issue["kind"],

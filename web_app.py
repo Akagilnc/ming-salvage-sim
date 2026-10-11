@@ -42,7 +42,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
-from ming_sim.db import _load_durable_json
+from ming_sim.db import _load_durable_str_list
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
@@ -757,13 +757,12 @@ class WebGame:
             for name, msgs in self.db.load_all_chat_history().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
             _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-            from ming_sim.db import _load_durable_json
             _fav_raw = self.db.kv_get("favorites")
             self.favorites: set = (
-                set(_load_durable_json(_fav_raw, default='[]'))
-                if _fav_raw else set(_DEFAULT_FAVORITES)
+                set(_load_durable_str_list(_fav_raw, surface="kv_store.favorites"))
+                if _fav_raw is not None else set(_DEFAULT_FAVORITES)
             )
-            if not _fav_raw:
+            if _fav_raw is None:
                 self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
             # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
             # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
@@ -985,12 +984,11 @@ class WebGame:
                 chat_history.setdefault(name, []).extend(msgs)
             default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
             fav_raw = candidate.db.kv_get("favorites")
-            from ming_sim.db import _load_durable_json
             favorites = (
-                set(_load_durable_json(fav_raw, default='[]'))
-                if fav_raw else set(default_favorites)
+                set(_load_durable_str_list(fav_raw, surface="kv_store.favorites"))
+                if fav_raw is not None else set(default_favorites)
             )
-            if not fav_raw:
+            if fav_raw is None:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
             candidate.db.reconcile_interrupted_chat_turns()
             candidate.db.reconcile_post_reply_recovery()
@@ -1484,7 +1482,7 @@ class WebGame:
                 "phase": row["phase"],
                 "stage_text": row["stage_text"],
                 "severity": int(row["severity"]),
-                "tags": list(_load_durable_json(row["tags"], default='[]')),
+                "tags": _load_durable_str_list(row["tags"], surface=f"issues#{row['id']}.tags"),
                 "inertia": int(row["inertia"] or 0),
                 "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
                 "fail_condition": _humanize_condition(row["fail_condition"] or ""),

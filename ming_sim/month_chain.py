@@ -383,7 +383,10 @@ def run_gazette_text(
 def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
     """核账期恢复投影只读：本月链上未消费的调用失败（无则 None）。"""
     chain = _load_chain(db, int(turn))
-    return chain.get("call_failure")
+    failure = chain.get("call_failure")
+    if failure is not None and not isinstance(failure, dict):
+        raise TypeError(f"month_chain:{turn}.call_failure must be an object, got {failure!r}")
+    return failure
 
 
 def continue_world_after_answers(
