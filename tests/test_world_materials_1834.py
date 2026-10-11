@@ -5,8 +5,7 @@ list_materials/read_material (#1830 API, generic over any root).
 
 大理寺 01a08e3a 裁定：本文件只留结构化契约（目录路径、可读载体、无裸
 副本）；对盘面/事务/opening/经历/邸报等人读渲染文本的措辞或固定片段机械
-断言（含哨兵）已整类删除，不得换形复造——`read_material` 越目录契约已由
-tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重复。
+断言（含哨兵）已整类删除，不得换形复造。
 """
 
 from __future__ import annotations

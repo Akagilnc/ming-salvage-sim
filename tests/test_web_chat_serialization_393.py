@@ -67,7 +67,7 @@ class _FakeSession(HallAdmissionSessionMixin):
         from ming_sim.session import GameSession
         return GameSession.schedule_pending_scene_translation(self, result)
     def can_summon(self, character):
-        # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
+        # #1402：web 改调 session.can_summon——假壳挂真方法，禁自造文案表
         from ming_sim.session import GameSession
         return GameSession.can_summon(self, character)
 

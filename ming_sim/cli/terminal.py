@@ -44,7 +44,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
     """列大臣，皇帝选一位。返回 None 表示退朝去审阅诏书。"""
     characters = session.content.characters
     # 可召名册资格单真源 _is_summonable_court_minister（#1317 r2 DRY：与 can_summon/
-    # list_ministers/visible_in_court/事实块同口径）。offstage 未登场另滤——到 debut 年月现身。
+    # visible_in_court/事实块同口径）。offstage 未登场另滤——到 debut 年月现身。
     # 后宫不经朝臣可召谓词、走 can_summon 专路，CLI 大臣单亦不列后宫（与 web consorts 分栏同形）。
     resolve = session.db.resolve_power_id
     names = [
@@ -433,12 +433,12 @@ def review_directives(session: GameSession) -> str:
             if session.state.turn_phase in FRONT_HALF_DONE_PHASES:
                 # 恢复态：上月结算未完成（崩溃/中止后），跳过拟诏直接续跑结算——
                 # resolve_turn 的恢复分流自己决定重放/重新推演/回放决策点
-                # （ship-pre r3：write_decree 在此态必拒，不开此口 CLI 永远够不到恢复入口）。
+                # （ship-pre r3：拟诏在此态必拒，不开此口 CLI 永远够不到恢复入口）。
                 print("\n检测到上月结算未完成，续跑结算……")
                 return "issue"
             return "issue"
         # 变更器统一接 ValueError（FRONT_HALF_DONE 冻结期的指引消息）：打印后留在
-        # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
+        # 审阅循环，不崩出进程（ship-pre r2，与拟诏既有 try 同款）。
         try:
             if lowered == "add" or raw == "新增":
                 # P6：旨文自由正文；判空观察副本，新增/抽取传原串。

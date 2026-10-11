@@ -193,7 +193,7 @@ def _is_summonable_court_minister(
 ) -> bool:
     """在朝可召资格 = 在册身份归一 ∧ 非宗藩 ∧ 非未仕（#1317 r2 单真源）。
 
-    受守面清单见 models.is_weishi / is_vassal_prince；list_ministers / can_summon（朝臣支）/
+    受守面清单见 models.is_weishi / is_vassal_prince；can_summon（朝臣支）/
     visible_in_court / CLI choose_minister / 拟诏事实块共吃本谓词。禁另造过滤表。
     resolve 成本规避走 resolve_power_id 惰性入参——类型短路不得与本谓词条件并存。
     """
@@ -619,7 +619,7 @@ class GameSession:
             self.debuts_this_turn: List[Dict[str, str]] = []
             self.previous_summary = ""
             self.last_decree = ""
-            # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
+            # P1-1：last_decree 所覆盖的 draft 指纹（拟诏写入时记，颁诏时校验是否已陈旧）。
             self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
             self._begun = False
             # #1353：per-session 单写者票据队列（CLI/Web 共用）；write_gate 并入队列。
@@ -716,7 +716,7 @@ class GameSession:
         self.auto_save("begin")
 
     def note_chat_rollback(self, deleted_committed_draft_ids: Optional[List[int]] = None) -> None:
-        """P1-2：撤回召对若删了 write_decree 已 commit 的对话草案（committed draft），
+        """P1-2：撤回召对若删了拟诏已 commit 的对话草案（committed draft），
         本份生成的诏书正文（last_decree）含被撤回的指令——必须作废，使颁诏须重生成，
         不能原样颁出。普通撤回（未删 committed draft）不动有效生成稿。"""
         if deleted_committed_draft_ids:
@@ -769,7 +769,7 @@ class GameSession:
         raise DeclarationDataError(f"人物未建档：{clean_name}")
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
-        # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
+        # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster 同口径
         # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
         if is_vassal_prince(character):
@@ -794,7 +794,7 @@ class GameSession:
         # 后宫 active+ming 可召（既有契约：嫔妃 chat 复用本闸，不经朝臣可召谓词；cmr 后宫反向锁）。
         if getattr(character, "office_type", None) == "后宫":
             return (True, "")
-        # 朝臣可召：与 list_ministers / visible_in_court / CLI / 事实块同吃 _is_summonable_court_minister
+        # 朝臣可召：与 visible_in_court / CLI / 事实块同吃 _is_summonable_court_minister
         # （#1317 r2：未仕诸生等身名分在册不得以在朝命官入可召；power 已解析，直传）。
         if not _is_summonable_court_minister(character, power_id=power_id):
             return (False, f"{character.name}尚未入仕，非朝廷命官，无法召见。")

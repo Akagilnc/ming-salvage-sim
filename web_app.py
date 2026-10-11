@@ -657,7 +657,7 @@ def visible_in_court(character: Character, db) -> bool:
     """朝堂大臣列表准入：在朝可召资格 + DB 权威状态非 offstage（离场/未登场不入列）。
 
     资格单真源 session._is_summonable_court_minister（#1317 r2：身份归一∧非宗藩∧非未仕）——
-    与 list_ministers/can_summon/CLI/事实块同口径，禁另造过滤表。resolve 惰性入参，
+    与 can_summon/CLI/事实块同口径，禁另造过滤表。resolve 惰性入参，
     类型短路不得与谓词条件并存。
     状态与势力一律以 DB 为准（与 public_character 同源）——内存 c.status 在 auto-debut
     等路径（set_character_status 只写 DB、不回写内存）会 stale，不能用作过滤依据（见 #104）。

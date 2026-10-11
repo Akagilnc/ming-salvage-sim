@@ -1,6 +1,4 @@
 """数据类：游戏实体与状态容器。L0 叶子模块。
-
-CourtContext 的 state/db 注解用字符串前向引用，避免 import db.py。
 """
 
 from __future__ import annotations
@@ -369,9 +367,9 @@ def is_vassal_prince(character: "Character") -> bool:
 
     单一定义，所有面引用此规则（PR#121，cmr R3–R5 cross-section coverage-drift 收敛于此）。
     受守面清单（新增同类面时一并加，勿漏）：
-    - web_app: visible_in_court / in_talent_pool / _require_active_minister / api_create_secret_order
+    - web_app: visible_in_court / in_talent_pool / api_create_secret_order
     - materials: 人物/朝臣名册.txt
-    - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
+    - session: can_summon（召对 choke）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
     - session: can_summon（召对 choke，覆盖 session/web/CLI choose_minister 三路）
     - db: create_secret_order（密令唯一 DB 写口 choke）/ _commit_office_action 罢免（玩家罢免）
@@ -393,7 +391,7 @@ def is_weishi(character: "Character") -> bool:
     与「在册身份归一」分离：别名/查重必须认识未仕（史宪之→史可法不得建重档）；
     「在朝可召资格」= 身份归一 ∧ 非宗藩 ∧ 非未仕，由可召/名册面共吃。
     受守面清单（新增同类面时一并加，勿漏；形制同 is_vassal_prince）：
-    - session: list_ministers / can_summon（朝臣支；后宫走专路）
+    - session: can_summon（朝臣支；后宫走专路）
     - web_app: visible_in_court
     - cli: terminal.choose_minister
     - cli_backend: _draft_intent_character_roster_facts（拟诏事实块）

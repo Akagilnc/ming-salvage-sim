@@ -1,10 +1,8 @@
 """#66/#266：regions.fiscal 省级 settle_tick 基座 + DB↔settle_tick 桥。
 
-两件事：
-1. 种子——已 seed 的明控省 fiscal JSON 内嵌 settle 基座（开账 st + 月参 p），必须能被
+内容：
+种子——已 seed 的明控省 fiscal JSON 内嵌 settle 基座（开账 st + 月参 p），必须能被
    settle_tick 接受（=有效基座）；陕西作为 #266 史实量级 shadow seed 的基线样例。
-2. 桥——`GameDB.settle_province_tick(region_id, actions)` 读 settle.st/p → 跑 settle_tick →
-   写回 new_st。**港口锁**：坏输入/守恒破 raise 时 FAIL tick 绝不落库（毒态不钉存档）。
 
 陕西种子 = 低省库 + 正赋5.0563/月 + 辽饷2.1969011325/月 + 逋赋0.45 + 边镇 Due；
 空 action 跑一 tick 应进入欠账螺旋。月末 shadow spine 按 controlled_by==ming 且有 settle

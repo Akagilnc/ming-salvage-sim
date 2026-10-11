@@ -116,7 +116,7 @@ class _FakeSession(HallAdmissionSessionMixin):
         return None
 
     def can_summon(self, character):
-        # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
+        # #1402：web 改调 session.can_summon——假壳挂真方法，禁自造文案表
         return GameSession.can_summon(self, character)
 
 

@@ -1,7 +1,7 @@
 """密令更新路径：同一承办大臣再次下密令 = 更新其要旨，而非建重复条。
 
 补 toolcall 缺口——CLI 后端无 function-calling，原 report/update 密令工具失效，
-「补充/更新已有密令」无路径。db.upsert_secret_order 提供 create-or-update。
+「补充/更新已有密令」无路径。
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 真实入口：草稿落桌（#1849 后走现行 capture 核 + session.add_directive；
 独立手拟新增 Web 口已退役）→ POST /api/decree/issue/stream；
-下月供料经 session.write_decree → write_decree_with_agno 真实投影。
+下月供料经 write_decree_with_agno 真实投影。
 断言 SSE 终态与 turn_directives / rejection_reports / dossier 结构化字段。
 
 本文件只断言结构化事实（供料入参 / 案卷字段 / DB 终态 / 错误包 manifest），

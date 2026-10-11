@@ -201,7 +201,7 @@ def test_consort_excluded_from_court(read_game):
 
 def test_zongfan_cannot_be_summoned_via_can_summon(game):
     """summon_minister 工具链（session 召对 + web 流式两路）共用 session.can_summon 闸——宗藩须在此拒，
-    否则裁判可绕朝堂列表按名召宗室（cmr R4：_require_active_minister 只守 /chat 直连，summon 工具走
+    否则裁判可绕朝堂列表按名召宗室（cmr R4：summon 工具走
     can_summon）。集中守 can_summon 一处覆盖两路；后宫不受此闸影响。"""
     import pytest
     from ming_sim.session import GameSession
@@ -319,7 +319,7 @@ def test_shi_kefa_not_in_summonable_court_roster(read_game):
     永不激活，人才池/朝堂双排除且无法按姓名铨选发现）。在场态靠 office_type='未仕'
     可召资格过滤挡召见；任命写路径仍可入仕。
 
-    接缝：list_ministers + can_summon + visible_in_court 三面同拒。
+    接缝：can_summon + visible_in_court 两面同拒。
     """
     db, _state, content = read_game
     assert "史可法" in content.characters, "seed 须含史可法"

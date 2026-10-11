@@ -1423,8 +1423,8 @@ class GameDB:
                 time_of_day TEXT NOT NULL DEFAULT '',
                 location TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'open',
-                -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEPS
-                -- endorsement-bound 是 CLOSE_STEPS 中的一步，不另设平行列
+                -- 收夜提交幂等游标：0=未开始；已完成步序号
+                -- endorsement-bound 是收夜步序中的一步，不另设平行列
                 close_commit_cursor INTEGER NOT NULL DEFAULT 0,
                 -- 夜内事件单调序源：账本 seq 与 chat night_seq 同桶递增
                 next_event_seq INTEGER NOT NULL DEFAULT 0,
@@ -8245,7 +8245,7 @@ class GameDB:
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),
             )
-        # P1-2：报告本召对删除了哪些 committed draft（write_decree 已 commit 的对话草案行）。
+        # P1-2：报告本召对删除了哪些 committed draft（拟诏已 commit 的对话草案行）。
         # 上层据此让已生成的诏书正文（last_decree）失效——否则若另有 draft 残留，玩家仍能
         # 原样颁出含被撤回指令的陈旧诏书。无删除则为空，普通撤回不触发上层清稿。
         turn_row["deleted_committed_draft_ids"] = list(dict.fromkeys(draft_ids_to_delete))
@@ -13364,7 +13364,7 @@ class GameDB:
                 for row in self.conn.execute("SELECT name FROM factions")
             }
             # 投影已先定档后去重（primary 胜）；同派系 UNIQUE 保留主责额度。
-            # #1900：连坐归属留在 list_execution_liability_parties / 关系边结构化账，
+            # #1900：连坐归属留在关系边结构化账，
             # 不向 execution_note 模板增补（P6 / ADR 0142 原文零删改）。
             for party in project_execution_liability_parties(
                 dossier.get("participant_roster"),
@@ -14598,7 +14598,7 @@ class GameDB:
         source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
-        与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
+        与原地更新（同回合同大臣至多一条、last-write-wins）互补：本方法给
         「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。
 
         ``source_chat_turn_id``（#1890）：本道交办的来源轮，随新行落库。"""
@@ -14647,11 +14647,11 @@ class GameDB:
         night_id: Optional[int] = None,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
-        未持源夜时与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清
+        未持源夜时与原地更新分支同纪律——把归属迁到当前开着的夜并清
         night_approved，使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入
         源夜则盖源夜。返回该行 id（不存在/非 pending 则 0）。
         **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
-        静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
+        静默抹掉待澄清/夜内态闸（#502 L5，与待澄清标同纪律）。
         #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
         声明路径传入源夜则盖源夜，不把既有候选迁到落账当下的开放夜。"""
         stamp = self._night_id_for_staged_write(night_id, what="改草")
@@ -18669,8 +18669,7 @@ class GameDB:
         """按**精确 id** 更新 active 密令要旨（title/content/tags/限期）。
         返回是否更新（id 存在且状态为 active）。
 
-        与 upsert_secret_order 的区别：upsert 按「该大臣最新 active」改，会话动作「更新」已解析出
-        确切 target id 时必须走本方法，否则大臣有多条 active 密令会改错条（CMR F1）。
+        会话动作「更新」已解析出确切 target id 时必须走本方法，否则大臣有多条 active 密令会改错条（CMR F1）。
         tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。
 
         Oral-decree pins (stage ``origin_chat_message_id`` / speaker) feed the same

@@ -256,7 +256,7 @@ def material_tools(root: Any) -> list:
         value = root() if callable(root) else root
         text = str(value or "").strip()
         if not text:
-            # Empty/cleared MaterialsRoot must not resolve Path("") → CWD.
+            # Empty/cleared root must not resolve Path("") → CWD.
             raise DeclarationDataError("材料目录未就绪")
         return Path(text)
 
@@ -520,7 +520,7 @@ def _opening_affair_lines(
     """Opening min-set: 正经手事务 ⊂ unique visible matter projection.
 
     `matter_lines` is the one frozen `_character_affair_lines` projection
-    `prepare_character_materials` already computed for this call — the
+    the materials entry already computed for this call — the
     directory tree is built from the same object (#1812: one projection per
     prepare, not a second independent recompute here). Each affair's single
     identity and `is_handling` verdict (dossier participant, or a linked
@@ -1063,7 +1063,7 @@ def _write_world_textual_fact_files(
 # 推演者三层全看（实况 + 人物经历 + 公开说法），另有盘面（0155 读取形态段）。
 # 开场最小集 = 当前盘面全量 + 开着的事务清单；其余（各人经历、公开说法、历月
 # 邸报）按需自读。夜里预推段与过月世界段读同一目录（同 night/turn key，与
-# character_materials_root 同构）；预推产物本身不进目录（0157 原则）——本模块
+# 角色材料目录同构）；预推产物本身不进目录（0157 原则）——本模块
 # 只备读，不提供任何暂存写入口，天然不会把预推产物写进来。
 
 
