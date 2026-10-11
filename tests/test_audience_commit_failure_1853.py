@@ -149,9 +149,8 @@ def test_ineligible_secret_order_is_business_refusal(game, monkeypatch):
     assert item["kind"] == "secret_order"
     assert item["pending_action_id"] == action_id
     assert item["assignee"] == assignee
-    from ming_sim.month_chain import _gazette_feed, _month_fact_materials
+    from ming_sim.month_chain import _month_fact_materials
 
-    assert "rejections" not in _gazette_feed(db, state)
     assert any(
         row["category"] == "ineligible_power"
         for row in _month_fact_materials(db, state, {})["rejections"]

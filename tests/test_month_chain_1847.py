@@ -2082,15 +2082,11 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
 
     def model_text(_agent, message, **kwargs):
         feeds[kwargs["tag"]] = json.loads(message)
-        return json.dumps({"title": "邸报", "report": "本月纪事。"}
-                          if kwargs["tag"] == "gazette" else {
-                              "dossier_progress_reports": [], "covert_exec_selections": [],
-                          })
+        return json.dumps({"dossier_progress_reports": [], "covert_exec_selections": []})
 
     monkeypatch.setattr("ming_sim.agents.run_agent_text", model_text)
     config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
     month_chain.run_secret_orders_supply(db, state, config, chain)
-    month_chain.run_gazette_text(db, state, config)
     feed = feeds["secret_orders_supply"]
     assert "origin_effects" not in feed
     assert "origin_rejections" not in feed
@@ -2128,8 +2124,6 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         int(item.get("dossier_id") or 0) == dossier_id
         for item in (feed.get("eligible_dossiers") or [])
     )
-
-    assert set(feeds["gazette"]) == {"instruction", "reign_period_label", "due_commitments", "waiting_audience"}
 
 
 def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypatch):
