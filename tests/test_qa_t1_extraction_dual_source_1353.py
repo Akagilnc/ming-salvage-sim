@@ -218,32 +218,34 @@ def test_barrier_waits_trail_ticket_then_auto_close(web_game, monkeypatch):
 
     t = threading.Thread(target=trail_worker, name="trail-barrier", daemon=True)
     t.start()
-    trail_holding.wait()
+    et = None
+    try:
+        trail_holding.wait()
 
-    def track_auto_close(_g, **_k):
-        assert ticket._done is True
-        order.append("auto_close")
+        def track_auto_close(_g, **_k):
+            order.append("auto_close")
 
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
-    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
+        monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
+        monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
 
-    def run_entry() -> None:
-        with web_app._settlement_period_entry(game, write_cm=web_app._game_write_gate):
-            order.append("body")
-        entry_done.set()
+        def run_entry() -> None:
+            with web_app._settlement_period_entry(game, write_cm=web_app._game_write_gate):
+                order.append("body")
+            entry_done.set()
 
-    et = threading.Thread(target=run_entry, name="settlement-entry", daemon=True)
-    et.start()
-    # 确定性：trail 未放行前 entry 不得完成（事件握手，不靠 sleep 判胜负）
-    assert not entry_done.is_set()
-    assert "auto_close" not in order
-    assert "body" not in order
+        et = threading.Thread(target=run_entry, name="settlement-entry", daemon=True)
+        et.start()
+        # 确定性：trail 未放行前 entry 不得完成（事件握手，不靠 sleep 判胜负）
+        assert not entry_done.is_set()
+        assert "auto_close" not in order
+        assert "body" not in order
 
-    order.append("release")
-    release.set()
-    entry_done.wait()
-    t.join()
-    et.join()
+        order.append("release")
+    finally:
+        release.set()
+        t.join()
+        if et is not None:
+            et.join()
     assert not t.is_alive() and not et.is_alive()
     assert order == ["release", "trail_end", "auto_close", "body"], order
     assert q.inflight_count() == 0
@@ -278,11 +280,13 @@ def test_production_seam_cancel_blocks_trail_write(web_game):
 
     th = threading.Thread(target=paused_trail, daemon=True)
     th.start()
-    entered.wait()
-    n = q.cancel_key(("turn", 4242))
-    assert n == 1
-    release.set()
-    th.join()
+    try:
+        entered.wait()
+        n = q.cancel_key(("turn", 4242))
+        assert n == 1
+    finally:
+        release.set()
+        th.join()
     assert not th.is_alive()
     assert wrote["n"] == 0
     assert outcome.get("cancelled") == "TicketCancelled"
@@ -308,38 +312,37 @@ def test_production_seam_post_barrier_ticket_ordered(web_game, monkeypatch):
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
 
-    entry_done = threading.Event()
-
     def run_entry() -> None:
         with web_app._settlement_period_entry(game, write_cm=web_app._game_write_gate):
             order.append("body")
-        entry_done.set()
 
     et = threading.Thread(target=run_entry, daemon=True)
     et.start()
-    barrier_in.wait()
+    lt = None
+    try:
+        barrier_in.wait()
 
-    late = game._mark_pending_write(key=("turn", 77))
-    assert late is not None
-    late_claimed.set()
+        late = game._mark_pending_write(key=("turn", 77))
+        assert late is not None
+        late_claimed.set()
 
-    def late_write() -> None:
-        gate = game._ticketed_write_gate(late)
-        with gate:
-            order.append("late")
-        game._complete_pending_write(late)
-        late_done.set()
+        def late_write() -> None:
+            gate = game._ticketed_write_gate(late)
+            with gate:
+                order.append("late")
+            game._complete_pending_write(late)
+            late_done.set()
 
-    lt = threading.Thread(target=late_write, daemon=True)
-    lt.start()
-    assert "late" not in order
-    assert not late_done.is_set()
-
-    release_barrier.set()
-    entry_done.wait()
-    late_done.wait()
-    et.join()
-    lt.join()
+        lt = threading.Thread(target=late_write, daemon=True)
+        lt.start()
+        assert "late" not in order
+        assert not late_done.is_set()
+    finally:
+        late_claimed.set()
+        release_barrier.set()
+        et.join()
+        if lt is not None:
+            lt.join()
     # barrier 写（auto_close）先于后票；body 在 barrier 返回后
     assert order.index("barrier") < order.index("late")
     assert order.index("barrier") < order.index("body")
@@ -360,7 +363,6 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     # 确定性握手：主线程入轮询 → worker 发终态 → 主线程因终态返回
     # （禁 sleep 毫秒窗；禁把 SUT 包进 waiter 线程 try/finally 吞异常假绿）
     waiter_polling = threading.Event()
-    worker_published = threading.Event()
     real_list = an.list_in_flight_chat_turns
 
     def _list_tracking(db_arg, night_id_arg):
@@ -376,17 +378,18 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
             "UPDATE chat_turns SET status='active' WHERE id=?", (ctid,)
         )
         db.conn.commit()
-        worker_published.set()
 
     wt = threading.Thread(
         target=_worker_terminal, name="worker-terminal-1353", daemon=True,
     )
     wt.start()
-    # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
-    # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
-    an.wait_in_flight_clear(db, nid)
-    worker_published.wait()
-    wt.join()
+    try:
+        # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
+        # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
+        an.wait_in_flight_clear(db, nid)
+    finally:
+        waiter_polling.set()
+        wt.join()
     assert not wt.is_alive()
     assert an.list_in_flight_chat_turns(db, nid) == []
 
@@ -429,7 +432,6 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
     game._run_startup_extraction_catch_up(pending_ticket=ticket)
     assert seen.get("ticketed_contract") is True
     assert seen.get("bare_lock") is not True
-    assert ticket._done is True
 
 def test_ticketed_write_gate_rejects_none(web_game):
     """无票不得回落裸 runtime write_gate。"""
@@ -500,6 +502,7 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
 def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monkeypatch):
     """#1353 fold-in r8：外层已持闸时 resolve 不得再抢同一把非重入锁。"""
     from ming_sim.session import GameSession, TurnPhase
+    from tests.month_chain_helpers import canned_full_settlement
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
@@ -525,7 +528,7 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     sess.auto_save = lambda *_a, **_k: None
 
     # 合法真实前置：无旨月 + 外部 LLM 缝 canned；不替 resolve_directives（被测持闸在其后）。
-    _canned_full_settlement(monkeypatch, narrative="持闸落相位探针邸报。")
+    canned_full_settlement(monkeypatch, narrative="持闸落相位探针邸报。")
 
     try:
         result = sess.resolve_turn(

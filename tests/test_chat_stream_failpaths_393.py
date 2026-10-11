@@ -39,7 +39,7 @@ def _query_conn_no_user_message():
 def _assert_write_path_free(runtime) -> None:
     """After failpath cleanup, a subsequent gated write and drain must not block.
 
-    Hang → CI job final line; no fixed wall-clock probe (#1723).
+    A blocked write or drain must report failure, not hold pytest open.
     """
     entered = threading.Event()
 
@@ -49,8 +49,8 @@ def _assert_write_path_free(runtime) -> None:
 
     t = threading.Thread(target=_try_serialized_write, daemon=True)
     t.start()
-    entered.wait()
-    t.join()
+    entered.wait(timeout=30)
+    t.join(timeout=30)
     assert entered.is_set() and not t.is_alive(), "serialized write path still blocked"
 
     drained = threading.Event()
@@ -63,8 +63,8 @@ def _assert_write_path_free(runtime) -> None:
 
     td = threading.Thread(target=_try_drain, daemon=True)
     td.start()
-    drained.wait()
-    td.join()
+    drained.wait(timeout=30)
+    td.join(timeout=30)
     assert drained.is_set() and not td.is_alive(), "drain still blocked (pending write leak)"
 
 
@@ -216,23 +216,26 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
-        other_entered.wait()
+        other_entered.wait(timeout=30)
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
-    gen = runtime.chat_stream("殿上", "辽东军情如何？")
-    with pytest.raises(RuntimeError):
-        next(gen)
+    try:
+        gen = runtime.chat_stream("殿上", "辽东军情如何？")
+        with pytest.raises(RuntimeError):
+            next(gen)
 
-    assert db.failed_turns == [7]
-    # Foreign holder must still own the serialized write path after prologue finally.
-    assert other_entered.is_set()
-    assert other_completed_ok == [], (
-        "foreign holder's critical section was broken by prologue finally"
-    )
-    allow_other_exit.set()
-    assert other_thread_holder, "foreign writer thread was not started"
-    other_thread_holder[0].join()
+        assert db.failed_turns == [7]
+        # Foreign holder must still own the serialized write path after prologue finally.
+        assert other_entered.is_set()
+        assert other_completed_ok == [], (
+            "foreign holder's critical section was broken by prologue finally"
+        )
+        assert other_thread_holder, "foreign writer thread was not started"
+    finally:
+        allow_other_exit.set()
+        for other in other_thread_holder:
+            other.join()
     assert not other_thread_holder[0].is_alive()
     assert other_completed_ok == [True], (
         "foreign holder could not complete its own serialized write"
@@ -389,8 +392,8 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog,
     with caplog.at_level(logging.ERROR, logger="web_app"):
         th = threading.Thread(target=consume, daemon=True)
         th.start()
-        done.wait()
-        th.join()
+        done.wait(timeout=30)
+        th.join(timeout=30)
 
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
@@ -455,8 +458,8 @@ def test_worker_postprocess_exception_emits_error_end(monkeypatch):
     # 施工席自选：Thread + Event 确定性等实际 worker 结束（非新增框架）
     th = threading.Thread(target=consume, daemon=True)
     th.start()
-    done.wait()
-    th.join()
+    done.wait(timeout=30)
+    th.join(timeout=30)
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
     assert "done" in types, events  # 回话已可见

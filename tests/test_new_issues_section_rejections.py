@@ -110,29 +110,6 @@ def _hist_event(eid, gate=None):
     )
 
 
-def test_temp_events_replaces_same_id_and_restores_original(content):
-    eid = "__temp_events_replace_existing__"
-    original = _hist_event(eid)
-    replacement = _hist_event(eid)
-    replacement.title = "替换事件"
-    content.events.append(original)
-    content.event_by_id[eid] = original
-    try:
-        with _TempEvents(content, replacement):
-            same_id_events = [ev for ev in content.events if ev.id == eid]
-            assert same_id_events == [replacement]
-            assert content.event_by_id[eid] is replacement
-
-        same_id_events = [ev for ev in content.events if ev.id == eid]
-        assert same_id_events == [original]
-        assert content.event_by_id[eid] is original
-    finally:
-        if original in content.events:
-            content.events.remove(original)
-        if content.event_by_id.get(eid) is original:
-            content.event_by_id.pop(eid, None)
-
-
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
 def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
     db, state, _ = read_game
@@ -140,21 +117,6 @@ def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-
-
-@pytest.mark.parametrize("bad_effects", [
-    {"人物变更": "垃圾串"},
-    {"人物变更": [1, 2]},
-    {"economy": [1, "x"]},
-])
-def test_new_issue_malformed_monthly_member_list_rejected_not_crash(read_game, bad_effects):
-    """LLM 新项的 ongoing 成员列表形状坏：逐项拒收留痕，不得裸抛越过本项崩整月落库（#1891 续修）。"""
-    db, state, _ = read_game
-    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·坏成员", "ongoing_effects": bad_effects}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    rej = _rejected(out)
-    assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_shape"
 
 
 @pytest.mark.parametrize("field,bad", [

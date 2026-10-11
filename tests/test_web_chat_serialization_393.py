@@ -218,30 +218,34 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 
     settlement_thread = threading.Thread(target=settlement)
     settlement_thread.start()
-    settlement_attempting.wait()
-    settlement.holding.wait()
-
-    done_box: list = []
-    done_collected = threading.Event()
-
-    def _take_done() -> None:
-        while True:
-            item = next(stream)
-            if item.get("type") == "done":
-                done_box.append(item)
-                done_collected.set()
-                return
-
-    threading.Thread(target=_take_done, daemon=True).start()
-    allow_finish.set()
+    done_thread = None
     try:
+        settlement_attempting.wait()
+        settlement.holding.wait()
+
+        done_box: list = []
+        done_collected = threading.Event()
+
+        def _take_done() -> None:
+            while True:
+                item = next(stream)
+                if item.get("type") == "done":
+                    done_box.append(item)
+                    done_collected.set()
+                    return
+
+        done_thread = threading.Thread(target=_take_done, daemon=True)
+        done_thread.start()
+        allow_finish.set()
         assert settlement.holding.is_set(), "settlement released before epilogue"
         assert not done_collected.is_set(), "done arrived before settlement released gate"
     finally:
+        allow_finish.set()
         settlement.release_event.set()
-    done_collected.wait()
+        settlement_thread.join()
+        if done_thread is not None:
+            done_thread.join()
     done = done_box[0]
-    settlement_thread.join()
 
     assert done["type"] == "done"
     assert runtime.db.overlapped_minister_commit is False
@@ -336,9 +340,12 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     monkeypatch.setattr(web_app, "get_game", lambda: _SlowLLMGame())
 
     async def drive_concurrent_state_probe():
+        chat_task = asyncio.create_task(
+            web_app.api_audience_chat(web_app.ChatRequest(message="边饷如何？")),
+        )
         async def state_probe():
-            await asyncio.to_thread(chat_entered.wait)
             try:
+                await _await_condition_or_task(chat_entered.is_set, chat_task)
                 payload = await web_app.api_state()
                 # 先落成功标记再放行：set() 先执行则 chat 线程可先记 "chat"，
                 # 与外部断言的严格顺序无 happens-before（#1722 判牒）。
@@ -349,7 +356,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
             return payload
 
         chat_result, state_payload = await asyncio.gather(
-            web_app.api_audience_chat(web_app.ChatRequest(message="边饷如何？")),
+            chat_task,
             state_probe(),
         )
         return chat_result, state_payload

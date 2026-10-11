@@ -27,8 +27,6 @@ from ming_sim.constants import (
     SCORE_METRICS,
 )
 from ming_sim.person_archive_contract import PERSON_ACTIONS
-from ming_sim.person_delta_adapter import PERSON_CHANGE_KEY
-from ming_sim.strict_types import strict_int
 
 
 def loads_persistent_json_object(
@@ -108,64 +106,13 @@ def loads_persistent_name_list(raw: object, *, surface: str = "name_list") -> li
     return require_persistent_string_list(data, surface=surface, field="items")
 
 
-def effect_member_shape_error(effect: Dict[str, object]) -> str | None:
-    """效果容器形状的共同规则；缺省/null 合法，供持久读取与新模型拒收分别处置。"""
-    for key in (
-        "metrics", "factions", "faction_delta", "classes", "class_delta",
-        "region_delta", "regions", "army_delta", "armies", "power_updates",
-    ):
-        raw = effect.get(key)
-        if raw is None:
-            continue
-        if not isinstance(raw, dict):
-            return f"effect.{key} 须为对象，得 {type(raw).__name__}"
-        if key == "metrics":
-            for metric, delta in raw.items():
-                if metric not in SCORE_METRICS or delta in (None, ""):
-                    continue
-                try:
-                    int(delta)
-                except (TypeError, ValueError, OverflowError):
-                    return f"effect.metrics.{metric} 须为可转整数的增量，得 {delta!r}"
-        else:
-            for entity_id, changes in raw.items():
-                if isinstance(changes, dict):
-                    continue
-                # 派系的标量整数（含数字字符串）是现役增量格式；阶层消费者只接受对象。
-                if key in {"factions", "faction_delta"} and type(changes) in (int, str):
-                    try:
-                        strict_int(changes)
-                    except ValueError:
-                        return f"effect.{key}.{entity_id} 须为整数增量，得 {changes!r}"
-                    continue
-                return f"effect.{key}.{entity_id} 须为对象，得 {type(changes).__name__}"
-    for key in (
-        "economy", "economy_moves", PERSON_CHANGE_KEY, "new_armies", "buildings",
-        "power_renames", "fiscal_creates", "fiscal_changes", "fiscal_removes",
-        "population_transfers", "surcharge_decrees", "bandit_absorptions",
-    ):
-        raw = effect.get(key)
-        if raw is None:
-            continue
-        if not isinstance(raw, list):
-            return f"effect.{key} 须为数组，得 {type(raw).__name__}"
-        for index, item in enumerate(raw):
-            if not isinstance(item, dict):
-                return f"effect.{key}[{index}] 须为对象，得 {type(item).__name__}"
-    return None
-
-
 def loads_effect_dict(raw: object) -> Dict[str, object]:
     """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）。
 
     已是 dict → 原样；缺省/空 → {}；腐坏或非 dict → 响亮失败（ADR 0005）。
     放 models（leaf）避免 db↔issues 循环。
     """
-    effect = loads_persistent_json_object(raw, surface="effect_json")
-    error = effect_member_shape_error(effect)
-    if error is not None:
-        raise ValueError(error)
-    return effect
+    return loads_persistent_json_object(raw, surface="effect_json")
 
 
 def _nonzero_int(raw: object) -> bool:

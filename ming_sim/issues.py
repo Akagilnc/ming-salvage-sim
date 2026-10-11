@@ -63,7 +63,6 @@ from ming_sim.models import (
     Event,
     GameState,
     effect_dict_has_work,
-    effect_member_shape_error,
     is_vassal_prince,
     loads_effect_dict,
     loads_persistent_json_list,
@@ -3101,7 +3100,6 @@ def _apply_issue_entities(
     # 走默认的案（army 非法字段/重复无 manpower/重复非整/可选脏值/非 dict 项）带
     # issue_strict=False 标——容忍不升级,否则历史可活的脏数据变成新的崩月路
     # （cmr S2 r1）。两类都留拒收记录,不无声丢。
-    effect = loads_effect_dict(effect)
     tolerated: List[Dict[str, object]] = []
     def effective_content():
         return content if content is not None else _ctx()
@@ -4469,19 +4467,6 @@ def apply_issue_tracker_output(
         ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
         resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
         fail_eff = _eff_dict(ni.get("effect_on_fail"))
-        # 同一效果形状规则：新模型的坏项拒收；不得先存坏事实再在月度消费时炸出。
-        effect_shape_error = None
-        for effect in (ongoing_eff, resolve_eff, fail_eff):
-            effect_shape_error = effect_member_shape_error(effect)
-            if effect_shape_error is not None:
-                break
-        if effect_shape_error is not None:
-            applied_new.append({
-                "rejected": True, "category": "invalid_shape",
-                "reason": f"new_issue {effect_shape_error}",
-                "item": ni, "title": title,
-            })
-            continue
         semantic_ongoing_has_work = effect_dict_has_work(ongoing_eff)
         ongoing_has_work = _monthly_ongoing_effects_has_work(ongoing_eff)
         unsupported_ongoing_fields = _unsupported_monthly_ongoing_fields(ongoing_eff)
