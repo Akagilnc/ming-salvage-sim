@@ -117,26 +117,14 @@ def _identity_keys_for_unit(unit: str, *, effect_sign: int, purpose: object = No
 class CovertContractError(ValueError):
     """确认闸未冻结合同，或后续读端找不到可落库合同。"""
 
-_FIDELITY_ALIASES = {
-    "faithful": "忠实",
-    "fulfilled": "忠实",
-    "discounted": "打折",
-    "degraded": "打折",
-    "surface": "阳奉阴违",
-    "yangfeng": "阳奉阴违",
-    "backlash": "反噬",
-    "transformed": "反噬",
-    "failed": "反噬",
-}
-
-
 def normalize_fidelity_state(raw: object) -> Optional[str]:
+    """Admit only closed Chinese fidelity enum; no synonym rewrite (#1847)."""
     text = str(raw or "").strip()
     if not text:
         return None
     if text in _FIDELITY_INDEX:
         return text
-    return _FIDELITY_ALIASES.get(text.lower())
+    return None
 
 
 def progress_units_for_state(state: object) -> float:
@@ -322,9 +310,6 @@ def canonicalize_economy_purpose(raw: object) -> str:
 
 def build_covert_task_contract(
     *,
-    deadline_span: int = 0,
-    due_turn: int = 0,
-    tags: object = None,
     axes: object = None,
     direction: object = None,
     delivery_target_units: object = None,
@@ -346,7 +331,6 @@ def build_covert_task_contract(
     investigation_fact: object = None,
 ) -> Dict[str, object]:
     """确认闸一次生成可被 canonical applier 接受的 typed contract。缺字段响亮失败。"""
-    del tags, deadline_span, due_turn
     extracted = covert_task_from_payload(
         {"covert_task": covert_task} if covert_task is not None else {},
     )
@@ -1606,7 +1590,7 @@ def apply_investigation_spoliation(
     if owns:
         db.conn.commit()
     return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
-            "knowledge_source": str(knowledge_source or "").strip(),
+            "knowledge_source": str(knowledge_source or ""),
             "row_id": row.get("id")}
 
 
@@ -1827,7 +1811,7 @@ def _investigation_declaration(
                 "fact_key": str(spoil.get("fact_key") or fact or "").strip(),
                 "knowledge_source": str(
                     spoil.get("knowledge_source", spoil.get("知情来源")) or ""
-                ).strip(),
+                ),
             }
     suppress = item.get("suppression", item.get("压案"))
     if isinstance(suppress, Mapping):
@@ -1888,7 +1872,7 @@ def apply_monthly_covert_actual_progress(
         if inv_target:
             applied.append(
                 _apply_investigation_selection(
-                    db, state, order=order, dossier=dossier, sel=sel,
+                    db, order=order, dossier=dossier, sel=sel,
                     target=inv_target, investigator=minister, turn=turn,
                 )
             )
@@ -1950,7 +1934,6 @@ def apply_monthly_covert_actual_progress(
 
 def _apply_investigation_selection(
     db: Any,
-    state: Any,
     *,
     order: Mapping[str, object],
     dossier: Mapping[str, object],
@@ -1973,11 +1956,12 @@ def _apply_investigation_selection(
     rejected_reactions: List[Dict[str, object]] = []
     # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
     # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
-    existing = db.conn.execute(
-        "SELECT id, units FROM dossier_actual_progress "
-        "WHERE dossier_id=? AND turn=? LIMIT 1",
-        (did, int(turn)),
-    ).fetchone()
+    existing_rows = [
+        row
+        for row in db.list_dossier_actual_progress(did)
+        if int(row.get("turn") or 0) == int(turn)
+    ]
+    existing = existing_rows[0] if existing_rows else None
     declaration = _investigation_declaration(sel)
     invalid = str(declaration.get("invalid") or "").strip()
     if invalid:

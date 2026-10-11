@@ -24,12 +24,14 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
+from ming_sim.pay_order import ARREARS_SUBJECTS, DUE_SUBJECTS
+
 EPS = 1e-6
 CASH_KEYS = ["省库库银", "C_地方截留", "C_中饱", "C_漂没", "C_eff损耗"]
 CLAIM_KEYS = ["民欠旧赋", "军饷欠", "官俸欠", "宗禄欠"]
 KNOWN_ACTIONS = {"补饷", "清丈", "挪借火耗", "追赃", "清欠", "蠲免", "营建"}
-_DUE_KEYS = ("军饷", "官俸", "宗禄", "赈济")
-_ARREARS_KEYS = ("军饷欠", "官俸欠", "宗禄欠")
+_DUE_KEYS = DUE_SUBJECTS  # #14 single source with pay_order
+_ARREARS_KEYS = ARREARS_SUBJECTS
 _DEBT_OF_DUE = {"军饷": "军饷欠", "官俸": "官俸欠", "宗禄": "宗禄欠"}
 
 
@@ -220,8 +222,8 @@ def settle_tick(
     r: Dict[str, Any] = dict(
         实征=0, 火耗实收=0, 清欠=0, 拨付gross=0, 起运到京=0, 实付=0, 偿旧欠=0, 行政补饷=0,
         漂没=0, 中饱=0, 民欠新增=0, 蠲免=0, unmet_relief=0,
-        NewDebt={"军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
-        Repaid={"军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+        NewDebt={c: 0 for c in _ARREARS_KEYS},
+        Repaid={c: 0 for c in _ARREARS_KEYS},
         action还={"军饷欠": 0},
         # #653 流水分解新字段：per-科目实付分账（TSV 断言实付序）＋折发免除额
         实付分账={h: 0.0 for h in _DUE_KEYS},
@@ -398,7 +400,7 @@ def settle_tick(
     # ── 守恒 oracle（4 类，独立重算，破即 raise）──
     _assert_conservation(
         st, p, actions, cash, claim, cash0, cash_in, cash_out, C0, claim0,
-        官民田, 隐田, 地0, 省内可支, fh, bf, g, zb, k, 正赋, r,
+        官民田, 隐田, 地0, 省内可支, fh, bf, g, zb,
     )
 
     new_st: Dict[str, float] = dict(cash)
@@ -417,7 +419,7 @@ def settle_tick(
 
 def _assert_conservation(
     st, p, actions, cash, claim, cash0, cash_in, cash_out, C0, claim0,
-    官民田, 隐田, 地0, 省内可支, fh, bf, g, zb, k, 正赋, r,
+    官民田, 隐田, 地0, 省内可支, fh, bf, g, zb,
 ) -> None:
     """4 类独立守恒 oracle：现金 / 债务 per-account / C 分账 per-account / 土地。
     每个都从 st+params+actions 独立重放（不读 settlement 中间量），破即 fail-loud raise。"""
@@ -476,7 +478,7 @@ def _assert_conservation(
         x = min(o_S, bal)
         o_rep[c] = x
         o_S -= x
-    for c in ("军饷欠", "官俸欠", "宗禄欠"):
+    for c in _ARREARS_KEYS:  # #14 single source; was duplicate inline 3-tuple
         exp = claim0[c] - o_a还.get(c, 0) + o_nd[c] - o_rep[c]
         if abs(claim[c] - exp) > EPS:
             raise FiscalConservationError(f"债务对账破：{c} {claim[c]:.4f} ≠ oracle {exp:.4f}")

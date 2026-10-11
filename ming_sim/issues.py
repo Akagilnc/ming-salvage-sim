@@ -23,6 +23,7 @@ from ming_sim.constants import (
     BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
     POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
+    GATE_METRIC_KEYS,
     BANDIT_ABSORPTION_FIELDS,
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
 )
@@ -37,7 +38,6 @@ from ming_sim.db import (
     _approx_wanliang,
     compute_loyalty_soft_adjust,
     fold_loyalty_alias_delta,
-    infer_office_type_from_office,
     latched_army_field_effect_permitted,
     normalize_office,
     resolve_office_type_preserving_title,
@@ -626,10 +626,8 @@ def commitment_progress_payload(
 
 
 def _commitment_arrears_remaining_text(amount: object) -> str:
-    text = _approx_wanliang(amount)
-    if text.startswith("欠饷"):
-        return "尚欠" + text[len("欠饷"):]
-    return text
+    """Pass through approx arrears text; #1847 no prefix wording rewrite."""
+    return _approx_wanliang(amount)
 
 
 def commitment_display_text(progress: Dict[str, object], row: sqlite3.Row) -> str:
@@ -2839,35 +2837,7 @@ def _pending_person_changes_block_event_gate(
                 ),
             )
             overlay(name, "transit_to", "")
-            new_parts = [p for p in normalized_office.split(",") if _is_exclusive_office(p)]
-            if new_parts:
-                for other_name in set(shadow_rows):
-                    if other_name == name:
-                        continue
-                    other_row = character_row(other_name)
-                    if other_row is None:
-                        continue
-                    if row_value(other_row, "status", "active") != "active":
-                        continue
-                    if row_value(other_row, "power_id", "ming") not in {"", "ming"}:
-                        continue
-                    current_parts = [p.strip() for p in row_value(other_row, "office").split(",") if p.strip()]
-                    kept = [p for p in current_parts if p not in new_parts]
-                    if len(kept) == len(current_parts):
-                        continue
-                    displaced_office = "听用候铨" if not kept else ",".join(kept)
-                    old_type = row_value(other_row, "office_type")
-                    displaced_type = (
-                        "身名分"
-                        if not kept
-                        else infer_office_type_from_office(displaced_office, old_type, db.llm_config)
-                    )
-                    overlay(other_name, "office", displaced_office)
-                    overlay(other_name, "office_type", displaced_type)
-                    if not kept:
-                        overlay(other_name, "status_reason", "被顶替")
-                        overlay(other_name, "reason_code", "被顶替")
-                        overlay(other_name, "transit_to", "")
+            # #1847: no free-text exclusive-suffix displacement in shadow preview.
         else:
             continue
 
@@ -2917,18 +2887,16 @@ def _pending_person_changes_block_event_gate(
 
 
 def _normalize_cancellable(raw: object) -> str:
-    """LLM 偶发臆造 cancellable 值（by_policy 之类），归一到合法白名单。"""
+    """Admit only the closed cancellable enum.
+
+    #1847: empty → by_progress; unknown free wording must not silently admit.
+    """
     val = str(raw or "").strip().lower()
+    if not val:
+        return "by_progress"
     if val in ("decree", "never", "by_progress"):
         return val
-    # 常见臆造映射
-    if val in ("by_policy", "policy"):
-        return "decree"
-    if val in ("none", "no", "false"):
-        return "never"
-    if val in ("yes", "true", "auto"):
-        return "by_progress"
-    return "by_progress"  # 默认
+    raise ValueError(f"cancellable 非法：{raw!r}")
 
 
 def _compute_inertia(ni: Dict[str, object]) -> int:
@@ -2946,18 +2914,12 @@ def _compute_inertia(ni: Dict[str, object]) -> int:
 
 # 离散时长档：LLM 只能给这几档（防乱填）；映射到月。
 _LEGACY_DURATION_MONTHS = {"1年": 12, "2年": 24, "永久": -1}
-_LEGACY_ACCOUNT_KEYS = ("国库", "内库", "民心", "皇威")  # 全局可被 % 修正的四项
 _LEGACY_PCT_CAP = 5  # 单条帝国修正对某维度的百分比上限，防幅度过大
 
 # 月固定收支项的合法账户 / 方向白名单（fiscal_creates 枚举守门，集中一处；
-# applier 是唯一的枚举守门（cleaner 只做 direction 同义词映射等无损规范化,cmr S3 r2）。
+# applier 是唯一的枚举守门。#1847：不做方向同义词改写，只认封闭枚举。
 _FISCAL_ACCOUNTS = ("国库", "内库")
 _FISCAL_DIRECTIONS = ("income", "expense")
-# #1843 reopen：方向同义词归一表从旧 extractor 清洗迁到本唯一使用处。
-_DIRECTION_NORMALIZE = {
-    "income": "income", "收": "income", "收入": "income", "进账": "income",
-    "expense": "expense", "支": "expense", "支出": "expense", "出账": "expense",
-}
 
 
 def _clamp_pct(v: object) -> Optional[int]:
@@ -3005,7 +2967,7 @@ def _spawn_legacy_from_effect(
     raw_eff = legacy.get("modifiers") or {}
     modifiers: Dict[str, object] = {}
     if isinstance(raw_eff, dict):
-        for k in _LEGACY_ACCOUNT_KEYS:
+        for k in GATE_METRIC_KEYS:  # single source (#14); was duplicate _LEGACY_ACCOUNT_KEYS
             pct = _clamp_pct(raw_eff.get(k))
             if pct is not None:
                 modifiers[k] = pct
@@ -3052,7 +3014,6 @@ def _spawn_legacy_from_effect(
     dur_label = "永久" if duration < 0 else f"{duration}月"
     print(f"[帝国修正] 局势#{issue_id}「{issue_title}」落「{name}」({dur_label}) {modifiers}")
     return summary
-
 
 
 
@@ -3166,6 +3127,8 @@ def _apply_issue_entities(
     return tolerated
 
 
+# #1847: free title/tag phrase pairing-warning admit deleted.
+
 _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = {
     "jisi_lubian": {
         "regions": frozenset({"beizhili"}),
@@ -3216,19 +3179,8 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
         "powers": frozenset({"bandit_li_zicheng"}),
     },
 }
-_STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES: Dict[str, Dict[str, str]] = {
-    "jisi_lubian": {
-        "挡于边墙外": "挡于边墙",
-        "拒于边墙": "挡于边墙",
-        "未能入塞": "挡于边墙",
-        "入塞遭遏": "入塞被遏",
-        "入塞受遏": "入塞被遏",
-        "入塞后被遏": "入塞被遏",
-        "入塞被阻": "入塞被遏",
-        "长驱入京": "长驱直入",
-        "兵临京师": "长驱直入",
-    },
-}
+# #1847: free outcome-label synonym rewrite deleted; closed labels only
+# (whitespace-compact exact match in _normalize_event_outcome_label).
 def _is_strategic_foreign_node_event(ev: Event) -> bool:
     return (
         getattr(ev, "event_type", "situation") != "situation"
@@ -3442,8 +3394,7 @@ def _normalize_event_outcome_label(event_id: str, label: str, content: GameConte
     for canonical in allowed:
         if compact == re.sub(r"\s+", "", canonical):
             return canonical
-    alias = _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES.get(event_id, {}).get(compact, "")
-    return alias if alias in allowed else ""
+    return ""
 
 
 def _strategic_event_outcome_label_or_error(
@@ -3980,7 +3931,7 @@ def preflight_declared_event_effects(
 
 
 def petition_outcome_is_admissible(
-    state: GameState, db: GameDB, event_id: str, content: Optional[GameContent],
+    db: GameDB, event_id: str, content: Optional[GameContent],
 ) -> bool:
     """该事件是否可由本回合的亲裁答复置定结局（#1892 亲裁语义落账）。
 
@@ -4020,7 +3971,7 @@ def _preflight_declared_event_groups(
         # （三饷的征收由饷率通道按终局标签核算），只要求标签落在事件自声明的封闭集内，
         # 且事件账里已有请旨答复、终态仍空。归一失败响亮失败（ADR 0014），不静默丢弃亲裁。
         if getattr(event, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
-            if not petition_outcome_is_admissible(state, db, event_id, content):
+            if not petition_outcome_is_admissible(db, event_id, content):
                 rejected[event_id] = f"三饷事项当前不能由亲裁置定结局：{event_id}"
                 continue
             outcome: Dict[str, object] = {}
@@ -4744,6 +4695,10 @@ def apply_issue_tracker_output(
             inertia = _compute_inertia(ni)
             if is_commitment:
                 inertia = 0
+            cancellable_norm = (
+                "decree" if is_commitment
+                else _normalize_cancellable(ni.get("cancellable"))
+            )
         except (TypeError, ValueError, OverflowError) as exc:
             # OverflowError：JSON 里 1e309 解析成 float('inf')，超界 int 绑定亦抛；_strict_int 已把
             # float（含 inf/nan）归 ValueError，OverflowError 兜超大 int 等残余路（cmr ni r3 codex）。
@@ -4778,6 +4733,8 @@ def apply_issue_tracker_output(
                         raise ValueError("participant_roster 每项须为对象或人名")
                     if not str(participant.get("character_id") or participant.get("name") or "").strip():
                         raise ValueError("participant_roster 每项须有 character_id")
+                    # 缺省「知情」为既有可选字段契约；封闭枚举校验保留（不作一律删除）.
+                    # #1847：不把缺字段升格为必填拒收护栏。
                     tier = str(participant.get("tier") or participant.get("档") or "知情").strip()
                     if tier not in {"主办", "协办", "知情"}:
                         raise ValueError(f"participant_roster tier 非法：{tier}")
@@ -4863,12 +4820,12 @@ def apply_issue_tracker_output(
             # dict entries to str(dict) creates phantom character names.
             participants=roster_input or [],
             ongoing_effects=ongoing_eff,
-            cancellable="decree" if is_commitment else _normalize_cancellable(ni.get("cancellable")),
+            cancellable=cancellable_norm,
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
             resolve_condition=resolve_condition,
-            fail_condition=str(ni.get("fail_condition") or ""),
+            fail_condition=_issue_condition_text(ni.get("fail_condition")),
             end_turn=end_turn,
             stop_condition=stop_condition,
             commitment_kind=commitment_kind,
@@ -5027,6 +4984,7 @@ def apply_issue_tracker_output(
         if isinstance(cl_effect, dict):
             # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设
             effect = {**effect, **cl_effect}
+        # #1847: free title/tag phrase pairing warn deleted.
         parent_origin_ref = _canonical_issue_origin(db, new_row)
         _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
         entity_rejections.extend(r for r in _apply_economy_list(
@@ -5172,121 +5130,7 @@ def apply_issue_tracker_output(
     }
 
 
-# 独占实职关键词：office 分项以此结尾者视为「一人一缺」，须顶替去重。
-# 群体职（大学士/侍郎/郎中/主事/御史/翰林等）不在内，可多员并存。
-_EXCLUSIVE_OFFICE_SUFFIXES = (
-    "首辅", "次辅", "尚书", "总督", "巡抚", "总兵", "督师", "经略", "提督",
-)
-
-
-def _is_exclusive_office(part: str) -> bool:
-    """office 单个分项是否独占实职。南京XX为留都缺，与京职互不冲突，单独算一缺。"""
-    return any(part.endswith(suf) for suf in _EXCLUSIVE_OFFICE_SUFFIXES)
-
-
-def _displace_duplicate_offices(
-    db: GameDB,
-    content: Optional[GameContent],
-    new_holder: str,
-    new_office: str,
-    *,
-    region_id: str = "",
-    commit: bool = True,
-) -> List[str]:
-    """新任者 new_holder 拿到 new_office 后，把其中每个独占实职分项从其他 active 官员
-    office 里剔除，避免双缺官。返回被腾出的 (旧任者:职) 描述列表。
-
-    ``region_id`` 必须是一次任职的 resolved seat（经 _resolve_appointment_seat /
-    character_offices），不是调用方原始字符串。中央 resolved 为空 → 按 office
-    文字挤位；地方 resolved 非空 → 仅同 seat 互挤（同名巡抚跨省不顶替）。
-    """
-    new_parts = [p for p in normalize_office(new_office).split(",") if _is_exclusive_office(p)]
-    if not new_parts:
-        return []
-    new_seat = str(region_id or "").strip()
-    displaced: List[str] = []
-    displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
-    rows = db.conn.execute(
-        "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
-        (new_holder,),
-    ).fetchall()
-    for row in rows:
-        holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
-        # Seat-aware exclusive collision: resolved local seat only bumps the
-        # same seat; empty resolved seat is central identity (title-only).
-        if new_seat:
-            holder_seat = db.character_office_region(row["name"])
-            if holder_seat != new_seat:
-                continue
-        conflicting = [p for p in holder_parts if p in new_parts]
-        if not conflicting:
-            continue  # 此人不占同名独缺
-        kept = [p for p in holder_parts if p not in conflicting]
-        displaced_names.add(row["name"])
-        for lost in conflicting:
-            displaced.append(f"{row['name']}:{lost}")
-        fully_displaced = not kept
-        new_holder_office = "听用候铨" if fully_displaced else ",".join(kept)
-        # 剔掉一个分项后,保留官职对应的 office_type 可能变了(如剔「兵部尚书」后只剩「左都御史」=都察院)。
-        # 若独占实职被完全腾空,旧任仍 active,但其名分必须落入人才池的「听用候铨」,
-        # 不能留下 active + 空 office 的半身份（ADR 0009 S5）。
-        old_type_row = db.conn.execute(
-            "SELECT office_type FROM characters WHERE name=?", (row["name"],)).fetchone()
-        old_type = old_type_row["office_type"] if old_type_row else ""
-        new_type = (
-            "身名分"
-            if fully_displaced
-            else infer_office_type_from_office(new_holder_office, old_type, db.llm_config)
-        )
-        # 排挤后 character_offices / 内存 office_region 与 characters 同事务同步：
-        # 全顶替 → 名分，备档删除、任所清空；部分保留 → 余职 + 原 seat 入 record。
-        # 内存 seat 必须以备档真源对齐（record 后可能因非地方 office_type 钳空）。
-        retained_seat = "" if fully_displaced else str(
-            db.character_office_region(row["name"]) or ""
-        ).strip()
-        if fully_displaced:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
-                (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
-            )
-            db.set_character_transit(str(row["name"]), content=content, commit=False)
-        else:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=? WHERE name=?",
-                (new_holder_office, new_type, row["name"]),
-            )
-        db._record_character_office(
-            row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
-        )
-        archived_seat = str(db.character_office_region(row["name"]) or "").strip()
-        if content is not None and row["name"] in content.characters:
-            ch = content.characters[row["name"]]
-            ch.office = new_holder_office
-            ch.office_type = new_type
-            ch.office_region = archived_seat
-            if fully_displaced:
-                ch.status_reason = "被顶替"
-                ch.reason_code = "被顶替"
-    # #9 cmr R1：被顶替者的 office_type 经上方裸 UPDATE 改了（全顶替→身名分=0 权重），绕过了
-    # set_character_office 钩子，故其所属派系（常与新任者异派系）的 leverage 须在此补重算，否则
-    # 残留偏高、违 #9 不变式。新任者自身派系已由 set_character_office 钩子重算，这里只补被顶替者。
-    # commit 前调用——recompute 读当前在朝成员、不内部 commit，正反映刚改完的 office_type；
-    # 绝对幂等（非白名单 return、重复无害）。去重后逐派系各调一次。
-    displaced_factions = set()
-    for dn in displaced_names:
-        frow = db.conn.execute(
-            "SELECT faction FROM characters WHERE name=?", (dn,)
-        ).fetchone()
-        # 空/None faction 提前滤掉（recompute_faction_leverage("") 虽被白名单校验 no-op，
-        # 但提前过滤免去无意义调用，集合也不残留空串。线上 R5 gemini medium。
-        if frow is not None and frow["faction"]:
-            displaced_factions.add(str(frow["faction"]))
-    for fac in displaced_factions:
-        db.recompute_faction_leverage(fac)
-    if commit:
-        db.conn.commit()
-    return displaced
-
+# #1847: free-text exclusive displacement deleted (no noop helper left).
 
 def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     character_rows = [
@@ -5560,7 +5404,7 @@ def apply_office_appointment(
     """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存；
     不在册 → apply_appointment 建新档。extractor 的 office_changes 与 CLI 自然语言任免 commit
     共用此核，杜绝两份会漂的 copy（CMR R2 reground）。
-    返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
+    返回结果 dict（rejected / kind=transfer|appoint 等）。"""
     name = str(name or "").strip()
     new_office = str(new_office or "").strip()
     if not name or not new_office:
@@ -5643,9 +5487,6 @@ def apply_office_appointment(
                     db.conn.commit()
             # Prefer post-write authority; never fall back to caller raw region.
             seat = db.character_office_region(name) or seat
-            displaced_parts = _displace_duplicate_offices(
-                db, content, name, new_office, region_id=seat, commit=commit,
-            )
             ch = content.characters[name]
             ch.office = new_office
             ch.office_type = new_office_type
@@ -5660,7 +5501,6 @@ def apply_office_appointment(
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
             "kind": "transfer", "reason": reason,
-            **({"displaced": displaced_parts} if displaced_parts else {}),
         }
     # ── 新任：建新档 ──
     # 不变式（#1317 r2 重立）：经身份归一后若 name 仍不在 content.characters，才建档。
@@ -5712,16 +5552,9 @@ def apply_office_appointment(
                 commit=commit,
             )
         if appointed:
-            # 新任也按 office+任所 去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
-            # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
-            # displaced 统一取 _displace_duplicate_offices 的 List[str](apply_appointment 的单名
-            # displaced 在去 replaces 后恒空,留着会让本字段时而 str 时而 list,故弃)(线上 gemini)。
+            # #1847: free-text exclusive displace deleted; no dual-seat peel after appoint.
             seat = db.character_office_region(appointed) or seat
-            displaced_parts = _displace_duplicate_offices(
-                db, content, appointed, new_office, region_id=seat, commit=commit,
-            )
-            return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
-                    **({"displaced": displaced_parts} if displaced_parts else {})}
+            return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason}
     except OfficeAppointmentRejection as exc:
         _restore_person_write_state(db, content, snapshot, commit=commit)
         return _office_appointment_failure(
@@ -5838,46 +5671,18 @@ def _apply_person_changes(
             origin_ref=origin_ref,
         )
 
-    def displaced_talent_pool_results(displaced_parts: object) -> List[Dict[str, object]]:
-        if not isinstance(displaced_parts, list):
-            return []
-        results: List[Dict[str, object]] = []
-        for part in displaced_parts:
-            name_part = str(part).split(":", 1)[0].strip()
-            if not name_part:
-                continue
-            row = character_row(name_part)
-            if row is None:
-                continue
-            if str(row["office"] or "") != "听用候铨" or str(row["reason_code"] or "") != "被顶替":
-                continue
-            results.append(
-                {
-                    "name": name_part,
-                    "动作": "处置",
-                    "status": "active",
-                    "reason": "被顶替",
-                    "reason_code": "被顶替",
-                    "office": "听用候铨",
-                    "office_type": "身名分",
-                    "derived_from": "被顶替",
-                    # applier 合成级联回声：信用写端只消费 extractor 宣告本体行。
-                    "cascade_echo": True,
-                }
-            )
-        return results
+    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
+        title = str(item.get("new_title") or item.get("title") or "").strip()
+        if title:
+            return title if title in PERSON_IDENTITY_TITLES else ""
+        way = str(item.get("方式") or item.get("way") or "").strip()
+        if new_power == "ming" or way == "主动归附":
+            return "归附"
+        return "降臣"
 
     applied: List[Dict[str, object]] = []
     needs_person_change_commit = False
-    person_statuses = {
-        "active",
-        "offstage",
-        "dismissed",
-        "imprisoned",
-        "exiled",
-        "retired",
-        "dead",
-    }
+    person_statuses = set(PERSON_STATUSES)
     disposition_statuses = person_statuses - {"active"}
     for item in changes:
         name = str(item.get("name") or "").strip()
@@ -6241,9 +6046,6 @@ def _apply_person_changes(
                 wrapped["normalized"] = f"{action}->{effective_action}"
             applied.append(wrapped)
             log_applied(wrapped, item, commit=False if derive_label else None)
-            for displacement_result in displaced_talent_pool_results(wrapped.get("displaced")):
-                applied.append(displacement_result)
-                log_applied(displacement_result, item, commit=False if derive_label else None)
             if derive_label and commit_person_change:
                 db.conn.commit()
             continue
@@ -6523,7 +6325,6 @@ def _apply_person_changes(
 
 def _apply_dossier_participant_items(
     db: GameDB,
-    state: GameState,
     extracted: Dict[str, object],
     *,
     items_key: str,
@@ -6583,7 +6384,7 @@ def _apply_dossier_participant_items(
             continue
         try:
             added = db.append_decree_dossier_participants(
-                dossier_id, [addition], state=state, commit=False,
+                dossier_id, [addition], commit=False,
             )
             if not added:
                 # Exact durable duplicate is the only no-write success case.
@@ -6882,7 +6683,6 @@ def _apply_bandit_absorptions(
             "actual_count": actual,
             "strength_delta": strength_delta,
             "origin_ref": origin_ref,
-            "population_unit": db.population_unit,
         }
         if strength_delta > 0:
             power_changes.extend(db.apply_power_deltas(
@@ -7170,8 +6970,6 @@ def apply_score_extraction(
             dossier_ids_at_input=dossier_ids_at_input,
             secret_dossier_ids_at_input=secret_dossier_ids_at_input,
             authorized_open_affairs=authorized_open_affairs,
-            frozen_open_affairs=frozen_open_affairs,
-            caller_transaction=caller_transaction,
             commit_now=commit_now,
             relation_pre_roster=_relation_pre_roster,
             validate_rejections=validate_rejections,
@@ -7277,8 +7075,6 @@ def _apply_score_extraction_body(
     dossier_ids_at_input: Optional[set[int]],
     secret_dossier_ids_at_input: Optional[set[int]],
     authorized_open_affairs: set[int],
-    frozen_open_affairs: set[int],
-    caller_transaction: bool,
     commit_now: bool,
     relation_pre_roster: set[str],
     validate_rejections: list,
@@ -7404,14 +7200,14 @@ def _apply_score_extraction_body(
     # Only the caller's frozen simulator input grants roster-write authority.
     # Public/secret field names and authority sets stay separate (no union).
     dossier_participant_results = _apply_dossier_participant_items(
-        db, state, extracted,
+        db, extracted,
         items_key="dossier_participants",
         authority_set=dossier_ids_at_input if isinstance(dossier_ids_at_input, set) else set(),
         not_in_batch_msg="案卷不在本批可见输入",
     )
     # #1252: independent secret-dossier roster field (field name = provenance).
     secret_dossier_participant_results = _apply_dossier_participant_items(
-        db, state, extracted,
+        db, extracted,
         items_key="secret_dossier_participants",
         authority_set=(
             secret_dossier_ids_at_input
@@ -8353,11 +8149,8 @@ def _apply_score_extraction_body(
     #      使同{月}「新立关税 + 立即调率」可一气落地。
     applied_fiscal_creates: List[Dict[str, object]] = []
     for create in extracted.get("fiscal_creates") or []:
-        # direction 同义词在唯一守门人处归一（cmr S3 r9:只放在可选的
-        # cleaner 层会让直接落账的声明漏判；DELTA_SCHEMA 明言吃中文别名）。表与 cleaner 共用
-        # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。
-        direction_raw = str(create.get("direction") or "").strip()
-        direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
+        # #1847: closed direction enum only — no Chinese synonym rewrite.
+        direction = str(create.get("direction") or "").strip()
         key = str(create.get("key") or "").strip()
         account = str(create.get("account") or "").strip()
         # key 空 / account / direction 非法 = 脏枚举,原先纯静默 continue,改记拒留痕
@@ -8629,8 +8422,6 @@ def _apply_score_extraction_body(
         db.update_secret_order_sim_note(
             real_id,
             sim_note,
-            year=state.year,
-            period=state.period,
             commit=commit_now,
         )
         if disclosed and not defer_disclosure:
@@ -8693,7 +8484,7 @@ def _apply_score_extraction_body(
             extracted.get("dossier_executions"), dossier_execution_results,
         ),
         # 人物变更 rejected 单一保护点（credit_events 不再二次滤）。
-        # cascade_echo：applier 合成级联回声（放归/被顶替等）在生产点打标，
+        # cascade_echo：applier 合成级联回声（放归/赦还等）在生产点打标，
         # 此处唯一滤除；禁在 credit_events 另设第二闸或盯 derived_from 文本。
         "人物变更": [
             r for r in applied_person_changes
@@ -8776,7 +8567,7 @@ def _apply_score_extraction_body(
         "applied_person_changes": applied_person_changes,
         "secret_order_updates": applied_secret_orders,
     }
-    victory = _resolve_victory(db, state, extracted)
+    victory = _resolve_victory(db, extracted)
     if str(victory.get("status") or "") != "ongoing":
         report["victory_status"] = victory
     return report
@@ -8787,6 +8578,9 @@ def _declared_emperor_ending(fate: object) -> Optional[Dict[str, object]]:
 
     其它非空声明（被废、暴毙，以及声明里的其它终态）同样终局，不再被旧的两值枚举丢掉。
     不定调新句子：总评仍由结局 agent 据邸报来写。
+
+    #1847：emperor_fate 是 extractor 契约结构化字段值，原样透传为终态号；
+    不是从自由散文推断分类（ADR 0142 不授权丢弃已声明非空终态）。
     """
     if not isinstance(fate, str):
         return None
@@ -8803,13 +8597,13 @@ def _declared_emperor_ending(fate: object) -> Optional[Dict[str, object]]:
     return {"status": token, "summary": ""}
 
 
-def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:
+def _resolve_victory(db: GameDB, extracted: Dict[str, object]) -> Dict[str, object]:
     """结局判定：模型声明的皇帝终态优先于数值型（京畿失守）。
     20 年到期（timeout）在 decree 结局收口判，不在此。"""
     declared = _declared_emperor_ending(extracted.get("emperor_fate"))
     if declared is not None:
         return declared
-    return victory_status(db, state)
+    return victory_status(db)
 
 
 # ── 开局负面帝国修正：不立 issue、不进推演，靠 clear_gate 程序判定消除 ──────────────

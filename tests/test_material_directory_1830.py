@@ -207,7 +207,6 @@ def test_read_material_stays_inside_directory(game, tmp_path):
     miss = tools["read_material"](display)
     assert isinstance(miss, str)
     assert display in miss
-    assert "本月邸报" not in miss
 
 
 def test_character_materials_read_archived_public_gazettes(

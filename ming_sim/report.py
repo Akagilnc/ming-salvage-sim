@@ -1,4 +1,4 @@
-"""回合展示与变更报告纯函数（返回 str / 打印）。L7。"""
+"""回合展示纯函数（返回 str / 打印）。L7。"""
 
 from __future__ import annotations
 

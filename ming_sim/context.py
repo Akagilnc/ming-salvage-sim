@@ -12,7 +12,7 @@ from ming_sim.assets import load_json_asset
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
-from ming_sim.models import Character, GameState
+from ming_sim.models import Character
 from ming_sim.qualitative import (
     identity_band,
     identity_bucket,
@@ -93,7 +93,7 @@ ENDING_LABELS: Dict[str, str] = {
 }
 
 
-def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
+def victory_status(db: GameDB) -> Dict[str, object]:
     """结局判定（数值型部分）：本函数只判「京师失守」。
 
     退位、自尽、被废、暴毙及其它已声明的皇帝终态走 emperor_fate
@@ -296,18 +296,15 @@ def match_minister_from_text(text: str, current: Optional[Character] = None) -> 
     for character in _ctx().characters.values():
         if current is not None and character.name == current.name:
             continue
+        # #1847 / ADR 0142: exact identity only — no substring name-in-prose admit.
         if (
-            character.name in cleaned
-            or character.office in cleaned
-            or character.office_type in cleaned
-            or character.faction in cleaned
-            or any(alias in cleaned for alias in character.aliases)
+            character.name == cleaned
+            or character.office == cleaned
+            or character.office_type == cleaned
+            or character.faction == cleaned
+            or cleaned in character.aliases
         ):
             matches.append(character)
     if len(matches) == 1:
         return matches[0]
-    if len(matches) > 1:
-        exact = [character for character in matches if character.name in cleaned]
-        if len(exact) == 1:
-            return exact[0]
     return None

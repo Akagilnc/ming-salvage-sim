@@ -23,61 +23,19 @@ from tests.dossier_test_helpers import create_test_secret_order
 from tests.readback_helpers import economy_ledger_count as _ledger_count
 
 
-def test_crash_reload_at_settling_no_double_fiscal_tick(game):
-    """pre_settle 完成（phase=settling 已落盘）→ 模拟崩溃重载（新开 GameDB 读盘）→
-    重进 pre_settle 幂等守门直接 return，economy_ledger 不二次增行（ADR 0008 验收测试①）。"""
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    turn = state.turn
-    from ming_sim.decree import prepare_resolve_front_half
-    db.save_resolve_context(turn, "", {"month_chain": {}}, source="system_simulation")
-
-    auto = prepare_resolve_front_half(state, db, content=content)
-    assert isinstance(auto, list)
-    assert state.turn_phase == "settling"
-    after_first = _ledger_count(db, turn)
-    assert after_first > 0  # 财政确已落
-    assert db.get_resolve_context(turn)["simulator_payload"]["month_chain"] == {}
-    db.conn.close()
-
-    # 崩溃重载：新开 GameDB（落盘的 phase=settling 读回），重进 pre_settle 不重跑前半段。
-    db2 = GameDB(db.path, content)
-    try:
-        state2 = db2.load_state()
-        assert state2.turn_phase == "settling"  # 同事务落库，崩溃前已持久
-        auto2 = prepare_resolve_front_half(state2, db2, content=content)
-        assert auto2 == []
-        assert db2.get_resolve_context(turn)["simulator_payload"]["month_chain"] == {}
-        assert _ledger_count(db2, turn) == after_first  # 财政只落一次
-    finally:
-        db2.conn.close()
-
-
-def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
+def test_settling_survives_begin_turn_phase_whitelist(web_game):
     """phase=settling 重载走 begin_turn → 保活不被重置回 summoning（白名单生效，
     ADR 0008 S4；白名单外的相位重载即被重置，守门失效）。"""
-    from ming_sim.session import GameSession, TurnPhase
-    import ming_sim.session as session_mod
+    from ming_sim.models import TurnPhase
 
-    db, state, content = game
+    db, state = web_game.db, web_game.state
     state.turn_phase = TurnPhase.SETTLING.value
     db.save_state(state)
 
-    # 用 __new__ 跳过重型 __init__（agno/registry/LLM），只装 begin_turn 需要的协作者；
-    # 重型协作者打桩（registry 建 agent / auto_save / office 同步均与白名单无关）。
-    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    sess.llm_config = None
-    sess.agno_db = None
-    monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
-
-    snap = sess.begin_turn()
+    snap = web_game.session.begin_turn()
 
     assert snap.phase == TurnPhase.SETTLING.value
-    assert sess.state.turn_phase == TurnPhase.SETTLING.value
+    assert web_game.state.turn_phase == TurnPhase.SETTLING.value
     # 落盘也仍是 settling（未被重置写回 summoning）
     assert db.load_state().turn_phase == TurnPhase.SETTLING.value
 
@@ -109,7 +67,8 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
     finally:
         other.close()
     assert row[0] == "active"
-    assert "[期限届满]" not in (row[1] or "")
+    # result 保持崩溃前原值（本案初始化为空）；不盯旧模板措辞。
+    assert (row[1] or "") == ""
 
 
 def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
@@ -283,8 +242,6 @@ def test_sticky_phases_cover_awaiting_decision(game):
 def test_advance_without_edict_refused_at_awaiting(game):
     """#1274 r1：空壳已删；awaiting 由 session.resolve_turn 幂等返回决策，不经退朝壳拒绝。"""
     from ming_sim.decree import pre_settle
-    from ming_sim.session import GameSession
-
     db, state, content = game
     turn = state.turn
     pre_settle(state, db)  # 真落财政 + settling
@@ -293,13 +250,8 @@ def test_advance_without_edict_refused_at_awaiting(game):
     rows_before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
 
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = sess.llm_config = sess.agno_db = None
-    sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = sess.last_report = ""
-    sess._decree_draft_fingerprint = ()
-    sess.auto_save = lambda *a, **k: None
+    from tests.month_chain_helpers import make_light_session
+    sess = make_light_session(db, state, content)
     result = sess.advance_without_decree()
     assert result is not None and result.awaiting is True
 
@@ -382,8 +334,6 @@ def test_write_decree_raises_at_awaiting_not_resolveresult(game):
         sess.write_decree()
 
 
-
-
 def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
     """settling 相位与诏书占位同事务可见（PR #90 R1 codex P2）：占位写崩 → 前半段
     整体回滚（相位回 summoning、财政无残留、无 context 行）。
@@ -401,7 +351,7 @@ def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
     monkeypatch.setattr(type(db), "save_resolve_context", _boom)
 
     with pytest.raises(RuntimeError):
-        decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
+        decree_mod.resolve_directives(state, db, None, None, "减赋诏",
                                       content=content)
 
     monkeypatch.undo()

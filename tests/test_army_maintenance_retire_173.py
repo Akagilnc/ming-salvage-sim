@@ -18,17 +18,7 @@ def _pseudo(title="测试"):
     return type("E", (), {"id": "test", "title": title})()
 
 
-def _pay_source():
-    return {
-        "pay_source_region": "shaanxi",
-        "province_pay_share": 1.0,
-        "central_pay_share": 0.0,
-    }
-
-
-# ── schema：列已物理删除 ──────────────────────────────────────────────
-
-
+from tests.test_army_firearms import _pay_source
 
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
 

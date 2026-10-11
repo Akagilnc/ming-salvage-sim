@@ -8,6 +8,7 @@ S3 嵌套通道「旨外恶果」别名 → ledger=1
 from __future__ import annotations
 
 import json
+from tests.dossier_test_helpers import executing_rostered_policy
 
 from ming_sim.commitment_backlash import (
     BACKLASH_ORIGIN_KIND,
@@ -24,20 +25,13 @@ from ming_sim.staged_commitment import write_due_staged_commitment_todos
 
 
 def _executing_policy(db, state, *, token: str):
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"财政旨外·{token}",
-        target_kind="issue",
-        target_id=token,
-        participants=[
+    return executing_rostered_policy(
+        db, state, token=token, decree_text=f"财政旨外·{token}",
+        roster=[
             {"character_id": "倪元璐", "tier": "主办", "role": "经办"},
             {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
         ],
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
 
 
 def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):

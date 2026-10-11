@@ -127,7 +127,7 @@ def _bind_round_after_dispatch(
         name = str(validated.get("person_name") or "").strip()
     if chat_turn_id <= 0:
         if name and night_id > 0:
-            set_night_protagonist(db, night_id, name, reason="translation", commit=False)
+            set_night_protagonist(db, night_id, name, commit=False)
         return
     if name:
         db.conn.execute(
@@ -506,7 +506,6 @@ def schedule_audience_turn_translation(
         pred_fut: Future,
         *,
         _out: Future = fut,
-        _night_key: Tuple[int, int] = night_key,
     ) -> None:
         _observe_predecessor(pred_fut)
         if _out.done():

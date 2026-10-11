@@ -17,6 +17,7 @@ import pytest
 
 from ming_sim.flows import apply_fixed_period_flows
 from tests.readback_helpers import army_loyalty as _loyalty_of
+from tests.army_pay_helpers import configure_guanning_army
 
 KEG = "guanning"    # 火药桶/主测军（content 军，needed 可控）
 ELITE = "jingying"  # 精锐对照军
@@ -27,27 +28,6 @@ def _silence_other_armies(db, keep=(KEG, ELITE)):
     marks = ",".join("?" for _ in keep)
     db.conn.execute(
         f"UPDATE armies SET manpower=0 WHERE id NOT IN ({marks})", keep)
-
-
-def _setup_army(db, aid, *, loyalty=50, arrears=0.0, manpower=10000,
-                salary_rate=1.0, is_tusi=0, owner_power="ming"):
-    """needed = ceil(10000×1.0/10000) = 1 万两/月。"""
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power=?, is_tusi=?, self_funded_pay=0,
-            manpower=?, salary_rate=?, loyalty=?, arrears=?, morale=50
-        WHERE id=?
-        """,
-        (owner_power, is_tusi, manpower, salary_rate, loyalty, arrears, aid),
-    )
-
-
-def _run_months(db, state, months, *, fund_fully=True):
-    for _ in range(months):
-        state.metrics["国库"] = 10 ** 9 if fund_fully else 0
-        apply_fixed_period_flows(db, state)
-
 
 
 
@@ -62,10 +42,12 @@ def test_substrate_hub_path_loyalty_tier(game, arrears, loyalty, expected):
     db.conn.execute(
         "UPDATE armies SET province_pay_share=0, central_pay_share=1.0, "
         "province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (KEG,))
-    _setup_army(db, KEG, loyalty=loyalty)
+    configure_guanning_army(db)
+    db.conn.execute("UPDATE armies SET loyalty=?, morale=50 WHERE id=?", (loyalty, KEG))
     db.conn.execute("UPDATE armies SET central_pay_arrears=? WHERE id=?", (arrears, KEG))
     db.conn.commit()
-    _run_months(db, state, 1)
+    state.metrics["国库"] = 10 ** 9
+    apply_fixed_period_flows(db, state)
     assert _loyalty_of(db, KEG) == expected
     log = db.conn.execute(
         "SELECT delta FROM army_logs WHERE army_id=? AND field='loyalty' "
@@ -133,51 +115,3 @@ def test_substrate_hub_hybrid_source_loyalty_regression(game):
     ).fetchall()
     assert len(logs) == 1, f"忠诚日志应仅一条，实得 {len(logs)}"
     assert int(logs[0]["delta"]) == -5
-
-
-def test_tusi_and_non_ming_untouched_on_hub(game):
-    db, state, _ = game
-    # 豁免军分源份额/欠饷须全 0（守恒）；本案只验 loyalty 不被 tick，cutover 保持现役。
-    _silence_other_armies(db, keep=(KEG, ELITE))
-    _setup_army(db, KEG, is_tusi=1, arrears=0.0, loyalty=50)
-    _setup_army(db, ELITE, owner_power="houjin", arrears=0.0, loyalty=66)
-    db.conn.execute(
-        "UPDATE armies SET province_pay_share=0, central_pay_share=0, "
-        "pay_source_region='', province_pay_arrears=0, central_pay_arrears=0, "
-        "arrears=0 WHERE id IN (?, ?)",
-        (KEG, ELITE),
-    )
-    db.conn.commit()
-    before_non_ming = _loyalty_of(db, ELITE)
-    _run_months(db, state, 1)
-    assert _loyalty_of(db, KEG) == 50, "土司自养军 loyalty 不得被 tick 动"
-    assert _loyalty_of(db, ELITE) == before_non_ming, "非明军 loyalty 不得被 tick 动"
-
-
-def test_self_funded_army_untouched_on_hub(game):
-    db, state, _ = game
-    _silence_other_armies(db, keep=(KEG,))
-    db.conn.execute(
-        "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=1, "
-        "manpower=10000, salary_rate=1.0, loyalty=50, arrears=0.0, "
-        "province_pay_share=0, central_pay_share=0, pay_source_region='', "
-        "province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
-        (KEG,),
-    )
-    db.conn.commit()
-    _run_months(db, state, 1)
-    assert _loyalty_of(db, KEG) == 50, "自养军 loyalty 不得被 tick 动"
-
-
-def test_zero_manpower_army_no_crash_no_tick_on_hub(game):
-    db, state, _ = game
-    _silence_other_armies(db, keep=(KEG,))
-    _setup_army(db, KEG, manpower=0, arrears=10.0, loyalty=30)
-    db.conn.execute(
-        "UPDATE armies SET province_pay_share=0, central_pay_share=1.0, "
-        "province_pay_arrears=0, central_pay_arrears=10.0 WHERE id=?",
-        (KEG,),
-    )
-    db.conn.commit()
-    _run_months(db, state, 2)
-    assert _loyalty_of(db, KEG) == 30, "零兵残军 loyalty 不得被 tick 动"

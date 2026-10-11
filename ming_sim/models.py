@@ -22,6 +22,7 @@ from ming_sim.constants import (
     BUILDING_TEXT_FIELDS,
     ECONOMY_ACCOUNTS,
     FISCAL_SCORE_FIELDS,
+    GATE_METRIC_KEYS,
     POWER_FIELD_ALIASES,
     REGION_FIELD_ALIASES,
     REGION_QUANTITY_FIELDS,
@@ -254,7 +255,7 @@ def _legacy_effect_has_work(raw: object) -> bool:
     modifiers = raw.get("modifiers")
     if not isinstance(modifiers, dict):
         return False
-    for key in ("国库", "内库", "民心", "皇威"):
+    for key in GATE_METRIC_KEYS:  # #14 same source as db.legacy_modifiers
         if _nonzero_int(modifiers.get(key)):
             return True
     if _entity_delta_has_work(
@@ -421,7 +422,7 @@ def is_vassal_prince(character: "Character") -> bool:
 
     单一定义，所有面引用此规则（PR#121，cmr R3–R5 cross-section coverage-drift 收敛于此）。
     受守面清单（新增同类面时一并加，勿漏）：
-    - web_app: visible_in_court / in_talent_pool / _require_active_minister / api_create_secret_order
+    - web_app: visible_in_court / in_talent_pool / api_create_secret_order
     - materials: 人物/朝臣名册.txt
     - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
@@ -733,5 +734,5 @@ def reign_period_label(year: int, month: int) -> str:
 
 
 def monthly_amount(amount: int) -> int:
-    # 全盘已按月度：base/maint/tax 都是月值，不再除 3。保留函数仅为兼容旧调用点（恒等）。
+    # 全盘已按月度：base/maint/tax 都是月值；本函数只做非负整钳，供盘面展示读端共用。
     return max(0, int(amount))

@@ -36,17 +36,16 @@ try:
 except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
     pass
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
-from ming_sim.constants import ROOT_DIR
+from ming_sim.constants import ROOT_DIR, GATE_METRIC_KEYS
 from ming_sim.db import _load_durable_json_list
-from ming_sim.paths import bundled_path, user_data_path, user_data_dir
+from ming_sim.paths import user_data_path, user_data_dir
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
@@ -111,17 +110,10 @@ from ming_sim.models import (
 )
 logger = logging.getLogger(__name__)
 
-WEB_DIST = bundled_path("web", "dist")
-# 用户上传的自定义立绘存档级目录（不随 build 清空，git 可忽略）。
-# frozen 模式落 ~/.ming_sim/uploads/portraits/，源码模式落 <repo>/data/uploads/portraits/。
-UPLOAD_PORTRAIT_DIR = user_data_path("uploads", "portraits")
-# 自定义立绘 portrait_id 前缀；前端据此解析到 /portraits/custom/<name>.png。
-CUSTOM_PORTRAIT_PREFIX = "custom:"
-ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
-MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
+_DEFAULT_FAVORITES = frozenset({"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"})
 
-# resolve/fail_condition 同时喂 extractor（需 input.factions/leverage 等技术 key）与展示给玩家。
-# 展示前把技术词替换成中文，原文不动（LLM 仍读原文判定）。按长键先替，避免子串误伤。
+# Formal character-condition value labels (used inside _humanize_condition_value only).
+# Free resolve/fail_condition prose is transported unchanged; no catch-all replace.
 _CONDITION_DISPLAY_REPLACEMENTS = [
     ("input.factions", "派系盘面"),
     ("input.classes", "阶级盘面"),
@@ -219,29 +211,27 @@ def _humanize_condition_value(field: str, value: str) -> str:
 
 
 def _humanize_condition(text: str) -> str:
-    """把结案/失败条件里的技术 key 替换成玩家可读中文（仅用于展示）。"""
+    """Formal character-condition DSL → display labels; free prose passes through unchanged."""
     if not text:
         return text
     character_condition = re.fullmatch(
         r"\s*character\.([^.]+)\.([A-Za-z_]+)\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*",
         text,
     )
-    if character_condition:
-        name, field, op, value = character_condition.groups()
-        if field == "loyalty" and re.fullmatch(r"\d+", value):
-            if op in {">=", ">"}:
-                return f"{name}忠诚回稳"
-            if op in {"<=", "<"}:
-                return f"{name}忠诚未稳"
-            return f"{name}忠诚非通常阈值"
-        label = _CHARACTER_CONDITION_FIELD_LABELS.get(field, field)
-        op_label = _CONDITION_OPERATOR_LABELS.get(op, op)
-        value_label = _humanize_condition_value(field, value)
-        return f"{name}{label}{op_label}{value_label}"
-    for src, dst in _CONDITION_DISPLAY_REPLACEMENTS:
-        text = text.replace(src, dst)
-    return text
-
+    if not character_condition:
+        # N6: no vocabulary replace on free prose / non-formal condition text in transport.
+        return text
+    name, field, op, value = character_condition.groups()
+    if field == "loyalty" and re.fullmatch(r"\d+", value):
+        if op in {">=", ">"}:
+            return f"{name}忠诚回稳"
+        if op in {"<=", "<"}:
+            return f"{name}忠诚未稳"
+        return f"{name}忠诚非通常取值"
+    label = _CHARACTER_CONDITION_FIELD_LABELS.get(field, field)
+    op_label = _CONDITION_OPERATOR_LABELS.get(op, op)
+    value_label = _humanize_condition_value(field, value)
+    return f"{name}{label}{op_label}{value_label}"
 
 _LEGACY_GATE_FIELD_LABELS = {
     "leverage": "影响力",
@@ -334,7 +324,7 @@ def _legacy_pct(value: int) -> str:
 def _humanize_legacy_effect(modifiers: Dict[str, Any], content: Any) -> str:
     """把 legacy modifiers 转为中文展示，避免前端露出 nanzhili/guanning 等内部 id。"""
     parts: List[str] = []
-    for account in ("国库", "内库", "民心", "皇威"):
+    for account in GATE_METRIC_KEYS:  # #14 same source as db.legacy_modifiers
         value = modifiers.get(account)
         if isinstance(value, (int, float)):
             parts.append(f"{account}{_legacy_pct(int(value))}")
@@ -812,8 +802,6 @@ class WebGame:
             }
             for name, msgs in self.db.load_all_chat_history().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
-            _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-            from ming_sim.db import _load_durable_json_list
             _fav_raw = self.db.kv_get("favorites")
             self.favorites: set = (
                 set(_load_durable_json_list(_fav_raw, surface="kv.favorites"))
@@ -871,8 +859,13 @@ class WebGame:
         return out
 
     def _safe_save_name(self, name: str) -> str:
-        cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
-        if not cleaned or cleaned.startswith("."):
+        # #1847: validate allowlist; do not strip/rewrite illegal characters.
+        cleaned = name.strip()
+        if (
+            not cleaned
+            or cleaned.startswith(".")
+            or any(c for c in cleaned if not (c.isalnum() or c in "._-"))
+        ):
             raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
         return cleaned
 
@@ -882,12 +875,6 @@ class WebGame:
         self.db.backup_to(target)
         return {"name": safe, "path": target}
 
-    def delete_save(self, name: str) -> None:
-        safe = self._safe_save_name(name)
-        target = os.path.join(self.saves_dir(), f"{safe}.db")
-        if not os.path.isfile(target):
-            raise HTTPException(status_code=404, detail="存档不存在。")
-        os.remove(target)
 
     def _dispose_rebuild_residual(self) -> bool:
         """#1749 B：处置上一失败 rebuild 候选。成功关闭返回 True；仍活则 False 且保留引用。"""
@@ -1033,12 +1020,10 @@ class WebGame:
             chat_history = {name: [] for name in candidate.content.characters}
             for name, msgs in candidate.db.load_all_chat_history().items():
                 chat_history.setdefault(name, []).extend(msgs)
-            default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
             fav_raw = candidate.db.kv_get("favorites")
-            from ming_sim.db import _load_durable_json_list
             favorites = (
                 set(_load_durable_json_list(fav_raw, surface="kv.favorites"))
-                if fav_raw else set(default_favorites)
+                if fav_raw else set(_DEFAULT_FAVORITES)
             )
             if not fav_raw:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
@@ -1066,166 +1051,6 @@ class WebGame:
         self._write_gate = q.write_gate
         self.chat_history = chat_history
         self.favorites = favorites
-
-    def build_llm_config(
-        self,
-        base_url: str,
-        model: str,
-        api_key: str,
-        timeout_seconds: float = 0,
-        thinking_level: Optional[str] = None,
-        reasoning_strength: Optional[str] = None,
-        advanced_model: Optional[str] = None,
-        advanced_base_url: Optional[str] = None,
-        advanced_api_key: Optional[str] = None,
-        advanced_thinking_level: Optional[str] = None,
-        channel: Optional[str] = None,
-        cli_runner: Optional[str] = None,
-        cli_model: Optional[str] = None,
-        cli_timeout_seconds: float = 0,
-        default_headers: Optional[Dict[str, str]] = None,
-    ) -> LLMConfig:
-        """从 in-game 输入派生新 LLMConfig（纯函数,不 verify/不落盘/不改 session）。
-        通道感知（#51）：显式 channel 优先;否则填了真实 API key=切 api;都没有=保留当前通道
-        （CLI 局开 in-game 设置不再被强制降级到 api + 空 key 误报）。"""
-        cur = self.session.llm_config
-        # 通道解析（#51）
-        explicit = (channel or "").strip().lower() if channel is not None else ""
-        if explicit in VALID_CHANNELS:
-            new_channel = explicit
-        elif real_api_key_or_empty(api_key):
-            new_channel = "api"   # 用户填了真实 API key = 显式切到 API
-        else:
-            new_channel = (cur.channel or "api")   # 没填 = 保留当前通道,不强制降级
-        # CLI 槽位：未传则保留当前
-        new_cli_runner = (cli_runner if cli_runner is not None else cur.cli_runner)
-        new_cli_model = (cli_model if cli_model is not None else cur.cli_model)
-        new_cli_timeout = (
-            cli_timeout_seconds if cli_timeout_seconds and cli_timeout_seconds > 0
-            else cur.cli_timeout_seconds
-        )
-        base = normalize_openai_base_url(base_url.strip() or cur.base_url)
-        new_model = model.strip() or cur.model
-        # CLI 通道不要 API key（占位符在 create_chat_model 构造 CliChat 时注入）；
-        # API 通道：请求 key 与已存 key 回落都过占位符过滤。
-        if new_channel == "cli":
-            new_key = ""
-        else:
-            new_key = real_api_key_or_empty(api_key) or real_api_key_or_empty(cur.api_key)
-            if not new_key:
-                # 从 cli 切回 api：cur.api_key 在 cli 模式已归一为空,但真实 key 仍存在
-                # runtime_llm.json 的 api 槽——回收它,免得切回 api 还要重输 key(Gemini R1)。
-                saved = load_runtime_llm()
-                saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
-                new_key = real_api_key_or_empty(saved_api.get("api_key"))
-        new_timeout = timeout_seconds if timeout_seconds > 0 else cur.timeout_seconds
-        if thinking_level is None:
-            new_thinking_level = cur.thinking_level
-        else:
-            new_thinking_level = normalize_thinking_level(thinking_level)
-        if reasoning_strength is None:
-            new_reasoning_strength = cur.reasoning_strength
-        else:
-            new_reasoning_strength = normalize_reasoning_strength(reasoning_strength)
-        # advanced_* = None 表示不动；传空串表示显式清空。
-        if advanced_model is None:
-            new_advanced = cur.advanced_model
-        else:
-            new_advanced = advanced_model.strip()
-        if advanced_base_url is None:
-            new_adv_base = cur.advanced_base_url
-        else:
-            adv_base_in = advanced_base_url.strip()
-            new_adv_base = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
-        if advanced_api_key is None:
-            new_adv_key = cur.advanced_api_key
-        else:
-            new_adv_key = advanced_api_key.strip()
-        new_adv_thinking_level = ""
-        # #1794：显式传入（含空表）覆写；省略则保留当前头。
-        if default_headers is None:
-            new_default_headers = dict(cur.default_headers or {})
-        else:
-            new_default_headers = _slot_header_table(default_headers)
-        return LLMConfig(
-            api_key=new_key,
-            base_url=base,
-            model=new_model,
-            timeout_seconds=new_timeout,
-            thinking_level=new_thinking_level,
-            advanced_model=new_advanced,
-            advanced_base_url=new_adv_base,
-            advanced_api_key=new_adv_key,
-            advanced_thinking_level=new_adv_thinking_level,
-            reasoning_strength=new_reasoning_strength,
-            channel=new_channel,
-            cli_runner=new_cli_runner,
-            cli_model=new_cli_model,
-            cli_timeout_seconds=new_cli_timeout,
-            default_headers=new_default_headers,
-        )
-
-    def commit_llm_config(self, new_config: LLMConfig) -> LLMConfig:
-        """落盘 + 切 session + 重建 registry（快;verify 由调用方先做,可 offload）。"""
-        if new_config.channel == "cli":
-            # CLI 通道:保住 api 槽的真实配置,切回 api 才找得回(CMR R1/R2 codex)。
-            #  1) 已存 api 槽有真实 key → 传空 api 输入触发 save_runtime_llm 的 preserve_api,原样留。
-            #  2) 槽无真实 key,但当前(切换前)session 是带真实 key 的 api 配置(可能来自 OPENAI_API_KEY
-            #     env,尚未落 runtime_llm.json 槽)→ 把它显式写进 api 槽,否则 env-only key 在
-            #     api→cli→api 往返中丢失。
-            #  3) 哪都没有真实 key → 传空(无可丢)。
-            saved = load_runtime_llm()
-            saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
-            prev = self.session.llm_config
-            if real_api_key_or_empty(saved_api.get("api_key")) or not real_api_key_or_empty(prev.api_key):
-                save_runtime_llm(
-                    "", "", "",
-                    channel="cli",
-                    cli_runner=new_config.cli_runner,
-                    cli_model=new_config.cli_model,
-                    cli_timeout_seconds=new_config.cli_timeout_seconds,
-                    reasoning_strength=new_config.reasoning_strength,
-                )
-            else:
-                save_runtime_llm(
-                    prev.base_url,
-                    prev.model,
-                    real_api_key_or_empty(prev.api_key),
-                    prev.timeout_seconds,
-                    prev.thinking_level,
-                    prev.advanced_model,
-                    prev.advanced_base_url,
-                    prev.advanced_api_key,
-                    "",
-                    channel="cli",
-                    cli_runner=new_config.cli_runner,
-                    cli_model=new_config.cli_model,
-                    cli_timeout_seconds=new_config.cli_timeout_seconds,
-                    reasoning_strength=new_config.reasoning_strength,
-                    api_reasoning_strength=prev.reasoning_strength,
-                )
-        else:
-            save_runtime_llm(
-                new_config.base_url,
-                new_config.model,
-                new_config.api_key,
-                new_config.timeout_seconds,
-                new_config.thinking_level,
-                new_config.advanced_model,
-                new_config.advanced_base_url,
-                new_config.advanced_api_key,
-                "",
-                channel="api",
-                cli_runner=new_config.cli_runner,
-                cli_model=new_config.cli_model,
-                cli_timeout_seconds=new_config.cli_timeout_seconds,
-                reasoning_strength=new_config.reasoning_strength,
-                default_headers=dict(new_config.default_headers or {}),
-            )
-        self.session.llm_config = new_config
-        # 重建 registry 让大臣 Agent 用新配置
-        self.session.begin_turn()
-        return new_config
 
     # ── 便捷属性 ──────────────────────────────────────────────────────────
     @property
@@ -1289,17 +1114,6 @@ class WebGame:
         self.session.begin_turn()
         # #1343 孤儿快照清一处：受理样板成功支（_settlement_period_entry 持 write_cm）。
         # 生产四调用点皆在 entry 体内（inflight>0），此处再清恒不触发；禁第二清理点。
-
-    # ── 自定义立绘 ────────────────────────────────────────────────────────
-    def find_character(self, name: str) -> Optional[Character]:
-        return self.content.characters.get(name)
-
-    def set_custom_portrait(self, name: str, portrait_id: str) -> None:
-        """落库并回写内存：把某人物 portrait_id 指向自定义立绘。"""
-        self.db.set_portrait_id(name, portrait_id)
-        character = self.content.characters.get(name)
-        if character is not None:
-            character.portrait_id = portrait_id
 
     # ── 序列化 ────────────────────────────────────────────────────────────
     def public_character(self, character: Character) -> Dict[str, Any]:
@@ -1685,12 +1499,12 @@ class WebGame:
     def mechanical_tail_pending(self) -> bool:
         from ming_sim.mechanical_tail import _pending_mechanical_tails
 
-        return bool(_pending_mechanical_tails(self.db, current_turn=int(self.state.turn)))
+        return bool(_pending_mechanical_tails(self.db))
 
     def mechanical_tail_failure(self) -> Optional[Dict[str, Any]]:
         from ming_sim.mechanical_tail import failed_mechanical_tail
 
-        failure = failed_mechanical_tail(self.db, self.state)
+        failure = failed_mechanical_tail(self.db)
         return {"error_pack_path": failure[1].get("error_pack_path"), "error": failure[1].get("error")} if failure else None
 
     def ending_payload(self) -> Optional[Dict[str, Any]]:
@@ -1738,6 +1552,7 @@ class WebGame:
             pending_decisions = (
                 self.session.pending_decisions() if awaiting_decision else []
             )
+            deferred_rescripts = self.db.list_rescript_drafts(status="revision_pending")
             durable_phase2_resume = (
                 awaiting_decision
                 and self.db.get_resolve_context(self.state.turn) is not None
@@ -1851,6 +1666,7 @@ class WebGame:
                 if a["kind"] == "secret_order"),
             "pending_non_directive_action_count": len(visible_non_directive_pending),
             "pending_decisions": pending_decisions,
+            "deferred_rescripts": deferred_rescripts,
             # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
             "resume_phase2": durable_phase2_resume and not settlement_entry_inflight,
@@ -1865,7 +1681,7 @@ class WebGame:
         }
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
-    def chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
+    def chat_projection(self) -> List[Dict[str, Any]]:
         """当前召对夜的殿上投影。"""
         from ming_sim.audience_night import get_open_night, SCENE_CHAT_SPEAKER
         night = get_open_night(self.db)
@@ -1873,7 +1689,7 @@ class WebGame:
             SCENE_CHAT_SPEAKER, int(night["id"]) if night else 0,
         )
 
-    def _minister_agno_session_id(self, minister_name: str) -> str:
+    def _minister_agno_session_id(self) -> str:
         # 所有 Web 召对都由场景 agent 生成；chat_turn 与 agent 必须绑同一 Agno session。
         from ming_sim.audience_night import get_open_night
         night = get_open_night(self.db)
@@ -1908,10 +1724,9 @@ class WebGame:
         ))
 
     def _start_chat_turn(
-        self, minister_name: str, *, attach_to_hall: bool = True,
-        message: str = "",
+        self, minister_name: str,
     ) -> tuple[int, Dict[str, Any]]:
-        agno_session_id = self._minister_agno_session_id(minister_name)
+        agno_session_id = self._minister_agno_session_id()
         runs_before = self.db.agno_runs_length(agno_session_id)
         snapshot = self.db.capture_chat_rollback_snapshot()
         # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
@@ -2035,7 +1850,7 @@ class WebGame:
                         if not owner_last or int(owner_last["id"]) != int(active["id"]):
                             raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
                         result = self.undo_last_chat(owner, gate_held=gate_held)
-                        result["history"] = self.chat_projection(minister_name)
+                        result["history"] = self.chat_projection()
                         result["can_undo_last_chat"] = self.can_undo_last_chat(minister_name)
                         return result
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
@@ -2092,7 +1907,7 @@ class WebGame:
             "night_id": int(row.get("night_id") or 0),
             "undone_chat_turn_id": int(undone["id"]),
             # #499 同一 turn-identified 投影：撤回后剩余轮的读心仍按轮归位
-            "history": self.chat_projection(minister_name),
+            "history": self.chat_projection(),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
@@ -2148,7 +1963,7 @@ class WebGame:
             "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既存读心记录按轮归位；
             # 前端 setChat 不再抹掉历史读心记录。
-            "history": self.chat_projection(minister_name),
+            "history": self.chat_projection(),
             "chat_turn_id": int(chat_turn_id or 0),
             # #544：供高亮判官落库锚定（非流式折窗 / 流式补挂）
             "minister_message_id": int(minister_message_id or 0),
@@ -2216,7 +2031,7 @@ class WebGame:
             raise
         return {
             "answer": str(target["answer"]), "chat_turn_id": chat_turn_id,
-            "history": self.chat_projection(minister_name),
+            "history": self.chat_projection(),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
@@ -2237,7 +2052,7 @@ class WebGame:
             raise HTTPException(status_code=404, detail=f"{minister_name}没有该轮待重试回话。")
         if target["minister_name"] != minister_name:
             result = self.retry_interrupted_reply(str(target["minister_name"]), int(target["chat_turn_id"]))
-            result["history"] = self.chat_projection(minister_name)
+            result["history"] = self.chat_projection()
             result["can_undo_last_chat"] = self.can_undo_last_chat(minister_name)
             return result
         if target.get("recovery_phase"):
@@ -2288,7 +2103,6 @@ class WebGame:
                     before_snapshot = self.db.capture_chat_rollback_snapshot()
                 result = self.session.scene_chat(
                     question, chat_turn_id=chat_turn_id,
-                    minister_name=minister_name,
                     stream_emit=lambda _delta, **_kwargs: None,
                 )
                 proposed = None
@@ -2324,7 +2138,7 @@ class WebGame:
                         message_id=message_id,
                         chat_turn_id=chat_turn_id,
                     )
-                    payload["history"] = self.chat_projection(minister_name)
+                    payload["history"] = self.chat_projection()
             except Exception as error:
                 # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
                 # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
@@ -2399,7 +2213,6 @@ class WebGame:
             text,
             chat_turn_id=int(chat_turn_id or 0),
             stream_emit=_emit,
-            minister_name=str(minister_name or ""),
             on_protagonist_changed=on_protagonist_changed,
         )
         answer = str(getattr(result, "answer", "") or "")
@@ -2530,7 +2343,6 @@ class WebGame:
         self,
         *,
         pending_ticket: Optional[WriteTicket] = None,
-        owns_pending: bool = False,
     ) -> None:
         """重开补跑（ADR 0036 / #1842）：已持久化回话但转译未承接 → 补跑转译，不回滚对话。
 
@@ -2538,7 +2350,6 @@ class WebGame:
         **永不进启动致命路径**。在后台线程跑，不阻塞存档加载。写经已领票据 seam（禁裸 gate）。
         #1353：spawn 路票据由 spawner finally 归还；本函数不归还交接票（complete 幂等保直接调用钉）。
         """
-        del owns_pending
         try:
             if pending_ticket is None:
                 return
@@ -2716,8 +2527,6 @@ class WebGame:
             accepted_turn = int(self.state.turn)
             chat_turn_id, before_snapshot = self._start_chat_turn(
                 minister_name,
-                message=text,
-                attach_to_hall=True,
             )
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
             message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
@@ -3234,28 +3043,6 @@ def _spawn_startup_catch_up_nonfatal(game) -> None:
     except Exception:
         logger.exception("startup extraction catch-up scheduling failed")
 
-
-def _run_hot_replace(game, replace: Callable[[], None], *, failure_label: str) -> None:
-    """局内忙态先回 409；真正排空与独占由 ``_replace_database`` 单点负责。"""
-    try:
-        _refuse_settling_or_busy_write_phase(game)
-        gate_probe = _try_acquire_serialized_web_write_gate(game)
-        gate_probe.release()
-        entry_lock = _settlement_entry_lock(game)
-        with entry_lock:
-            entry_busy = int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 0
-        if entry_busy or get_session_write_queue(game).inflight_count() > 0:
-            raise HTTPException(
-                status_code=409,
-                detail="月末结算或上一步写入进行中，请稍候再操作。",
-            )
-        replace()
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("%s", failure_label)
-        raise HTTPException(status_code=500, detail=f"{failure_label}：{exc}") from exc
-    _spawn_startup_catch_up_nonfatal(game)
 
 
 @contextlib.contextmanager
@@ -4689,7 +4476,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
 @app.delete("/api/menu/saves/{name}")
 async def api_menu_delete_save(name: str) -> Dict[str, Any]:
     """菜单页删存档：不依赖 WebGame 实例，直接删文件系统里的 <name>.db。
-    与 WebGame.delete_save 同名校验，返回刷新后的 campaigns。"""
+    返回刷新后的 campaigns。"""
     cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
     if not cleaned or cleaned.startswith("."):
         raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
@@ -5104,18 +4891,6 @@ _STATUS_LABEL_WEB = {
 }
 
 
-def _require_active_minister(minister_name: str) -> None:
-    if minister_name not in get_game().content.characters:
-        raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
-    character = get_game().content.characters[minister_name]
-    # #1402：召见闸文案单一真源 = session.can_summon（含宗藩/非大明/非 active）。
-    # 旧副本多一个「已」字，offstage 产「已尚未登场」；后宫仍由 can_summon 放行
-    # （不拒 office_type=后宫，嫔妃 chat 复用本端点）。
-    ok, reason = get_game().session.can_summon(character)
-    if not ok:
-        raise HTTPException(status_code=409, detail=(reason or "").strip())
-
-
 def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     turns = db.list_hall_chat_turns(int(night_id))
     speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
@@ -5184,7 +4959,7 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         },
         "campaign_id": str(game.db.kv_get("campaign_id") or ""),
         "night_id": int(open_night["id"]) if open_night else 0,
-        "history": game.chat_projection(SCENE_CHAT_SPEAKER),
+        "history": game.chat_projection(),
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
         "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
             night_id=int(open_night["id"]) if open_night else None,
@@ -5335,6 +5110,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             if row is None:
                 raise HTTPException(status_code=404, detail="未找到草案。")
             text = request.text if request.text is not None else str(row["text"])
+            # #1847 N6：判空可读 strip；旨意正文运输用原文。
             if not text.strip():
                 raise HTTPException(status_code=400, detail="指令内容不能为空。")
             capture_turn = int(game.state.turn)
@@ -5388,19 +5164,12 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
 def api_advance_without_edict(
     body: AdvanceWithoutEdictRequest = AdvanceWithoutEdictRequest(),
 ) -> Dict[str, Any]:
-    # #498 AC10 / #1353：内部屏障票据同步等在飞尾随终态
-    # （消费工人终态，不按 elapsed 伪造 409）。用同步 def 交给 FastAPI threadpool，
-    # 绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
+    # #498 AC10 / #1353：内部屏障票据同步等在飞尾随终态。
     game = get_game()
     from ming_sim.audience_night import AudienceNightError
     try:
-        # #1241 S1：受理样板收 helper；advance 锁语义 = 非阻塞抢锁 409（禁改用阻塞 gate）。
         with _settlement_period_entry(game, write_cm=_serialized_web_write):
-            # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
             _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
-            # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
-            # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
-            # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
             settlement_result = game.session.advance_without_decree(
                 write_gate_already_held=True,
             )
@@ -5426,7 +5195,6 @@ def api_advance_without_edict(
                 ),
             }
     except HTTPException:
-        # 令牌/相位/锁门 409 等既有 HTTP 面原样上抛，禁被下方 Exception 改包。
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
@@ -5436,12 +5204,8 @@ def api_advance_without_edict(
             detail=_settlement_abort_http_detail(e),
         ) from None
     except (AudienceNightError, ExceptionGroup) as e:
-        # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
         raise _retryable_audience_close_http(e) from None
     except Exception as e:  # noqa: BLE001
-        # #1433：同流式颁诏——LLMUnavailable→可读 _llm_error_detail；其余 Exception→str。
-        # HTTP 面 LLM 死走 412（菜单/连通先例）；禁裸 500 无 detail。
-        # #1853 J5：真异常经本口上抛；不以 failed 行另造 pending_action_failures。
         if isinstance(e, LLMUnavailable):
             raise HTTPException(status_code=412, detail=_llm_error_detail(e)) from None
         message = str(e) or "退朝结算失败，请重试。"
@@ -5480,87 +5244,19 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
         )
 
 
-@app.post("/api/decree/issue")
-def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
-    """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。
-
-    同步 def：内部队列屏障 + resolve_turn 是阻塞同步调用
-    （等在飞回话工人终态；#1353 K10a 不按 elapsed 造 409），交给 FastAPI threadpool，
-    不冻结 async event loop。"""
-    game = get_game()
-    from ming_sim.audience_night import AudienceNightError
-    try:
-        # #1241 S1：受理样板收 helper；issue 锁语义 = 阻塞 _game_write_gate（禁改非阻塞）。
-        with _settlement_period_entry(game, write_cm=_game_write_gate):
-            # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-            _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
-            result = game.session.resolve_turn(
-                cheat_directive=body.cheat,
-                write_gate_already_held=True,
-            )
-            decree = game.session.last_decree
-            if result.awaiting:
-                # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新。
-                return {
-                    **_settlement_player_payload(
-                        decree=decree,
-                        decisions=result.decisions,
-                    ),
-                    "awaiting_decision": True,
-                }
-            report = result.report
-            advanced = bool(getattr(result, "advanced", True))
-            if advanced:
-                game.session.end_turn()
-                game.refresh_turn()
-            return _settlement_player_payload(
-                decree=decree,
-                report=report,
-                advanced=advanced,
-            )
-    except HTTPException:
-        # §5.2：非流式 catch-all 前保留 HTTP 身份；status/detail/headers 不改包。
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-    except SettlementAbort as e:
-        # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试；typed stage/error_pack_path。
-        raise HTTPException(
-            status_code=409,
-            detail=_settlement_abort_http_detail(e),
-        ) from None
-    except LLMUnavailable as e:
-        # #1452：非流式颁诏 LLM 死 → 结构化错误，禁裸 500（对齐 _llm_error_detail）。
-        # 注意：本入口 LLM 仍走 400（不是 advance 的 412）。
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-    except (AudienceNightError, ExceptionGroup) as e:
-        # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
-        raise _retryable_audience_close_http(e) from None
-    except Exception as e:  # noqa: BLE001
-        # §5.2：只补本入口缺失的未映射异常出口（含 clear RuntimeError）；非抄 advance 整表。
-        # #1853 J5：真异常经本口上抛；不以 failed 行另造 pending_action_failures。
-        message = str(e) or "颁诏结算失败，请重试。"
-        raise HTTPException(status_code=500, detail={"message": message}) from None
-
-
 @app.post("/api/decree/issue/stream")
 async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
     """流式颁诏：终态（done / decisions / error）经 SSE 推给前端。
 
-    #1852：核账等待面不呈现推演阶段进度；worker 只投终态。
-    resolve_turn 是阻塞的同步调用，用 worker 线程跑；async generator 从 Queue 拉终态转 SSE。
+    #1852：worker 只投终态。#1853 J5：不附 failed 密令专属载荷。
     """
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def worker() -> None:
         try:
             game = get_game()
-            # #1241 S1：受理样板收 helper；stream 锁语义 = 阻塞 _game_write_gate（与 issue 同）。
-            # 终态 __done__/__decisions__ 须在 entry（含 clear）成功后才入队——
-            # 与 settled_ok 同核：clear 抛错走 __error__，禁先推成功终态。
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(game, write_cm=_game_write_gate):
-                # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                 _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
                 result = game.session.resolve_turn(
                     cheat_directive=body.cheat,
@@ -5568,7 +5264,6 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 )
                 decree = game.session.last_decree
                 if result.awaiting:
-                    # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新。
                     terminal = ("__decisions__", _settlement_player_payload(
                         decree=decree,
                         decisions=result.decisions,
@@ -5587,11 +5282,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
-            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             ev_queue.put(("__error__", str(e)))
         except HTTPException as e:
-            # #1277：令牌 409 等须保留 detail.turn / status_code，供 FE 复用 advance 的
-            # 「serverTurn>expected → reload 不报错」；禁 str(HTTPException) 丢结构。
             detail = e.detail
             if isinstance(detail, dict):
                 payload = dict(detail)
@@ -5603,9 +5295,6 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     {"message": str(detail), "status_code": e.status_code},
                 ))
         except Exception as e:  # noqa: BLE001
-            # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
-            # #1465 ②：message 标量 + typed 键外层；与 resolve_decisions/stream 同真源。
-            # #1853 J5：真异常经本口上抛；不以 failed 行另造 pending_action_failures。
             ev_queue.put(("__error__", _settlement_sse_error_data(e)))
 
     async def generate() -> AsyncIterator[str]:
@@ -5623,7 +5312,6 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             if kind == "__error__":
                 yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
-            # #1852：中间 stage/thinking/text 已退役；非终态事件不转发。
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -5638,23 +5326,15 @@ class ResolveDecisionsRequest(BaseModel):
 
 @app.post("/api/decree/resolve_decisions/stream")
 async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> StreamingResponse:
-    """皇帝亲裁完决策点，流式跑 phase2 结算。
-    与 issue/stream 同结构：worker 跑 session.submit_hitl_choices（唯一 HITL 编排入口，
-    keyed 权威由 validate_all 整批拒），SSE 只推终态 done/error。"""
+    """皇帝亲裁完决策点，流式跑 phase2 结算。#1853 J5：不附 failed 密令专属载荷。"""
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def worker() -> None:
         try:
             game = get_game()
             turn_before = int(game.state.turn)
-            # #1322：相位快速预检前移到受理/抢锁前（假 200/锁排队拖成数十秒）；
-            # 锁内 submit_decisions 仍做权威复查——与既有 TOCTOU 双查同款。
             if game.session.current_phase() != TurnPhase.AWAITING_DECISION:
                 raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
-            # #657 / ADR 0149：展示态走 _settlement_period_entry；hold_write_for_body=False
-            # 使 PREWRITE/② join 在 write_gate 外，①/③ 由 submit_hitl_choices 短持同一 gate。
-            # 终态 __done__ 须在 entry（含 clear）成功后才入队——与 settled_ok 同核。
-            # 唯一 HITL 编排：session.submit_hitl_choices；禁 submit_decisions 生产旁路。
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(
                 game, write_cm=_game_write_gate, hold_write_for_body=False,
@@ -5665,8 +5345,6 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     cheat_directive=body.cheat,
                 )
                 decree = game.session.last_decree
-                # #1702 A2：尾写短持既有 write_gate，与热替换/其它持闸写者单写；
-                # 不整段 body 持锁（join 仍在 gate 外）；成功 clear 仍走样板 False 支短持。
                 with _game_write_gate(game):
                     advanced = int(game.state.turn) != turn_before
                     if advanced:
@@ -5680,12 +5358,8 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
-            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             ev_queue.put(("__error__", str(e)))
         except Exception as e:  # noqa: BLE001
-            # §5.4：无独立 HTTP/AudienceNight 分表；与 issue/stream 同真源。
-            # #1465 ②：SettlementAbort.__cause__ LLMUnavailable 亦外层保真 typed 键。
-            # #1853 J5：真异常经本口上抛；不以 failed 行另造 pending_action_failures。
             ev_queue.put(("__error__", _settlement_sse_error_data(e)))
 
     async def generate() -> AsyncIterator[str]:
@@ -5700,298 +5374,11 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             if kind == "__error__":
                 yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
-            # #1852：中间 stage/thinking/text 已退役；非终态事件不转发。
 
     return StreamingResponse(generate(), media_type="text/event-stream")
-
-
-class SaveCreateRequest(BaseModel):
-    name: str
-
-
-class LLMConfigRequest(BaseModel):
-    base_url: str = ""
-    model: str = ""
-    api_key: str = ""
-    timeout_seconds: float = 0
-    thinking_level: str = "__keep__"
-    reasoning_strength: str = "__keep__"
-    # None=不动，""=显式清空，其他=覆写。pydantic v1 默认 None 走不进来；用 sentinel "__keep__"
-    advanced_model: str = "__keep__"
-    advanced_base_url: str = "__keep__"
-    advanced_api_key: str = "__keep__"
-    advanced_thinking_level: str = "__keep__"
-    # 通道感知（#51）：channel/cli_runner/cli_model 用 "__keep__" sentinel 表示「保留当前」;
-    # cli_timeout_seconds（静默判死阈值,秒）是数值,沿用数值 sentinel 0（=不改,build 回落当前值），
-    # 不走 "__keep__"。
-    channel: str = "__keep__"
-    cli_runner: str = "__keep__"
-    cli_model: str = "__keep__"
-    cli_timeout_seconds: float = 0
-    # #1794：附加请求头表；None=保留当前，{}=清空。
-    default_headers: Optional[Dict[str, str]] = None
 
 
 @app.get("/api/saves")
 async def api_list_saves() -> Dict[str, Any]:
     return {"saves": get_game().list_saves()}
 
-
-@app.post("/api/saves")
-async def api_create_save(request: SaveCreateRequest) -> Dict[str, Any]:
-    # save_to → db.backup_to（commit + sqlite backup）：结算/后台召对 worker 持锁期间不能并发
-    # 走同一无锁连接（否则撞 _commit_suspended 守卫成 500）。走 _write_gate → 忙时干净 409
-    # （cmr Gate2 r5）。生命周期写也纳入串行门，完整收口（连接级 close 竞态的通用解仍属 #382）。
-    game = get_game()
-    with _serialized_web_write(game):
-        info = game.save_to(request.name)
-        # #1749：list_saves 读 campaign_id（DB）；响应列表在 gate 内快照。
-        saves = game.list_saves()
-    return {"save": info, "saves": saves}
-
-
-@app.delete("/api/saves/{name}")
-async def api_delete_save(name: str) -> Dict[str, Any]:
-    get_game().delete_save(name)
-    return {"saves": get_game().list_saves()}
-
-
-@app.post("/api/saves/{name}/load")
-async def api_load_save(name: str) -> Dict[str, Any]:
-    # load_save 会 session.close() 热替换主 DB——若结算/后台召对 worker / 在飞转译正写旧连接，
-    # 关连接会让 worker 崩在「closed database」。非阻塞抢 _write_gate，并核 queue ticket 与
-    # 转译 ledger：忙时 409，让玩家待落定再载（cmr Gate2 r5；#1842；强制中断在途 worker
-    # 的取消语义属 #382 通用并发模型，本轮不做）。
-    game = get_game()
-    _run_hot_replace(game, lambda: game.load_save(name), failure_label="载入存档失败")
-    return {"state": get_game().state_payload()}
-
-
-@app.get("/api/llm/config")
-async def api_get_llm_config() -> Dict[str, Any]:
-    """读当前生效的 LLM 配置。api_key 不回传明文，只回是否已设置。"""
-    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS, cli_model_choices, cli_runner_choices
-    cfg = get_game().session.llm_config
-    saved = load_runtime_llm()
-    saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
-    saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
-    saved_api_reasoning_strength = normalize_reasoning_strength(saved_api.get("reasoning_strength"))
-    saved_cli_reasoning_strength = normalize_reasoning_strength(saved_cli.get("reasoning_strength"))
-    reasoning_supported = (
-        cli_supports_reasoning_strength(cfg.cli_runner)
-        if cfg.channel == "cli"
-        else _api_reasoning_supported_for_effective_model(
-            cfg.base_url, cfg.model, cfg.advanced_base_url, cfg.advanced_model
-        )
-    )
-    return {
-        "channel": cfg.channel,
-        "base_url": cfg.base_url,
-        "model": cfg.model,
-        "timeout_seconds": cfg.timeout_seconds,
-        "thinking_level": cfg.thinking_level,
-        "reasoning_strength": cfg.reasoning_strength,
-        "reasoning_supported": reasoning_supported,
-        "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
-        # #1271：能力名单自 cli_backend 单源导出。
-        "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
-        "advanced_model": cfg.advanced_model,
-        "advanced_base_url": cfg.advanced_base_url,
-        "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
-        "advanced_thinking_level": "",
-        "has_api_key": _has_real_api_key(cfg.api_key),
-        "cli_runner": cfg.cli_runner,
-        "cli_model": cfg.cli_model,
-        "cli_model_choices": cli_model_choices(),
-        # #1274 W1：CLI Runner 下拉单源（= _CLI_BACKENDS 有序），menuPage/gameMenu 共吃。
-        "cli_runners": cli_runner_choices(),
-        "cli_timeout_seconds": cfg.cli_timeout_seconds,
-        # #1794：设置页读回附加请求头表。
-        "default_headers": dict(cfg.default_headers or {}),
-        "persisted": {
-            "channel": saved.get("channel", ""),
-            "base_url": saved.get("base_url", ""),
-            "model": saved.get("model", ""),
-            "has_api_key": _has_real_api_key(saved.get("api_key", "")),
-            "timeout_seconds": float(saved.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
-            "thinking_level": saved.get("thinking_level", ""),
-            "reasoning_strength": saved.get("reasoning_strength", ""),
-            "api_reasoning_strength": saved_api_reasoning_strength,
-            "cli_reasoning_strength": saved_cli_reasoning_strength,
-            "advanced_model": saved.get("advanced_model", ""),
-            "advanced_base_url": saved.get("advanced_base_url", ""),
-            "has_advanced_api_key": _has_real_api_key(saved.get("advanced_api_key", "")),
-            "advanced_thinking_level": "",
-            "cli_runner": str(saved_cli.get("runner") or ""),
-            "cli_model": str(saved_cli.get("model") or ""),
-            "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS),
-            # #1794：persisted 头表；load_runtime_llm 已归一，扁平单读。
-            "default_headers": dict(saved.get("default_headers") or {}),
-        },
-    }
-
-
-@app.post("/api/llm/config")
-async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
-    thinking_level = None if request.thinking_level == "__keep__" else request.thinking_level
-    reasoning_strength = None if request.reasoning_strength == "__keep__" else request.reasoning_strength
-    advanced = None if request.advanced_model == "__keep__" else request.advanced_model
-    adv_base = None if request.advanced_base_url == "__keep__" else request.advanced_base_url
-    adv_key = None if request.advanced_api_key == "__keep__" else request.advanced_api_key
-    adv_thinking = None if request.advanced_thinking_level == "__keep__" else request.advanced_thinking_level
-    channel = None if request.channel == "__keep__" else request.channel
-    cli_runner = None if request.cli_runner == "__keep__" else request.cli_runner
-    cli_model = None if request.cli_model == "__keep__" else request.cli_model
-    try:
-        # 通道感知 build（#51）。verify(CLI smoke ~12s,只读)offload 出 event loop 不卡 UI;
-        # commit(落盘+begin_turn 改 session 态)**留在 loop 上同步跑**——单人 CLI 串行探针下它原子、
-        # 无并发 race,无需全局锁(CMR R3-R5:把 commit offload 到线程引入 session race / 断连
-        # cancel 下 worker-join 不可靠的一连串并发边缘,对单人场景得不偿失,故回退到 on-loop)。
-        game = get_game()
-        cfg = game.build_llm_config(
-            request.base_url,
-            request.model,
-            request.api_key,
-            request.timeout_seconds,
-            thinking_level=thinking_level,
-            reasoning_strength=reasoning_strength,
-            advanced_model=advanced,
-            advanced_base_url=adv_base,
-            advanced_api_key=adv_key,
-            advanced_thinking_level=adv_thinking,
-            channel=channel,
-            cli_runner=cli_runner,
-            cli_model=cli_model,
-            cli_timeout_seconds=request.cli_timeout_seconds,
-            default_headers=request.default_headers,
-        )
-        await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
-        # commit 仍同步 on-loop（上方注释的刻意决定不变），但须走 _write_gate：commit_llm_config
-        # 末尾 begin_turn 会 save_state/apply_historical_* 直写共享连接，#383 后台召对 worker /
-        # #393 线程化结算引入了真并发——那条「单人无并发 race、无需锁」的前提已被推翻，结算/召对
-        # worker 持锁期间 commit 会撞同一无锁连接（cmr Gate2 r4 Finding1）。非阻塞抢锁、保持 on-loop。
-        with _serialized_web_write(game):
-            game.commit_llm_config(cfg)
-    except HTTPException:
-        # _verify_llm_configs_or_raise 已把校验失败包成带干净 detail 的 HTTPException;
-        # 经 run_in_executor 透传上来后原样抛,别被下面 except Exception 二次包裹 mangle 掉(Gemini R2)。
-        raise
-    except LLMUnavailable as e:
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS, cli_runner_choices
-    reasoning_supported = (
-        cli_supports_reasoning_strength(cfg.cli_runner)
-        if cfg.channel == "cli"
-        else _api_reasoning_supported_for_effective_model(
-            cfg.base_url, cfg.model, cfg.advanced_base_url, cfg.advanced_model
-        )
-    )
-    return {
-        "base_url": cfg.base_url,
-        "model": cfg.model,
-        "timeout_seconds": cfg.timeout_seconds,
-        "thinking_level": cfg.thinking_level,
-        "reasoning_strength": cfg.reasoning_strength,
-        "reasoning_supported": reasoning_supported,
-        "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
-        # #1271：能力名单自 cli_backend 单源导出。
-        "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
-        "advanced_model": cfg.advanced_model,
-        "advanced_base_url": cfg.advanced_base_url,
-        "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
-        "advanced_thinking_level": "",
-        "has_api_key": _has_real_api_key(cfg.api_key),
-        "channel": cfg.channel,
-        "cli_runner": cfg.cli_runner,
-        "cli_model": cfg.cli_model,
-        # #1274 W1：CLI Runner 下拉单源。
-        "cli_runners": cli_runner_choices(),
-        "cli_timeout_seconds": cfg.cli_timeout_seconds,
-        "default_headers": dict(cfg.default_headers or {}),
-    }
-
-
-# ── 自定义立绘上传/读取 ──────────────────────────────────────────────────────
-# content_type → 存盘扩展名。一人一图，上传新图会顶掉旧扩展名的文件。
-_PORTRAIT_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
-
-
-def _find_portrait_file(name: str) -> Optional[str]:
-    """找该人物已存在的自定义立绘文件（任一扩展名），无则 None。"""
-    for ext in _PORTRAIT_EXT.values():
-        path = os.path.join(UPLOAD_PORTRAIT_DIR, f"{name}.{ext}")
-        if os.path.exists(path):
-            return path
-    return None
-
-
-@app.post("/api/consorts/{name}/portrait")
-async def api_upload_portrait(name: str, file: UploadFile = File(...)) -> Dict[str, Any]:
-    # 只接受已存在的人物名 → 集合固定，杜绝路径穿越/任意写。
-    game = get_game()
-    character = game.find_character(name)
-    if character is None:
-        raise HTTPException(status_code=404, detail="未找到该人物")
-    ext = _PORTRAIT_EXT.get(file.content_type or "")
-    if ext is None:
-        raise HTTPException(status_code=400, detail="仅支持 PNG/JPEG/WebP 图片")
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="文件为空")
-    if len(data) > MAX_PORTRAIT_BYTES:
-        raise HTTPException(status_code=400, detail="图片过大（上限 8MB）")
-    with _serialized_web_write(game):
-        os.makedirs(UPLOAD_PORTRAIT_DIR, exist_ok=True)
-        # 先清掉该人物的旧图（可能扩展名不同），再写新图。
-        old = _find_portrait_file(name)
-        if old is not None:
-            os.remove(old)
-        with open(os.path.join(UPLOAD_PORTRAIT_DIR, f"{name}.{ext}"), "wb") as fh:
-            fh.write(data)
-        game.set_custom_portrait(name, f"{CUSTOM_PORTRAIT_PREFIX}{name}")
-    return {"name": name, "portrait_id": f"{CUSTOM_PORTRAIT_PREFIX}{name}"}
-
-
-@app.delete("/api/consorts/{name}/portrait")
-async def api_delete_portrait(name: str) -> Dict[str, Any]:
-    game = get_game()
-    character = game.find_character(name)
-    if character is None:
-        raise HTTPException(status_code=404, detail="未找到该人物")
-    with _serialized_web_write(game):
-        old = _find_portrait_file(name)
-        if old is not None:
-            os.remove(old)
-        # 复位 portrait_id：清空 → 前端回落到池图（add/seed 时会按 office_type 再分配）。
-        game.set_custom_portrait(name, "")
-    return {"name": name, "portrait_id": ""}
-
-
-@app.get("/api/court_layout")
-async def api_get_court_layout() -> Dict[str, Any]:
-    val = get_game().db.kv_get("court_layout")
-    return {"layout": val or "{}"}
-
-
-@app.post("/api/court_layout")
-async def api_set_court_layout(body: Dict[str, Any]) -> Dict[str, Any]:
-    game = get_game()
-    with _serialized_web_write(game):
-        game.db.kv_set("court_layout", body.get("layout", "{}"))
-    return {"ok": True}
-
-
-@app.get("/portraits/custom/{name}")
-async def api_get_portrait(name: str):
-    path = _find_portrait_file(name)
-    if path is None:
-        raise HTTPException(status_code=404, detail="无自定义立绘")
-    return FileResponse(path)
-
-
-
-
-if os.path.isdir(WEB_DIST):
-    app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ming_sim import issues
@@ -49,14 +51,16 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game, monkeypatc
     reports = [
         {"dossier_id": int(item["dossier_id"]), "progress_band": "持平",
          "memorial_text": "本月密奏已达"}
-        for item in db.list_monthly_dossier_progress_nudges(state.turn)
+        for item in db.list_monthly_dossier_progress_nudges()
     ]
-    player = _prepare_player_month(
-        db, state, content, monkeypatch,
-        secret_orders_supply=lambda *a, **k: {"dossier_progress_reports": reports},
-    )
-    player.resolve_turn(allow_empty_decree=True)
-    db.save_turn_report(state, "邸报", public_body="邸报")
+    from ming_sim.models import LLMConfig
+
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k: json.dumps(
+        {"dossier_progress_reports": reports} if k["tag"] == "secret_orders_supply"
+        else {"title": "邸报", "report": "本月纪事。"},
+    ))
+    player = _prepare_player_month(db, state, content, monkeypatch)
+    player.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
     player.resolve_turn(allow_empty_decree=True)
 
     brief = db.conn.execute(

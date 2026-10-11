@@ -120,7 +120,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         status = str(item.get("status") or "active")
         office_type = str_field(item, "office_type", f"characters.json.characters[{idx}]")
-        status_reason = str(item.get("status_reason") or "").strip()
+        status_reason = str(item.get("status_reason") or "")
         # ADR 0009：在事者 office 必非空。离事者现职以 characters.json 为名分真源
         # （允许空 office 合法读取）；不在装载时二次洗职，也不解析 status_reason。
         if status in PERSON_OUSTED_STATUSES:
@@ -148,9 +148,10 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             historical_death_month=int(item.get("historical_death_month") or 0),
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
-            status=str(item.get("status") or "active"),
+            status=status,
             # Free prose status_reason: preserve raw (#1834 F16).
-            status_reason=str(item.get("status_reason") or ""),            reason_code=str(item.get("reason_code") or "").strip(),
+            status_reason=status_reason,
+            reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
@@ -578,7 +579,7 @@ def load_powers() -> Dict[str, Power]:
             supply=int_field(entry, "supply", "powers.json::powers[item].supply"),
             agenda=str_field(entry, "agenda", "powers.json::powers[item].agenda"),
             status=str_field(entry, "status", "powers.json::powers[item].status"),
-            last_action=str(entry.get("last_action") or "尚无新动").strip() or "尚无新动",
+            last_action=str(entry.get("last_action") or "尚无新动"),
             aliases="，".join(string_list(entry.get("aliases", []), "powers.json::powers[item].aliases")),
         )
     return powers
@@ -700,6 +701,7 @@ class GameContent:
     decree_writer_prompt: str = ""
     gazette_author_prompt: str = ""
     ending_summary_prompt: str = ""
+    rescript_draft_prompt: str = ""
     relation_brew_prompt: str = ""
     faction_brew_prompt: str = ""
 
@@ -737,6 +739,7 @@ class GameContent:
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             gazette_author_prompt=load_text_asset("prompts/gazette_author.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
+            rescript_draft_prompt=load_text_asset("prompts/rescript_draft.md"),
             relation_brew_prompt=load_text_asset("prompts/relation_brew.md"),
             faction_brew_prompt=load_text_asset("prompts/faction_brew.md"),
         )

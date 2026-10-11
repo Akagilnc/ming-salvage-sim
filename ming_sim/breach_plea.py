@@ -309,12 +309,10 @@ def _merge_plea_kind_into_todo(
             todo.get("commitment_ref"), todo.get("id"), primary, kind,
         )
     meta["absorbed_breach_kinds"] = absorbed_list
-    # 保留首类 primary；补充理由/案卷（#1897：不按正文身份去重，只追加；
-    # 仅空白的既有 reason 也是原文，不得因 strip 判空而覆盖）。
-    if reason:
-        prev = str(meta.get("reason") or "")
-        add = str(reason)
-        meta["reason"] = f"{prev}；{add}" if prev else add
+    # 保留首类 primary；补充理由/案卷
+    # #1847: do not substring-merge free reason wording into prior reason.
+    if reason and not str(meta.get("reason") or "").strip():
+        meta["reason"] = str(reason)
     if int(target_dossier_id or 0) > 0 and int(meta.get("target_dossier_id") or 0) <= 0:
         meta["target_dossier_id"] = int(target_dossier_id)
     if extra:
@@ -423,9 +421,7 @@ def write_breach_plea_todo(
     return int(todo_id or 0)
 
 
-def project_breach_plea_scene(
-    db: Any, todo: Dict[str, object],
-) -> Dict[str, object]:
+def project_breach_plea_scene(todo: Dict[str, object]) -> Dict[str, object]:
     meta = decode_plea_meta(todo.get("origin_context"))
     breach_kind = str(meta.get("breach_kind") or "")
     label = BREACH_KIND_LABELS.get(breach_kind, str(todo.get("criterion_text") or "松手"))
@@ -503,23 +499,14 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     stages_passed = _stages_passed_from_records(db, int(commitment_ref), n_stages)
     spent_amount, _fiscal_count = _spent_amount_and_fiscal_count(db, row)
 
-    band = ""
-    did = parse_dossier_id(row["origin_ref"] if "origin_ref" in row.keys() else "")
-    if did is not None:
-        progress = db.list_dossier_progress(int(did))
-        if progress:
-            band = str(progress[-1].get("progress_band") or "")
-
-    rooted_bands = {"告成", "已成", "生根", "完工", "就绪"}
-    mid_bands = {"在办", "过半", "在途", "推进"}
-
-    if band in rooted_bands or bar >= _BAR_ROOTED:
+    # #1847: do not admit foundation tier from free progress_band wording synonyms.
+    # Structural signals only: bar thresholds, stages passed, spent amount.
+    if bar >= _BAR_ROOTED:
         return FOUNDATION_ROOTED
     if n_stages >= 2 and stages_passed >= n_stages:
         return FOUNDATION_ROOTED
     if (
-        band in mid_bands
-        or (_BAR_MID_LOW <= bar < _BAR_ROOTED)
+        (_BAR_MID_LOW <= bar < _BAR_ROOTED)
         or (n_stages >= 2 and 0 < stages_passed < n_stages)
         or (spent_amount >= _SPENT_AMOUNT_HALFWAY and bar >= _BAR_MID_LOW)
     ):
@@ -798,7 +785,6 @@ def finalize_persist(
 
 def finalize_regret(
     db: Any,
-    state: Any,
     todo: Dict[str, object],
     *,
     commit: bool = False,
@@ -1072,7 +1058,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     if co is not None:
         current_office = str(co["office_title"] or current_office).strip() or current_office
 
-    # 承诺 roster 上记录的 role/office 快照；腐坏响亮（#1897 E1）。
+    # 承诺 roster 只读结构化 office 身份；role 是自由职分，腐坏名册响亮。
     expected = ""
     from ming_sim.participant_roster import decode_durable_participant_roster
     roster = decode_durable_participant_roster(commitment_row["participant_roster"])
@@ -1082,11 +1068,11 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
         if item.get("tier") != "主办":
             continue
         expected = str(
-            item.get("office") or item.get("role") or item.get("office_title") or ""
+            item.get("office") or item.get("office_title") or ""
         ).strip()
         break
 
-    # 案卷 executor office 快照
+    # 案卷 executor office 快照（结构化 office 字段，非自由 role）
     if not expected:
         did = parse_dossier_id(
             commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
@@ -1101,7 +1087,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
                     or ""
                 ).strip()
 
-    # office_change_records：有调任记录且当前 office 与最早/承诺侧不一致
+    # office_change_records：有调任记录且当前 office 与承诺侧 office 身份不等
     oc = db.conn.execute(
         """
         SELECT office_title FROM office_change_records
@@ -1113,33 +1099,8 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
         latest = str(oc["office_title"] or "").strip()
         if latest and expected and latest != expected and current_office != expected:
             return True
+    # Exact office-identity inequality only — no length/substring free-text classify.
     if expected and current_office and expected != current_office:
-        # role 常是职分非官职名，仅当 expected 像官职（含于 current 或相等）才判
-        if expected == current_office:
-            return False
-        # 若 expected 是短 role（承办/清丈）而非 office，不误判
-        if len(expected) <= 4 and expected not in current_office:
-            # 无可靠 office 快照时：看 office_change_records 是否在承诺 origin 之后有调任
-            if oc is not None:
-                # 有任何调任记录且 status active → 调
-                # 过宽；要求 dossier 绑承诺同源
-                did = parse_dossier_id(
-                    commitment_row["origin_ref"]
-                    if "origin_ref" in commitment_row.keys() else ""
-                )
-                if did is not None:
-                    linked = db.conn.execute(
-                        """
-                        SELECT 1 FROM office_change_records
-                        WHERE character_name=? AND dossier_id IS NOT NULL
-                          AND dossier_id != ?
-                        ORDER BY id DESC LIMIT 1
-                        """,
-                        (name, int(did)),
-                    ).fetchone()
-                    if linked is not None:
-                        return True
-            return False
         return True
     return False
 
@@ -1389,7 +1350,7 @@ def resolve_breach_pleas_from_extraction(
         if decision == "persist":
             results.append(finalize_persist(db, state, todo, commit=False))
         elif decision == "regret":
-            results.append(finalize_regret(db, state, todo, commit=False))
+            results.append(finalize_regret(db, todo, commit=False))
 
     if commit and results:
         db.conn.commit()

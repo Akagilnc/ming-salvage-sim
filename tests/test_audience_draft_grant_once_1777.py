@@ -32,7 +32,7 @@ _UTTERANCE = (
 
 
 def test_http_audience_one_matter_grant_with_deadline_1783(
-    tmp_path, monkeypatch, _offline_scene_beat_generator,
+    web_game, monkeypatch,
 ):
     """真 HTTP：一卷宗原句单候选 → 「准」 → issue/stream；
     恰一笔 −15、恰一份 grant 案卷、期限=下一回合；无平行交办案卷；
@@ -51,232 +51,222 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
     class _HubuAgent:
         def run(self, *_a, **kwargs):
-            from tests.test_audience_background import RunContent, RunOutput
-
             if kwargs.get("stream"):
                 def chunks():
-                    yield RunContent(_EDICT)
-                    yield RunOutput([])
+                    yield SimpleNamespace(event="RunContent", content=_EDICT)
+                    yield SimpleNamespace(content=_EDICT, tools=[], status="COMPLETED")
                 return chunks()
             return SimpleNamespace(content=_EDICT, tools=[])
 
         def get_last_run_output(self):
             return None
 
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
+    game = web_game
+    # 召对大臣刻意避开抽取所得承办人，钉「名单≠当前说话大臣」。
+    name = next(
+        getattr(ch, "name", key)
+        for key, ch in game.content.characters.items()
+        if getattr(ch, "office_type", "") == "户部"
+        and getattr(ch, "power_id", "ming") == "ming"
+        and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
+        and getattr(ch, "name", key) != "郭允厚"
+    )
+    agent = _HubuAgent()
+    stub_scene_agent(monkeypatch, agent)
+    if getattr(game.session, "llm_config", None) is not None:
+        try:
+            game.session.llm_config.channel = "cli"
+        except Exception:
+            pass
 
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
-    try:
-        # 召对大臣刻意避开抽取所得承办人，钉「名单≠当前说话大臣」。
-        name = next(
-            getattr(ch, "name", key)
-            for key, ch in game.content.characters.items()
-            if getattr(ch, "office_type", "") == "户部"
-            and getattr(ch, "power_id", "ming") == "ming"
-            and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
-            and getattr(ch, "name", key) != "郭允厚"
-        )
-        agent = _HubuAgent()
-        stub_scene_agent(monkeypatch, agent)
-        if getattr(game.session, "llm_config", None) is not None:
-            try:
-                game.session.llm_config.channel = "cli"
-            except Exception:
-                pass
+    _set_guanning_arrears(game.db, 60, central=60, province=0)
+    game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
+    game.db.save_state(game.state)
+    treasury_before = int(game.state.metrics["国库"])
+    turn_before = int(game.state.turn)
 
-        _set_guanning_arrears(game.db, 60, central=60, province=0)
-        game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
-        game.db.save_state(game.state)
-        treasury_before = int(game.state.metrics["国库"])
-        turn_before = int(game.state.turn)
+    import ming_sim.audience_translate as audience_translate
 
-        import ming_sim.audience_translate as audience_translate
+    build_prompt = audience_translate.build_audience_translate_prompt
 
-        build_prompt = audience_translate.build_audience_translate_prompt
+    def _capture_emperor(*, emperor_message, **kwargs):
+        _translate_emperor.set(str(emperor_message or ""))
+        return build_prompt(emperor_message=emperor_message, **kwargs)
 
-        def _capture_emperor(*, emperor_message, **kwargs):
-            _translate_emperor.set(str(emperor_message or ""))
-            return build_prompt(emperor_message=emperor_message, **kwargs)
+    monkeypatch.setattr(
+        audience_translate, "build_audience_translate_prompt", _capture_emperor,
+    )
 
-        monkeypatch.setattr(
-            audience_translate, "build_audience_translate_prompt", _capture_emperor,
-        )
-
-        def _translate(prompt, _cfg):
-            scene = offline_empty_audience_translate(prompt, _cfg)
-            if _translate_emperor.get() == "准":
-                rows = [
-                    r for r in game.db.list_pending_actions(game.state.turn)
-                    if r.get("kind") == "directive" and r.get("status") == "pending"
-                ]
-                if not rows:
-                    return scene
-                return {
-                    **scene,
-                    "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
-                }
+    def _translate(prompt, _cfg):
+        scene = offline_empty_audience_translate(prompt, _cfg)
+        if _translate_emperor.get() == "准":
+            rows = [
+                r for r in game.db.list_pending_actions(game.state.turn)
+                if r.get("kind") == "directive" and r.get("status") == "pending"
+            ]
+            if not rows:
+                return scene
             return {
                 **scene,
-                "commissions": [{
-                    "text": _UTTERANCE,
-                    "grant": {
-                        "grant_action": "协饷",
-                        "amount": 15,
-                        "account": "国库",
-                        "purpose": "补饷",
-                        "target_kind": "army",
-                        "target_id": "guanning",
-                    },
-                    # #1778/#1783 既有 staging 字段（非 #1815）
-                    "assignee": "郭允厚",
-                    "participant_roster": [{
-                        "character_id": "郭允厚", "tier": "主办",
-                        "role": "户部尚书承办", "delegator_id": None,
-                    }],
-                    "due_turn": turn_before + 1,
-                }],
+                "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
             }
+        return {
+            **scene,
+            "commissions": [{
+                "text": _UTTERANCE,
+                "grant": {
+                    "grant_action": "协饷",
+                    "amount": 15,
+                    "account": "国库",
+                    "purpose": "补饷",
+                    "target_kind": "army",
+                    "target_id": "guanning",
+                },
+                # #1778/#1783 既有 staging 字段（非 #1815）
+                "assignee": "郭允厚",
+                "participant_roster": [{
+                    "character_id": "郭允厚", "tier": "主办",
+                    "role": "户部尚书承办", "delegator_id": None,
+                }],
+                "due_turn": turn_before + 1,
+            }],
+        }
 
-        stub_audience_translate(monkeypatch, _translate)
+    stub_audience_translate(monkeypatch, _translate)
 
-        client = TestClient(web_app.app)
-        petition = client.post(
-            "/api/audience/chat",
-            json={"message": _UTTERANCE},
-        )
-        assert petition.status_code == 200, petition.text
-        game._runtime_write_queue().barrier(lambda: None)
-        wait_pending_writes(game)
-        assert int(game.state.metrics["国库"]) == treasury_before
+    client = TestClient(web_app.app)
+    petition = client.post(
+        "/api/audience/chat",
+        json={"message": _UTTERANCE},
+    )
+    assert petition.status_code == 200, petition.text
+    game._runtime_write_queue().barrier(lambda: None)
+    wait_pending_writes(game)
+    assert int(game.state.metrics["国库"]) == treasury_before
 
-        # 成案前：单候选、期限=下一回合；无 assignment 候选
-        pending = [
-            p for p in game.db.list_pending_actions(turn_before)
-            if p.get("status") == "pending"
-        ]
-        assert len(pending) == 1, pending
-        payload = json.loads(str(pending[0].get("payload_json") or "{}"))
-        assert payload.get("dossier_action_type") == "grant_allocation"
-        assert int(payload.get("due_turn") or 0) == turn_before + 1
-        assert int(payload.get("amount") or 0) == 15
-        # 承办人挂本案 pending（#1778 并存；非当前召对大臣）
-        assert str(payload.get("assignee") or payload.get("assignee_id") or "") == "郭允厚", payload
-        assert not any(
-            json.loads(str(p.get("payload_json") or "{}")).get("dossier_action_type")
-            == "assignment"
-            for p in pending
-        )
+    # 成案前：单候选、期限=下一回合；无 assignment 候选
+    pending = [
+        p for p in game.db.list_pending_actions(turn_before)
+        if p.get("status") == "pending"
+    ]
+    assert len(pending) == 1, pending
+    payload = json.loads(str(pending[0].get("payload_json") or "{}"))
+    assert payload.get("dossier_action_type") == "grant_allocation"
+    assert int(payload.get("due_turn") or 0) == turn_before + 1
+    assert int(payload.get("amount") or 0) == 15
+    # 承办人挂本案 pending（#1778 并存；非当前召对大臣）
+    assert str(payload.get("assignee") or payload.get("assignee_id") or "") == "郭允厚", payload
+    assert not any(
+        json.loads(str(p.get("payload_json") or "{}")).get("dossier_action_type")
+        == "assignment"
+        for p in pending
+    )
 
-        confirm = client.post("/api/audience/chat", json={"message": "准"})
-        assert confirm.status_code == 200, confirm.text
-        game._runtime_write_queue().barrier(lambda: None)
-        wait_pending_writes(game)
+    confirm = client.post("/api/audience/chat", json={"message": "准"})
+    assert confirm.status_code == 200, confirm.text
+    game._runtime_write_queue().barrier(lambda: None)
+    wait_pending_writes(game)
 
-        body = _post_issue_stream(
-            client, expected_turn=turn_before, step="1783 issue/stream",
-        )
-        assert not body.get("awaiting_decision"), body
-        wait_pending_writes(game)
+    body = _post_issue_stream(
+        client, expected_turn=turn_before, step="1783 issue/stream",
+    )
+    assert not body.get("awaiting_decision"), body
+    wait_pending_writes(game)
 
-        after = _get_state(client)
-        assert _turn_of(after) == turn_before + 1, after.get("turn")
+    after = _get_state(client)
+    assert _turn_of(after) == turn_before + 1, after.get("turn")
 
-        ledger = [
-            dict(r) for r in game.db.conn.execute(
-                """
-                SELECT account, delta, purpose, target_id FROM economy_ledger
-                WHERE purpose='补饷' AND target_id='guanning' AND account='国库'
-                """
-            ).fetchall()
-        ]
-        assert len(ledger) == 1, ledger
-        assert int(ledger[0]["delta"]) == -15, ledger
+    ledger = [
+        dict(r) for r in game.db.conn.execute(
+            """
+            SELECT account, delta, purpose, target_id FROM economy_ledger
+            WHERE purpose='补饷' AND target_id='guanning' AND account='国库'
+            """
+        ).fetchall()
+    ]
+    assert len(ledger) == 1, ledger
+    assert int(ledger[0]["delta"]) == -15, ledger
 
-        pay_dossiers = [
-            d for d in game.db.list_decree_dossiers()
-            if d["action_type"] == "grant_allocation"
-            and d["target_id"] == "guanning"
-            and json.loads(game.db.conn.execute(
-                "SELECT payload_json FROM decree_dossiers WHERE id=?", (d["id"],),
-            ).fetchone()[0]).get("grant_action") == "协饷"
-        ]
-        assert len(pay_dossiers) == 1, pay_dossiers
-        dossier_id = int(pay_dossiers[0]["id"])
-        assert int(pay_dossiers[0].get("due_turn") or 0) == turn_before + 1, pay_dossiers[0]
-        # 期限未到：钱已落、案卷保持 executing（不当夜终裁）
-        assert pay_dossiers[0]["status"] == "executing", pay_dossiers[0]
-        assert not str(pay_dossiers[0].get("execution_outcome") or "").strip()
+    pay_dossiers = [
+        d for d in game.db.list_decree_dossiers()
+        if d["action_type"] == "grant_allocation"
+        and d["target_id"] == "guanning"
+        and json.loads(game.db.conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?", (d["id"],),
+        ).fetchone()[0]).get("grant_action") == "协饷"
+    ]
+    assert len(pay_dossiers) == 1, pay_dossiers
+    dossier_id = int(pay_dossiers[0]["id"])
+    assert int(pay_dossiers[0].get("due_turn") or 0) == turn_before + 1, pay_dossiers[0]
+    # 期限未到：钱已落、案卷保持 executing（不当夜终裁）
+    assert pay_dossiers[0]["status"] == "executing", pay_dossiers[0]
+    assert not str(pay_dossiers[0].get("execution_outcome") or "").strip()
 
-        # 无以召对记录为正文的平行交办案卷
-        assignment_dossiers = [
-            d for d in game.db.list_decree_dossiers()
-            if d["action_type"] == "assignment"
-        ]
-        assert assignment_dossiers == [], assignment_dossiers
+    # 无以召对记录为正文的平行交办案卷
+    assignment_dossiers = [
+        d for d in game.db.list_decree_dossiers()
+        if d["action_type"] == "assignment"
+    ]
+    assert assignment_dossiers == [], assignment_dossiers
 
-        # #1778 并存：一件事一案的主办＝郭允厚，不是当前召对大臣
-        leads = [
-            e["character_id"]
-            for e in (pay_dossiers[0].get("participant_roster") or [])
-            if e.get("tier") == "主办"
-        ]
-        assert leads == ["郭允厚"], leads
-        assert name != "郭允厚" and name not in leads
+    # #1778 并存：一件事一案的主办＝郭允厚，不是当前召对大臣
+    leads = [
+        e["character_id"]
+        for e in (pay_dossiers[0].get("participant_roster") or [])
+        if e.get("tier") == "主办"
+    ]
+    assert leads == ["郭允厚"], leads
+    assert name != "郭允厚" and name not in leads
 
-        # 期限不另立承诺事项、不占在办名额
-        origin_issues = game.db.conn.execute(
-            "SELECT id, kind, status FROM issues WHERE origin_ref=?",
+    # 期限不另立承诺事项、不占在办名额
+    origin_issues = game.db.conn.execute(
+        "SELECT id, kind, status FROM issues WHERE origin_ref=?",
+        (f"dossier:{dossier_id}",),
+    ).fetchall()
+    assert origin_issues == [], origin_issues
+
+    pay_logs = [
+        dict(r) for r in game.db.conn.execute(
+            """
+            SELECT delta FROM army_logs
+            WHERE army_id='guanning' AND field='arrears' AND origin_ref=?
+            """,
             (f"dossier:{dossier_id}",),
         ).fetchall()
-        assert origin_issues == [], origin_issues
+    ]
+    assert len(pay_logs) == 1, pay_logs
+    assert float(pay_logs[0]["delta"]) == pytest.approx(-15)
 
-        pay_logs = [
-            dict(r) for r in game.db.conn.execute(
-                """
-                SELECT delta FROM army_logs
-                WHERE army_id='guanning' AND field='arrears' AND origin_ref=?
-                """,
-                (f"dossier:{dossier_id}",),
-            ).fetchall()
-        ]
-        assert len(pay_logs) == 1, pay_logs
-        assert float(pay_logs[0]["delta"]) == pytest.approx(-15)
+    # 验收 3：作者替身写成邸报后进入期限月，漂移写下到期复核，下一月才消费。
+    from ming_sim.month_chain import run_player_month_chain
+    from ming_sim.due_review import list_due_review_scenes
+    from ming_sim.staged_commitment import TODO_STATUS_PENDING
 
-        # 验收 3：作者替身写成邸报后进入期限月，漂移写下到期复核，下一月才消费。
-        from ming_sim.month_chain import run_player_month_chain
-        from ming_sim.due_review import list_due_review_scenes
-        from ming_sim.staged_commitment import TODO_STATUS_PENDING
+    closed = int(game.state.turn)
+    advanced = run_player_month_chain(
+        game.state, game.db, game.session.agno_db, game.session.llm_config,
+        content=game.content,
+    )
+    assert advanced.advanced is True
+    assert int(game.state.turn) == closed + 1
+    assert game.db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    scenes = list_due_review_scenes(game.db)
+    due_scenes = [
+        s for s in scenes
+        if s.get("kind") == "due_review"
+        and int(s.get("dossier_id") or 0) == dossier_id
+    ]
+    assert due_scenes, scenes
+    assert not any(s.get("kind") == "breach_plea" for s in scenes), scenes
 
-        closed = int(game.state.turn)
-        advanced = run_player_month_chain(
-            game.state, game.db, game.session.agno_db, game.session.llm_config,
-            content=game.content,
-        )
-        assert advanced.advanced is True
-        assert int(game.state.turn) == closed + 1
-        assert game.db.list_next_audience_todos(status=TODO_STATUS_PENDING)
-        scenes = list_due_review_scenes(game.db, game.state)
-        due_scenes = [
-            s for s in scenes
-            if s.get("kind") == "due_review"
-            and int(s.get("dossier_id") or 0) == dossier_id
-        ]
-        assert due_scenes, scenes
-        assert not any(s.get("kind") == "breach_plea" for s in scenes), scenes
-
-        consumed = run_player_month_chain(
-            game.state, game.db, game.session.agno_db, game.session.llm_config,
-            content=game.content,
-        )
-        assert consumed.advanced is True
-        after_due = game.db.get_decree_dossier(dossier_id)
-        assert after_due is not None
-        # 本路 economy 实况已落、无表报 → 0076 decide 唯一终值 fulfilled
-        assert after_due["execution_outcome"] == "fulfilled", after_due
-        assert after_due["status"] == "closed"
-    finally:
-        game.session.close()
+    consumed = run_player_month_chain(
+        game.state, game.db, game.session.agno_db, game.session.llm_config,
+        content=game.content,
+    )
+    assert consumed.advanced is True
+    after_due = game.db.get_decree_dossier(dossier_id)
+    assert after_due is not None
+    # 本路 economy 实况已落、无表报 → 0076 decide 唯一终值 fulfilled
+    assert after_due["execution_outcome"] == "fulfilled", after_due
+    assert after_due["status"] == "closed"

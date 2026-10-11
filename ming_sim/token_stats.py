@@ -122,7 +122,7 @@ def install_token_stats_patch() -> None:
             resp = orig_create(self, *args, **kwargs)
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                _record_usage(model_id, getattr(resp, "usage", None))
+                _record_usage(model_id, getattr(resp, "usage", None), "?")
             except Exception as exc:
                 tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
@@ -134,7 +134,7 @@ def install_token_stats_patch() -> None:
             resp = await orig_acreate(self, *args, **kwargs)
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                _record_usage(model_id, getattr(resp, "usage", None))
+                _record_usage(model_id, getattr(resp, "usage", None), "?")
             except Exception as exc:
                 tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp

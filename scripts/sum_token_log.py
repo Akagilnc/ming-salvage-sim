@@ -1,8 +1,5 @@
 """汇总基准日志里的 [TOKEN] 行 → 按 model + caller 聚合出 token 用量表。
 
-play_as_emperor.py 跑压测时,游戏侧(deepseek)与玩家侧(qwen)每次 completion 都打一行:
-  [TOKEN] caller=minister model=deepseek-v4-flash prompt=1234 cached=0 cache_creation=0 completion=56 reasoning=0 total=1290
-
 本脚本扫一个或多个日志(含 .stdout),把这些行按 model 聚合(可选再按 caller 细分),
 算出 calls / prompt / cached / completion / total 与缓存命中率,给基准结论用。
 

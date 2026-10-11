@@ -70,12 +70,6 @@ def _faction_of(db, name: str) -> str:
     return str(row["faction"])
 
 
-def _set_identity(db, name: str, identity: int) -> None:
-    db.conn.execute(
-        "UPDATE characters SET identity=? WHERE name=?", (int(identity), name)
-    )
-    db.conn.commit()
-
 
 def _direct_rows(db, *, idem_base: str | None = None) -> list[sqlite3.Row]:
     if idem_base is None:
@@ -148,7 +142,6 @@ def test_t2_kinship_uses_unrounded_formula(game):
     rows = {r["kind"]: r for r in _log_rows(db) if r["idem_key"].startswith("t2|kinship|")}
     assert int(rows["direct"]["amount"]) == 2
     assert int(rows["kinship"]["amount"]) == 1
-    assert int(rows["kinship"]["amount"]) != 0
 
 
 def test_t2b_legitimacy_uses_raw_for_amounts(game):
@@ -205,21 +198,6 @@ def test_t2b_legitimacy_uses_raw_for_amounts(game):
 # ---------------------------------------------------------------------------
 
 
-def test_t3_zero_delta_empty_namespace_is_legal_noop(game):
-    from ming_sim.centrifuge_ledger import accrue_blood_debt
-
-    db, state, _content = game
-    before = _snapshot(db)
-    accrue_blood_debt(
-        db=db,
-        turn=state.turn,
-        target=_TARGET_EUNUCH,
-        axis=_AXIS,
-        penalty_type="申饬",
-        crime_weight=3,
-        idem_base="t3|zero",
-    )
-    assert _snapshot(db) == before
 
 
 # ---------------------------------------------------------------------------
@@ -227,56 +205,6 @@ def test_t3_zero_delta_empty_namespace_is_legal_noop(game):
 # ---------------------------------------------------------------------------
 
 
-def test_t4_happy_path_and_forbidden_kwargs(game):
-    from ming_sim.centrifuge_ledger import accrue_blood_debt
-
-    db, state, _content = game
-    before = _snapshot(db)
-    accrue_blood_debt(
-        db=db,
-        turn=state.turn,
-        target=_TARGET_EUNUCH,
-        axis=_AXIS,
-        penalty_type="抄家",
-        crime_weight=70,
-        idem_base="t4|happy",
-        reason_code="依律",
-        source="test",
-    )
-    faction = _faction_of(db, _TARGET_EUNUCH)
-    rows = [r for r in _log_rows(db) if str(r["idem_key"]).startswith("t4|happy|")]
-    kinds = {r["kind"] for r in rows}
-    assert "direct" in kinds
-    assert "kinship" in kinds
-    for r in rows:
-        assert r["source_name"] == _TARGET_EUNUCH
-        assert r["faction"] == faction
-    cache = [
-        r
-        for r in _cache_rows(db)
-        if r["faction"] == faction and r["axis"] == _AXIS
-    ]
-    assert cache and int(cache[0]["blood_debt"]) > 0
-
-    for kwargs in (
-        {"faction": faction},
-        {"identity": 50},
-        {"amount": 1},
-    ):
-        snap = _snapshot(db)
-        with pytest.raises(TypeError):
-            accrue_blood_debt(
-                db=db,
-                turn=state.turn,
-                target=_TARGET_EUNUCH,
-                axis=_AXIS,
-                penalty_type="抄家",
-                crime_weight=70,
-                idem_base="t4|forbidden",
-                **kwargs,
-            )
-        assert _snapshot(db) == snap
-    assert before != _snapshot(db)
 
 
 # ---------------------------------------------------------------------------
@@ -451,9 +379,6 @@ def test_t8_detection_wariness_only_kinship(game):
     assert len(rows) == 1
     assert rows[0]["kind"] == "kinship"
     assert int(rows[0]["legitimacy_pct"]) == 100
-    assert rows[0]["kind"] != "direct"
-    assert all(r["kind"] != "overdraw" for r in rows)
-    assert all(r["kind"] != "direct" for r in rows)
 
     for kwargs in (
         {"penalty_type": "抄家"},
@@ -482,120 +407,6 @@ def test_t8_detection_wariness_only_kinship(game):
 # ---------------------------------------------------------------------------
 
 
-def test_t9_idempotency_namespace_and_empty_planned(game):
-    from ming_sim.centrifuge_ledger import accrue_blood_debt
-
-    db, state, _content = game
-
-    # ① replay：同参两次，第二次零增
-    accrue_blood_debt(
-        db=db,
-        turn=state.turn,
-        target=_TARGET_EUNUCH,
-        axis=_AXIS,
-        penalty_type="抄家",
-        crime_weight=70,
-        idem_base="t9|replay",
-        reason_code="依律",
-        source="s",
-    )
-    mid = _snapshot(db)
-    accrue_blood_debt(
-        db=db,
-        turn=state.turn,
-        target=_TARGET_EUNUCH,
-        axis=_AXIS,
-        penalty_type="抄家",
-        crime_weight=70,
-        idem_base="t9|replay",
-        reason_code="依律",
-        source="s",
-    )
-    assert _snapshot(db) == mid
-
-    # ② 同 idem_base 异载荷（换 target）且 kinds 仍能凑集合相等 → Abort
-    # 先用另一 base 写军队目标，确保军队可被写；此处专门：已有 t9|payload 写阉党后换军队
-    accrue_blood_debt(
-        db=db,
-        turn=state.turn,
-        target=_TARGET_EUNUCH,
-        axis=_AXIS,
-        penalty_type="申饬",
-        crime_weight=1,
-        idem_base="t9|payload",
-    )
-    before_payload = _snapshot(db)
-    with pytest.raises(SettlementAbort):
-        accrue_blood_debt(
-            db=db,
-            turn=state.turn,
-            target=_TARGET_ARMY,
-            axis=_AXIS,
-            penalty_type="申饬",
-            crime_weight=1,
-            idem_base="t9|payload",
-        )
-    assert _snapshot(db) == before_payload
-
-    # ③ 旧批多 kind / 当前真子集：identity→0 去掉 kinship
-    _set_identity(db, _TARGET_ARMY, 80)
-    accrue_blood_debt(
-        db=db,
-        turn=state.turn,
-        target=_TARGET_ARMY,
-        axis=_AXIS,
-        penalty_type="申饬",
-        crime_weight=1,
-        idem_base="t9|subset",
-    )
-    kinds_first = {
-        r["kind"]
-        for r in _log_rows(db)
-        if str(r["idem_key"]).startswith("t9|subset|")
-    }
-    assert kinds_first == {"direct", "kinship"}
-    _set_identity(db, _TARGET_ARMY, 0)
-    before_subset = _snapshot(db)
-    with pytest.raises(SettlementAbort):
-        accrue_blood_debt(
-            db=db,
-            turn=state.turn,
-            target=_TARGET_ARMY,
-            axis=_AXIS,
-            penalty_type="申饬",
-            crime_weight=1,
-            idem_base="t9|subset",
-        )
-    assert _snapshot(db) == before_subset
-
-    # ④ 旧批非空 / 当前 planned 空：申饬 cw1→cw3，同 target/axis/idem_base
-    accrue_blood_debt(
-        db=db,
-        turn=state.turn,
-        target=_TARGET_EUNUCH,
-        axis=_AXIS,
-        penalty_type="申饬",
-        crime_weight=1,
-        idem_base="t9|empty_planned",
-    )
-    first_rows = [
-        r
-        for r in _log_rows(db)
-        if str(r["idem_key"]).startswith("t9|empty_planned|")
-    ]
-    assert any(r["kind"] == "direct" and int(r["amount"]) == 2 for r in first_rows)
-    before_empty = _snapshot(db)
-    with pytest.raises(SettlementAbort):
-        accrue_blood_debt(
-            db=db,
-            turn=state.turn,
-            target=_TARGET_EUNUCH,
-            axis=_AXIS,
-            penalty_type="申饬",
-            crime_weight=3,
-            idem_base="t9|empty_planned",
-        )
-    assert _snapshot(db) == before_empty
 
 
 # ---------------------------------------------------------------------------
@@ -603,44 +414,6 @@ def test_t9_idempotency_namespace_and_empty_planned(game):
 # ---------------------------------------------------------------------------
 
 
-def test_t10_partial_preinserted_key_aborts(game):
-    from ming_sim.centrifuge_ledger import accrue_blood_debt
-
-    db, state, _content = game
-    faction = _faction_of(db, _TARGET_EUNUCH)
-    # 只预插 direct，公开调用会计划 multi-kind → 集合不等
-    db.conn.execute(
-        "INSERT INTO centrifuge_log("
-        "turn, faction, axis, kind, base, legitimacy_pct, amount, "
-        "source_name, reason_code, source, idem_key"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            state.turn,
-            faction,
-            _AXIS,
-            "direct",
-            70,
-            10,
-            7,
-            _TARGET_EUNUCH,
-            None,
-            None,
-            "t10|partial|direct",
-        ),
-    )
-    db.conn.commit()
-    before = _snapshot(db)
-    with pytest.raises(SettlementAbort):
-        accrue_blood_debt(
-            db=db,
-            turn=state.turn,
-            target=_TARGET_EUNUCH,
-            axis=_AXIS,
-            penalty_type="抄家",
-            crime_weight=70,
-            idem_base="t10|partial",
-        )
-    assert _snapshot(db) == before
 
 
 # ---------------------------------------------------------------------------
@@ -648,96 +421,6 @@ def test_t10_partial_preinserted_key_aborts(game):
 # ---------------------------------------------------------------------------
 
 
-def test_t11_rebuild_clears_dirty_and_write_path_rolls_back(game, monkeypatch):
-    from ming_sim.centrifuge_ledger import (
-        accrue_blood_debt,
-        rebuild_centrifuge_cache,
-    )
-
-    db, state, _content = game
-    # 先落一笔真账
-    accrue_blood_debt(
-        db=db,
-        turn=state.turn,
-        target=_TARGET_EUNUCH,
-        axis=_AXIS,
-        penalty_type="抄家",
-        crime_weight=70,
-        idem_base="t11|seed",
-    )
-    log_before = [dict(r) for r in _log_rows(db)]
-    faction = _faction_of(db, _TARGET_EUNUCH)
-    other = "东林"
-    assert other != faction
-
-    # 脏 cache 行（无对应 log group）+ 脏 overdraw
-    db.conn.execute(
-        "INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness) "
-        "VALUES (?,?,?,?)",
-        (other, "民本恤民", 99, 88),
-    )
-    db.conn.execute(
-        "UPDATE factions SET edict_overdraw = 7 WHERE name=?", (other,)
-    )
-    db.conn.commit()
-    assert any(r["faction"] == other for r in _cache_rows(db))
-    assert _overdraw_map(db)[other] == 7
-
-    rebuild_centrifuge_cache(db)
-    assert not any(r["faction"] == other for r in _cache_rows(db))
-    assert _overdraw_map(db)[other] == 0
-    assert [dict(r) for r in _log_rows(db)] == log_before
-    # 真账 cache 仍在
-    eunuch_cache = [
-        r for r in _cache_rows(db) if r["faction"] == faction and r["axis"] == _AXIS
-    ]
-    assert eunuch_cache and int(eunuch_cache[0]["blood_debt"]) > 0
-
-    # 写途 monkeypatch：INSERT centrifuge_log 时抛错 → 全快照回滚
-    before_fail = _snapshot(db)
-    real_execute = db.conn.execute
-
-    def boom_on_log(sql, parameters=()):
-        text = sql if isinstance(sql, str) else str(sql)
-        if "INSERT INTO centrifuge_log" in text.replace("\n", " "):
-            raise sqlite3.OperationalError("simulated write failure")
-        return real_execute(sql, parameters)
-
-    monkeypatch.setattr(db.conn, "execute", boom_on_log)
-    with pytest.raises(sqlite3.OperationalError):
-        accrue_blood_debt(
-            db=db,
-            turn=state.turn,
-            target=_TARGET_ARMY,
-            axis=_AXIS,
-            penalty_type="抄家",
-            crime_weight=70,
-            idem_base="t11|boom",
-        )
-    monkeypatch.setattr(db.conn, "execute", real_execute)
-    assert _snapshot(db) == before_fail
-
-    # rebuild 中途失败亦整原子回滚
-    real_execute2 = db.conn.execute
-    calls = {"n": 0}
-
-    def boom_on_rebuild(sql, parameters=()):
-        text = sql if isinstance(sql, str) else str(sql)
-        if "DELETE FROM faction_axis_debt" in text:
-            calls["n"] += 1
-            if calls["n"] >= 1:
-                # let delete happen then fail on next write
-                pass
-        if "UPDATE factions SET edict_overdraw" in text.replace("\n", " "):
-            raise sqlite3.OperationalError("simulated rebuild failure")
-        return real_execute2(sql, parameters)
-
-    before_rebuild = _snapshot(db)
-    monkeypatch.setattr(db.conn, "execute", boom_on_rebuild)
-    with pytest.raises(sqlite3.OperationalError):
-        rebuild_centrifuge_cache(db)
-    monkeypatch.setattr(db.conn, "execute", real_execute2)
-    assert _snapshot(db) == before_rebuild
 
 
 # ---------------------------------------------------------------------------

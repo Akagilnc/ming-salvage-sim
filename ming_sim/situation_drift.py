@@ -386,6 +386,7 @@ def apply_situation_monthly_drift(
                     continue
                 if new_row["status"] == "resolved":
                     effect = loads_effect_dict(new_row["effect_on_resolve"])
+                    # #1847: free title/tag phrase pairing warn deleted.
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
                     inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], origin_ref=parent_origin_ref) if r.get("rejected"))  # economy 拒收不蒸发（#14）
                     inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）

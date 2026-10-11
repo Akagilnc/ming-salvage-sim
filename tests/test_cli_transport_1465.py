@@ -113,23 +113,20 @@ def _pin_transport_policy(
     )
 
 
-def _cli_web_game(game, monkeypatch, *, backend: str = "claude"):
-    """真实召对装配 + 真 CliChat model（channel=cli）。"""
+def _cli_web_game(web_game, monkeypatch, *, backend: str = "claude"):
+    """在既有 web_game 上挂真 CliChat model（channel=cli）；不开第二 runtime。"""
     from agno.agent import Agent
 
     model = cb.CliChat(id="cli-model-test", backend=backend)
     agent = Agent(model=model, markdown=False)
-    web_game, minister = _transport_web_game(game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
     web_game.session.llm_config = SimpleNamespace(
         channel="cli", cli_runner=backend, cli_model="cli-model-test",
         cli_timeout_seconds=None, reasoning_strength="",
     )
-    return web_game, minister
 
 
-def test_cli_chat_stream_two_transient_then_success_three_attempts(
-    monkeypatch, tmp_path, game,
-):
+def test_cli_chat_stream_two_transient_then_success_three_attempts(monkeypatch, web_game, tmp_path):
     """①瞬断两次后第三次成功：CLI runner 与 API 同一 transport 次数账。
 
     注入 = 前两次子进程 rc=0 空输出（可重试 typed 空输出），第三次正常出文。
@@ -140,9 +137,9 @@ def test_cli_chat_stream_two_transient_then_success_three_attempts(
         {"stdout": (), "returncode": 0},
         {"stdout": (_OK_REPLY,), "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert "done" in [e[0] for e in events], events
@@ -156,9 +153,7 @@ def test_cli_chat_stream_two_transient_then_success_three_attempts(
     assert int(done.get("minister_message_id") or 0) > 0
 
 
-def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_resend(
-    monkeypatch, tmp_path, game,
-):
+def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_resend(monkeypatch, web_game, tmp_path):
     """②三次瞬断耗尽 → 系统层终失败呈现、夜不封、可重发。
 
     注入 = rc=0 空输出（可重试 typed 空输出，结构化路径）；耗尽后换出文脚本重发即成。
@@ -166,19 +161,22 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     """
     from ming_sim import audience_night as an
 
-    # runtime 即使误配为五次，玩家的一次动作仍以票面三次为硬上限。
     _pin_transport_policy(monkeypatch, tmp_path, max_attempts=5)
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (), "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(game, monkeypatch, backend="agy")
+    _cli_web_game(web_game, monkeypatch)
     db = web_game.db
     night_closed = {"n": 0}
-    web_game.session.close_night_after_chat_if_needed = (
-        lambda *_a, **_k: night_closed.__setitem__("n", night_closed["n"] + 1)
-    )
+    real_close = web_game.session.close_night_after_chat_if_needed
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    def close(*args, **kwargs):
+        night_closed["n"] += 1
+        return real_close(*args, **kwargs)
+
+    web_game.session.close_night_after_chat_if_needed = close
+
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
@@ -200,7 +198,7 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     ok_script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (_OK_REPLY,), "returncode": 0},
     ])
-    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
+    response2 = _post_chat_stream(monkeypatch, web_game, message="再问边饷。")
     events2 = _parse_sse(response2.text)
     assert "done" in [e[0] for e in events2], events2
     done2 = next(e[1] for e in events2 if e[0] == "done")
@@ -209,15 +207,15 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     assert an.get_open_night(db) is not None
 
 
-def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path, game):
+def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, web_game, tmp_path):
     """③确定性失败一次不重试：未知非零退出（无 typed status）不洗成瞬断。"""
     _pin_transport_policy(monkeypatch, tmp_path)
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (), "stderr": ("error: unknown model\n",), "returncode": 1},
     ])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
@@ -234,7 +232,10 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path, 
     ids=["empty_stdout", "nonempty_stdout"],
 )
 def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
-    monkeypatch, tmp_path, game, stdout,
+    monkeypatch,
+    web_game,
+    tmp_path,
+    stdout,
 ):
     """prompt 没写进 stdin = IO 错，须响亮确定性失败一次，不洗成空输出瞬断重试。
 
@@ -246,9 +247,9 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
         "stdout": stdout, "returncode": 0,
         "stdin_error": BrokenPipeError("stdin 已关闭"),
     }])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
@@ -259,7 +260,7 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
     assert "stdin" in str(detail.get("provider_message") or ""), detail
 
 
-def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, game):
+def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, web_game, tmp_path):
     """④持续出字跨旧 300s 硬墙不被杀（受控推进时钟，不跑真墙钟）。
 
     时钟间隔必须落在读循环 Empty→check_idle 可观测静默窗，不得藏在泵钩子里。
@@ -281,9 +282,9 @@ def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, g
         "stdout": tuple(chunks),
         "returncode": 0,
     }])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert "done" in [e[0] for e in events], events
@@ -297,9 +298,7 @@ def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, g
     assert int(done.get("minister_message_id") or 0) > 0
 
 
-def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
-    monkeypatch, tmp_path, game,
-):
+def test_cli_process_idle_over_budget_dies_then_retry_succeeds(monkeypatch, web_game, tmp_path):
     """⑤静默超阈值判死并重试；每 attempt 独立整份 idle 预算（受控时钟）。
 
     对照：完全无字节超 idle 仍判死可重试；无换行字节持续到达（间隔 < idle、
@@ -332,9 +331,9 @@ def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
         {"stdout": (SilentUntilKilled(on_tick=_advance_while_silent),), "returncode": 0},
         {"stdout": no_nl_chunks, "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert "done" in [e[0] for e in events], events

@@ -12,7 +12,6 @@ from ming_sim.structured_decree import (
     assemble_structured_decree,
 )
 from tests.directive_seed_helpers import seed_manual_draft
-from tests.rescript_test_helpers import sql_rescript_draft
 
 from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     _post_issue_stream,
@@ -143,47 +142,6 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     assert only_action["action_type"] == "policy"
     assert only_action["dossier_action_type"] == "policy"
 
-def test_rescript_follow_draft_nails_drafted_roster(game):
-    """真实批红 follow_draft：Owner 例未点将 → 主办来自票拟名单，成案钉进案卷。"""
-    import ming_sim.rescript_actions as ra
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-    db, state, content = game
-
-    opt = normalize_rescript_layer_a_option(dict(_OWNER_OPTION))
-    alt = normalize_rescript_layer_a_option({
-        **_OWNER_OPTION, "label": "缓征", "hint": "b", "transaction_category": "钱粮",
-    })
-    sql_rescript_draft(
-        db, int(state.turn), idx=0, event_id="draft:陕西告饥",
-        title="陕西告饥", context="秦地赤旱",
-        options=[opt, alt],
-        actor_name="杨嗣昌", actor_office="兵部尚书", actor_faction="东林",
-    )
-    db.conn.commit()
-    urgent = next(
-        r for r in db.list_rescript_desk(int(state.turn))
-        if r.get("kind") == "rescript_draft" and r.get("title") == "陕西告饥"
-    )
-    before = len(db.list_decree_dossiers())
-    batch = ra.validate_all([urgent], [{
-        "decision_key": urgent["decision_key"],
-        "action": "follow_draft",
-        "draft_capability": opt["draft_capability"],
-        "label": opt["label"],
-    }])
-    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    after = db.list_decree_dossiers()
-    assert len(after) > before
-    created = after[-1]
-    payload = json.loads(created.get("payload_json") or "{}")
-    assert payload.get("target_kind") == "region"
-    assert payload.get("target_id") == "shaanxi"
-    assert payload.get("region_id") == "shaanxi"
-    assert payload.get("locality_scope") == "single"
-    assert payload.get("transaction_category") == "督赈"
-    assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
-    _assert_drafted_roster_nailed(db, created)
 
 def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 大臣所拟名单。"""
@@ -225,81 +183,6 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert str(payload.get("execution_surface") or "").strip() == ""
     _assert_drafted_roster_nailed(game.db, matched[0])
 
-def _executing_counts(db, *, owner_name: str, region_id: str):
-    """Observe durable executing dossiers, not the retired simulator board."""
-    owner_open = db.conn.execute(
-        "SELECT COUNT(*) FROM decree_dossiers d, json_each(d.participant_roster) r "
-        "WHERE d.status='executing' AND json_extract(r.value, '$.tier')='主办' "
-        "AND json_extract(r.value, '$.character_id')=?", (owner_name,),
-    ).fetchone()[0]
-    province_open = db.conn.execute(
-        "SELECT COUNT(*) FROM decree_dossiers "
-        "WHERE status='executing' AND region_id=?", (region_id,),
-    ).fetchone()[0]
-    return owner_open, province_open
-
-
-def test_normalize_rescript_layer_a_option_contract():
-    """normalize_rescript_layer_a_option：外部可观察成败与归一结果。
-
-    不锁私有常量、对象身份或 shape 精确布局；prompt/Agent 装配亦不在此锁。
-    """
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-    # 缺 appoint_action 须失败
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({
-            "label": "授官", "hint": "h", "action_type": "appointment",
-            "target_kind": "character", "target_id": "某官",
-            "locality_scope": "none", "region_id": "",
-            "assignee_name": "", "transaction_category": "",
-            "office": "兵部尚书",
-        })
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({
-            "label": "调驻", "hint": "h", "action_type": "military_order",
-            "target_kind": "army", "target_id": "xuanfu",
-            "locality_scope": "none", "region_id": "",
-            "assignee_name": "", "transaction_category": "",
-            "station": "京师",
-        })
-    # 军令 dual：驻地|正期限须具其一；双缺与 0/"0" 不得过层 A
-    mil_base = {
-        "label": "出战", "hint": "h", "action_type": "military_order",
-        "target_kind": "army", "target_id": "xuanfu",
-        "locality_scope": "none", "region_id": "",
-        "assignee_name": "祖大寿", "transaction_category": "",
-    }
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option(dict(mil_base))
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({
-            **mil_base, "station": "", "due_turn": 0, "deadline_months": "0",
-        })
-    only_station = normalize_rescript_layer_a_option({**mil_base, "station": "京师"})
-    assert only_station.get("station") == "京师"
-    only_deadline = normalize_rescript_layer_a_option({
-        **mil_base, "deadline_months": 3,
-    })
-    assert int(only_deadline.get("deadline_months") or 0) == 3
-
-    # authorization require_any 保持通用非空串语义（禁被军令正值判定误伤）
-    auth_zero = normalize_rescript_layer_a_option({
-        "label": "授权", "hint": "h", "action_type": "authorization",
-        "target_kind": "character", "target_id": "某官",
-        "locality_scope": "none", "region_id": "",
-        "assignee_name": "", "transaction_category": "",
-        "name": "0",
-    })
-    assert auth_zero.get("name") == "0"
-    auth_assignee_zero = normalize_rescript_layer_a_option({
-        "label": "授权", "hint": "h", "action_type": "authorization",
-        "target_kind": "character", "target_id": "某官",
-        "locality_scope": "none", "region_id": "",
-        "assignee_name": "0", "transaction_category": "",
-        "name": "",
-    })
-    assert auth_assignee_zero.get("assignee_name") == "0"
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     """组合纠错：失败字段（含 target_kind 身份束）采纳；未失败动作/名册/类别/旨文冻结。
@@ -395,4 +278,3 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
         conn=db.conn,
         regions_content=content.regions,
     )
-

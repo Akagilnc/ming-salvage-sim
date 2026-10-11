@@ -199,8 +199,8 @@ def test_expired_only_keys_return_none_fast_path():
 
 # ═══════════════ F1.6 验收表 golden ①–⑦ ═══════════════
 
-def test_golden1_pay_order_reversal_breakdown_tsv():
-    """①「边饷居末、官俸优先」：省内池不足时军饷先欠、官俸足付；实付分账可 TSV 断言。"""
+def test_golden1_pay_order_reversal_breakdown():
+    """①「边饷居末、官俸优先」：省内池不足时军饷先欠、官俸足付；实付分账读 breakdown。"""
     st, p = _board(gross=0.0)  # 省内可支＝实征 10，祖制序下全被军饷吃光
     base = settle_tick(copy.deepcopy(st), copy.deepcopy(p), [])
     assert base.breakdown["实付分账"]["军饷"] == pytest.approx(10.0)
@@ -210,11 +210,9 @@ def test_golden1_pay_order_reversal_breakdown_tsv():
     p2 = dict(p)
     p2["due_order"] = ["官俸", "宗禄", "赈济", "军饷"]
     res = settle_tick(st, p2, [])
-    tsv = "\n".join(f"{k}\t{res.breakdown['实付分账'][k]}" for k in p2["due_order"])
-    assert tsv.splitlines()[0] == "官俸\t3.0"       # 官俸足付
-    assert tsv.splitlines()[0].startswith("官俸\t3.0")
-    last_cell = float(tsv.splitlines()[-1].split("\t")[1])
-    assert last_cell == pytest.approx(1.93)          # 边饷居末只捡残池
+    paid = res.breakdown["实付分账"]
+    assert paid["官俸"] == pytest.approx(3.0)       # 官俸足付
+    assert paid["军饷"] == pytest.approx(1.93)      # 边饷居末只捡残池
     assert res.breakdown["NewDebt"]["军饷欠"] == pytest.approx(16.07)
     assert res.breakdown["NewDebt"]["官俸欠"] == 0.0
     assert res.new_st["军饷欠"] == pytest.approx(36.07)  # 旧欠20 + 新欠16.07
@@ -299,6 +297,8 @@ def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
     assert expired.breakdown == expected_default.breakdown
     # 键与 provenance 保留不删
     assert "due_priority_军饷@shaanxi_until_turn" in db.get_fiscal_config()
+    # 撤销路径归 test_real_revoke_decree_*（revoke_decree 真入口）；
+    # 已退役 revoke_pay_order_decree API 不得复活。
 
     # 撤销旨路径：在位永久旨撤销＝写回默认值的新旨（r2：old/new provenance 链即审计账）
     db.conn.execute("UPDATE game_state SET turn = ? WHERE id = 1", (turn,))
@@ -792,7 +792,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     )
 
     db, state, _content = game
-
     army = db.conn.execute(
         "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "
         "province_pay_share, pay_source_region, central_pay_arrears, arrears "

@@ -88,7 +88,7 @@ def test_speed_factors_match_f2_oracle_on_differentiated_route(game, speed_facto
     row = _ledger(db, name)
     assert tuple(row) == (dest, '', None, None, 0)
 
-def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
+def test_pre_settle_tick_before_event_terminal_reads_new_location(game, monkeypatch):
     db, state, content = game
     import ming_sim.issues as issues
     issues.bind_content(content)
@@ -106,18 +106,15 @@ def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
         assert not db.has_event_terminal_state('__test_transit_gate_668__', 'avoided')
-        from types import SimpleNamespace
-        from ming_sim.applier import Provenance
-        import ming_sim.month_chain as month_chain
-        month_chain._consume_event_gates_after_edicts(
-            SimpleNamespace(db=db, state=state), {},
-            decree_text="", source=Provenance.system_simulation,
-        )
+        from tests.month_chain_helpers import canned_full_settlement, make_light_session
+        canned_full_settlement(monkeypatch)
+        session = make_light_session(db, state, content)
+        session.resolve_turn(allow_empty_decree=True)
         assert not db.has_event_terminal_state('__test_transit_gate_668__', 'avoided')
     finally:
         content.events.remove(ev)
 
-def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
+def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game, monkeypatch):
     """F7.4：tick 在 pre_settle 落定，seed 门在逐旨后的唯一消费点读到新 location。"""
     db, state, content = game
     import ming_sim.issues as issues
@@ -136,13 +133,10 @@ def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
         assert db.find_any_issue_by_origin('event_pool', ev.id) is None
-        from types import SimpleNamespace
-        from ming_sim.applier import Provenance
-        import ming_sim.month_chain as month_chain
-        month_chain._consume_event_gates_after_edicts(
-            SimpleNamespace(db=db, state=state), {},
-            decree_text="", source=Provenance.system_simulation,
-        )
+        from tests.month_chain_helpers import canned_full_settlement, make_light_session
+        canned_full_settlement(monkeypatch)
+        session = make_light_session(db, state, content)
+        session.resolve_turn(allow_empty_decree=True)
         issue = db.find_any_issue_by_origin('event_pool', ev.id)
         assert issue is not None, 'seed 门应在 tick 后读新 location 并硬立项'
         assert issue['status'] == 'active'
@@ -242,21 +236,6 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
         except Exception:
             pass
         raise
-
-def _assert_ledger_match(db, name: str, expected):
-    loc, to, remaining, factor, start_turn = expected
-    row = _ledger(db, name)
-    assert row['location'] == loc
-    assert row['transit_to'] == to
-    assert row['transit_start_turn'] == start_turn
-    if remaining is None:
-        assert row['transit_distance_remaining'] is None
-    else:
-        assert row['transit_distance_remaining'] == pytest.approx(remaining)
-    if factor is None:
-        assert row['transit_speed_factor'] is None
-    else:
-        assert row['transit_speed_factor'] == pytest.approx(factor)
 
 def test_arrivals_sorted_by_name_stable(game):
     db, state, content = game

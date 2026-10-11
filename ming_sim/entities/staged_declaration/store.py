@@ -26,13 +26,13 @@ CREATE TABLE IF NOT EXISTS staged_declarations (
     decree_ref TEXT NOT NULL,
     declaration_json TEXT NOT NULL,
     visible_refs_json TEXT NOT NULL DEFAULT '{}',
+    verdict_json TEXT,
+    questions_json TEXT,
+    forecast_text TEXT,
     status TEXT NOT NULL DEFAULT 'staged'
         CHECK(status IN ('staged','discarded','settled')),
     created_turn INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    verdict_json TEXT,
-    questions_json TEXT,
-    forecast_text TEXT
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_staged_declarations_decree
     ON staged_declarations(decree_ref, id);
@@ -71,6 +71,7 @@ class StagedDeclarationStore:
 
     @staticmethod
     def ensure_schema(conn: Any) -> None:
+        # #1847 N11：列权威只在 CREATE；不另跑旧档 ALTER 补列。
         conn.executescript(_SCHEMA_SQL)
 
     def stage(
@@ -149,13 +150,15 @@ class StagedDeclarationStore:
                 return write()
         return write()
 
-    def staged_for(self, decree_ref: str) -> tuple[StagedDeclaration, ...]:
+    def staged_for(self, decree_ref: str, *, turn: int | None = None) -> tuple[StagedDeclaration, ...]:
+        """Declarations retain decree identity; reusable verdicts are turn-scoped."""
         ref = str(decree_ref or "").strip()
         rows = self._conn.execute(
             "SELECT id, decree_ref, declaration_json, visible_refs_json, status, created_turn, "
             "verdict_json, questions_json, forecast_text "
-            "FROM staged_declarations WHERE decree_ref=? AND status='staged' ORDER BY id",
-            (ref,),
+            "FROM staged_declarations WHERE decree_ref=? AND status='staged' "
+            "AND (? IS NULL OR created_turn=?) ORDER BY id",
+            (ref, turn, turn),
         ).fetchall()
         return tuple(_row_to_staged(row) for row in rows)
 
@@ -215,19 +218,14 @@ class StagedDeclarationStore:
             "AND forecast_text IS NOT NULL ORDER BY id",
             (ref,),
         ).fetchall()
-        parts: list[str] = []
-        for row in rows:
-            text = row["forecast_text"]
-            if text is None:
-                continue
-            original = text if isinstance(text, str) else str(text)
-            if not original.strip():
-                continue
-            parts.append(original)
+        parts = [
+            str(row["forecast_text"])
+            for row in rows
+        ]
         return "\n".join(parts)
 
-    def clear_questions(self, decree_ref: str) -> int:
-        """批红答复已持久化后清请旨；问前声明与结算标记不动。"""
+    def replace_questions(self, decree_ref: str, questions: list, *, forecast_text: str) -> int:
+        """续推消费旧问并承接新问；声明及结算标记不动，原文保留供下一次续推。"""
         ref = str(decree_ref or "").strip()
         if not ref:
             return 0
@@ -236,6 +234,13 @@ class StagedDeclarationStore:
             "UPDATE staged_declarations SET questions_json=NULL "
             "WHERE decree_ref=? AND status!='discarded' AND questions_json IS NOT NULL",
             (ref,),
+        )
+        self._conn.execute(
+            "UPDATE staged_declarations SET questions_json=?, forecast_text=COALESCE(forecast_text,'') || ? "
+            "WHERE id=(SELECT MAX(id) FROM staged_declarations "
+            "WHERE decree_ref=? AND status!='discarded')",
+            (json.dumps(questions, ensure_ascii=False) if questions else None,
+             "\n" + forecast_text, ref),
         )
         if owns:
             self._conn.commit()

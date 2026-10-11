@@ -204,4 +204,3 @@ def canonical_army_id_exact(
             if compact_name(alias) == key:
                 return army.id
     return None
-

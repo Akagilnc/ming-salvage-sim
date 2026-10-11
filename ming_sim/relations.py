@@ -103,7 +103,7 @@ def _validated_settlement_origin(
 
 
 def _validated_settlement_endpoints(
-    db: Any, state: Any, source: str, targets: list[str],
+    source: str, targets: list[str],
     allowed_endpoint_names: Any,
 ) -> None:
     """结算口端点守门（V1 + T1 r5 owner 裁决 B 案时间语义）：大臣边两端须为
@@ -225,9 +225,7 @@ def _capture_one_interaction(
         kind,
     )
     # V1：端点整项校验在任何边写入前完成——含坏端点的互动零边写入。
-    _validated_settlement_endpoints(
-        db, state, source, targets, allowed_endpoint_names,
-    )
+    _validated_settlement_endpoints(source, targets, allowed_endpoint_names)
     out: list[dict[str, Any]] = []
     for target in targets:
         # r2 F2 基数：每「施动者→受动者」有序对恰一行；N 方联名=牵头者→各联署者
@@ -293,4 +291,3 @@ def resolve_relation_edge_events_from_extraction(
 
 
 # ── #633 结算口（ADR 0082）：邸报大臣互动 → 边事件当场落库 ──────────────
-

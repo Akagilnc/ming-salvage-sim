@@ -17,20 +17,6 @@ from ming_sim.models import LLMConfig
 from ming_sim.llm_model import create_chat_model
 from ming_sim.materials import PreparedMaterials, material_tools
 
-def _minister_game_world_prompt(prompt: str) -> str:
-    """给场景的世界观说明只保留呈现口径，不把引擎量表喂给角色。"""
-    lines = []
-    for line in prompt.splitlines():
-        if "国势核心数值四个：" in line:
-            line = "- 国势以奏报呈现：国库、内库保留钱粮口径；民心、皇威只作定性描述。"
-        elif "地区盘面使用两京十三省的核心字段：" in line:
-            line = "- 地区盘面中人口、粮食、田亩、隐田、每回合税收等可数物照实呈报；民心、动乱、士绅阻力、军事压力以定性描述呈报。"
-        elif "军队盘面使用主要军队核心字段：" in line:
-            line = "- 军队盘面中驻地、统帅、兵种、人数、月饷与欠饷等可数物照实呈报；补给、士气、训练、装备、火器、机动、忠诚以定性描述呈报；随军大炮照门数呈报。"
-        lines.append(line)
-    return "\n".join(lines)
-
-
 def create_scene_agent(
     llm_config: LLMConfig,
     prepared: PreparedMaterials,
@@ -49,15 +35,16 @@ def create_scene_agent(
     )
     if hasattr(chat_model, "materials_dir"):
         chat_model.materials_dir = str(prepared.root)
-    scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "").strip()
-    if not scene_prompt:
+    # #1847 N6：bundled 戏文底是自由正文，判空用局部副本，注入用原文。
+    scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "")
+    if not scene_prompt.strip():
         # 无 bundled prompt 时的最低特征化底（真源仍是 content/prompts/scene_agent.md）。
         scene_prompt = (
             "你演一场御前召对整场戏。以整段自由戏文回应；可含多人答话、插话与递话人低语。"
             "材料在当前目录，按需自读。"
         )
     instructions = [
-        _minister_game_world_prompt(content.game_world_prompt) if getattr(content, "game_world_prompt", "") else "",
+        str(getattr(content, "game_world_prompt", "") or ""),
         scene_prompt,
         prepared.opening,
     ]

@@ -18,6 +18,8 @@ import ming_sim.month_chain as month_chain
 from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
+from tests.test_faction_brew_637 import _dual_brew_fn_factory
+import ming_sim.mechanical_tail as tail_mod
 
 
 def _forbid_extractor(monkeypatch):
@@ -27,12 +29,15 @@ def _forbid_extractor(monkeypatch):
 
 
 def _archive_and_stub_world(db, state, monkeypatch):
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     db.save_turn_report(state, "本月邸报正文·公开")
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr(
-        "ming_sim.month_translate.translate_month_segment",
+        "ming_sim.month_translate._default_month_translate_runner",
         lambda *a, **k: {"effects": {}},
     )
+    monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
 
 
 class _DeferredExecutor:
@@ -63,6 +68,7 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
     _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     brew_calls = []
+    original_brew = tail_mod._run_relation_brew
 
     def recording_brew(_session, **kwargs):
         brew_calls.append({
@@ -70,7 +76,7 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
             "period": kwargs.get("settled_period"),
             "turn": kwargs.get("closed_turn"),
         })
-        return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
+        return original_brew(_session, **kwargs)
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", recording_brew)
     session = make_light_session(db, state, content)
@@ -109,10 +115,11 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     session.agno_db = object()
 
     calls = []
+    original_brew = tail_mod._run_relation_brew
 
     def recording_brew(_session, **kwargs):
         calls.append(kwargs.get("closed_turn"))
-        return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
+        return original_brew(_session, **kwargs)
 
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._run_relation_brew", recording_brew,
@@ -194,7 +201,9 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="当殿讦奏", origin="audience:turn-1")
     _forbid_extractor(monkeypatch)
+    original_factory = tail_mod._brew_fn_for_session
     _archive_and_stub_world(db, state, monkeypatch)
+    monkeypatch.setattr(tail_mod, "_brew_fn_for_session", original_factory)
     monkeypatch.setattr("ming_sim.agents.create_relation_brew_agent", lambda *a: object())
     monkeypatch.setattr("ming_sim.agents.create_faction_brew_agent", lambda *a: object())
     # 诊断来源保真：可见 error 须等于真实失败异常的 str(exc)；不锁生产中文固定字句。
@@ -257,20 +266,7 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
             return future
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
-    monkeypatch.setattr(
-        "ming_sim.mechanical_tail._run_relation_brew",
-        lambda *_a, **_k: order.append("tail-done"),
-    )
-    monkeypatch.setattr(
-        "ming_sim.audience_translation.catch_up_pending_translations",
-        lambda *_a, **_k: None,
-    )
-    monkeypatch.setattr(
-        "ming_sim.audience_translation.list_pending_translations", lambda *_a: [],
-    )
-    monkeypatch.setattr(
-        "ming_sim.audience_night.commit_late_night_approved", lambda *_a, **_k: None,
-    )
+    monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
     original_barrier = queue.barrier
 
     def barrier(fn):
@@ -280,7 +276,7 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
 
     monkeypatch.setattr(queue, "barrier", barrier)
     session.await_translations_before_month()
-    assert order == ["tail-done", "barrier"]
+    assert order == ["barrier"]
 
 
 def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch):
@@ -295,6 +291,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     session.llm_config = object()
     session.agno_db = object()
     calls = []
+    original_brew = tail_mod._run_relation_brew
 
     class InlineExecutor:
         def submit(self, fn):
@@ -317,7 +314,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     from ming_sim.mechanical_tail import ensure_mechanical_tails, retry_failed_mechanical_tail, failed_mechanical_tail
     ensure_mechanical_tails(session)
     assert calls == [closed_turn]
-    assert failed_mechanical_tail(db, state)[0] == closed_turn
+    assert failed_mechanical_tail(db)[0] == closed_turn
     from web_app import WebGame
     from types import SimpleNamespace
     state.ended = True
@@ -345,30 +342,23 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert tail["status"] == "failed"
     assert tail["error_pack_path"] == caught.value.error_pack_path
 
-    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", lambda *_a, **_k: None)
+    monkeypatch.setattr(tail_mod, "_run_relation_brew", original_brew)
     assert retry_failed_mechanical_tail(session)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
     assert int(state.turn) == closed_turn + 2
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
-@pytest.mark.parametrize("model_text,tail_status,visible", [
-    ("\n 史评 \n", "done", "\n 史评 \n"),
-    ("  ", "done", "  "),
-])
+@pytest.mark.parametrize("model_text", ["\n 史评 \n", "  "])
 def test_ending_summary_runs_in_mechanical_tail_after_advance(
-    game, monkeypatch, model_text, tail_status, visible,
+    game, monkeypatch, model_text,
 ):
     """过月入口：模型原文落总评。"""
-    from ming_sim.cli.terminal import _printed_ending_summary
-
     db, state, content = game
     closed_turn = int(state.turn)
     _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
-    monkeypatch.setattr(
-        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
-    )
+    monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
     monkeypatch.setattr(
         "ming_sim.agents.create_ending_summary_agent", lambda *_a, **_k: object(),
     )
@@ -432,18 +422,13 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     assert tail_reads_under_gate
     assert all(tail_reads_under_gate)
     tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
-    assert tail["status"] == tail_status
+    assert tail["status"] == "done"
     ending = db.get_ending_summary()
     landed = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
     assert landed is not None
     assert landed["summary_pending"] is False
-    printed = _printed_ending_summary(session)  # 观察打印面；不锁 summary 字面
-    if visible:
-        assert ending is not None
-    else:
-        assert ending is None
-        assert landed["summary"] == ""
-        assert printed in (None, "")
+    assert ending["summary"] == model_text
+    assert landed["summary"] == model_text
 
 
 
@@ -469,6 +454,7 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     session.agno_db = None
     executor = _install_deferred(monkeypatch)
 
+    monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
     # 本案带 ending_outcome：首个可见失败源须来自结局总评缺配置路径（非关系酿制）。
     # 包装真实生产路径捕获异常；同义改写生产中文不构成契约，无关替换存储须红。
     seen: dict = {}
@@ -498,7 +484,7 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     except Exception:
         pass
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
-    failure = failed_mechanical_tail(db, state)
+    failure = failed_mechanical_tail(db)
     assert failure is not None
     turn, tail = failure
     assert turn == closed_turn
@@ -510,9 +496,7 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     assert tail.get("error") == str(raised)
     assert tail.get("error_pack_path")
 
-    monkeypatch.setattr(
-        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
-    )
+    monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
     monkeypatch.setattr(
         "ming_sim.agents.create_ending_summary_agent", lambda *a, **k: object(),
     )

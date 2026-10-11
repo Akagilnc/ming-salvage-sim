@@ -165,7 +165,7 @@ def _handle_court_command(
     return None
 
 
-def _confirm_pending_directive(session: GameSession, draft, minister_name: str) -> None:
+def _confirm_pending_directive(draft, minister_name: str) -> None:
     """Legacy CLI display only; end-turn default approval owns submission."""
     print(f"\n{minister_name}拟旨如下：\n")
     print("─" * 50)
@@ -181,10 +181,11 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     if not retries:
         return
     last = retries[-1]
-    question = str(last.get("question") or "").strip()
+    # #1847 N6：判空可读 strip；提示展示玩家问话原文。
+    question = str(last.get("question") or "")
     print(
         "【回话中断】上回问话未得回话"
-        f"{f'（「{question}」）' if question else ''}。"
+        f"{f'（「{question}」）' if question.strip() else ''}。"
         "输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
     )
 
@@ -213,7 +214,6 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     try:
         result = session.scene_chat(
             question, chat_turn_id=chat_turn_id,
-            minister_name=minister_name,
         )
         answer = str(getattr(result, "answer", "") or "")
         db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
@@ -275,9 +275,9 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
     )
     while True:
         # A selection is its own scene turn; the first question remains the player's text.
-        question = f"宣{character.name}" if pending_xuan else input("朕问：").strip()
+        question = f"宣{character.name}" if pending_xuan else input("朕问：")
         pending_xuan = False
-        if not question:
+        if not str(question).strip():
             print("可继续问话；若要让其退下，请输入 done。")
             continue
         # #505 系统层恢复命令（非皇帝内容选项）。禁抽取手动补写平行面（#1353）。
@@ -350,7 +350,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             # 殿上不派旧判官/尾随抽取——转译一次承接。
             result = session.scene_chat(
                 question, chat_turn_id=chat_turn_id,
-                minister_name="殿上",
             )
             if persistent_chat:
                 session.db.persist_minister_reply(
@@ -380,7 +379,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         print(wrap(result.answer))
         print()
         if result.proposed_directive is not None:
-            _confirm_pending_directive(session, result.proposed_directive, character.name)
+            _confirm_pending_directive(result.proposed_directive, character.name)
         if result.court_action == "dismiss":
             # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
             return "dismiss"
@@ -474,18 +473,37 @@ def review_directives(session: GameSession) -> str:
         print("未识别操作。")
 
 
-def _report_cli_hitl_gap(session: GameSession, result) -> str:
-    """CLI 缺亲裁能力：如实报告，不自动代裁（#1812 第9项 / #1834 F24）。"""
-    if result is None:
-        return ""
-    if not result.awaiting:
-        return result.report
-    decisions = list(result.decisions or []) or list(session.pending_decisions())
-    print("\n【月末重大抉择】CLI 暂无亲裁能力，不能代为批红；请使用网页版提交亲裁。")
-    for decision in decisions:
-        title = decision.get("title") if isinstance(decision, dict) else decision
-        print(f"  · 待裁：{title}")
-    return result.report
+def _submit_cli_decisions(session: GameSession, result) -> str:
+    """CLI 文书批语：皇帝选择拟批或亲笔；不自动代选。"""
+    if result is None or not result.awaiting:
+        return "" if result is None else result.report
+    choices = []
+    for row in list(result.decisions or []) or session.pending_decisions():
+        print(f"\n{row['title']}\n{row['context']}")
+        for idx, option in enumerate(row["options"], 1):
+            print(f"{idx}. {option['label']} {option.get('hint', '')}")
+        explicit = str(row.get("event_id") or "").startswith(("dossier:", "deliberation:"))
+        while True:
+            raw = input("拟批编号 / 亲笔批语" + ("（m 另旨·中旨）" if row["kind"] == "rescript_draft" else "") + "：")
+            choice = {"decision_key": row["decision_key"]}
+            if raw.isdecimal() and 1 <= int(raw) <= len(row["options"]):
+                option = row["options"][int(raw) - 1]
+                choice.update(label=option["label"], hint=option.get("hint", ""))
+                if explicit:
+                    choice["action"] = option.get("dossier_decision") or option.get("action") or ""
+                choice["note"] = input("附批（可空）：")
+                break
+            if not explicit and raw.strip():
+                if raw == "m" and row["kind"] == "rescript_draft":
+                    choice.update(action="midzhi", note=input("御笔旨意："))
+                    if not choice["note"].strip():
+                        continue
+                else:
+                    choice["note"] = raw
+                break
+            print("请选择编号；不代选。")
+        choices.append(choice)
+    return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
 
 
 def play_turn(session: GameSession) -> None:
@@ -528,7 +546,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.advance_without_decree()
-                report = _report_cli_hitl_gap(session, result)
+                report = _submit_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
@@ -555,7 +573,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.resolve_turn()
-                report = _report_cli_hitl_gap(session, result)
+                report = _submit_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。

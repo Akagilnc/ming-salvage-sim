@@ -518,7 +518,6 @@ def main() -> int:
     content = GameContent.load()
     bind_content(content)
     bind_issue_content(content)
-    bind_agent_content(content)
     cfg = _config(args)
     trace_path = require_fresh_cli_trace(cfg)
 

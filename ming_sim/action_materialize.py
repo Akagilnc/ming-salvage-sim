@@ -2,7 +2,7 @@
 
 分类器 run_materialize_pipeline 链已删。本模块保留：
 - ACTION_CLUSTERS FieldSpec 目录（枚举/shape 真源）
-- 现役写入共享 seam（stage_*_candidate、协饷/拨帑 shape、任免 path 辅助等）
+- 现役写入共享 seam（stage_*_candidate、协饷/拨帑 shape、任免 path 辅助等；拨帑候选经 declaration_dispatch）
 """
 
 from __future__ import annotations
@@ -70,7 +70,6 @@ def _apply_existing_appointment_hit(
     tenure_mark: Optional[str] = None,
     region_id: str = "",
     minister_name: str = "",
-    turn: int = 0,
     origin_chat_turn_id: int = 0,
     annotate: bool = False,
     recommendation_fields: Optional[Dict[str, Any]] = None,
@@ -99,7 +98,6 @@ def _apply_existing_appointment_hit(
                 tenure_mark=tenure_mark,
                 region_id=region_id,
                 minister_name=minister_name,
-                turn=turn,
                 night_id=night_id,
                 source_chat_turn_id=int(origin_chat_turn_id or 0),
             )
@@ -204,22 +202,7 @@ def punish_actions_effective() -> frozenset:
     return punish_actions_allowed() - {"无"}
 
 
-def appoint_actions_allowed() -> frozenset:
-    """appoint_action 枚举唯一真源 = ACTION_CLUSTERS appointment FieldSpec.allowed。"""
-    cluster = cluster_by_kind("appointment")
-    if cluster is None:
-        raise RuntimeError("appointment cluster not installed")
-    for field in cluster.fields:
-        if field.name == "appoint_action":
-            if field.allowed is None:
-                raise RuntimeError("appoint_action FieldSpec.allowed missing")
-            return field.allowed
-    raise RuntimeError("appoint_action FieldSpec missing")
 
-
-def appoint_actions_effective() -> frozenset:
-    """可物化的任免动作（排除分类器占位「无」）；层 A 与 mapper 共引。"""
-    return appoint_actions_allowed() - {"无"}
 
 
 def issue_dispositions_allowed() -> frozenset:
@@ -398,21 +381,6 @@ GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
 XIEXIANG_TARGET_KINDS = frozenset({"army"})
 
 
-def _grant_shape_value_error(
-    message: str,
-    *,
-    field: str,
-    current: object = None,
-    expected: object = None,
-) -> ValueError:
-    """ValueError carrying failed shape field + structured fact; callers catching ValueError unchanged."""
-    exc = ValueError(message)
-    exc.field = field  # type: ignore[attr-defined]
-    exc.current = current  # type: ignore[attr-defined]
-    exc.expected = expected  # type: ignore[attr-defined]
-    return exc
-
-
 def resolve_grant_account(*, grant_action: object = None, account: object = None) -> str:
     """grant account 归一唯一权威（无 DB）。
 
@@ -431,12 +399,7 @@ def resolve_grant_account(*, grant_action: object = None, account: object = None
         return raw_account
     if ga in GRANT_MONEY_ACTIONS:
         if raw_account and raw_account not in {"国库", "内库"}:
-            raise _grant_shape_value_error(
-                f"grant 非法 account：{raw_account!r}",
-                field="account",
-                current=raw_account,
-                expected=["国库", "内库"],
-            )
+            raise ValueError(f"grant 非法 account：{raw_account!r}")
         return raw_account if raw_account in {"国库", "内库"} else "国库"
     return ""
 
@@ -452,79 +415,34 @@ def require_grant_allocation_shape(
     #1620：层 A 上桌与 rescript mapper 共用——禁平行第二套规则。
     顺序：action 闭集 → account（resolve_grant_account）→ amount（本函数独掌）。
     返回 grant_action、account；非 honorific 另含正 int amount。
-    校验失败仍 raise ValueError；附 field 属性供物化缝转 typed 拒收（#1730）。
+    校验失败仍 raise ValueError。
     """
     from ming_sim.strict_types import strict_int
 
     ga = str(grant_action or "").strip()
-    grant_action_domain = sorted(GRANT_ACTIONS - {"无"})
-    amount_expected: object = {"type": "positive_int"}
     if not ga:
-        raise _grant_shape_value_error(
-            "grant_allocation 缺 grant_action",
-            field="grant_action",
-            current=grant_action,
-            expected=grant_action_domain,
-        )
+        raise ValueError("grant_allocation 缺 grant_action")
     if ga not in (GRANT_ACTIONS - {"无"}):
-        raise _grant_shape_value_error(
-            f"grant 非法 grant_action：{ga!r}",
-            field="grant_action",
-            current=ga,
-            expected=grant_action_domain,
-        )
+        raise ValueError(f"grant 非法 grant_action：{ga!r}")
     resolved_account = resolve_grant_account(grant_action=ga, account=account)
     out: Dict[str, Any] = {"grant_action": ga, "account": resolved_account}
     if ga in GRANT_HONORIFICS:
         return out
     if amount is None or amount == "":
-        raise _grant_shape_value_error(
-            "grant 金钱缺正 amount",
-            field="amount",
-            current=amount,
-            expected=amount_expected,
-        )
+        raise ValueError("grant 金钱缺正 amount")
     # #1716：整数字符串是 classifier/LLM 运输常态（#658 normalize raw 直达本边界）；bool/float 仍拒。
     # #1620 原 accept_numeric_strings=False 把 "8" 一并拒掉，拟旨 grant 物化中断、pending 零落。
     try:
         amt = strict_int(amount, accept_numeric_strings=True)
     except ValueError as exc:
-        raise _grant_shape_value_error(
-            f"grant 金钱 amount 须为正整数，拒 {amount!r}",
-            field="amount",
-            current=amount,
-            expected=amount_expected,
-        ) from exc
+        raise ValueError(f"grant 金钱 amount 须为正整数，拒 {amount!r}") from exc
     if amt <= 0:
-        raise _grant_shape_value_error(
-            "grant 金钱缺正 amount",
-            field="amount",
-            current=amount,
-            expected=amount_expected,
-        )
+        raise ValueError("grant 金钱缺正 amount")
     out["amount"] = amt
     return out
 
 
 
-def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
-    action = str(intent.get("grant_action") or "").strip()
-    name = str(intent.get("name") or "").strip()
-    target_id = str(intent.get("target_id") or "").strip()
-    if action in {"赏赉", "发内帑", "加衔", "荫叙"}:
-        return "character", name or target_id
-    if action == "项目经费":
-        return "issue", target_id or name or action
-    if action == "协饷":
-        # 仅抛原始 target 文本；army id 解析在 stage 前完成，禁止把 region 标签硬改 army。
-        # #1503：target_kind/target_id 须显式透传；缺失不得默认 army，不得用 name 代填。
-        kind = str(intent.get("target_kind") or "").strip()
-        return kind, target_id
-    if action in {"赈灾", "招抚屯田"}:
-        # #652：执行型赈济／招抚屯田均锚定属地省；recovery 单核读 region target。
-        kind = "region" if target_id and target_id != action else "issue"
-        return kind, target_id or name or action
-    return "issue", target_id or name or action
 
 
 def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
@@ -928,7 +846,6 @@ def _annotate_office_pending_path(
     tenure_mark: Optional[str] = None,
     region_id: str = "",
     minister_name: str = "",
-    turn: int = 0,
     night_id: Optional[int] = None,
     source_chat_turn_id: int = 0,
 ) -> int:
@@ -1485,35 +1402,31 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             fields=(
                 FieldSpec(
                     "grant_action", "恩赏拨帑",
-                    GRANT_ACTIONS, "无", season_option=True,
+                    GRANT_ACTIONS, "无",
                 ),
                 FieldSpec("name", "姓名", None, ""),
                 # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
                 FieldSpec(
                     "target_id", "目标", None, "",
-                    season_option=True,
                 ),
                 FieldSpec(
                     "target_kind", "目标类型", TARGET_KINDS, "",
-                    season_option=True,
-                    allowed_when=("grant_action", "协饷", XIEXIANG_TARGET_KINDS),
                 ),
                 FieldSpec(
                     "amount", "金额", None, None, as_int=True, int_lo=1,
-                    quantity_unit="万两", season_option=True,
+                    quantity_unit="万两",
                 ),
                 FieldSpec(
                     "account", "账户",
-                    frozenset({"国库", "内库", "太仓"}), "", season_option=True,
+                    frozenset({"国库", "内库", "太仓"}), "",
                 ),
                 FieldSpec(
                     "purpose", "用途", frozenset({"补饷"}), "",
-                    season_option=True,
                     populated_when=("grant_action", frozenset({"协饷"})),
                 ),
                 FieldSpec(
                     "cadence", "拨付节奏",
-                    frozenset({"一次性", "每月"}), "", season_option=True,
+                    frozenset({"一次性", "每月"}), "",
                 ),
                 FieldSpec(
                     "mode", "颁布方式",

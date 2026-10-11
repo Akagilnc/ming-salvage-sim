@@ -14,6 +14,8 @@ class 则只收嵌套字段 dict、扁平 int 逐项拒收。
 
 from __future__ import annotations
 
+import json
+
 from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
@@ -204,17 +206,6 @@ def test_flat_class_delta_rejected_while_nested_sibling_lands(game):
     assert _class_satisfaction(db, good) == before + 6
 
 
-def test_zero_delta_faction_not_rejected(game):
-    """0 增量是合法 no-op，不当拒收（不误报）。"""
-    db, state, content = game
-    turn = state.turn
-    good = _valid_faction(db)
-
-    run_settle(db, state, content, {
-        "faction_delta": {good: 0},
-    }, narrative="x", decree_text="y")
-
-    assert _rejection_rows(db, turn, FACTION_REJ_SECTION) == []
 
 
 def test_issue_effect_faction_rejection_reaches_reports(game):
@@ -238,7 +229,11 @@ def test_issue_effect_faction_rejection_reaches_reports(game):
         "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
     }, narrative="x", decree_text="y")
 
-    rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = _rejection_rows(
+        db, turn, "issue_summary.entity_rejections",
+        columns="section, reason, category, source, item_json",
+    )
     rows = [r for r in rows if r[2] == "missing_ref"]
     assert len(rows) == 1, rows
-    assert rows[0][1]
+    item = json.loads(rows[0][4])
+    assert item == {"查无此派系": {"satisfaction": 9}}

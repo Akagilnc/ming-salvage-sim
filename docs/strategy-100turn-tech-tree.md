@@ -140,21 +140,6 @@
 
 ---
 
-## 六、复现命令
-
-```bash
-# 跑这套攻略（CLI 自动玩，崇祯 agent 按上述目标行动）
-.venv/bin/python scripts/play_as_emperor.py \
-  --goal "100月内解决户部亏空/辽东索饷/陕西流寇：先打阉党提皇威，再查隐田+开海+办工厂(玻璃肥皂化肥)开源，招徐光启/袁可立/郑芝龙/宋应星，国库转正后足饷解辽东、赈抚解陕西" \
-  --turns 100 \
-  --db data/strat100.db --agno-db data/strat100_agno.db \
-  --log scripts/runs/strat100_$(date +%s).log
-```
-
-验证看：四指标曲线、三 bar 是否单调上行、国库月净何时转正、有无单指标飞天/崩盘。
-
----
-
 ## 七、实跑验证结论（2026-05，qwen3.6-plus 跑游戏侧+玩家侧）
 
 > 以下为历史实跑报告（旧 extractor 时代 CLI 自动局），仅作证据；现行操作以第五、二节改写后的月链声明接法为准。

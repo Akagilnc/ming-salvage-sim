@@ -1,5 +1,5 @@
 """Agno Agent 执行与工厂（非大臣类）：run_agent_*、parse_agent_json、
-诏书润色/月末推演/打分提取/JSON 修复 agent。L5。
+诏书润色/月末推演/打分提取 agent。L5。
 
 通过 bind_content() 注入 GameContent（取提示词）。
 """
@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional, Sequence
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 
-from ming_sim.assets import strip_json_fence
 from ming_sim.content import GameContent
 from ming_sim.exceptions import LLMContractError
 from ming_sim.cli_backend import describe_effective_model
@@ -361,63 +360,18 @@ def _agent_run_accepts_stream(agent: object) -> bool:
 
 
 def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
-    """Decode agent JSON. Structural fence/outer/first-object only; never rewrite string bodies."""
-    text = strip_json_fence(raw)
-    # 试 1：原文直解
+    """Strict JSON object decoder for agent structured output.
+
+    Uses the stdlib decoder only. No fence stripping, control-byte rewrite,
+    outer-brace crop, or first-object pick — malformed output fails the
+    existing LLM contract channel and keeps the true raw response.
+    """
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        data = None
-    # 试 2：截 {...} 最外层再解（外围结构，不改正文）
-    if data is None:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            abort_llm_contract(stage, "没有返回 JSON object", raw)
-        snippet = text[start : end + 1]
-        try:
-            data = json.loads(snippet)
-        except json.JSONDecodeError:
-            data = None
-        # 试 3：截取首个合法平衡的 {...} 子串（防 LLM 重发拼接；不擦洗字符串正文）
-        if data is None:
-            depth = 0
-            in_str = False
-            esc = False
-            best_end = -1
-            for i, ch in enumerate(snippet):
-                if esc:
-                    esc = False
-                    continue
-                if ch == "\\" and in_str:
-                    esc = True
-                    continue
-                if ch == '"':
-                    in_str = not in_str
-                    continue
-                if in_str:
-                    continue
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        best_end = i
-                        break
-            if best_end > 0:
-                first_block = snippet[: best_end + 1]
-                try:
-                    data = json.loads(first_block)
-                except json.JSONDecodeError as error:
-                    raise LLMContractError(
-                        f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",
-                        raw_value=raw,
-                    ) from error
-            else:
-                raise LLMContractError(
-                    f"{stage} 输出不是合法 JSON\n原始输出：{raw[:800]}",
-                    raw_value=raw,
-                )
+        data = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise LLMContractError(
+            f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",
+        ) from error
     if not isinstance(data, dict):
         abort_llm_contract(stage, "顶层必须是 JSON object", raw)
     return data
@@ -495,10 +449,9 @@ def create_promulgation_judge_agent(
     )
 
 
-def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+def create_decree_writer_agent(llm_config: LLMConfig) -> Agent:
     # 一次性 agent：add_history_to_context=False，无需持久化 → 不传 db，免得每次往
-    # <db>.emperor.db 的 agno_sessions 累积 runs 撑爆存档。agno_db 仅保留以兼容调用方。
-    del agno_db
+    # <db>.emperor.db 的 agno_sessions 累积 runs 撑爆存档。
     return Agent(
         name="诏书润色官",
         id="decree-writer",
@@ -531,6 +484,7 @@ def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
 
 def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     """逐旨预推：与世界段同一材料目录读法，本旨事实由调用消息携带。"""
+    from ming_sim.settlement_payload import decision_prompt_contract
     from ming_sim.materials import material_tools
 
     cfg = _llm_for_role(llm_config, "simulator")
@@ -543,7 +497,7 @@ def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         _ctx().game_world_prompt,
         "只推演本次输入中这一道旨在当前盘面上的可能后果。",
         "这是夜里预推，不推演月度世界事件，也不生成月末邸报。",
-        "若推演需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        decision_prompt_contract(),
         "开场只有最小集。其余材料在当前目录，按需自读。",
         str(getattr(prepared, "opening", "") or ""),
     ]
@@ -566,6 +520,7 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     与召对同一读法（ADR 0155）：API 用列目录／读文件工具，CLI 把材料目录
     设为 cwd。不另造读取机制。
     """
+    from ming_sim.settlement_payload import decision_prompt_contract
     from ming_sim.materials import material_tools
 
     cfg = _llm_for_role(llm_config, "simulator")
@@ -579,7 +534,7 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         "你推演本月旨意之外的世界事件，并承接开场列出的在途办理案卷。"
         "已经落账的旨不要重算，也不要写月末邸报。",
         "本段只写推演结果。",
-        "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        decision_prompt_contract(),
         "开场只有最小集。其余材料在当前目录，按需自读。",
         # #1893：候选事实在世界目录里（盘面/候选事件与弹劾潮.txt），本段自读、
         # 自行判定本月哪些真发生、哪个派系是否发难；不选的照实不写。
@@ -633,94 +588,37 @@ def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     )
 
 
-def _rescript_option_instructions(
-    *,
-    character_targets_supplied: bool = False,
-) -> list[str]:
-    """月末票拟/改票：层 A 完整受理 + 目标/属地/承办子契约；禁入口手抄。
-
-    character_targets_supplied 与本批 payload 是否注入 character_targets 对齐：
-    初拟供目录 → True；改票不供 → False（不下 character_targets 子句）。
-    """
-    from ming_sim.rescript_draft import rescript_layer_a_prompt_contract
+def create_rescript_draft_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
+    """One perspective-fed run for memorials, revisions or raw rescript continuation."""
+    from ming_sim.materials import material_tools
     from ming_sim.structured_decree import structured_decree_prompt_contract
-    return [
-        rescript_layer_a_prompt_contract(
-            character_targets_supplied=character_targets_supplied,
-        ),
-        structured_decree_prompt_contract(),
-    ]
-
-
-
-def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """#657 单行改票：输出唯一 shape {"options":[...]}；禁 monthly items[] 契约。"""
-    del agno_db
-    ctx = _ctx()
-    cfg = _llm_for_role(llm_config, "extractor")
-    instructions = [
-        ctx.game_world_prompt,
-        (
-            "你是批红改票官。根据给定急务行与批语，输出改票 options。\n"
-            "只输出一个 JSON 对象，shape 必须是 "
-            '{"options":[{...},...]}' "——禁止 items 数组、禁止草稿列表外壳。\n"
-            "每个 option 须满足运行时注入的层 A 受理契约与结构化旨意子契约；"
-            "军队目标的 target_id 只可从同批 army_targets 中选择。"
-        ),
-        # 改票 payload 不供 character_targets：契约不下该目录子句（#1804 P6）
-        *_rescript_option_instructions(character_targets_supplied=False),
-    ]
+    from ming_sim.action_clusters import cluster_fields_prompt, cluster_by_kind
+    from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES
+    cfg = _llm_for_role(llm_config, "simulator")
+    model = create_chat_model(cfg, temperature=0.4, top_p=0.9,
+                              enable_thinking=True, force_json_output=True)
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(prepared.root)
     return Agent(
-        name="批红改票官",
-        id="rescript-reviser",
-        model=create_chat_model(
-            cfg,
-            temperature=0.3,
-            top_p=0.9,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=instructions,
-        add_history_to_context=False,
-        markdown=False,
+        name="急务票拟官", id="rescript-drafter", model=model,
+        instructions=[
+            _ctx().game_world_prompt, _ctx().rescript_draft_prompt,
+            structured_decree_prompt_contract(),
+            "中旨 payload 以 dossier_action_type 承接共同契约中的 action_type，使用库级动作名；\n"
+            "库级动作全集：" + "、".join(sorted(DOSSIER_ACTION_TYPES)) + "。\n"
+            "以下为有现役动作字段契约的附加约束；字段使用英键，约束见对应中文字段契约：\n"
+            + "\n".join(
+                f"{kind}: " + "、".join(f"{field.name}={field.zh}" for field in cluster_by_kind(kind).fields)
+                + f"\n{cluster_fields_prompt(kind)}"
+                for kind in sorted(DOSSIER_ACTION_TYPES) if cluster_by_kind(kind) is not None
+            ),
+        ],
+        tools=material_tools(prepared.root), add_history_to_context=False, markdown=False,
     )
 
 
-def create_rescript_deliberate_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """#658 廷议站台：{title, body, stance, supporter_ids} 整串严格 JSON。"""
-    del agno_db
-    ctx = _ctx()
-    cfg = _llm_for_role(llm_config, "extractor")
-    instructions = [
-        ctx.game_world_prompt,
-        (
-            "你是廷议站台官。根据急务、批语、关系账与派系态势，判定谁肯当面站台。\n"
-            "只输出一个 JSON 对象，shape 必须是 "
-            '{"title":"...","body":"...","stance":"...","supporter_ids":["..."]}' "。\n"
-            "title/body/stance 均须非空字符串；supporter_ids 为候选名单中的人物 id 数组，"
-            "可空（无人站台＝议而不决）；禁止从散文抠人名以外的第二名单；"
-            "禁止数组外壳、禁止围栏外 prose。"
-        ),
-    ]
-    return Agent(
-        name="廷议站台官",
-        id="rescript-deliberator",
-        model=create_chat_model(
-            cfg,
-            temperature=0.4,
-            top_p=0.9,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=instructions,
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+def create_ending_summary_agent(llm_config: LLMConfig) -> Agent:
     """国史编纂官：读所给历月邸报，生成史评式结局总结（纯文本）。一次性，不持久化。"""
-    del agno_db
     ctx = _ctx()
     return Agent(
         name="国史编纂官",
@@ -737,12 +635,11 @@ def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
-def create_faction_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+def create_faction_brew_agent(llm_config: LLMConfig) -> Agent:
     """派系态势酿制裁判（#637 S6）：派系级定性聚合摘要，输出 {stance_segment} JSON。
     一次性，不持久化；与关系酿制同一受管批次、每条工作项一个实例（批内并行各自
     独享，不共享运行态）。三不碰（ADR 0084）：不写派系真源、不动满意度/影响力、
     不建认同度。"""
-    del agno_db
     ctx = _ctx()
     return Agent(
         name="派系态势酿制裁判",
@@ -760,10 +657,9 @@ def create_faction_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent
     )
 
 
-def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+def create_relation_brew_agent(llm_config: LLMConfig) -> Agent:
     """关系酿制裁判（#636 S5）：两段式摘要增量重酿，输出 {new_foundings, recent_segment} JSON。
     一次性，不持久化；每条关系一个实例（批内并行各自独享，不共享运行态）。"""
-    del agno_db
     ctx = _ctx()
     return Agent(
         name="关系酿制裁判",

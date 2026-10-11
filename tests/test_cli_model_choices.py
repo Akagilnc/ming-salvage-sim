@@ -2,16 +2,14 @@
 
 CLI Model 从自由文本框改成 per-runner 策展下拉，清单在后端单点定义、经
 config 端点暴露给前端。这里测清单结构 + 默认档语义 + 与默认常量的一致性
-（不重写字面量），以及两个 config 端点确实把清单带出去。
+（不重写字面量），以及 menu/status 确实把清单带出去。
 """
 
 from __future__ import annotations
 
 import asyncio
 
-
 import ming_sim.cli_backend as cb
-
 
 def test_default_labels_reuse_single_source_constants(monkeypatch):
     """无 env 覆盖时，默认档 label 复用 cli_backend 的默认常量，不重写字面量（单一真源）。"""
@@ -21,7 +19,6 @@ def test_default_labels_reuse_single_source_constants(monkeypatch):
     assert cb.CODEX_DEFAULT_MODEL in choices["codex"][0]["label"]
     assert cb.CLAUDE_DEFAULT_MODEL in choices["claude"][0]["label"]
 
-
 def test_default_label_reflects_env_override(monkeypatch):
     """设了 MING_SIM_CODEX_MODEL → 默认档 label 跟随真实 resolved 默认（cli_model_from_env），
     与 api_menu_status 的 resolved cli_model 同源，不停留在内置常量（CMR R2 codex spec-impl）。"""
@@ -30,16 +27,7 @@ def test_default_label_reflects_env_override(monkeypatch):
     assert "env-override-model" in label
     assert cb.CODEX_DEFAULT_MODEL not in label
 
-
-
-
-
-
-
-
-
-
-# ── 端点暴露：两个 config 端点都把清单带给前端 ──
+# ── 端点暴露：menu/status 把清单带给前端 ──
 
 def _patch_status_io(monkeypatch, runtime):
     """把 api_menu_status 的全部磁盘 I/O monkeypatch 掉（含 load_runtime_llm），
@@ -52,13 +40,11 @@ def _patch_status_io(monkeypatch, runtime):
     monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
     return web_app
 
-
 def test_menu_status_exposes_choices(monkeypatch):
     web_app = _patch_status_io(monkeypatch, {})
     data = asyncio.run(web_app.api_menu_status())
     assert data["llm"]["cli_model_choices"] == cb.cli_model_choices()
     assert data["llm"]["cli_runners"] == cb.cli_runner_choices()
-
 
 def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch):
     """空 saved model（=用户选「默认」档）→ menu-status 须暴露 raw cli_model_saved=''，
@@ -72,7 +58,6 @@ def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch):
     assert llm["cli_model_saved"] == ""        # raw 留空 = 默认档（表单用）
     assert llm["cli_model"] == "gpt-5.5"        # resolved 仍供「当前后端」展示
 
-
 def test_menu_status_cli_model_saved_passes_explicit(monkeypatch):
     """显式存了某档 → raw 原样回传（表单选中该档）。"""
     web_app = _patch_status_io(monkeypatch, {
@@ -82,19 +67,3 @@ def test_menu_status_cli_model_saved_passes_explicit(monkeypatch):
     llm = asyncio.run(web_app.api_menu_status())["llm"]
     assert llm["cli_model_saved"] == "gpt-5.3-codex-spark"
 
-
-def test_get_llm_config_exposes_choices(monkeypatch):
-    import web_app
-    from ming_sim.models import LLMConfig
-
-    fake_cfg = LLMConfig(
-        api_key="", base_url="https://x/v1", model="m",
-        channel="cli", cli_runner="codex", cli_model="",
-    )
-    monkeypatch.setattr(
-        web_app, "get_game",
-        lambda: type("G", (), {"session": type("S", (), {"llm_config": fake_cfg})()})(),
-    )
-    data = asyncio.run(web_app.api_get_llm_config())
-    assert data["cli_model_choices"] == cb.cli_model_choices()
-    assert data["cli_runners"] == cb.cli_runner_choices()

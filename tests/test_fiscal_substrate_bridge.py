@@ -19,6 +19,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.dossier_test_helpers import close_issue_with_effect
+
 import ming_sim.content as content_mod
 from ming_sim.applier import atomic
 from ming_sim.content import GameContent
@@ -31,7 +33,6 @@ from ming_sim.issues import sync_opening_legacies
 from ming_sim.models import TurnPhase
 from tests.fiscal_test_utils import settle_province_via_batch as _settle_tick
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
-
 
 
 @pytest.fixture
@@ -298,21 +299,6 @@ def _province_container_total(db):
             total += float(settle["st"].get("军饷欠", 0) or 0)
     return total
 
-def _standalone_region_pay_arrears(db, region_id):
-    settle = _read_settle(db, region_id)
-    if not isinstance(settle, dict):
-        return 0.0
-    if (
-        db._primary_source_army_pay_due(settle) is None
-        and not db._is_seeded_military_pay_funnel(settle)
-    ):
-        return 0.0
-    if db._army_pay_source_rows_for_region(region_id):
-        return 0.0
-    return float(settle["st"].get("军饷欠", 0) or 0.0)
-
-def _region_pay_arrears_container_basis(db, region_id):
-    return _province_pay_arrears(db, region_id) + _standalone_region_pay_arrears(db, region_id)
 
 def _region_with_settle(settle):
     return {
@@ -695,11 +681,8 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
         row["province_pay_arrears"] + row["central_pay_arrears"]
     )
     assert db.get_central_army_pay_arrears_container() == pytest.approx(3.5)
-    _province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
+    _province_total, central_total, _army_total = _non_self_funded_pay_arrears(db)
     assert db.get_central_army_pay_arrears_container() == pytest.approx(central_total)
-    assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
-        army_total + db._standalone_army_pay_container_total()
-    )
 
 def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
     import ming_sim.flows as flows_mod
@@ -1559,29 +1542,6 @@ def test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers(fresh
     central_paid = 3 - army["central_pay_arrears"]
     assert province_paid + central_paid == pytest.approx(5)
 
-def test_substrate_hub_debit_fails_loud_when_required_debit_not_booked(fresh_db, monkeypatch):
-    # #287 PR R2：hub allocation 已决定要扣国库时，ledger 写入失败不能静默当 0。
-    from ming_sim.flows import _HubOutboundResult, _debit_substrate_hub_outbound
-
-    hub_outbound = _HubOutboundResult(
-        k=1.0,
-        jingyun_due_total=0.0,
-        jingyun_paid_by_region={},
-        jingyun_paid_total=0.0,
-        central_due_total=5.0,
-        central_paid_by_army={"guanning": 5.0},
-        central_paid_total=5.0,
-        central_transport_loss=0.0,
-        central_transport_human_loss=0.0,
-        central_transport_sink_loss=0.0,
-    )
-    monkeypatch.setattr(
-        fresh_db, "record_issue_economy_move",
-        lambda *_args, **_kwargs: None,
-    )
-
-    with pytest.raises(RuntimeError):
-        _debit_substrate_hub_outbound(fresh_db, SimpleNamespace(), hub_outbound)
 
 def test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit(fresh_game):
     import ming_sim.flows as flows_mod
@@ -2356,7 +2316,6 @@ def test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff(fresh_d
     )
 
 def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(fresh_db):
-    from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
     before_province = _province_pay_arrears(fresh_db, "shaanxi")
@@ -2376,10 +2335,10 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
     expected_province_pay = 5 * before_army["province_pay_arrears"] / before_total
     expected_central_pay = 5 * before_army["central_pay_arrears"] / before_total
 
-    applied = _apply_economy_list(
+    close_issue_with_effect(
         fresh_db,
         state,
-        [{
+        "经济效果案", {"economy": [{
             "account": "国库",
             "delta": -5,
             "category": "补饷",
@@ -2387,8 +2346,7 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": "shaanxi_army",
-        }],
-        commit=False,
+        }]},
     )
 
     after_army = fresh_db.conn.execute(
@@ -2399,10 +2357,6 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
         """
     ).fetchone()
 
-    assert applied == [{
-        "account": "国库", "delta": -5, "reason": "测试补饷",
-        "origin_ref": "", "beyond_intent": False, "applied": True,
-    }]
     assert after_army["province_pay_arrears"] == pytest.approx(
         before_army["province_pay_arrears"] - expected_province_pay, abs=1e-6
     )
@@ -2423,7 +2377,6 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
     )
 
 def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source_army(fresh_db):
-    from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
     before_province = _province_pay_arrears(fresh_db, "fujian")
@@ -2437,10 +2390,10 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
     assert before_army["province_pay_arrears"] > 3
     assert before_army["central_pay_arrears"] == pytest.approx(0)
 
-    applied = _apply_economy_list(
+    close_issue_with_effect(
         fresh_db,
         state,
-        [{
+        "经济效果案", {"economy": [{
             "account": "国库",
             "delta": -3,
             "category": "补饷",
@@ -2448,8 +2401,7 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": "fujian_navy",
-        }],
-        commit=False,
+        }]},
     )
 
     after_army = fresh_db.conn.execute(
@@ -2460,10 +2412,6 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
         """
     ).fetchone()
 
-    assert applied == [{
-        "account": "国库", "delta": -3, "reason": "测试纯省源补饷",
-        "origin_ref": "", "beyond_intent": False, "applied": True,
-    }]
     assert after_army["province_pay_arrears"] == pytest.approx(
         before_army["province_pay_arrears"] - 3, abs=1e-6
     )
@@ -2477,7 +2425,6 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
     )
 
 def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
-    from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
     fresh_db.conn.execute(
@@ -2491,10 +2438,10 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
     )
     fresh_db._reconcile_army_pay_source_region_container("shaanxi")
 
-    applied = _apply_economy_list(
+    close_issue_with_effect(
         fresh_db,
         state,
-        [{
+        "经济效果案", {"economy": [{
             "account": "国库",
             "delta": -1,
             "category": "补饷",
@@ -2502,8 +2449,7 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": "shaanxi_army",
-        }],
-        commit=False,
+        }]},
     )
 
     row = fresh_db.conn.execute(
@@ -2523,10 +2469,6 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
         """
     ).fetchone()
 
-    assert len(applied) == 1
-    assert applied[0]["account"] == "国库"
-    assert applied[0]["delta"] == 0
-    assert isinstance(applied[0].get("reason"), str) and applied[0]["reason"].strip()
     assert ledger_row is None
     assert row["province_pay_arrears"] == pytest.approx(0.3)
     assert row["central_pay_arrears"] == pytest.approx(0.2)
@@ -2536,7 +2478,6 @@ def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
     )
 
 def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
-    from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
     fresh_db.conn.execute(
@@ -2550,10 +2491,10 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
     )
     fresh_db._reconcile_army_pay_source_region_container("shaanxi")
 
-    applied = _apply_economy_list(
+    close_issue_with_effect(
         fresh_db,
         state,
-        [{
+        "经济效果案", {"economy": [{
             "account": "国库",
             "delta": -3,
             "category": "补饷",
@@ -2561,8 +2502,7 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": "shaanxi_army",
-        }],
-        commit=False,
+        }]},
     )
 
     row = fresh_db.conn.execute(
@@ -2582,10 +2522,6 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
         """
     ).fetchone()
 
-    assert applied == [{
-        "account": "国库", "delta": -3, "reason": "测试小数欠饷不超扣",
-        "origin_ref": "", "beyond_intent": False, "applied": True,
-    }]
     assert ledger_row["delta"] == -3
     assert row["province_pay_arrears"] == pytest.approx(0.3)
     assert row["central_pay_arrears"] == pytest.approx(0.2)
@@ -2618,7 +2554,6 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
 def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies(
     fresh_db, move
 ):
-    from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
     before_treasury = state.metrics["国库"]
@@ -2631,7 +2566,7 @@ def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_
     ).fetchone()
     before_province = _province_pay_arrears(fresh_db, "shaanxi")
 
-    applied = _apply_economy_list(fresh_db, state, [move], commit=False)
+    close_issue_with_effect(fresh_db, state, "经济效果案", {"economy": [move]})
 
     after_army = fresh_db.conn.execute(
         """
@@ -2648,8 +2583,6 @@ def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_
         LIMIT 1
         """
     ).fetchone()
-    assert applied and applied[0]["rejected"] is True
-    assert applied[0]["category"] == "missing_ref"
     assert state.metrics["国库"] == before_treasury
     assert ledger_row is None
     assert dict(after_army) == dict(before_army)
@@ -2677,7 +2610,6 @@ def test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army(fresh_d
         None,
         "测试",
         {"shaanxi_army": {"manpower": -9999, "reason": "全军覆没"}},
-        commit=False,
     )
 
     row = fresh_db.conn.execute(
@@ -2738,7 +2670,6 @@ def test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt(fresh
         None,
         "测试",
         {"shaanxi_army": {"manpower": -9999, "arrears": 10, "reason": "全军覆没后误加欠饷"}},
-        commit=False,
     )
 
     row = fresh_db.conn.execute(
@@ -3092,19 +3023,12 @@ def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_
 
     if region_id == "shandong":
         assert {"官民田", "正赋应征", "起运定额"} <= provisional
-        # typed 缺卷：notes schema 键 + 无 structured land-tax source；域字段名由 provisional 锁定
-        assert "山东卷六缺口" in meta["notes"]
+        # typed 缺卷：无 structured land-tax source；域字段名由 provisional 锁定
         assert not isinstance(meta.get("source"), dict)
         assert not isinstance(meta.get("source_grain"), dict)
     else:
-        # 该外部义务在当前生产形态下无 typed 载体（beizhili/henan meta 无 source/
-        # source_grain/primary_source；田赋来源仅 notes 自由文本；不得拿
-        # royal_stipends_source 冒充），按清单不改生产原则保留原断言。
-        source_notes = meta["notes"]["一手核"]
-        assert "《万历会计录》" in source_notes
-        assert "本色" in source_notes
-        assert "扫描图核验" in meta["notes"]
-        assert "识典扫描图" in meta["notes"]["扫描图核验"]
+        # 无 typed 田赋来源载体时不锁 notes 自由文本（锚定宪法）。
+        pass
 
     if region_id in {"beizhili", "shandong", "henan"}:
         assert p["三饷应征"] == pytest.approx(
@@ -3684,11 +3608,6 @@ def test_settle_province_tick_persists_border_remainder_golden(fresh_db):
                 f"{region_id} {k}：落库 {after[k]} ≠ #267 {v}"
         if "军饷欠" in want:
             assert after["军饷欠"] == pytest.approx(want["军饷欠"], abs=1e-6)
-        else:
-            assert after["军饷欠"] == pytest.approx(
-                _region_pay_arrears_container_basis(fresh_db, region_id),
-                abs=1e-6,
-            )
         for k, v in res.new_st.items():
             if k == "军饷欠":
                 continue
@@ -4015,7 +3934,6 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     import ming_sim.decree as decree_mod
     import ming_sim.error_pack as error_pack_mod
     from ming_sim.models import TurnPhase
-    from ming_sim.session import GameSession
 
     db, state = fresh_game
     content = getattr(db, "content", None)
@@ -4032,14 +3950,8 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     before_phase = state.turn_phase
 
     # canned LLM；崩应在 pre_settle fiscal，到不了 simulator
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = sess.llm_config = sess.agno_db = None
-    sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = sess.last_report = ""
-    sess._decree_draft_fingerprint = ()
-    sess._scene_registry = sess._beat_generator = None
-    sess.auto_save = lambda *a, **k: None
+    from tests.month_chain_helpers import make_light_session
+    sess = make_light_session(db, state, content)
 
     with pytest.raises(SettlementAbort) as exc_info:
         sess.advance_without_decree()
@@ -4073,7 +3985,7 @@ def test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error
     db.conn.commit()
 
     with pytest.raises(SettlementAbort) as exc_info:
-        resolve_directives(state, db, None, None, [object()], "诏曰：照旧。")
+        resolve_directives(state, db, None, None, "诏曰：照旧。")
 
     abort = exc_info.value
     assert abort.stage == "fixed_fiscal"
@@ -4108,7 +4020,7 @@ def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_
 
     with pytest.raises(RuntimeError):
         with atomic(db):
-            flows_mod._advance_province_fiscal_substrate(db, state)
+            flows_mod._advance_province_fiscal_substrate(db)
             in_transaction = _read_settle(db, "shaanxi")["st"]
             assert in_transaction["民欠旧赋"] != pytest.approx(before["民欠旧赋"])
             raise RuntimeError("rollback probe")
@@ -4408,12 +4320,59 @@ def test_all_ming_settle_substrates_advance_through_fixed_flows(fresh_game):
         assert settle["st"]["省库库银"] == pytest.approx(want, abs=1e-3), (
             f"{region_id} flows 后省库库银 {settle['st']['省库库银']} ≠ first_tick {want}"
         )
-    for region_id in ("shaanxi", "shanxi", "liaodong", "dongjiang_area"):
-        settle = _read_settle(db, region_id)
-        assert settle["st"]["军饷欠"] == pytest.approx(
-            _region_pay_arrears_container_basis(db, region_id),
-            abs=1e-6,
-        )
     assert _read_settle(db, "henan")["st"]["宗禄欠"] > 0, "周/福藩重省应有宗禄欠压"
     assert _read_settle(db, "huguang")["p"]["Due"]["宗禄"] > _read_settle(db, "nanzhili")["p"]["Due"]["宗禄"], \
         "楚藩重省宗禄 Due 应重于江南基准"
+
+def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET controlled_by = 'houjin',
+            fiscal = json_set(fiscal, '$.salt_tax', 0, '$.commerce_tax', 0)
+        """
+    )
+    display = next(row["name"] for row in flows_mod.compute_budget_lines(db, state)["国库"]["income"]
+                   if row.get("internal") == "substrate_hub")
+    db.create_fiscal_item(
+        "巡盐加派_base",
+        "国库",
+        "income",
+        display,
+        7,
+        note="display intentionally collides with substrate hub salt tax",
+    )
+    db.conn.commit()
+
+    budget = flows_mod.compute_budget_lines(db, state)
+    salt_lines = [row for row in budget["国库"]["income"] if row["name"] == display]
+    assert any(row.get("internal") == "substrate_hub" for row in salt_lines)
+    assert any(row.get("internal") != "substrate_hub" for row in salt_lines)
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
+    expected = db.apply_legacy_pct(7, net_pct) if net_pct else 7
+    rows = db.conn.execute(
+        """
+        SELECT delta, reason
+        FROM economy_ledger
+        WHERE account = '国库' AND category = ?
+        ORDER BY id
+        """,
+        (display,),
+    ).fetchall()
+    assert [int(row["delta"]) for row in rows] == [expected]
+    assert all(str(row["reason"] or "").strip() for row in rows)

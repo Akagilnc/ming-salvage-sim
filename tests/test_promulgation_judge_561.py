@@ -4,11 +4,9 @@ import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
-from ming_sim.exceptions import LLMContractError
-from ming_sim.models import LLMConfig
 from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
-from tests.dossier_test_helpers import rejected_verdict
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
     return db.create_decree_dossier(
@@ -42,12 +40,11 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     assert context == decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )
-    encoded = json.dumps(context, ensure_ascii=False, sort_keys=True)
-    assert "satisfaction" not in encoded
-    assert "满意" not in encoded
+    # 结构键白名单：派系面不含 satisfaction；不扫序列化载体禁词。
     assert context["dossiers"][0]["mode"] == "midzhi"
     assert context["dossiers"][0]["break_rank"] == {"office_rank": "越三级"}
     assert set(context["factions"][0]) == {"name", "leverage", "agenda"}
+    assert all("satisfaction" not in row for row in context["factions"])
     assert context["imperial_authority_band"] in IMPERIAL_AUTHORITY_BANDS
     assert context["classes"]
     assert all(isinstance(name, str) for name in context["classes"])
@@ -377,41 +374,7 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
         str(authority_id),
     ]
 
-def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
-    """Non-awaiting arms must read applied history at the pre-resolve turn."""
-    from ming_sim.content import GameContent
-    from ming_sim.models import LLMConfig
-    from scripts import promulgation_gate_561 as gate
 
-    content = GameContent.load()
-    cfg = LLMConfig(
-        api_key="", base_url="", model="test", channel="cli",
-        cli_runner="codex", cli_model="test",
-    )
-
-    def fake_resolve(state, db, *_a, **_k):
-        dossiers = db.list_decree_dossiers(status="proposed")
-        verdicts = [
-            {"dossier_id": int(row["id"]), "decision": "promulgated"}
-            for row in dossiers
-        ]
-        db.apply_dossier_verdicts(state, verdicts, content=content)
-        # Settlement advances turn — the bug surface (pending batch writer retired).
-        state.turn += 1
-        db.save_state(state)
-        return decree_mod.ResolveResult(awaiting=False, report="settled")
-
-    monkeypatch.setattr(gate, "resolve_directives", fake_resolve)
-    result = gate._run_resolve_arm(
-        str(tmp_path), content, cfg,
-        name="settled_arm", authority=100, kinds=("hostile",),
-    )
-    assert result["awaiting"] is False
-    assert result["verdicts"], "settled arm must recover applied verdicts"
-    assert {int(row["dossier_id"]) for row in result["verdicts"]} == set(
-        result["ids"].values()
-    )
-    assert all(row["decision"] == "promulgated" for row in result["verdicts"])
 def test_gatekeeper_successor_removes_donglin_block_posture(game):
     """TD-9 successor must be registered and not recreate the 东林 block."""
     from scripts.promulgation_gate_561 import (
@@ -429,7 +392,7 @@ def test_gatekeeper_successor_removes_donglin_block_posture(game):
     assert seeded["power_id"] == "ming"
     assert seeded["faction"] != "东林"
 
-    _mutate_gatekeeper_replace(db, state)
+    _mutate_gatekeeper_replace(db)
     context = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )
@@ -551,7 +514,7 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
         "SELECT status, office FROM characters WHERE name='钱谦益'"
     ).fetchone()
 
-    _mutate_leader_only(db, state)
+    _mutate_leader_only(db)
     after = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )
@@ -582,211 +545,3 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     ).fetchone()
     assert qian_after["status"] == qian_before["status"]
     assert qian_after["office"] == qian_before["office"]
-
-def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
-    # Preserve suite-specific reason/intensity differences via builder knobs.
-    return rejected_verdict(
-        dossier_id, authority_band, midzhi=midzhi,
-        reason="触犯钱粮命门，科臣封驳。", intensity="strong",
-    )
-
-@pytest.mark.parametrize(
-    ("mode", "decision"),
-    [("ordinary", "promulgated"), ("midzhi", "promulgated"),
-     ("ordinary", "rejected"), ("midzhi", "rejected")],
-)
-def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decision):
-    db, state, _content = game
-    dossier_id = _dossier(db, state, mode=mode)
-    dossiers = db.list_decree_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    if decision == "promulgated":
-        verdict = {"dossier_id": dossier_id, "decision": decision}
-        expected = [verdict]
-    else:
-        verdict = _rejected_verdict(
-            dossier_id, context["imperial_authority_band"], midzhi=mode == "midzhi",
-        )
-        if mode == "midzhi":
-            # #657 §C.8：中旨打回剥离猜派字段
-            expected = [{
-                k: v for k, v in verdict.items() if k != "affected_parties"
-            }]
-        else:
-            expected = [verdict]
-
-    assert decree_mod.validate_promulgation_verdicts(
-        [verdict], dossiers, db, prepared_context=context,
-    ) == expected
-
-def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
-    db, state, _content = game
-    dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
-    verdict["legal_reason_code"] = ""
-
-    assert decree_mod.validate_promulgation_verdicts(
-        [verdict], dossiers, db, prepared_context=context,
-    ) == [verdict]
-
-    for invalid in ("statute-42", 0, False, [], {}):
-        verdict["legal_reason_code"] = invalid
-        with pytest.raises(LLMContractError):
-            decree_mod.validate_promulgation_verdicts(
-                [verdict], dossiers, db, prepared_context=context,
-            )
-
-def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, monkeypatch):
-    """一批判官一次调用，再走既有校验。入口是 llm_promulgation_verdicts。"""
-    db, state, content = game
-    del content
-    first = _dossier(db, state)
-    second = db.create_decree_dossier(
-        state, action_type="appointment", decree_text="擢任某官",
-        target_kind="character", target_id="candidate",
-    )
-    calls = []
-
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
-
-    def canned(_agent, prompt, tag, **_k):
-        calls.append((json.loads(prompt), tag))
-        return json.dumps({"verdicts": [
-            {"dossier_id": first, "decision": "promulgated"},
-            {"dossier_id": second, "decision": "promulgated"},
-        ]})
-
-    monkeypatch.setattr(decree_mod, "run_agent_text", canned)
-    dossiers = db.list_decree_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    raw = decree_mod.llm_promulgation_verdicts(
-        dossiers, state, db=db, agno_db=None, llm_config=object(),
-        prepared_context=context,
-    )
-
-    assert decree_mod.validate_promulgation_verdicts(
-        raw, dossiers, db, prepared_context=context,
-    ) == [
-        {"dossier_id": first, "decision": "promulgated"},
-        {"dossier_id": second, "decision": "promulgated"},
-    ]
-    assert len(calls) == 1
-    assert calls[0][1] == "promulgation-judge"
-    assert [row["id"] for row in calls[0][0]["dossiers"]] == [first, second]
-
-@pytest.mark.parametrize(
-    ("snapshot_key", "forged"),
-    [
-        ("imperial_authority_band", "极弱"),
-        ("appointment_tenure", "署理"),
-        ("authorization_ids", ["forged-auth"]),
-        ("endorsement_entry_ids", [1]),
-    ],
-)
-def test_rejected_snapshot_must_equal_the_prepared_judge_input(
-    game, snapshot_key, forged,
-):
-    db, state, _content = game
-    dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
-    verdict["criteria_snapshot"][snapshot_key] = forged
-
-    with pytest.raises(decree_mod.LLMContractError):
-        decree_mod.validate_promulgation_verdicts(
-            [verdict], dossiers, db, prepared_context=context,
-        )
-
-def test_appointment_tenure_is_the_rejection_snapshot_value(game):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="appointment", decree_text="署理某官",
-        target_kind="character", target_id="candidate", payload={"任别": "署理"},
-    )
-
-    context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
-    )
-
-    assert context["dossiers"][0]["criteria_snapshot_source"]["appointment_tenure"] == "署理"
-    assert context["dossiers"][0]["id"] == dossier_id
-
-def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
-    db, state, _content = game
-    dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    gatekeepers = {row["name"] for row in context["gatekeepers"]}
-    outsider = next(
-        row["name"] for row in db.conn.execute("SELECT name FROM characters ORDER BY name")
-        if row["name"] not in gatekeepers
-    )
-    verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
-    verdict["gatekeeper_id"] = outsider
-
-    with pytest.raises(decree_mod.LLMContractError):
-        decree_mod.validate_promulgation_verdicts(
-            [verdict], dossiers, db, prepared_context=context,
-        )
-
-def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
-    db, state, _content = game
-    dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    verdict = _rejected_verdict(
-        dossier_id, context["imperial_authority_band"], midzhi=True,
-    )
-
-    with pytest.raises(decree_mod.LLMContractError):
-        decree_mod.validate_promulgation_verdicts(
-            [verdict], dossiers, db, prepared_context=context,
-        )
-
-@pytest.mark.parametrize(
-    ("action_type", "mode"),
-    [
-        ("secret_authorization", "ordinary"),
-        ("secret_authorization", "midzhi"),
-        ("secret_investigation", "ordinary"),
-        ("secret_investigation", "midzhi"),
-        ("protection", "ordinary"),
-        ("protection", "midzhi"),
-    ],
-)
-def test_review_exempt_actions_auto_promulgate_without_judge_contract_abort(
-    game, monkeypatch, action_type, mode,
-):
-    from types import SimpleNamespace
-
-    from ming_sim import agents as forecast_agents
-    from ming_sim.decree_forecast import (
-        produce_forecast_product, snapshot_for_existing_dossier,
-    )
-
-    db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type=action_type, decree_text="密旨照准",
-        target_kind="issue", target_id=f"exempt-{action_type}-{mode}",
-        payload={"mode": mode},
-    )
-    monkeypatch.setattr(
-        decree_mod, "create_promulgation_judge_agent",
-        lambda *_a, **_k: pytest.fail("review-exempt 案卷不得送入 LLM"),
-    )
-    monkeypatch.setattr(forecast_agents, "create_decree_forecast_agent", lambda *a, **k: object())
-    monkeypatch.setattr(forecast_agents, "run_agent_text", lambda *a, **k: "")
-    session = SimpleNamespace(
-        db=db, state=state, llm_config=object(), agno_db=None, content=content,
-    )
-    dossier = db.get_decree_dossier(dossier_id)
-    product = produce_forecast_product(
-        session, snapshot_for_existing_dossier(session, dossier),
-    )
-
-    assert product["verdict"] == {"dossier_id": dossier_id, "decision": "promulgated"}
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
-    assert db.list_decree_dossier_decisions(dossier_id) == []

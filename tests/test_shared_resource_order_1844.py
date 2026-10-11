@@ -153,17 +153,25 @@ def test_player_decree_missing_entity_rejection_persists_for_feed(game, monkeypa
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='补饷坏目标' AND delta != 0"
     ).fetchone()[0] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref' AND item_json LIKE '%no-such-army-1844%'"
-    ).fetchone()[0] >= 1
+    rej = db.conn.execute(
+        "SELECT item_json, category FROM rejection_reports WHERE category='missing_ref'"
+    ).fetchall()
+    assert any(
+        json.loads(row["item_json"]).get("target_id") == "no-such-army-1844"
+        for row in rej
+    ), rej
 
     db_path = tmp_path / "reject-reopen.db"
     db.conn.execute("VACUUM INTO ?", (str(db_path),))
     reopened = sqlite3.connect(str(db_path))
     reopened.row_factory = sqlite3.Row
-    assert reopened.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref' AND item_json LIKE '%no-such-army-1844%'"
-    ).fetchone()[0] >= 1
+    rej2 = reopened.execute(
+        "SELECT item_json, category FROM rejection_reports WHERE category='missing_ref'"
+    ).fetchall()
+    assert any(
+        json.loads(row["item_json"]).get("target_id") == "no-such-army-1844"
+        for row in rej2
+    ), rej2
     assert reopened.execute(
         "SELECT status FROM staged_declarations WHERE decree_ref=?",
         (ref,),

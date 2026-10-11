@@ -1,21 +1,8 @@
-import shutil
-import sqlite3
-
 from ming_sim import issues as issue_engine
-from ming_sim.db import GameDB
+from tests.dossier_test_helpers import recorded_executing_policy as _promulgated_policy
 
 
 SPONTANEOUS = "盘面自发"
-
-
-def _promulgated_policy(db, state):
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="兴修水利",
-        target_kind="issue", target_id="origin-558",
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
-    return dossier_id
 
 
 def test_decree_driven_effect_without_any_origin_is_rejected(game):
@@ -159,7 +146,6 @@ def test_fiscal_remove_keeps_durable_origin_tombstone(game):
     ]
 
 
-
 def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
     db, state, content = game
     before = state.metrics["国库"]
@@ -285,7 +271,6 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
         "UPDATE armies SET manpower=0, arrears=5, province_pay_arrears=3, central_pay_arrears=2 WHERE id=?",
         (army_id,),
     )
-
     db.conn.execute("UPDATE armies SET owner_power='houjin' WHERE id=?", (army_id,))
     non_ming_noop = issue_engine.apply_score_extraction(
         db, state, {"army_delta": {army_id: {"manpower": 0}}}, content=content

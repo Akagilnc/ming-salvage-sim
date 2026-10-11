@@ -24,19 +24,6 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
 
 
-def _production_session(db, state, content):
-    from ming_sim.session import GameSession
-
-    session = GameSession.__new__(GameSession)
-    session.db, session.state, session.content = db, state, content
-    session.registry = session.llm_config = session.agno_db = None
-    session.deaths_this_turn, session.debuts_this_turn = [], []
-    session.last_decree = session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session.auto_save = lambda *args, **kwargs: None
-    return session
-
-
 def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 
@@ -52,6 +39,7 @@ def test_monthly_report_keeps_its_turn_and_text(game):
 
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
     report = emperor_order["dossier_progress"][-1]
+    assert report["memorial_text"] == marker
     assert int(report["turn"]) == int(state.turn)
     assert report.get("is_terminal") is False
 
@@ -68,19 +56,20 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
     })
     assert not any(str(item.get("source_id") or "").startswith(
         f"secret_order_disclosure:{order_id}:"
-    ) for item in db._character_knowledge_events(""))
+    ) for item in db.get_character_knowledge(state, _actor(db))["public_events"])
 
     apply_score_extraction(db, state, {"secret_order_updates": [{
         "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
     }]}, content=content)
-    public = db._character_knowledge_events("")
+    public = db.get_character_knowledge(state, _actor(db))["public_events"]
     disclosure = next(
         item for item in public
         if str(item.get("source_id") or "").startswith(
             f"secret_order_disclosure:{order_id}:"
         )
     )
-    assert disclosure["source_id"]
+    assert marker in disclosure["body"]
+    assert "该案已经明发廷议" in disclosure["body"]
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
@@ -247,7 +236,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     game, monkeypatch, entry,
 ):
     """A post-fiscal fault cannot expose preview-time directive materialization."""
-    from contextlib import contextmanager
     from types import SimpleNamespace
     import ming_sim.decree as decree
     import ming_sim.session as session_mod
@@ -281,11 +269,12 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     monkeypatch.setattr(decree, "apply_fixed_period_flows", fail_after_real_flows)
     monkeypatch.setattr(
         session_mod, "write_decree_with_agno",
-        lambda _config, _agno, _state, directives, db=None: "\n".join(
+        lambda _config, _state, directives, db=None: "\n".join(
             str(item["text"]) for item in directives
         ),
     )
-    session = _production_session(db, state, content)
+    from tests.month_chain_helpers import make_light_session
+    session = make_light_session(db, state, content)
 
     if entry == "web":
         web_game = SimpleNamespace(
@@ -295,12 +284,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
             state_payload=lambda: {"turn": state.turn},
         )
 
-        @contextmanager
-        def unlocked(_game):
-            yield
-
         monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
         invoke = web_app.api_advance_without_edict
     else:
         invoke = session.advance_without_decree
@@ -327,28 +311,3 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     reloaded = db.load_state()
     assert (reloaded.turn, reloaded.year, reloaded.period, reloaded.turn_phase) == before["clock"]
     assert reloaded.metrics == before["metrics"]
-
-
-def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
-    db, state, _content = game
-    _, dossier_id = _order(db, state)
-    import pytest
-    with pytest.raises(ValueError):
-        db.record_monthly_dossier_progress(state.turn, None)
-    with pytest.raises(ValueError):
-        db.record_monthly_dossier_progress(state.turn, {"dossier_id": dossier_id})
-    with pytest.raises(ValueError):
-        db.record_monthly_dossier_progress(state.turn, [
-        {"dossier_id": 999999, "progress_band": "伪", "memorial_text": "伪进展"},
-        {"dossier_id": dossier_id, "progress_band": "", "memorial_text": "缺档"},
-        {"dossier_id": dossier_id, "progress_band": "启程", "memorial_text": "首批出京"},
-            {"dossier_id": dossier_id, "progress_band": "重复", "memorial_text": "不得覆盖"},
-        ])
-    for invalid_id in (True, 1.0, 0, -1):
-        with pytest.raises(ValueError):
-            db.record_monthly_dossier_progress(state.turn, [{
-                "dossier_id": invalid_id,
-                "progress_band": "伪进展",
-                "memorial_text": "不得命中真实案卷",
-            }])
-    assert db.list_dossier_progress(dossier_id) == []

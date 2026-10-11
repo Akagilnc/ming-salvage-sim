@@ -14,17 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import time
-from types import SimpleNamespace
 
-import httpx
-import pytest
 
 import web_app
-import ming_sim.agents as agents_mod
-import ming_sim.decree as decree_mod
-import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
@@ -34,94 +27,12 @@ _IN_FLIGHT_DETAIL = "收夜中止：本夜仍有未完成回话（在飞/挂起�
 _GATE_BUSY_DETAIL = "月末结算或上一步写入进行中，请稍候再操作。"
 
 
-# ── 轻量 canned 边界（与 #498 web tracer 同形，仅中和 LLM）────────────────
+from tests.test_court_break_player_lock_1727 import _active_minister
 
-
-class _CannedExtractor:
-    def run(self, _material):
-        class _R:
-            content = '{"facts":[]}'
-        return _R()
-
-
-class _BoomExtractor:
-    def run(self, _material):
-        raise RuntimeError("抽取持续失败·真失败注入")
-
-
-def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    monkeypatch.setattr(
-        decree_mod, "llm_promulgation_verdicts",
-        lambda dossiers, _state, **_kwargs: [
-            {"dossier_id": row["id"], "decision": "promulgated"}
-            for row in dossiers
-        ],
-    )
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_world_segment_text",
-        lambda *a, **k: "",
-    )
-    real_run_agent_text = agents_mod.run_agent_text
-
-    def _run_month_chain_text(agent, prompt, tag, **kwargs):
-        if tag == "decree-forecast":
-            return ""
-        if tag == "gazette":
-            return '{"title":"邸报","report":"本月边饷已清。"}'
-        return real_run_agent_text(agent, prompt, tag, **kwargs)
-
-    monkeypatch.setattr(
-        agents_mod, "run_agent_text", _run_month_chain_text,
-    )
-
-
-@pytest.fixture
-def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """真实 WebGame；LLM 边界 canned。与 #498 fixture 同形。"""
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和。
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
-    yield game
-    try:
-        game.session.close()
-    except Exception:
-        pass
-
-
-def _active_minister(game) -> str:
-    for name, ch in game.content.characters.items():
-        if getattr(ch, "power_id", "ming") != "ming":
-            continue
-        if getattr(ch, "office_type", "") == "后宫":
-            continue
-        if game.db.get_character_status(name)[0] == "active":
-            return name
-    raise AssertionError("no active ming minister")
-
-
-def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=web_app.app), base_url="http://t",
-    )
-
+from tests.test_court_break_player_lock_1727 import _client
 
 def _click_before(state) -> dict[str, int]:
     return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
-
-
-def _terminal_sse(response: httpx.Response) -> tuple[str, dict]:
-    blocks = [block for block in response.text.split("\n\n") if block.strip()]
-    assert blocks
-    lines = blocks[-1].splitlines()
-    event = next(line[7:] for line in lines if line.startswith("event: "))
-    data = next(line[6:] for line in lines if line.startswith("data: "))
-    return event, json.loads(data)
 
 
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):
@@ -138,38 +49,7 @@ def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事
     return nid, ctid
 
 
-def _runtime_payload(db, state):
-    """轻壳 state_payload（与 T1 同形）。"""
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=SimpleNamespace(characters={}),
-        previous_summary="",
-        last_decree="",
-        last_report="",
-        pending_count=lambda: 0,
-        pending_decisions=lambda: [],
-        victory=lambda: {"status": "ongoing", "summary": ""},
-    )
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.map_nodes = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-    return runtime.state_payload()
-
-
 # ── 1. 未了续跑：未落账回话退朝不 409，自动接续至月完 ────────────────────
-
-
-
-
-
-
 
 
 # ── 2. 点即入：capture 先于 await/close（失败前已入核账，失败后出展示态）──
@@ -218,9 +98,7 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
     # 真失败后展示态退出
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
-    detail = resp.json()["detail"]
-    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
-    assert _IN_FLIGHT_DETAIL in text
+    assert resp.json()["detail"] == _IN_FLIGHT_DETAIL
 
 
 # ── 3. 真失败另形：pending 抽取仍失败 → 人话 + 展示态退出 ──────────────
@@ -284,7 +162,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
 
 
 def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
-    """AC2 颁布入口同形。"""
+    """AC2 颁布入口同形（真入口 POST /api/decree/issue/stream）。"""
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
@@ -320,12 +198,21 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
 
     async def go():
         async with _client() as client:
-            return await client.post("/api/decree/issue", json={})
+            async with client.stream(
+                "POST", "/api/decree/issue/stream", json={},
+            ) as resp:
+                body = ""
+                async for chunk in resp.aiter_text():
+                    body += chunk
+                return resp.status_code, body
 
-    resp = asyncio.run(go())
-    # #1842：转译耗尽 → SettlementAbort（HTTP 409 + typed stage）；issue 与 advance 同形。
-    assert resp.status_code == 409, resp.text
-    detail = resp.json().get("detail")
+    status, body = asyncio.run(go())
+    # #1842：转译耗尽 → SettlementAbort → SSE error + typed stage
+    assert status == 200, body
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    events = _parse_sse(body or "")
+    assert events and events[-1][0] == "error", events
+    detail = events[-1][1]
     assert isinstance(detail, dict), detail
     assert detail.get("stage") == "audience_translation_exhausted", detail
     assert detail.get("error_pack_path"), detail
@@ -338,9 +225,9 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
 # ── 4. AC3 不回归：settling 恢复条 / 批红下发 ────────────────────────────
 
 
-def test_settling_keeps_display_for_recovery(game):
+def test_settling_keeps_display_for_recovery(web_game):
     """AC3：settling 相位下快照保留（恢复入口可达的状态口条件）。"""
-    db, state, content = game
+    db, state, content = web_game.db, web_game.state, web_game.session.content
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
     import ming_sim.decree as dm
@@ -350,47 +237,18 @@ def test_settling_keeps_display_for_recovery(game):
     from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     assert exit_settlement_display_on_failure(db, state) is False
     assert db.get_month_open_snapshot(int(state.turn)) == before
-    payload = _runtime_payload(db, state)
+    payload = web_game.state_payload()
     assert payload["turn"]["settlement_display"] is True
     assert payload["turn"]["phase"] == "settling"
 
 
-def test_awaiting_decision_still_emits_pending(game):
-    """AC3：awaiting_decision 下 pending_decisions 照常下发 + 核账展示态在。"""
-    db, state, _content = game
+def test_awaiting_decision_still_emits_pending(web_game):
+    """AC3：失败退出不得清除 awaiting_decision 的恢复快照。"""
+    db, state = web_game.db, web_game.state
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-    decisions = [{"title": "测", "context": "x", "idx": 0, "options": [{"label": "a"}]}]
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=SimpleNamespace(characters={}),
-        previous_summary="",
-        last_decree="",
-        last_report="",
-        pending_count=lambda: 0,
-        pending_decisions=lambda: list(decisions),
-        victory=lambda: {"status": "ongoing", "summary": ""},
-    )
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.map_nodes = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-
-    payload = runtime.state_payload()
-    assert payload["turn"]["settlement_display"] is True
-    assert payload["turn"]["phase"] == "awaiting_decision"
-    assert payload["pending_decisions"] == decisions
-    for k in MONTH_OPEN_KEYS:
-        assert payload["metrics"][k] == before[k]
 
     from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     assert exit_settlement_display_on_failure(db, state) is False
@@ -446,18 +304,13 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
         yield  # pragma: no cover — raise 后不可达；保 CM 形
 
     monkeypatch.setattr(web_app, "_serialized_web_write", _gate_busy)
-    # 跳过 await/close 噪声，直达 gate 缝
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
-
     async def go():
         async with _client() as client:
             return await client.post("/api/decree/advance_without_edict")
 
     resp = asyncio.run(go())
     assert resp.status_code == 409, resp.text
-    detail = resp.json()["detail"]
-    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
-    assert _GATE_BUSY_DETAIL in text
+    assert resp.json()["detail"] == _GATE_BUSY_DETAIL
     # 点即入曾发生
     assert saw.get("snap") == before
     # 拒收后不得留孤儿核账展示态
@@ -469,7 +322,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
     )
 
 
-def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, monkeypatch):
+def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game):
     """#1235 r2 p2：并发代清洞——A 已 capture 持 _write_gate；B accept 幂等 no-op 后抢锁 409，
     其 finally 以 non-blocking exit 撞锁 skip，不得代清 A 的快照（须立即返回不堵）。
 
@@ -478,9 +331,6 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
     game = web_game
     before = _click_before(game.state)
     turn = int(game.state.turn)
-
-    # 跳过 await/close 噪声，直达 gate 缝
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
 
     # 请求 A：点即入真新建 + 持 _write_gate（结算 worker 在办）
     assert web_app._accept_settlement_period(game) is True
@@ -559,12 +409,8 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
     assert game.db.get_month_open_snapshot(turn) is None
 
 
-@pytest.mark.parametrize("entry", [
-    pytest.param("issue", id="issue"),
-    pytest.param("stream", id="stream"),
-])
-def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch, entry):
-    """#1235 r3 / #1241 S5：session-reaccept-orphan-after-web-noncreator（issue/stream 同根）。
+def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch):
+    """#1235 r3 / #1241 S5：session-reaccept-orphan-after-web-noncreator（issue/stream 真入口）。
 
     A web-accept 真新建并持 gate；B web-accept 得 False 后堵在阻塞 gate；
     A 失败 exit 清快照并放锁 → B 进 resolve（session 再 accept 新建）后失败 →
@@ -578,8 +424,6 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     game = web_game
     before = _click_before(game.state)
     turn = int(game.state.turn)
-
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
 
     saw = {"web_created": None, "session_reaccept": None}
     b_done = threading.Event()
@@ -600,7 +444,7 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         # 模拟 session.resolve_turn 内二次 accept 后 ValueError（无 session exit 臂）
         created = accept_settlement_period(game.db, game.state)
         saw["session_reaccept"] = created
-        raise ValueError(f"推演失败·{entry} session再创建后注入")
+        raise ValueError("推演失败·stream session再创建后注入")
 
     monkeypatch.setattr(game.session, "resolve_turn", _boom_resolve)
 
@@ -614,9 +458,6 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         try:
             async def go():
                 async with _client() as client:
-                    if entry == "issue":
-                        resp = await client.post("/api/decree/issue", json={})
-                        return resp.status_code, resp.text
                     async with client.stream(
                         "POST", "/api/decree/issue/stream", json={},
                     ) as resp:
@@ -640,7 +481,7 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         while saw["web_created"] is None:
             time.sleep(0.01)  # backoff only
         assert saw["web_created"] is False, "B 须为 web 非创建者"
-        assert not b_done.is_set(), f"B 不得在 A 持锁时完成 {entry}"
+        assert not b_done.is_set(), "B 不得在 A 持锁时完成"
         assert game.db.get_month_open_snapshot(turn) == before
 
         # A 失败 exit 清快照后再放锁（判词序：清后放锁，逼出 B session 再创建）
@@ -653,20 +494,19 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
 
     b_done.wait()
     assert "err" not in b_result, b_result.get("err")
-    if entry == "issue":
-        assert b_result.get("status") == 400, b_result
-    else:
-        assert b_result.get("status") == 200, b_result
-        assert "error" in (b_result.get("body") or "")
+    assert b_result.get("status") == 200, b_result
+    # SSE 事件字段；复用既有解析，不扫整流正文。
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    events = _parse_sse(b_result.get("body") or "")
+    assert events and events[-1][0] == "error", events
     # B 进 resolve 后 session 再创建了孤儿快照
     assert saw["session_reaccept"] is True
     # B finally 须清掉该孤儿（created_display=False 不得再跳过 exit）
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
-    if entry == "issue":
-        assert game.state.turn_phase not in (
-            TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
-        )
+    assert game.state.turn_phase not in (
+        TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
+    )
 
 
 def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypatch):

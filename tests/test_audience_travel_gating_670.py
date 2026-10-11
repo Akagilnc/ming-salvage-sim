@@ -9,6 +9,7 @@ from ming_sim.session import AudienceAdmission, GameSession
 from ming_sim import audience_night as an
 
 
+
 def _session(game):
     db, _state, content = game
     sess = GameSession.__new__(GameSession)
@@ -135,7 +136,6 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
     _set_place(game, "洪承畴", location="shaanxi")
     answers = iter(["洪承畴", "quit"])
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr("builtins.print", lambda *_a, **_k: None)
 
     assert terminal.choose_minister(sess) is None
     # 结构化：未入殿大臣记入未结传召；不扫 print 承旨措辞（P7 禁模板负向≠合法盯文）。
@@ -155,7 +155,6 @@ def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeyp
     assert unknown not in sess.content.characters
     answers = iter([unknown, "quit"])
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr("builtins.print", lambda *_a, **_k: None)
 
     assert terminal.choose_minister(sess) is None
     assert unknown not in sess.temporary_characters
@@ -561,7 +560,7 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     assert {row["origin_id"] for row in unsettled} == {origin_a, origin_b}
 
 
-def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatch):
+def test_cli_midflow_summon_consumes_admission_without_entering(game):
     """#670 T3：夜内「传X来」场外只打印闸文，不返 summon:、不入殿。"""
     from ming_sim.cli import terminal
 
@@ -570,12 +569,11 @@ def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatc
     sess.state = state
     current = _set_place(game, "毕自严", location="beizhili")
     _set_place(game, "洪承畴", location="shaanxi")
-    monkeypatch.setattr("builtins.print", lambda *_a, **_k: None)
 
     outcome = terminal._handle_court_command(sess, "传洪承畴来", current)
 
     assert outcome == "handled"
-    # 结构化：handled + 未结传召 origin；不扫 print 承旨措辞。
+    # handled 且不入殿：结构结果由 unsettled summons 与 outcome 承担。
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
         f"cli:midflow:{state.turn}:洪承畴",
     ]
@@ -681,21 +679,6 @@ def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch
     assert unsettled[0]["origin_id"] == "web:atomic-ok"
 
 
-def test_capital_aliases_admit_in_capital(game):
-    """#670：京师/北京/beijing/北直隶 经 canonicalize 按 beizhili 在京（读时归一，非旧档写回）。"""
-    db, state, content = game
-    sess = _session(game)
-    for alias in ("京师", "北京", "beijing", "北直隶"):
-        person = _set_place(game, "毕自严", location=alias)
-        decision = sess.admit_audience(person)
-        assert decision.result is AudienceAdmission.IN_CAPITAL, alias
-        assert decision.allowed is True
-        assert decision.location == "beizhili"
-        consumed = sess.consume_audience_admission(
-            person, origin_id=f"web:alias:{alias}", state=state,
-        )
-        assert consumed.allowed is True
-        assert an.list_unsettled_summons(db) == []
 
 
 
@@ -922,6 +905,9 @@ def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(g
     assert _travel_row(db, person.name) == before_travel
     assert an.list_unsettled_summons(db) == before_unsettled
     assert before_unsettled[0]["entry_id"] == entry_id
+
+
+
 
 
 

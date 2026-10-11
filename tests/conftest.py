@@ -334,31 +334,26 @@ def _isolated_user_data_dir(tmp_path):
     （实证 18 包 75MB + 假行混真 jsonl + attempt 序号灌高）。各用例自己 setenv 指
     自己的 tmp_path 仍可覆盖本兜底（后设者胜）。
 
-    同步把 import 时钉死的 user_data 常量（``UPLOAD_PORTRAIT_DIR`` /
-    ``RUNTIME_LLM_PATH``）拨到本用例 tmp——否则 env 改了
+    同步把 import 时钉死的 user_data 常量（``RUNTIME_LLM_PATH``）拨到本用例 tmp——否则 env 改了
     常量仍指仓内 ``data/``，xdist 多 worker 会抢同一固定路径（#1233 刀2 gate）。
 
     用独立 MonkeyPatch 实例而非共享的 monkeypatch fixture：后者与测试同一实例，
     测试里 monkeypatch.undo() 会把本兜底一并撤掉（实证 test_noready_recovery
     undo 后 settle 把空目录建回真实 data/）。"""
     import ming_sim.llm_config as _llm_config
-    import web_app as _web_app
 
     user_root = tmp_path / "user_data"
-    portrait_dir = user_root / "uploads" / "portraits"
-    portrait_dir.mkdir(parents=True, exist_ok=True)
+    user_root.mkdir(parents=True, exist_ok=True)
 
     mp = pytest.MonkeyPatch()
     mp.setenv("MING_SIM_USER_DATA_DIR", str(user_root))
-    mp.setattr(_web_app, "UPLOAD_PORTRAIT_DIR", str(portrait_dir))
     mp.setattr(_llm_config, "RUNTIME_LLM_PATH", str(user_root / "runtime_llm.json"))
     yield
     mp.undo()
 
 
 def open_hall_turn(
-    db, state, minister_name, *, agno_session_id="", agno_runs_before=0, route="",
-    **_ignored,
+    db, state, minister_name, *, agno_session_id="", agno_runs_before=0,
 ):
     """测试 setup（非生产 API）：开夜 + 建轮 + 具名大臣 ensure_summon_enter。
 
@@ -457,6 +452,8 @@ def stub_scene_agent(monkeypatch, agent):
         def __init__(self, inner):
             self._inner = inner
             self.name = getattr(inner, "name", "scene")
+            # transport bind_transport_sdk_budget 读 agent.model；须透传真 model。
+            self.model = getattr(inner, "model", None)
 
         def run(self, *a, **k):
             out = self._inner.run(*a, **k) if hasattr(self._inner, "run") else self._inner
@@ -522,34 +519,44 @@ def _offline_scene_beat_generator():
     mp.undo()
 
 
-@pytest.fixture
-def _atomic_connless_test_shell_compat():
-    """#542：无 conn 轻壳测试显式 opt-in 的 atomic 兼容（非 autouse）。
+def stub_webgame_boundary(monkeypatch) -> None:
+    """WebGame 外部 LLM 边界中和：runtime 配置与高亮判官（单权威；#1847 D14）。
 
-    生产 chat/retry/stream 落回话无条件 `with atomic(self.db)`；真实 DB 测试默认
-    走生产 atomic。仅轻壳（故意无 conn，以保持 stub 缝）请求本 fixture：
-    missing conn → no-op CM；真 _SuspendableConnection 仍走真实 atomic。
+    #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
     """
-    import contextlib
-
-    import ming_sim.applier as applier
     import web_app
 
-    real_atomic = applier.atomic
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
 
-    @contextlib.contextmanager
-    def atomic_for_tests(db):
-        if getattr(db, "conn", None) is None:
-            yield
-            return
-        with real_atomic(db):
-            yield
 
-    mp = pytest.MonkeyPatch()
-    mp.setattr(applier, "atomic", atomic_for_tests)
-    mp.setattr(web_app, "atomic", atomic_for_tests)
-    yield
-    mp.undo()
+@pytest.fixture
+def webgame_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
+    """真实 WebGame 的环境与外部边界（新档、temp DB）；本夹具不构造 WebGame。
+
+    需在同一用例内多次开档（关档重开、对账）的用例请求本夹具，自行构造。
+    """
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    stub_webgame_boundary(monkeypatch)
+
+
+@pytest.fixture
+def web_game(webgame_env, monkeypatch):
+    """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 与动作级 LLM 边界中和。
+
+    单权威开局/生命周期夹具（#1847 消费者闭包复用）。测试只经本夹具取 runtime，
+    不得平行复制 env/API key/WebGame 构造与 session.close teardown。
+    """
+    import web_app
+
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    try:
+        yield game
+    finally:
+        game.session.close()
 
 
 @pytest.fixture(autouse=True)

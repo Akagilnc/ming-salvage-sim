@@ -11,6 +11,16 @@ from ming_sim.simulation import EMPTY_EXTRACTION
 from types import SimpleNamespace
 
 
+
+def _realize_fork(db, state, did):
+    """经现役写口造真实分叉（不替换读端）：有奏报『有成』、执行格 transformed、旨外 durable 经济效果。"""
+    db.record_dossier_progress(int(did), int(state.turn), "有成", "奏报有成")
+    db.conn.execute("UPDATE decree_dossiers SET execution_outcome='transformed' WHERE id=?", (int(did),))
+    db.record_issue_economy_move(
+        state, "国库", -3, "旨外", "旨外测试", origin_ref=f"dossier:{int(did)}", beyond_intent=1,
+    )
+    db.conn.commit()
+
 def _bound_case(db, state):
     army = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
     executor = db.conn.execute("SELECT name FROM characters WHERE status='active' LIMIT 1").fetchone()[0]
@@ -28,13 +38,10 @@ def _bound_case(db, state):
 
 
 
-def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypatch):
+def test_exposure_uses_single_dispatcher_and_projects_exact_case(game):
     db, state, _ = game
     did, issue_id, _, executor = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) VALUES (?,?, '稽核','查账')",
         (did, did),
@@ -42,14 +49,14 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
     assert write_exposure_todos(db, state) == 1
     todo = db.list_next_audience_todos(status="pending")[0]
     assert audience_todo_lane(ENTRY_KIND) == "covert_levy"
-    scene = list_due_review_scenes(db, state)[0]
+    scene = list_due_review_scenes(db)[0]
     assert scene["kind"] == ENTRY_KIND
     assert scene["dossier_id"] == did and scene["executor_id"] == executor
     assert scene["channels"] == ["稽核"]
     assert build_due_review_input(db, todo)["commitment_ref"] == issue_id
 
 
-def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
+def test_same_segment_denunciation_creates_exposure_todo(game):
     from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import dispatch_declaration
     from tests.test_faction_denunciation_627 import _enemy_accuser
@@ -58,10 +65,7 @@ def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
     did, _, _, executor = _bound_case(db, state)
     faction = db.conn.execute("SELECT faction FROM characters WHERE name=?", (executor,)).fetchone()[0]
     accuser = _enemy_accuser(db, faction)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     dispatch_declaration(
         db, state,
         {"effects": {"faction_denunciations": [{
@@ -81,10 +85,7 @@ def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
 
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
         "VALUES (?,?,'稽核','查账')", (did, did),
@@ -97,13 +98,10 @@ def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
 
 
 
-def test_rejected_canonical_results_neither_consume_nor_create_channel(game, monkeypatch):
+def test_rejected_canonical_results_neither_consume_nor_create_channel(game):
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
         "VALUES (?,?, '稽核','查账')", (did, did),
@@ -134,16 +132,13 @@ def test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_ge
     assert write_exposure_todos(db, state) == 0  # #651 additionally requires actual effect
 
 
-def _exposed_todo(db, state, monkeypatch, did):
+def _exposed_todo(db, state, did):
     db.conn.execute(
         "UPDATE decree_dossiers SET promulgation_decision='promulgated' WHERE id=?", (did,)
     )
     db.record_dossier_progress(did, state.turn, "有成", "军饷已有着落", commit=False)
     db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=True, commit=False)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
         "VALUES (?,?, '稽核','查账')", (did, did),
@@ -151,14 +146,14 @@ def _exposed_todo(db, state, monkeypatch, did):
     assert write_exposure_todos(db, state) == 1
 
 
-def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatch):
+def test_dispositions_consume_only_real_canonical_complete_legs(game):
     """#1843 reopen：查办经真实 dispatch 逐段入口落到待办 consumed（两腿齐备）。"""
     from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import dispatch_declaration
 
     db, state, content = game
     did, _, army_id, executor = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did)
+    _exposed_todo(db, state, did)
     origin = f"dossier:{did}"
     other = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND name<>? LIMIT 1", (executor,)
@@ -215,10 +210,10 @@ def _promulgated_prohibition(db, state, exposed_id):
     return prohibition_id
 
 
-def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(game, monkeypatch):
+def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(game):
     db, state, content = game
     did, _, army_id, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did)
+    _exposed_todo(db, state, did)
     origin = f"dossier:{did}"
     key = next(iter(db.get_fiscal_config()))
     db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (army_id,))
@@ -233,14 +228,14 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     assert active_prohibition_dossier(db, did)["id"] == prohibition_id
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert settle_exposure_from_canonical_actions(db, state, {}) == 0
-    scene = list_due_review_scenes(db, state)[0]
+    scene = list_due_review_scenes(db)[0]
     assert scene["decision"] == "禁摊派" and scene["shortfall_reopened"] is True
     assert scene["available_dispositions"] == []
     assert scene["army_pay_fact"]["arrears"] == 10.0
 
     # 默许：两腿齐备经真实 dispatch 入口 → 待办 consumed（#1843 reopen）。
     did2, _, _, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did2)
+    _exposed_todo(db, state, did2)
     origin2 = f"dossier:{did2}"
     todo2 = int(db.list_next_audience_todos(status="pending")[-1]["id"])
     from ming_sim.applier import Provenance
@@ -279,10 +274,10 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     assert json.loads(row["payload_json"] or "{}").get("decision") == "默许"
 
 
-def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, monkeypatch):
+def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did)
+    _exposed_todo(db, state, did)
     db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
     _promulgated_prohibition(db, state, did)
 
@@ -290,10 +285,10 @@ def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, mo
     assert db.list_next_audience_todos(status="pending") == []
 
 
-def test_prohibition_reminder_is_consumed_after_later_payoff(game, monkeypatch):
+def test_prohibition_reminder_is_consumed_after_later_payoff(game):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did)
+    _exposed_todo(db, state, did)
     db.conn.execute("UPDATE armies SET arrears=6, province_pay_arrears=0, central_pay_arrears=6 WHERE id=?", (army_id,))
     _promulgated_prohibition(db, state, did)
 
@@ -383,11 +378,11 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 6
 
 
-def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, monkeypatch):
+def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game):
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
     other, _, _, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did)
+    _exposed_todo(db, state, did)
     key = "禁令反冲_base"
     apply_score_extraction(db, state, {"fiscal_creates": [{
         "key": key, "account": "国库", "direction": "income", "init_value": 5,
@@ -409,7 +404,7 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
 
     # A second key whose contribution is already fully displaced still gets a zero receipt.
     did2, _, _, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did2)
+    _exposed_todo(db, state, did2)
     key2 = "零值回执_base"
     apply_score_extraction(db, state, {"fiscal_creates": [{
         "key": key2, "account": "国库", "direction": "income", "init_value": 1,
@@ -432,11 +427,11 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
     assert db.get_fiscal_config()[key2] == 3
 
 
-def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
+def test_prohibition_uses_only_current_canonical_incarnation(game):
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
     other, _, _, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did)
+    _exposed_todo(db, state, did)
     origin, other_origin = f"dossier:{did}", f"dossier:{other}"
     key = "转世税_base"
     apply_score_extraction(db, state, {"fiscal_creates": [{
@@ -462,10 +457,10 @@ def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
     assert db.get_fiscal_config()[key] == 10
 
 
-def test_prohibition_removes_live_covert_creation_without_rewriting_history(game, monkeypatch):
+def test_prohibition_removes_live_covert_creation_without_rewriting_history(game):
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did)
+    _exposed_todo(db, state, did)
     origin = f"dossier:{did}"
     apply_score_extraction(db, state, {"fiscal_creates": [{
         "key": "暗渠新项_rate", "account": "国库", "direction": "income", "init_value": 6,
@@ -484,12 +479,12 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
     assert [row["key"] for row in tombstones] == ["暗渠新项_base", "暗渠新项_rate"]
 
 
-def test_zero_pay_receipts_are_not_durable_tacit_effects(game, monkeypatch):
+def test_zero_pay_receipts_are_not_durable_tacit_effects(game):
     from ming_sim.issues import apply_score_extraction
 
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
-    _exposed_todo(db, state, monkeypatch, did)
+    _exposed_todo(db, state, did)
     db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0")
     origin = f"dossier:{did}"
     directed = apply_score_extraction(db, state, {"economy_moves": [{
@@ -526,15 +521,12 @@ def test_force_promulgated_history_is_the_canonical_prohibition_authority(game):
     assert active_prohibition_dossier(db, exposed)["id"] == prohibition
 
 
-def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game, monkeypatch):
+def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game):
     from ming_sim.supervision import compose_denunciation_origin
 
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     values = (state.turn, "甲", "阉党", "乙", "东林", did, compose_denunciation_origin(is_true=False), "{}", "诬告")
     db.conn.execute(
         "INSERT INTO faction_denunciations(turn,accuser_name,accuser_faction,subject_name,"
@@ -552,13 +544,10 @@ def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game,
 
 
 
-def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
+def test_population_transfer_is_the_self_grown_unrest_channel(game):
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute("UPDATE classes SET population=0 WHERE name='农民' AND region_id='shaanxi'")
     extracted = {"population_transfers": [{
         "origin_ref": f"dossier:{did}", "reason": "摊派", "source": "农民@shaanxi",

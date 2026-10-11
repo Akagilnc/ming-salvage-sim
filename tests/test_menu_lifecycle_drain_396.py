@@ -10,6 +10,7 @@ import time
 from types import SimpleNamespace
 
 import web_app
+from tests.conftest import stub_webgame_boundary
 from tests.wait_utils import reset_menu_path_leases, wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
 
@@ -125,6 +126,24 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     wait_until(lambda: closed == [1])
     assert not gate.locked()
 
+
+
+def test_get_main_db_path_prefers_active_db_over_launch_env(monkeypatch, tmp_path):
+    """#402 R1（Codex）：重启后 active_db.txt 必须压过启动 env，才能继续 new_game 切出的新主库。"""
+    env_db_path = str(tmp_path / "launch_env.db")
+    active_db_path = str(tmp_path / "active_from_new_game.db")
+    monkeypatch.setenv("MING_SIM_DB", env_db_path)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    with open(web_app.user_data_path("active_db.txt"), "w", encoding="utf-8") as f:
+        f.write(active_db_path)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    stub_webgame_boundary(monkeypatch)
+    game = web_app.WebGame(fresh=False)
+    try:
+        assert game.db_path == active_db_path
+    finally:
+        game.session.close()
 
 
 def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_path):

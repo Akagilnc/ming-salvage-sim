@@ -156,7 +156,7 @@ def _emit_late_pair(db, state, content, monkeypatch, first, second, *, minister,
             )
             mid = db.append_chat_message(minister, state.turn, "user", text)
             db.update_chat_turn_messages(ctid, user_message_id=mid)
-            reply = sess.scene_chat(text, chat_turn_id=int(ctid), minister_name=minister)
+            reply = sess.scene_chat(text, chat_turn_id=int(ctid))
             fut = persist_and_schedule_scene(sess, db, reply, speaker=minister)
             assert fut is not None
             futures.append(fut)
@@ -181,7 +181,7 @@ def _staged_secret_order_rows(db, turn):
     ).fetchall()
 
 
-def _summonable_name(db, content) -> str:
+def _summonable_name(db) -> str:
     """任免候选要一个名册里的具名人物（场景标签/虚构人名会被 durable 拒收）。"""
     row = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
@@ -337,7 +337,7 @@ def _late_revision_and_approval(
         ctid = int(db.create_chat_turn(
             state, minister, "s", 0, night_id=night_id, status="active",
         ))
-        reply = sess.scene_chat(words, chat_turn_id=ctid, minister_name=minister)
+        reply = sess.scene_chat(words, chat_turn_id=ctid)
         return ctid, reply
 
     revision_ctid, revision_reply = _turn("改中旨径发。")
@@ -622,7 +622,7 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
     ctid = int(db.create_chat_turn(
         state, minister, "s", 0, night_id=night_id, status="active",
     ))
-    reply = sess.scene_chat("应允查办。", chat_turn_id=ctid, minister_name=minister)
+    reply = sess.scene_chat("应允查办。", chat_turn_id=ctid)
     fut = persist_and_schedule_scene(sess, db, reply, speaker=minister)
     assert fut is not None
     with pytest.raises(sqlite3.DatabaseError if fault == "sqlite" else ValueError):
@@ -846,7 +846,7 @@ def test_late_translated_appointment_hit_keeps_its_source_night(game, monkeypatc
     """补译既有任免：收夜窗口与已封夜都落在源夜源轮，应允后成案，撤回不复活。"""
     db, state, content = game
     minister = _minister(db)
-    appointee = _summonable_name(db, content)
+    appointee = _summonable_name(db)
     first = _emit(
         db, state, content, monkeypatch,
         {"commissions": [{
@@ -958,7 +958,7 @@ def test_secret_order_progress_is_stored_verbatim(game, monkeypatch):
     state.period = 4
     db.save_state(state)
     raw_note = f"\n  已查得线索，仍须密访。  \n〔{int(state.year)}年1月〕旧报未结。\n"
-    other = _summonable_name(db, content)
+    other = _summonable_name(db)
     progress = {
         "commissions": [{
             "text": "据实以闻。",

@@ -21,11 +21,7 @@ from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
 
 
-def _forbid_extractor(monkeypatch):
-    monkeypatch.setattr(
-        "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
-    )
-
+from tests.test_month_chain_1843 import _forbid_extractor
 
 def _stage_settled_ready_edict(db, state, minister, *, delta=-3):
     from ming_sim.declaration_dispatch import pending_action_decree_ref
@@ -170,20 +166,17 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
     )
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
+    from tests.test_web_audience_night_498 import _fake_settlement_llm
+    _fake_settlement_llm(monkeypatch)
     failed = {"once": True}
 
     def produce(*_a, **_k):
         if failed["once"]:
             failed["once"] = False
             raise LLMUnavailable("catch-up exhausted")
-        return {
-            "verdict": {"decision": "promulgated"},
-            "declaration": {"effects": {}},
-            "questions": None,
-            "forecast_text": "补跑完成",
-        }
+        return "补跑完成"
 
-    monkeypatch.setattr(decree_forecast, "produce_forecast_product", produce)
+    monkeypatch.setattr(decree_forecast.agents, "run_agent_text", produce)
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *_a, **_k: "")
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
@@ -282,7 +275,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
         )
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate_fail)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate_fail)
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
 
@@ -294,6 +287,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
+    assert chain.get("world_text") == "世界段已成文。"
     assert chain.get("world_text_ready") is True
     assert not chain.get("world_committed")
     assert db.staged_declarations.is_settled(ref)
@@ -306,7 +300,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
         translate_calls.append("ok")
         return {"effects": {}}
 
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate_ok)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate_ok)
     monkeypatch.setattr(
         month_chain, "run_world_segment_text",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not repush world")),
@@ -321,21 +315,10 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -5
 
 
-def test_settlement_recovery_projects_month_call_failure(
-    game, monkeypatch, tmp_path, _offline_scene_beat_generator,
-):
+def test_settlement_recovery_projects_month_call_failure(web_game, monkeypatch):
     """核账期投影交出错误原文、错误包路径与可重试（#1854 只承接呈现）。"""
     import ming_sim.month_chain as month_chain
-    import web_app
 
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    web_game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", web_game)
     db, state = web_game.db, web_game.state
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
@@ -377,13 +360,13 @@ def test_settlement_recovery_projects_month_call_failure(
     recovery_again = web_game.state_payload().get("settlement_recovery")
     assert isinstance(recovery_again, dict)
     assert recovery_again.get("error_pack_path") == ""
-    assert recovery_again.get("error_pack_path") != first_pack
     chain_again = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
-    failure_again = chain_again.get("call_failure") or {}
-    assert failure_again.get("kind") == "model_exhausted"
-    web_game.session.close()
+    assert recovery_again.get("message") == (
+        (chain_again.get("call_failure") or {}).get("message")
+    )
+    assert (chain_again.get("call_failure") or {}).get("kind") == "model_exhausted"
 
 
 def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
@@ -463,7 +446,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
         }]}}
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     failed = {"done": False}
     original_commit = db.conn.commit
 
@@ -543,7 +526,7 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
     monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}},
+        "ming_sim.month_translate._default_month_translate_runner", lambda *_a, **_k: {"effects": {}},
     )
     real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
     calls = {"n": 0}
@@ -599,7 +582,7 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
     monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}},
+        "ming_sim.month_translate._default_month_translate_runner", lambda *_a, **_k: {"effects": {}},
     )
     real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
     calls = {"n": 0}

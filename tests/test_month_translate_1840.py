@@ -113,6 +113,7 @@ def _region_id(db) -> str:
 
 
 
+
 def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_order(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -278,6 +279,7 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
 
 
 
+
 def test_world_segment_failure_rolls_back_only_current_segment(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -370,6 +372,8 @@ def test_world_segment_effects_use_frozen_visible_affairs(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM rejection_reports WHERE category='invalid_enum'"
     ).fetchone()[0] >= 1
+
+
 
 
 

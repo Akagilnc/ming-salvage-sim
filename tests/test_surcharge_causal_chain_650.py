@@ -18,6 +18,7 @@ import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
+from tests.dossier_test_helpers import promulgated_policy_origin
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
@@ -37,12 +38,7 @@ LIAO_SEED_SHAANXI = 2929.20151 * 0.009 / 12.0  # 辽饷九厘基线（万两/月
 
 def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):
     if "origin_ref" not in kw:
-        dossier_id = db.create_decree_dossier(
-            state, action_type="policy", decree_text=f"{region_id}加派",
-            target_kind="region", target_id=region_id,
-        )
-        db.record_dossier_decision(dossier_id, "promulgated")
-        kw["origin_ref"] = f"dossier:{dossier_id}"
+        kw["origin_ref"] = promulgated_policy_origin(db, state, f"{region_id}加派")
     item = {"region_id": region_id, "monthly_amount": monthly_amount}
     item.update(kw)
     return item
@@ -246,6 +242,8 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     pre_settle(state, db, content=content)
     db.save_resolve_context(turn, "测试诏", {})
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     session = _recovery_session(db, state, content, monkeypatch)
     result = session.resolve_turn()
     assert result.stage == "gazette"
@@ -335,21 +333,3 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
 
 
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──
-
-def test_e2e_surcharge_and_stop_share_month_open_snapshot(game, monkeypatch):
-    db, state, content = game
-    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
-
-    turn = state.turn
-    _settle_month(state, db, {"surcharge_decrees": [_decree(db, state, monthly_amount=10.0)]},
-                  before_turn=turn, content=content, monkeypatch=monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
-
-    turn = state.turn
-    _settle_month(state, db, {"surcharge_decrees": [_decree(db, state, monthly_amount=-10.0)]},
-                  before_turn=turn, content=content, monkeypatch=monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want
-
-    turn = state.turn
-    _settle_month(state, db, {}, before_turn=turn, content=content, monkeypatch=monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want

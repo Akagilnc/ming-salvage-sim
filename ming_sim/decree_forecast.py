@@ -168,7 +168,7 @@ def forecast_snapshot(
     dest_parent = Path(world_materials_root(db, state)).parent / "decree-forecast"
     prepared = prepare_world_materials(db, state, dest_root=dest_parent)
     try:
-        grounding, refs = _frozen_effect_refs(db, turn, payload)
+        grounding, refs = _frozen_effect_refs(db, turn)
         # 夜里拨银还没有案卷。目录与本旨身份用这道暂存自己的 decree_ref，
         # 不用 MAX(id)+1 猜号——两道同夜预推会猜到同一个未来号，落账时串路。
         # 猜号只留在判官候选的整数 id 上（批红契约要正整数），不进护送目录。
@@ -318,10 +318,10 @@ def _append_this_decree_escort_grounding(
 
 
 def _frozen_effect_refs(
-    db: Any, turn: int, payload: Dict[str, Any],
+    db: Any, turn: int,
 ) -> tuple[str, dict]:
     """#1840：转译输入与暂存落账共用这一份可见引用，不另建账。"""
-    refs = _visible_effect_refs(db, turn, payload)
+    refs = _visible_effect_refs(db, turn)
     return build_translation_target_grounding(db) + _effect_ref_grounding(refs), refs
 
 
@@ -374,7 +374,7 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
                 transport_policy=audience_transport_policy(),
             )
         else:
-            raw = decree.stub_promulgation_verdicts([candidate], session.state)
+            raw = decree.stub_promulgation_verdicts([candidate])
         verdicts = decree.validate_promulgation_verdicts(
             raw, [candidate], session.db, prepared_context=snapshot["context"],
         )
@@ -426,9 +426,11 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
 def _forecast(
     session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
 ) -> None:
-    # 同一 decree_ref（记录号+版本，或留中案卷 id）已有暂存则不再跑模型链。
+    # 同一 decree_ref（记录号+版本，或留中案卷 id）当月已有暂存则不再跑模型链。
     try:
-        if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
+        if session.db.staged_declarations.staged_for(
+            str(snapshot["decree_ref"]), turn=int(snapshot["turn"]),
+        ):
             return
         product = produce_forecast_product(session, snapshot)
         verdict = product["verdict"]
@@ -443,7 +445,7 @@ def _forecast(
             from ming_sim.applier import Provenance, atomic
             from ming_sim.month_chain import _load_chain, _consume_call_failure_for_retry
             with atomic(session.db):
-                if not session.db.staged_declarations.staged_for(ref):
+                if not session.db.staged_declarations.staged_for(ref, turn=int(snapshot["turn"])):
                     stage_declaration(
                         session.db, decree_ref=ref, declaration=declaration,
                         turn=int(snapshot["turn"]), verdict=verdict,
@@ -544,7 +546,7 @@ def schedule_pending_decree_forecast(
     version = int(row["version"] or 1)
     key = ("decree_forecast", action_id, version, nid)
     ref = _current_forecast_ref(session, key)
-    if ref is None or session.db.staged_declarations.staged_for(ref):
+    if ref is None or session.db.staged_declarations.staged_for(ref, turn=int(session.state.turn)):
         return False
     queue = get_session_write_queue(session)
     ticket = queue.claim_if_absent(

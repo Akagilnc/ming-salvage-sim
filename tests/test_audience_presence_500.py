@@ -83,28 +83,7 @@ def test_dismiss_noop_when_not_present(game):
 # ── AC1 真实入口 tracer：CLI 玩家「退下」口令 → 引擎告退账 → 名单即时去人 ──
 
 
-def _cli_session(db, state, content):
-    from types import SimpleNamespace
-
-    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
-        return SimpleNamespace(
-            answer="臣有本奏。", proposed_directive=None, court_action="",
-            next_minister="", secret_order_id=0, pending_action_id=0,
-        )
-
-    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        # #1842：CLI 殿上口令外问话走 scene_chat；替身委托既有 chat 同形。
-        return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
-
-    return SimpleNamespace(
-        db=db, state=state, content=content, temporary_characters=set(),
-        chat=chat, scene_chat=scene_chat,
-        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
-        schedule_pending_scene_translation=lambda result: None,
-        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
-        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
-        close_night_after_chat_if_needed=lambda *_a, **_k: None,
-    )
+from tests.month_chain_helpers import make_light_session as _cli_session
 
 
 def _active_minister(db, content):
@@ -123,6 +102,10 @@ def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
     db, state, content = game
     character = _active_minister(db, content)
     session = _cli_session(db, state, content)
+    from types import SimpleNamespace
+    from tests.conftest import stub_scene_agent
+    session.llm_config = SimpleNamespace(channel="api")
+    stub_scene_agent(monkeypatch, SimpleNamespace(content="臣有本奏。", tools=[]))
     answers = iter(["退下"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
@@ -141,27 +124,19 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
     db, state, content = game
     character = _active_minister(db, content)
     session = _cli_session(db, state, content)
+    from types import SimpleNamespace
+    from tests.conftest import stub_scene_agent
+    session.llm_config = SimpleNamespace(channel="api")
+    stub_scene_agent(monkeypatch, SimpleNamespace(content="臣有本奏。", tools=[]))
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    closed_nid: dict[str, int] = {}
-
-    # #526：CLI 退朝走收夜；本测只证「无个人告退账」，收夜本体 stub 成功。
-    # #1353：生产 epilogue 传 write_gate=…；假体须收 **kwargs，禁 TypeError。
-    def _close_ok(court_action: str, **_kwargs) -> None:
-        assert court_action == "court_break"
-        open_n = an.get_open_night(db)
-        assert open_n is not None
-        nid = int(open_n["id"])
-        closed_nid["id"] = nid
-        an.close_night(db, state, night_id=nid, content=content)
-
-    session.close_night_after_chat_if_needed = _close_ok
-    session.schedule_close_night_after_chat_if_needed = _close_ok
+    nid = int(an.get_open_night(db)["id"])
     answers = iter(["朕问卿边事如何？", "退朝"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     assert term.minister_chat(session, character) == "court_break"
+    from tests.test_session_write_queue_1353 import wait_pending_writes
+    wait_pending_writes(session)
 
-    nid = closed_nid["id"]
     exits = [
         e for e in an.list_ledger(db, nid)
         if TAG_EXIT in e["tags"] and character.name in e["person_names"]
@@ -172,40 +147,6 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
 
 # ── L1 R2：court_action=dismiss 单缝——非流式 web /api/audience/chat
 #          与 CLI tool 路共 GameSession.chat 产源，令退落告退账、名单即时去人 ──
-
-
-def _session_double(db, state, content, registry):
-    from types import SimpleNamespace
-    from ming_sim.session import GameSession
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = registry
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    return sess
-
-
-def _tool_registry(tools):
-    from types import SimpleNamespace
-
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(content="臣领旨。", tools=list(tools))
-
-    class Registry:
-        def get(self, _character, **_kw):
-            return Agent()
-
-
-    return Registry()
-
-
-
-
 
 
 # ── L2：告退后再宣入须重新落入殿账（present_names_at 单一在场真源）──────────

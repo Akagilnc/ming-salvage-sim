@@ -108,9 +108,9 @@ def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
     assert len(lines) == 1
 
 def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
-    """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""
+    """SettlementAbort 在 /api/decree/issue/stream 回结构化 SSE error，玩家看得到指引。"""
     import asyncio
-    from fastapi import HTTPException
+    import json
     import web_app
     from ming_sim.exceptions import SettlementAbort
 
@@ -136,13 +136,23 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
 
     monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
 
-    with pytest.raises(HTTPException) as ei:
-        web_app.api_issue_decree()
+    async def _consume():
+        response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
+        chunks = [
+            chunk.decode() if isinstance(chunk, bytes) else chunk
+            async for chunk in response.body_iterator
+        ]
+        return "".join(chunks)
 
-    assert ei.value.status_code != 500
-    assert ei.value.detail["stage"] == "extract"
-    assert ei.value.detail["error_pack_path"] == "/tmp/x"
-    assert ei.value.detail["turn"] == 3
+    serialized = asyncio.run(_consume())
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    events = _parse_sse(serialized)
+    assert events, serialized
+    assert events[-1][0] == "error", events[-1]
+    detail = events[-1][1]
+    assert detail["stage"] == "extract"
+    assert detail["error_pack_path"] == "/tmp/x"
+    assert detail["turn"] == 3
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1

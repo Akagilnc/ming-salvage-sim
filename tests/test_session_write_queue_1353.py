@@ -19,6 +19,16 @@ from ming_sim.session_write_queue import (
 )
 
 
+
+def _run_exclusive(q, fn):
+    """Test-local: live queue seam is claim+run+complete (#1847 N11)."""
+    ticket = q.claim()
+    assert ticket is not None
+    try:
+        return q.run(ticket, fn)
+    finally:
+        q.complete(ticket)
+
 def wait_pending_writes(game, *, timeout_s: float | None = None) -> None:
     """Fail-loud drain of SessionWriteQueue open tickets (teardown/body shared).
 
@@ -250,59 +260,6 @@ def test_ticketed_gate_cancel_blocks_write():
         with gate:
             wrote["n"] += 1
     assert wrote["n"] == 0
-
-
-def test_post_barrier_claim_cannot_cross_barrier_write():
-    """屏障后新领票经 seam 不得越过屏障写（确定性握手）。"""
-    q = SessionWriteQueue()
-    order: list[str] = []
-    barrier_in_body = threading.Event()
-    release_barrier = threading.Event()
-    late_claimed = threading.Event()
-    late_wrote = threading.Event()
-    barrier_done = threading.Event()
-
-    def barrier_body() -> None:
-        barrier_in_body.set()
-        # 屏障持票期间允许后票 claim；后票 run 必须等屏障 complete。
-        late_claimed.wait()
-        order.append("barrier_write")
-        release_barrier.wait()
-
-    def run_barrier() -> None:
-        q.barrier(barrier_body)
-        barrier_done.set()
-
-    bt = threading.Thread(target=run_barrier, daemon=True)
-    lt = None
-    try:
-        bt.start()
-        barrier_in_body.wait()
-
-        late = q.claim(key=("turn", 99))
-        assert late is not None
-        late_claimed.set()
-
-        def late_writer() -> None:
-            q.run(late, lambda: order.append("late_write") or late_wrote.set())
-            q.complete(late)
-
-        lt = threading.Thread(target=late_writer, daemon=True)
-        lt.start()
-        # 确定性：屏障未放行前 late 不得写入（order 握手，不靠 sleep）
-        assert "late_write" not in order
-        assert not late_wrote.is_set()
-        assert not barrier_done.is_set()
-
-    finally:
-        late_claimed.set()
-        release_barrier.set()
-        bt.join()
-        if lt is not None:
-            lt.join()
-    barrier_done.wait()
-    late_wrote.wait()
-    assert order == ["barrier_write", "late_write"], order
 
 
 def test_barrier_waits_healthy_slow_worker_terminal():

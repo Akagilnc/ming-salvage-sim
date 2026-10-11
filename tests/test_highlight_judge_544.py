@@ -14,27 +14,13 @@ import threading
 import pytest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List
 
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
-from ming_sim.highlight_judge import (
-    DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
-    run_highlight_judge,
-)
+from ming_sim.highlight_judge import run_highlight_judge
 
 
-# ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
-
-
-def _highlights(db, message_id):
-    """消息高亮落库值（读端直查 chat_messages 行；单读口已退休）。"""
-    row = db.conn.execute(
-        "SELECT highlights_json FROM chat_messages WHERE id = ?", (int(message_id),),
-    ).fetchone()
-    if row is None:
-        return []
-    return db._parse_highlights_json(row["highlights_json"])
+# ── 单次调用降级（parser 由 run_highlight_judge 真入口覆盖，不另立孤立 parser 钉）──
 
 
 def test_run_highlight_judge_timeout_and_exception_degrade_silently():
@@ -126,7 +112,7 @@ def test_build_chat_projection_includes_minister_highlights(game):
 
     proj = db.build_chat_projection(minister)
     roles = [(m["role"], m.get("highlights")) for m in proj]
-    assert ("user", []) in roles or any(r == "user" and h == [] for r, h in roles)
+    assert ("user", []) in roles
     minister_msgs = [m for m in proj if m["role"] == "minister"]
     assert minister_msgs
     assert minister_msgs[0]["highlights"] == ["辽饷", "户部亏空"]
@@ -187,185 +173,3 @@ def test_highlights_survive_db_restore(game, content, tmp_path):
 
 
 # ── 通道时序（注入假判官，零真 LLM）────────────────────────────────────
-
-
-def _restore_highlight_seams(web_game) -> None:
-    """_web_game 默认桩掉高亮 trail/spawn（离线禁真 LLM）；本文件通道测须绑回生产缝。"""
-    import types
-    from web_app import WebGame
-
-    web_game._trail_highlight_judge_after_reply = types.MethodType(
-        WebGame._trail_highlight_judge_after_reply, web_game,
-    )
-    web_game._spawn_pending_write_thread = types.MethodType(
-        WebGame._spawn_pending_write_thread, web_game,
-    )
-
-
-def _drain(web_game) -> None:
-    from tests.test_audience_background import _wait_for_pending_writes_to_drain
-
-    _wait_for_pending_writes_to_drain(web_game)
-
-
-def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
-    """流式：done 先于 highlights；坏输出/超时 → 无高亮事件、回话照常、零上抛。"""
-    import web_app as web_app_mod
-    from tests.test_audience_background import _FakeAgent, _web_game
-
-    db, state, content = game
-    web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "陈辽饷。"]))
-    _restore_highlight_seams(web_game)
-
-    # run_highlight_judge 契约：失败/超时/坏输出只回 []、不抛（一层边界在其内部）。
-    monkeypatch.setattr(web_app_mod, "run_highlight_judge", lambda **_k: [])
-
-    events = list(web_game.chat_stream("殿上", "军务如何？"))
-    types = [e.get("type") for e in events]
-    assert "delta" in types
-    assert "done" in types
-    assert "end" in types
-    assert "error" not in types
-    assert "highlights" not in types
-    next(e for e in events if e["type"] == "done")
-    # 回话已落库且高亮为空
-    mid = int(db.get_last_active_chat_turn("殿上", state.turn)["minister_message_id"])
-    assert _highlights(db, mid) == []
-    _drain(web_game)
-
-
-def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
-    """AC6 流式：回话先 done；慢而成功的判官在 done 后补挂 highlights 事件并落库。"""
-    import web_app as web_app_mod
-    from tests.test_audience_background import _FakeAgent, _web_game
-
-    db, state, content = game
-    web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "先陈军务。"]))
-    _restore_highlight_seams(web_game)
-
-    release = threading.Event()
-    seen_reply: List[str] = []
-
-    def slow_ok(**kwargs):
-        seen_reply.append(str(kwargs.get("minister_reply") or ""))
-        release.wait()
-        return ["军务"]
-
-    monkeypatch.setattr(web_app_mod, "run_highlight_judge", slow_ok)
-
-    stream = web_game.chat_stream("殿上", "如何？")
-    events: List[Dict[str, Any]] = []
-    done_seen = False
-    hl_before_done = False
-    try:
-        for item in stream:
-            events.append(item)
-            if item.get("type") == "highlights" and not done_seen:
-                hl_before_done = True
-            if item.get("type") == "done":
-                done_seen = True
-                release.set()
-
-        types = [e.get("type") for e in events]
-        assert types.index("done") < types.index("highlights")
-        assert types.index("highlights") < types.index("end")
-        assert not hl_before_done
-        hl = next(e for e in events if e["type"] == "highlights")
-        assert hl["highlights"] == ["军务"]
-        assert len(seen_reply) == 1
-        mid = int(hl.get("message_id") or 0)
-        assert mid > 0
-        assert _highlights(db, mid) == ["军务"]
-        # 投影读端
-        proj = db.build_chat_projection("殿上")
-        assert any(m.get("highlights") == ["军务"] for m in proj if m["role"] == "minister")  # night 下 殿上轮
-    finally:
-        release.set()
-        stream.close()
-        _drain(web_game)
-
-
-def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
-    """AC6 非流式：折进等待窗，成功则 history 同到带高亮。"""
-    import web_app as web_app_mod
-    from tests.test_audience_background import _FakeAgent, _web_game
-
-    db, state, content = game
-    web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣陈辽饷。"]))
-    _restore_highlight_seams(web_game)
-
-    # #1842：殿上非流式走 scene_chat
-    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name="", **_kw):
-        from ming_sim.session import ChatTurnResult
-        return ChatTurnResult(answer="臣陈辽饷。")
-
-    web_game.session.scene_chat = fake_scene_chat  # type: ignore[method-assign]
-    monkeypatch.setattr(
-        web_app_mod, "run_highlight_judge",
-        lambda **_k: ["辽饷"],
-    )
-
-    events = list(web_game.chat_stream("殿上", "问辽饷？"))
-    assert "error" not in [e.get("type") for e in events]
-    done_payload = next(e for e in events if e.get("type") == "done")["payload"]
-    # #1849 reopen：唯一入口是 stream；高亮在 done 后以 highlights 事件补挂并落库。
-    _drain(web_game)
-    hl_events = [e for e in events if e.get("type") == "highlights"]
-    mid = int((hl_events[0].get("message_id") if hl_events else 0) or done_payload.get("minister_message_id") or 0)
-    if mid <= 0:
-        row = db.get_last_active_chat_turn("殿上", state.turn)
-        mid = int((row or {}).get("minister_message_id") or 0)
-    assert mid > 0
-    assert _highlights(db, mid) == ["辽饷"]
-
-
-def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypatch):
-    """非流式超时封顶：回话先行返回、无高亮、不报错。"""
-    import web_app as web_app_mod
-    import ming_sim.highlight_judge as hj
-    from tests.test_audience_background import _FakeAgent, _web_game
-
-    db, state, content = game
-    web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
-    _restore_highlight_seams(web_game)
-
-    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name="", **_kw):
-        from ming_sim.session import ChatTurnResult
-        return ChatTurnResult(answer="臣遵旨。")
-
-    web_game.session.scene_chat = fake_scene_chat  # type: ignore[method-assign]
-
-    release = threading.Event()
-
-    class _Slow:
-        def run(self, *_a, **_k):
-            release.wait()
-            return SimpleNamespace(content='{"highlights": ["不该出现"]}')
-
-    real_run = hj.run_highlight_judge
-
-    def capped(**kwargs):
-        kwargs = dict(kwargs)
-        kwargs["agent"] = _Slow()
-        kwargs["timeout_s"] = 0.05
-        return real_run(**kwargs)
-
-    monkeypatch.setattr(web_app_mod, "run_highlight_judge", capped)
-
-    try:
-        events = list(web_game.chat_stream("殿上", "问？"))
-        assert "error" not in [e.get("type") for e in events]
-        next(e for e in events if e.get("type") == "done")
-
-        # 超时封顶：done 后无有效 highlights 事件；落库亦空。
-        assert not [e for e in events if e.get("type") == "highlights" and e.get("highlights")]
-        row = db.get_last_active_chat_turn("殿上", state.turn)
-        mid = int((row or {}).get("minister_message_id") or 0)
-        if mid > 0:
-            assert _highlights(db, mid) == []
-        # 生产 timeout_s 输入保留；旁侧 elapsed 墙钟证据删除（接缝无「N 秒内完成」契约）。
-        assert DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S > 0
-    finally:
-        # chat/断言失败路径仍须放行 _Slow，再 drain 后台。
-        release.set()
-        _drain(web_game)

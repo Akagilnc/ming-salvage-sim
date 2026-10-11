@@ -85,13 +85,15 @@ def test_dossier_link_rejection_stays_business_refusal_not_loud(game, monkeypatc
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "failed"
-    # 审计落在 durable 表；不另造 test-only list API（#1834 F22 / M4）。
-    audit = db.conn.execute(
-        "SELECT pending_action_id, target_dossier_id, relation_type "
-        "FROM decree_dossier_link_rejections WHERE pending_action_id=? "
-        "ORDER BY rowid",
-        (int(action_id),),
-    ).fetchall()
+    # 现役 durable 审计表：decree_dossier_link_rejections（不恢复已退役 list helper）。
+    audit = [
+        dict(row)
+        for row in db.conn.execute(
+            "SELECT pending_action_id, target_dossier_id, relation_type, note, reason "
+            "FROM decree_dossier_link_rejections WHERE pending_action_id=? ORDER BY id",
+            (action_id,),
+        ).fetchall()
+    ]
     assert audit
     assert int(audit[-1]["pending_action_id"]) == int(action_id)
     assert int(audit[-1]["target_dossier_id"]) == 999999
@@ -147,15 +149,11 @@ def test_ineligible_secret_order_is_business_refusal(game, monkeypatch):
     assert item["kind"] == "secret_order"
     assert item["pending_action_id"] == action_id
     assert item["assignee"] == assignee
-    from ming_sim.month_chain import _gazette_feed, _month_fact_materials
+    from ming_sim.month_chain import _month_fact_materials
 
-    assert not any(
-        row["category"] == "ineligible_power"
-        for row in _gazette_feed(db, state, {})["rejections"]
-    )
     assert any(
         row["category"] == "ineligible_power"
-        for row in _month_fact_materials(db, state, {}, include_secret_sources=True)["rejections"]
+        for row in _month_fact_materials(db, state, {})["rejections"]
     )
     turn = db.conn.execute(
         "SELECT extract_status, error_pack_path FROM chat_turns WHERE id=?", (ctid,),

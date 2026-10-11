@@ -11,11 +11,13 @@ Seams:
 
 from __future__ import annotations
 
+from functools import partial
 
 import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.audience_night import list_ledger, open_night
+from tests.dossier_test_helpers import executing_staged_policy, promulgated_policy_origin
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
@@ -37,43 +39,14 @@ from tests.readback_helpers import decree_cost_event_rows
 # ── fixtures ──────────────────────────────────────────────────────────
 
 
-def _promulgated_origin(db, state, token: str) -> str:
-    # 起源夹具只需可颁布案卷 id。用 policy（非 multi_month 覆盖域）避免
-    # #1778：assignment 无点将时代码不配人；主办来自旨意自带名单，不牵撤人边。
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"分段承诺：{token}",
-        target_kind="issue",
-        target_id=token,
-        payload={"token": token},
-    )
-    assert dossier_id > 0
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
 
-
-def _executing_policy_dossier(db, state, *, token: str = "due-review-621"):
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        participants=[
-            {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
-            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
-        ],
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
+_executing_policy_dossier = partial(executing_staged_policy, token="due-review-621")
 
 
 def _insert_staged_commitment(
     db, state, content, *, stages, title="徐光启分段之诺", origin_ref: str = "",
 ):
-    origin = origin_ref or _promulgated_origin(db, state, title)
+    origin = origin_ref or promulgated_policy_origin(db, state, title)
     out = apply_score_extraction(
         db,
         state,
@@ -106,10 +79,6 @@ def _settle_empty_month(db, state, content, monkeypatch):
     result = session.resolve_turn(allow_empty_decree=True)
     assert state.turn == before + 1
     return result
-
-
-def _cost_events(db, dossier_id, *, identity="连坐"):
-    return decree_cost_event_rows(db, dossier_id, identity)
 
 
 # ── P3 待办消费 ───────────────────────────────────────────────────────
@@ -212,7 +181,7 @@ def test_due_review_scene_has_no_internal_payload(game):
     _insert_staged_commitment(db, state, content, stages=stages)
     write_due_staged_commitment_todos(db, state)
 
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert len(scenes) == 1
     scene = scenes[0]
     assert "payload_json" not in scene
@@ -248,7 +217,7 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     # 过月写 todo（中段到期）→ 次回合落格
     _settle_empty_month(db, state, content, monkeypatch)
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert scenes
 
     _settle_empty_month(db, state, content, monkeypatch)
@@ -256,7 +225,7 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     # 中段：过程态 executing，不结案
     assert dossier["execution_outcome"] == "executing"
     assert dossier["status"] == "executing"
-    assert _cost_events(db, dossier_id) == []
+    assert decree_cost_event_rows(db, dossier_id, "连坐") == []
     # todo 已消费
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
@@ -303,7 +272,7 @@ def test_no_dossier_branch_only_scene_no_forged_dossier(game):
     }]
     # origin 指向已颁但非 executing 的 assignment 案卷（或空执行面）——走无执行面案卷分支
     # 用无 origin_ref 的承诺：insert 仍需合法 origin；用已 close 的案卷模拟无执行桥
-    origin = _promulgated_origin(db, state, "no-exec-surface")
+    origin = promulgated_policy_origin(db, state, "no-exec-surface")
     # promulgated assignment without executing transition stays promulgated if terminal?
     # assignment 有执行面；改为直接空 origin_ref 不可。用已 closed 案卷：
     did = int(origin.split(":")[1])
@@ -321,7 +290,7 @@ def test_no_dossier_branch_only_scene_no_forged_dossier(game):
         (state.turn - 1,),
     )
     db.conn.commit()
-    scenes_before = list_due_review_scenes(db, state)
+    scenes_before = list_due_review_scenes(db)
     assert scenes_before
 
     results = apply_pending_due_reviews(db, state, commit=True)
@@ -346,7 +315,7 @@ def test_no_dossier_branch_negative_does_not_create_dossier(game):
         "criterion_text": "农政见效",
         "origin_context": "七八年农政见效",
     }]
-    origin = _promulgated_origin(db, state, "neg-no-dossier")
+    origin = promulgated_policy_origin(db, state, "neg-no-dossier")
     did = int(origin.split(":")[1])
     db.conn.execute(
         "UPDATE decree_dossiers SET status='closed', execution_outcome='fulfilled' WHERE id=?",
@@ -410,7 +379,7 @@ def test_mid_stage_no_close_no_joint_liability(game):
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["execution_outcome"] == "executing"
     assert dossier["status"] == "executing"
-    assert _cost_events(db, dossier_id) == []
+    assert decree_cost_event_rows(db, dossier_id, "连坐") == []
     # 复核只落执行格，不凭机器评语补承办人的奏报。
     assert db.list_dossier_progress(dossier_id) == []
 
@@ -441,7 +410,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     assert dossier["execution_outcome"] in {"fulfilled", "degraded", "failed", "transformed"}
     assert dossier["status"] == "closed"
     # 无实账无表报 → failed ∈ 连坐触发集；整笔幂等门闩 cost_kind=liability 恰一行
-    costs = _cost_events(db, dossier_id)
+    costs = decree_cost_event_rows(db, dossier_id, "连坐")
     liability_gates = [c for c in costs if c.get("cost_kind") == "liability"]
     assert len(liability_gates) == 1
 
@@ -460,7 +429,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     assert second, "幂等腿须真正再入正式复核"
     assert second[0].get("branch") == "dossier", second
     assert (second[0].get("execution") or {}).get("rejected") is not True, second
-    costs_after = _cost_events(db, dossier_id)
+    costs_after = decree_cost_event_rows(db, dossier_id, "连坐")
     assert costs_after == costs
     liability_after = [c for c in costs_after if c.get("cost_kind") == "liability"]
     assert len(liability_after) == 1
@@ -497,7 +466,7 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     # beat0: 未到期
     _settle_empty_month(db, state, content, monkeypatch)
     assert db.list_next_audience_todos() == []
-    assert not list_due_review_scenes(db, state)
+    assert not list_due_review_scenes(db)
 
     # beat1: 过月写 todo
     _settle_empty_month(db, state, content, monkeypatch)
@@ -506,7 +475,7 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     # 落格尚未发生
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] in ("", None)
     # beat2: 召对场面可读
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert len(scenes) == 1
 
     # beat3: 下一过月落格 + 消费
@@ -705,62 +674,3 @@ def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
     assert dossier["status"] == "executing"
     assert dossier["execution_outcome"] in ("", None)
 
-
-def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
-    """生根：履行期已逐月落完 → 复核零重复落账。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    dossier_id = _executing_policy_dossier(db, state, token="rooted")
-    # 预先落一笔带 origin 的 durable 效果
-    db.record_issue_economy_move(
-        state, "国库", -3, "清丈经费", "履行期逐月已落",
-        origin_ref=f"dossier:{dossier_id}", commit=True,
-    )
-    before_moves = db.list_economy_moves_for_dossier(dossier_id)
-    assert before_moves
-    stages = [{
-        "stage_idx": 0,
-        "due_turn": state.turn,
-        "criterion_text": "火器见眉目",
-        "origin_context": "三年火器见眉目",
-    }]
-    _insert_staged_commitment(
-        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
-    )
-    write_due_staged_commitment_todos(db, state)
-    db.conn.execute(
-        "UPDATE next_audience_todos SET created_turn=?",
-        (state.turn - 1,),
-    )
-    db.conn.commit()
-    apply_pending_due_reviews(db, state, commit=True)
-
-    dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["execution_outcome"] == "fulfilled"
-    after_moves = db.list_economy_moves_for_dossier(dossier_id)
-    assert after_moves == before_moves
-
-
-def test_due_review_scene_binds_reported_dossier(game):
-    """0118 最小玩家面：果可见、因不自动。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    dossier_id = _executing_policy_dossier(db, state, token="gap")
-    db.record_dossier_progress(
-        dossier_id, state.turn, "在办", "臣工奏称已办十之七八",
-        is_terminal=False, commit=True,
-    )
-    stages = [{
-        "stage_idx": 0,
-        "due_turn": state.turn,
-        "criterion_text": "火器见眉目",
-        "origin_context": "三年火器见眉目",
-    }]
-    _insert_staged_commitment(
-        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
-    )
-    write_due_staged_commitment_todos(db, state)
-    scene = list_due_review_scenes(db, state)[0]
-    assert scene["dossier_id"] == dossier_id

@@ -13,7 +13,6 @@ import contextlib
 import json
 import logging
 import re
-import sqlite3
 import time
 import traceback
 from datetime import datetime, timezone
@@ -135,11 +134,14 @@ def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
     ]
     return max(tones or ["常行"], key=TRAVEL_SPEED_BY_TONE.__getitem__)
 _SUMMON_ORIGIN_PREFIX = "传召源#"
-# 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
-# 留侍／含糊收夜词表已退役（#1812 第5项）。
+
+# #526 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
+# #1812 待拍第5项：留侍／含糊收夜两句口令已撤销代码识别，只保留高置信收夜。
 CMD_CLOSE_NIGHT = "close_night"
 CMD_NONE = "none"
-_CMD_VERDICTS = frozenset({CMD_CLOSE_NIGHT, CMD_NONE})
+_CMD_VERDICTS = frozenset({
+    CMD_CLOSE_NIGHT, CMD_NONE,
+})
 
 METHOD_XUANRU = "宣入"
 METHOD_CHUANZHAO = "传召"
@@ -389,7 +391,6 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "kind": "ledger",
         })
     return out
-
 
 
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
@@ -975,8 +976,7 @@ def publish_night_directives(db: Any, night_id: int) -> None:
 
 
 def commit_late_night_approved(
-    db: Any, state: GameState, *, content: Any,
-    llm_config: Any = None, write_gate: Any = None,
+    db: Any, state: GameState, *, content: Any, write_gate: Any = None,
 ) -> None:
     """过月 join 后沿收夜提交、明发入口补完迟到应允（#1842：背书随载荷，不另补批）。"""
     nights = db.conn.execute(
@@ -1726,10 +1726,9 @@ def normalize_audience_command_verdict(raw: Any) -> str:
 
 
 def recognize_audience_command(message: str) -> str:
-    """显式退朝口令结构化判词。
+    """高置信收夜口令结构化判词（#526；#1812 撤销留侍／含糊两句旁路）。
 
-    确定性封闭集 COURT_BREAK；引擎不重解析散文。
-    留侍／含糊收夜词表已退役，不在此识别。
+    确定性封闭集仅 COURT_BREAK；引擎不重解析散文。
     不进 ACTION_CLUSTERS；非第二 parser（无自由散文正则启发）。
     """
     from ming_sim.constants import COURT_BREAK_COMMANDS
@@ -1871,14 +1870,11 @@ def set_night_protagonist(
     night_id: int,
     person_name: str,
     *,
-    reason: str = "translation",
     commit: bool = True,
 ) -> str:
     """写下本夜御前主角（#1838 / ADR 0158 决定 4）。
 
-    ``reason`` 仅作调用语义标注（``xuan`` = 皇帝亲口宣 X 当场先切；
-    ``translation`` = 转译声明），不进库、不驱动规则。代码只存声明/口令给出
-    的人名，不从戏文散文解析（ADR 0142）。
+    代码只存声明/口令给出的人名，不从戏文散文解析（ADR 0142）。
     """
     owns = _should_commit(db) if commit else False
     name = str(person_name or "").strip()
@@ -1993,120 +1989,6 @@ def ensure_summon_enter(
     )
 
 
-def rescript_summon_origin_ref(source_turn: int, idx: int, revision_round: int) -> str:
-    """#657 D.0 origin 公式唯一真源。"""
-    return f"rescript_draft:{int(source_turn)}:{int(idx)}:summon:r{int(revision_round)}"
-
-
-def rescript_summon_origin_consumed(
-    entry: Optional[Mapping[str, Any]],
-) -> bool:
-    """#1838 reopen / #657：已消费 ≔ origin 行存在 ∧ TAG_ENTER∈tags。
-
-    不再依赖旁白正文；入殿账正文恒空。
-    """
-    if entry is None:
-        return False
-    # 持久 tags 走故事账列表权威；腐坏响亮，不洗空（#1897 E1）。
-    tags = list(_json_list(entry.get("tags")))
-    return TAG_ENTER in tags
-
-
-def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
-    origin = str(origin or "").strip()
-    if not origin:
-        return None
-    row = db.conn.execute(
-        "SELECT * FROM story_ledger_entries WHERE origin_ref = ? LIMIT 1",
-        (origin,),
-    ).fetchone()
-    if row is None:
-        return None
-    raw = _row_dict(row)
-    return {
-        "id": int(raw["id"]),
-        "night_id": int(raw["night_id"]),
-        "body": str(raw.get("body") or ""),
-        "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
-        "origin_ref": str(raw.get("origin_ref") or ""),
-        "tags": list(_json_list(raw.get("tags"))),
-        "person_names": list(_json_list(raw.get("person_names"))),
-    }
-
-
-def prepare_rescript_summon_scaffold(
-    db: Any,
-    state: GameState,
-    *,
-    person_name: str,
-    origin_ref: str,
-    method: str = METHOD_XUANRU,
-    time_of_day: str = "",
-    location: str = "",
-) -> Dict[str, Any]:
-    """#1838 reopen / #657：批红召见只落入殿事实账。
-
-    返回 {entry_id, night_id, consumed: bool}。
-    已消费 ≔ origin_ref 行存在 ∧ TAG_ENTER；不再建 generating 对话轮、不依赖旁白正文。
-    幂等靠 origin_ref UNIQUE。
-    """
-    from ming_sim.applier import atomic
-
-    name = str(person_name or "").strip()
-    origin = str(origin_ref or "").strip()
-    if not name or not origin:
-        raise AudienceNightError("prepare_rescript_summon 缺 name/origin", code="bad_args")
-
-    existing = _ledger_by_origin_ref(db, origin)
-    if existing is not None:
-        return {
-            "entry_id": int(existing["id"]),
-            "chat_turn_id": int(existing.get("origin_chat_turn_id") or 0),
-            "night_id": int(existing["night_id"]),
-            "consumed": rescript_summon_origin_consumed(existing),
-        }
-
-    try:
-        with atomic(db):
-            night = get_open_night(db)
-            if night is None or str(night.get("status") or "") != NIGHT_STATUS_OPEN:
-                night = open_night(
-                    db, state,
-                    time_of_day=time_of_day, location=location,
-                )
-            night_id = int(night["id"])
-            entry_id = summon_enter(
-                db, night_id, name,
-                method=method,
-                origin_ref=origin,
-                commit=False,
-            )
-        return {
-            "entry_id": int(entry_id),
-            "chat_turn_id": 0,
-            "night_id": night_id,
-            "consumed": True,
-        }
-    except sqlite3.IntegrityError as exc:
-        unique_codes = {
-            getattr(sqlite3, "SQLITE_CONSTRAINT_UNIQUE", None),
-            getattr(sqlite3, "SQLITE_CONSTRAINT", None),
-        }
-        unique_codes.discard(None)
-        err_code = getattr(exc, "sqlite_errorcode", None)
-        if unique_codes and err_code not in unique_codes:
-            raise
-        again = _ledger_by_origin_ref(db, origin)
-        if again is None:
-            raise
-        return {
-            "entry_id": int(again["id"]),
-            "chat_turn_id": int(again.get("origin_chat_turn_id") or 0),
-            "night_id": int(again["night_id"]),
-            "consumed": rescript_summon_origin_consumed(again),
-        }
-
-
 def mark_actions_night_approved(
     db: Any, action_ids: Sequence[int], *, night_id: Optional[int] = None,
     source_chat_turn_id: int = 0,
@@ -2132,4 +2014,3 @@ def mark_actions_night_approved(
     return int(db.mark_pending_night_approved(
         action_ids, night_id=nid, source_chat_turn_id=ctid,
     ) or 0)
-

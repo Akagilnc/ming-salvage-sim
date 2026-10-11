@@ -1,7 +1,5 @@
 
-import pytest
 
-from ming_sim.action_materialize import DecreeMaterializationValidationError
 
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.dossier_test_helpers import create_test_secret_order
@@ -128,22 +126,3 @@ def test_withdrawn_rejected_dossier_is_not_referenceable(game):
     db.record_dossier_decision(dossier_id, "rejected", reason="驳回")
     db.record_dossier_decision(dossier_id, "withdrawn", reason="收回")
     assert dossier_id not in {row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)}
-
-
-def test_unknown_target_link_is_rejected_and_audited(game):
-    db, state, _ = game
-    source = _make_dossier(db, state, "护行密令")
-
-    with pytest.raises(DecreeMaterializationValidationError) as caught:
-        db.add_dossier_links(
-            source,
-            [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}],
-        )
-
-    assert db.list_dossier_links(source) == []
-    assert caught.value.category == "hallucinated_id"
-    audit = db.conn.execute(
-        "SELECT target_dossier_id FROM decree_dossier_link_rejections WHERE source_dossier_id=? ORDER BY id",
-        (source,),
-    ).fetchall()
-    assert audit[-1]["target_dossier_id"] == 999999

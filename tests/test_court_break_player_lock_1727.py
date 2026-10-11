@@ -12,22 +12,15 @@ D2/D3 是病因钉，修好后不要求常绿——本文件不收录。
 from __future__ import annotations
 
 import asyncio
-import json
 from types import SimpleNamespace
 
 import httpx
-import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from tests.conftest import stub_audience_translate, stub_scene_agent
-
-
-class _CannedExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"facts":[]}')
 
 
 
@@ -38,22 +31,6 @@ class _StreamFarewellAgent:
 
     def get_last_run_output(self):
         return None
-
-
-@pytest.fixture
-def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
-    yield game
-    try:
-        game.session.close()
-    except Exception:
-        pass
 
 
 def _active_minister(game) -> str:
@@ -74,18 +51,7 @@ def _client() -> httpx.AsyncClient:
     )
 
 
-def _parse_sse_chunk(buf: str) -> list[dict]:
-    events: list[dict] = []
-    for block in buf.split("\n\n"):
-        cur: dict = {}
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                cur["event"] = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                cur["data"] = line[len("data:"):].strip()
-        if cur.get("event"):
-            events.append(cur)
-    return events
+from tests.test_chat_stream_failpaths_393 import _parse_sse as _parse_sse_chunk
 
 
 def _named_scene_beats(scroll) -> list[str]:
@@ -142,12 +108,11 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
 
     stream_events = asyncio.run(_run_stream())
 
-    types = [str(ev.get("event") or "") for ev in stream_events]
+    types = [name for name, _ in stream_events]
     assert "error" not in types, stream_events
     assert "done" in types, stream_events
     assert "end" in types, stream_events
-    done_raw = next(ev for ev in stream_events if ev.get("event") == "done").get("data") or "{}"
-    done_payload = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
+    done_payload = next(data for name, data in stream_events if name == "done")
     assert isinstance(done_payload, dict), done_payload
     assert done_payload.get("court_action") == "court_break", done_payload
     assert barrier_at_done == [True]

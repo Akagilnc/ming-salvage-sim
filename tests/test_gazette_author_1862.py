@@ -7,37 +7,23 @@ import json
 import pytest
 
 import ming_sim.month_chain as month_chain
-import ming_sim.month_translate as month_translate
-from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
-from ming_sim.materials import (
-    list_materials,
-    prepare_character_materials,
-    prepare_world_materials,
-    read_material,
-    release_material_tree,
-)
+from ming_sim.materials import list_materials, prepare_character_materials, prepare_world_materials, read_material, release_material_tree
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, executing_rostered_policy
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 
-_SECRET_DECL = "SECRET_DECL_1862"
-_SECRET_FORECAST = "SECRET_FORECAST_1862"
 _SECRET_FACT = "SECRET_FACT_1862"
-_SECRET_REJ = "SECRET_REJ_1862"
 _PUBLIC_FACT = "PUBLIC_FACT_1862"
-_PUBLIC_REJ = "PUBLIC_REJ_1862"
 _SECRET_BRIEF = "SECRET_BRIEF_BODY_1862"
 _SECRET_AUDIENCE = "AUD_SECRET_SRC_1862"
 _PRIVATE_KEEP = "AUD_PRIVATE_KEEP_1862"
 _SECRET_DOSSIER_TEXT = "SECRET_DOSSIER_OPEN_1862"
 _PLAIN_DOSSIER_TEXT = "PLAIN_DOSSIER_OPEN_1862"
-_SECRET_DOSSIER_LEDGER = "SECRET_DOSSIER_LEDGER_1862"
-_PLAIN_DOSSIER_LEDGER = "PLAIN_DOSSIER_LEDGER_1862"
 _SECRET_DOSSIER_FACT = "SECRET_DOSSIER_FACT_1862"
 _PLAIN_DOSSIER_FACT = "PLAIN_DOSSIER_FACT_1862"
 _TITLE = "关山烽火"
@@ -50,7 +36,7 @@ def _llm() -> LLMConfig:
 
 def _session(db, state, content, monkeypatch):
     _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *_a, **_k: {"effects": {}})
     session = make_light_session(db, state, content)
     session.llm_config = _llm()
     session._write_gate = session._write_queue.write_gate
@@ -75,8 +61,8 @@ def test_author_waits_until_rescript_is_done(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
     # 外部 LLM 边界：挡邸报作者；可见结果是请旨台阶段，不锁调用次数。
     monkeypatch.setattr(
-        month_chain, "run_gazette_text",
-        lambda *_a, **_k: (_TITLE, _REPORT),
+        "ming_sim.agents.run_agent_text",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("未批红不得调用邸报模型")),
     )
     session = _session(db, state, content, monkeypatch)
     held = session.resolve_turn(allow_empty_decree=True)
@@ -94,18 +80,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     _stage_edict(db, state, minister, "宁远补饷", "宁远补饷", -1, affair.id)
     turn = int(state.turn)
     year, period = int(state.year), int(state.period)
-    db.conn.execute(
-        "INSERT INTO staged_declarations "
-        "(decree_ref, declaration_json, visible_refs_json, status, created_turn, forecast_text) "
-        "VALUES (?, ?, ?, 'settled', ?, ?)",
-        (
-            "secret_order:9",
-            json.dumps({"kind": "secret_order", "origin_ref": "secret_order:9", "body": _SECRET_DECL}, ensure_ascii=False),
-            json.dumps({"secret_orders": [9]}),
-            turn,
-            _SECRET_FORECAST,
-        ),
-    )
     db.textual_facts.append(
         subject_kind="character", subject_id=minister, body=_SECRET_FACT,
         year=year, period=period, turn=turn, origin_ref="secret_order:9",
@@ -114,26 +88,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         subject_kind="character", subject_id=minister, body=_PUBLIC_FACT,
         year=year, period=period, turn=turn, origin_ref=f"affair:{affair.id}",
     )
-    db.conn.execute(
-        "INSERT INTO economy_ledger "
-        "(turn, year, period, account, delta, balance_after, category, reason, origin_ref) "
-        "VALUES (?, ?, ?, '国库', -3, 1, 'SECRET_LEDGER', '密令账', 'secret_order:9')",
-        (turn, year, period),
-    )
-    collector = RejectionCollector()
-    collector.record(
-        "密令", RejectedItem(
-            {"kind": "secret_order", "origin_ref": "secret_order:9", "note": _SECRET_REJ},
-            "密令拒收", "invalid_shape", Provenance.secret_order,
-        ), turn,
-    )
-    collector.record(
-        "旨意", RejectedItem(
-            {"origin_ref": f"affair:{affair.id}", "note": _PUBLIC_REJ},
-            "公开拒收", "invalid_shape", Provenance.player_decree,
-        ), turn,
-    )
-    collector.flush_to_db(db)
     night_id = open_audience_night(db, state)
     secret_turn, first_mid = append_night_chat(db, state, night_id, minister, "问密", "答密", 1)
     pending_create = db.stage_pending_action(
@@ -153,21 +107,9 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         "UPDATE decree_dossiers SET status='executing', decree_text=? WHERE id=?",
         (_SECRET_DOSSIER_TEXT, secret_did),
     )
-    plain_did = db.create_decree_dossier(
-        state, action_type="policy", decree_text=_PLAIN_DOSSIER_TEXT,
-        target_kind="issue", target_id="plain-dossier-1862",
+    plain_did = executing_rostered_policy(
+        db, state, token="plain-dossier-1862", decree_text=_PLAIN_DOSSIER_TEXT, roster=[],
     )
-    db.apply_dossier_promulgation(state, plain_did, "promulgated")
-    for category, reason, origin in (
-        (_SECRET_DOSSIER_LEDGER, "密令案卷账", f"dossier:{secret_did}"),
-        (_PLAIN_DOSSIER_LEDGER, "普通案卷账", f"dossier:{plain_did}"),
-    ):
-        db.conn.execute(
-            "INSERT INTO economy_ledger "
-            "(turn, year, period, account, delta, balance_after, category, reason, origin_ref) "
-            "VALUES (?, ?, ?, '国库', -2, 1, ?, ?, ?)",
-            (turn, year, period, category, reason, origin),
-        )
     db.textual_facts.append(
         subject_kind="character", subject_id=minister, body=_SECRET_DOSSIER_FACT,
         year=year, period=period, turn=turn, origin_ref=f"dossier:{secret_did}",
@@ -368,32 +310,13 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert plain_did in seen["opening_dossiers"]
     assert secret_did not in seen["opening_dossiers"]
     assert seen["treasury_options"]["public_only"] is True
-    from ming_sim.materials import _safe_segment
-    fact_rel = f"人物/{_safe_segment(minister)}/按月实况.txt"
-    assert _PUBLIC_FACT in seen["author_files"][fact_rel]
-    assert _PLAIN_DOSSIER_FACT in seen["author_files"][fact_rel]
-    # 独立写入的普通低语仍须完整搬运，不从筛选 helper 重建经历正文。
-    assert _PRIVATE_KEEP in seen["author_files"][f"人物/{_safe_segment(minister)}/经历.txt"]
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
     listed = next(row for row in db.list_turn_reports() if int(row["turn"]) == turn)
     assert listed["title"] == _TITLE
     payload = json.loads(seen["prompt"])
-    assert any(row.get("category") == "宁远补饷" for row in payload["landed"])
-    assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
-    assert all(str(row.get("origin_ref") or "") != f"dossier:{secret_did}" for row in payload["landed"])
-    assert any(str(row.get("origin_ref") or "") == f"dossier:{plain_did}" for row in payload["landed"])
-    assert all(item.get("decree_ref") != "secret_order:9" for item in payload["nominal"])
-    assert any(
-        str((item.get("item") or {}).get("origin_ref") or "") == f"affair:{affair.id}"
-        for item in payload["rejections"]
-    )
-    assert all(
-        str((item.get("item") or {}).get("origin_ref") or "") != "secret_order:9"
-        for item in payload["rejections"]
-    )
-    assert [row["event_id"] for row in payload["rescript_answers"]] == ["note:1"]
+    assert set(payload) == {"instruction", "reign_period_label", "due_commitments", "waiting_audience"}
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
     assert {item["origin_ref"] for item in payload["due_commitments"]} == {
@@ -407,7 +330,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         item.get("person_name") != old_waiter
         for item in payload["waiting_audience"]
     ), payload["waiting_audience"]
-    assert set(payload["month_open"]) == {"国库", "内库", "民心", "皇威"}
     knowledge = db.get_character_knowledge(state, minister)
     public_ids = {
         str(item.get("source_id") or "") for item in knowledge.get("public_events") or []
@@ -461,10 +383,10 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
         gazette_calls["n"] += 1
         if gazette_calls["n"] == 1:
             raise LLMUnavailable("邸报写失败", stage="gazette")
-        return _TITLE, _REPORT
+        return json.dumps({"title": _TITLE, "report": _REPORT})
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_chain, "run_gazette_text", gazette)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", gazette)
     session = _session(db, state, content, monkeypatch)
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)

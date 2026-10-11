@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from ming_sim.db import GameDB
 from ming_sim.models import Event
-from tests.readback_helpers import class_population as _pop
+from tests.readback_helpers import class_population
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
 JUNHU_LIAODONG = 230000
@@ -35,34 +35,6 @@ def _pseudo_event(title: str = "调防") -> Event:
         urgency=0, severity=0, credibility=100, interests=[], audiences=[],
     )
 
-
-def _executing_dossier(db, state, region_id: str) -> int:
-    did = db.create_decree_dossier(
-        state,
-        action_type="assignment",
-        decree_text=f"属地差务@{region_id}",
-        target_kind="issue",
-        target_id=f"errand-{region_id}",
-        payload={
-            "target_kind": "issue",
-            "target_id": f"errand-{region_id}",
-            "locality_scope": "none",
-            "assignee_id": "毕自严",
-            "transaction_category": "清丈",
-            "participant_roster": [
-                {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-            ],
-        },
-        participants=[
-            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-        ],
-    )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='executing', region_id=? WHERE id=?",
-        (region_id, int(did)),
-    )
-    db.conn.commit()
-    return int(did)
 
 
 def test_redeploy_moves_fact_region_keeps_pay_source(game):
@@ -120,8 +92,8 @@ def test_fresh_seed_station_region_and_class_slices(game):
     assert rows["guanning"]["station_region"] == "liaodong"
     assert rows["dongjiang"]["station_region"] == "dongjiang_area"
     assert rows["guanning"]["pay_source_region"] == rows["dongjiang"]["pay_source_region"] == "liaodong"
-    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG
-    assert _pop(db, "流民", "liaodong") == LIUMIN_LIAODONG
-    assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
-    assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
+    assert class_population(db, "军户", "liaodong") == JUNHU_LIAODONG
+    assert class_population(db, "流民", "liaodong") == LIUMIN_LIAODONG
+    assert class_population(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
+    assert class_population(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
 

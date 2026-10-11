@@ -15,6 +15,7 @@ from functools import partial
 
 import pytest
 
+from tests.dossier_test_helpers import executing_staged_policy
 from tests.test_due_review_621 import _insert_staged_commitment as _due_review_commitment
 from ming_sim.due_review import (
     apply_due_review_for_todo,
@@ -46,21 +47,7 @@ from ming_sim.urge_lever import (
 # ── fixtures ──────────────────────────────────────────────────────────
 
 
-def _executing_policy_dossier(db, state, *, token: str = "urge-624", host: str = "倪元璐"):
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        participants=[
-            {"character_id": host, "tier": "主办", "role": "清丈"},
-            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
-        ],
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
+_executing_policy_dossier = partial(executing_staged_policy, token="urge-624")
 
 
 _insert_staged_commitment = partial(_due_review_commitment, title="催办分段之诺")
@@ -298,7 +285,7 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     scene = project_due_review_scene(db, staged_todo)
     assert "payload_json" not in scene
     # list_due_review_scenes also omits the structured payload.
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert all("payload_json" not in item for item in scenes)
 
 
@@ -408,7 +395,7 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
     )
 
     # 1) 不投影为 due-review 场面
-    assert list_due_review_scenes(db, state) == []
+    assert list_due_review_scenes(db) == []
 
     # 2) 不占接管窗
     owned = dossiers_with_pending_due_review(db, state)
@@ -530,7 +517,7 @@ def test_urge_audience_project_and_consume_path(game):
     for s in scenes:
         assert "payload_json" not in s
     # 不进 due-review、不占接管窗
-    assert list_due_review_scenes(db, state) == []
+    assert list_due_review_scenes(db) == []
     assert dossier_id not in dossiers_with_pending_due_review(db, state)
 
     # 消费路径：created_turn < 下回合 → consumed

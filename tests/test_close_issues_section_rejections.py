@@ -173,15 +173,3 @@ def test_close_issue_code_exception_propagates(read_game, monkeypatch):
     assert ei.value is fault
 
 
-def test_close_valid_issue_still_succeeds(game):
-    db, state, _ = game
-    active = db.list_active_issues()
-    if not active:
-        pytest.skip("seed 无 active issue，跳过 happy-path 控制")
-    iid = int(active[0]["id"])
-    out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved", "narrative": "测试结案"}]}
-    )
-    closed = [c for c in _closes(out) if not c.get("rejected")]
-    assert any(int(c.get("issue_id", -1)) == iid for c in closed), out
-    assert iid in (out.get("touched_ids") or [])

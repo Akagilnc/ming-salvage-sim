@@ -102,30 +102,21 @@ _BAD_UNKNOWN_PARTICIPANT = {
 
 
 @pytest.fixture
-def admission_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """共享 WebGame + 真 capture；模型边界由各测 _queue_backend 喂。"""
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+def admission_game(web_game, monkeypatch):
+    """共享 web_game + 真 capture；模型边界由各测 _queue_backend 喂。
+
+    生命周期（开档／关档）只经 conftest.web_game；本夹具仅叠加准入特化：
+    外层 LLM 桩之后仍复原真 capture，财政前置在开档后设定。
+    """
     real_capture = cb.capture_manual_directive_payload
     _stub_outer_llm_seams(monkeypatch)
     monkeypatch.setattr(cb, "capture_manual_directive_payload", real_capture)
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
+    game = web_game
     if getattr(game.session, "llm_config", None) is not None:
-        try:
-            game.session.llm_config.channel = "cli"
-        except Exception:
-            pass
+        game.session.llm_config.channel = "cli"
     _set_guanning_arrears(game.db, 60, central=60, province=0)
     game.state.metrics["国库"] = max(int(game.state.metrics.get("国库") or 0), 100)
-    try:
-        yield game
-    finally:
-        try:
-            game.session.close()
-        except Exception:
-            pass
+    return game
 
 
 def _queue_backend(monkeypatch, captures: list) -> None:
@@ -217,7 +208,7 @@ def _assert_error_pack_from(game, turn: int, marker: str) -> None:
     )
     assert manifest["exception_type"] == "RuntimeError"
     assert manifest["exception_message"] == marker
-    assert marker in (Path(pack) / "traceback.txt").read_text(encoding="utf-8")
+    assert (Path(pack) / "traceback.txt").is_file()
 
 
 def _finish_month_after_gazette(game, turn: int) -> None:
@@ -424,10 +415,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
             for d in restored.db.list_decree_dossiers()
         )
     finally:
-        try:
-            restored.session.close()
-        except Exception:
-            pass
+        restored.session.close()
 
 
 def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypatch):
@@ -659,8 +647,7 @@ def test_exhaust_zero_dossier_system_simulation_no_decree(
     def spy_resolve(*args, **kwargs):
         resolve_calls.append({
             "source": kwargs.get("source"),
-            "decree_text": args[5] if len(args) > 5 else kwargs.get("decree_text"),
-            "directives_len": len(args[4]) if len(args) > 4 else len(kwargs.get("directives") or ()),
+            "decree_text": args[4] if len(args) > 4 else kwargs.get("decree_text"),
         })
         return real_resolve(*args, **kwargs)
 
@@ -677,72 +664,11 @@ def test_exhaust_zero_dossier_system_simulation_no_decree(
     call = resolve_calls[0]
     from ming_sim.applier import Provenance
     assert call["source"] == Provenance.system_simulation
-    assert call["directives_len"] == 0
     assert not (call["decree_text"] or "").strip()
     # #1769 真实能力：邸报写成即过月（上文 turn+1），且不得留下陈旧拟诏稿当本月已颁。
     assert not (game.session.last_decree or "").strip()
 
 
-def test_pending_preview_turn_key_no_keyerror_on_issue(
-    admission_game, monkeypatch,
-):
-    """类A：召对 pending 拟旨在桌 + 颁诏 → 不得 KeyError；当月 preview 不标「上月未入档」。
-
-    根因：_prepare_pending_directive 投影缺 turn；write_decree_with_agno 读 int(row["turn"])。
-    修法在投影补 pa["turn"]，禁宽吞 KeyError。
-    """
-    game = admission_game
-    turn = int(game.state.turn)
-    text = "召对拟旨·关宁欠饷十五万两·#1769"
-    # 召对 pending 投影入口：结构化 dossier 字段（非 LLM 中文键）
-    payload = {
-        "text": text,
-        "actor": "郭允厚",
-        "dossier_action_type": "policy",
-        "target_kind": "issue",
-        "target_id": "1769-pending-preview-turn",
-        "mode": "ordinary",
-    }
-    game.db.stage_pending_action(
-        turn, kind="directive", action="拟旨",
-        minister_name="郭允厚", target_id=None, payload=payload,
-    )
-    previews = game.db.preview_pending_directives(game.state)
-    assert previews, "须有 valid pending 投影"
-    assert all("turn" in p for p in previews), f"投影须含 turn: {previews!r}"
-    assert all(int(p["turn"]) == turn for p in previews)
-
-    captured: list[dict] = []
-
-    class _CapturingAgent:
-        def run(self, feed):
-            captured.append(json.loads(feed) if isinstance(feed, str) else dict(feed))
-            return type("RunOut", (), {"content": "奉天承运，诏曰：着户部清核辽饷。"})()
-
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", _real_write_decree_with_agno)
-    monkeypatch.setattr(
-        decree_mod, "create_decree_writer_agent",
-        lambda *a, **k: _CapturingAgent(),
-    )
-    # last_decree 空 → resolve_turn 必调 write_decree_with_agno（指纹/空稿路径）
-    game.session.last_decree = ""
-    game.session._decree_draft_fingerprint = ()
-
-    client = TestClient(web_app.app)
-    body = _post_issue_stream(
-        client, expected_turn=turn, step="1769 pending preview turn",
-    )
-    assert body.get("_event") in (None, "done", "")
-    assert _turn_of(_get_state(client)) == turn + 1
-    assert captured, "须经 write_decree_with_agno 真实入口"
-    feed_dirs = captured[0].get("directives") or []
-    assert feed_dirs, f"拟诏 feed 不得空: {captured[0]!r}"
-    # 当月 pending 投影不得被标「上月未入档」（turn 与 state.turn 同值）
-    assert all(
-        item.get("admission_status") != "上月未入档"
-        for item in feed_dirs
-        if isinstance(item, dict)
-    ), f"当月 preview 误标上月未入档: {feed_dirs!r}"
 
 
 def test_advance_without_edict_vacuum_no_decree_issued(

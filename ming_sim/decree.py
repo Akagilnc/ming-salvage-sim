@@ -68,7 +68,6 @@ TIMEOUT_TURN = 240
 from ming_sim.settlement_payload import (  # noqa: E402
     _DECISION_RE,
     bind_decision_options,
-    bind_decisions_to_candidate_events,
     parse_decision_blocks,
 )
 
@@ -136,17 +135,15 @@ def collect_new_arrival_waiting_audience(
     return result
 
 
-
 # #1753 decision key promulgation-verdict-heal-by-resume-then-fail-closed：
 # 颁布判决 LLM 违契约 → 同一会话有界纠正补交次数（单一真源；不含首次）。
 PROMULGATION_VERDICT_HEAL_RETRIES = 3
 
 
 def stub_promulgation_verdicts(
-    dossiers: Sequence[Dict[str, object]], state: GameState,
+    dossiers: Sequence[Dict[str, object]],
 ) -> List[Dict[str, object]]:
     """Deterministic auto-promulgation for exempt dossiers and explicit test fixtures."""
-    del state
     return [
         {"dossier_id": int(row["id"]), "decision": "promulgated"}
         for row in dossiers
@@ -161,9 +158,6 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
     """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
     return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
-
-
-
 
 
 def build_promulgation_judge_context(
@@ -219,6 +213,8 @@ def build_promulgation_judge_context(
             from ming_sim.materials import revoke_target_facts
             entry["revoke_target"] = revoke_target_facts(db, payload, row)
         dossier_rows.append(entry)
+    # Exact roster office identities + closed office_type enum — no LIKE stem vocabulary.
+    _GATEKEEPER_OFFICE_TITLES = ("内阁首辅", "司礼监掌印太监")
     gatekeepers = [
         {
             **dict(row),
@@ -228,8 +224,11 @@ def build_promulgation_judge_context(
         for row in db.conn.execute(
             "SELECT name,office,office_type,faction,courage,integrity FROM characters "
             "WHERE status='active' AND power_id='ming' AND "
-            "(office LIKE '%首辅%' OR office LIKE '%掌印%' OR office LIKE '%给事中%' "
-            "OR office_type='六科') ORDER BY office_type,office,name"
+            "(office IN ({placeholders}) OR office_type='六科') "
+            "ORDER BY office_type,office,name".format(
+                placeholders=",".join("?" for _ in _GATEKEEPER_OFFICE_TITLES),
+            ),
+            _GATEKEEPER_OFFICE_TITLES,
         ).fetchall()
     ]
     history = []
@@ -279,13 +278,11 @@ def build_promulgation_judge_context(
 
 
 def _require_promulgation_verdict_list(
-    generated: object, *, raw_value: object = None,
+    generated: object,
 ) -> List[Dict[str, object]]:
     """Canonical top-level shape authority for every promulgation verdict batch."""
     if not isinstance(generated, list):
-        raise LLMContractError(
-            "颁布判官 verdicts 必须为列表", raw_value=raw_value,
-        )
+        raise LLMContractError("颁布判官 verdicts 必须为列表")
     return generated
 
 
@@ -362,9 +359,7 @@ def llm_promulgation_verdicts(
         transport_policy=transport_policy,
     )
     parsed = parse_agent_json(raw, "颁布判官")
-    return _require_promulgation_verdict_list(
-        parsed.get("verdicts"), raw_value=parsed,
-    )
+    return _require_promulgation_verdict_list(parsed.get("verdicts"))
 
 
 def _validate_promulgation_verdict_item(
@@ -593,12 +588,8 @@ def _rescript_decisions(
     return decisions
 
 
-
-
-
 def write_decree_with_agno(
     llm_config: LLMConfig,
-    agno_db: SqliteDb,
     state: GameState,
     directives: List[sqlite3.Row],
     db: Optional[GameDB] = None,
@@ -631,7 +622,7 @@ def write_decree_with_agno(
                        "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
     }
     try:
-        agent = create_decree_writer_agent(llm_config, agno_db)
+        agent = create_decree_writer_agent(llm_config)
         run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         _dump_llm_messages(run_output, "拟诏", agent=agent)
         text = extract_agent_text(run_output)
@@ -673,10 +664,7 @@ def resolve_directives(
     db: GameDB,
     agno_db: SqliteDb,
     llm_config: LLMConfig,
-    directives: List[sqlite3.Row],
     decree_text: str,
-    deaths_this_turn: Optional[List[Dict[str, str]]] = None,
-    debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     content=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
@@ -695,10 +683,6 @@ def resolve_directives(
     # 前括号之后按旨序核算，再跑世界段。批红、邸报与推进是后续阶段的交接，
     # 不在本入口用 extractor 落账。
 
-    before_turn = state.turn
-
-    # 草案内容已由拟诏合并进 decree_text；月链沿已保存的旨意继续。
-
     # 1) 前括号确定性结算：玩家月链的唯一准备入口。
     prepare_resolve_front_half(
         state, db,
@@ -711,7 +695,6 @@ def resolve_directives(
     return run_player_month_chain(
         state, db, agno_db, llm_config,
         decree_text=decree_text,
-        before_turn=before_turn,
         content=content,
         source=source,
         cheat_directive=cheat_directive,
@@ -776,16 +759,6 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
     return state
 
 
-class _AtomicOutcome:
-    """atomic_and_reload yield 出的结果句柄（cmr PR2 R1 sourcery）：取代把
-    `_reload_failed` 动态属性挂到任意 BaseException 上（slotted/复用异常时脆弱）。
-    专用对象、固定字段——settle 用 `as` 接、外层 except 读 `.reload_failed`。"""
-    __slots__ = ("reload_failed",)
-
-    def __init__(self) -> None:
-        self.reload_failed = False
-
-
 @contextmanager
 def atomic_and_reload(
     db: GameDB,
@@ -793,7 +766,7 @@ def atomic_and_reload(
     *,
     content=None,
     on_error: Optional[Callable[[BaseException], None]] = None,
-) -> "Iterator[_AtomicOutcome]":
+) -> "Iterator[None]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
 
     供 pre_settle 与玩家月链中需要事务回滚并重载内存状态的步骤使用。
@@ -810,10 +783,9 @@ def atomic_and_reload(
     内存缓冲须同步清场）。settle 的中断透传 / 错误包 / SettlementAbort 包装等**特殊** except
     逻辑不属公共内核，仍由调用方在本助手之外的外层 try/except 处理。
     """
-    outcome = _AtomicOutcome()
     try:
         with atomic(db):
-            yield outcome
+            yield
     except BaseException as exc:
         if on_error is not None:
             on_error(exc)
@@ -821,10 +793,6 @@ def atomic_and_reload(
             try:
                 reload_state_from_db(db, state, content=content)
             except BaseException as reload_exc:
-                # reload 失败标记落在专用句柄上（不挂异常属性）：settle 的外层 except
-                # 凭 `as` 句柄裸传播原异常,不包 SettlementAbort 不写错误包（内存仍脏时
-                # 宣传可重试/基于脏态写包都是误导;b12a60e 原语义保真,cmr S4 r1）。
-                outcome.reload_failed = True
                 raise exc from reload_exc
         raise
 
@@ -1058,8 +1026,6 @@ def pre_settle(
     return auto_triggered
 
 
-
-
 def _collect_inline_rejections(
     collector: RejectionCollector,
     applied: Dict[str, object],
@@ -1125,7 +1091,6 @@ def resolve_decisions_phase2(
     ctx = db.get_resolve_context(state.turn)
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
-    before_turn = state.turn
     from ming_sim.month_chain import run_player_month_chain
     result = run_player_month_chain(
         state, db, agno_db, llm_config,
