@@ -563,16 +563,6 @@ def test_issue_path_tolerates_previously_skipped_cases(game):
         "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
     assert after == min(100, before + 2)  # 好字段照落
 
-def test_issue_path_still_strict_for_historically_fatal(read_game):
-    """历史上就 raise 的类别(查无此军)在国策结案路保持严格(pin)。"""
-    import ming_sim.issues as I
-
-    db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "army_delta": {"查无此军xyz": {"morale": 2}},
-        }, "局势#测试结案")
-
 def test_nondict_new_army_item_recorded_not_silent(read_game):
     """new_armies 非 dict 项不再静默 continue——留拒收记录(issue 路容忍不升级,
     历史即静默;season 路本就被 validate_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""

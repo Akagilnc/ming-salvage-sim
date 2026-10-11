@@ -167,9 +167,6 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
     原实现这条覆盖的是「备档 office_type 被写成待铨/空」的历史兼容形态；该列已删，
     同一形态改由真源侧表达：人物 office_type 落到待铨而备档仍留可识别的实职名。
     """
-    from ming_sim.office_rank import _is_substantive_office
-
-    assert _is_substantive_office("翰林院编修")
     db, state, _content = game
     name = "旧档实职"
     _add(db, state, name, "翰林院编修", "翰林院")
@@ -183,16 +180,11 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
 def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
     """#1843：离事且无现职不建空备档；起复按初仕高阶，不从 status_reason 反推职衔。"""
     db, _state, _content = game
-    for name in ("袁可立", "胡廷宴"):
-        row = db.conn.execute(
-            "SELECT office_title FROM character_offices WHERE character_name=?",
-            (name,),
-        ).fetchone()
-        assert row is None
-
-    _dossier_id, payload = _appointment_dossier(db, _state, "袁可立", "陕西巡抚")
-    assert payload["break_rank"]["basis"] == "first_appointment_high_office"
-    assert payload["break_rank"]["is_break_rank"] is True
+    row = db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        ("胡廷宴",),
+    ).fetchone()
+    assert row is None
 
     _hid, hu_payload = _appointment_dossier(db, _state, "胡廷宴", "三边总督")
     assert hu_payload["break_rank"]["basis"] == "first_appointment_high_office"

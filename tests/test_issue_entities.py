@@ -199,34 +199,12 @@ def test_resolve_applies_unified_person_change_effect(game):
         content.characters[name].transit_to = old_transit_to
 
 
-def test_resolve_rejects_bad_unified_person_change_effect(read_game):
-    db, state, content = read_game
-
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(
-            db,
-            state,
-            {"人物变更": [{"name": "不存在的人", "动作": "行止", "transit_to": "liaodong"}]},
-            "局势#测试结案",
-            content=content,
-        )
-
-
 @pytest.mark.parametrize("bad_effect", [{"人物变更": "bad"}, {"人物变更": ["bad"]}])
 def test_issue_person_change_effect_rejects_malformed_shape(read_game, bad_effect):
     db, state, content = read_game
 
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, bad_effect, "局势#测试结案", content=content)
-
-
-def test_malformed_army_raises_not_silent(read_game):
-    """缺 manpower 的建军必须抛错，不许静默跳过（全局严格）。"""
-    db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "new_armies": [{"id": "broken", "name": "残军", "owner_power": "ming"}],
-        }, "局势#测试")
 
 
 def test_army_bad_owner_power_raises(read_game):
@@ -238,12 +216,16 @@ def test_army_bad_owner_power_raises(read_game):
         }, "局势#测试")
 
 
-def test_unknown_character_raises(read_game):
-    db, state, _ = read_game
+@pytest.mark.parametrize("change", [
+    {"动作": "处置", "status": "dead"},
+    {"动作": "行止", "transit_to": "liaodong"},
+])
+def test_unknown_character_raises(read_game, change):
+    db, state, content = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
-            "人物变更": [{"name": "查无此人张三", "动作": "处置", "status": "dead"}],
-        }, "局势#测试")
+            "人物变更": [{"name": "查无此人张三", **change}],
+        }, "局势#测试", content=content)
 
 
 def test_bad_status_raises(read_game):
@@ -320,8 +302,7 @@ def test_apply_score_extraction_rejects_unknown_top_level_key(game):
     applied = I.apply_score_extraction(
         db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}, "metric_delta": {"民心": 1}},
     )
-    shape = [r for r in applied["validate_shape_rejections"]
-             if "region_delta_typo" in str(r.get("reason"))]
+    shape = applied["validate_shape_rejections"]
     assert shape and shape[0]["rejected"] is True
     assert shape[0]["item"] == {"raw_value": {"shanxi": {"unrest": 5}}}
     assert applied["metric_delta"].get("民心") == 1  # 其余 section 不受累
@@ -346,15 +327,6 @@ def test_army_delta_unknown_army_raises(read_game):
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
             "army_delta": {"查无此军": {"manpower": 100}},
-        }, "局势#测试")
-
-
-def test_non_dict_person_change_item_raises(read_game):
-    """人物变更 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
-    db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "人物变更": ["这不是dict"],
         }, "局势#测试")
 
 

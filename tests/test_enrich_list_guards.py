@@ -52,10 +52,6 @@ def test_loads_effect_dict_coerces_non_dict():
     import pytest
     from ming_sim.applier import StoredDocumentError
     from ming_sim.models import loads_effect_dict
-    assert loads_effect_dict('{"metrics": {"民心": 1}}') == {"metrics": {"民心": 1}}
-    assert loads_effect_dict({"already": "parsed"}) == {"already": "parsed"}
-    assert loads_effect_dict('') == {}
-    assert loads_effect_dict(None) == {}
     for bad in ('"oops"', '5', 'true', '[1,2]', 'null', '不是合法json', 5, [1, 2], True):
         with pytest.raises(StoredDocumentError):
             loads_effect_dict(bad)

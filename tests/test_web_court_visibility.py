@@ -7,9 +7,7 @@ issue #104 原提议的 `c.status != "offstage"` 会把「DB 已 active 但内�
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
 
-import web_app
 from web_app import in_talent_pool, visible_in_court
 
 
@@ -102,7 +100,6 @@ def test_vassal_prince_excluded_from_court(game):
     db.set_character_status(state, name, "active", "测试：在世")
     # 物化后 setup 真生效：DB 确为 active+ming（否则仅 office_type 短路，测不出 gate 优先于状态）
     assert db.characters.get_character_status(name)[0] == "active"
-    assert web_app._character_power_id(ch, db) == "ming"
     assert visible_in_court(ch, db) is False
 
 

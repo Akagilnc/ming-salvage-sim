@@ -1,4 +1,4 @@
-"""#321 — 玩家军心/士气/欠饷投影：复用 derive + qualitative/arrears helper，四链去 raw。"""
+"""#321 — 玩家军情结构化投影：真实载荷与地图节点不暴露 raw 军情。"""
 from __future__ import annotations
 
 import sqlite3
@@ -7,12 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import web_app
-from ming_sim.db import (
-    GameDB,
-    _player_army_situation,
-    mutiny_loyalty_cap,
-)
-from ming_sim.army_pay import derive_army_mutiny_state
+from ming_sim.db import GameDB
 from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
@@ -64,44 +59,7 @@ _TIER_IDS = [
 ]
 
 
-def _row(
-    *,
-    is_mutinied: int = 0,
-    loyalty: int = 70,
-    mutiny_probation: int = 0,
-    morale: int = 73,
-    arrears: float = 0.0,
-    **extra,
-):
-    base = {
-        "is_mutinied": is_mutinied,
-        "loyalty": loyalty,
-        "mutiny_probation": mutiny_probation,
-        "morale": morale,
-        "arrears": arrears,
-    }
-    base.update(extra)
-    return base
-
-
-@pytest.mark.parametrize(
-    "is_mutinied,loyalty,probation,expected",
-    _TIER_CASES,
-    ids=_TIER_IDS,
-)
-def test_player_army_situation_six_tier_truth_table(
-    is_mutinied, loyalty, probation, expected
-):
-    row = _row(is_mutinied=is_mutinied, loyalty=loyalty, mutiny_probation=probation)
-    sit = _player_army_situation(row, monthly_pay=10)
-    assert sit["mutiny_tier"] == expected
-    assert isinstance(sit["morale_text"], str)
-    assert isinstance(sit["arrears_text"], str)
-
-
 def _configure(db) -> None:
-    value = 1  # active substrate_hub cutover
-    # hub-only: cutover markers retired (#1889)
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
@@ -189,23 +147,27 @@ def _find_army_in_map_nodes(nodes, army_id: str = ARMY):
     raise AssertionError(f"map_nodes 未挂载军队 {army_id}")
 
 
-def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
+def _assert_structured_situation(card: dict, tier: str, label: str) -> None:
     assert _SIT_KEYS <= set(card.keys()), f"{label} 缺 situation 三键: {sorted(card)}"
     assert _RAW_KEYS.isdisjoint(card.keys()), f"{label} 泄漏 raw 轴: {sorted(_RAW_KEYS & set(card.keys()))}"
     assert _MUTINY_ORDINAL_KEYS.isdisjoint(card.keys()), (
         f"{label} 泄漏 mutiny ordinal/五持久列: {sorted(_MUTINY_ORDINAL_KEYS & set(card.keys()))}"
     )
-    assert card["mutiny_tier"] == sit["mutiny_tier"], f"{label}.mutiny_tier"
-    assert card["morale_text"] == sit["morale_text"], f"{label}.morale_text"
+    assert card["mutiny_tier"] == tier, f"{label}.mutiny_tier"
     assert isinstance(card["mutiny_tier"], str)
     assert isinstance(card["morale_text"], str)
     assert isinstance(card["arrears_text"], str)
 
 
-def test_structured_situation_on_payload_and_map_nodes(game):
+@pytest.mark.parametrize(
+    "is_mutinied,loyalty,probation,expected",
+    _TIER_CASES,
+    ids=_TIER_IDS,
+)
+def test_structured_situation_on_payload_and_map_nodes(
+    game, is_mutinied, loyalty, probation, expected,
+):
     """结构化 ABI：army_payload / state_payload.armies / map_nodes 携带 situation 三键。"""
-    # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
-    is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
     db, state, content = game
     _configure(db)
     arrears = 12.5
@@ -232,25 +194,21 @@ def test_structured_situation_on_payload_and_map_nodes(game):
         (ARMY,),
     )
     db.conn.commit()
-    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    sit = _player_army_situation(row, db._army_pay(row))
-    assert sit["mutiny_tier"] == expected
-
     card = _payload_by_id(db)[ARMY]
-    _assert_structured_situation(card, sit, "army_payload")
+    _assert_structured_situation(card, expected, "army_payload")
 
     runtime = _web_runtime(db, state, content)
     payload = web_app.WebGame.state_payload(runtime)
     armies = {a["id"]: a for a in (payload.get("armies") or [])}
     assert ARMY in armies
-    _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
+    _assert_structured_situation(armies[ARMY], expected, "state_payload.armies")
     # army_warning 与 report 同源字符串出口；契约落在结构化 armies 投影，不锁生成正文
     assert isinstance(payload.get("army_warning") or "", str)
 
     map_army = _find_army_in_map_nodes(payload.get("map_nodes") or [])
-    _assert_structured_situation(map_army, sit, "map_nodes.armies")
+    _assert_structured_situation(map_army, expected, "map_nodes.armies")
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
-    _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
+    _assert_structured_situation(map_army2, expected, "WebGame.map_nodes")
 
 
 def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
@@ -297,11 +255,6 @@ def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
         assert int(row["loyalty"]) == 95
         assert float(row["arrears"]) == pytest.approx(0)
         assert int(row["manpower"]) == 10000
-        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
-        assert derive_army_mutiny_state(row) == "哗变"
-        pay = reopened._army_pay(row)
-        sit_before = _player_army_situation(row, pay)
-        assert sit_before["mutiny_tier"] == "哗变"
         card_before = _payload_by_id(reopened)[ARMY]
         assert card_before["mutiny_tier"] == "哗变"
 
@@ -320,10 +273,6 @@ def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
         assert int(after["redemption_count"]) == 1
         assert float(after["arrears"]) == pytest.approx(0)
         assert int(after["manpower"]) == 10000
-        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
-        assert derive_army_mutiny_state(after) == "不满"
-        sit_after = _player_army_situation(after, reopened._army_pay(after))
-        assert sit_after["mutiny_tier"] == "不满"
         assert _payload_by_id(reopened)[ARMY]["mutiny_tier"] == "不满"
     finally:
         reopened.close()

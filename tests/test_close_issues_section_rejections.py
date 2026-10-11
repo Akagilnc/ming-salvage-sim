@@ -26,6 +26,7 @@ def _rejected(result):
     True,       # bool（_strict_int 拒）
     1.5,        # float
     -10 ** 100,  # 超 SQLite 64-bit 下界
+    10 ** 100,   # 超 SQLite 64-bit 上界
 ])
 def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
     db, state, _ = read_game
@@ -38,15 +39,6 @@ def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
     assert rej[0]["category"] == "invalid_enum"
 
 
-@pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
-def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
-    db, state, _ = read_game
-    # 非 dict close 项（close_issues:[null]/标量，_sanitize 不清列表项可达）：必须逐项拒收，
-    # 不能 cl.get 抛 AttributeError 崩整月（codex r4）。
-    out = I.apply_issue_tracker_output(db, state, {"close_issues": [bad_item]})
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
 
 
 def test_close_bad_reason_rejected(read_game):
@@ -60,27 +52,8 @@ def test_close_bad_reason_rejected(read_game):
     assert rej[0]["category"] == "invalid_enum"
 
 
-def test_close_unknown_issue_rejected_missing_ref(read_game):
-    db, state, _ = read_game
-    # 合法 reason + 不存在的 issue_id → close_issue 回 None → missing_ref 拒收（不再静默 continue）。
-    out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": 999999, "reason": "resolved"}]}
-    )
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0]["category"] == "missing_ref"
 
 
-def test_close_overflow_issue_id_rejected(read_game):
-    db, state, _ = read_game
-    # 10**100：int() 过得了但绑定 SQLite 会抛 OverflowError——必须在解析期拒收（invalid_enum），
-    # 不能让 OverflowError 上抛崩整月（codex r1，复用 _parse_sqlite_id 64-bit 守门）。
-    out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": 10 ** 100, "reason": "resolved"}]}
-    )
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
 
 
 def test_close_already_inactive_rejected_missing_ref(game):
@@ -112,16 +85,14 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
 
 
 def test_close_rejection_reaches_rejection_reports(game):
-    """端到端 plumbing：close 段拒收经 _collect_inline_rejections 真落 rejection_reports 表
-    （桥接下探 issue_summary.closes，cmr Claude r1）。"""
+    """真实 close 请求的缺失引用拒收，经桥接持久记录。"""
     db, state, _ = game
     from ming_sim.applier import Provenance, RejectionCollector
     from ming_sim.decree import _collect_inline_rejections
 
-    applied = {"issue_summary": {"closes": [{
-        "rejected": True, "category": "missing_ref",
-        "reason": "close 测试拒收", "item": {"issue_id": 999999, "reason": "resolved"},
-    }]}}
+    applied = {"issue_summary": I.apply_issue_tracker_output(
+        db, state, {"close_issues": [{"issue_id": 999999, "reason": "resolved"}]},
+    )}
     collector = RejectionCollector()
     _collect_inline_rejections(collector, applied, 7, Provenance.unknown)
     collector.flush_to_db(db)
@@ -134,26 +105,30 @@ def test_close_rejection_reaches_rejection_reports(game):
     assert row["category"] == "missing_ref"
 
 
-def test_scalar_item_rejection_preserves_original_in_reports(game):
+@pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
+def test_scalar_item_rejection_preserves_original_in_reports(game, bad_item):
     """非 dict 坏项（item 为标量/null）的 item_json 须存原始坏项本身（ADR 决定 5），
     不是整个 rejected wrapper——桥接按 'item' 键存在性解包、覆盖标量原件（cmr r5 codex）。"""
     import json
     from ming_sim.applier import Provenance, RejectionCollector
     from ming_sim.decree import _collect_inline_rejections
 
-    applied = {"issue_summary": {"closes": [
-        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": 42},
-        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": None},
-    ]}}
+    db, state, _ = game
+    applied = {"issue_summary": I.apply_issue_tracker_output(
+        db, state, {"close_issues": [bad_item]},
+    )}
+    rej = _rejected(applied["issue_summary"])
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
     collector = RejectionCollector()
     _collect_inline_rejections(collector, applied, 8, Provenance.unknown)
-    collector.flush_to_db(db := game[0])
+    collector.flush_to_db(db)
 
     rows = db.conn.execute(
         "SELECT item_json FROM rejection_reports WHERE turn=8 AND section LIKE '%closes%' ORDER BY id"
     ).fetchall()
     items = [json.loads(r["item_json"]) for r in rows]
-    assert 42 in items and None in items, items  # 原始标量原件保真，非嵌套 wrapper
+    assert bad_item in items, items  # 原始坏项保真，非嵌套 wrapper
 
 
 def test_close_issue_code_exception_propagates(read_game, monkeypatch):

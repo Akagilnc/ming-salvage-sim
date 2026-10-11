@@ -24,15 +24,18 @@ def _yandang_core(db):
         "AND office_type IN ('内阁','司礼监','吏部','兵部') LIMIT 1"
     ).fetchone()
 
-def test_faction_leverage_drops_when_core_minister_ousted(game):
-    """#9 核心：握高权官的阉党在朝核心退场 → 阉党 leverage 全重算后下跌。"""
+@pytest.mark.parametrize("name,faction", [(None, "阉党"), ("许誉卿", "东林")])
+def test_faction_leverage_drops_when_core_minister_ousted(game, name, faction):
+    """#9/#608：中枢或六科在朝成员退场，持久派系权势联动下跌。"""
     db, state, content = game
-    row = _yandang_core(db)
-    assert row is not None, "阉党需有握高权官(内阁/司礼监/吏部/兵部)的在朝核心"
-    before = db.factions.faction_leverage("阉党")
+    row = _yandang_core(db) if name is None else db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert row is not None
+    before = db.factions.faction_leverage(faction)
     db.set_character_status(state, row["name"], "dismissed", reason="清算阉党")
-    after = db.factions.faction_leverage("阉党")
-    assert after < before, f"核心退场后阉党 leverage 应联动下跌(before={before} after={after})"
+    after = db.factions.faction_leverage(faction)
+    assert after < before, f"成员退场后派系权势应下跌(before={before} after={after})"
 
 def test_faction_leverage_rises_back_when_minister_restored(game):
     """#9 对称：退场核心起复(active) → leverage 回到原值（绝对重算、无漂移）。"""

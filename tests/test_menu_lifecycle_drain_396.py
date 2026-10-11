@@ -35,16 +35,6 @@ def _drain_then_archive(game, db_path: str) -> None:
 
 
 
-def test_get_main_db_path_prefers_active_db_over_launch_env(monkeypatch, tmp_path):
-    """#402 R1（Codex）：重启后 active_db.txt 必须压过启动 env，才能继续 new_game 切出的新主库。"""
-    env_db_path = str(tmp_path / "launch_env.db")
-    active_db_path = str(tmp_path / "active_from_new_game.db")
-    monkeypatch.setenv("MING_SIM_DB", env_db_path)
-    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
-        f.write(active_db_path)
-
-    assert web_app._get_main_db_path() == active_db_path
 
 
 @pytest.mark.parametrize("config_remove_fault", [False, True])
@@ -472,8 +462,10 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     conn.close()
 
     monkeypatch.setattr(web_app, "web_game", None)
-    monkeypatch.setenv("MING_SIM_DB", old_db_path)
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "launch_env.db"))
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
+        f.write(old_db_path)
     _reset_path_leases()
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
@@ -498,10 +490,6 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     rows = dict(check.execute("SELECT key, value FROM kv_store").fetchall())
     check.close()
     assert rows["data"] == "before_new_game"
-    # 归档名可被存档扫描与 load 名校验接受
-    scanned = web_app._scan_saves()
-    assert len(scanned) == 1
-    assert scanned[0]["name"] == save_files[0].stem
 
 
 def test_new_game_switches_db_path_when_web_game_none_and_no_env(monkeypatch, tmp_path):

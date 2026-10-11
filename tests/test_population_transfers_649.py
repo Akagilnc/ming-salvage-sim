@@ -11,6 +11,8 @@ canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5；#1843
 
 from __future__ import annotations
 
+import pytest
+
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.issues import apply_score_extraction
@@ -200,64 +202,37 @@ def test_section_non_list_rejects_section_rest_lands(game):
     ).fetchone()[0]
     assert sat_after == sat_before - 2
 
-def test_class_delta_population_key_upgraded_to_per_item_rejection(game):
+@pytest.mark.parametrize("population_key,satisfaction_key,name,before_population,before_satisfaction,delta", [
+    ("population", "satisfaction", "流民", DISPLACED_SHAANXI, 20, -3),
+    ("人口", "满意", "农民", FARMER_SHAANXI, 12, -2),
+])
+def test_class_delta_population_key_upgraded_to_per_item_rejection(
+    game, population_key, satisfaction_key, name, before_population, before_satisfaction, delta,
+):
     """§1.4 升格：class_delta value 内出现 population 键 → 该 item invalid_enum 拒收，
     其余 sat/lev 合法项不受累；人口不变。"""
     db, state, content = game
     applied = apply_score_extraction(db, state, {
         "class_delta": {
-            "流民@shaanxi": {"satisfaction": 1, "population": 123456},
-            "农民": {"satisfaction": -3},
+            f"{name}@shaanxi": {satisfaction_key: 1, population_key: 123456},
+            "农民": {satisfaction_key: delta},
         },
     }, content, None)
     rejections = applied["class_delta_rejections"]
     assert len(rejections) == 1
     assert rejections[0]["category"] == "invalid_enum"
     row = db.conn.execute(
-        "SELECT population, satisfaction FROM classes WHERE name='流民' AND region_id='shaanxi'"
+        "SELECT population, satisfaction FROM classes WHERE name=? AND region_id='shaanxi'",
+        (name,),
     ).fetchone()
-    assert row["population"] == DISPLACED_SHAANXI  # 人口不被触碰
-    assert row["satisfaction"] == 20               # 整 item 拒收，satisfaction 也不落
+    assert row["population"] == before_population  # 人口不被触碰
+    assert row["satisfaction"] == before_satisfaction               # 整 item 拒收，satisfaction 也不落
     farmer = db.conn.execute(
         "SELECT satisfaction FROM classes WHERE name='农民' AND region_id=''"
     ).fetchone()
-    assert farmer["satisfaction"] == 32 - 3        # 其余合法项照常落库
+    assert farmer["satisfaction"] == 32 + delta        # 其余合法项照常落库
 
-def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game):
-    """#649 C3/C4：中文形 {"满意":1,"人口":3000} 经 canonicalize 后 population guard
-    统一整项拒收（invalid_enum），满意度与人口均不变；同批合法项照落。"""
-    db, state, content = game
-    applied = apply_score_extraction(db, state, {
-        "class_delta": {
-            "农民@shaanxi": {"满意": 1, "人口": 3000},
-            "农民": {"满意": -2},
-        },
-    }, content, None)
-    rejections = applied["class_delta_rejections"]
-    assert len(rejections) == 1
-    assert rejections[0]["category"] == "invalid_enum"
-    row = db.conn.execute(
-        "SELECT population, satisfaction FROM classes WHERE name='农民' AND region_id='shaanxi'"
-    ).fetchone()
-    assert row["population"] == FARMER_SHAANXI
-    assert row["satisfaction"] == 12               # 整 item 拒收，满意也不落
-    farmer = db.conn.execute(
-        "SELECT satisfaction FROM classes WHERE name='农民' AND region_id=''"
-    ).fetchone()
-    assert farmer["satisfaction"] == 32 - 2        # 同批合法项不受累
 
-def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
-    """r4 分层终态：未知顶层 key=可拆 section → 按段拒收留痕不整份退（ADR0015 待施工纠正面）。"""
-    db, state, content = game
-    applied = apply_score_extraction(db, state, {
-        "region_delta_typo": {"shaanxi": {"unrest": 5}},
-        "metric_delta": {"民心": 1},
-    }, content, None)
-    shape_rej = [r for r in applied["validate_shape_rejections"]
-                 if "region_delta_typo" in str(r.get("reason"))]
-    assert shape_rej, "未知顶层 key 必须按段拒收留痕"
-    assert shape_rej[0]["rejected"] is True
-    assert applied["metric_delta"].get("民心") == 1  # 其余 section 照落，不整份退
 
 # ── 单位口径：新档为人 ──────────────────────────────────────────────────────
 

@@ -9,32 +9,21 @@ import pytest
 from ming_sim.applier import StoredDocumentError
 
 
-def test_pending_decisions_corrupt_options_json_fails_loud(game, monkeypatch):
-    db, _state, _content = game
-    db.conn.execute(
-        "INSERT INTO pending_decisions "
-        "(turn, idx, title, context, options_json, choice_json, status) "
-        "VALUES (?, ?, ?, ?, ?, '', 'pending')",
-        (999, 0, "测试抉择", "", "{不是合法JSON"),
-    )
-    db.conn.commit()
-
-    with pytest.raises(StoredDocumentError):
-        db.issues.list_pending_decisions(999)
-
-
-def test_pending_decisions_corrupt_choice_json_fails_loud(game, monkeypatch):
+@pytest.mark.parametrize("options,choice", [
+    ("{不是合法JSON", ""), ("[]", "{坏choice"),
+])
+def test_pending_decisions_corrupt_options_json_fails_loud(game, options, choice):
     db, _state, _content = game
     db.conn.execute(
         "INSERT INTO pending_decisions "
         "(turn, idx, title, context, options_json, choice_json, status) "
         "VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-        (998, 0, "测试抉择", "", "[]", "{坏choice"),
+        (999, 0, "测试抉择", "", options, choice),
     )
     db.conn.commit()
 
     with pytest.raises(StoredDocumentError):
-        db.issues.list_pending_decisions(998)
+        db.issues.list_pending_decisions(999)
 
 
 def test_resolve_context_corrupt_payload_fails_loud(game, monkeypatch):

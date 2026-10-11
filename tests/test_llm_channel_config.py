@@ -538,7 +538,8 @@ def test_verify_llm_available_api_empty_content_passes(monkeypatch, output_conte
     verify_llm_available(_api_cfg())
 
 
-def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch):
+@pytest.mark.parametrize("error_content", ["", "Invalid API key"])
+def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch, error_content):
     """#1455：status=ERROR 且空 content 仍是权威失败——设置页不得判连通成功。
 
     空正文不能证明只是推理 token 耗尽；token 耗尽须另据结束原因识别（无错误 status）。
@@ -546,7 +547,7 @@ def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch)
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     class EmptyErrorOutput:
-        content = ""
+        content = error_content
         status = "ERROR"
 
     class FakeAgent:
@@ -560,28 +561,6 @@ def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch)
     with pytest.raises(LLMUnavailable) as ei:
         verify_llm_available(_api_cfg())
     assert ei.value.code == "llm_run_error"
-
-def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypatch):
-    """真错：生产 agno 形 status=ERROR 且 content 非空错误串，走真实 extract_agent_text，须报 llm_run_error。"""
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    class ErrorOutput:
-        content = "Invalid API key"
-        status = "ERROR"
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        def run(self, prompt: str) -> ErrorOutput:
-            return ErrorOutput()
-
-    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
-    # 不 stub extract_agent_text：咬住内层非空再抛
-    with pytest.raises(LLMUnavailable) as ei:
-        verify_llm_available(_api_cfg())
-    assert ei.value.code == "llm_run_error"
-
 
 def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
     """codex R1 #2：legacy env CLI（MING_SIM_LLM_BACKEND 设）时 cli_timeout_seconds 必须用

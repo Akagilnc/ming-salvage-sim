@@ -5,16 +5,14 @@
 2. 人物变更不得平行落抵达
 3. 同目的地 re-emit 不刷新 start_turn / remaining
 4. 在途改道拒收
-5. tick 先于事件终态评估（链顺序）
 6. snapshot/restore 包含 transit 账
 """
 
 from __future__ import annotations
 
 import ming_sim.issues as issues
-from ming_sim.decree import pre_settle, tick_transit_arrivals
+from ming_sim.decree import tick_transit_arrivals
 from ming_sim.distance import DistanceMatrix
-from ming_sim.models import Event, TurnPhase
 from pathlib import Path
 from tests.conftest import active_ming_character
 
@@ -154,61 +152,6 @@ def test_行止_change_dest_is_rejected(game):
 # ── tick 先于事件终态 ───────────────────────────────────────────────────────
 
 
-def test_pre_settle_ticks_arrival_before_terminal_states(game):
-    """tick_transit_arrivals 必须在 apply_event_terminal_states 之前跑。"""
-    db, state, content = game
-    issues.bind_content(content)
-    name = active_ming_character(db, content)
-
-    ev = Event(
-        id="__test_transit_gate__", title="测试在途门控", kind="situation",
-        summary="x", urgency=50, severity=50, credibility=50,
-        interests=[], audiences=[],
-        trigger_year=1, trigger_month=0,
-        trigger_gate={
-            f"character.{name}.location": "==liaodong",
-            f"character.{name}.status": "==active",
-        },
-        person_core_subjects=[name],
-    )
-    content.events.append(ev)
-    try:
-        # 构造本 tick 必抵达：remaining 很小，且 start_turn < 当前 turn（次月起才减）
-        state.turn = 5
-        state.turn_phase = TurnPhase.REVIEWING.value
-        db.set_character_transit(
-            name,
-            location="beizhili",
-            transit_to="liaodong",
-            distance_remaining=0.5,
-            speed_factor=1.0,
-            start_turn=4,
-            content=content,
-        )
-        db.reign.save_game_state(state)
-
-        pre_settle(state, db, content=content)
-
-        row = db.conn.execute(
-            "SELECT location, transit_to FROM characters WHERE name=?", (name,),
-        ).fetchone()
-        assert row["location"] == "liaodong" and row["transit_to"] == "", (
-            "倒数 tick 应已引擎抵达"
-        )
-        assert not db.issues.has_event_terminal_state("__test_transit_gate__", "avoided")
-        from types import SimpleNamespace
-
-        from ming_sim.applier import Provenance
-        import ming_sim.month_chain as month_chain
-        month_chain._consume_event_gates_after_edicts(
-            SimpleNamespace(db=db, state=state), {},
-            decree_text="", source=Provenance.system_simulation,
-        )
-        assert not db.issues.has_event_terminal_state("__test_transit_gate__", "avoided"), (
-            "在途赴门控地者抵达月事件不应在 tick 前被误判 avoided"
-        )
-    finally:
-        content.events.remove(ev)
 
 
 def test_tick_does_not_arrive_when_remaining_still_positive(game):

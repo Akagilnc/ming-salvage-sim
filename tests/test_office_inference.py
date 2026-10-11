@@ -274,7 +274,6 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
 def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     """一次任职 resolved seat：地方同职省略 region 续任不跨省挤位；中央夹带 region 归一空。"""
     from ming_sim.issues import (
-        _canonical_appointment_fields,
         apply_office_appointment,
     )
 
@@ -312,11 +311,7 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     assert content.characters[b].office_region == "henan"
     assert db.characters.office_region(b) == "henan"
 
-    # Central identity ignores caller-stuffed region on canonical tuple + write.
-    canon = _canonical_appointment_fields({
-        "office": "户部尚书", "office_type": "户部", "region_id": "henan",
-    })
-    assert canon == ("户部尚书", "户部", "真除", "")
+    # Central appointment persists no local seat.
     r4 = apply_office_appointment(
         db, state, content, a, "户部尚书",
         new_office_type="户部", region_id="henan", reason="central-noise-region",

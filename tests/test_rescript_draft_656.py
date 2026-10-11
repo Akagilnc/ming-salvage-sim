@@ -170,20 +170,14 @@ def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
 # PR #1521 r3：三条 shape 拒收负例（顶层未知字段 / 畸形 JSON / lone surrogate）
 # ---------------------------------------------------------------------------
 
-def test_r3_strict_parse_control_char_raises_contract_error():
-    """r3-2 strict 解析：含非法控制字符的 raw 不做清洗，直解失败抛 LLMContractError。"""
+@pytest.mark.parametrize("raw", [
+    '{"items": [{"title": "a\x01b", "context": "c", "options": [{"label": "l1", "hint": "h1"}, {"label": "l2", "hint": "h2"}]}]}',
+    '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]}]}{"items": []}',
+])
+def test_r3_strict_parse_control_char_raises_contract_error(raw):
+    """r3-2：非法控制字符或拼接对象不清洗截取，直解失败抛 LLMContractError。"""
     from ming_sim.rescript_draft import _parse_rescript_json_strict
     from ming_sim.exceptions import LLMContractError
-    # 控制字符 \x01 在 JSON 字符串内非法，必须触发 JSONDecodeError→LLMContractError
-    raw = '{"items": [{"title": "a\x01b", "context": "c", "options": [{"label": "l1", "hint": "h1"}, {"label": "l2", "hint": "h2"}]}]}'
-    with pytest.raises(LLMContractError):
-        _parse_rescript_json_strict(raw)
-
-def test_r3_strict_parse_concatenated_objects_raises_contract_error():
-    """r3-2 strict 解析：拼接对象不截首块，直解失败抛 LLMContractError。"""
-    from ming_sim.rescript_draft import _parse_rescript_json_strict
-    from ming_sim.exceptions import LLMContractError
-    raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
     with pytest.raises(LLMContractError):
         _parse_rescript_json_strict(raw)
 

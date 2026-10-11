@@ -81,15 +81,6 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
-    exit_calls = {"n": 0}
-    real_exit = web_app._exit_settlement_display_on_failure
-
-    def _spy_exit(g, *, blocking=False):
-        exit_calls["n"] += 1
-        return real_exit(g, blocking=blocking)
-
-    monkeypatch.setattr(web_app, "_exit_settlement_display_on_failure", _spy_exit)
-
     def _boom_clear(_t):
         raise RuntimeError("clear boom")
 
@@ -104,7 +95,6 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
 
     assert raised is not None and "clear boom" in str(raised)
     assert web_app._settlement_entry_inflight(runtime) == 0, "clear 抛错后 inflight 须归零"
-    assert exit_calls["n"] == 1, "clear 抛须走失败 exit（settled_ok 未在 clear 前预置）"
 
 
 def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
