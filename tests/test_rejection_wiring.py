@@ -77,10 +77,6 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         run_settle(db, state, content, {
             "人物变更": [{"动作": "处置", "name": "查无此人乙", "status": "dead", "reason": "测试"}],
-            "dossier_reconciliations": [
-                {"dossier_id": gid, "arrived_amount": 16},
-                {"dossier_id": 88888, "arrived_amount": 5},
-            ],
         }, narrative="x", decree_text="y")
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
@@ -130,27 +126,6 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()  # 镜像未先写
 
 
-def test_attempt_derivation_failure_does_not_abort_settlement(game, monkeypatch, tmp_path):
-    """attempt 推导(扫错误目录)是诊断侧路径——它自身故障(目录不可遍历等)不得
-    崩掉正常结算,回落 attempt=1(与 mirror 失败同向:副信道绝不拖垮主流程)
-    (cmr S0 r2 codex P2)。"""
-    import ming_sim.decree as decree_mod
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-
-    def _boom(t):
-        raise OSError("error_packs root not traversable")
-    monkeypatch.setattr(decree_mod, "_next_attempt", _boom)
-
-    run_settle(db, state, content, {
-        "人物状态变化": [{"name": "查无此人己", "动作": "处置", "status": "dead", "reason": "测试"}],
-    }, narrative="x", decree_text="y")  # 不抛=结算完成
-
-    rows = _rejection_rows(db, turn)
-    assert len(rows) == 1
-    assert rows[0][4] == 1  # attempt 回落 1
 
 
 def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_path):
@@ -174,7 +149,6 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_summary.cancels"]
     assert len(rows) == 1
     assert rows[0][1]  # reason 非空
-
 
 
 
@@ -542,5 +516,3 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type
-
-

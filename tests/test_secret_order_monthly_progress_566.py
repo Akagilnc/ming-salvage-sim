@@ -285,7 +285,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     from contextlib import contextmanager
     from types import SimpleNamespace
     import ming_sim.decree as decree
-    import ming_sim.session as session_mod
     import web_app
 
     db, state, content = game
@@ -307,7 +306,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     def fail_after_real_flows(flow_db, flow_state):
         ledger_before = _rows(flow_db, "economy_ledger")
         metrics_before = dict(flow_state.metrics)
-        result = original_flows(flow_db, flow_state)
+        original_flows(flow_db, flow_state)
         observed["fiscal_written"] = _rows(flow_db, "economy_ledger") != ledger_before
         observed["metrics_written"] = dict(flow_state.metrics) != metrics_before
         assert observed == {"fiscal_written": True, "metrics_written": True}

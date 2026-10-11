@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, SectionResult
+from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
 
 # ---------------------------------------------------------------------------

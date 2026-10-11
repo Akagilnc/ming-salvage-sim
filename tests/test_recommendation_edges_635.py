@@ -82,7 +82,7 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
     assert zhiyu["context"] == reason
 
     # restore：只读重建 GameState 后，任命与双边无损接续（P1/TD-5）。
-    restored = db.load_state()
+    db.load_state()
     restored_char = content.characters[row["name"]]
     assert restored_char.office == "巡盐御史"
     restored_legs = [e for e in db.get_relation_edge_events()

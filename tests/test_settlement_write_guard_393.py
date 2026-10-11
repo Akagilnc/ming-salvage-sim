@@ -16,7 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 import web_app
-from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
+from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
 

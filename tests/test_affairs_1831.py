@@ -31,9 +31,6 @@ def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
 
 
 
-
-
-
 def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
     db, state, _ = game
     minister = _minister(db)
@@ -79,7 +76,6 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
             },
         )
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
-
 
 
 
@@ -129,9 +125,6 @@ def test_same_name_affairs_are_not_merged_and_close_attach_is_not_a_birth(game):
 
 
 
-
-
-
 def test_typed_affair_new_issues_share_provenance(game):
     db, state, content = game
     existing = db.affairs.open(
@@ -166,14 +159,13 @@ def test_typed_affair_new_issues_share_provenance(game):
 
 
 
-
 def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):
     """战略人物越权来源逐项拒收；已声明的合法同批战果仍落账。"""
     db, state, content = game
     issues_mod.bind_content(content)
     state.year = 1638
     state.period = 9
-    authorized = db.affairs.open(
+    db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
     )

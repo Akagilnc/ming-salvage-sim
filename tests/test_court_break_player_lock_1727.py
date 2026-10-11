@@ -48,16 +48,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         pass
 
 
-def _active_minister(game) -> str:
-    for name, ch in game.content.characters.items():
-        if getattr(ch, "power_id", "ming") != "ming":
-            continue
-        if getattr(ch, "office_type", "") == "后宫":
-            continue
-        if game.db.get_character_status(name)[0] == "active":
-            return name
-    raise AssertionError("no active ming minister")
-
 
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
@@ -87,7 +77,6 @@ def _named_scene_beats(scroll) -> list[str]:
 def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch):
     """#1727：真实退朝在 done 暴露前预领屏障，随后收夜。"""
     game = web_game
-    minister = _active_minister(game)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     agent = _StreamFarewellAgent()

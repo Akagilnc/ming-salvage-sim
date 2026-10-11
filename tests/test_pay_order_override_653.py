@@ -676,7 +676,6 @@ def test_revoke_provincial_falls_back_to_nationwide(game):
 
 
 
-
 # ═══════════════ F3 LLM 综合归因边界 ═══════════════
 
 
@@ -705,7 +704,6 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
 def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
     """顺颁：判决当回合落 config；本月已按旧序完成的结算不追溯、下一次结算读取。"""
     db, state, _content = game
-    turn = db._current_settle_turn()
     # 本月结算先按旧序完成（fixed flow 已结束的等价断言：旧序结果在案）
     before = settle_region_tick(db, "shaanxi")
     assert before.breakdown["实付分账"]["军饷"] > 0

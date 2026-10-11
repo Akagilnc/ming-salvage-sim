@@ -601,11 +601,6 @@ def _isolate_cli_bin_resolution():
     _cb._BIN_CACHE.clear()
 
 
-def covering_monthly_extract(_agents, db, state, _narrative=None, *args, **kwargs):
-    """Settlement extractor stub that satisfies 0058 complete-coverage for active secret orders."""
-    extracted = with_monthly_reports(db, {})
-    return extracted, "out", "in"
-
 
 def monthly_progress_reports(db):
     return [

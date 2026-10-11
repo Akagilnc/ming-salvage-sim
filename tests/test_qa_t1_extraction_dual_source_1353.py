@@ -20,7 +20,6 @@ import threading
 
 import pytest
 
-import ming_sim.audience_translation as audience_translation
 from ming_sim.audience_translation import list_pending_translations
 import web_app
 from ming_sim import audience_night as an
@@ -296,7 +295,7 @@ def test_production_seam_cancel_blocks_trail_write(web_game):
 def test_production_seam_post_barrier_ticket_ordered(web_game, monkeypatch):
     """生产接缝：屏障已领后再领票，后票写不得越过屏障（经 ticketed gate）。"""
     game = web_game
-    q = game._runtime_write_queue()
+    game._runtime_write_queue()
     order: list[str] = []
     barrier_in = threading.Event()
     release_barrier = threading.Event()
@@ -444,7 +443,6 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     from tests.web_audience_test_doubles import install_hall_admission
 
     game = web_game
-    minister = next(iter(game.content.characters))
     install_hall_admission(game.session)
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: None
     game._spawn_pending_write_thread = lambda *_a, **_k: None
@@ -478,7 +476,6 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     from tests.web_audience_test_doubles import install_hall_admission
 
     game = web_game
-    minister = next(iter(game.content.characters))
     install_hall_admission(game.session)
     game.session.scene_chat = lambda *_a, **_k: ChatTurnResult(answer="臣遵旨。")
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: (_ for _ in ()).throw(

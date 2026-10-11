@@ -35,7 +35,6 @@ def _query_conn_no_user_message():
 
 
 
-
 def _assert_write_path_free(runtime) -> None:
     """After failpath cleanup, a subsequent gated write and drain must not block.
 
@@ -594,42 +593,6 @@ class _CountingFailAgent:
         yield RunCompletedEvent()
 
 
-class _FailLeavingAgnoRunAgent:
-    """#1465 fo2Og：失败 attempt 留下确定性 Agno run 残迹，并记录每 attempt 读回的 run_id 序列。
-
-    残迹写入与 truncate 同一 GameDB Agno 域（非私有缓存旁路）；成功 attempt 不另写 run。
-    """
-
-    def __init__(self, db, session_id: str, *, fail_times: int, error_factory):
-        self.db = db
-        self.session_id = str(session_id)
-        self.fail_times = int(fail_times)
-        self.error_factory = error_factory
-        self.calls = 0
-        self.history_at_attempt_start: list[list[str]] = []
-
-    def run(self, *_a, **_k):
-        self.calls += 1
-        n = self.calls
-        # 本 attempt 启动时持久读回（_start_stream 已先 truncate）
-        self.history_at_attempt_start.append(
-            list(self.db.agno_run_ids(self.session_id))
-        )
-        if n <= self.fail_times:
-            from tests.test_audience_restore_505 import _insert_agno_table_run
-
-            rid = f"fail-attempt-{n}"
-            _insert_agno_table_run(
-                self.db,
-                self.session_id,
-                rid,
-                run_index=self.db.agno_runs_length(self.session_id),
-            )
-            raise self.error_factory(n)
-        yield RunContent("臣")
-        yield RunContent("已核辽饷。")
-        yield RunCompletedEvent()
-
 
 def _transport_web_game(game, agent, monkeypatch):
     """复用 audience_background 真实召对装配（真 DB / atomic / interpret）。"""
@@ -899,7 +862,6 @@ def test_chat_stream_typed_429_preserved(monkeypatch, game):
     response = _post_chat_stream(monkeypatch, web_game, minister)
     events = _parse_sse(response.text)
     detail = events[-1][1]
-    max_a = default_transport_policy().max_attempts
     assert detail.get("status_code") == 429
     assert detail.get("code") == "llm_run_error"
     assert detail.get("provider_message") == reason

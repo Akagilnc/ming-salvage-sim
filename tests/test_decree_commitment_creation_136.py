@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-import pytest
 
 import ming_sim.issues as I
 
@@ -79,11 +78,6 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert json.loads(row["ongoing_effects"])["economy"][0]["target_id"] == "guanning"
     assert json.loads(row["stop_condition"]) == stop_condition
     assert json.loads(row["effect_on_resolve"]) == {}
-
-
-
-
-
 
 
 

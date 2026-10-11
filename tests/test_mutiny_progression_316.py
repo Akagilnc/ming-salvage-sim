@@ -3,7 +3,6 @@ from __future__ import annotations
 
 
 
-from ming_sim.db import GameDB
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 

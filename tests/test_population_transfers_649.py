@@ -12,7 +12,6 @@ canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5；#1843
 from __future__ import annotations
 
 
-import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.issues import apply_score_extraction

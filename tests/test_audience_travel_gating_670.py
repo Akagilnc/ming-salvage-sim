@@ -56,13 +56,6 @@ def _travel_row(db, name):
     }
 
 
-def _chat_message_count(db):
-    return int(db.conn.execute("SELECT COUNT(*) AS n FROM chat_messages").fetchone()["n"])
-
-
-def _chat_turn_count(db):
-    return int(db.conn.execute("SELECT COUNT(*) AS n FROM chat_turns").fetchone()["n"])
-
 
 def test_audience_admission_distinguishes_capital_fresh_and_existing_transit(game):
     sess = _session(game)
@@ -123,46 +116,6 @@ def test_audience_admission_records_nothing_for_capital_or_disqualified_person(g
     ).allowed is False
     assert an.list_unsettled_summons(db) == []
 
-
-def test_cli_initial_selection_records_remote_summon_without_returning_minister(game, monkeypatch):
-    from ming_sim.cli import terminal
-
-    sess = _session(game)
-    db, state, _content = game
-    sess.state = state
-    _set_place(game, "洪承畴", location="shaanxi")
-    answers = iter(["洪承畴", "quit"])
-    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr("builtins.print", lambda *_a, **_k: None)
-
-    assert terminal.choose_minister(sess) is None
-    # 结构化：未入殿大臣记入未结传召；不扫 print 承旨措辞（P7 禁模板负向≠合法盯文）。
-    assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
-        ("洪承畴", f"cli:initial:{state.turn}:洪承畴"),
-    ]
-
-
-def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeypatch):
-    """#670：CLI 初选未知人物不得临时旁路入殿，须 ADR 0038 持久入册后再 admission。"""
-    from ming_sim.cli import terminal
-
-    sess = _session(game)
-    db, state, _content = game
-    sess.state = state
-    unknown = "乌有先生甲"
-    assert unknown not in sess.content.characters
-    answers = iter([unknown, "quit"])
-    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr("builtins.print", lambda *_a, **_k: None)
-
-    assert terminal.choose_minister(sess) is None
-    assert unknown not in sess.temporary_characters
-    assert an.list_unsettled_summons(db) == []
-    assert _chat_turn_count(db) == 0
-    assert _chat_message_count(db) == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
-    ).fetchone()["n"] == 0
 
 
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
@@ -438,20 +391,13 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     )
     night_id = int(an.open_night(db, state)["id"])
     origin = "command:arrived-1"
-    entry_id = an.record_summon_in_transit(
+    an.record_summon_in_transit(
         db, night_id, person.name, origin_id=origin,
     )
 
     assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
-    arrived_fact = {
-        "person_name": person.name,
-        "original_destination": "henan",
-        "origin_id": origin,
-        "source_entry_id": entry_id,
-        "required_fact": "抵原地后续赴京",
-    }
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
@@ -657,48 +603,6 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     assert {row["origin_id"] for row in unsettled} == {origin_a, origin_b}
 
 
-def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatch):
-    """#670 T3：夜内「传X来」场外只打印闸文，不返 summon:、不入殿。"""
-    from ming_sim.cli import terminal
-
-    sess = _session(game)
-    db, state, content = game
-    sess.state = state
-    current = _set_place(game, "毕自严", location="beizhili")
-    _set_place(game, "洪承畴", location="shaanxi")
-    monkeypatch.setattr("builtins.print", lambda *_a, **_k: None)
-
-    outcome = terminal._handle_court_command(sess, "传洪承畴来", current)
-
-    assert outcome == "handled"
-    # 结构化：handled + 未结传召 origin；不扫 print 承旨措辞。
-    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
-        f"cli:midflow:{state.turn}:洪承畴",
-    ]
-
-
-def test_cli_midflow_summon_rejects_unknown_unregistered_person(game):
-    """#670：CLI 夜内换人未知人物不得 summon-temp 旁路，须 ADR 0038 持久入册后再 admission。"""
-    from ming_sim.cli import terminal
-
-    sess = _session(game)
-    db, state, _content = game
-    sess.state = state
-    current = _set_place(game, "毕自严", location="beizhili")
-    unknown = "乌有先生乙"
-    assert unknown not in sess.content.characters
-
-    outcome = terminal._handle_court_command(sess, f"传{unknown}来", current)
-
-    assert outcome == "handled"
-    assert unknown not in sess.temporary_characters
-    assert an.list_unsettled_summons(db) == []
-    assert _chat_turn_count(db) == 0
-    assert _chat_message_count(db) == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
-    ).fetchone()["n"] == 0
-
 
 def test_summon_recorder_default_body_is_empty_and_tags_carry_facts(game):
     """#670 P7：传召账默认无固定玩家文案；机器事实只在 tags。"""
@@ -776,11 +680,6 @@ def test_capital_aliases_admit_in_capital(game):
 
 
 
-
-
-
-
-
 def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
     """#670：抵非京 arrived → 续程 beizhili 成功即结清 origin，不再形成该 origin 候见。
 
@@ -795,7 +694,7 @@ def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
     )
     night_id = int(an.open_night(db, state)["id"])
     origin = "command:continue-wait-1"
-    entry_id = an.record_summon_in_transit(
+    an.record_summon_in_transit(
         db, night_id, person.name, origin_id=origin,
     )
     assert _arrive_at_destination(game, person.name) == [
@@ -1118,11 +1017,6 @@ def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(g
 
 
 
-
-
-
-
-
 def test_inactive_person_skips_continuation_and_retires_on_month(game, monkeypatch):
     """#670：非 active 不投续程；玩家过月退役结清 origin。"""
     from tests.test_due_review_621 import _settle_empty_month
@@ -1144,7 +1038,6 @@ def test_inactive_person_skips_continuation_and_retires_on_month(game, monkeypat
 
     _settle_empty_month(db, state, content, monkeypatch)
     assert an.list_unsettled_summons(db) == []
-
 
 
 

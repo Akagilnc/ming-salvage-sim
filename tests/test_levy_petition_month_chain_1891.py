@@ -290,7 +290,7 @@ def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch, abolishe
             "key": "辽饷_rate", "origin_ref": "盘面自发", "reason": "罢征",
         }]}]})
         before = 0
-    seen = _install_model_boundary(
+    _install_model_boundary(
         monkeypatch,
         world_text="本月边情，户部请加辽饷。" + _levy_block(),
         declaration={"effects": [{
@@ -328,7 +328,7 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
         }]}]})
         before = 0
     # 留中＝转译不声明该事件结局（代码不据批语文字补结局）。
-    seen = _install_model_boundary(
+    _install_model_boundary(
         monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
     )
     session = _make_session(db, state, content)

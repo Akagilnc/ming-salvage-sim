@@ -18,7 +18,6 @@ from types import SimpleNamespace
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
 from ming_sim.highlight_judge import (
-    parse_highlight_judge_output,
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
     run_highlight_judge,
 )

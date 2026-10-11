@@ -182,7 +182,6 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
-    before = _click_before(game.state)
     turn = int(game.state.turn)
     nid, ctid = _open_night_with_unextracted_reply(game, minister)
 
@@ -239,7 +238,6 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
-    before = _click_before(game.state)
     turn = int(game.state.turn)
     _open_night_with_unextracted_reply(game, minister)
     game.db.add_directive(

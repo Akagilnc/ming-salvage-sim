@@ -22,7 +22,6 @@ from ming_sim.due_review import (
     build_due_review_input,
     dossiers_with_pending_due_review,
     list_due_review_scenes,
-    project_due_review_scene,
 )
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
@@ -608,7 +607,6 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     assert inp["supervision_history"] == []  # 本夹具未挂稽核链
     assert inp["progress_reports"] == []
     assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
-    scene = project_due_review_scene(db, todo, review_input=inp)
 
 
 def test_formal_review_blocks_extractor_second_terminal(game):

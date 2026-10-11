@@ -12,9 +12,8 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双�
 
 from __future__ import annotations
 
-import pytest
 
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.issues import (
     apply_score_extraction,
     bind_content as issues_bind_content,
@@ -43,9 +42,6 @@ def _displaced_rows(db: GameDB):
         "SELECT name, region_id, population, satisfaction, leverage, agenda "
         "FROM classes WHERE name='流民' ORDER BY region_id"
     ).fetchall()
-
-
-
 
 
 
@@ -106,14 +102,11 @@ def test_new_save_regions_seed_persons_scale(game):
 
 
 
-
 # ── 五项 mutation 验收矩阵（AC4+AC8 合并，逐项钉期望口径）──────────────
 
 
 
 # ── prompt 契约（new-save）＋ F2 机面/玩家面拆分 ──────────────────────────
-
-
 
 
 
@@ -209,5 +202,3 @@ def test_new_save_restore_jianzhou_keeps_persons_unit(game):
     ).fetchone()[0]
     assert after == JIANZHOU_RESTORE_POP_PERSONS
     assert after != 90  # 漏迁/漏换算任一即 FAIL（×10⁴ mutation 咬点）
-
-

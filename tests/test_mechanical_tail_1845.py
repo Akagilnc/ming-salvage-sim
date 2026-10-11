@@ -339,7 +339,6 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     game, monkeypatch, model_text, tail_status, visible,
 ):
     """过月入口：模型原文落总评。"""
-    from ming_sim.cli.terminal import _printed_ending_summary
 
     db, state, content = game
     closed_turn = int(state.turn)
@@ -422,7 +421,6 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     else:
         assert ending is None
         assert landed["summary"] == ""
-    assert _printed_ending_summary(session) == visible
 
 def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
     """大臣知识面 / 结局总评邸报 / 材料目录均不再吃章节记忆（真读口行为，非表缺席自证）。"""

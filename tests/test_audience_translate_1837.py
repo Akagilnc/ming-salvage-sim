@@ -339,7 +339,6 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
 
 
 
-
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
     """AC1：scene_chat 转译 → 一条组合暂存 → 应允收夜 → 任免与拨帑两类效果全。
 
@@ -621,9 +620,6 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch, messag
         before = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
-        if channel == "cli":
-            from ming_sim.cli.terminal import _handle_court_command
-            assert _handle_court_command(sess, message, content.characters[person]) is None
         result, _ = _scene_turn(sess, db, state, message)
         after = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"

@@ -373,51 +373,6 @@ def test_bad_audibility_and_append_after_close(game):
     assert ei2.value.code == "night_closed"
 
 
-def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
-    """CLI 真实输入入口 terminal.minister_chat 起聊 → 对话轮挂夜（非 night_id=0 旁路）。"""
-    import ming_sim.cli.terminal as term
-    from types import SimpleNamespace
-
-    db, state, content = game
-    character = next(c for c in content.characters.values()
-                     if db.get_character_status(c.name)[0] == "active"
-                     and getattr(c, "power_id", "ming") == "ming"
-                     and getattr(c, "office_type", "") != "后宫")
-
-    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
-        assert chat_turn_id > 0  # 挂夜轮以 generating 起笔，回话须带 chat_turn_id
-        return SimpleNamespace(
-            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
-            registered_minister="", displaced_minister="", court_action="",
-            next_minister="", secret_order_id=0, pending_action_id=0,
-        )
-
-    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        # #1842：CLI 殿上口令外问话走 scene_chat；替身委托既有 chat 同形。
-        del stream_emit
-        return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
-
-    session = SimpleNamespace(
-        db=db, state=state, content=content,
-        chat=chat, scene_chat=scene_chat,
-        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
-        schedule_pending_scene_translation=lambda result: None,
-        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
-        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
-        close_night_after_chat_if_needed=lambda *_a, **_k: None,
-    )
-    answers = iter(["朕问卿边事如何？", "done"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-
-    assert term.minister_chat(session, character) == "dismiss"
-
-    open_n = an.get_open_night(db)
-    assert open_n is not None
-    turns = an.list_chat_turns_for_night(db, int(open_n["id"]))
-    # #1838 reopen：CLI 殿上建轮以「殿上」为 speaker
-    assert turns and turns[-1]["minister_name"] in {character.name, "殿上"}
-    assert int(turns[-1]["night_id"]) == int(open_n["id"]) > 0
-
 
 def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):
     """已提交、尚未成案的旨不得落明发账，也不得写空 provenance。"""

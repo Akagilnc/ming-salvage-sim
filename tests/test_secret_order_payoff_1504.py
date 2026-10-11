@@ -842,7 +842,6 @@ def test_reaction_declarations_need_real_knowledge_across_months(game):
         db, state, name, "查核", "查核", months=6, target=1,
         kind="查核", axes=["既得利益"], investigation_target=target,
     )
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
 
     # 未知情时声明压案 → 不落这项事实（引擎不替不知情的人记下他压了案）
     _next_month(db, state)
@@ -1110,12 +1109,11 @@ def test_investigation_history_is_not_truncated(game):
     )
     _set_axes(db, name, loyalty=90, identity=30)
     _co_locate(db, name, target)
-    informer = _relation_informer(db, name, target)
+    _relation_informer(db, name, target)
     oid = _issue(
         db, state, name, "查核", "查核", months=30, target=1,
         kind="查核", axes=["既得利益"], investigation_target=target,
     )
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
     months = 9
     for i in range(months):
         _next_month(db, state)

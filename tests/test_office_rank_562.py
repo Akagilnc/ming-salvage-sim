@@ -1,9 +1,5 @@
 import json
 
-from ming_sim.office_rank import (
-    canonical_office_title,
-    office_rank_band,
-)
 from ming_sim.models import Character
 
 
@@ -31,7 +27,6 @@ def _appointment_dossier(db, state, name, office, office_type=""):
         "SELECT * FROM decree_dossiers WHERE id=?", (dossier_id,)
     ).fetchone()
     return dossier_id, json.loads(row["payload_json"])
-
 
 
 
@@ -158,9 +153,6 @@ def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(gam
         _dossier_id, payload = _appointment_dossier(db, state, name, "翰林院编修")
         assert payload["break_rank"]["basis"] == "first_appointment_regular"
         assert payload["break_rank"]["is_break_rank"] is False
-
-
-
 
 
 

@@ -13,11 +13,6 @@ import sqlite3
 import pytest
 
 from ming_sim.applier import atomic
-from ming_sim.constants import (
-    BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
-    RECOVERY_OUTCOME_FACTORS,
-    RECOVERY_PERSONS_PER_WAN,
-)
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
@@ -606,5 +601,3 @@ def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
     assert result is not None and result.awaiting is False
     assert result.advanced is False
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-
-
