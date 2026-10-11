@@ -212,14 +212,15 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     runtime, minister_name, allow_finish, settlement_attempting, settlement = _runtime_for_stream_race(monkeypatch)
 
     stream = runtime.chat_stream("殿上", "请奏")
-    first = next(stream)
-    assert first["type"] == "accepted"
-    assert next(stream) == {"type": "delta", "content": "臣已知悉。"}
-
-    settlement_thread = threading.Thread(target=settlement)
-    settlement_thread.start()
+    settlement_thread = None
     done_thread = None
     try:
+        first = next(stream)
+        assert first["type"] == "accepted"
+        assert next(stream) == {"type": "delta", "content": "臣已知悉。"}
+
+        settlement_thread = threading.Thread(target=settlement)
+        settlement_thread.start()
         settlement_attempting.wait()
         settlement.holding.wait()
 
@@ -242,9 +243,13 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     finally:
         allow_finish.set()
         settlement.release_event.set()
-        settlement_thread.join()
+        if settlement_thread is not None:
+            settlement_thread.join()
         if done_thread is not None:
             done_thread.join()
+        for _ in stream:
+            pass
+        runtime._runtime_write_queue().wait_idle()
     done = done_box[0]
 
     assert done["type"] == "done"

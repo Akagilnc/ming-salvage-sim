@@ -132,7 +132,6 @@ def test_barrier_waits_multiple_prior_tickets():
         assert not done.is_set()
     finally:
         release.set()
-        both_waiting.abort()
         ta.join()
         tb.join()
         if bt is not None:
