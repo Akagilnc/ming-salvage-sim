@@ -11,8 +11,8 @@ export class ApiRequestError extends Error {
     fallback: string,
     chatIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number },
   ) {
-    const message = detail.message || fallback;
-    super(message);
+    const reason = detail.reason || detail.provider_message || detail.message || fallback;
+    super(detail.error_pack_path ? `${reason}\n错误包：${detail.error_pack_path}` : reason);
     this.name = "ApiRequestError";
     this.detail = detail;
     this.chatIdentity = chatIdentity;
@@ -25,10 +25,8 @@ export const normalizeApiError = (error: any, fallback: string): ApiErrorDetail 
     const turnRaw = detail.turn;
     const turnNum = typeof turnRaw === "number" ? turnRaw : Number(turnRaw);
     return {
-      code: detail.code,
+      ...detail,
       message: detail.message || detail.detail || fallback,
-      provider_message: detail.provider_message,
-      status_code: detail.status_code,
       turn: Number.isFinite(turnNum) ? turnNum : undefined,
     };
   }

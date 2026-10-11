@@ -122,7 +122,7 @@ def _json_name_list(raw: object) -> list[str]:
     # 与 db 持久 list 权威同缝；腐坏响亮，不 catch-to-[]（#1897 E1）。
     from ming_sim.db import _load_durable_str_list
     return list(
-        _load_durable_str_list(raw, surface="public_sayings.excluded_names")
+        _load_durable_str_list(raw)
     )
 
 

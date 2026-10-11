@@ -44,21 +44,15 @@ def derive_opportunity_band(durable_effects: object) -> str:
             continue
         for key in ("delta", "amount", "new_value", "old_value"):
             if key in row and row.get(key) is not None:
-                try:
-                    if key == "old_value":
-                        continue
-                    total_abs += abs(int(row.get(key) or 0))
-                except (TypeError, ValueError):
-                    pass
+                if key == "old_value":
+                    continue
+                total_abs += abs(int(row.get(key) or 0))
                 break
         else:
             # fiscal change: |new-old|
-            try:
-                nv = int(row.get("new_value") or 0)
-                ov = int(row.get("old_value") or 0)
-                total_abs += abs(nv - ov)
-            except (TypeError, ValueError):
-                pass
+            nv = int(row.get("new_value") or 0)
+            ov = int(row.get("old_value") or 0)
+            total_abs += abs(nv - ov)
     if total_abs <= 0:
         return "none"
     if total_abs >= _OPPORTUNITY_HIGH_ABS:
@@ -114,10 +108,7 @@ def collect_urge_history(
         dossier = db.get_decree_dossier(int(dossier_id))
         so_id = 0
         if isinstance(dossier, dict):
-            try:
-                so_id = int(dossier.get("secret_order_id") or 0)
-            except (TypeError, ValueError):
-                so_id = 0
+            so_id = int(dossier.get("secret_order_id") or 0)
         if so_id > 0:
             so_rows = db.conn.execute(
                 """
@@ -181,10 +172,7 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
                     name = cand
                     break
             if not name:
-                parts = _load_durable_str_list(
-                    row["participants"],
-                    surface=f"issues#{int(commitment_ref)}.participants",
-                )
+                parts = _load_durable_str_list(row['participants'])
                 if parts:
                     name = str(parts[0]).strip()
     integrity, courage = 50, 50
@@ -194,14 +182,8 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             (name,),
         ).fetchone()
         if crow is not None:
-            try:
-                integrity = int(crow["integrity"])
-            except (TypeError, ValueError):
-                integrity = 50
-            try:
-                courage = int(crow["courage"])
-            except (TypeError, ValueError):
-                courage = 50
+            integrity = int(crow["integrity"])
+            courage = int(crow["courage"])
     return {"name": name, "integrity": integrity, "courage": courage}
 
 
@@ -308,10 +290,7 @@ def rush_staged_commitment_stage(
             item={"commitment_ref": int(commitment_ref), "stage_idx": int(stage_idx)},
         )
 
-    try:
-        months = max(0, min(int(deadline_months if deadline_months is not None else 1), 36))
-    except (TypeError, ValueError):
-        months = 1
+    months = max(0, min(int(deadline_months if deadline_months is not None else 1), 36))
 
     turn = int(getattr(state, "turn", 0) or 0)
     old_due = int(target_stage["due_turn"])
@@ -338,9 +317,8 @@ def rush_staged_commitment_stage(
     )
 
     # 真正空串才回落缺省；合法空白原文原样运输，禁 strip 改字（#1897）。
-    # 类型合同复用 _require_durable_prose，不另建校验器。
-    from ming_sim.db import _require_durable_prose
-    raw_reason = _require_durable_prose(reason, field="reason", required=False)
+
+    raw_reason = reason
     why = raw_reason if raw_reason else "奉旨加急"
     if record_history:
         _record_commitment_urge(

@@ -219,22 +219,18 @@ def _login_shell_path() -> Optional[str]:
         return _DISCOVERED_LOGIN_PATH or None
     discovered = ""
     shell = os.environ.get("SHELL") or "/bin/zsh"
-    try:
-        # 用 printenv 取已导出的 PATH（shell 无关）：不靠 "$PATH" 展开——fish 把 $PATH
-        # 当 list、双引号里展开成空格分隔，会破后面的冒号切分（gemini r2 G-R1）。
-        # printenv 是外部命令，读到的是登录 shell 导出的 env PATH（恒冒号分隔）。
-        # flag 分开传 -l -i -c：组合形式 -lic 在 fish 等 shell 报错（不支持组合单字符
-        # 选项）；分开形式各 shell 通吃，仍由外层 try 兜底（gemini PR#115 high）。
-        proc = _RAW_RUN(
-            [shell, "-l", "-i", "-c", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
-            capture_output=True, text=True, timeout=8,
-        )
-        m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
-        if m:
-            discovered = m.group(1).strip()
-    except Exception:
-        logger.exception("login shell PATH discovery failed")
-        discovered = ""
+    # 用 printenv 取已导出的 PATH（shell 无关）：不靠 "$PATH" 展开——fish 把 $PATH
+    # 当 list、双引号里展开成空格分隔，会破后面的冒号切分（gemini r2 G-R1）。
+    # printenv 是外部命令，读到的是登录 shell 导出的 env PATH（恒冒号分隔）。
+    # flag 分开传 -l -i -c：组合形式 -lic 在 fish 等 shell 报错（不支持组合单字符
+    # 选项）；分开形式各 shell 通吃，执行失败原样交出（gemini PR#115 high）。
+    proc = _RAW_RUN(
+        [shell, "-l", "-i", "-c", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
+        capture_output=True, text=True, timeout=8,
+    )
+    m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
+    if m:
+        discovered = m.group(1).strip()
     _DISCOVERED_LOGIN_PATH = discovered
     return discovered or None
 
@@ -346,13 +342,10 @@ def _trace(record: Dict[str, Any]) -> None:
 
 def _warm_keychain() -> None:
     """暖 macOS keychain 路径，缓解 agy headless auth 的 1s race（见 wiki）。"""
-    try:
-        subprocess.run(
-            ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
-        )
-    except Exception:
-        logger.exception("keychain warm failed")
+    subprocess.run(
+        ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+    )
 
 
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
@@ -583,8 +576,7 @@ def _iter_cli_process_lines(
         if fault_parts:
             for label, exc in fault_parts[1:]:
                 logger.warning("CLI 并存故障（%s）：%s", label, exc)
-            label, fault = fault_parts[0]
-            raise RuntimeError(f"CLI {label}失败：{fault}") from fault
+            raise fault_parts[0][1]
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     if reasoning_strength is None:
@@ -836,10 +828,7 @@ def _iter_cli_runner_text(
                 stripped = line.strip()
                 if not stripped:
                     continue
-                try:
-                    obj = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
+                obj = json.loads(stripped)
                 delta = _codex_event_text(obj)
                 if delta:
                     pieces.append(delta)
@@ -870,7 +859,7 @@ def _iter_cli_runner_text(
             text = ""
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
-            raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
+            raise subprocess.CalledProcessError(returncode, cmd, output=stdout_text, stderr=stderr)
         if not text.strip():
             raise transport_failure_unavailable(
                 empty_output_failure(), attempts=1, exhausted=False,
@@ -1166,10 +1155,7 @@ def _run_json_extractor_for_config(
 def _backend_label(llm_config: Any = None) -> str:
     if _llm_channel(llm_config) == "api":
         return "api"
-    try:
-        parts = _cli_config_parts(llm_config)
-    except RuntimeError:
-        parts = None  # 不支持的 runner：trace 标签回落，不让构造崩
+    parts = _cli_config_parts(llm_config)
     if parts is not None:
         return parts[0] or "agy"
     return cli_backend_from_env() or "agy"
@@ -1205,12 +1191,7 @@ def cli_backend_active(llm_config: Any = None) -> bool:
     if channel == "api":
         return False
     if channel == "cli":
-        # 显式 CLI：直接判 runner，不回落 env。否则 bogus runner 误报 active，
-        # 执行期 _run_backend_for_config 再调 _cli_config_parts 仍会崩。
-        try:
-            return _cli_config_parts(llm_config) is not None
-        except RuntimeError:
-            return False
+        return _cli_config_parts(llm_config) is not None
     return cli_backend_from_env() is not None
 
 
@@ -1688,11 +1669,10 @@ def _compose_inworld_fact_report(
 ) -> str:
     """Shared player-lane fact-to-prose call; generated prose is never rewritten.
 
-    #1465 切片③：随手工拟诏 30s 总罩一并删除「剩余预算」墙钟——产文失败仍 typed
-    上抛（#1299/#1310 单源），但不再被外层墙截断。
+    #1465 切片③：随手工拟诏 30s 总罩一并删除「剩余预算」墙钟——产文失败原样
+    上抛，但不再被外层墙截断。
     """
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import cli_runner_unavailable
+    from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
 
     def _produce() -> str:
         # 玩家产文：复用 API/CLI 既有接缝；API 关 force_json（0033），不另开平行函数。
@@ -1707,15 +1687,9 @@ def _compose_inworld_fact_report(
         # strip 只判空；原文不改写（generated prose is never rewritten）。
         if text.strip():
             return text
-        raise cli_runner_unavailable(RuntimeError(f"{tag} 空响"), backend=tag)
+        raise transport_failure_unavailable(empty_output_failure(), attempts=1, exhausted=False)
 
-    try:
-        return _produce()
-    except LLMUnavailable:
-        raise
-    except Exception as exc:
-        _log(f"{tag} 产文失败：{exc}")
-        raise cli_runner_unavailable(exc, backend=tag) from exc
+    return _produce()
 
 
 def compose_unknown_participant_inworld_report(
@@ -1728,8 +1702,7 @@ def compose_unknown_participant_inworld_report(
 ) -> str:
     """P7：把查无此人事实喂给 LLM，产大臣/通政司口吻回禀；禁模板当台词。
 
-    产文失败 → typed LLMUnavailable（#1299/#1310/#1452
-    失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
+    调用失败原样交出；空输出沿现有 transport 分类。入口呈现原因与诊断。
     speaker_role：客观档料由调用方给出（0033）；不在此复制档料。
     """
     cleaned = _normalize_unknown_participant_names(names)
@@ -2227,34 +2200,29 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
         if str(payload.get("deliberation_state") or "") != "stalled":
             continue
         did = int(row["id"])
-        try:
-            issue = db.conn.execute(
-                "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' "
-                "LIMIT 1",
-                (f"dossier:{did}",),
-            ).fetchone()
-            if issue is None:
-                continue
-            # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
-            # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
-            # 题/正文为 LLM 供料：原话过手，strip 只判空（#1897 E2 / P6）。
-            title_raw = (
-                payload.get("title")
-                or payload.get("target_id")
-                or issue["title"]
-                or ""
-            )
-            title = title_raw if isinstance(title_raw, str) else str(title_raw or "")
-            body_raw = payload.get("text") or row.get("decree_text") or ""
-            body = body_raw if isinstance(body_raw, str) else str(body_raw or "")
-            # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
-            lines.append(
-                f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
-            )
-        except (TypeError, ValueError, KeyError) as exc:
-            # #1849：坏项隔离留痕（ADR 0005：只拒该项、不带走整批，但必须记原因）。
-            _log(f"强推案卷事实跳过坏行（dossier={row.get('id')!r}）：{exc}")
+        issue = db.conn.execute(
+            "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' "
+            "LIMIT 1",
+            (f"dossier:{did}",),
+        ).fetchone()
+        if issue is None:
             continue
+        # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
+        # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
+        # 题/正文为 LLM 供料：原话过手，strip 只判空（#1897 E2 / P6）。
+        title_raw = (
+            payload.get("title")
+            or payload.get("target_id")
+            or issue["title"]
+            or ""
+        )
+        title = title_raw if isinstance(title_raw, str) else str(title_raw or "")
+        body_raw = payload.get("text") or row.get("decree_text") or ""
+        body = body_raw if isinstance(body_raw, str) else str(body_raw or "")
+        # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
+        lines.append(
+            f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
+        )
     if not lines:
         return ""
     return (
@@ -2959,17 +2927,8 @@ class CliChat(OpenAIChat):
         try:
             text, attempts = self._call_cli(prompt)
         except Exception as exc:
-            # #1299/#1310：runner 自身失败翻成 typed LLMUnavailable，
-            # 错误串不得进 content 当叙事（agno 吞 Exception 会把 str(e) 塞 content）。
-            from ming_sim.exceptions import LLMUnavailable
-            from ming_sim.llm_model import cli_runner_unavailable
-            from ming_sim.llm_transport import TransportIdleTimeout
             error = str(exc)
-            # 已 typed 的可重试瞬断（空转/空输出/连接）原样上浮：套成
-            # llm_cli_* 会让 transport 把瞬断误判成确定性失败，一次即终。
-            if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):
-                raise
-            raise cli_runner_unavailable(exc, backend=self.backend) from exc
+            raise
         finally:
             dt = round(time.monotonic() - t0, 1)
             assistant_message.metrics.stop_timer()
@@ -3025,29 +2984,19 @@ class CliChat(OpenAIChat):
             return
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
         prompt = _messages_to_prompt(messages, response_format, materials_dir=materials)
-        try:
-            # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
-            # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
-            # codex 走结构化 --json 事件流边到边出；纯文本 runner 判活后一次交全。
-            stream = _iter_cli_runner_text(
-                self.backend,
-                prompt,
-                model=str(getattr(self, "id", "") or ""),
-                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
-                json_events=(self.backend == "codex"),
-                materials_dir=materials,
-            )
-            for delta in stream:
-                yield ModelResponse(role="assistant", content=str(delta))
-        except Exception as exc:
-            # #1299/#1310：流式 runner 失败同翻 typed，禁机器横幅进 delta/content。
-            # #1465：已 typed 的可重试瞬断原样上浮（同 invoke）。
-            from ming_sim.exceptions import LLMUnavailable
-            from ming_sim.llm_model import cli_runner_unavailable
-            from ming_sim.llm_transport import TransportIdleTimeout
-            if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):
-                raise
-            raise cli_runner_unavailable(exc, backend=self.backend) from exc
+        # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
+        # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
+        # codex 走结构化 --json 事件流边到边出；纯文本 runner 判活后一次交全。
+        stream = _iter_cli_runner_text(
+            self.backend,
+            prompt,
+            model=str(getattr(self, "id", "") or ""),
+            reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+            json_events=(self.backend == "codex"),
+            materials_dir=materials,
+        )
+        for delta in stream:
+            yield ModelResponse(role="assistant", content=str(delta))
 
     def response_stream(  # type: ignore[override]
         self,

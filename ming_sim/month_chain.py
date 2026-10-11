@@ -385,9 +385,7 @@ def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
     from ming_sim.db import GameDB
 
     chain = _load_chain(db, int(turn))
-    return GameDB.optional_object(
-        chain.get("call_failure"), surface="month_chain.call_failure",
-    )
+    return chain.get("call_failure")
 
 
 def continue_world_after_answers(
@@ -686,9 +684,7 @@ def _consume_call_failure_for_retry(
     """玩家点「重试」再入主链：按需丢段，然后清失败标记，只续未完成步。"""
     from ming_sim.db import GameDB
 
-    failure = GameDB.optional_object(
-        chain.get("call_failure"), surface="month_chain.call_failure",
-    )
+    failure = chain.get("call_failure")
     if failure is None:
         return
     step = str(failure.get("step") or "")
@@ -1670,10 +1666,7 @@ def _pin_world_question_event_bindings(
     from ming_sim.db import GameDB
     from ming_sim.issues import gather_fiscal_levy_petitions
 
-    if GameDB.optional_object(
-        chain.get("world_question_event_bindings"),
-        surface="month_chain.world_question_event_bindings",
-    ) is not None:
+    if chain.get("world_question_event_bindings") is not None:
         return
 
     questions = [
@@ -1915,9 +1908,7 @@ def _advance_after_gazette(
         for value in candidates:
             if value is None:
                 continue
-            checked = GameDB.optional_object(
-                value, surface="month_chain.declaration_outcome",
-            )
+            checked = value
             if checked:  # 合法 {} 继续回落
                 return checked
         return None
@@ -2016,7 +2007,7 @@ def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
     chain = payload.get(_CHAIN_KEY)
     if chain is None:
         return {}
-    return dict(GameDB.optional_object(chain, surface="month_chain") or {})
+    return dict(chain or {})
 
 
 def _save_chain(

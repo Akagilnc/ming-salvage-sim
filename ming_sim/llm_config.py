@@ -97,13 +97,7 @@ _TRANSPORT_NUMERIC_FIELDS = {
 def _slot_number(value: object, caster, default):
     if value is None or (isinstance(value, str) and not value.strip()):
         return default
-    try:
-        return caster(value)
-    except (TypeError, ValueError):
-        try:
-            return caster(float(value))  # "4096.0" / 含小数的字符串兜底
-        except (TypeError, ValueError):
-            return default
+    return caster(value)
 
 
 def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
@@ -423,15 +417,11 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
 
 
 def load_runtime_llm() -> Dict[str, object]:
-    """读 data/runtime_llm.json。缺/坏返回空 dict。"""
-    if not os.path.isfile(RUNTIME_LLM_PATH):
-        return {}
+    """读 runtime_llm.json。未配置返回空 dict；读写或解析故障原样交出。"""
     try:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
+    except FileNotFoundError:
         return {}
     return _normalize_runtime_llm(data)
 

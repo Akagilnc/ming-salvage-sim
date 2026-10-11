@@ -287,10 +287,7 @@ def run_turn_translation_job(
             status = str(row["status"] or "") if row is not None else ""
             mid = 0
             if row is not None and row["minister_message_id"] is not None:
-                try:
-                    mid = int(row["minister_message_id"] or 0)
-                except (TypeError, ValueError):
-                    mid = 0
+                mid = int(row["minister_message_id"] or 0)
             if status == "generating" or mid <= 0:
                 raise AudienceTranslateError(
                     f"源轮回话未落定：chat_turn_id={ctid} status={status}"

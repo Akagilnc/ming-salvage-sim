@@ -163,7 +163,8 @@ def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
             return False
         try:
             parsed = json.loads(text)
-        except (TypeError, ValueError):
+        except json.JSONDecodeError:
+            # W4/#1896：seed_guilt 允许裸散文；它不提供结构化罪情。
             return False
         if not isinstance(parsed, Mapping):
             return False
@@ -741,10 +742,7 @@ def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
 
 
 def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
-    try:
-        delta = float(item.get("delta") or 0)
-    except (TypeError, ValueError):
-        return False
+    delta = float(item.get("delta") or 0)
     sign = int(delivery.get("effect_sign") or 0)
     if sign < 0 and delta >= 0:
         return False
@@ -769,10 +767,7 @@ def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str,
 
 
 def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
-    try:
-        delta = float(row["delta"] or 0)
-    except (TypeError, ValueError, KeyError):
-        return False
+    delta = float(row["delta"] or 0)
     sign = int(delivery.get("effect_sign") or 0)
     return (
         ((sign < 0 and delta < 0) or (sign > 0 and delta > 0))
@@ -1081,13 +1076,10 @@ def investigation_fact_difficulty(
             "SELECT ability FROM characters WHERE name=?", (worker,),
         ).fetchone()
         if ability_row is not None:
-            try:
-                ability = float(ability_row["ability"])
-            except (TypeError, ValueError):
-                ability = _ABILITY_REFERENCE
+            ability = float(ability_row["ability"])
             # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零，
             # 不另立「能力为零则拒绝」的闸，也不把前置因子覆盖成常数。
-            # 解析失败或非有限值仍按参考能力（乘子为 1）。
+            # 非有限值仍按参考能力（乘子为 1）；解析失败原样交出。
             if math.isfinite(ability) and ability >= 0.0:
                 difficulty *= (
                     math.inf if ability == 0.0 else _ABILITY_REFERENCE / ability
@@ -1161,10 +1153,7 @@ def investigation_monthly_capacity(
         return _CAPACITY_MIN  # 未到差：无差可查，投入为零
     capacity = 1.0
     if row is not None:
-        try:
-            ability = float(row["ability"])
-        except (TypeError, ValueError):
-            ability = _ABILITY_CAPACITY_REFERENCE
+        ability = float(row["ability"])
         # 零参与同一带宽公式。解析失败或非有限值用参考能力。
         if math.isfinite(ability):
             capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
@@ -1708,10 +1697,7 @@ def originated_quantity_this_turn(
                 continue
             if not _delivery_matches_economy(item, delivery):
                 continue
-            try:
-                qty += abs(float(item.get("delta") or 0))
-            except (TypeError, ValueError):
-                continue
+            qty += abs(float(item.get("delta") or 0))
     if "人物变更" in fields:
         action = str(delivery.get("person_action") or "").strip()
         rows = db.conn.execute(
@@ -1733,10 +1719,7 @@ def originated_quantity_this_turn(
 
 def monthly_actual_units(*, fidelity: object, originated_quantity: float) -> float:
     """实进度 = 执行格份额 × 当月 canonical 可数量。无 origin 实物则空转 0。"""
-    try:
-        quantity = float(originated_quantity or 0)
-    except (TypeError, ValueError):
-        quantity = 0.0
+    quantity = float(originated_quantity or 0)
     if quantity <= 0.0:
         return 0.0
     return progress_units_for_state(fidelity) * quantity
@@ -1748,10 +1731,7 @@ def _selection_map(raw_selections: object) -> Dict[int, Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id", item.get("密令编号"))
-        try:
-            oid = int(raw_id)
-        except (TypeError, ValueError):
-            continue
+        oid = int(raw_id)
         mapping[oid] = item
     return mapping
 
@@ -1920,8 +1900,8 @@ def apply_monthly_covert_actual_progress(
             note: Optional[str] = None
         else:
             # 已提供 note 禁 str() 洗白；坏类型沿写口响亮（#1897 J820-E1）。
-            from ming_sim.db import _require_durable_prose
-            note = _require_durable_prose(raw_note, field="note", required=False)
+
+            note = raw_note
         row = db.record_dossier_actual_progress(
             did,
             turn,
@@ -2075,10 +2055,8 @@ def _apply_investigation_selection(
     # 写口前禁 str() 洗白；坏类型沿既有写口响亮（#1897 J820-E1）。
     memorial_note: Optional[str] = None
     if raw_note is not None:
-        from ming_sim.db import _require_durable_prose
-        memorial_note = _require_durable_prose(
-            raw_note, field="note", required=False,
-        )
+
+        memorial_note = raw_note
     row = db.record_dossier_actual_progress(
         did, turn, units=units, fidelity_state="", floor_state="",
         note=None, commit=False,

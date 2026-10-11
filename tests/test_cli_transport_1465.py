@@ -7,6 +7,8 @@ code / outcome / message_id / 夜未封 / 子进程调用次数。受控时钟�
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import threading
 from types import SimpleNamespace
 from typing import Callable, Dict, Optional
@@ -222,9 +224,11 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path, 
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
     detail = events[-1][1]
-    assert detail.get("code") == "llm_cli_claude", detail
-    attempts = detail.get("transport_attempts") or []
-    assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
+    assert detail["error_type"] == "CalledProcessError"
+    assert detail["returncode"] == 1
+    assert detail["stderr"] == "error: unknown model\n"
+    assert detail["reason"] == detail["stderr"]
+    assert (Path(detail["error_pack_path"]) / "traceback.txt").is_file()
     assert script.calls == 1
 
 
@@ -253,10 +257,9 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
     detail = events[-1][1]
-    attempts = detail.get("transport_attempts") or []
-    assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
+    assert detail["error_type"] == "BrokenPipeError"
+    assert (Path(detail["error_pack_path"]) / "traceback.txt").is_file()
     assert script.calls == 1
-    assert "stdin" in str(detail.get("provider_message") or ""), detail
 
 
 def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, game):

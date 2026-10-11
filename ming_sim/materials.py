@@ -359,14 +359,8 @@ def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
     Missing issue (KeyError) is not a link. Corrupt durable ``issues.affair_id``
     raises from AffairStore.affair_id_for_issue (F39) — never wash into unlinked.
     """
-    try:
-        iid = int(issue_id)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0
-    try:
-        return int(db.affairs.affair_id_for_issue(iid))
-    except KeyError:
-        return 0
+    iid = int(issue_id)  # type: ignore[arg-type]
+    return int(db.affairs.affair_id_for_issue(iid))
 
 
 def _own_affair_lines(
@@ -453,17 +447,11 @@ def _own_affair_lines(
 
     handling_ids: set[int] = set()
     for issue in db.list_active_issues():
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
         if not linked_affair_id:
             continue
-        try:
-            roster = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            roster = set()
+        roster = participant_roster_names(issue["participant_roster"])
         if character_name in roster or _reader_in_issue_audience(db, issue, character_name):
             handling_ids.add(linked_affair_id)
 
@@ -471,10 +459,7 @@ def _own_affair_lines(
     textual_facts = db.textual_facts
     lines: list[tuple[str, str, str, str, bool]] = []
     for affair_id in candidate_ids:
-        try:
-            affair = store.get(affair_id)
-        except KeyError:
-            continue
+        affair = store.get(affair_id)
         facts = store.current_situation(textual_facts, affair_id)
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         extra_lines = linked_material.get(affair_id) or []
@@ -614,19 +599,13 @@ def _opening_affair_lines(
     seen: set[str] = set()
     active = db.list_active_issues()
     for issue in active:
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         if _issue_linked_affair_id(db, issue_id):
             continue  # represented via its affair's own entry, if any.
         dir_key = f"issue-{issue_id}"
         if dir_key not in visible or dir_key in seen:
             continue
-        try:
-            roster = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            roster = set()
+        roster = participant_roster_names(issue["participant_roster"])
         if character_name not in roster and not _reader_in_issue_audience(db, issue, character_name):
             continue
         seen.add(dir_key)
@@ -791,10 +770,7 @@ def _write_textual_fact_files(
     for dir_key, title, _directory_text, _opening_text, _is_handling in matter_lines:
         if not str(dir_key).startswith("affair-"):
             continue
-        try:
-            affair_id = int(str(dir_key).split("-", 1)[1])
-        except (TypeError, ValueError, IndexError):
-            continue
+        affair_id = int(str(dir_key).split("-", 1)[1])
         if affair_id > 0:
             subjects.append(("affair", str(affair_id), str(title or affair_id)))
     index: list[str] = []
@@ -1859,10 +1835,7 @@ def dossier_paid_amount(db: Any, dossier_id: object) -> int:
 
     世界段在途案卷与逐旨预推「本旨」事实共用；无案卷行或尚无动账时为 0。
     """
-    try:
-        oid = int(dossier_id)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0
+    oid = int(dossier_id)  # type: ignore[arg-type]
     if oid <= 0:
         return 0
     return sum(
@@ -1882,10 +1855,7 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
     """
     if not isinstance(payload, Mapping) and not isinstance(row, Mapping):
         return {}
-    try:
-        target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
-    except (TypeError, ValueError):
-        return {}
+    target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
     dossier = db.get_decree_dossier(int(target_dossier_id))
     if dossier is None:
         return {}
@@ -2022,7 +1992,7 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
 def _json_list_field(raw: object) -> list[str]:
     """DB 人物 aliases/personal_skills：腐坏响亮，不 catch-to-[]（#1897 E1）。"""
     from ming_sim.db import _load_durable_str_list
-    return _load_durable_str_list(raw, surface="characters.json_list_field")
+    return _load_durable_str_list(raw)
 
 
 def _character_projection_from_db_row(row: Any) -> Any:
@@ -2030,16 +2000,10 @@ def _character_projection_from_db_row(row: Any) -> Any:
     from ming_sim.models import Character
 
     def _int(key: str, default: int = 0) -> int:
-        try:
-            return int(row[key])
-        except (KeyError, TypeError, ValueError):
-            return default
+        return int(row[key])
 
     def _str(key: str, default: str = "") -> str:
-        try:
-            value = row[key]
-        except (KeyError, IndexError, TypeError):
-            return default
+        value = row[key]
         return default if value is None else str(value)
 
     return Character(

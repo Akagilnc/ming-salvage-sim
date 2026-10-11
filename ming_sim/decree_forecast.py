@@ -588,10 +588,7 @@ def schedule_approved_from_dispatch(db: Any, result: Any, night_id: int) -> None
             continue
         if str(item.get("action") or "") != "拟旨":
             continue
-        try:
-            action_id = int(item.get("action_id") or 0)
-        except (TypeError, ValueError):
-            continue
+        action_id = int(item.get("action_id") or 0)
         if action_id > 0:
             schedule_pending_decree_forecast(owner, action_id, night_id=int(night_id))
 

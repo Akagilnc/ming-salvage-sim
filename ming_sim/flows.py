@@ -19,7 +19,7 @@ from ming_sim.army_pay import (
 )
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import TURN_UNIT
-from ming_sim.db import GameDB, _load_durable_json_object
+from ming_sim.db import GameDB, _load_durable_json
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import GameState
@@ -88,7 +88,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]
     ).fetchall()
     for row in rows:
         try:
-            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+            fiscal = _load_durable_json(row["fiscal"], default='{}')
         except (TypeError, ValueError) as exc:
             raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路") from exc
         salt_total += _as_finite_nonnegative_float(
@@ -111,7 +111,7 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     for row in rows:
         region_id = str(row["id"])
         try:
-            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+            fiscal = _load_durable_json(row["fiscal"], default='{}')
         except (TypeError, ValueError) as exc:
             raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运") from exc
         if not isinstance(fiscal, dict):
@@ -385,7 +385,7 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
     ).fetchall()
     for row in rows:
         # 持久财政读取故障响亮上抛；不得出列成「无需求」后照常出成功预算（ADR 0005）。
-        fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+        fiscal = _load_durable_json(row["fiscal"], default='{}')
         settle = fiscal.get("settle")
         if settle is None:
             continue
@@ -548,10 +548,7 @@ def _apply_metric_dict(
     for key, val in metric_delta.items():
         if key not in ISSUE_METRIC_KEYS:
             continue
-        try:
-            d = int(val)
-        except (TypeError, ValueError):
-            continue
+        d = int(val)
         net_pct = int(mods.get(key, 0) or 0)
         if net_pct and db is not None:
             d = db.apply_legacy_pct(d, net_pct)

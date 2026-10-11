@@ -56,10 +56,7 @@ def qualitative_bucket(
     default: int = 0,
 ) -> int:
     """Return the zero-based bucket for a score, preserving valid zeroes."""
-    try:
-        score = int(default if value is None else value)
-    except (TypeError, ValueError):
-        score = default
+    score = int(default if value is None else value)
     return sum(score >= cutoff for cutoff in cutoffs)
 
 
@@ -79,12 +76,8 @@ def qualitative_band(value: object, words: tuple[str, ...], default: int = 0) ->
     if value is None:
         index = qualitative_bucket(default, (20, 40, 60, 80), 0) - (1 if default else 0)
     else:
-        try:
-            int(value)
-        except (TypeError, ValueError):
-            index = qualitative_bucket(default, (20, 40, 60, 80), 0) - (1 if default else 0)
-        else:
-            index = qualitative_bucket(value, (20, 40, 60, 80), default)
+        int(value)
+        index = qualitative_bucket(value, (20, 40, 60, 80), default)
     index = max(0, index)
     index = min(index, len(words) - 1)
     return words[index]
@@ -117,10 +110,7 @@ def building_risk_description(value: object) -> str:
 
 def city_defense_description(value: object) -> str:
     """Describe the discrete 0–5 city-defense level without exposing its score."""
-    try:
-        level = int(0 if value is None else value)
-    except (TypeError, ValueError):
-        level = 0
+    level = int(0 if value is None else value)
     level = max(0, min(level, 5))
     return ("初设", "简陋", "成形", "坚固", "重镇", "雄城")[level]
 
@@ -139,10 +129,7 @@ def building_output_effect(metric: str, amount: object, prefix: str = "") -> str
     if not metric:
         return ""
     if metric in ("民心", "皇威"):
-        try:
-            output = int(0 if amount is None else amount)
-        except (TypeError, ValueError):
-            output = 0
+        output = int(0 if amount is None else amount)
         effect = "略有裨益" if output < 10 else "颇有裨益" if output < 30 else "有显著裨益"
         return f"{prefix}对{metric}{effect}"
     return f"{prefix}产出{metric}{amount}"
@@ -197,10 +184,7 @@ def military_pressure_band(value: object) -> str:
 
 def population_wan_kou_label(persons: object) -> str:
     """ADR 0088/#648：裸人数 → 「约N万口」定性（P4 玩家可感 LLM 输入）。"""
-    try:
-        n = int(0 if persons is None else persons)
-    except (TypeError, ValueError):
-        n = 0
+    n = int(0 if persons is None else persons)
     wan = n // 10000
     if wan <= 0:
         return "不足一万口"

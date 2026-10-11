@@ -1,7 +1,7 @@
 """#1299/#1310：CLI runner 失败横幅不得进 content 当大臣台词。
 
 真实入口：
-1. CliChat.invoke — runner 自身失败 → typed LLMUnavailable（非 RuntimeError 原文上抛）
+1. CliChat.invoke — 未分类 runner 故障 → 原异常上抛（不冒称 LLM 故障）
 2. extract_agent_text — ERROR 状态转成 typed failure
 
 原文运输由 CliChat.invoke 的既有成功案承接。
@@ -29,25 +29,19 @@ _RUNNER_BANNER = (
 # ── seam 1: CliChat ──
 
 
-def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
-    """runner exit 1 带横幅 → CliChat 抛 typed LLMUnavailable，非 RuntimeError。"""
+def test_clichat_unclassified_runner_failure_preserves_original(monkeypatch):
+    """未分类故障不能靠 runner 名字洗成模型错误。"""
     cc = cb.CliChat(id="cli-test", backend="codex")
-    monkeypatch.setattr(
-        cc, "_call_cli",
-        lambda p: (_ for _ in ()).throw(RuntimeError(_RUNNER_BANNER)),
-    )
+    fault = RuntimeError(_RUNNER_BANNER)
+    monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(fault))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
 
-    with pytest.raises(LLMUnavailable) as ei:
+    with pytest.raises(RuntimeError) as ei:
         cc.invoke(
             [SimpleNamespace(role="user", content="宣袁崇焕")],
             Message(role="assistant"),
         )
-    exc = ei.value
-    # The injected provider diagnostic is not the player-facing message.
-    assert _RUNNER_BANNER not in exc.message
-    assert exc.provider_message == _RUNNER_BANNER
-    assert exc.code  # typed
+    assert ei.value is fault
 
 
 def test_clichat_normal_reply_still_returns(monkeypatch):

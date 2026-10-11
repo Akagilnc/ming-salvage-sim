@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ming_sim import llm_config
 
 
@@ -11,18 +13,20 @@ def test_load_runtime_llm_missing_file_keeps_empty_dict_contract(tmp_path, monke
     assert llm_config.load_runtime_llm() == {}
 
 
-def test_load_runtime_llm_malformed_json_returns_empty(tmp_path, monkeypatch):
-    """坏 JSON(语法错)走 json.JSONDecodeError 防御分支 → {}(Sourcery R2)。"""
+def test_load_runtime_llm_malformed_json_fails_loud(tmp_path, monkeypatch):
+    """已配置文件的语法故障不能被洗成尚未配置。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text("{not valid json,,,", encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
 
-    assert llm_config.load_runtime_llm() == {}
+    with pytest.raises(json.JSONDecodeError) as failure:
+        llm_config.load_runtime_llm()
+    assert failure.value.pos == 1
 
 
 def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypatch):
     """#53 _slot_number:旧存档把 timeout_seconds 存成字符串时,load 归一回数值
-    (covers caster(value) / caster(float(value)) 兜底 / garbage→default 三分支)。"""
+    （直接沿字段的标准数值转换）。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "channel": "api",
@@ -36,8 +40,8 @@ def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypat
     assert "max_tokens" not in out["api"]
 
 
-def test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default(tmp_path, monkeypatch):
-    """#53 _slot_number:不可解析的数值字段回落默认(timeout=180.0)。"""
+def test_load_runtime_llm_garbage_numeric_fields_fail_loud(tmp_path, monkeypatch):
+    """不可解析的已配置数值由标准库报错，不冒用默认值。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "channel": "api",
@@ -45,9 +49,8 @@ def test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default(tmp_path, 
                 "timeout_seconds": "xyz"},
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-    out = llm_config.load_runtime_llm()
-    assert out["api"]["timeout_seconds"] == 180.0
-    assert "max_tokens" not in out["api"]
+    with pytest.raises(ValueError):
+        llm_config.load_runtime_llm()
 
 
 def test_load_runtime_llm_ignores_legacy_max_tokens_key(tmp_path, monkeypatch):
@@ -73,13 +76,14 @@ def test_load_runtime_llm_ignores_legacy_max_tokens_key(tmp_path, monkeypatch):
     assert "max_tokens" not in out
 
 
-def test_load_runtime_llm_non_dict_payload_returns_empty(tmp_path, monkeypatch):
-    """合法 JSON 但顶层非 dict(list / 字符串 / 数字)走 isinstance 防御分支 → {}。"""
+def test_load_runtime_llm_non_dict_payload_fails_loud(tmp_path, monkeypatch):
+    """非配置对象不能冒用尚未配置。"""
     for payload in ("[1, 2, 3]", '"just a string"', "42"):
         path = tmp_path / "runtime_llm.json"
         path.write_text(payload, encoding="utf-8")
         monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-        assert llm_config.load_runtime_llm() == {}, f"payload={payload!r} 应回落空 dict"
+        with pytest.raises(AttributeError):
+            llm_config.load_runtime_llm()
 
 
 def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
@@ -427,28 +431,6 @@ def test_load_runtime_flat_cli_backend_placeholder_not_api_channel(tmp_path, mon
 
     assert out["channel"] != "api"
 
-
-def test_cli_backend_active_explicit_cli_bogus_runner_false_despite_env(monkeypatch):
-    # ship-pre CMR Group F'：显式 channel=cli + 不支持 runner，即便 env 有 agy
-    # 也不该误报 active（否则执行期 _run_backend_for_config 仍会崩）。
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    from ming_sim import cli_backend
-    from ming_sim.models import LLMConfig
-
-    cfg = LLMConfig(api_key="cli-backend", base_url="", model="", channel="cli", cli_runner="bogus")
-
-    assert cli_backend.cli_backend_active(cfg) is False
-
-
-def test_cli_backend_active_total_on_unsupported_runner(monkeypatch):
-    # ship-pre CMR Group F：不支持的 runner 不该让守卫崩（应判 not-active，不抛 RuntimeError）。
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    from ming_sim import cli_backend
-    from ming_sim.models import LLMConfig
-
-    cfg = LLMConfig(api_key="cli-backend", base_url="", model="", channel="cli", cli_runner="bogus")
-
-    assert cli_backend.cli_backend_active(cfg) is False
 
 
 def test_create_chat_model_unsupported_cli_runner_raises_unavailable(monkeypatch):

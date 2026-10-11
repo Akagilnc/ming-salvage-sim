@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from importlib.metadata import version as installed_distribution_version
 from pathlib import Path
 from typing import Dict, Optional
@@ -60,7 +62,8 @@ def _extract_provider_error(error: Exception) -> tuple[str, str, int | None]:
     if response is not None:
         try:
             payload = response.json()
-        except Exception:
+        except json.JSONDecodeError:
+            # 非 JSON 的提供方 HTTP 响应：保留原始异常，不丢真实原因。
             payload = None
         if isinstance(payload, dict):
             inner = payload.get("error")
@@ -89,30 +92,6 @@ def llm_unavailable_from_error(error: Exception, stage: str = "LLM 连通性检�
         code=failure.code,
         provider_message=pmsg,
         status_code=failure.status_code,
-    )
-
-
-# #1299/#1310：CLI runner 自身失败（cli_runner_unavailable）与抽取欠账失败单源。
-# 机器横幅只进 provider_message，永不进 content 叙事通道。
-# 召对流 / extract_agent_text ERROR status / API transport 终失败一律走
-# llm_transport.transport_failure_unavailable（系统层，#1465 ④ / P7 / ADR 0046）。
-CLI_RUNNER_PLAYER_MESSAGE = "通传未达，请稍后再召。"
-
-
-def cli_runner_unavailable(
-    error: BaseException,
-    *,
-    backend: str = "",
-) -> LLMUnavailable:
-    """CliChat/runner 自身失败 → typed LLMUnavailable（错误串不得当台词）。"""
-    provider = str(error) if error is not None else ""
-    code = "llm_cli_error"
-    if backend:
-        code = f"llm_cli_{backend}"
-    return LLMUnavailable(
-        CLI_RUNNER_PLAYER_MESSAGE,
-        code=code,
-        provider_message=provider or CLI_RUNNER_PLAYER_MESSAGE,
     )
 
 
@@ -333,10 +312,7 @@ def _stamp_verify_stage(error: BaseException, stage: str) -> None:
     """#884：外呼失败账面带阶段名；不改已有 stage。"""
     if getattr(error, "stage", None):
         return
-    try:
-        error.stage = stage
-    except (AttributeError, TypeError):
-        return
+    error.stage = stage
 
 
 def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") -> None:
@@ -358,10 +334,6 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
         except LLMUnavailable as error:
             _stamp_verify_stage(error, stage)
             raise
-        except Exception as error:
-            wrapped = llm_unavailable_from_error(error)
-            _stamp_verify_stage(wrapped, stage)
-            raise wrapped from error
         return
     agent = Agent(
         name="LLM连通性检查",
@@ -396,7 +368,3 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
     except LLMUnavailable as error:
         _stamp_verify_stage(error, stage)
         raise
-    except Exception as error:
-        wrapped = llm_unavailable_from_error(error)
-        _stamp_verify_stage(wrapped, stage)
-        raise wrapped from error

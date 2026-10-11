@@ -290,11 +290,9 @@ def stage_punishment_candidate(
         if disposition not in issue_dispositions_allowed():
             return 0
         # 已持久 target_roster 腐坏是内部故障，不得洗成声明 invalid_state（#1897 E1）。
-        from ming_sim.db import _load_durable_json_list
+        from ming_sim.db import _load_durable_json
 
-        roster = _load_durable_json_list(
-            issue["target_roster"], surface=f"弹劾潮#{linked_issue_id}.target_roster",
-        )
+        roster = _load_durable_json(issue["target_roster"], default='[]')
         if not roster:
             return 0
         if disposition == "办人":
@@ -330,10 +328,7 @@ def stage_punishment_candidate(
             continue
         if str(payload.get("target_id") or "").strip() != target:
             continue
-        try:
-            stored_issue_id = int(payload.get("issue_id") or 0)
-        except (TypeError, ValueError):
-            stored_issue_id = 0
+        stored_issue_id = int(payload.get("issue_id") or 0)
         if stored_issue_id != linked_issue_id:
             continue
         existing_id = int(row["id"])
@@ -368,10 +363,7 @@ def stage_punishment_candidate(
         if not valid:
             return 0
         staged["transaction_category"] = category
-    try:
-        n = int(amount) if amount is not None and amount != "" else 0
-    except (TypeError, ValueError):
-        n = 0
+    n = int(amount) if amount is not None and amount != "" else 0
     # #517 r2：罚俸 admission 要求正数 amount；缺/零/非法不得成候选。
     if action == "罚俸":
         if n <= 0:
@@ -631,7 +623,7 @@ def require_explicit_xiexang_fields(
     try:
         n = strict_int(amount, accept_numeric_strings=False)
     except ValueError:
-        n = 0
+        n = 0  # Invalid model input joins the existing field-specific rejection below.
     if n <= 0:
         _note("amount", current=amount, expected={"type": "positive_int"})
     # #1620：太仓→国库唯一权威 resolve_grant_account；此处不再平行 if。
@@ -715,10 +707,9 @@ def _parse_json_field(raw: object) -> Any:
     if not text.strip():
         return None
     try:
-        value = json.loads(text)
-    except (TypeError, ValueError):
-        return text
-    return value
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text  # responsible_bodies explicitly accepts delimited prose as well as JSON.
 
 
 def _assignment_absolute_end_turn(
@@ -1285,10 +1276,7 @@ def stage_assignment_candidate(
         "title": matter_title,
         "mode": mode,
     }
-    try:
-        origin_cid = int(source_chat_turn_id or 0)
-    except (TypeError, ValueError):
-        origin_cid = 0
+    origin_cid = int(source_chat_turn_id or 0)
     # #1890：来源轮不写进载荷——它只落 pending_actions.source_chat_turn_id 一列
     # （交办的统一身份）。载荷里留副本等于同一事实两处可写，改草与迟到转译
     # 会让两者漂移；成案侧已改读该列。

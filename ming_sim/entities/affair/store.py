@@ -409,13 +409,8 @@ class AffairStore:
         for row in rows:
             origin = str(row["origin_ref"] or "").strip()
             # 故事账 tags/person_names：腐坏响亮，不 catch-to-[]（#1897 E1）。
-            tags = _load_durable_str_list(
-                row["tags"], surface=f"story_ledger_entries#{int(row['id'])}.tags",
-            )
-            people = _load_durable_str_list(
-                row["person_names"],
-                surface=f"story_ledger_entries#{int(row['id'])}.person_names",
-            )
+            tags = _load_durable_str_list(row['tags'])
+            people = _load_durable_str_list(row['person_names'])
             out.append({
                 "id": int(row["id"]),
                 "body": str(row["body"] or ""),

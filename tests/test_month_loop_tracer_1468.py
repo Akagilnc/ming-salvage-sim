@@ -322,7 +322,6 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
     非流式兼容口轻钉：结构化 HTTP 409 SettlementAbort + detail 单源。
     """
     from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     client = tracer_client
 
@@ -340,7 +339,7 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
     # #1842：收夜 catch-up 认转译水位；真失败注入转译缝。
     def _boom_translate(prompt, llm_config):
         del prompt, llm_config
-        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+        raise LLMUnavailable("fixture unavailable", code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
 

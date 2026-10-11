@@ -7,12 +7,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Any, List
 
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMContractError
+from ming_sim.audience_night import write_audience_error_pack
 from ming_sim.llm_model import extract_agent_text
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,11 @@ def parse_highlight_judge_output(raw: str) -> List[str]:
 
     try:
         data = parse_agent_json(text, "高亮判官")
-    except (LLMContractError, json.JSONDecodeError, TypeError, ValueError):
+    except LLMContractError as exc:
+        pack_path = write_audience_error_pack(
+            kind="highlight", message=str(exc), detail={"raw": raw}, exc=exc,
+        )
+        logger.exception("highlight output rejected diagnostic=%s", pack_path)
         return []
     if not isinstance(data, dict):
         return []
@@ -60,10 +64,7 @@ def run_highlight_judge(
     reply = str(minister_reply or "")
     if not reply.strip():
         return []
-    try:
-        timeout = float(timeout_s)
-    except (TypeError, ValueError):
-        timeout = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S
+    timeout = float(timeout_s)
     if timeout <= 0:
         timeout = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S
 
@@ -90,16 +91,16 @@ def run_highlight_judge(
         future = pool.submit(_call)
         try:
             return list(future.result(timeout=timeout))
-        except FuturesTimeout:
-            # 不 wait 卡住调用方——超时即降级；worker 随进程回收
-            future.cancel()
-            return []
-        except (LLMContractError, LLMUnavailable) as exc:
-            logger.warning("highlight judge degraded (contract/unavailable): %s", exc)
-            return []
         except Exception as exc:
-            # 判官调用失败（模型/provider）→ 产品面空清单；必须留痕，不得与合法空清单不可区分
-            logger.warning("highlight judge degraded: %s", exc, exc_info=True)
+            # ADR 0045 不阻塞回话；降级仍须保留真实原因与诊断。
+            if isinstance(exc, FuturesTimeout):
+                future.cancel()
+            pack_path = write_audience_error_pack(
+                kind="highlight", message=str(exc) or type(exc).__name__,
+                detail={"error_type": type(exc).__name__, "timeout_seconds": timeout},
+                exc=exc,
+            )
+            logger.exception("highlight judge degraded diagnostic=%s", pack_path)
             return []
     finally:
         pool.shutdown(wait=False, cancel_futures=True)

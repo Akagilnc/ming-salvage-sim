@@ -33,11 +33,8 @@ def normalize_axes(raw: object) -> list[str]:
 
 
 def normalize_direction(raw: object, *, default: int = 1) -> int:
-    """动作方向：+1 顺轴护向，−1 逆轴护向。非法回 default。"""
-    try:
-        value = int(raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return int(default)
+    """动作方向：+1 顺轴护向，−1 逆轴护向。缺省回 default，非法数字原样报错。"""
+    value = int(default if raw in (None, "") else raw)  # type: ignore[arg-type]
     if value >= 0:
         return 1
     return -1

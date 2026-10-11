@@ -91,14 +91,10 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
     run_src = output
     msgs = getattr(output, "messages", None)
     if not msgs and agent is not None:
-        try:
-            last = agent.get_last_run_output()
-            msgs = getattr(last, "messages", None)
-            if last is not None:
-                run_src = last
-        except Exception as exc:  # noqa: BLE001 — dump 是调试旁路，不中断主路径但须留真因
-            tlog(f"[DUMP-LLM] get_last_run_output failed: {type(exc).__name__}: {exc}")
-            msgs = None
+        last = agent.get_last_run_output()
+        msgs = getattr(last, "messages", None)
+        if last is not None:
+            run_src = last
     if not msgs:
         return
     # 票面/phase0 已列真名：官方 reasoning_content；vLLM/Nous reasoning + reasoning_details
@@ -145,12 +141,9 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
         "usage": run_metrics,
         "finish_reason": finish_reason,
     }
-    try:
-        with open(_DUMP_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False, default=_json_default) + "\n")
-        tlog(f"[{tag}] LLM messages 已 dump → {_DUMP_PATH}")
-    except OSError as e:
-        tlog(f"[{tag}] dump 写盘失败：{e}")
+    with open(_DUMP_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False, default=_json_default) + "\n")
+    tlog(f"[{tag}] LLM messages 已 dump → {_DUMP_PATH}")
 
 
 def _agent_run_input(

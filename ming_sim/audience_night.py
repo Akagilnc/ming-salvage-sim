@@ -14,9 +14,11 @@ import json
 import logging
 import re
 import sqlite3
+import tempfile
 import time
 import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -39,10 +41,7 @@ _INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"
 
 def _character_field(character: object, field: str) -> object:
     if isinstance(character, Mapping) or hasattr(character, "keys"):
-        try:
-            return character[field]  # type: ignore[index]
-        except (KeyError, IndexError, TypeError):
-            return ""
+        return character[field] if field in character.keys() else ""  # type: ignore[attr-defined,index]
     return getattr(character, field, "")
 
 
@@ -208,7 +207,7 @@ def _now_iso() -> str:
 def _json_list(value: Any) -> List[Any]:
     """故事账 tags/person_names 持久字符串列表：腐坏/非 str 成员响亮，禁 str() 洗（#1897 E1）。"""
     from ming_sim.db import _load_durable_str_list
-    return _load_durable_str_list(value, surface="story_ledger_entries.json_list")
+    return _load_durable_str_list(value)
 
 
 def _row_dict(row: Any) -> Dict[str, Any]:
@@ -245,12 +244,7 @@ def write_audience_error_pack(
     root = error_packs_root()
     root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    pack_dir = root / f"audience_{kind}_{stamp}"
-    suffix = 0
-    while pack_dir.exists():
-        suffix += 1
-        pack_dir = root / f"audience_{kind}_{stamp}_{suffix}"
-    pack_dir.mkdir(parents=True, exist_ok=False)
+    pack_dir = Path(tempfile.mkdtemp(dir=root, prefix=f"audience_{kind}_{stamp}_"))
     payload = {
         "kind": kind,
         "message": message,
@@ -806,11 +800,8 @@ def open_night(
         if owns:
             db.conn.commit()
     except Exception:
-        try:
-            db.conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
-            db.conn.execute(f"RELEASE SAVEPOINT {sp}")
-        except Exception:
-            pass
+        db.conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+        db.conn.execute(f"RELEASE SAVEPOINT {sp}")
         raise
 
     night = get_night(db, night_id)
@@ -1266,7 +1257,6 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     ).fetchall()
     projected: List[Dict[str, Any]] = []
     for row in rows:
-        # Story-ledger list columns: reuse _json_list → _load_durable_str_list (F39).
         # Wrong object shape must not become empty unsettled-summon facts.
         tags = _json_list(row["tags"])
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:

@@ -73,8 +73,8 @@ def _read_version() -> str:
     """读 VERSION 文件（bundled）；缺失 / 读失败回 'unknown'，绝不让写包失败。"""
     try:
         return Path(bundled_path("VERSION")).read_text(encoding="utf-8").strip()
-    except Exception:
-        logger.exception("error pack VERSION read failed")
+    except OSError:
+        logger.exception("error pack VERSION read failed path=%s", bundled_path("VERSION"))
         return "unknown"
 
 

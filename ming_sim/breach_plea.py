@@ -98,31 +98,22 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     if not text.startswith(_META_PREFIX):
         return {}
     # 有前缀的机读元数据：腐坏 JSON/非对象响亮，不 catch-to-{}（#1897 E1）。
-    from ming_sim.db import _load_durable_json_object
-    return _load_durable_json_object(
-        text[len(_META_PREFIX):],
-        surface="breach_plea.origin_context.meta",
-    )
+    from ming_sim.db import _load_durable_json
+    return _load_durable_json(text[len(_META_PREFIX):], default='{}')
 
 
 def commitment_natural_due_turn(row: Any) -> int:
     """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
-    try:
-        keys = row.keys()  # sqlite3.Row
-    except Exception:
-        keys = list(row.keys()) if isinstance(row, dict) else []
+    keys = row.keys()  # sqlite3.Row
     stages_raw = row["stages_json"] if "stages_json" in keys else (
         row.get("stages_json") if isinstance(row, dict) else None
     )
     stages = normalize_commitment_stages(stages_raw)
     if stages:
         return max(int(s["due_turn"]) for s in stages)
-    try:
-        end_turn = int(row["end_turn"] if "end_turn" in keys else (
-            row.get("end_turn") if isinstance(row, dict) else 0
-        ) or 0)
-    except (TypeError, ValueError):
-        end_turn = 0
+    end_turn = int(row["end_turn"] if "end_turn" in keys else (
+        row.get("end_turn") if isinstance(row, dict) else 0
+    ) or 0)
     return end_turn if end_turn > 0 else 0
 
 
@@ -146,10 +137,7 @@ def list_active_commitments(db: Any) -> List[Any]:
 
 def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
     refs: Set[str] = {f"issue:{int(commitment_ref)}"}
-    try:
-        origin = str(row["origin_ref"] or "").strip()
-    except (TypeError, KeyError, IndexError):
-        origin = ""
+    origin = str(row["origin_ref"] or "").strip()
     if origin:
         refs.add(origin)
     return refs
@@ -167,10 +155,7 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
             cid = str(item.get("character_id") or "").strip()
             if cid:
                 names.append(cid)
-    try:
-        origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
-    except Exception:
-        origin_ref = ""
+    origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
         # get_decree_dossier 已响亮解码名册；再消费其结构化列表。
@@ -202,15 +187,12 @@ def _dedicated_accounts(row: Any) -> List[str]:
             seen.add(acc)
             accounts.append(acc)
 
-    try:
-        keys = row.keys()
-    except Exception:
-        keys = []
+    keys = row.keys()
 
     tags_raw = row["tags"] if "tags" in keys else None
     # issues.tags 持久字符串数组：腐坏响亮（#1897 E1）。
     from ming_sim.db import _load_durable_str_list
-    tags = _load_durable_str_list(tags_raw, surface="issues.tags")
+    tags = _load_durable_str_list(tags_raw)
     for tag in tags:
         t = str(tag or "").strip()
         if t.startswith("专款:"):
@@ -465,17 +447,11 @@ def _spent_amount_and_fiscal_count(
     """已投入：金额（economy 负流水绝对值）与 fiscal 条数分账。"""
     spent_amount = 0
     fiscal_count = 0
-    try:
-        origin = str(row["origin_ref"] or "")
-    except Exception:
-        origin = ""
+    origin = str(row["origin_ref"] or "")
     did = parse_dossier_id(origin)
     if did is not None:
         for mv in db.list_economy_moves_for_dossier(int(did)):
-            try:
-                delta = int(mv.get("delta") or 0)
-            except (TypeError, ValueError):
-                delta = 0
+            delta = int(mv.get("delta") or 0)
             if delta < 0:
                 spent_amount += -delta
         fiscal_count += len(db.list_fiscal_effects_for_dossier(int(did)))
@@ -596,10 +572,7 @@ def stop_origin_commitment_ticks(
             db.cancel_issue(state, iid, narrative=reason, commit=False)
             stopped.append(iid)
     for raw in extra_issue_ids or ():
-        try:
-            iid = int(raw)
-        except (TypeError, ValueError):
-            continue
+        iid = int(raw)
         if iid <= 0 or iid in stopped:
             continue
         row_i = db.conn.execute(
@@ -875,10 +848,7 @@ def _promised_monthly_amount(row: Any) -> int:
         for it in economy:
             if not isinstance(it, dict):
                 continue
-            try:
-                delta = int(it.get("delta") or 0)
-            except (TypeError, ValueError):
-                delta = 0
+            delta = int(it.get("delta") or 0)
             if delta < 0:
                 total += -delta
             elif delta > 0:
@@ -939,10 +909,7 @@ def _fiscal_funding_cut_this_turn(
             (oref, turn),
         ).fetchone()
         if ch is not None:
-            try:
-                old_v, new_v = int(ch["old_value"]), int(ch["new_value"])
-            except (TypeError, ValueError):
-                continue
+            old_v, new_v = int(ch["old_value"]), int(ch["new_value"])
             if old_v > 0 and new_v <= 0:
                 return True
             if old_v > 0 and new_v < old_v * _FUNDING_ARREARS_RATIO:
@@ -1237,17 +1204,11 @@ def _extract_ref_ids(items: object, *, prefixes: Sequence[str]) -> Set[int]:
             # issue walker 的裸 id 可能与 dossier_id 键冲突时仅在对应 prefix 下启用
             if key in {"id"} and "issue" not in prefixes:
                 continue
-            try:
-                out.add(int(raw))
-            except (TypeError, ValueError):
-                continue
+            out.add(int(raw))
         tid = str(it.get("target_id") or "").strip()
         for p in prefixes:
             if tid.startswith(f"{p}:"):
-                try:
-                    out.add(int(tid.split(":", 1)[1]))
-                except (TypeError, ValueError):
-                    pass
+                out.add(int(tid.split(":", 1)[1]))
         for key in ("origin_ref", "来源引用"):
             ref = str(it.get(key) or "").strip()
             for p in prefixes:
@@ -1294,10 +1255,7 @@ def resolve_breach_pleas_from_extraction(
         if not isinstance(it, dict):
             continue
         if str(it.get("outcome") or "") in {"failed", "cancelled", "revoked"}:
-            try:
-                revoke_dossiers.add(int(it.get("dossier_id")))
-            except (TypeError, ValueError):
-                pass
+            revoke_dossiers.add(int(it.get("dossier_id")))
 
     advance_ids = _extract_ref_ids(
         extracted.get("issue_advances"), prefixes=("issue",),
@@ -1314,26 +1272,17 @@ def resolve_breach_pleas_from_extraction(
                 fund_issue_ids.add(int(m.group(1)))
         tid = str(it.get("target_id") or "")
         if tid.startswith("issue:"):
-            try:
-                fund_issue_ids.add(int(tid.split(":", 1)[1]))
-            except (TypeError, ValueError):
-                pass
+            fund_issue_ids.add(int(tid.split(":", 1)[1]))
         for key in ("issue_id", "commitment_ref"):
             raw = it.get(key)
             if raw in (None, ""):
                 continue
-            try:
-                fund_issue_ids.add(int(raw))
-            except (TypeError, ValueError):
-                pass
+            fund_issue_ids.add(int(raw))
 
     for it in extracted.get("economy_moves") or []:
         if not isinstance(it, dict):
             continue
-        try:
-            delta = int(it.get("delta") or 0)
-        except (TypeError, ValueError):
-            delta = 0
+        delta = int(it.get("delta") or 0)
         # 只认非零 delta 结构化资金事实；不从 purpose 散文猜续拨/加拨。
         if delta != 0:
             _note_funding_item(it)
@@ -1347,18 +1296,12 @@ def resolve_breach_pleas_from_extraction(
         if not isinstance(it, dict):
             continue
         # 只认 new_value>old_value 或 delta>0 的结构化增值；不从 reason 散文猜加拨。
-        try:
-            delta = int(it.get("delta") or 0)
-        except (TypeError, ValueError):
-            delta = 0
-        try:
-            old_v = it.get("old_value")
-            new_v = it.get("new_value")
-            if old_v is not None and new_v is not None:
-                if int(new_v) > int(old_v):
-                    delta = max(delta, int(new_v) - int(old_v))
-        except (TypeError, ValueError):
-            pass
+        delta = int(it.get("delta") or 0)
+        old_v = it.get("old_value")
+        new_v = it.get("new_value")
+        if old_v is not None and new_v is not None:
+            if int(new_v) > int(old_v):
+                delta = max(delta, int(new_v) - int(old_v))
         if delta > 0:
             _note_funding_item(it)
 

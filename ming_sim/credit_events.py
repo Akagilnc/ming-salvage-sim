@@ -319,10 +319,7 @@ def _item_dossier_id(item: Dict[str, object]) -> Optional[int]:
     raw = item.get("dossier_id")
     if raw in (None, ""):
         return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
+    return int(raw)
 
 
 def _item_narrative(item: Dict[str, object]) -> str:
@@ -655,10 +652,7 @@ def resolve_fulfillment_credit_from_extraction(
             continue
         if str(it.get("outcome") or "").strip() != "fulfilled":
             continue
-        try:
-            did = int(it.get("dossier_id"))
-        except (TypeError, ValueError):
-            continue
+        did = int(it.get("dossier_id"))
         if did in seen:
             continue
         seen.add(did)

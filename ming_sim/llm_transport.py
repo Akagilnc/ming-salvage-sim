@@ -48,7 +48,7 @@ _typed_provider_status: ContextVar[Optional[int]] = ContextVar(
 # 提供方层抛出的 transport typed 失败（空转/空输出/瞬断/HTTP）。SDK 层把异常吞成
 # RunErrorEvent(content=str(e)) 后 typed 语义只剩散文；本 ContextVar 在 model 调用
 # 边界原样记住分类结果，供事件映射还原——不从 content 散文抠语义（ADR 0142）。
-_typed_provider_failure: ContextVar[Optional["ClassifiedFailure"]] = ContextVar(
+_typed_provider_failure: ContextVar[Optional["ClassifiedFailure | BaseException"]] = ContextVar(
     "ming_sim_transport_typed_failure", default=None,
 )
 
@@ -140,7 +140,7 @@ def resolve_transport_policy(source: object = None) -> TransportPolicy:
     """解析策略：TransportPolicy / mapping → runtime_llm.json transport 段 → 默认。
 
     不认 getattr 对象旁路（无执行消费者；配置经 runtime 文件或显式 mapping 进入）。
-    load_runtime_llm 自身已对缺/坏档回空 dict；此处不再 except Exception。
+    load_runtime_llm 自身仅对未配置回空 dict；此处不再 except Exception。
     """
     if isinstance(source, TransportPolicy):
         return source
@@ -208,7 +208,7 @@ def _remember_typed_failure(
     OpenAIChat.invoke 会把 openai typed 异常包装为 ModelProviderError 并显式
     ``raise ... from provider_error``；外层本身不是 openai typed，须沿 __cause__
     链取回既有 typed 事实（与 _remember_typed_status 同口径，不走 __context__）。
-    未 typed 的异常不记，仍走 run_error_event_failure 的「无 status 不洗成瞬断」。
+    未分类异常也原样记住，在 SDK 错误出口重新抛出；不得冒称模型故障。
 
     remember_connection：同步 verify/invoke 为 True（#1465 网络断重试）；流式
     invoke_stream 为 False——无提供方 HTTP typed status 的连接断不得洗成
@@ -227,7 +227,10 @@ def _remember_typed_failure(
         if remember_connection and isinstance(cause, APIConnectionError):
             _typed_provider_failure.set(classify_transport_failure(cause))
             return
+        if not remember_connection and isinstance(cause, APIConnectionError):
+            return
         cause = cause.__cause__
+    _typed_provider_failure.set(error)
 
 
 def _capture_status_wrapper(method: Callable) -> Callable:
@@ -435,6 +438,8 @@ def take_remembered_typed_failure() -> Optional[ClassifiedFailure]:
         return None
     _typed_provider_failure.set(None)
     _typed_provider_status.set(None)
+    if isinstance(remembered, BaseException):
+        raise remembered
     return remembered
 
 

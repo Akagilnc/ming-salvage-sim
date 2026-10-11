@@ -239,10 +239,7 @@ def _blank_candidate(*, kind: str = "none") -> Dict[str, Any]:
 
 
 def _as_int(value: object, *, lo: int = 0, hi: int = 10**9) -> int:
-    try:
-        n = int(value or 0)
-    except (TypeError, ValueError):
-        return lo
+    n = int(value or 0)
     return max(lo, min(n, hi))
 
 

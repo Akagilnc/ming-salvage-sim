@@ -69,9 +69,11 @@ def decode_durable_participant_roster(
     require_tier=True（案卷/连坐）：每项必有合法机械档；''/False/0 不得洗空跳过。
     require_tier=False（knowledge 取人名）：缺档可过；**一旦 present** 类型/闭集仍响亮。
     """
-    from ming_sim.db import _load_durable_json_list
+    from ming_sim.db import _load_durable_json
 
-    roster = _load_durable_json_list(raw, surface="participant_roster")
+    roster = _load_durable_json(raw, default='[]')
+    if not isinstance(roster, list):
+        raise ValueError("participant_roster must be a list of participants")
     out: list = []
     for item in roster:
         if not isinstance(item, dict):

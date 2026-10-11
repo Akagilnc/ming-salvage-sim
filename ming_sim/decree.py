@@ -630,14 +630,14 @@ def write_decree_with_agno(
         "instruction": "合并成一份正式诏书正文。closed_secret_orders 是已办结密令查得的实证，"
                        "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
     }
+    from openai import APIConnectionError, APIStatusError, APITimeoutError
+
     try:
         agent = create_decree_writer_agent(llm_config, agno_db)
         run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         _dump_llm_messages(run_output, "拟诏", agent=agent)
         text = extract_agent_text(run_output)
-    except LLMUnavailable:
-        raise
-    except Exception as error:
+    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
         raise llm_unavailable_from_error(error, "拟诏") from error
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")

@@ -98,10 +98,7 @@ def derive_draft_capability(fields: Mapping[str, Any] | None) -> str:
             if isinstance(raw, bool) or raw is None or raw == "":
                 canonical[key] = 0
             else:
-                try:
-                    canonical[key] = int(raw)
-                except (TypeError, ValueError):
-                    canonical[key] = 0
+                canonical[key] = int(raw)
         else:
             canonical[key] = "" if raw is None else str(raw)
     blob = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -170,7 +167,7 @@ def dossier_action_policy(action_type: object, payload=None):
         # 已解码可选对象权威；业务缺省 {} 在权威返回后由本调用方决定。
         from ming_sim.db import GameDB
 
-        payload = GameDB.optional_object(payload, surface="dossier payload") or {}
+        payload = payload or {}
         grant_action = str(payload.get("grant_action") or "").strip()
         cadence = str(payload.get("cadence") or "").strip()
         if grant_action in {"加衔", "荫叙"}:

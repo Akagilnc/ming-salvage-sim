@@ -533,10 +533,7 @@ def _commitment_remaining_from_gate(
         val = _eval_gate_key(str(key), state.metrics, db)
         if val is None:
             continue
-        try:
-            val_num = float(val)
-        except (TypeError, ValueError):
-            continue
+        val_num = float(val)
         op, target = m.group(1), int(m.group(2))
         if op == "<=":
             need = max(0.0, val_num - target)
@@ -604,10 +601,7 @@ def commitment_progress_payload(
     # a NULL/0 to 0 and leak the absolute turn number into months_elapsed (#380 cmr:
     # gemini + coderabbit). Only a positive origin_turn is a real anchor.
     origin_turn_raw = row["origin_turn"] if "origin_turn" in keys else None
-    try:
-        origin_turn = int(origin_turn_raw)
-    except (TypeError, ValueError):
-        origin_turn = 0
+    origin_turn = int(origin_turn_raw)
     if origin_turn <= 0:
         origin_turn = int(state.turn)
     months_elapsed = max(0, int(state.turn) - origin_turn)
@@ -1815,10 +1809,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
     """
     if "." not in key:
         if key in metrics:
-            try:
-                return int(metrics[key])
-            except (TypeError, ValueError):
-                return None
+            return int(metrics[key])
         return None
     parts = key.split(".")
     table = parts[0]
@@ -1884,12 +1875,10 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
             raise RuntimeError(f"gate key 持久读失败：{key}") from exc
         try:
             values.append(float(raw_val))
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             # 字段已过 _gate_sql_field 数值资格；库内非数值是持久账本故障，
             # 不是模型选错字段（选错由 gate 以 ValueError 拒）。
             raise RuntimeError(f"gate key 持久读失败：{key}") from exc
-        except TypeError:
-            return None
     if not values:
         return None
     if len(values) == 1:
@@ -2498,10 +2487,7 @@ def _register_runtime_rollback_snapshot(
     character_objects = dict(content.characters) if content is not None else {}
     character_attrs: Dict[str, Dict[str, object]] = {}
     for name, character in character_objects.items():
-        try:
-            character_attrs[name] = dict(vars(character))
-        except TypeError:
-            character_attrs[name] = {}
+        character_attrs[name] = dict(vars(character))
     def restore_runtime() -> None:
         state.metrics.clear()
         state.metrics.update(metrics_snapshot)
@@ -2511,12 +2497,9 @@ def _register_runtime_rollback_snapshot(
                     del content.characters[name]
             for name, character in character_objects.items():
                 content.characters[name] = character
-                try:
-                    for attr in list(vars(character)):
-                        if attr not in character_attrs.get(name, {}):
-                            delattr(character, attr)
-                except TypeError:
-                    pass
+                for attr in list(vars(character)):
+                    if attr not in character_attrs.get(name, {}):
+                        delattr(character, attr)
                 for attr, value in character_attrs.get(name, {}).items():
                     setattr(character, attr, value)
 
@@ -2675,12 +2658,9 @@ def _pending_person_changes_block_event_gate(
                 continue
             if field not in _PENDING_POWER_GATE_FIELDS:
                 continue
-            try:
-                if isinstance(value, bool) or isinstance(value, float):
-                    raise ValueError("非整数 delta")
-                delta = int(value)
-            except (TypeError, ValueError):
-                continue
+            if isinstance(value, bool) or isinstance(value, float):
+                raise ValueError("非整数 delta")
+            delta = int(value)
             old_value = int(row[field])
             new_value = max(0, min(100, old_value + delta))
             if new_value == old_value:
@@ -2961,10 +2941,7 @@ _DIRECTION_NORMALIZE = {
 
 
 def _clamp_pct(v: object) -> Optional[int]:
-    try:
-        pct = int(v)
-    except (TypeError, ValueError):
-        return None
+    pct = int(v)
     if pct == 0:
         return None
     return max(-_LEGACY_PCT_CAP, min(_LEGACY_PCT_CAP, pct))
@@ -4106,10 +4083,7 @@ def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> 
         delta = item.get("delta")
         if delta is None:
             return False
-        try:
-            return int(delta) != 0
-        except (TypeError, ValueError):
-            return bool(delta)
+        return int(delta) != 0
     return False
 
 
@@ -4119,10 +4093,7 @@ def _restore_person_content_from_snapshot(
 ) -> None:
     if content is None:
         return
-    try:
-        content_rows = snapshot[3]  # shape from _snapshot_person_write_state
-    except (IndexError, TypeError):
-        return
+    content_rows = snapshot[3]  # shape from _snapshot_person_write_state
     _restore_content_character_rows(content, content_rows)
 
 
@@ -5066,10 +5037,7 @@ def apply_issue_tracker_output(
 
     # 4) cancels
     for cn in tracker_output.get("cancels", []) or []:
-        try:
-            issue_id = int(cn.get("issue_id"))
-        except (TypeError, ValueError):
-            continue
+        issue_id = int(cn.get("issue_id"))
         row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
             continue
@@ -6315,10 +6283,7 @@ def _apply_person_changes(
             # #522：招抚案卷效果绑定 canonical target；generic special_decree
             # 不得授权招抚式易主。其它 dossier/盘面自发路径保持既有授权。
             if require_origin and str(origin_ref or "").startswith("dossier:"):
-                try:
-                    dossier_id = _parse_sqlite_id(str(origin_ref).split(":", 1)[1])
-                except ValueError:
-                    dossier_id = 0
+                dossier_id = _parse_sqlite_id(str(origin_ref).split(":", 1)[1])
                 dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
                 if dossier is not None:
                     action_type = str(dossier.get("action_type") or "").strip()
@@ -7197,10 +7162,7 @@ def _apply_extracted_army_delta(
     if "cannon_transfer_to" in payload:
         target_id = payload.pop("cannon_transfer_to")
         cannon_keys = [k for k in payload if ARMY_FIELD_ALIASES.get(k, k) == "cannon_equipment"]
-        try:
-            requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0
-        except (TypeError, ValueError):
-            requested = 0
+        requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0
         source = db.conn.execute(
             "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (army_id,)
         ).fetchone()

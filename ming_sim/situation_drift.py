@@ -149,10 +149,7 @@ def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[s
                 normalized_economy.append(move)
                 continue
             item = dict(move)
-            try:
-                delta = _strict_int(item.get("delta"))
-            except (TypeError, ValueError):
-                delta = 0
+            delta = _strict_int(item.get("delta"))
             if delta < 0:
                 item["purpose"] = "补饷"
                 if (

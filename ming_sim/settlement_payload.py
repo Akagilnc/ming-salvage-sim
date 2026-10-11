@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import (
     TYPE_CHECKING, Dict, List, Optional, Tuple,
@@ -10,6 +11,8 @@ from typing import (
 
 from ming_sim.action_clusters import season_option_fields, validate_season_option
 from ming_sim.models import effect_dict_has_work
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ming_sim.db import GameDB
@@ -46,7 +49,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
     """读取世界段请旨机标中的决策列表，不改写原文。
 
     每块须含 title/context/options（2-3 项，每项 label + 可选 hint）。
-    解析失败的块忽略，最多取 MAX_DECISIONS_PER_TURN 条。
+    坏输入按块拒收并落诊断；未知代码错误原样上抛。最多取 MAX_DECISIONS_PER_TURN 条。
     """
     decisions: List[Dict[str, object]] = []
     for m in _DECISION_RE.finditer(text or ""):
@@ -54,58 +57,58 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             break
         try:
             obj = json.loads(m.group(1))
-        except Exception:
-            continue
-        if not isinstance(obj, dict):
-            continue
-        # #1897：请旨自由字段原样；判空用局部副本，不把 strip 写回。
-        title = str(obj.get("title") or "")
-        raw_opts = obj.get("options")
-        if not title.strip() or not isinstance(raw_opts, list):
-            continue
-        options: List[Dict[str, object]] = []
-        for o in raw_opts:
-            if not isinstance(o, dict):
+            if not isinstance(obj, dict):
                 continue
-            label = str(o.get("label") or "")
-            if not label.strip():
+            # #1897：请旨自由字段原样；判空用局部副本，不把 strip 写回。
+            title = str(obj.get("title") or "")
+            raw_opts = obj.get("options")
+            if not title.strip() or not isinstance(raw_opts, list):
                 continue
-            try:
+            options: List[Dict[str, object]] = []
+            for o in raw_opts:
+                if not isinstance(o, dict):
+                    continue
+                label = str(o.get("label") or "")
+                if not label.strip():
+                    continue
                 action_type = validate_season_option(o)
-            except ValueError:
-                options = []
-                break
-            option: Dict[str, object] = {
-                "label": label,
-                "hint": str(o.get("hint") or ""),
-            }
-            # Deterministic financial options carry their executable payload;
-            # label/hint remain presentation only.
-            for key in season_option_fields(action_type):
-                if key in o:
-                    option[key] = action_type if key == "action_type" else o[key]
-            options.append(option)
-        try:
+                option: Dict[str, object] = {
+                    "label": label,
+                    "hint": str(o.get("hint") or ""),
+                }
+                # Deterministic financial options carry their executable payload;
+                # label/hint remain presentation only.
+                for key in season_option_fields(action_type):
+                    if key in o:
+                        option[key] = action_type if key == "action_type" else o[key]
+                options.append(option)
             bind_decision_options(options)
-        except ValueError:
-            continue
-        if len(options) < 2:  # 至少给 2 个选项才算有效抉择
-            continue
-        decision = {
-            "title": title,
-            "context": str(obj.get("context") or ""),
-            "options": options[:3],
-        }
-        explicit_event_id = str(obj.get("event_id") or "").strip()
-        origin_ref = str(obj.get("origin_ref") or "").strip()
-        event_id = explicit_event_id or origin_ref
-        if event_id:
-            decision["event_id"] = event_id
-        # 只在 id 来自 origin_ref 时留下该键。世界请旨钉定就地排除它；
-        # 显式 event_id 的块与原先一样只有 event_id。
-        if origin_ref and not explicit_event_id:
-            decision["origin_ref"] = origin_ref
-        decisions.append(decision)
+            if len(options) < 2:  # 至少给 2 个选项才算有效抉择
+                continue
+            decision = {
+                "title": title,
+                "context": str(obj.get("context") or ""),
+                "options": options[:3],
+            }
+            explicit_event_id = str(obj.get("event_id") or "").strip()
+            origin_ref = str(obj.get("origin_ref") or "").strip()
+            event_id = explicit_event_id or origin_ref
+            if event_id:
+                decision["event_id"] = event_id
+            # 只在 id 来自 origin_ref 时留下该键。世界请旨钉定就地排除它；
+            # 显式 event_id 的块与原先一样只有 event_id。
+            if origin_ref and not explicit_event_id:
+                decision["origin_ref"] = origin_ref
+            decisions.append(decision)
+        except ValueError as exc:
+            # These pure JSON/enum validators reject one malformed model block, not its siblings.
+            from ming_sim.audience_night import write_audience_error_pack
+
+            pack_path = write_audience_error_pack(
+                kind="decision_admission", message=str(exc), exc=exc,
+                detail={"block_span": m.span(), "input": m.group(1)},
+            )
+            logger.exception("decision block rejected diagnostic=%s", pack_path)
     return decisions
 
 

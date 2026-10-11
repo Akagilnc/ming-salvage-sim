@@ -613,21 +613,3 @@ def test_commitment_rush_via_pending_actions_gate(game):
         (issue_id,),
     ).fetchone()["c"]
     assert int(n_committed) == 1
-
-
-def test_payload_json_corrupt_read_is_loud(game):
-    """腐坏 payload 读路响亮，禁静默等同空底。"""
-    from ming_sim.db import GameDB
-    with pytest.raises(ValueError):
-        GameDB.parse_engine_payload_json(
-            "{not-json", surface="test.payload_json",
-        )
-    with pytest.raises(ValueError):
-        GameDB.parse_engine_payload_json(
-            "[1,2]", surface="test.payload_json",
-        )
-    assert GameDB.parse_engine_payload_json(None) == {}
-    assert GameDB.parse_engine_payload_json("{}") == {}
-    # 空串是持久腐坏，不得洗成合法空对象（#1897 E1）。
-    with pytest.raises(ValueError):
-        GameDB.parse_engine_payload_json("")

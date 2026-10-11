@@ -145,6 +145,7 @@ def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tm
     """Agy 1.2.0 材料调用用 --print=<prompt>，不再走失效 sandbox/stdin。"""
     root = str((tmp_path / "materials").resolve())
     tmp_path.joinpath("materials").mkdir()
+    monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
     captured = _capture_run(monkeypatch, _P(stdout="ok"))
     out, n = cb._run_agy("PROMPT", materials_dir=root)
     assert out == "ok" and n == 1
@@ -322,17 +323,16 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
-    """#1299/#1310：runner 失败翻 typed LLMUnavailable；trace 仍记机器原文。"""
-    from ming_sim.exceptions import LLMUnavailable
+    """Native runner failures remain identifiable in both the exception and trace."""
     cc = cb.CliChat(id="cli-test", backend="agy")
-    monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(RuntimeError("cli down")))
+    fault = RuntimeError("cli down")
+    monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(fault))
     traced = {}
     monkeypatch.setattr(cb, "_trace", lambda rec: traced.update(rec))
-    with pytest.raises(LLMUnavailable) as ei:
+    with pytest.raises(RuntimeError) as caught:
         cc.invoke([SimpleNamespace(role="user", content="x")], Message(role="assistant"))
-    assert traced.get("error") == "cli down"
-    assert "cli down" in (ei.value.provider_message or "")
-    assert "cli down" not in ei.value.message
+    assert caught.value is fault
+    assert traced.get("error") == str(fault)
 
 
 def test_clichat_call_cli_unknown_backend_raises():
@@ -379,8 +379,9 @@ def test_run_agy_success_single_subprocess(monkeypatch):
 def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
     """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
     state = _agy_popen(monkeypatch, [("", 1)])
-    with pytest.raises(RuntimeError):
+    with pytest.raises(cb.subprocess.CalledProcessError) as caught:
         cb._run_agy("p")
+    assert caught.value.returncode == 1
     assert state["agy"] == 1
 
 
@@ -399,8 +400,9 @@ class _RcProc:
 def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, proc):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     _capture_run(monkeypatch, lambda cmd, **kw: proc())
-    with pytest.raises(RuntimeError):
+    with pytest.raises(cb.subprocess.CalledProcessError) as caught:
         getattr(cb, runner)("p")
+    assert caught.value.returncode == 1
 
 
 def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
@@ -601,8 +603,9 @@ def test_describe_effective_model_includes_new_runners(runner):
 @pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok", "_run_pi"])
 def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
     _capture_run(monkeypatch, _RcProc(stderr="auth failed", returncode=1))
-    with pytest.raises(RuntimeError):
+    with pytest.raises(cb.subprocess.CalledProcessError) as caught:
         getattr(cb, runner)("p")
+    assert caught.value.returncode == 1
 
 
 # ── #1256 S2 gate LLM args / config / evidence ──

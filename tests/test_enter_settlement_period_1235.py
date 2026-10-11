@@ -229,7 +229,6 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
 def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, tmp_path):
     """AC2 / #1353 fold-in：drain 真失败 → 失败单源 + settlement_display 退出（≠ 未了在办）。"""
     from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     game = web_game
     minister = _active_minister(game)
@@ -237,7 +236,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
     # #1842：收夜 catch-up 认转译水位；真失败注入转译缝（旧抽取 drain 已退役）。
     def _boom_translate(prompt, llm_config):
         del prompt, llm_config
-        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+        raise LLMUnavailable("fixture unavailable", code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
     before = _click_before(game.state)
@@ -286,7 +285,6 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
 def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
     """AC2 颁布入口同形。"""
     from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     game = web_game
     minister = _active_minister(game)
@@ -294,7 +292,7 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
     # #1842：真失败注入转译缝（旧抽取 drain 已退役）。
     def _boom_translate(prompt, llm_config):
         del prompt, llm_config
-        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+        raise LLMUnavailable("fixture unavailable", code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
     before = _click_before(game.state)

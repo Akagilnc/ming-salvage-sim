@@ -474,13 +474,13 @@ def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
         cli_timeout_seconds=240,
     )
 
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(RuntimeError):
         verify_llm_available(cfg)
 
 
 def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
     """legacy env-only 路径（无显式 channel + MING_SIM_LLM_BACKEND 设置）现在也真实 smoke
-    （旧版直接 return 跳过）：触发 _run_backend_for_config，失败抛 LLMUnavailable，
+    （旧版直接 return 跳过）：触发 _run_backend_for_config，失败抛原始异常，
     避免 fresh-start 在 runner 缺失时先删主库。"""
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     seen = {}
@@ -496,7 +496,7 @@ def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
 
 
 def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
-    """legacy env-only smoke 失败同样抛 LLMUnavailable（fail-fast，不静默放行）。"""
+    """legacy env-only smoke 失败同样抛原始异常（fail-fast，不静默放行）。"""
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
 
     def boom(prompt, llm_config=None, tag="", *, policy=None):
@@ -504,7 +504,7 @@ def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
     cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(RuntimeError):
         verify_llm_available(cfg)
 
 

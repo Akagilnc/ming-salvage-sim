@@ -153,11 +153,8 @@ def _choice_empty(choice: object) -> bool:
 
 
 def _choices_equal(a: object, b: object) -> bool:
-    try:
-        ca = canonical_choice(a) if isinstance(a, dict) else None
-        cb = canonical_choice(b) if isinstance(b, dict) else None
-    except ValueError:
-        return False
+    ca = canonical_choice(a) if isinstance(a, dict) else None
+    cb = canonical_choice(b) if isinstance(b, dict) else None
     if ca is None or cb is None:
         return False
     return _stable_json(ca) == _stable_json(cb)
@@ -170,10 +167,7 @@ def _is_applied_revise_anchor(row: Mapping[str, object], choice: Mapping[str, ob
     if str(row.get("status") or "") != "pending":
         return False
     applied_from = choice.get("applied_from_revision_round")
-    try:
-        applied_from_i = int(applied_from) if applied_from is not None else -1
-    except (TypeError, ValueError):
-        return False
+    applied_from_i = int(applied_from) if applied_from is not None else -1
     # 应用后 revision_round 应为 applied_from + 1
     return int(row.get("revision_round") or 0) == applied_from_i + 1
 
@@ -194,10 +188,7 @@ def _option_by_capability(row: Mapping[str, object]) -> Dict[str, Dict[str, obje
         cap = str(opt.get("draft_capability") or "").strip()
         if not cap:
             # 允许服务端即时派生
-            try:
-                cap = derive_draft_capability(opt)
-            except Exception:
-                continue
+            cap = derive_draft_capability(opt)
         out[cap] = opt
     return out
 
@@ -746,15 +737,9 @@ def map_rescript_option_or_choice(
             payload["station"] = station
         else:
             due = 0
-            try:
-                due = int(src.get("due_turn") or 0)
-            except (TypeError, ValueError):
-                due = 0
+            due = int(src.get("due_turn") or 0)
             months = 0
-            try:
-                months = int(src.get("deadline_months") or 0)
-            except (TypeError, ValueError):
-                months = 0
+            months = int(src.get("deadline_months") or 0)
             if months > 0:
                 due = current_turn + months
             if due <= current_turn:
@@ -886,19 +871,13 @@ def map_rescript_option_or_choice(
         payload["target_kind"] = "character"
         payload["target_id"] = name
         if pa == "罚俸":
-            try:
-                amount = int(src.get("amount") or 0)
-            except (TypeError, ValueError):
-                amount = 0
+            amount = int(src.get("amount") or 0)
             if amount <= 0:
                 raise ValueError("罚俸须正 amount")
             payload["amount"] = amount
         else:
             # 其它动作不得正 amount
-            try:
-                amount = int(src.get("amount") or 0)
-            except (TypeError, ValueError):
-                amount = 0
+            amount = int(src.get("amount") or 0)
             if amount > 0:
                 raise ValueError("非罚俸不得带正 amount")
 
@@ -1007,10 +986,7 @@ def _create_from_mapped(
         executor_kind = "character"
         executor_id = assignee
     due_turn = 0
-    try:
-        due_turn = int(normalized.get("due_turn") or 0)
-    except (TypeError, ValueError):
-        due_turn = 0
+    due_turn = int(normalized.get("due_turn") or 0)
     return list(db.create_decree_dossiers(
         state,
         action_type=emitted,

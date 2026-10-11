@@ -46,10 +46,7 @@ def loads_effect_dict(raw: object) -> Dict[str, object]:
 def _nonzero_int(raw: object) -> bool:
     if raw in (None, "") or isinstance(raw, (bool, float)):
         return False
-    try:
-        return int(raw) != 0  # type: ignore[arg-type]
-    except (TypeError, ValueError, OverflowError):
-        return False
+    return int(raw) != 0  # type: ignore[arg-type]
 
 
 def _nonempty_text(raw: object) -> bool:

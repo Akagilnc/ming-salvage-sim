@@ -6,11 +6,14 @@ describe("streamChat typed error projection", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows the payload message while preserving diagnostic fields", async () => {
+  it("preserves the native cause and diagnostic pointer", async () => {
     const detail = {
       code: "llm_run_error",
       message: "通传未达，请稍后再召。",
       provider_message: "provider stack trace",
+      reason: "Cannot operate on a closed database.",
+      error_type: "ProgrammingError",
+      error_pack_path: "/tmp/native-failure",
     };
     const body = `event: error\ndata: ${JSON.stringify(detail)}\n\n`;
     vi.stubGlobal("fetch", vi.fn(async () => new Response(body, {
@@ -21,7 +24,9 @@ describe("streamChat typed error projection", () => {
     const error = await streamChat("洪承畴", "传来。", () => {}).catch((reason) => reason);
 
     expect(error).toBeInstanceOf(ApiRequestError);
-    expect(error.message).toBe(detail.message);
+    expect(error.detail.reason).toBe(detail.reason);
+    expect(error.detail.error_type).toBe(detail.error_type);
+    expect(error.detail.error_pack_path).toBe(detail.error_pack_path);
     expect(error.detail.code).toBe(detail.code);
     expect(error.detail.provider_message).toBe(detail.provider_message);
   });

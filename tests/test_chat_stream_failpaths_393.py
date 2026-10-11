@@ -14,6 +14,7 @@ from ming_sim.session_write_queue import get_session_write_queue
 
 import json
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +22,6 @@ from fastapi.testclient import TestClient
 
 import web_app
 from ming_sim.exceptions import LLMUnavailable
-from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
 from tests.conftest import stub_scene_agent
@@ -49,8 +49,8 @@ def _assert_write_path_free(runtime) -> None:
 
     t = threading.Thread(target=_try_serialized_write, daemon=True)
     t.start()
-    entered.wait()
-    t.join()
+    entered.wait(timeout=30)
+    t.join(timeout=30)
     assert entered.is_set() and not t.is_alive(), "serialized write path still blocked"
 
     drained = threading.Event()
@@ -179,9 +179,16 @@ def _base_runtime(db, monkeypatch):
 def test_prologue_failure_fails_orphan_turn_and_releases_gate(monkeypatch):
     db = _FailingPrologueDB()
     runtime, minister = _base_runtime(db, monkeypatch)
-    gen = runtime.chat_stream("殿上", "辽东军情如何？")
-    with pytest.raises(RuntimeError):
-        next(gen)  # prologue 在 append_chat_message 崩 → 重新抛出
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    response = TestClient(web_app.app, raise_server_exceptions=False).post(
+        "/api/audience/chat/stream", json={"message": "辽东军情如何？"},
+    )
+    assert response.status_code == 200
+    events = _parse_sse(response.text)
+    assert [event for event, _ in events] == ["error"]
+    detail = events[0][1]
+    assert detail["error_type"] == "RuntimeError"
+    assert (Path(detail["error_pack_path"]) / "traceback.txt").is_file()
     # 孤儿轮被失败掉（不留 active 无回复轮挡住该大臣）
     assert db.failed_turns == [7]
     # 写路径已释放：后续串行写与 drain 不阻塞
@@ -203,7 +210,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         try:
             with web_app._serialized_web_write(runtime):
                 other_entered.set()
-                allow_other_exit.wait()
+                allow_other_exit.wait(timeout=30)
             other_completed_ok.append(True)
         except Exception:
             other_completed_ok.append(False)
@@ -216,7 +223,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
-        other_entered.wait()
+        other_entered.wait(timeout=30)
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
@@ -234,7 +241,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
     finally:
         allow_other_exit.set()
         for other in other_thread_holder:
-            other.join()
+            other.join(timeout=30)
     assert other_thread_holder, "foreign writer thread was not started"
     assert not other_thread_holder[0].is_alive()
     assert other_completed_ok == [True], (
@@ -514,7 +521,7 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
 
     def _boom_resolve(**_k):
         raise LLMUnavailable(
-            CLI_RUNNER_PLAYER_MESSAGE,
+            "fixture unavailable",
             code="llm_error",
             provider_message=provider,
         )
@@ -542,7 +549,6 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
     response = TestClient(web_app.app).post("/api/decree/issue", json={})
     detail = _assert_structured_llm_http(response)
     assert detail["code"] == "llm_error"
-    assert detail["message"] == CLI_RUNNER_PLAYER_MESSAGE
     assert detail["provider_message"] == provider
 
 

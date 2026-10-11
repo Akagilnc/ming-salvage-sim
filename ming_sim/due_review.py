@@ -140,11 +140,8 @@ def _todo_origin_ref(todo: Dict[str, object], meta_origin: str = "") -> str:
     if raw:
         return raw
     did = payload.get("dossier_id")
-    try:
-        if int(did or 0) > 0:
-            return f"dossier:{int(did)}"
-    except (TypeError, ValueError):
-        pass
+    if int(did or 0) > 0:
+        return f"dossier:{int(did)}"
     return str(meta_origin or "").strip()
 
 

@@ -32,11 +32,8 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     propagate unchanged.  Content fallback applies only when the events query
     succeeds with no row.
     """
-    try:
-        origin_kind = str(issue["origin_kind"] or "")
-        origin_ref = str(issue["origin_ref"] or "").strip()
-    except (KeyError, IndexError, TypeError):
-        return None
+    origin_kind = str(issue["origin_kind"] or "")
+    origin_ref = str(issue["origin_ref"] or "").strip()
     if origin_kind != "event_pool":
         return None
     if not origin_ref:
@@ -97,18 +94,11 @@ def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
     """
     from ming_sim.db import _load_durable_str_list, _load_exclusion_targets
 
-    try:
-        raw_names = row["excluded_names"]
-    except (KeyError, IndexError, TypeError):
-        raw_names = "[]"
-    names_list = _load_durable_str_list(
-        raw_names, surface="knowledge excluded_names",
-    )
+    keys = row.keys()
+    raw_names = row["excluded_names"] if "excluded_names" in keys else None
+    names_list = _load_durable_str_list(raw_names)
     excluded_names = {str(name) for name in names_list}
-    try:
-        raw_targets = row["excluded_targets"]
-    except (KeyError, IndexError, TypeError):
-        raw_targets = "{}"
+    raw_targets = row["excluded_targets"] if "excluded_targets" in keys else None
     # 空串/腐坏不得洗成合法空对象——与 db._load_exclusion_targets 同权威（#1897 E1）。
     targets = _load_exclusion_targets(
         raw_targets, surface="knowledge excluded_targets",
@@ -130,12 +120,10 @@ def _subject_matches_exclusion(
     if subject is None:
         name, office_type, office = fallback_name, "", ""
     else:
-        try:
-            name = str(subject["name"] or fallback_name)
-            office_type = str(subject["office_type"] or "")
-            office = str(subject["office"] or "")
-        except (KeyError, IndexError, TypeError):
-            name, office_type, office = fallback_name, "", ""
+        keys = subject.keys()
+        name = str(subject["name"] or fallback_name) if "name" in keys else fallback_name
+        office_type = str(subject["office_type"] or "") if "office_type" in keys else ""
+        office = str(subject["office"] or "") if "office" in keys else ""
     if name in excluded_names or name in people:
         return True
     return bool(office_type and office_type in offices) or bool(
@@ -158,13 +146,12 @@ def knowledge_row_visible_to(
         "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
     ).fetchone()
     target = target or reader or row
-    def target_value(key: str) -> object:
-        try:
-            return target[key]
-        except (KeyError, IndexError, TypeError):
-            return None
-
-    target_name = str(target_value("name") or target_value("character_id") or character_name)
+    target_keys = target.keys()
+    target_name = str(
+        (target["name"] if "name" in target_keys else "")
+        or (target["character_id"] if "character_id" in target_keys else "")
+        or character_name
+    )
     excluded_names, people, offices = _exclusion_lists_from_row(row)
     source_id = str(row["source_id"] or "")
     # 合成读模型行未必自带 excluded_names；source 上的持久黑名单仍是同一真源。
@@ -196,10 +183,7 @@ def knowledge_row_visible_to(
     # A public event is a new disclosure capability even when it deliberately
     # retains the private source id for provenance.  It keeps its own explicit
     # people/office exclusions above, but must not inherit the source roster.
-    try:
-        event_is_public = str(row["kind"] or "") == "public"
-    except (KeyError, IndexError, TypeError):
-        event_is_public = False
+    event_is_public = "kind" in row.keys() and row["kind"] == "public"
     if not event_is_public and source is not None and str(source["kind"] or "") != "public":
         participants = participant_roster_names(source["participant_roster"])
         if participants and character_name not in participants:
@@ -288,9 +272,7 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
             continue
         participants = participant_roster_names(row["participant_roster"])
         from ming_sim.db import _load_durable_str_list
-        excluded = _load_durable_str_list(
-            row["excluded_names"], surface="knowledge excluded_names",
-        )
+        excluded = _load_durable_str_list(row['excluded_names'])
         # A participant-rostered source is private to its participants unless
         # an explicit exclusion says otherwise.  Empty rosters are not added
         # here: public events already have their own projection path.
@@ -436,16 +418,10 @@ def _issue_audience_case_events(
     synthesized: list[Dict[str, object]] = []
     active_issues = db.list_active_issues()
     for issue in active_issues:
-        try:
-            source_id = f"issue:{int(issue['id'])}"
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        source_id = f"issue:{int(issue['id'])}"
         if source_id in known:
             continue
-        try:
-            stage = _prose(issue["stage_text"])
-        except (KeyError, IndexError, TypeError):
-            stage = ""
+        stage = _prose(issue["stage_text"])
         if not str(stage).strip() or not _reader_in_issue_audience(db, issue, character_name):
             continue
         if not knowledge_row_visible_to(
@@ -454,10 +430,7 @@ def _issue_audience_case_events(
             character_name,
         ):
             continue
-        try:
-            origin_turn = int(issue["origin_turn"] or state.turn)
-        except (KeyError, IndexError, TypeError, ValueError):
-            origin_turn = int(state.turn)
+        origin_turn = int(issue["origin_turn"] or state.turn)
         synthesized.append({
             "turn": origin_turn,
             "year": int(state.year) if origin_turn == int(state.turn) else 0,
@@ -680,10 +653,7 @@ def build_character_knowledge(
     visible_issues = []
     for issue in db.list_active_issues():
         source_id = f"issue:{issue['id']}"
-        try:
-            participants = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            participants = set()
+        participants = participant_roster_names(issue["participant_roster"])
         # Unassigned issues are public; assigned issues are visible only when
         # this character entered the durable source projection.
         if participants:
@@ -699,12 +669,9 @@ def build_character_knowledge(
             target_roster = []
         else:
             # 已持久 target_roster 腐坏响亮，不洗成空名单改准入（#1897 E1）。
-            from ming_sim.db import _load_durable_json_list
+            from ming_sim.db import _load_durable_json
 
-            target_roster = _load_durable_json_list(
-                issue["target_roster"],
-                surface=f"弹劾潮#{int(issue['id'])}.target_roster",
-            )
+            target_roster = _load_durable_json(issue["target_roster"], default='[]')
             target_roster = [
                 str(target).strip() for target in target_roster if str(target).strip()
             ]

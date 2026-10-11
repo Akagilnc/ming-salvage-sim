@@ -14,7 +14,6 @@ import pytest
 import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
-from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import GameSession, TurnPhase
 from ming_sim import audience_night as an
 
@@ -90,7 +89,7 @@ def _chat_rows(db, minister_name: str):
     ValueError("有 pending 拟旨待处理，请先处理再颁诏。"),
     SettlementAbort("本月结算失败，进度已保存，可重试。", turn=1, stage="extract"),
     # 现役 LLM 通路的失败与结算中止同形——留本回合可重按。
-    LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error"),
+    LLMUnavailable("fixture unavailable", code="llm_timeout"),
     # #1700：空 simulator 的 LLMContractError 同形，issue catch 扩员后留本回合。
     LLMContractError("simulator 流式无内容且无终结事件"),
 ])
