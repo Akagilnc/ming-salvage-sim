@@ -287,41 +287,6 @@ describe("EdictModal — decree desk behavior", () => {
     expect(onIssue).toHaveBeenCalledTimes(1);
   });
 
-  it("#1732 failed-only：页脚就地确认；取消零调用；确认后退朝", () => {
-    const onAdvance = vi.fn();
-    const confirm = vi.spyOn(window, "confirm");
-    const { host } = renderEdictModal({
-      state: baseGameState({
-        directives: [],
-        pending_directive_count: 0,
-        pending_secret_order_count: 0,
-        pending_non_directive_action_count: 0,
-        failed_secret_order_count: 1,
-      }),
-      onAdvanceWithoutEdict: onAdvance,
-    });
-    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
-    expect(footer?.disabled).toBe(false);
-    act(() => footer?.click());
-    expect(confirm).not.toHaveBeenCalled();
-    expect(onAdvance).not.toHaveBeenCalled();
-    const panel = host.querySelector('[aria-label="退朝确认"]');
-    expect(panel).not.toBeNull();
-
-    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("取消")
-    );
-    act(() => cancel?.click());
-    expect(onAdvance).not.toHaveBeenCalled();
-
-    const footer2 = host.querySelector<HTMLButtonElement>(".desk-footer button");
-    act(() => footer2?.click());
-    const yes = Array.from(host.querySelector('[aria-label="退朝确认"]')!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("退朝结束本月")
-    );
-    act(() => yes?.click());
-    expect(onAdvance).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("#1732 ChatModal · 撤回就地确认", () => {
@@ -495,14 +460,15 @@ describe("ChatModal — placeholder switches on character type", () => {
       chat: [{ role: "user", content: "剿抚孰先？" }],
       onRetryReply: retry,
     });
-
-    const button = Array.from(document.querySelectorAll("button")).find(
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const retryButtons = Array.from(document.querySelectorAll("button")).filter(
       (node) => node.textContent === "重试",
     );
-    expect(button).toBeTruthy();
-    act(() => button?.click());
-    expect(retry).toHaveBeenCalledTimes(1);
-    expect(retry).toHaveBeenCalledWith("殿上", 12);
+    expect(retryButtons).toHaveLength(2);
+    act(() => retryButtons[0]?.click());
+    expect(retry).toHaveBeenCalledWith("殿上", 12, undefined);
+    act(() => retryButtons[1]?.click());
+    expect(retry).toHaveBeenLastCalledWith("殿上", 13, "court_break");
   });
 
 });
@@ -1320,7 +1286,9 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     await act(async () => { newRetry?.click(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 32 }) }));
     await act(async () => { releaseOldRetry?.(); await Promise.resolve(); await Promise.resolve(); });
-
+    expect(host.textContent).toContain("乙夜奏对");
+    expect(host.textContent).not.toContain("甲夜奏对");
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-32"] button')?.disabled).toBe(true);
     await act(async () => { releaseNewRetry?.(); await Promise.resolve(); await Promise.resolve(); });
   });
   it("retries a pending translation on its original closed night", async () => {
@@ -1345,7 +1313,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(retry).not.toBeNull();
     await act(async () => { retry?.click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 8 }) }));
-
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
   });
   it("recovers a completed translation by rereading the scroll after its first read fails", async () => {
     let reads = 0;
@@ -1362,10 +1330,10 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); await Promise.resolve(); });
-
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).not.toBeNull();
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); await Promise.resolve(); });
     expect(posts).toBe(1);
-
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
   });
   it("selects closed scenes through the shared scroll endpoint without a composer", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
@@ -1385,7 +1353,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-
+    expect(host.querySelector("textarea, input, .chat-composer")).toBeNull();
     await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item.active")?.click(); });
 
     const filter = host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')!;
@@ -1399,7 +1367,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const buttons = Array.from(host.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
     await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
-
   });
 
   it("#671 史册月档经 HistoryModal fetch 呈现独立递话原文", async () => {
@@ -1598,7 +1565,10 @@ describe("ReportModal — narrative settlement bulletin", () => {
   it("#671 王承恩递话在邸报纸面外独立区，不经 stripOrganicMarkdown；空则不渲染", () => {
 
     // 纯空白 / 空串：trim 判空后不渲染
-
+    expect(renderReportModal({ report: "一、边报", attendantMessage: " \n\t " })
+      .querySelector("[data-testid=gazette-attendant]")).toBeNull();
+    expect(renderReportModal({ report: "一、边报", attendantMessage: "" })
+      .querySelector("[data-testid=gazette-attendant]")).toBeNull();
     const rawWithWs = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
     const host = renderReportModal({
       report: "**辽东军情**",

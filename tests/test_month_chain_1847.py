@@ -1677,6 +1677,11 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     assert db.staged_declarations.is_settled(ref)
     reloaded = _load_chain(db, turn)
     pending = reloaded.get("pending_disclosures") or []
+    assert any(
+        int(item.get("order_id") or 0) == order_id
+        and "私仓已查封" in str(item.get("sim_note") or "")
+        for item in pending
+    )
 
     # 同事务：alongside 内 _save_chain 失败须回滚结算标记
     order_2 = create_test_secret_order(

@@ -71,6 +71,7 @@ def test_update_valid_active_order_applies_no_reject(game):
     }, narrative="x", decree_text="y")
 
     assert _rejection_rows(db, turn, "secret_order_updates") == []
+    assert "推演副作用XYZ" in (db.character_knowledge.get_secret_order(oid)["sim_note"] or "")
 
 
 def test_apply_score_extraction_secret_order_update_respects_outer_transaction_rollback(game):
@@ -89,10 +90,12 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
     assert out["secret_order_updates"][0]["order_id"] == oid
     in_tx = db.character_knowledge.get_secret_order(oid)
     assert in_tx is not None
+    assert "测试密令副作用R8" in (in_tx["sim_note"] or "")
     db.conn.rollback()
 
     row = db.character_knowledge.get_secret_order(oid)
     assert row is not None
+    assert "测试密令副作用R8" not in (row["sim_note"] or "")
 
 
 def test_oversized_order_id_rejected_not_crash(game):

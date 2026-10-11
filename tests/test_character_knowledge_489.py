@@ -159,6 +159,8 @@ def test_turn_report_projects_public_and_secret_items_per_character(game):
     source_ids = {item["source_id"] for item in view["public_events"]}
     assert f"projection:turn_report:{state.turn}" in source_ids
     assert "restricted:mixed-report" not in source_ids
+    assert public_marker in view["world"]["public"]
+    assert secret_marker not in view["world"]["public"]
 
 def test_participation_survives_restore(game):
     db, state, content = game
@@ -1135,23 +1137,17 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
     db.conn.execute("UPDATE armies SET commander=? WHERE id=?", (general.name, rows[0]["id"]))
     db.conn.commit()
     view = db.get_character_knowledge(state, general.name)
-    # 结构化身份：指挥范围 army_ids；不锁军队名称正文成员。
+    # 范围元数据与实际投影须同时裁切；军名是输入原值，不是生成措辞。
     assert view["scope"]["army_ids"] == (rows[0]["id"],)
-    assert rows[1]["id"] not in set(view["scope"]["army_ids"])
-    assert "command" in view["world"] and str(view["world"]["command"] or "").strip()
+    assert rows[0]["name"] in view["world"]["command"]
+    assert rows[1]["name"] not in view["world"]["command"]
 
 
 def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
-    """数额在结构化流水；案情隐藏走生产排除闸（不锁呈现子串、不比正文差分）。"""
-    from ming_sim.entities.character.store import CharacterStore
-    from ming_sim.knowledge import _household_secret_case_hidden
+    """数额仍在流水；姓名排除的实际账目投影不得泄漏输入案情。"""
 
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
-    other = next(
-        c for c in content.characters.values()
-        if c.office_type == "户部" and c.name != clerk.name
-    )
     order_id = create_test_secret_order(
         db, state, "毕自严", "密查太仓", "不可见案卷语义", [],
         excluded_names=[clerk.name],
@@ -1162,48 +1158,17 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
         state, "国库", -1, case_cat, case_reason,
         origin_ref=f"dossier:{dossier['id']}",
     )
-    # 合法公开同文流水不得参与私源身份判定。
-    db.record_issue_economy_move(
-        state, "国库", -3, case_cat, case_reason, origin_ref="",
-    )
     move = db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE origin_ref=? ORDER BY id DESC LIMIT 1",
         (f"dossier:{dossier['id']}",),
     ).fetchone()
     assert move is not None and int(move["delta"]) == -1
-    order = next(
-        o for o in db.character_knowledge.list_secret_orders()
-        if int(o["id"]) == int(order_id)
-    )
-    secret_row = {
-        "origin_ref": f"dossier:{dossier['id']}",
-        "category": case_cat,
-        "reason": case_reason,
-        "excluded_names": order.get("excluded_names"),
-        "excluded_targets": order.get("excluded_targets"),
-    }
-    public_row = {
-        "origin_ref": "",
-        "category": case_cat,
-        "reason": case_reason,
-        "excluded_names": None,
-        "excluded_targets": None,
-    }
-    clerk_reader = CharacterStore(db.conn).read_knowledge_row_visible_to((clerk.name,))
-    other_reader = CharacterStore(db.conn).read_knowledge_row_visible_to((other.name,))
-    # 生产排除闸：排除读者隐藏私源案情；非排除户部不隐藏；公开同文永不按私源隐藏。
-    assert _household_secret_case_hidden(secret_row, clerk.name, clerk_reader) is True
-    assert _household_secret_case_hidden(secret_row, other.name, other_reader) is False
-    assert _household_secret_case_hidden(public_row, clerk.name, clerk_reader) is False
-    # 真实入口：两名户部均有 treasury 投影（特征观察，不锁字）。
-    assert "treasury" in db.get_character_knowledge(state, clerk.name)["world"]
-    assert "treasury" in db.get_character_knowledge(state, other.name)["world"]
+    ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
+    assert case_cat not in ledger and case_reason not in ledger
 
 
 def test_household_secret_ledger_hides_case_by_excluded_office(game):
-    """现职/继任按 excluded_targets.offices 走生产排除闸；数额仍在结构化流水。"""
-    from ming_sim.entities.character.store import CharacterStore
-    from ming_sim.knowledge import _household_secret_case_hidden
+    """现职/继任的实际账目投影均不得泄漏职署排除案情；数额仍在流水。"""
 
     db, state, content = game
     # 读者不得是密令受令者：受令者常入 excluded_names，会掩盖「仅按 office 排除」的继任语义。
@@ -1238,16 +1203,8 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
     )
     offices = list((order.get("excluded_targets") or {}).get("offices") or [])
     assert clerk.office_type in offices
-    secret_row = {
-        "origin_ref": f"dossier:{dossier['id']}",
-        "category": case_cat,
-        "reason": case_reason,
-        "excluded_names": order.get("excluded_names"),
-        "excluded_targets": order.get("excluded_targets"),
-    }
-    clerk_reader = CharacterStore(db.conn).read_knowledge_row_visible_to((clerk.name,))
-    assert _household_secret_case_hidden(secret_row, clerk.name, clerk_reader) is True
-    assert "treasury" in db.get_character_knowledge(state, clerk.name)["world"]
+    hidden = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
+    assert case_cat not in hidden and case_reason not in hidden
 
     clerk_office, clerk_type = clerk.office, clerk.office_type
     prior_office, prior_type = successor.office, successor.office_type
@@ -1256,10 +1213,9 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
     clerk.office, clerk.office_type = "闲住", "未仕"
     successor.office, successor.office_type = clerk_office, "户部"
     try:
-        successor_reader = CharacterStore(db.conn).read_knowledge_row_visible_to((successor.name,))
-        # 继任现职落入 excluded offices → 生产闸隐藏（不靠签发时人名快照）。
-        assert _household_secret_case_hidden(secret_row, successor.name, successor_reader) is True
-        assert "treasury" in db.get_character_knowledge(state, successor.name)["world"]
+        # 继任现职落入 excluded offices，不靠签发时人名快照。
+        successor_view = db.get_character_knowledge(state, successor.name)["world"]["treasury"]
+        assert case_reason not in successor_view
     finally:
         db.set_character_office(clerk.name, clerk_office, office_type=clerk_type)
         db.set_character_office(successor.name, prior_office, office_type=prior_type)

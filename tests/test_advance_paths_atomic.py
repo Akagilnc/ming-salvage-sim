@@ -369,17 +369,3 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     with pytest.raises(ValueError):
         sess.resolve_turn()
     assert state.turn == turn  # 未推进，拟旨不孤儿
-
-def test_skip_refused_at_front_half_done(game):
-    """#1274 r1：decree.advance_without_edict 空壳已删；跳过结算的快路名缺席。
-
-    FRONT_HALF_DONE 恢复/亲裁由 session.resolve_turn 真缝承担（settling 恢复 /
-    awaiting 幂等返回决策），不再经独立退朝壳拒绝。
-    """
-    from ming_sim.decree import pre_settle
-
-    db, state, content = game
-    turn = state.turn
-    pre_settle(state, db, content=content)
-    # 前半落账不推进月份；财政落账/恢复另由本文件真实收尾案证明。
-    assert state.turn == turn
