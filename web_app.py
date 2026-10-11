@@ -22,6 +22,7 @@ import tempfile
 import time
 import threading
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional
 
@@ -1731,6 +1732,7 @@ class WebGame:
             if turn_phase == TurnPhase.SETTLING.value:
                 from ming_sim.error_pack import (
                     latest_error_pack_for_turn,
+                    _read_complete_pack_manifest,
                     settlement_abort_message,
                 )
                 from ming_sim.month_chain import month_chain_call_failure
@@ -1747,12 +1749,17 @@ class WebGame:
                     pack_path = latest_error_pack_for_turn(
                         self.db.path, int(self.state.turn),
                     )
+                    manifest = (
+                        _read_complete_pack_manifest(Path(pack_path)) if pack_path else None
+                    )
                     settlement_recovery = {
                         "retryable": True,
                         "error_pack_path": pack_path or "",
                         "message": (
-                            settlement_abort_message(pack_path)
-                            if pack_path
+                            settlement_abort_message(
+                                pack_path, reason=str(manifest["exception_message"]),
+                            )
+                            if manifest is not None
                             else "上月结算未完成（进度已保存）。"
                         ),
                     }
@@ -4949,7 +4956,12 @@ app.add_middleware(
 
 @app.get("/api/game/state")
 async def api_state() -> Dict[str, Any]:
-    return get_game().state_payload()
+    try:
+        return get_game().state_payload()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=_settlement_sse_error_data(exc)) from exc
 
 
 @app.post("/api/game/mechanical_tail/retry")

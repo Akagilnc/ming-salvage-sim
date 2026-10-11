@@ -79,7 +79,8 @@ class _SuspendableConnection(sqlite3.Connection):
                 callback_errors.append(exc)
         if callback_errors:
             raise RuntimeError(
-                f"runtime commit callback failed ({len(callback_errors)} error(s))"
+                f"runtime commit callback failed ({len(callback_errors)} error(s)): "
+                f"{callback_errors[0]}"
             ) from callback_errors[0]
 
     def rollback(self) -> None:
@@ -102,7 +103,8 @@ class _SuspendableConnection(sqlite3.Connection):
                 self.execute("BEGIN")
         if callback_errors:
             raise RuntimeError(
-                f"runtime rollback callback failed ({len(callback_errors)} error(s))"
+                f"runtime rollback callback failed ({len(callback_errors)} error(s)): "
+                f"{callback_errors[0]}"
             ) from callback_errors[0]
 
     def __enter__(self) -> "_SuspendableConnection":

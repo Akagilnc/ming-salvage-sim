@@ -147,12 +147,12 @@ def _levy_handoff_blocks(text: str, turn: int) -> List[Dict[str, Any]]:
             obj = json.loads(match.group(1).strip())
         except Exception as exc:
             raise SettlementAbort(
-                "请饷交接块无法对齐名单",
+                f"请饷交接块 <<LEVY>> JSON 解析失败：{exc}",
                 turn=int(turn), stage="world_bind",
             ) from exc
         if not isinstance(obj, dict):
             raise SettlementAbort(
-                "请饷交接块无法对齐名单",
+                f"请饷交接块 <<LEVY>> 根须为对象，得 {type(obj).__name__}",
                 turn=int(turn), stage="world_bind",
             )
         if obj.get("present") is False:
@@ -990,7 +990,7 @@ def _abort_month_call(
             original, turn=turn, stage=step, error_pack_path=None,
         ) from pack_exc
     abort_message = (
-        f"{original}\n{settlement_abort_message(pack_path)}"
+        settlement_abort_message(pack_path, reason=original)
         if kind == "code_exception" else original
     )
     raise SettlementAbort(

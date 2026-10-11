@@ -3362,7 +3362,7 @@ class GameDB:
             try:
                 fiscal = json.loads(str(row["fiscal"] or "{}"))
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"region {row['id']} fiscal JSON 非法，无法校验军饷容器守恒") from exc
+                raise ValueError(f"region {row['id']} fiscal JSON 非法，无法校验军饷容器守恒：{exc}") from exc
             settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
             if settle is None:
                 continue
@@ -3537,7 +3537,7 @@ class GameDB:
             fiscal = json.loads(str(row["fiscal"] or "{}"))
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                f"army {army_id} pay_source_region 财政基座 JSON 非法：{pay_source_region}"
+                f"army {army_id} pay_source_region 财政基座 JSON 非法：{pay_source_region}：{exc}"
             ) from exc
         settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
@@ -9692,7 +9692,7 @@ class GameDB:
         try:
             payload = json.loads(out.get("payload_json") or "{}")
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} payload_json 无效") from exc
+            raise ValueError(f"案卷#{out['id']} payload_json 无效：{exc}") from exc
         if not isinstance(payload, dict):
             raise ValueError(f"案卷#{out['id']} payload_json 非对象")
         out["payload"] = payload
@@ -9702,21 +9702,21 @@ class GameDB:
         try:
             stigma = json.loads(out.get("stigma_json") or "[]")
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} stigma_json 无效") from exc
+            raise ValueError(f"案卷#{out['id']} stigma_json 无效：{exc}") from exc
         if not isinstance(stigma, list):
             raise ValueError(f"案卷#{out['id']} stigma_json 非列表")
         out["stigma"] = stigma
         try:
             roster = json.loads(out.get("participant_roster") or "[]")
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} participant_roster 无效") from exc
+            raise ValueError(f"案卷#{out['id']} participant_roster 无效：{exc}") from exc
         if not isinstance(roster, list):
             raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
         out["participant_roster"] = roster
         try:
             extension = json.loads(out.get("extension_json") or "{}")
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} extension_json 无效") from exc
+            raise ValueError(f"案卷#{out['id']} extension_json 无效：{exc}") from exc
         if not isinstance(extension, dict):
             raise ValueError(f"案卷#{out['id']} extension_json 非对象")
         signal = extension.get("execution_signal")
@@ -10047,7 +10047,7 @@ class GameDB:
                 if dossier_id <= 0:
                     raise ValueError("not positive")
             except (TypeError, ValueError) as exc:
-                raise ValueError("长差月报案卷编号无效") from exc
+                raise ValueError(f"长差月报案卷编号无效：{exc}") from exc
             band = str(item.get("progress_band") or "")
             text = str(item.get("memorial_text") or "")
             if dossier_id not in candidates or dossier_id in supplied or not band.strip() or not text.strip():
@@ -13425,7 +13425,7 @@ class GameDB:
         try:
             value = json.loads(str(row["affected_parties_json"] or ""))
         except (TypeError, ValueError) as exc:
-            raise ValueError("强颁当前回合 Judge affected_parties 非法") from exc
+            raise ValueError(f"强颁当前回合 Judge affected_parties 非法：{exc}") from exc
         if not isinstance(value, list) or not value:
             raise ValueError("强颁当前回合 Judge affected_parties 必须为非空 typed 清单")
         validate_affected_parties(
@@ -14317,7 +14317,7 @@ class GameDB:
                 try:
                     roster = json.loads(str(issue["target_roster"] or "[]"))
                 except (TypeError, ValueError) as exc:
-                    raise ValueError("弹劾潮 target_roster 非法") from exc
+                    raise ValueError(f"弹劾潮#{issue_id} target_roster 非法：{exc}") from exc
                 if target not in roster:
                     raise ValueError("办人目标不在弹劾潮 target_roster")
         if issue_disposition == "压下" and issue is not None:
@@ -16510,7 +16510,7 @@ class GameDB:
         try:
             payload = json.loads(raw or "{}")
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"{label} 结构化载荷损坏") from exc
+            raise ValueError(f"{label} 结构化载荷损坏：{exc}") from exc
         if not isinstance(payload, dict):
             raise ValueError(f"{label} 结构化载荷必须为对象")
         return payload
@@ -16623,7 +16623,7 @@ class GameDB:
                 self, state, exc=code_fault, extracted=None, resolve_ctx=None,
             )
             raise SettlementAbort(
-                settlement_abort_message(pack_path),
+                settlement_abort_message(pack_path, reason=str(code_fault)),
                 turn=int(state.turn),
                 stage="directive_ensure",
                 error_pack_path=pack_path,
@@ -16934,7 +16934,7 @@ class GameDB:
 
                 raise SettlementAbort(
                     "event_triggers.choice_json 解析失败 "
-                    f"event_id={r['event_id']!r} rowid={r['rowid']}",
+                    f"event_id={r['event_id']!r} rowid={r['rowid']}：{exc}",
                     turn=int(r["turn"] or 0),
                     stage="petition_records",
                 ) from exc
@@ -17089,7 +17089,7 @@ class GameDB:
                 data = json.loads(text)
             except (TypeError, ValueError) as exc:
                 raise ValueError(
-                    f"next_audience_todos.payload_json 须为 JSON 对象：{text!r}"
+                    f"next_audience_todos.payload_json JSON 解析失败：{exc}；原值 {text!r}"
                 ) from exc
             if not isinstance(data, dict):
                 raise ValueError(

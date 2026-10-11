@@ -98,10 +98,10 @@ def _read_complete_pack_manifest(path: Path) -> Optional[Dict[str, object]]:
     return manifest if isinstance(manifest, dict) else None
 
 
-def settlement_abort_message(pack_path: str) -> str:
-    """中止时的玩家可见提示（决定 7：自带路径指引）。"""
+def settlement_abort_message(pack_path: str, *, reason: str) -> str:
+    """中止时透传故障原因及错误包路径（决定 7）。"""
     return (
-        "本月结算失败，进度已保存，可重试。\n"
+        f"{reason}\n本月结算失败，进度已保存，可重试。\n"
         f"错误包已生成：{pack_path}\n"
         "请把该文件夹发给作者，以便排查。"
     )

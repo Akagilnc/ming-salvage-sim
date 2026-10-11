@@ -572,7 +572,7 @@ def contract_target_units(contract: Mapping[str, object]) -> float:
     try:
         target = float(delivery.get("target_units"))
     except (TypeError, ValueError) as exc:
-        raise CovertContractError("typed contract 缺少可数目标") from exc
+        raise CovertContractError(f"typed contract delivery.target_units 非数值：{exc}") from exc
     if target <= 0.0:
         raise CovertContractError("typed contract 目标必须为正数")
     return target

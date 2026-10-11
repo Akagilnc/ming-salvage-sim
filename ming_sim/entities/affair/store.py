@@ -420,7 +420,7 @@ def parse_affair_declaration(
     try:
         affair_id = parse_positive_affair_id(raw.get("affair_id"))
     except (TypeError, ValueError) as exc:
-        raise ValueError("接到已开事务须有 affair_id") from exc
+        raise ValueError(f"接到已开事务 affair_id 无效：{exc}") from exc
     return {"attach": attach, "affair_id": affair_id}
 
 

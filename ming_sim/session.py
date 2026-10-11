@@ -1507,7 +1507,7 @@ class GameSession:
                     self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
                 )
                 raise SettlementAbort(
-                    settlement_abort_message(pack_path),
+                    settlement_abort_message(pack_path, reason=str(exc)),
                     turn=int(self.state.turn),
                     stage="directive_admission_resubmit",
                     error_pack_path=pack_path,
@@ -1537,7 +1537,7 @@ class GameSession:
                     extracted=None, resolve_ctx=None,
                 )
                 raise SettlementAbort(
-                    settlement_abort_message(pack_path),
+                    settlement_abort_message(pack_path, reason=str(write_exc)),
                     turn=int(self.state.turn),
                     stage="directive_admission_resubmit",
                     error_pack_path=pack_path,
@@ -1584,6 +1584,7 @@ class GameSession:
             )
             if failure or pending_tails:
                 exc = RuntimeError(
+                    str(failure[1]["error"]) if failure else
                     f"机械尾未终结，不能过月：{[turn for turn, _ in pending_tails]}"
                 )
                 pack_path = (
@@ -1599,7 +1600,7 @@ class GameSession:
                             extracted=None, resolve_ctx=None,
                         )
                 raise SettlementAbort(
-                    settlement_abort_message(pack_path),
+                    settlement_abort_message(pack_path, reason=str(exc)),
                     turn=int(self.state.turn),
                     stage="mechanical_tail_pending",
                     error_pack_path=pack_path,
@@ -1621,7 +1622,7 @@ class GameSession:
                     self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
                 )
                 raise SettlementAbort(
-                    settlement_abort_message(pack_path),
+                    settlement_abort_message(pack_path, reason=str(exc)),
                     turn=int(self.state.turn),
                     stage="audience_translation_exhausted",
                     error_pack_path=pack_path,

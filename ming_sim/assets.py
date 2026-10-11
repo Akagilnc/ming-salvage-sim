@@ -100,7 +100,7 @@ def int_field(data: Dict[str, object], key: str, path: str) -> int:
     try:
         return int(data[key])
     except (KeyError, TypeError, ValueError) as error:
-        raise SystemExit(f"设定字段应为整数：{path}.{key}") from error
+        raise SystemExit(f"设定字段应为整数：{path}.{key}：{error}") from error
 
 
 def str_field(data: Dict[str, object], key: str, path: str) -> str:

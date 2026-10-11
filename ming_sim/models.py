@@ -46,7 +46,7 @@ def loads_persistent_json_object(
     try:
         data = json.loads(text)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{surface} 腐坏 JSON：{text!r}") from exc
+        raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"{surface} 须为对象，得 {type(data).__name__}")
     return dict(data)
@@ -66,7 +66,7 @@ def loads_persistent_json_list(
     try:
         data = json.loads(text)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{surface} 腐坏 JSON：{text!r}") from exc
+        raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
     if not isinstance(data, list):
         raise ValueError(f"{surface} 须为数组，得 {type(data).__name__}")
     return list(data)

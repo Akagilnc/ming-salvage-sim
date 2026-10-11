@@ -54,7 +54,7 @@ def raise_fixed_period_flow_abort_if_needed(
         return
     pack_path = write_error_pack(db, state, exc=exc, extracted=None, resolve_ctx=None)
     raise SettlementAbort(
-        settlement_abort_message(pack_path),
+        settlement_abort_message(pack_path, reason=str(exc)),
         turn=int(getattr(state, "turn", 0)),
         stage="fixed_fiscal",
         error_pack_path=pack_path,
@@ -105,7 +105,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
         except (TypeError, ValueError) as exc:
             if not strict:
                 continue
-            raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路") from exc
+            raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路：{exc}") from exc
         if not isinstance(fiscal, dict):
             if not strict:
                 continue
@@ -132,7 +132,7 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
         try:
             fiscal = json.loads(str(row["fiscal"] or "{}"))
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运") from exc
+            raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运：{exc}") from exc
         if not isinstance(fiscal, dict):
             raise ValueError(f"region {region_id!r} fiscal 非字典，无法投影起运")
         if "settle" not in fiscal:
