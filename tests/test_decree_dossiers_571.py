@@ -1635,7 +1635,7 @@ def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch, draft
     if draft_count != 1:
         assert result["drafts"] == []
 
-def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
+def test_batch_draft_extraction_preserves_each_mechanical_payload(game, monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
     raw = json.dumps({
@@ -1668,15 +1668,23 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
     result = cli_backend.extract_draft_intent(
         "分别拟旨拨款、出师", "臣已拟妥", draft_count=2,
     )
-    assert result["drafts"][0]["amount"] == 10000
-    assert result["drafts"][0]["dossier_action_type"] == "grant_allocation"
-    assert result["drafts"][0]["mode"] == "ordinary"
-    # #1624：grant 经 cluster 投影保留 in_transit；military 不携带执行面。
-    assert result["drafts"][0].get("execution_surface") == "in_transit"
-    assert result["drafts"][1]["deadline_months"] == 3
-    assert result["drafts"][1]["dossier_action_type"] == "military_order"
-    assert result["drafts"][1]["mode"] == "midzhi"
-    assert str(result["drafts"][1].get("execution_surface") or "").strip() == ""
+    from tests.month_chain_helpers import make_light_session
+    db, state, content = game
+    session = make_light_session(db, state, content)
+    staged = []
+    for draft in result["drafts"]:
+        directive = session.add_directive(draft["draft_text"], dossier_payload=draft)
+        db.ensure_dossiers_for_draft_directives(state)
+        staged.append(db.dossiers.get_for_directive(directive.id))
+    grant, military = [json.loads(row["payload_json"]) for row in staged]
+    assert grant["amount"] == 10000
+    assert staged[0]["action_type"] == "grant_allocation"
+    assert grant["execution_surface"] == "in_transit"
+    assert staged[0]["mode"] == "ordinary"
+    assert military["due_turn"] == staged[1]["due_turn"] == state.turn + 3
+    assert staged[1]["action_type"] == "military_order"
+    assert staged[1]["mode"] == "midzhi"
+    assert str(military.get("execution_surface") or "").strip() == ""
 
 def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
     from ming_sim.issues import apply_score_extraction

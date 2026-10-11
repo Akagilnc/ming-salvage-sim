@@ -23,10 +23,6 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.faction_brew import (
     STANCE_KEY,
     VIEW_FACTION_STANCE,
-    build_faction_brew_input,
-    collect_new_edge_events_for_faction,
-    project_character_factions,
-    select_faction_brew_targets,
 )
 from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY
 from ming_sim.relations import EMPEROR_NODE
@@ -88,18 +84,11 @@ def test_any_endpoint_hit_selects_and_same_faction_dedups(game):
     # 温体仁×周延儒均皇党 → 恰一个派系目标＋一条关系目标。
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert [row["faction"] for row in targets] == ["皇党"]
-
     calls: list = []
     report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
     # 同批：1 条关系工作项＋1 条派系工作项。
     assert report["selected"] == 2
-    assert len(report["brewed"]) == 2
-
-
+    assert {row["faction"] for row in db.factions.get_faction_stance_summaries()} == {"皇党"}
 
 
 def test_out_of_table_faction_and_unknown_person_never_projected(game):
@@ -109,11 +98,6 @@ def test_out_of_table_faction_and_unknown_person_never_projected(game):
               context="皇太极请市被拒。", origin="audience:turn-1")
     _add_edge(db, state, source="甲", target="乙", kind="协作",
               context="甲乙当场协作。", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert targets == []
-
     calls: list = []
     report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
     # 只剩两条关系工作项；零派系工作项。
@@ -125,12 +109,10 @@ def test_out_of_table_faction_and_unknown_person_never_projected(game):
 # ------------------------------------- 验收：事件月更新／无事月字节不变
 
 
-
 # ------------------------- F2 pending 补酿复用 #636 接缝：恰一次
 
 
 # ----------------------- 输出契约严格边界：畸形产出拒收降级保旧摘要
-
 
 
 # ------------------------------------------- 异常边界：DB 错响亮不伪装降级
@@ -248,18 +230,12 @@ def test_declared_holder_to_emperor_grudge_reaches_holder_faction_brew(game):
     that holder's faction brew; direction comes only from source/target (#1895)."""
     db, state, _content = game
     holder = _minister(db)
-    projection = project_character_factions(db)
-    holder_faction = projection[holder]
+    holder_faction = db.conn.execute("SELECT faction FROM characters WHERE name=?", (holder,)).fetchone()[0]
     origin = f"declaration:结怨|{holder}"
     _add_edge(
         db, state, source=holder, target=EMPEROR_NODE, kind="结怨",
         context="密令被收后心生不满", origin=origin,
     )
-
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert [row["faction"] for row in targets] == [holder_faction]
 
     calls: list = []
     run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
@@ -276,111 +252,28 @@ def test_declared_holder_to_emperor_grudge_reaches_holder_faction_brew(game):
     assert matching[0]["target"] == EMPEROR_NODE
 
 
-def test_new_event_fields_are_pure_data_no_prose_composition(game):
-    """(c) 新增字段为纯数据、无任何拼接散文（ADR 0142：给数据不给话术）。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target=EMPEROR_NODE, kind="结怨",
-              context="收权·罢差·便宜行事·issue:清丈田亩", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert targets
-    events = collect_new_edge_events_for_faction(
-        db, faction=targets[0]["faction"], watermark=targets[0]["watermark"],
-    )
-    payload = build_faction_brew_input(
-        faction=targets[0]["faction"], year=int(state.year),
-        period=int(state.period), summary=targets[0]["summary"],
-        new_events=events, has_pending=targets[0]["has_pending"],
-    )
-    for item in payload["new_events"]:
-        # 新增字段值必须与 DB 列逐字节相同——非任何 "{source}（{faction}）与{target}…" 式拼接串。
-        row = next(r for r in events if r["origin"] == item["origin"])
-        assert item["source"] == row["source"]
-        assert item["target"] == row["target"]
-        assert isinstance(item["source"], str) and isinstance(item["target"], str)
-
-
 # ---- 送修口一负例 (a)：source_faction/target_faction 与现算投影逐项相等、皇帝端/表外 null ----
 
 def test_source_faction_target_faction_equals_current_projection_and_nulls(game):
-    """负例(a)：每项 source_faction/target_faction == project_character_factions 现算投影；
-    皇帝端显式 None、表外党籍显式 None。对照原 source/target 身份，不禁自由正文。"""
+    """实际月末供料携带人物/党籍身份；皇帝和表外党籍不冒用合法派系。"""
     db, state, _ = game
-    projection = project_character_factions(db)
-    # 皇帝端不在映射、表外党籍不在映射（前提校验）
-    assert EMPEROR_NODE not in projection
-    assert "皇太极" not in projection
-    assert "周皇后" not in projection
-    in_table = {row["name"] for row in db.conn.execute("SELECT name FROM factions").fetchall()}
-    assert set(projection.values()) <= in_table
-
-    # 构造三种边：皇党→阉党（双侧均在表）、皇党→皇帝（皇帝端 null）、表外(后金)→皇党（表外 null)
-    _add_edge(db, state, source="温体仁", target="王绍徽", kind="结怨",
-              context="温体仁当殿讦王绍徽。", origin="audience:turn-1")
-    _add_edge(db, state, source="温体仁", target=EMPEROR_NODE, kind="结怨",
-              context="温体仁面斥皇帝。", origin="audience:turn-1b")
-    # 表外角色：直接落边（select 不会选中表外派，但 build 現算投影应给 null）
-    fake_event_out_of_table = {
-        "event_kind": "结怨",
-        "context": "皇太极讦温体仁。",
-        "origin": "test:out_of_table",
-        "year": int(state.year),
-        "period": int(state.period),
-        "source": "皇太极",
-        "target": "温体仁",
+    expected = {
+        ("温体仁", "王绍徽"): ("皇党", "阉党"),
+        ("温体仁", EMPEROR_NODE): ("皇党", None),
+        ("皇太极", "温体仁"): (None, "皇党"),
     }
-
-    # 经 collect 路径的派系事件（皇党）应携带正确投影
-    targets = select_faction_brew_targets(db, year=int(state.year), period=int(state.period))
-    assert any(row["faction"] == "皇党" for row in targets)
-    for target in targets:
-        events = collect_new_edge_events_for_faction(
-            db, faction=target["faction"], watermark=target["watermark"],
-        )
-        # collect 自身已附带 faction 字段且与现算投影一致（皇帝端 null）
-        for row in events:
-            assert row["source_faction"] == projection.get(row["source"])
-            assert row["target_faction"] == projection.get(row["target"])
-            if row["source"] == EMPEROR_NODE or row["target"] == EMPEROR_NODE:
-                assert (row["source_faction"] is None or row["target_faction"] is None)
-        payload = build_faction_brew_input(
-            faction=target["faction"], year=int(state.year),
-            period=int(state.period), summary=target["summary"],
-            new_events=events, has_pending=target["has_pending"],
-        )
-        # build 透传：身份字段与 collect 原行相等，派系与现算投影相等
-        assert len(payload["new_events"]) == len(events)
-        for projected, row in zip(payload["new_events"], events, strict=True):
-            assert projected["source"] == row["source"]
-            assert projected["target"] == row["target"]
-            assert projected["source_faction"] == projection.get(row["source"])
-            assert projected["target_faction"] == projection.get(row["target"])
-            if row["source"] == EMPEROR_NODE:
-                assert projected["source_faction"] is None
-            if row["target"] == EMPEROR_NODE:
-                assert projected["target_faction"] is None
-
-    # 表外党籍显式 null：经 build 显式投影路径验证（不经 select）
-    payload_out = build_faction_brew_input(
-        faction="皇党", year=int(state.year), period=int(state.period),
-        summary=None, new_events=[fake_event_out_of_table], has_pending=False,
-        character_factions=projection,
-    )
-    assert payload_out["new_events"][0]["source"] == "皇太极"
-    assert payload_out["new_events"][0]["target"] == "温体仁"
-    assert payload_out["new_events"][0]["source_faction"] is None  # 皇太极表外
-    assert payload_out["new_events"][0]["target_faction"] == projection.get("温体仁")
-    # db 路径亦同
-    payload_out_db = build_faction_brew_input(
-        faction="皇党", year=int(state.year), period=int(state.period),
-        summary=None, new_events=[fake_event_out_of_table], has_pending=False,
-        db=db,
-    )
-    assert payload_out_db["new_events"][0]["source"] == "皇太极"
-    assert payload_out_db["new_events"][0]["target"] == "温体仁"
-    assert payload_out_db["new_events"][0]["source_faction"] is None
-    assert payload_out_db["new_events"][0]["target_faction"] == "皇党"
+    for source, target in expected:
+        _add_edge(db, state, source=source, target=target, kind="结怨",
+                  context="原始事件", origin="test:identity")
+    calls = []
+    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls), parallel=False)
+    supplied = {
+        (item["source"], item["target"]): (item["source_faction"], item["target_faction"])
+        for payload in calls if payload.get("view") == VIEW_FACTION_STANCE
+        for item in payload["new_events"]
+    }
+    assert supplied == expected
+    assert {row[0] for row in db.conn.execute("SELECT faction FROM faction_stance_summaries")} == {"皇党", "阉党"}
 
 
 # ---- 送修口二负例 (b)：重试月场景，prompt 不把旧事件称作本月 ----

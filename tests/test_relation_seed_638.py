@@ -143,7 +143,7 @@ def test_fresh_seed_summary_is_readable_with_seed_event_clock(fresh_session):
 def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
     """同一套酿制（ADR 0086 机械面）：seed 对在真实月末落新事件后，月末腿照常
     选中该对，且 seed 边因水位为 0 一并进入酿制输入。"""
-    from ming_sim.relation_brew import collect_new_edge_events, select_brew_targets
+    from tests.test_relation_brew_636 import run_month_end_relation_brew, _brew_fn_factory
 
     sess, _content = fresh_session
     state = sess.state
@@ -159,17 +159,13 @@ def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
         origin="test:month-event", turn=int(state.turn),
         year=int(state.year), period=int(state.period),
     )
-    targets = select_brew_targets(db=sess.db, year=int(state.year), period=int(state.period))
-    match = [t for t in targets if t["source"] == "魏忠贤" and t["target"] == "杨涟"]
-    assert match, "seed 对未被月末腿选中"
-    assert int(match[0]["watermark"]) == 0, "seed 导入不得推进水位"
-
-    new_events = collect_new_edge_events(
-        db=sess.db, source="魏忠贤", target="杨涟", watermark=0,
-    )
+    calls = []
+    run_month_end_relation_brew(sess.db, state, _brew_fn_factory(calls), parallel=False)
+    supplied = next(item for item in calls if item.get("source") == "魏忠贤" and item.get("target") == "杨涟")
     seed_ids = {int(e["id"]) for e in pair_events}
-    new_ids = {int(e["id"]) for e in new_events}
-    assert seed_ids <= new_ids, "seed 奠基边未进酿制输入"
+    assert {e["origin"] for e in pair_events} <= {e["origin"] for e in supplied["new_events"]}
+    summary = sess.db.person_logs.get_relation_summary("魏忠贤", "杨涟")
+    assert int(summary["last_event_id"]) > max(seed_ids)
 
 
 def test_earliest_legal_start_imports_only_earlier_seed_events(tmp_path, monkeypatch):

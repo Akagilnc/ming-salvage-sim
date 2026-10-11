@@ -30,7 +30,7 @@ def _rejected_verdict(dossier_id):
      ("清核仓场", "midzhi", "midzhi")],
 )
 def test_manual_mode_uses_typed_extractor_judgment(
-    monkeypatch, emperor_text, extracted_mode, expected,
+    game, monkeypatch, emperor_text, extracted_mode, expected,
 ):
     extracted = json.dumps({
         "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
@@ -39,10 +39,16 @@ def test_manual_mode_uses_typed_extractor_judgment(
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
     )
-    assert cli_backend.capture_manual_directive_payload(emperor_text)["mode"] == expected
+    from tests.month_chain_helpers import make_light_session
+    db, state, content = game
+    session = make_light_session(db, state, content)
+    payload = cli_backend.capture_manual_directive_payload(emperor_text)
+    directive = session.add_directive(emperor_text, dossier_payload=payload)
+    db.ensure_dossiers_for_draft_directives(state)
+    assert db.dossiers.get_for_directive(directive.id)["mode"] == expected
 
 
-def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(monkeypatch):
+def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(game, monkeypatch):
     extracted = json.dumps({
         "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
         "目标ID": "granary",
@@ -55,7 +61,14 @@ def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(
         "增列核验期限", existing_mode="midzhi",
     )
 
-    assert payload["mode"] == "midzhi"
+    from tests.month_chain_helpers import make_light_session
+    db, state, content = game
+    session = make_light_session(db, state, content)
+    original = {**payload, "mode": "midzhi"}
+    directive = session.add_directive("清核仓场", dossier_payload=original)
+    session.update_directive(directive.id, "增列核验期限", dossier_payload=payload)
+    db.ensure_dossiers_for_draft_directives(state)
+    assert db.dossiers.get_for_directive(directive.id)["mode"] == "midzhi"
 
 
 def test_predeclared_midzhi_promulgation_persists_stigma(game):
@@ -196,9 +209,8 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
 # ---------------------------------------------------------------------------
 
 
-
 @pytest.mark.parametrize("amount", ["30", True, 30.75, 30])
-def test_financial_decision_uses_stored_option_not_client_payload(amount):
+def test_financial_decision_uses_stored_option_not_client_payload(game, amount):
     """Raw season options retain strict catalog types and remain server-authoritative."""
     from ming_sim import rescript_actions as ra
     from ming_sim.settlement_payload import parse_decision_blocks
@@ -224,35 +236,33 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
         for block in blocks
     )
     decisions = parse_decision_blocks(raw)
+    db, state, content = game
+    db.issues.save_pending_decisions(int(state.turn), decisions)
     if type(amount) is not int:
         # Parse/save boundary rejects the whole malformed typed decision.
-        assert [decision["title"] for decision in decisions] == ["巡河"]
+        assert [decision["title"] for decision in db.issues.list_pending_decisions(int(state.turn))] == ["巡河"]
         return
-    desk = [{
-        "decision_key": f"decision:3:{idx}", "kind": "decision", "turn": 3,
-        "idx": idx, "status": "pending", "options": decision["options"],
-    } for idx, decision in enumerate(decisions)]
+    desk = db.issues.list_rescript_desk(int(state.turn))
     requests = [
-        {
-            "decision_key": "decision:3:0", "label": "发内帑三十万两",
-            "action_type": "punishment", "account": "国库", "amount": 999,
-        },
-        {"decision_key": "decision:3:1", "label": "遣员巡河"},
+        {"decision_key": desk[0]["decision_key"], "label": "发内帑三十万两",
+         "action_type": "punishment", "account": "国库", "amount": 999},
+        {"decision_key": desk[1]["decision_key"], "label": "遣员巡河"},
     ]
-
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0,central_pay_arrears=30 WHERE id='guanning'")
+    db.conn.commit()
+    before = dict(state.metrics)
+    before_ledger = db.conn.execute("SELECT COALESCE(MAX(id),0) FROM economy_ledger").fetchone()[0]
     batch = ra.validate_all(desk, requests)
-    assert len(batch.items) == 2
-    choice = batch.items[0].choice
-    assert choice["action_type"] == "punishment"  # persisted request identity
-    execution = batch.items[0].execution_option
-    assert execution is not None
-    assert execution["action_type"] == "grant_allocation"
-    assert execution["account"] == "内库"
-    assert execution["amount"] == 30
-    assert type(execution["amount"]) is int
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    assert state.metrics["内库"] == before["内库"] - 30
+    assert state.metrics["国库"] == before["国库"]
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT account,delta FROM economy_ledger WHERE id>? ORDER BY id", (before_ledger,)
+    )] == [("内库", -30)]
+    assert db.conn.execute("SELECT central_pay_arrears FROM armies WHERE id='guanning'").fetchone()[0] == 0
 
 
-def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
+def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling(game):
     from ming_sim.settlement_payload import parse_decision_blocks
 
     malformed = {
@@ -344,7 +354,9 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
         )
     )
 
-    decisions = parse_decision_blocks(raw)
+    db, state, _ = game
+    db.issues.save_pending_decisions(int(state.turn), parse_decision_blocks(raw))
+    decisions = db.issues.list_pending_decisions(int(state.turn))
 
     assert [decision["title"] for decision in decisions] == ["犒军", "巡河"]
     assert decisions[0]["options"][0]["action_type"] == "grant_allocation"
@@ -352,7 +364,7 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
 
 
 @pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
-def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
+def test_decision_parser_rejects_empty_or_ambiguous_labels(game, labels):
     from ming_sim.settlement_payload import parse_decision_blocks
 
     block = {
@@ -360,8 +372,9 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
         "options": [{"label": label, "hint": "h"} for label in labels],
     }
     raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
-    decisions = parse_decision_blocks(raw)
-    assert decisions == []
+    db, state, _ = game
+    db.issues.save_pending_decisions(int(state.turn), parse_decision_blocks(raw))
+    assert db.issues.list_pending_decisions(int(state.turn)) == []
 
 
 def test_657_capability_revalidate_on_follow(game):

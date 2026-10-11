@@ -343,24 +343,22 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
 
 def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch):
     db, state, content = game
-    from ming_sim.applier import Provenance
 
     monkeypatch.setattr(
         month_translate, "translate_month_segment",
         lambda *_a, **_k: {"effects": {"emperor_fate": "suicide"}},
     )
-    chain = {"world_text_ready": True, "world_text": "世界段"}
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "世界段")
     session = make_light_session(db, state, content)
-
-    outcome = month_chain._run_world_segment(
-        session, chain, source=Provenance.system_simulation,
-    )
-
-    expected = {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
-    assert outcome == expected
-    assert chain["declaration_outcome"] == expected
-    payload = db.resolve_contexts.get(int(state.turn))["simulator_payload"]
-    assert payload["month_chain"]["declaration_outcome"] == expected
+    turn = int(state.turn)
+    assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+    payload = db.resolve_contexts.get(turn)["simulator_payload"]
+    assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_suicide"
+    db.save_turn_report(state, "邸报已成")
+    assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    assert state.ended is True
+    assert state.ending_status == "emperor_suicide"
+    assert int(state.turn) == turn + 1
 
 def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatch):
     db, state, content = game
@@ -418,29 +416,6 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     assert state.ending_status == "emperor_abdicate"
     assert int(state.turn) == turn + 1
 
-def test_staged_ending_is_available_inside_its_settlement_transaction(game):
-    db, state, _content = game
-    from ming_sim.applier import Provenance
-    from ming_sim.declaration_dispatch import (
-        settle_staged_declarations_in_decree_order, stage_declaration,
-    )
-
-    stage_declaration(
-        db, decree_ref="ending-decree", turn=int(state.turn),
-        declaration={"effects": {"emperor_fate": "abdicate"}},
-    )
-    committed = {}
-    settled = settle_staged_declarations_in_decree_order(
-        db, state, ["ending-decree"], source=Provenance.player_decree,
-        alongside=lambda ref, result: committed.update(
-            ref=ref, outcome=month_chain._ending_from_dispatch_result(result),
-        ),
-    )
-
-    assert "ending-decree" in settled
-    assert committed["ref"] == "ending-decree"
-    assert committed["outcome"]["status"] == "emperor_abdicate"
-    assert db.staged_declarations.is_settled("ending-decree")
 
 def test_failed_declaration_commit_reloads_memory_from_db(game):
     db, state, _content = game
@@ -572,24 +547,6 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     assert decree_ref_for_dossier(db, dossier) == held_ref
 
 
-def test_advance_uses_staged_declaration_ending(game, monkeypatch):
-    db, state, content = game
-    turn = int(state.turn)
-    db.save_turn_report(state, "邸报已成")
-    chain = {}
-    outcome = {"status": "emperor_abdicate", "summary": "退位"}
-
-    from ming_sim.applier import Provenance
-
-    advanced = month_chain._advance_after_gazette(
-        db, state, chain, turn, "", Provenance.system_simulation,
-        declaration_outcome=outcome, content=content,
-    )
-
-    assert advanced is True
-    assert state.ended is True
-    assert state.ending_status == "emperor_abdicate"
-    assert int(state.turn) == turn + 1
 
 
 def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
@@ -873,7 +830,10 @@ def test_edict_that_drops_unrest_below_gate_does_not_trigger_world_event(game, m
     session.resolve_turn(allow_empty_decree=True)
     unrest = _three_province_unrest(db)
     assert unrest == {"shaanxi": 55, "shanxi": 55, "henan": 55}
-    assert db.event_terminal_state("north_three_uprising") is None
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
+        ("north_three_uprising",),
+    ).fetchone() is None
 
 def test_edict_that_raises_unrest_over_gate_triggers_after_the_edict(game, monkeypatch):
     """三省 unrest 55 经旨升 20 后，同一过月入口在实账上触发。"""
@@ -884,4 +844,7 @@ def test_edict_that_raises_unrest_over_gate_triggers_after_the_edict(game, monke
     session = _prepare_player_month(db, state, content, monkeypatch)
     session.resolve_turn(allow_empty_decree=True)
     assert _three_province_unrest(db) == {"shaanxi": 75, "shanxi": 75, "henan": 75}
-    assert db.event_terminal_state("north_three_uprising") == "triggered"
+    assert db.conn.execute(
+        "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+        ("north_three_uprising",),
+    ).fetchone()["terminal_state"] == "triggered"

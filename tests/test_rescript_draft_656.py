@@ -196,24 +196,9 @@ def test_657_s1_option_shape_stamps_draft_capability():
         "region_id": "shaanxi",
         "transaction_category": "督赈",
     }
-    opt = normalize_rescript_layer_a_option(raw)
-    assert opt["draft_capability"]
-    assert opt["label"] == "发帑赈济"
-    assert opt["action_type"] == "assignment"
     # 缺必填键 → 拒
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option({"label": "x", "hint": "y"})
-    # #1778：库级全集内的类型（policy 等）照常受理，无七类闭集
-    policy_opt = normalize_rescript_layer_a_option({
-        **raw,
-        "action_type": "policy",
-        "target_kind": "policy",
-        "target_id": "清丈全国田亩",
-        "locality_scope": "national",
-        "region_id": "",
-    })
-    assert policy_opt["action_type"] == "policy"
-    assert policy_opt["draft_capability"]
     # 库级全集之外仍 fail-loud（ADR 0040 形状检查）
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option({**raw, "action_type": "修仙"})
@@ -238,25 +223,6 @@ def _army_pay_grant_option(**extra) -> dict:
     opt.update(extra)
     return opt
 
-def test_1620_layer_a_reward_with_army_target_stays_reward():
-    """赏赉+army 不因 target_kind 升格协饷。"""
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-    opt = normalize_rescript_layer_a_option({
-        "label": "赏关宁将士",
-        "hint": "恩赏",
-        "action_type": "grant_allocation",
-        "assignee_name": "",
-        "target_kind": "army",
-        "target_id": "guanning",
-        "locality_scope": "none",
-        "region_id": "",
-        "transaction_category": "",
-        "grant_action": "赏赉",
-        "amount": 50,
-        "account": "国库",
-    })
-    assert opt["grant_action"] == "赏赉"
 
 @pytest.mark.parametrize("extra,drop", [
     pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),

@@ -55,10 +55,11 @@ def test_load_llm_config_records_backend_env_as_cli_channel(monkeypatch):
 
     cfg = load_llm_config("https://api.example.com", "api-fallback", api_key="")
 
-    assert cfg.channel == "cli"
-    assert cfg.cli_runner == "codex"
-    assert cfg.cli_model == "gpt-codex-test"
-    assert cfg.api_key == ""
+    model = create_chat_model(cfg)
+    assert model.backend == "codex"
+    assert model.id == "gpt-codex-test"
+    assert model.api_key == "cli-backend"
+
 
 def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -84,10 +85,8 @@ def test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning(monkeypa
     )
     advanced = for_role(cfg, "simulator")
 
-    assert cfg.advanced_thinking_level == ""
-    assert cfg.reasoning_strength == "high"
-    assert advanced.reasoning_strength == "high"
-    assert advanced.thinking_level == ""
+    assert create_chat_model(advanced).reasoning_effort == "high"
+
 
 def test_load_llm_config_migrates_legacy_none_thinking_to_off(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -100,14 +99,15 @@ def test_load_llm_config_migrates_legacy_none_thinking_to_off(monkeypatch):
         thinking_level="none",
     )
 
-    assert cfg.reasoning_strength == "off"
+    assert create_chat_model(cfg).reasoning_effort == "none"
 
-def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch):
+@pytest.mark.parametrize("model_id", ["gpt-5.5", "gpt-5.6-luna"])
+def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch, model_id):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
         api_key="sk-test",
         base_url="https://api.example.com/v1",
-        model="gpt-5.5",
+        model=model_id,
         channel="api",
         thinking_level="high",
         reasoning_strength="off",
@@ -117,38 +117,9 @@ def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch):
 
     assert model.reasoning_effort == "none"
 
-def test_create_chat_model_off_reasoning_uses_none_for_gpt56_not_version_list(monkeypatch):
-    """#1452：关思考档不得靠 gpt-5.1/5.2/5.4/5.5 盯文枚举——gpt-5.6 掉表外会落到 minimal。"""
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://opencode.ai/zen/go/v1",
-        model="gpt-5.6-luna",
-        channel="api",
-        reasoning_strength="off",
-    )
 
-    model = create_chat_model(cfg)
-
-    assert model.reasoning_effort == "none"
-
-def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="o1-mini",
-        channel="api",
-        reasoning_strength="off",
-    )
-
-    model = create_chat_model(cfg)
-
-    assert model.reasoning_effort == "minimal"
-
-@pytest.mark.parametrize("model_id", ["o3-mini", "o4-mini", "o3", "o4-mini-high"])
-def test_create_chat_model_off_reasoning_keeps_minimal_for_o3_o4(monkeypatch, model_id):
-    """#1461：o3/o4 关思考须发 minimal；none 会被不支持的 provider 拒。"""
+@pytest.mark.parametrize("model_id", ["o1-mini", "o3-mini", "o4-mini", "o3", "o4-mini-high"])
+def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch, model_id):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
         api_key="sk-test",
@@ -160,17 +131,13 @@ def test_create_chat_model_off_reasoning_keeps_minimal_for_o3_o4(monkeypatch, mo
 
     model = create_chat_model(cfg)
 
-    assert model.reasoning_effort == "minimal", model_id
+    assert model.reasoning_effort == "minimal"
+
 
 def test_create_chat_model_strips_provider_prefix_for_reasoning_family(monkeypatch):
     """#1461：openai/gpt-5.x 带 provider 前缀仍须识别为推理族（剥前缀后判）。"""
-    from ming_sim.llm_config import supports_openai_reasoning_effort
 
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    assert supports_openai_reasoning_effort("openai/gpt-5.4")
-    assert supports_openai_reasoning_effort("openai/o3-mini")
-    assert supports_openai_reasoning_effort("openai/o4-mini")
-    assert not supports_openai_reasoning_effort("openai/gpt-4o")
 
     cfg = LLMConfig(
         api_key="sk-test",
@@ -568,8 +535,12 @@ def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
     from ming_sim.llm_config import load_llm_config, CLI_DEFAULT_TIMEOUT_SECONDS
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     cfg = load_llm_config(base_url="", model="m", api_key="", timeout_seconds=180.0)
-    assert cfg.channel == "cli"
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
+    calls = []
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", lambda _prompt, llm_config=None, **kw: (calls.append(llm_config), ("ok", 1))[1])
+    verify_llm_available(cfg)
+    assert calls[0].channel == "cli"
+    assert calls[0].cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
+
 
 def test_for_role_advanced_empty_cli_model_no_api_model_leak(monkeypatch):
     """#52 核查:CLI 通道 + advanced 角色(simulator)+ cli_model 空时,for_role 把
@@ -691,16 +662,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     cb._run_api_for_config("输出 {}", cfg, tag="gate")
     assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
     assert "max_tokens" not in seen[-1], seen[-1]
-
-def test_gate_evidence_config_omits_max_tokens():
-    """#1472：四闸证据块不再写 max_tokens。"""
-    from types import SimpleNamespace
-    from ming_sim import cli_backend as cb
-
-    args = SimpleNamespace(channel="cli", runner="kimi", model="kimi-k2")
-    cfg = cb.gate_llm_config_from_args(args)
-    block = cb.gate_evidence_config(args, cfg)
-    assert "max_tokens" not in block
 
 
 def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game, tmp_path):

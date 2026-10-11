@@ -1,3 +1,5 @@
+import pytest
+
 
 from ming_sim import issues as issue_engine
 
@@ -12,19 +14,6 @@ def _promulgated_policy(db, state):
     db.dossiers.transition(dossier_id, "executing")
     return dossier_id
 
-def test_decree_driven_effect_without_any_origin_is_rejected(game):
-    db, state, content = game
-    _promulgated_policy(db, state)
-    before = state.metrics["国库"]
-
-    result = issue_engine.apply_score_extraction(db, state, {
-        "economy_moves": [{
-            "account": "国库", "delta": -7, "category": "无源支出",
-        }],
-    }, content=content)
-
-    assert state.metrics["国库"] == before
-    assert result["economy_moves_rejections"][0]["category"] == "missing_origin_ref"
 
 def test_effect_origins_round_trip_and_missing_origin_is_rejected(game):
     db, state, content = game
@@ -53,11 +42,16 @@ def test_effect_origins_round_trip_and_missing_origin_is_rejected(game):
     assert {row["origin_ref"] for row in fiscal} == {f"dossier:{dossier_id}"}
     assert all(row["dossier_id"] is None for row in db.reign.list_economy_moves_for_dossier(dossier_id))
 
-def test_issue_close_effects_inherit_parent_canonical_origin(game):
+@pytest.mark.parametrize("bad", [True, 5, "oops", {"account": "国库", "delta": -10}, [1, "x", None]])
+def test_issue_close_effects_inherit_parent_canonical_origin(game, bad):
     db, state, content = game
     dossier_id = _promulgated_policy(db, state)
     origin = f"dossier:{dossier_id}"
     region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    before_balance = state.metrics["国库"]
+    before_ledger = db.conn.execute("SELECT COALESCE(MAX(id), 0) FROM economy_ledger").fetchone()[0]
+    before_metrics = dict(state.metrics)
+    before_factions = [tuple(row) for row in db.conn.execute("SELECT * FROM factions ORDER BY name")]
     issue_id = db.insert_issue(
         state,
         kind="initiative",
@@ -65,7 +59,9 @@ def test_issue_close_effects_inherit_parent_canonical_origin(game):
         origin_kind="decree",
         origin_ref=origin,
         effect_on_resolve={
-            "economy": [{"account": "国库", "delta": -1, "category": "父案卷支出"}],
+            "economy": bad + [{"account": "国库", "delta": -3, "category": "父案卷支出"}] if isinstance(bad, list) else bad,
+            "metrics": bad,
+            "factions": bad,
             "buildings": [{
                 "action": "create", "region_id": region_id, "name": "父案卷工坊",
                 "category": "科技",
@@ -82,9 +78,16 @@ def test_issue_close_effects_inherit_parent_canonical_origin(game):
 
     close = result["issue_summary"]["closes"][0]
     assert close["building_ops"][0]["name"] == "父案卷工坊"
-    assert db.conn.execute(
-        "SELECT origin_ref FROM economy_ledger WHERE category='父案卷支出'"
-    ).fetchone()["origin_ref"] == origin
+    rows = db.conn.execute(
+        "SELECT account, delta, origin_ref FROM economy_ledger WHERE id > ? ORDER BY id", (before_ledger,)
+    ).fetchall()
+    assert [tuple(row) for row in rows] == ([('国库', -3, origin)] if isinstance(bad, list) else [])
+    assert state.metrics["国库"] == before_balance - (3 if isinstance(bad, list) else 0)
+    assert {key: value for key, value in state.metrics.items() if key != "国库"} == {
+        key: value for key, value in before_metrics.items() if key != "国库"
+    }
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM factions ORDER BY name")] == before_factions
+    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "resolved"
     assert db.conn.execute(
         "SELECT origin_ref FROM building_logs WHERE building_id=?",
         (close["building_ops"][0]["building_id"],),
@@ -94,11 +97,15 @@ def test_issue_close_effects_inherit_parent_canonical_origin(game):
         (region_id,),
     ).fetchone()["origin_ref"] == origin
 
-def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
+@pytest.mark.parametrize("bad", [True, 5, "oops", [1, 2]])
+def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game, bad):
     db, state, content = game
     dossier_id = _promulgated_policy(db, state)
     origin = f"dossier:{dossier_id}"
     region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    before_balance = state.metrics["国库"]
+    before_ledger = db.conn.execute("SELECT COALESCE(MAX(id), 0) FROM economy_ledger").fetchone()[0]
+    before_classes = [tuple(row) for row in db.conn.execute("SELECT * FROM classes ORDER BY region_id, name")]
     issue_id = db.insert_issue(
         state,
         kind="situation",
@@ -109,6 +116,7 @@ def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
         inertia=1,
         ongoing_effects={
             "economy": [{"account": "国库", "delta": -2, "category": "同月持续支出"}],
+            "classes": bad,
             "region_delta": {region_id: {"public_support": 1}},
         },
     )
@@ -118,6 +126,10 @@ def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
 
     row = db.conn.execute("SELECT bar_value, status FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert (row["bar_value"], row["status"]) == (51, "active")
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM classes ORDER BY region_id, name")] == before_classes
+    delta = db.conn.execute("SELECT COALESCE(SUM(delta), 0) FROM economy_ledger WHERE id > ? AND account='国库'", (before_ledger,)).fetchone()[0]
+    assert state.metrics["国库"] == before_balance + delta
+    assert db.conn.execute("SELECT delta FROM economy_ledger WHERE category='同月持续支出'").fetchone()[0] == -2
     assert db.conn.execute(
         "SELECT origin_ref FROM economy_ledger WHERE category='同月持续支出' ORDER BY id DESC LIMIT 1"
     ).fetchone()["origin_ref"] == origin

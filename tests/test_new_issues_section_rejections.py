@@ -373,10 +373,12 @@ def test_event_to_issue_duplicate_returns_none_not_raise(game):
     # try 外的去重 early-return None（正常跳过），绝不抛、不重立（否则 fix 错把幂等当真异常）。
     eid = _pick_event_pool_id(db)
     ev = I._ctx().event_by_id[eid]
+    before = db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_ref=?", (eid,)).fetchone()[0]
     first = I.event_to_issue(db, state, ev)
     assert first is not None, "首次触发应立项"
     again = I.event_to_issue(db, state, ev)
     assert again is None, "同源事件重复触发应幂等返回 None，不抛不重立"
+    assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_ref=?", (eid,)).fetchone()[0] == before + 1
 
 
 def test_new_issue_event_pool_rejects_expired_event(game):

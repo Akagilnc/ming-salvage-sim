@@ -320,11 +320,12 @@ def test_fiscal_levy_is_not_auto_approved_without_emperor_decision(game):
     )
 
 
-def test_fiscal_levy_events_are_not_in_model_candidate_pool(game):
+@pytest.mark.parametrize("year", [1631, 1637, 1639, 1640])
+def test_fiscal_levy_events_are_not_in_model_candidate_pool(game, year):
     """#1892 J5：三饷不在人物候选里交世界段模型代批。"""
     db, state, content = game
     issues.bind_content(content)
-    state.year = 1631
+    state.year = year
     state.period = 1
     db.reign.save_game_state(state)
 
@@ -334,7 +335,8 @@ def test_fiscal_levy_events_are_not_in_model_candidate_pool(game):
     assert "jiao_levy_start_1637" not in candidate_ids
     assert "lian_levy_start_1639" not in candidate_ids
     # 排除的不是整个候选池：同期合资格的人物事件仍在池中。
-    assert "jisi_lubian" in candidate_ids
+    if year == 1631:
+        assert "jisi_lubian" in candidate_ids
 
 
 def test_fiscal_levy_expired_pending_choice_is_terminalized(game):
@@ -1269,7 +1271,8 @@ def test_rejected_levy_identity_does_not_write_a_terminal_from_a_sibling_envelop
 def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monkeypatch):
     """留中走案头：不写终态，已呈原文与原批语进入后续世界材料。"""
 
-    from ming_sim import materials as materials_mod
+    from ming_sim import agents, month_chain
+    native_world = month_chain.run_world_segment_text
     from ming_sim.models import LLMConfig
     from tests.month_chain_helpers import make_light_session
 
@@ -1309,16 +1312,31 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
     assert dict(led)["terminal_reason"] == ""
     assert _settle_payload(db, "shaanxi")["p"] == before["p"]
 
-    petitions = materials_mod._world_fiscal_levy_petitions(db, state)
-    item = next(entry for entry in petitions if entry["id"] == "liao_levy_rise_1631")
-    presented = item["presented"]
-    assert presented["presented_context"] == "边饷急迫，请旨定夺。"
-    assert presented["emperor_note"] == "姑候户部再核"
-    assert presented["held"] is True
-    assert "liao_levy_rise_1631" in {
-        ev.id for ev in issues.gather_fiscal_levy_petitions(state, db)
-    }
+    record = next(
+        item for item in db.issues.list_event_petition_records()
+        if item["event_id"] == "liao_levy_rise_1631"
+    )
+    assert record["petition"]["context"] == "边饷急迫，请旨定夺。"
+    assert record["note"] == "姑候户部再核"
+    assert record["terminal_state"] == ""
 
+    supplied = []
+    monkeypatch.setattr(agents, "create_world_segment_agent", lambda cfg, prepared: prepared)
+    monkeypatch.setattr(
+        agents, "run_agent_text",
+        lambda prepared, *args, **kwargs: supplied.append({
+            "root": prepared.root,
+            "petitions": [
+                path.name for path in (prepared.root / "请旨事项").glob("*.txt")
+                if path.name != "INDEX.txt" and path.is_file() and path.stat().st_size
+            ],
+        }) or "",
+    )
+    native_world(db, state, session.llm_config)
+    assert any(
+        name.startswith("liao_levy_rise_1631-") for name in supplied[0]["petitions"]
+    )
+    assert not supplied[0]["root"].exists()
 
 def _present_liao_petition(db, state):
     state.year = 1631

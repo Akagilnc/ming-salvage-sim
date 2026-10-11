@@ -8,7 +8,7 @@ issue #104 原提议的 `c.status != "offstage"` 会把「DB 已 active 但内�
 from __future__ import annotations
 
 
-from web_app import in_talent_pool, visible_in_court
+from tests.test_qa_c2_settlement_display_lifecycle_1343 import _shell
 
 
 def _active_ming_minister(db, content) -> str:
@@ -24,9 +24,9 @@ def _active_ming_minister(db, content) -> str:
 
 
 def test_active_ming_minister_visible(read_game):
-    db, _state, content = read_game
+    db, state, content = read_game
     name = _active_ming_minister(db, content)
-    assert visible_in_court(content.characters[name], db) is True
+    assert content.characters[name].name in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
 
 
 def test_active_non_ming_character_not_in_court(game):
@@ -42,7 +42,7 @@ def test_active_non_ming_character_not_in_court(game):
         import pytest
         pytest.skip("基底盘面无非 ming 人物")
     db.set_character_status(state, name, "active", "测试：在世")
-    assert visible_in_court(content.characters[name], db) is False
+    assert content.characters[name].name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
 
 
 def test_db_offstage_excluded_even_if_memory_active(game):
@@ -52,7 +52,7 @@ def test_db_offstage_excluded_even_if_memory_active(game):
     ch = content.characters[name]
     db.set_character_status(state, name, "offstage", "测试：离场")
     assert ch.status == "active"  # 内存 stale，证明分叉确实存在
-    assert visible_in_court(ch, db) is False
+    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
     assert name not in {row["name"] for row in db.characters.current_court_rows(state.year, state.period)}
 
 
@@ -66,7 +66,7 @@ def test_db_active_included_even_if_memory_offstage(game):
     try:
         ch.status = "offstage"  # 模拟 JSON seed / stale 内存
         db.set_character_status(state, name, "active", "测试：历史登场")
-        assert visible_in_court(ch, db) is True
+        assert ch.name in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
     finally:
         # content fixture 是 session 作用域，还原内存 status 防跨用例污染（Codex R2）
         ch.status = original_status
@@ -100,7 +100,7 @@ def test_vassal_prince_excluded_from_court(game):
     db.set_character_status(state, name, "active", "测试：在世")
     # 物化后 setup 真生效：DB 确为 active+ming（否则仅 office_type 短路，测不出 gate 优先于状态）
     assert db.characters.get_character_status(name)[0] == "active"
-    assert visible_in_court(ch, db) is False
+    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
 
 
 def test_offstage_former_minister_in_talent_pool(game):
@@ -118,16 +118,16 @@ def test_offstage_former_minister_in_talent_pool(game):
         import pytest
         pytest.skip("基底盘面无合适的朝堂类前臣")
     db.set_character_status(state, name, "offstage", "测试：自请罢居")
-    assert in_talent_pool(content.characters[name], db, state.year, state.period) is True
+    assert content.characters[name].name in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
     # 在野不入朝堂列表（两个列表互斥，offstage 只进人才池）
-    assert visible_in_court(content.characters[name], db) is False
+    assert content.characters[name].name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
 
 
 def test_active_minister_not_in_talent_pool(read_game):
     """在朝（active）大臣不进在野池——人才池只补 offstage 这一漏面。"""
     db, state, content = read_game
     name = _active_ming_minister(db, content)
-    assert in_talent_pool(content.characters[name], db, state.year, state.period) is False
+    assert content.characters[name].name not in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
 
 
 def test_vassal_prince_excluded_from_talent_pool(game):
@@ -136,7 +136,7 @@ def test_vassal_prince_excluded_from_talent_pool(game):
     name, ch = _materialized_prince(db, state, content)
     db.set_character_status(state, name, "offstage", "测试")
     assert db.characters.get_character_status(name)[0] == "offstage"  # 物化后 setup 真生效
-    assert in_talent_pool(ch, db, state.year, state.period) is False
+    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
 
 
 def test_amnestied_rebel_excluded_from_talent_pool(game):
@@ -156,7 +156,7 @@ def test_amnestied_rebel_excluded_from_talent_pool(game):
     db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (name,))
     db.conn.commit()
     assert db.characters.get_character_status(name)[0] == "offstage"
-    assert in_talent_pool(ch, db, state.year, state.period) is False
+    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
 
 
 def test_same_year_future_month_debut_excluded_from_talent_pool(game):
@@ -172,9 +172,9 @@ def test_same_year_future_month_debut_excluded_from_talent_pool(game):
     try:
         db.set_character_status(state, name, "offstage", "测试")
         ch.debut_year, ch.debut_month = state.year, state.period + 1  # 同年下月才登场
-        assert in_talent_pool(ch, db, state.year, state.period) is False
+        assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
         ch.debut_month = state.period  # 月份已到 → 视为已登场，可进池
-        assert in_talent_pool(ch, db, state.year, state.period) is True
+        assert ch.name in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
     finally:
         # content fixture 是 session 作用域，还原内存 debut 字段防跨用例污染
         ch.debut_year, ch.debut_month = orig
@@ -182,7 +182,7 @@ def test_same_year_future_month_debut_excluded_from_talent_pool(game):
 
 def test_consort_excluded_from_court(read_game):
     """后宫不算朝堂大臣，DB active 也不入列。"""
-    db, _state, content = read_game
+    db, state, content = read_game
     consort = next(
         (n for n, c in content.characters.items()
          if getattr(c, "office_type", "") == "后宫"),
@@ -191,7 +191,7 @@ def test_consort_excluded_from_court(read_game):
     if consort is None:
         import pytest
         pytest.skip("基底盘面无后宫人物")
-    assert visible_in_court(content.characters[consort], db) is False
+    assert content.characters[consort].name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
 
 
 def test_zongfan_cannot_be_summoned_via_can_summon(game):

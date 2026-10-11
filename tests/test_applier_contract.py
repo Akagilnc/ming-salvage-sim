@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pytest
 
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
@@ -23,21 +24,6 @@ def clean_rejections(game):
 # ---------------------------------------------------------------------------
 # RejectionCollector — mirror_to_jsonl
 # ---------------------------------------------------------------------------
-
-def test_mirror_to_jsonl_appends_on_multiple_calls(game, tmp_path):
-    """多次「flush→commit→mirror」批次追加而不覆盖。"""
-    db, state, content = game
-    out = str(tmp_path / "rejections.jsonl")
-    for turn in (1, 2):
-        rc = RejectionCollector()
-        ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
-        rc.record("metric_delta", ri, turn=turn)
-        rc.flush_to_db(db)
-        db.conn.commit()
-        rc.mirror_to_jsonl(out)
-
-    lines = open(out, encoding="utf-8").readlines()
-    assert len(lines) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -63,16 +49,21 @@ def test_mirror_idempotent_after_flush(clean_rejections, tmp_path):
     rc.mirror_to_jsonl(out)
     rc.mirror_to_jsonl(out)
 
-    lines = open(out, encoding="utf-8").readlines()
-    assert len(lines) == 1
-
-
+    with open(out, encoding="utf-8") as fh:
+        assert [(row["turn"], row["section"]) for row in map(json.loads, fh)] == [(1, "metric_delta")]
     rc.record("metric_delta", ri, turn=2)
+    rc.flush_to_db(db)
+    db.conn.commit()
+    rc.mirror_to_jsonl(out)
+    with open(out, encoding="utf-8") as fh:
+        assert [(row["turn"], row["section"]) for row in map(json.loads, fh)] == [(1, "metric_delta"), (2, "metric_delta")]
+    rc.record("metric_delta", ri, turn=3)
     rc.reset()
     rc.flush_to_db(db)
     rc.mirror_to_jsonl(out)
-    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
-    assert len(open(out, encoding="utf-8").readlines()) == 1
+    assert [row["turn"] for row in db.conn.execute("SELECT turn FROM rejection_reports ORDER BY id")] == [1, 2]
+    with open(out, encoding="utf-8") as fh:
+        assert [(row["turn"], row["section"]) for row in map(json.loads, fh)] == [(1, "metric_delta"), (2, "metric_delta")]
 
 
 def test_unflushed_rows_never_mirrored(tmp_path):

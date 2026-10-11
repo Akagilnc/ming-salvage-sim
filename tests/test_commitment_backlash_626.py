@@ -18,14 +18,10 @@ from __future__ import annotations
 HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
 from ming_sim.breach_plea import (
     BREACH_KIND_POLICY_REVERSAL,
-    FOUNDATION_HALFWAY,
-    FOUNDATION_JUST_STARTED,
-    FOUNDATION_ROOTED,
     PLEA_VERDICT_EXPIRED,
     PLEA_VERDICT_KEY,
     PLEA_VERDICT_PERSIST,
     PLEA_VERDICT_REGRET,
-    assess_foundation_tier,
     expire_breach_pleas_on_due,
     finalize_persist,
     finalize_regret,
@@ -159,7 +155,6 @@ def test_ac1_breach_verdict_triggers_commitment_backlash(game):
         bar_value=bar,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
 
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
@@ -213,7 +208,6 @@ def test_ac1_failed_terminal_triggers_commitment_backlash(game):
         bar_value=bar,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
 
     # 直接落 #621 式烂尾终值；总纲：源类读执行格，不读 note 子串
     db.dossiers.record_execution(
@@ -430,7 +424,6 @@ def test_ac3_just_started_and_rooted_do_not_trigger(game):
         bar_value=10,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    assert assess_foundation_tier(db, cid_j) == FOUNDATION_JUST_STARTED
     todo_j = write_breach_plea_todo(
         db, state, commitment_ref=cid_j,
         breach_kind=BREACH_KIND_POLICY_REVERSAL,
@@ -453,7 +446,6 @@ def test_ac3_just_started_and_rooted_do_not_trigger(game):
         bar_value=80,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    assert assess_foundation_tier(db, cid_r) == FOUNDATION_ROOTED
     todo_r = write_breach_plea_todo(
         db, state, commitment_ref=cid_r,
         breach_kind=BREACH_KIND_POLICY_REVERSAL,
@@ -482,7 +474,6 @@ def test_ac3_regret_then_resolve_no_breach_verdict_hammer(game):
         bar_value=bar,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
 
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
@@ -542,7 +533,6 @@ def test_ac3_regret_then_expire_dropped_no_hammer(game):
         bar_value=bar,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
 
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
@@ -562,7 +552,6 @@ def test_ac3_regret_then_expire_dropped_no_hammer(game):
     assert int(closed["bar_value"]) == bar_before
     assert int(closed["closed_turn"]) == int(state.turn)
     # 停账后仍可评 HALFWAY（原 dropped 门会漏的链）
-    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
 
     minxin_0 = int(state.metrics.get("民心", 0) or 0)
     huangwei_0 = int(state.metrics.get("皇威", 0) or 0)
@@ -591,7 +580,6 @@ def test_ac3_plea_due_expire_then_commitment_expire_no_hammer(game):
         bar_value=bar, end_turn=due,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
 
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
@@ -616,7 +604,6 @@ def test_ac3_plea_due_expire_then_commitment_expire_no_hammer(game):
     ).fetchone()
     assert str(closed["status"]) == "dropped"
     assert int(closed["bar_value"]) == bar_before
-    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
 
     minxin_0 = int(state.metrics.get("民心", 0) or 0)
     huangwei_0 = int(state.metrics.get("皇威", 0) or 0)

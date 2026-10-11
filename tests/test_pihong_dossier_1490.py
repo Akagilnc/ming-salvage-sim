@@ -288,30 +288,6 @@ def _plant_dossier_awaiting(db, state):
     return dossier_id
 
 
-def _plant_due_commitment_shaped_awaiting(db, state, *, dossier_id: int=12):
-    """种 due-commitment 同形：event_id=dossier:N，options 仅 {label,hint}。"""
-    options = [{'label': '准其销号', 'hint': '事已办结'}, {'label': '着再催办', 'hint': '期限宽延'}]
-    db.issues.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '承诺到期核验', 'context': '清丈之诺届期', 'options': options}])
-    db.resolve_contexts.save(state.turn, '诏曰核验', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}]})
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.reign.save_game_state(state)
-
-
-
-def test_parse_rescript_capability_pair_rejects_non_positive_and_unknown():
-    """#1494 共享校验器：正整数 id + 支持动作枚举；其余一律 None。"""
-    from ming_sim.settlement_payload import parse_rescript_capability_pair
-    assert parse_rescript_capability_pair({'dossier_id': 3, 'dossier_decision': 'hold'}) == (3, 'hold')
-    assert parse_rescript_capability_pair({'dossier_id': '7', 'dossier_decision': 'withdrawn'}) == (7, 'withdrawn')
-    assert parse_rescript_capability_pair({'dossier_id': 0, 'dossier_decision': 'hold'}) is None
-    assert parse_rescript_capability_pair({'dossier_id': -1, 'dossier_decision': 'hold'}) is None
-    assert parse_rescript_capability_pair({'dossier_id': 3, 'dossier_decision': 'promulgated'}) is None
-    assert parse_rescript_capability_pair({'dossier_id': 3, 'dossier_decision': None}) is None
-    assert parse_rescript_capability_pair({'dossier_decision': 'hold'}) is None
-    assert parse_rescript_capability_pair(None) is None
-    assert parse_rescript_capability_pair('force_promulgated') is None
-
-
 _ROSTER_LEAD = '毕自严'
 _ROSTER = [{'character_id': _ROSTER_LEAD, 'tier': '主办', 'role': '总核', 'delegator_id': None}]
 
@@ -344,11 +320,6 @@ def _dossier_payload(row):
     except (TypeError, ValueError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
-
-
-
-
-
 
 
 def _657_db_path_of(game_or_path) -> str:
@@ -412,9 +383,6 @@ def test_1627_stamp_ignores_pre_edict_clarification_directive(web_game):
         probe.close()
 
 
-
-
-
 def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, monkeypatch):
     """Late HITL grants auto-promulgate only canonical review-exempt dossiers."""
     from ming_sim import rescript_actions as ra
@@ -469,8 +437,6 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert db.conn.execute('SELECT * FROM economy_ledger ORDER BY id').fetchall() == ledger_before
     assert state.metrics == metrics_before
     assert db.load_state().metrics == metrics_before
-
-
 
 
 def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_game):
@@ -539,11 +505,7 @@ def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch)
     assert phase2_calls == [1], '真正空 choices 续跑仍合法，走 submit_decisions'
 
 
-
-
-
-
-def test_1620_layer_a_money_grant_requires_positive_amount():
+def test_1620_layer_a_money_grant_requires_positive_amount(game):
     """#1620：层 A shape 独掌 grant——正 amount/honorific/私库 + 非法 action/非积分 amount。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     base = {'label': '赏银', 'hint': '赏功', 'action_type': 'grant_allocation', 'assignee_name': '', 'target_kind': 'character', 'target_id': '张瑞图', 'locality_scope': 'none', 'region_id': '', 'transaction_category': '', 'grant_action': '赏赉', 'name': '张瑞图'}
@@ -561,21 +523,29 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
         normalize_rescript_layer_a_option({**base, 'amount': True})
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option({**base, 'amount': 1.5})
-    ok = normalize_rescript_layer_a_option({**base, 'amount': 10})
-    assert int(ok['amount']) == 10
-    assert str(ok.get('account') or '') == ''
-    taicang = normalize_rescript_layer_a_option({**base, 'amount': 10, 'account': '太仓'})
-    guoku = normalize_rescript_layer_a_option({**base, 'amount': 10, 'account': '国库'})
-    assert str(taicang.get('account') or '') == '国库'
-    assert str(guoku.get('account') or '') == '国库'
-    assert taicang['draft_capability'] == guoku['draft_capability']
-    assert taicang['draft_capability'] != ok['draft_capability']
-    honor = normalize_rescript_layer_a_option({**base, 'grant_action': '加衔', 'label': '加衔'})
-    assert honor.get('grant_action') == '加衔'
-    assert 'amount' not in honor
-
-
-
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    options = [
+        {**base, 'amount': 10},
+        {**base, 'amount': 10, 'account': '太仓'},
+        {**base, 'amount': 10, 'account': '国库'},
+        {**base, 'grant_action': '加衔', 'label': '加衔'},
+        {**base, 'target_kind': 'army', 'target_id': 'guanning', 'name': '', 'amount': 10},
+    ]
+    batch = ra.validate_all([urgent], [{"decision_key": key, "action": "return_revise", "note": "再拟"}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(revise_by_key={key: options}), content=content)
+    stored = db.issues.list_rescript_drafts()[0]["options"]
+    assert stored[0]['amount'] == 10
+    assert str(stored[0].get('account') or '') == ''
+    assert stored[1]['account'] == stored[2]['account'] == '国库'
+    assert stored[3]['grant_action'] == '加衔'
+    assert 'amount' not in stored[3]
+    assert stored[4]['grant_action'] == '赏赉'
+    assert stored[4]['target_kind'] == 'army'
+    assert stored[4]['target_id'] == 'guanning'
+    assert db.issues.list_rescript_drafts()[0]['revision_round'] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -599,7 +569,6 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     assert db.issues.list_pending_decisions(int(state.turn))[0]['status'] == 'pending'
 
 
-
 def test_657_appointment_name_target_id_conflict_batch_reject(game):
     """⑥ appointment/dismiss name≠target_id 在 mapper 单一边界整批拒绝。
 
@@ -615,12 +584,6 @@ def test_657_appointment_name_target_id_conflict_batch_reject(game):
         ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '任命', 'office': '兵部尚书', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '授官'}, db=db, content=content, state=state)
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '罢免', 'office': '', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '罢'}, db=db, content=content, state=state)
-
-
-
-
-
-
 
 
 def _summonable_name(db, content):
@@ -641,8 +604,6 @@ def _658_plant_stalled_deliberation(db, state, content, *, title='议而不决')
     return (stalled, key)
 
 
-
-
 def test_658_endorsement_provenance_xor(game):
     """#658：背书 provenance 恰为 chat_turn 或 decision_key 之一。"""
     db, state, content = game
@@ -660,9 +621,6 @@ def test_658_endorsement_provenance_xor(game):
         db.dossiers.add_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat, decision_key='x')
     with pytest.raises(ValueError):
         db.dossiers.add_endorsement(did, form='会签', endorser_id=minister)
-
-
-
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -731,9 +689,6 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     provenance = db.conn.execute('SELECT turn,year,period,source FROM turn_directives WHERE id=?', (bad,)).fetchone()
     assert (provenance['turn'], provenance['year'], provenance['period']) == (original_turn, original_year, original_period)
     assert provenance['source'] == 'player-decree-test'
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1080,24 +1035,32 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, phase):
     assert payload["resume_phase2"] == (phase == TurnPhase.AWAITING_DECISION.value)
 
 
-@pytest.mark.parametrize("dossier_prefix", [False, True])
-def test_decision_requires_both_prefix_and_capability_to_enter_rescript_rail(game, dossier_prefix):
+@pytest.mark.parametrize("dossier_prefix,capability", [
+    (False, {"dossier_id": 3, "dossier_decision": "hold"}),
+    (True, {}),
+    (True, {"dossier_id": 0, "dossier_decision": "hold"}),
+    (True, {"dossier_id": -1, "dossier_decision": "hold"}),
+    (True, {"dossier_id": 3, "dossier_decision": "promulgated"}),
+    (True, {"dossier_id": 3, "dossier_decision": None}),
+    (True, {"dossier_decision": "hold"}),
+    (True, None),
+    (True, "force_promulgated"),
+])
+def test_decision_requires_both_prefix_and_capability_to_enter_rescript_rail(game, dossier_prefix, capability):
     from ming_sim import rescript_actions as ra
     db, state, content = game
-    if dossier_prefix:
-        _plant_due_commitment_shaped_awaiting(db, state)
-    else:
-        db.issues.save_pending_decisions(state.turn, [{"event_id": "mao_wenlong", "title": "边警", "options": [
-            {"label": "准其销号", "hint": "事已办结"},
-            {"label": "强颁", "dossier_id": 3, "dossier_decision": "hold"},
-        ]}])
+    malformed = {"label": "强颁", **capability} if isinstance(capability, dict) else capability
+    db.issues.save_pending_decisions(state.turn, [{
+        "event_id": "dossier:12" if dossier_prefix else "mao_wenlong", "title": "待裁",
+        "options": [{"label": "准其销号", "hint": "事已办结"}, malformed],
+    }])
     desk = db.issues.list_rescript_desk(state.turn)
     option = desk[0]["options"][0]
     batch = ra.validate_all(desk, [{"decision_key": desk[0]["decision_key"], "label": option["label"], "note": "准销。"}])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
     row = db.issues.list_pending_decisions(state.turn)[0]
     assert row["status"] == "decided"
-    assert row["choice"]["label"] == option["label"]
+    assert row["choice"]["label"] == "准其销号"
     assert not row["choice"].get("dossier_decision")
 
 

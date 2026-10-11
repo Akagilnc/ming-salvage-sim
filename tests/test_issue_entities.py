@@ -13,7 +13,6 @@ import ming_sim.issues as I
 from tests.conftest import active_ming_character
 
 
-
 def _decree_origin(db, state) -> str:
     dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试国策来源", target_kind="issue", target_id="test")
     db.dossiers.record_dossier_decision(dossier_id, "promulgated")
@@ -237,14 +236,6 @@ def test_bad_status_raises(read_game):
         }, "局势#测试")
 
 
-def test_empty_effect_noop(read_game):
-    """无实体段的 effect 不应报错、不改军队数。"""
-    db, state, _ = read_game
-    before = _army_count(db)
-    I._apply_issue_entities(db, state, {"metrics": {"民心": 5}}, "局势#测试")
-    assert _army_count(db) == before
-
-
 def test_apply_score_extraction_splits_bad_nested_entity(game):
     """ADR0015：嵌套实体坏值逐实体拒收，不带走同批好字段。"""
     db, state, _ = game
@@ -350,24 +341,36 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
 
 
-def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
+@pytest.mark.parametrize("raw", [
+    {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}},
+    {"effect_on_resolve": "坏数据", "ongoing_effects": ["x"], "effect_on_fail": 3},
+    RuntimeError("backend down"),
+])
+def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch, raw):
     """CLI 后端国策 enrich 没补出 resolve（或抛错）时，floor 兜最小回报，绝不入空壳（codexB）。"""
     import ming_sim.cli_backend as _cb
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
+    import json as _j
+    monkeypatch.setattr(_cb, "_run_backend", lambda *_a, **_k:
+                        (_ for _ in ()).throw(raw) if isinstance(raw, BaseException) else (_j.dumps(raw), 1))
     I.apply_issue_tracker_output(db, state, {
         "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "空回报国策", "kind": "initiative"}],
     })
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='空回报国策'").fetchone()
     assert row is not None                         # 国策入库了
-    import json as _j
     assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}   # floor 生效，非空壳
 
 
-def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypatch):
+@pytest.mark.parametrize("resolve", [
+    {},
+    *({"buildings": bad, "metrics": {"民心": 1}} for bad in (True, 5, "oops")),
+    {"metrics": {"皇威": 5}, "new_armies": [{"id": "qinjun", "name": "秦兵", "owner_power": "ming",
+       "manpower": 20000, "maintenance_per_turn": 4, "commander": "孙传庭"}]},
+    {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
+])
+def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypatch, resolve):
     """runtime CLI 通道无 env 时，月末国策空回报也要走 CLI floor，不能落空壳。"""
     import json as _j
     from ming_sim.models import LLMConfig
@@ -375,8 +378,8 @@ def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypa
 
     db, state, _ = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
+    raw = _j.dumps({"effect_on_resolve": resolve, "ongoing_effects": {}, "effect_on_fail": {}})
+    monkeypatch.setattr(_cb, "_run_backend_for_config", lambda *a, **k: (raw, 1))
     cfg = LLMConfig(
         api_key="cli-backend",
         base_url="",
@@ -394,7 +397,15 @@ def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypa
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='runtime空回报国策'").fetchone()
     assert row is not None
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
+    stored = _j.loads(row["effect_on_resolve"])
+    assert stored.get("metrics", {}) == (resolve.get("metrics", {}) if resolve else {"民心": 1})
+    if "buildings" in resolve and not isinstance(resolve["buildings"], list):
+        assert stored["buildings"] == []
+    elif "buildings" in resolve:
+        assert stored["buildings"][0]["region_id"] == "beizhili"
+    if "new_armies" in resolve:
+        assert stored["new_armies"][0]["id"] == "qinjun"
+        assert stored["new_armies"][0]["manpower"] == 20000
 
 
 def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch):

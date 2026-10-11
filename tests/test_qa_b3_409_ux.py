@@ -26,27 +26,23 @@ from ming_sim.models import TurnPhase
 
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────
 
-class _Row(dict):
-    def keys(self):
-        return super().keys()
-
-
-def test_directive_payload_authority_not_notes_alias():
-    """#1319(a)：notes 备注不得投影成 authority；无真 authority 则空串。"""
-    game = web_app.WebGame.__new__(web_app.WebGame)
-    row = _Row(
-        id=9,
-        event_id="",
-        event_title="",
-        actor="袁崇焕",
-        text="发帑辽东",
-        source="manual",
-        status="draft",
-        notes="家赀约十万两",
+def test_directive_payload_authority_not_notes_alias(game, monkeypatch):
+    """真实公开状态载荷保留备注；备注不得冒用 authority。"""
+    from tests.month_chain_helpers import make_light_session
+    from tests.test_qa_c2_settlement_display_lifecycle_1343 import _shell
+    db, state, content = game
+    directive_id = db.issues.add_directive(
+        state.turn, state.year, state.period, None, "发帑辽东", "manual",
+        notes="家赀约十万两", status="draft",
     )
-    payload = web_app.WebGame.directive_payload(game, row)
-    assert payload["notes"] == "家赀约十万两"
-    assert payload["authority"] == ""
+    runtime = _shell(db, state, content)
+    runtime.session.list_directives = make_light_session(db, state, content).list_directives
+    del runtime.directive_rows
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    payload = asyncio.run(web_app.api_state())
+    directive = next(row for row in payload["directives"] if row["id"] == directive_id)
+    assert directive["notes"] == "家赀约十万两"
+    assert directive["authority"] == ""
 
 
 # ── #1322 resolve stream 相位预检在抢锁前 ───────────────────────────────────

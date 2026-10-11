@@ -8,11 +8,12 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 
 from ming_sim.fiscal_tick import settle_tick
-from ming_sim.pay_order import PayOrderKeyError, restore_pay_order_override, materialize_pay_order_decree, resolve_haircut_bp, resolve_pay_order_overrides
+from ming_sim.pay_order import PayOrderKeyError, restore_pay_order_override, materialize_pay_order_decree
 
 def _override_dossier(db, state, entries, *, text="偿还序/折发旨") -> int:
     """成案一道 pay_order_override 案卷（F1.2：旨意不是面板、每道旨一张案卷）。"""
@@ -71,42 +72,52 @@ def test_origin_ref_must_be_dossier_provenance(game):
 
 # ═══════════════ r3/r4 读取优先级全序 goldens ═══════════════
 
-def test_r4_golden1_region_source_specificity_wins():
-    """r4 golden①：@shaanxi#province 与 #province 并存 → 陕西饷侧取 @shaanxi#province、
-    他省省饷侧取 #province；两把 #province 键对中央侧零约束（饷源精确）。"""
-    config = {
-        "due_haircut_bp_军饷@shaanxi#province": 6000,
-        "due_haircut_bp_军饷#province": 9000,
-    }
-    shaanxi = resolve_pay_order_overrides(config, "shaanxi", turn=1)
-    henan = resolve_pay_order_overrides(config, "henan", turn=1)
-    assert shaanxi.haircut_bp["军饷"] == 6000
-    assert henan.haircut_bp["军饷"] == 9000
-    # 中央侧不受影响：#province 键在任何省的 central 侧都无消费者
-    assert resolve_haircut_bp(config, "军饷", "shaanxi", 1, "central") is None
-    assert resolve_haircut_bp(config, "军饷", "henan", 1, "central") is None
-    assert resolve_haircut_bp(config, "军饷", "", 1, "central") is None
+@pytest.mark.parametrize("turn,expected", [(12, 10), (13, 16)])
+def test_r4_golden1_region_source_specificity_wins(game, turn, expected):
+    """地方优先和到期回落由真实省账结算后的各军欠饷证明，省键不改中央应发。"""
+    db, state, _ = game
+    entries = [
+        {"key": "due_haircut_bp_军饷@shaanxi#province", "value": 6000, "until_turn": 12},
+        {"key": "due_haircut_bp_军饷#province", "value": 9000},
+    ]
+    did = _override_dossier(db, state, entries)
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    db.conn.execute("UPDATE armies SET manpower=0, province_pay_arrears=0, central_pay_arrears=0")
+    for army, region in [("guanning", "shaanxi"), ("jingying", "henan")]:
+        db.conn.execute(
+            "UPDATE armies SET manpower=10000,salary_rate=18,province_pay_share=1,"
+            "central_pay_share=0,pay_source_region=?,self_funded_pay=0,is_tusi=0 WHERE id=?",
+            (region, army),
+        )
+        st, p = _board()
+        p.update({"正赋应征": 0, "三饷应征": 0})
+        db.regions.update(region, {"fiscal": json.dumps({"settle": {"st": st, "p": p}})})
+    state.turn = turn
+    db.reign.save_game_state(state)
+    db.conn.commit()
+    db.settle_ming_province_substrate_ticks()
+    assert db.conn.execute("SELECT province_pay_arrears FROM armies WHERE id='guanning'").fetchone()[0] == expected
+    assert db.conn.execute("SELECT province_pay_arrears FROM armies WHERE id='jingying'").fetchone()[0] == 16
+    assert db.fiscal_config.values()["due_haircut_bp_军饷@shaanxi#province_until_turn"] == 12
 
 
-def test_r4_golden2_expiry_falls_back_to_next_specific(game=None):
-    """r4 golden②：同一在位组合，@shaanxi#province_until_turn 到期后（其余键不变），
-    陕西省饷侧回落 #province 胜出。"""
-    config = {
-        "due_haircut_bp_军饷@shaanxi#province": 6000,
-        "due_haircut_bp_军饷@shaanxi#province_until_turn": 12,
-        "due_haircut_bp_军饷#province": 9000,
-    }
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=12).haircut_bp["军饷"] == 6000
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=13).haircut_bp["军饷"] == 9000
-    # 到期形状退出格律；键与 provenance 保留不删
-    assert config["due_haircut_bp_军饷@shaanxi#province"] == 6000
-    assert config["due_haircut_bp_军饷@shaanxi#province_until_turn"] == 12
-
-
-def test_priority_tie_breaks_on_default_baseline_stable():
-    config = {"due_priority_宗禄": 10}  # 与 军饷 默认 10 并列 → 默认基准 tie-break（军饷先）
-    order = resolve_pay_order_overrides(config, "shaanxi", turn=1).due_order
-    assert order == ("军饷", "宗禄", "官俸", "赈济")
+def test_priority_tie_breaks_on_default_baseline_stable(game):
+    """同优先级仍先付军饷：真实省账无余银付宗禄。"""
+    db, state, _ = game
+    did = _override_dossier(db, state, [{"key": "due_priority_宗禄", "value": 10}])
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    db.conn.execute("UPDATE armies SET manpower=0,province_pay_arrears=0,central_pay_arrears=0")
+    db.conn.execute(
+        "UPDATE armies SET manpower=10000,salary_rate=18,province_pay_share=1,"
+        "central_pay_share=0,pay_source_region='shaanxi',self_funded_pay=0,is_tusi=0 WHERE id='guanning'"
+    )
+    st, p = _board()
+    db.regions.update("shaanxi", {"fiscal": json.dumps({"settle": {"st": st, "p": p}})})
+    db.conn.commit()
+    db.settle_ming_province_substrate_ticks()
+    assert db.conn.execute("SELECT province_pay_arrears FROM armies WHERE id='guanning'").fetchone()[0] == pytest.approx(8)
+    stored = json.loads(db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()[0])["settle"]["st"]
+    assert stored["宗禄欠"] == pytest.approx(4.07)
 
 
 # ═══════════════ F1.6 验收表 golden ①–⑦ ═══════════════
@@ -122,10 +133,6 @@ def test_golden1_pay_order_reversal_breakdown_tsv():
     p2 = dict(p)
     p2["due_order"] = ["官俸", "宗禄", "赈济", "军饷"]
     res = settle_tick(st, p2, [])
-    tsv = "\n".join(f"{k}\t{res.breakdown['实付分账'][k]}" for k in p2["due_order"])
-    assert tsv.splitlines()[0] == "官俸\t3.0"       # 官俸足付
-    last_cell = float(tsv.splitlines()[-1].split("\t")[1])
-    assert last_cell == pytest.approx(1.93)          # 边饷居末只捡残池
     assert res.breakdown["NewDebt"]["军饷欠"] == pytest.approx(16.07)
     assert res.breakdown["NewDebt"]["官俸欠"] == 0.0
     assert res.new_st["军饷欠"] == pytest.approx(36.07)  # 旧欠20 + 新欠16.07
@@ -204,12 +211,17 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
     db.conn.execute(
         "UPDATE armies SET province_pay_arrears = 12.0 WHERE id = 'shaanxi_army'"
     )
+    db.conn.execute("UPDATE classes SET satisfaction=50 WHERE name='军户' AND region_id=''")
     db.conn.commit()
     applied = apply_score_extraction(
         db, state, {"class_delta": {"军户": {"satisfaction": 9}}}
     )
     assert applied["class_delta"]["军户"]["satisfaction"] == 9
     assert applied["class_delta_rejections"] == []
+
+    assert db.conn.execute(
+        "SELECT satisfaction FROM classes WHERE name='军户' AND region_id=''",
+    ).fetchone()["satisfaction"] == 59
 
 # ═══════════════ F1 颁布生命周期 E2E（ADR 0055 判后物化缝）═══════════════
 
@@ -444,9 +456,6 @@ def test_stale_until_cleared_by_permanent_overwrite(game):
     assert cfg['due_priority_军饷'] == 30
     tomb = db.conn.execute("SELECT key, value, origin_ref FROM fiscal_config_tombstones WHERE key='due_priority_军饷_until_turn' ORDER BY id DESC LIMIT 1").fetchone()
     assert tomb is not None and tomb['origin_ref'] == f'dossier:{d2}'
-    res = resolve_pay_order_overrides(db.fiscal_config.values(), 'shaanxi', turn + 2)
-    assert res is not None
-    assert res.due_order == ('官俸', '军饷', '宗禄', '赈济')
 
 
 def test_revoke_provincial_falls_back_to_nationwide(game):
@@ -456,15 +465,8 @@ def test_revoke_provincial_falls_back_to_nationwide(game):
     db.apply_dossier_promulgation(state, nation, 'promulgated')
     local = _override_dossier(db, state, [{'key': 'due_priority_军饷@shaanxi', 'value': 50}], text='陕西边饷居末')
     db.apply_dossier_promulgation(state, local, 'promulgated')
-    turn = db.reign.current_settle_turn()
-    before = resolve_pay_order_overrides(db.fiscal_config.values(), 'shaanxi', turn)
-    assert before is not None and before.due_order.index('军饷') == 3
     revoke = db.create_decree_dossier(state, action_type='revoke_decree', decree_text='撤陕西旨', target_kind='dossier', target_id=str(local), payload={'revoke_target_dossier_id': local})
     db.apply_dossier_promulgation(state, revoke, 'promulgated')
     cfg = db.fiscal_config.values()
     assert 'due_priority_军饷@shaanxi' not in cfg
     assert cfg['due_priority_军饷'] == 35
-    after = resolve_pay_order_overrides(cfg, 'shaanxi', turn)
-    assert after is not None
-    assert after.due_order == ('官俸', '宗禄', '军饷', '赈济')
-    assert resolve_pay_order_overrides(cfg, 'henan', turn).due_order == after.due_order

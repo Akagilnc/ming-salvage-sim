@@ -272,6 +272,8 @@ def test_present_names_at_table(game, label, at_key, expected_present, expected_
     present = an.present_names_at(db, nid, at_seq=at_seq)
     assert expected_present <= present, f"{label}: 缺 {expected_present - present}"
     assert not (expected_absent & present), f"{label}: 误含 {expected_absent & present}"
+    assert not any(TAG_EXIT in entry["tags"] and STANDING in entry["person_names"]
+                   for entry in an.list_ledger(db, nid))
 
 
 def test_present_names_at_uses_timeline_key_not_raw_seq(game):
@@ -295,22 +297,6 @@ def test_present_names_at_uses_timeline_key_not_raw_seq(game):
     assert "徐光启" in present
 
 
-def test_standing_roster_present_throughout(game):
-    """AC3：王承恩（常在员额）全程在场——每个关键时刻均在名单。"""
-    db, state, content = game
-    nid, seqs = _build_presence_night(db, state)
-    checkpoints = [
-        seqs["徐光启_入"], seqs["毕自严_入"], seqs["洪承畴_途"],
-        seqs["王绍徽_入"], seqs["徐光启_退"], None,
-    ]
-    for at in checkpoints:
-        assert STANDING in an.present_names_at(db, nid, at_seq=at)
-    # 负向：常在员额从未落告退账 → 无 TAG_EXIT 条目挂其名
-    exits = [
-        e for e in an.list_ledger(db, nid)
-        if TAG_EXIT in e["tags"] and STANDING in e["person_names"]
-    ]
-    assert exits == []
 
 
 # ── AC6：侍立区间取数只含殿上公开条目（御前低语不流入）──────────────────

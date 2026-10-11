@@ -1992,8 +1992,6 @@ def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game
     assert db.conn.execute("SELECT id FROM issues WHERE id=?", (issue_id,)).fetchone() is None
 
 
-
-
 @pytest.mark.parametrize("bar,delta,status,stage", [
     (40, 7, "active", "推进前"),
     (95, 10, "resolved", "将成"),
@@ -2036,8 +2034,6 @@ def test_issue_tracker_advance_effects_respect_outer_transaction_rollback(game, 
         "SELECT COUNT(*) FROM economy_ledger WHERE reason=?",
         (reason,),
     ).fetchone()[0] == 0
-
-
 
 
 def test_issue_tracker_close_effects_respect_outer_transaction_rollback(game):
@@ -3216,8 +3212,6 @@ def test_event_pool_pending_appointment_normalizes_equivalent_office(game):
         content.event_by_id.pop(ev.id, None)
 
 
-
-
 @pytest.mark.parametrize("with_cost", [False, True])
 def test_issue_tracker_cancel_cost_respects_outer_transaction_rollback(game, with_cost):
     """post-merge CMR R5：cancel applied_cost 的经济效果不得提前提交外层事务。"""
@@ -3538,19 +3532,6 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
         "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
         ("huangtaiji_chengdi",),
     ).fetchone()[0] == 1
-
-
-def test_fiscal_levy_events_stay_out_of_model_candidate_pool(game):
-    """#1892/#1893：三饷是皇帝亲裁，不进人物候选交模型代批（ADR 0020）。"""
-    from ming_sim.issues import FISCAL_LEVY_EVENT_CATEGORY
-    db, state, content = game
-    issues.bind_content(content)
-    levy_ids = {ev.id for ev in content.events if getattr(ev, 'category', '') == FISCAL_LEVY_EVENT_CATEGORY}
-    assert levy_ids, 'content 里应至少有一个三饷事件'
-    for year in (1631, 1637, 1639, 1640):
-        state.year, state.period = (year, 1)
-        db.reign.save_game_state(state)
-        assert not levy_ids & {ev.id for ev in issues.gather_candidate_events(state, db)}
 
 
 @pytest.mark.parametrize('event_id,setup', [('korea_envoy', lambda db: db.conn.execute("UPDATE powers SET leverage=80 WHERE id='houjin'")), ('houjin_split', lambda db: db.conn.execute("UPDATE powers SET cohesion=50 WHERE id='houjin'")), ('jiangnan_gentry_revolt', lambda db: db.conn.executemany("UPDATE classes SET satisfaction=20 WHERE name='士绅' AND region_id=?", [('nanzhili',), ('zhejiang',), ('fujian',)]))])

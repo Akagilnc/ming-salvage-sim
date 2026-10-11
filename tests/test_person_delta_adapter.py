@@ -7,7 +7,6 @@ import pytest
 
 import ming_sim.issues as issues
 from ming_sim.db import GameDB
-from ming_sim.exceptions import PendingActionRefusal
 from ming_sim.models import Character
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from tests.conftest import active_ming_character
@@ -1042,7 +1041,7 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
         if name != first
         and getattr(ch, "power_id", "ming") == "ming"
         and getattr(ch, "office_type", "") != "后宫"
-        and db.get_character_status(name)[0] == "active"
+        and db.characters.get_character_status(name)[0] == "active"
     )
     old_first_status = content.characters[first].status
     old_first_office = content.characters[first].office
@@ -1695,33 +1694,21 @@ def test_apply_office_appointment_rejects_vassal_prince(game):
     assert row["status"] == "offstage", "宗藩被授官路径翻成 active"
 
 
-def test_create_secret_order_rejects_vassal_prince(read_game):
-    """密令创建唯一 DB 写口 create_secret_order 拒宗藩——集中守此一处覆盖 API/大臣工具/CLI/upsert
-    回落 create 全路（cmr R6：web 端点单守不够，工具/CLI 路径绕过）。"""
-    import pytest
-    db, state, content = read_game
-    name = _materialize_active_prince(db, state, content)
-    with pytest.raises(PendingActionRefusal) as raised:
-        create_test_secret_order(db, state, name, "密查", "着尔暗中查访", [])
-    assert raised.value.category == "ineligible_vassal"
+@pytest.mark.parametrize("kind,use_alias", [("vassal", False), ("vassal", True), ("foreign", False), ("foreign", True)])
+def test_create_secret_order_rejects_vassal_prince(game, kind, use_alias):
+    """真实密令写口拒绝非朝廷命官，规范名/别名皆不得添令或案卷。"""
+    db, state, content = game
+    name = next(n for n, ch in content.characters.items()
+                if (ch.office_type == "宗藩" if kind == "vassal" else db.resolve_power_id(ch) != "ming")
+                and any(a != n for a in (ch.aliases or [])))
+    target = next(a for a in content.characters[name].aliases if a != name) if use_alias else name
+    before_orders = [tuple(row) for row in db.conn.execute("SELECT * FROM secret_orders ORDER BY id")]
+    before_dossiers = db.dossiers.list_dossiers()
+    with pytest.raises(ValueError):
+        create_test_secret_order(db, state, target, "密查", "着尔暗中查访", [])
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM secret_orders ORDER BY id")] == before_orders
+    assert db.dossiers.list_dossiers() == before_dossiers
 
-def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
-    """密令 assignee 用别名（如「福王」）也须被宗藩闸挡——create_secret_order 先 _find_existing_minister
-    把别名规范化到在册 key 再校（cmr R2 online codex+CodeRabbit concur：原仅按 raw 名 .get，别名绕过）。"""
-    import pytest
-    db, state, content = read_game
-    prince = next(
-        (n for n, c in content.characters.items()
-         if c.office_type == "宗藩" and any(a != n for a in (c.aliases or []))),
-        None,
-    )
-    if prince is None:
-        pytest.skip("基底盘面无带别名的宗藩")
-    db.add_character(state, content.characters[prince], source="测试")
-    alias = next(a for a in content.characters[prince].aliases if a != prince)
-    with pytest.raises(PendingActionRefusal) as raised:
-        create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
-    assert raised.value.category == "ineligible_vassal"
 
 def test_create_secret_order_persists_canonical_name(game):
     """密令按别名下达给在册大臣时落库存规范名（非别名），否则后续按规范名查不到此令（cmr R3 CodeRabbit）。"""
@@ -1742,38 +1729,6 @@ def test_create_secret_order_persists_canonical_name(game):
     row = db.conn.execute("SELECT minister_name FROM secret_orders WHERE id=?", (oid,)).fetchone()
     assert row["minister_name"] == target  # 存规范名，非别名
 
-def test_create_secret_order_rejects_foreign_power(game):
-    """密令唯一 DB 写口 create_secret_order 拒外藩（皇太极等非大明势力）——同宗藩集中守此一处覆盖
-    API/大臣工具/CLI/upsert 全路，按 DB 权威 power_id 判（#125；CodeRabbit PR#130 R1 Major：
-    _find_existing_minister 返 None 后 `or 原名` 回退会把外藩 raw 名写进 secret_orders，须显式拒）。"""
-    import pytest
-    db, state, content = game
-    enemy = next((n for n, c in content.characters.items()
-                  if db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone()
-                  and (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone()["power_id"] or "ming") != "ming"), None)
-    if enemy is None:
-        pytest.skip("基底盘面无外藩人物")
-    with pytest.raises(PendingActionRefusal) as raised:
-        create_test_secret_order(db, state, enemy, "密查", "着尔暗中查访", [])
-    assert raised.value.category == "ineligible_power"
-
-def test_create_secret_order_rejects_foreign_power_by_alias(game):
-    """密令 assignee 用外藩别名也须被资格闸挡——_find_existing_minister 不解非 ming 别名，
-    须按名/别名兜回显式拒，否则别名经 `or 原名` 回退绕闸（#125；CodeRabbit PR#130 R1 Major）。"""
-    import pytest
-    db, state, content = game
-    enemy = next(
-        (n for n, c in content.characters.items()
-         if (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone() or {"power_id": "ming"})["power_id"] not in (None, "ming")
-         and any(a != n for a in (c.aliases or []))),
-        None,
-    )
-    if enemy is None:
-        pytest.skip("基底盘面无带别名的外藩")
-    alias = next(a for a in content.characters[enemy].aliases if a != enemy)
-    with pytest.raises(PendingActionRefusal) as raised:
-        create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
-    assert raised.value.category == "ineligible_power"
 
 def test_create_secret_order_allows_returned_defector(game):
     """招抚归明者（DB power_id 翻 ming、content 仍旧势力）可受密令——资格闸认 DB 权威，
@@ -2328,11 +2283,11 @@ def test_reload_syncs_reason_code_status_reason_to_content(game):
     """ADR 决定6 三面同步：回滚统一重载须把 DB 的 reason_code/status_reason 刷回
     content.characters，否则内存对象缺 ADR 0009 新字段、三面不一致（读内存即拿空/报错）。"""
     db, state, content = game
-    from ming_sim.session import _sync_offices_from_db_impl
+    from tests.month_chain_helpers import make_light_session
     name = active_ming_character(db, content)
     db.set_character_status(state, name, "dismissed", "忤逆案削籍", reason_code="获罪削籍")
 
-    _sync_offices_from_db_impl(content, db)
+    make_light_session(db, state, content).begin_turn()
 
     ch = content.characters[name]
     assert getattr(ch, "reason_code", None) == "获罪削籍", "重载未同步 reason_code"

@@ -10,7 +10,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import pytest
+from fastapi import HTTPException
 
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
@@ -21,12 +22,11 @@ import web_app
 from ming_sim.models import TurnPhase
 
 
-
-
 def _shell(db, state, content):
     """轻壳 WebGame：真 db/state + 真 write_gate。"""
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(
+        advance_without_decree=lambda **_k: None,
         db=db,
         state=state,
         content=content,
@@ -53,19 +53,6 @@ def _shell(db, state, content):
     return runtime
 
 
-@contextmanager
-def _blocking_gate(game):
-    """与 issue/stream 同形：阻塞持 _game_write_gate。"""
-    gate = web_app._game_write_gate(game)
-    gate.acquire()
-    try:
-        yield
-    finally:
-        gate.release()
-
-
-
-
 def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     """验收：成功支 clear 抛错仍执行 _end_settlement_entry（inflight 归零）。
 
@@ -78,7 +65,7 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     db.reign.save_game_state(state)
     db.capture_month_open_snapshot(state)
 
-    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
     def _boom_clear(_t):
@@ -86,15 +73,11 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
 
     db.month_open_snapshots.delete = _boom_clear  # type: ignore[method-assign]
 
-    raised = None
-    try:
-        with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
-            pass
-    except RuntimeError as exc:
-        raised = exc
-
-    assert raised is not None and "clear boom" in str(raised)
-    assert web_app._settlement_entry_inflight(runtime) == 0, "clear 抛错后 inflight 须归零"
+    with pytest.raises(HTTPException) as exc:
+        web_app.api_advance_without_edict()
+    assert exc.value.status_code == 500
+    assert db.month_open_snapshots.get(int(state.turn)) is not None
+    assert runtime.state_payload()["settlement_entry_inflight"] is False
 
 
 def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
@@ -104,23 +87,20 @@ def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
     state.turn_phase = TurnPhase.SUMMONING.value
     db.reign.save_game_state(state)
 
-    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
     def _boom_exit(*_a, **_k):
         raise RuntimeError("exit boom")
 
-    monkeypatch.setattr(web_app, "_exit_settlement_display_on_failure", _boom_exit)
+    db.month_open_snapshots.delete = _boom_exit
+    runtime.session.advance_without_decree = lambda **_k: (_ for _ in ()).throw(ValueError("body fail"))
 
-    raised = None
-    try:
-        with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
-            raise ValueError("body fail")
-    except RuntimeError as exc:
-        raised = exc
-
-    assert raised is not None and "exit boom" in str(raised)
-    assert web_app._settlement_entry_inflight(runtime) == 0
+    with pytest.raises(HTTPException) as exc:
+        web_app.api_advance_without_edict()
+    assert exc.value.status_code == 500
+    assert db.month_open_snapshots.get(int(state.turn)) is not None
+    assert runtime.state_payload()["settlement_entry_inflight"] is False
 
 
 def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
@@ -135,7 +115,7 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
     db.capture_month_open_snapshot(state)
     assert runtime.state_payload()["turn"]["settlement_display"] is True
 
-    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
     import ming_sim.month_open_snapshot as mos
@@ -145,14 +125,9 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
 
     monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
 
-    raised = None
-    try:
-        with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
-            pass
-    except RuntimeError as exc:
-        raised = exc
-
-    assert raised is not None and "orphan clear boom" in str(raised)
-    assert web_app._settlement_entry_inflight(runtime) == 0
+    with pytest.raises(HTTPException) as exc:
+        web_app.api_advance_without_edict()
+    assert exc.value.status_code == 500
+    assert runtime.state_payload()["settlement_entry_inflight"] is False
     assert db.month_open_snapshots.get(int(state.turn)) is None
     assert runtime.state_payload()["turn"]["settlement_display"] is False

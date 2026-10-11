@@ -82,33 +82,8 @@ def _record_monthly(db, state, *, progress=None):
     db.conn.commit()
 
 
-def test_escorted_midpoint_strictly_beats_bare(game):
-    """同批三路：有护行中位折损口径优于无护行（北极星多救七万两量级可复现）。"""
-    db, state, content = game
-    g_bare_a = _in_transit_grant(db, state, text="辽东补饷", target_id="liaodong")
-    g_bare_b = _in_transit_grant(db, state, text="宣大补饷", target_id="xuan_da")
-    g_escort = _in_transit_grant(db, state, text="陕西赈银", target_id="shaanxi")
-    _order_id, escort_dossier_id = _escort_order(db, state, [g_escort])
-
-    _record_monthly(db, state, progress=[{
-        "dossier_id": escort_dossier_id,
-        "progress_band": "在途",
-        "memorial_text": "护行路按月核验",
-    }])
-
-    bare_a = db.dossiers.reconciliations(g_bare_a)[-1]
-    bare_b = db.dossiers.reconciliations(g_bare_b)[-1]
-    escorted = db.dossiers.reconciliations(g_escort)[-1]
-    assert bare_a["arrived_amount"] == bare_b["arrived_amount"] == 16
-    assert escorted["arrived_amount"] == 23
-    assert escorted["loss_amount"] < bare_a["loss_amount"]
-    assert escorted["escorted"] is True
-    assert bare_a["escorted"] is False
-
-
 def test_per_route_storage_restore_and_escort_split(game):
     """机械中位逐路落被护侧；有护行另走 #566 进展，无护行不产密奏。"""
-    from ming_sim.db import grant_arrival_bounds
 
     db, state, content = game
     bare = _in_transit_grant(db, state, text="无护行路", target_id="liaodong")
@@ -122,14 +97,12 @@ def test_per_route_storage_restore_and_escort_split(game):
         "memorial_text": "护行路已核关防，实银可期",
     }])
 
-    bare_mid = sum(grant_arrival_bounds(ORDERED, escorted=False)) // 2
-    escort_mid = sum(grant_arrival_bounds(ORDERED, escorted=True)) // 2
     bare_rows = db.dossiers.reconciliations(bare)
     escort_rows = db.dossiers.reconciliations(escorted_grant)
     assert len(bare_rows) == 1 and bare_rows[0]["turn"] == turn
     assert len(escort_rows) == 1 and escort_rows[0]["turn"] == turn
-    assert bare_rows[0]["arrived_amount"] == bare_mid
-    assert escort_rows[0]["arrived_amount"] == escort_mid
+    assert bare_rows[0]["arrived_amount"] == 16
+    assert escort_rows[0]["arrived_amount"] == 23
     assert bare_rows[0]["escorted"] is False
     assert escort_rows[0]["escorted"] is True
     assert escort_rows[0]["escort_source_dossier_id"] == escort_dossier_id
@@ -157,7 +130,6 @@ def test_per_route_storage_restore_and_escort_split(game):
 
 def test_close_merges_recon_note_without_second_treasury_debit(game):
     """S10 结案同源读对账；不二次扣库、不改原流水；执行说明原文原样。"""
-    from ming_sim.db import grant_arrival_bounds
 
     db, state, content = game
     before_inner = int(state.metrics["内库"])
@@ -185,8 +157,7 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     note = closed["execution_note"]
     assert note == "赈银押解到达"
     recon = db.dossiers.reconciliations(gid)[-1]
-    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
-    assert recon["arrived_amount"] == (lo + hi) // 2
+    assert recon["arrived_amount"] == 16
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.reign.list_economy_moves_for_dossier(gid) == moves_before

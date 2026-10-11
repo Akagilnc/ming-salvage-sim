@@ -20,7 +20,6 @@ from ming_sim.credit_events import (
     KIND_FULFILL,
     KIND_SCAPEGOAT,
     resolve_credit_events_from_extraction,
-    scapegoat_actor_kind_from_origin,
 )
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
@@ -378,12 +377,6 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
 
     # ── 丢卒保车：惩卒倪元璐、保车徐光启 ──
     did_sg = _transformed_dossier(db, state, token="sg-628", roster=roster)
-    # 方案 b：origin 可派生施弃方=皇帝
-    assert scapegoat_actor_kind_from_origin(
-        f"dossier:{did_sg}:credit:scapegoat:pawn:倪元璐"
-    ) == "皇帝"
-    assert scapegoat_actor_kind_from_origin("random:foo") is None
-
     before_sg = len(_credit_edges(db, event_kind=KIND_SCAPEGOAT))
     reason_sg = "顶罪下狱"
     apply_score_extraction(
@@ -401,8 +394,7 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     assert by_target["倪元璐"]["context"] == reason_sg
     assert by_target["徐光启"]["context"] == reason_sg
     assert by_target["倪元璐"]["source"] == "皇帝"
-    for e in by_target.values():
-        assert scapegoat_actor_kind_from_origin(e["origin"]) == "皇帝"
+    assert {e["source"] for e in by_target.values()} == {"皇帝"}
 
     # ── 包庇：庇护主办 → 撑腰（另人，避免与上文弃卒入狱撞状态）──
     did_cv = _transformed_dossier(

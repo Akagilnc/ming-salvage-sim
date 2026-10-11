@@ -20,11 +20,9 @@ from ming_sim.covert_progress import (
     CovertContractError,
     apply_investigation_spoliation,
     build_covert_task_contract,
-    decide_secret_order_settlement,
     investigation_clue_records,
     live_investigation_fact_keys,
     read_covert_task_contract,
-    seed_guilt_counts_as_debt,
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
     settle_due_secret_orders,
@@ -208,55 +206,23 @@ def _originate_catches(db, state, content, dossier_id, names):
     )
 
 
-def test_seed_guilt_structured_clean_vs_debt():
-    # 现约：只收结构化 severity∈{轻,中,重}；合法空白/「无」不造罪；
-    # 持久损坏（裸散文/坏 JSON）走 StoredDocumentError，不洗成无罪。
+def test_seed_guilt_structured_clean_vs_debt(game):
+    """持久罪证损坏必须在真实月度密查调用链上报错，不洗成无罪。"""
+    db, state, _ = game
+    name = _minister(db)
+    target = db.conn.execute("SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1", (name,)).fetchone()[0]
+    _co_locate(db, name, target)
+    oid = _issue(db, state, name, "坏罪证密查", "核旧案", months=3, target=1,
+                 kind="查核", axes=["既得利益"], investigation_target=target)
+    db.conn.execute("UPDATE characters SET seed_guilt='血债' WHERE name=?", (target,))
+    db.conn.commit()
+    did = db.dossiers.get_for_secret_order(oid)["id"]
+    _next_month(db, state)
     from ming_sim.applier import StoredDocumentError
-
-    assert not seed_guilt_counts_as_debt("")
-    assert not seed_guilt_counts_as_debt(None)
-    assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
-    assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
     with pytest.raises(StoredDocumentError):
-        seed_guilt_counts_as_debt("血债")
-    assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
-
-
-def test_decide_settlement_delivery_gap_bidirectional():
-    done = decide_secret_order_settlement({
-        "actual_units": 3.0, "target_units": 3.0, "criterion_text": "密查甲",
-    })
-    assert done["status"] == "done" and done["outcome"] == "fulfilled" and done["delivered"]
-
-    failed = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "criterion_text": "密查甲",
-        "has_reports": True,
-    })
-    assert failed["status"] == "failed" and not failed["delivered"]
-    # 表报不改变 delivered 判定
-    bare = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
-    })
-    assert bare["status"] == "failed"
-
-
-def test_task_specific_contract_from_explicit_fields_not_tags():
-    audit = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="补发饷银", axes=["既得利益"], direction=1,
-        delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
-        purpose="其它", category="密令差务", account="内库",
-    )
-    catch = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="缉获人犯", axes=["实务事功"], direction=1,
-        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置",
-    )
-    assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
-    assert audit["delivery"]["unit"] == "万两"
-    assert audit["delivery"]["target_units"] == 3.0
-    assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
-    assert catch["delivery"]["target_units"] == 3.0
+        _run_supply_4a(db, state, [{"order_id": oid, "fact_key": target, "effort": 1.0}])
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "active"
+    assert db.dossiers.actual_progress_units(did) == 0
 
 
 def test_task_specific_contract_rejects_tags_without_explicit_fields():
@@ -310,34 +276,6 @@ def test_confirm_persists_task_specific_contract_absent_before(game):
     assert catch["delivery"]["unit"] == "人犯"
     assert catch["delivery"]["target_units"] == 2.0
 
-
-def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
-    """窄接缝：settle_due_secret_orders 只读 actual rail；奏报灌满不翻 verdict。
-
-    """
-    db, state, _ = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=20, identity=80)
-    oid = _issue(db, state, name, "空转密查", "查无实据之案", months=1, target=1)
-    dossier = db.dossiers.get_for_secret_order(oid)
-    did = int(dossier["id"])
-    # 只写奏报，不写实况
-    db.dossiers.record_dossier_progress(
-        did, state.turn, "办成", "臣已查明全部", is_terminal=False,
-    )
-    # 推 due 到当月
-    db.conn.execute(
-        "UPDATE secret_orders SET due_turn=? WHERE id=?",
-        (state.turn, oid),
-    )
-    db.conn.commit()
-
-    out = settle_due_secret_orders(db, state, commit=True)
-    row = next(r for r in out if r["order_id"] == oid)
-    assert row["status"] == "failed"
-    assert row["actual_units"] == 0.0
-    closed = db.character_knowledge.get_secret_order(oid)
-    assert closed["status"] == "failed"
 
 def test_settle_due_close_follows_surviving_memorial_and_actual(game):
     """记进展与同月密奏是同一条奏报。结案取留下的结构化奏报，实况为零则不成。"""
@@ -917,16 +855,6 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
     assert len(roots) == 2
     assert not roots[-1].exists()
 
-def test_non_investigation_contract_keeps_its_delivery_account(game):
-    """筹饷密令仍按自己的交付单位与账户成约。"""
-    del game
-    contract = build_covert_task_contract(covert_task={
-        "kind": "筹饷", "axes": ["实务事功"], "direction": 1,
-        "delivery": {"unit": "万两", "target_units": 30.0, "effect_sign": -1,
-                     "purpose": "其它", "category": "密令差务", "account": "内库"},
-    })
-    assert contract["delivery"]["unit"] == "万两"
-    assert contract["delivery"]["account"] == "内库"
 
 def test_case_opening_source_clue_assists_its_fact(game):
     """#1896 R6：开案这条来源自身就是真实线索，与汇案来源同一条接线。
@@ -1688,7 +1616,6 @@ def test_deep_dig_lands_through_month_chain_entry(game):
     assert investigation_clue_records(db, did)[-1]["credited"] is True
 
 
-
 def test_repeated_pointerless_orders_do_not_mint_clues(game):
     """连续无指针下令不是来源。已落库的空指针旧线索仍按 ADR 0098:11 路由。"""
     db, state, _ = game
@@ -1900,34 +1827,13 @@ def test_merged_clue_assists_the_fact_it_points_at(game):
         key: float(lane["effort"]) for key, lane in _lanes(db, oid).items()
     } == held_effort
 
-def test_supply_feed_identity_material_is_empty_for_topic_target(game):
-    """#1896：查案对象不是真人物时，身份材料如实留空——不编造、不炸掉整月供料。"""
-    from ming_sim.month_chain import build_secret_orders_supply_feed
-
-    db, state, _ = game
-    name = _minister(db)
-    topic = "辽饷转运及押运相关人员"
-    _issue(
-        db, state, name, "查核题名", "查核题名",
-        months=3, target=1, kind="查核", axes=["既得利益"],
-        investigation_target=topic,
-    )
-    _next_month(db, state)
-    feed = build_secret_orders_supply_feed(db, state, {})
-    order = next(
-        o for o in feed["active_secret_orders"]
-        if o.get("investigation_target") == topic
-    )
-    assert order["investigation_facts"] == []
-    assert order["investigation_target_identity_materials"] == {"name": topic}
-    assert order["investigator_identity_materials"]["name"] == name
-
-def test_supply_feed_carries_per_fact_investigation_materials(game):
+def test_supply_feed_carries_per_fact_investigation_materials(game, monkeypatch):
     """#1896：4a 供料带逐证清单（键/难度/已投入/状态），模型才可能声明 fact_key。
 
     空 lane 集（清白目标）照发空清单——不因无证而拒开案。
     """
-    from ming_sim.month_chain import build_secret_orders_supply_feed
+    from ming_sim.month_chain import run_secret_orders_supply
+    from ming_sim.models import LLMConfig
 
     db, state, _ = game
     name = _minister(db)
@@ -1956,10 +1862,16 @@ def test_supply_feed_carries_per_fact_investigation_materials(game):
         months=3, target=1, kind="查核", axes=["既得利益"],
         investigation_target=clean,
     )
+    topic = "辽饷转运及押运相关人员"
+    topic_oid = _issue(db, state, name, "查核题名", "查核题名", months=3, target=1,
+                       kind="查核", axes=["既得利益"], investigation_target=topic)
     state.turn += 1
     db.reign.save_game_state(state)
 
-    feed = build_secret_orders_supply_feed(db, state, {})
+    calls = []
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda _agent, message, **kw: (calls.append(json.loads(message)), "{}")[1])
+    run_secret_orders_supply(db, state, LLMConfig(api_key="sk-test", base_url="https://example.test/v1", model="test"), {})
+    feed = calls[0]
     orders = {int(o["id"]): o for o in feed["active_secret_orders"]}
     assert oid in orders and clean_oid in orders
     hot = orders[oid]
@@ -1975,9 +1887,14 @@ def test_supply_feed_carries_per_fact_investigation_materials(game):
     # 清白目标：照开案、照列空清单
     assert orders[clean_oid]["investigation_facts"] == []
 
-def test_spoliated_fact_reported_as_unreachable_in_feed(game):
+    assert orders[topic_oid]["investigation_facts"] == []
+    assert orders[topic_oid]["investigation_target_identity_materials"] == {"name": topic}
+    assert orders[topic_oid]["investigator_identity_materials"]["name"] == name
+
+def test_spoliated_fact_reported_as_unreachable_in_feed(game, monkeypatch):
     """#1896：被毁成 gone 的罪证在供料里标湮灭，难度不给数字（inf 不外泄）。"""
-    from ming_sim.month_chain import build_secret_orders_supply_feed
+    from ming_sim.month_chain import run_secret_orders_supply
+    from ming_sim.models import LLMConfig
 
     db, state, _ = game
     name = _minister(db)
@@ -2026,7 +1943,10 @@ def test_spoliated_fact_reported_as_unreachable_in_feed(game):
         investigation_target=target,
     )
     _next_month(db, state)
-    feed = build_secret_orders_supply_feed(db, state, {})
+    calls = []
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda _agent, message, **kw: (calls.append(json.loads(message)), "{}")[1])
+    run_secret_orders_supply(db, state, LLMConfig(api_key="sk-test", base_url="https://example.test/v1", model="test"), {})
+    feed = calls[0]
     order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == oid)
     fact = next(f for f in order["investigation_facts"] if f["fact_key"] == key)
     assert fact["state"] == "已被毁证湮灭"

@@ -74,8 +74,12 @@ def test_build_llm_config_recovers_preserved_api_key_on_switch_back(monkeypatch)
 
     cfg = web_app.WebGame.build_llm_config(fake, "", "", "", channel="api")
 
-    assert cfg.channel == "api"
-    assert cfg.api_key == "sk-preserved"
+    saved = []
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: saved.append((args, kwargs)))
+    web_app.WebGame.commit_llm_config(fake, cfg)
+    assert fake.session.llm_config.channel == "api"
+    assert fake.session.llm_config.api_key == "sk-preserved"
+    assert saved[0][0][2] == "sk-preserved"
 
 
 def test_set_llm_config_cli_placeholder_not_real_api_key(monkeypatch):
@@ -929,17 +933,17 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
     seed = web_app.WebGame(fresh=True)
     try:
         seed.favorites = {seed_marker}
-        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        seed.db.reign.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         assert db_path.exists()
 
         # 构造同一回合可区分的 begin/preresolve 自动档；热加载不得改写任一源档。
         begin_marker = "__begin_1702__"
         preresolve_marker = "__preresolve_1702__"
         seed.favorites = {begin_marker}
-        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        seed.db.reign.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         begin_path = Path(seed.session.auto_save("begin"))
         seed.favorites = {preresolve_marker}
-        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        seed.db.reign.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         preresolve_path = Path(seed.session.auto_save("preresolve"))
         begin_bytes = begin_path.read_bytes()
         preresolve_bytes = preresolve_path.read_bytes()
@@ -955,7 +959,7 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
         next_begin_bytes = next_begin_path.read_bytes()
         after_begin_marker = "__after_begin_1702__"
         seed.favorites = {after_begin_marker}
-        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        seed.db.reign.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         seed.session.begin_turn()
         seed.session.begin_turn()
         assert next_begin_path.read_bytes() == next_begin_bytes
@@ -964,7 +968,7 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
                 "SELECT value FROM kv_store WHERE key = 'favorites'"
             ).fetchone()[0])
         assert archived_favorites == [preresolve_marker]
-        assert after_begin_marker in json.loads(seed.db.kv_get("favorites"))
+        assert after_begin_marker in json.loads(seed.db.reign.kv_get("favorites"))
     finally:
         try:
             seed.session.close()
@@ -991,8 +995,8 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
         _assert_hud(cont.state_payload())
         assert begin_marker in cont.favorites
         cont.favorites.add(seed_marker)
-        cont.db.kv_set("favorites", json.dumps(sorted(cont.favorites), ensure_ascii=False))
-        assert seed_marker in json.loads(cont.db.kv_get("favorites"))
+        cont.db.reign.kv_set("favorites", json.dumps(sorted(cont.favorites), ensure_ascii=False))
+        assert seed_marker in json.loads(cont.db.reign.kv_get("favorites"))
 
         assert calls == [], f"continue/load_save 不应触发 LLM 调用，实得 {calls}"
     finally:
@@ -1024,10 +1028,10 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
     runtime.favorites = {saved_marker}
-    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.db.reign.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
     runtime.save_to("before")
     runtime.favorites = {live_marker}
-    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.db.reign.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
 
     response = TestClient(web_app.app).post("/api/saves/before/load")
     assert response.status_code == 200
@@ -1058,10 +1062,10 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
     runtime.favorites = {saved_marker}
-    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.db.reign.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
     runtime.save_to("before")
     runtime.favorites = {live_marker}
-    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.db.reign.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
     old_turn = runtime.state.turn
 
     if failure == "candidate":
@@ -1133,8 +1137,12 @@ def test_build_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
     # 空表单 + CLI 局：保留 cli 通道（#51）、不把占位符当 API key 带入。
     cfg = web_app.WebGame.build_llm_config(fake, "", "", "")
 
-    assert cfg.api_key != "cli-backend"
-    assert cfg.channel == "cli"
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    web_app.WebGame.commit_llm_config(fake, cfg)
+    assert fake.session.llm_config.api_key == ""
+    assert fake.session.llm_config.channel == "cli"
+    assert saved[0][0][2] == ""
+    assert saved[0][1]["channel"] == "cli"
 
 
 def test_game_start_rejects_placeholder_api_key(monkeypatch, tmp_path):

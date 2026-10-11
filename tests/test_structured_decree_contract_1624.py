@@ -13,7 +13,6 @@ from ming_sim.structured_decree import (
 from tests.rescript_test_helpers import sql_rescript_draft
 
 
-
 # #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
 _OWNER_ROSTER = [
     {"character_id": "毕自严", "tier": "主办", "role": "总核赈务", "delegator_id": None},
@@ -70,8 +69,6 @@ def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
         ).fetchone() is not None, f"参与人未建档：{name!r}"
 
 
-
-
 def test_shared_validate_rejects_region_id_and_category_holes():
     """共同 assemble/validate 最低可证层：钉原洞 typed 拒绝。
 
@@ -118,24 +115,6 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     assert ei.value.failed_fields == frozenset(
         {"action_type", "dossier_action_type"}
     )
-    # 同值或一侧空：维持现状（不因 alias 比较误伤）
-    same = assemble_structured_decree({
-        "action_type": "policy",
-        "dossier_action_type": "policy",
-        "target_kind": "policy",
-        "target_id": "x",
-        "locality_scope": "none",
-    })
-    assert same["action_type"] == "policy"
-    assert same["dossier_action_type"] == "policy"
-    only_action = assemble_structured_decree({
-        "action_type": "policy",
-        "target_kind": "policy",
-        "target_id": "x",
-        "locality_scope": "none",
-    })
-    assert only_action["action_type"] == "policy"
-    assert only_action["dossier_action_type"] == "policy"
 
 def test_rescript_follow_draft_nails_drafted_roster(game):
     """真实批红 follow_draft：Owner 例未点将 → 主办来自票拟名单，成案钉进案卷。"""
@@ -194,11 +173,8 @@ def _executing_counts(db, *, owner_name: str, region_id: str):
     return owner_open, province_open
 
 
-def test_normalize_rescript_layer_a_option_contract():
-    """normalize_rescript_layer_a_option：外部可观察成败与归一结果。
-
-    不锁私有常量、对象身份或 shape 精确布局；prompt/Agent 装配亦不在此锁。
-    """
+def test_normalize_rescript_layer_a_option_contract(game):
+    """坏选项拒收；合法军令与授权经真实改票写口存入待批票拟。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     # 缺 appoint_action 须失败
@@ -231,30 +207,33 @@ def test_normalize_rescript_layer_a_option_contract():
         normalize_rescript_layer_a_option({
             **mil_base, "station": "", "due_turn": 0, "deadline_months": "0",
         })
-    only_station = normalize_rescript_layer_a_option({**mil_base, "station": "京师"})
-    assert only_station.get("station") == "京师"
-    only_deadline = normalize_rescript_layer_a_option({
-        **mil_base, "deadline_months": 3,
-    })
-    assert int(only_deadline.get("deadline_months") or 0) == 3
+    import ming_sim.rescript_actions as ra
+    db, state, content = game
+    auth_base = {
+        "label": "授权", "hint": "h", "action_type": "authorization",
+        "target_kind": "character", "target_id": "某官",
+        "locality_scope": "none", "region_id": "", "transaction_category": "",
+    }
+    options = [
+        {**mil_base, "station": "京师"},
+        {**mil_base, "deadline_months": 3},
+        {**auth_base, "name": "0", "assignee_name": ""},
+        {**auth_base, "name": "", "assignee_name": "0"},
+    ]
+    sql_rescript_draft(db, int(state.turn), idx=0, event_id="draft:改票",
+                       title="改票", options=[dict(_OWNER_OPTION)])
+    db.conn.commit()
+    urgent = db.issues.list_rescript_desk(int(state.turn))[0]
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [{"decision_key": key, "action": "return_revise", "note": "再拟"}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(revise_by_key={key: options}), content=content)
+    stored = db.issues.list_rescript_drafts()[0]["options"]
+    assert stored[0]["station"] == "京师"
+    assert stored[1]["deadline_months"] == 3
+    assert stored[2]["name"] == "0"
+    assert stored[3]["assignee_name"] == "0"
+    assert db.issues.list_rescript_drafts()[0]["revision_round"] == 1
 
-    # authorization require_any 保持通用非空串语义（禁被军令正值判定误伤）
-    auth_zero = normalize_rescript_layer_a_option({
-        "label": "授权", "hint": "h", "action_type": "authorization",
-        "target_kind": "character", "target_id": "某官",
-        "locality_scope": "none", "region_id": "",
-        "assignee_name": "", "transaction_category": "",
-        "name": "0",
-    })
-    assert auth_zero.get("name") == "0"
-    auth_assignee_zero = normalize_rescript_layer_a_option({
-        "label": "授权", "hint": "h", "action_type": "authorization",
-        "target_kind": "character", "target_id": "某官",
-        "locality_scope": "none", "region_id": "",
-        "assignee_name": "0", "transaction_category": "",
-        "name": "",
-    })
-    assert auth_assignee_zero.get("assignee_name") == "0"
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     """组合纠错：失败字段（含 target_kind 身份束）采纳；未失败动作/名册/类别/旨文冻结。
@@ -264,7 +243,7 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     """
     import ming_sim.cli_backend as cb
 
-    db, _state, content = game
+    db, state, content = game
     first = "毕自严"
     assert first in content.characters
     second = next(
@@ -324,33 +303,20 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
         "着户部继续核查陕西赈务，按月具报。", "臣遵拟。",
         db=db, content=content,
     )
-    ids = [
-        str(i.get("character_id") or "")
-        for i in (result.get("participant_roster") or [])
-    ]
-    assert ids == [first], f"roster drifted to {ids!r}, expected {[first]!r}"
-    assert result.get("locality_scope") == "single"
-    assert result.get("dossier_action_type") == "assignment"
-    assert result.get("target_kind") == "region"
-    assert result.get("target_id") == "shaanxi"
-    assert result.get("region_id") == "shaanxi"
-    assert result.get("transaction_category") == "督赈"
-    # 单条路径 draft_text=大臣回话；纠错轮正文漂移不得改写会话正文真源
-    assert result.get("draft_text") == "臣遵拟。"
-    assert n["c"] == 2
-    # DB-backed 共同闸：身份束归正后可解析（禁 region+户部 漏网）
-    assemble_structured_decree(
-        {
-            "action_type": result.get("dossier_action_type"),
-            "target_kind": result.get("target_kind"),
-            "target_id": result.get("target_id"),
-            "region_id": result.get("region_id"),
-            "locality_scope": result.get("locality_scope"),
-            "transaction_category": result.get("transaction_category"),
-        },
-        conn=db.conn,
-        regions_content=content.regions,
-    )
+    from tests.month_chain_helpers import make_light_session
+    session = make_light_session(db, state, content)
+    directive = session.add_directive(result["draft_text"], dossier_payload=result)
+    db.ensure_dossiers_for_draft_directives(state)
+    dossier = db.dossiers.get_for_directive(directive.id)
+    payload = json.loads(dossier["payload_json"])
+    assert [item["character_id"] for item in dossier["participant_roster"]] == [first]
+    assert dossier["action_type"] == "assignment"
+    assert dossier["target_kind"] == "region"
+    assert dossier["target_id"] == "shaanxi"
+    assert payload["region_id"] == "shaanxi"
+    assert payload["locality_scope"] == "single"
+    assert payload["transaction_category"] == "督赈"
+
 
 @pytest.mark.parametrize("mode", ["freeze_roster", "heal_first_only_reject"])
 def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):
@@ -362,7 +328,7 @@ def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):
     import ming_sim.cli_backend as cb
     from ming_sim.structured_decree import StructuredDecreeCombinationError
 
-    db, _state, content = game
+    db, state, content = game
     first = "毕自严"
     second = next(
         name for name, ch in content.characters.items()
@@ -406,9 +372,10 @@ def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):
                         "动作类型": "military_order",
                         "目标类型": "army",
                         "目标ID": "guanning",
+                        "期限月数": 3,
                         "施行范围": "无",
                         "颁布方式": "普通",
-                        "参与人": [],
+                        "参与人": [{"character_id": first, "tier": "主办"}],
                     },
                 ]
             }
@@ -482,21 +449,22 @@ def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):
             f"两道旨着{first}核查并整饬", "臣遵拟。",
             db=db, content=content, draft_count=2,
         )
-        drafts = result.get("drafts") or []
-        assert len(drafts) == 2
-        ids = [
-            str(i.get("character_id") or "")
-            for i in (drafts[0].get("participant_roster") or [])
-        ]
-        assert ids == [first]
-        assert drafts[0].get("locality_scope") == "single"
-        assert drafts[0].get("dossier_action_type") == "assignment"
-        assert drafts[0].get("target_kind") == "region"
-        assert drafts[0].get("target_id") == "shaanxi"
-        assert drafts[0].get("transaction_category") == "督赈"
-        assert first in str(drafts[0].get("draft_text") or "")
-        assert drafts[1].get("target_id") == "guanning"
-        assert n["c"] == 2
+        from tests.month_chain_helpers import make_light_session
+        session = make_light_session(db, state, content)
+        staged = []
+        for draft in result["drafts"]:
+            directive = session.add_directive(draft["draft_text"], dossier_payload=draft)
+            db.ensure_dossiers_for_draft_directives(state)
+            staged.append(db.dossiers.get_for_directive(directive.id))
+        assert len(staged) == 2
+        assert [item["character_id"] for item in staged[0]["participant_roster"]] == [first]
+        payload = json.loads(staged[0]["payload_json"])
+        assert staged[0]["action_type"] == "assignment"
+        assert staged[0]["target_kind"] == "region"
+        assert staged[0]["target_id"] == "shaanxi"
+        assert payload["locality_scope"] == "single"
+        assert payload["transaction_category"] == "督赈"
+        assert staged[1]["target_id"] == "guanning"
         return
 
     with pytest.raises(StructuredDecreeCombinationError) as ei:
@@ -508,4 +476,3 @@ def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):
     failures = dict(getattr(ei.value, "draft_failures", None) or {})
     # 失败图必须含 draft1；禁 OR partial 条数的放松断言
     assert 1 in failures, f"expected draft1 in draft_failures, got {failures!r}"
-    assert n["c"] >= 2

@@ -71,8 +71,6 @@ def _cost_liability(db, dossier_id):
     ]
 
 
-
-
 # ── ① AC1+AC2(+AC4) tracer ───────────────────────────────────────────
 
 
@@ -256,125 +254,6 @@ def _seed_army_arrears(db, army_id: str, arrears: int) -> None:
     db.conn.commit()
 
 
-def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
-    """定向补饷：beyond_intent 经 coerce 落 ledger 且 applied 回执回响；无标记仍为 0。"""
-    db, state, _content = game
-    army_id = "guanning"
-    _seed_army_arrears(db, army_id, 30)
-    state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
-
-    ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
-
-    applied = _apply_economy_list(
-        db,
-        state,
-        [{
-            "account": "国库",
-            "delta": -10,
-            "purpose": "补饷",
-            "target_kind": "army",
-            "target_id": army_id,
-            "category": "补饷",
-            "reason": "定向补饷旨外",
-            "origin_ref": "dossier:item",
-            "beyond_intent": True,
-        }],
-        origin_ref="dossier:parent",
-        commit=True,
-    )
-    assert applied and applied[0].get("beyond_intent") is True, applied
-    assert applied[0]["delta"] == -10
-    assert applied[0]["origin_ref"] == "dossier:parent"
-    assert applied[0]["applied"] is True
-
-    row = db.conn.execute(
-        "SELECT beyond_intent, purpose, target_id, origin_ref FROM economy_ledger "
-        "WHERE id > ? ORDER BY id DESC LIMIT 1",
-        (ledger_before,),
-    ).fetchone()
-    assert row is not None
-    assert int(row["beyond_intent"]) == 1
-    assert row["purpose"] == "补饷"
-    assert row["target_id"] == army_id
-    assert row["origin_ref"] == "dossier:parent"
-
-    applied_yes = _apply_economy_list(
-        db,
-        state,
-        [{
-            "account": "国库",
-            "delta": -2,
-            "purpose": "补饷",
-            "target_kind": "army",
-            "target_id": army_id,
-            "category": "补饷",
-            "reason": "定向补饷肯定串",
-            "origin_ref": "dossier:yes",
-            "beyond_intent": "是",
-        }],
-        origin_ref="dossier:yes",
-        commit=True,
-    )
-    assert applied_yes and applied_yes[0].get("beyond_intent") is True, applied_yes
-    yes_row = db.conn.execute(
-        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
-        ("定向补饷肯定串",),
-    ).fetchone()
-    assert yes_row is not None
-    assert int(yes_row["beyond_intent"]) == 1
-
-    # 反向锚：不带标记 → ledger=0，canonical 回执为 false/空来源
-    applied_plain = _apply_economy_list(
-        db,
-        state,
-        [{
-            "account": "国库",
-            "delta": -5,
-            "purpose": "补饷",
-            "target_kind": "army",
-            "target_id": army_id,
-            "category": "补饷",
-            "reason": "定向补饷无标记",
-        }],
-        commit=True,
-    )
-    assert applied_plain and applied_plain[0]["beyond_intent"] is False, applied_plain
-    assert applied_plain[0]["origin_ref"] == ""
-    assert applied_plain[0]["applied"] is True
-    plain_row = db.conn.execute(
-        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
-        ("定向补饷无标记",),
-    ).fetchone()
-    assert plain_row is not None
-    assert int(plain_row["beyond_intent"]) == 0
-
-    # 畸形值仍由 coerce 单点归 0，补饷分支不得自建判定
-    applied_bad = _apply_economy_list(
-        db,
-        state,
-        [{
-            "account": "国库",
-            "delta": -3,
-            "purpose": "补饷",
-            "target_kind": "army",
-            "target_id": army_id,
-            "category": "补饷",
-            "reason": "定向补饷畸形",
-            "beyond_intent": [],
-        }],
-        commit=True,
-    )
-    assert applied_bad and applied_bad[0]["beyond_intent"] is False, applied_bad
-    assert applied_bad[0]["origin_ref"] == ""
-    assert applied_bad[0]["applied"] is True
-    bad_row = db.conn.execute(
-        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
-        ("定向补饷畸形",),
-    ).fetchone()
-    assert bad_row is not None
-    assert int(bad_row["beyond_intent"]) == 0
-
-
 def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     """池化补饷：承诺月拨带 beyond_intent，拆分落库每行均继承（走 issues 结算 choke）。"""
     db, state, _content = game
@@ -466,6 +345,22 @@ def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
             "expect_origin": "",
             "expect_beyond": False,
         },
+        {
+            "label": "typed_yes",
+            "outer": "",
+            "item_origin": "dossier:item651",
+            "beyond": "是",
+            "expect_origin": "dossier:item651",
+            "expect_beyond": True,
+        },
+        {
+            "label": "malformed_flag",
+            "outer": "",
+            "item_origin": "dossier:item651",
+            "beyond": [],
+            "expect_origin": "dossier:item651",
+            "expect_beyond": False,
+        },
     )
 
     def _ledger_max_id() -> int:
@@ -478,7 +373,7 @@ def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
             (before_id,),
         ).fetchall()
 
-    def _move_base(reason: str, *, item_origin: str, beyond: bool) -> dict:
+    def _move_base(reason: str, *, item_origin: str, beyond: object) -> dict:
         move = {
             "account": "国库",
             "category": "补饷",
@@ -486,8 +381,7 @@ def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
         }
         if item_origin:
             move["origin_ref"] = item_origin
-        if beyond:
-            move["beyond_intent"] = True
+        move["beyond_intent"] = beyond
         return move
 
     def _assert_receipt(receipt: dict, *, expect_origin: str, expect_beyond: bool, applied: bool):

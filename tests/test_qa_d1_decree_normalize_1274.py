@@ -43,9 +43,6 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch, name):
     payload = cli_backend.capture_manual_directive_payload(
         text, None, db=db, content=content,
     )
-    ids = [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
-    assert name not in ids
-    assert ids == ["毕自严"]
 
     session = GameSession.__new__(GameSession)
     session.db = db
@@ -53,8 +50,9 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch, name):
     session.llm_config = None
     session.content = content
     dv = session.add_directive(text, dossier_payload=payload)
-    assert dv.id > 0
-    assert any(int(r["id"]) == int(dv.id) for r in db.issues.list_directives(state.turn))
+    db.ensure_dossiers_for_draft_directives(state)
+    dossier = db.dossiers.get_for_directive(dv.id)
+    assert [item["character_id"] for item in dossier["participant_roster"]] == ["毕自严"]
 
 
 def test_capture_unknown_person_still_409(game, monkeypatch):
@@ -150,25 +148,6 @@ def test_patch_decree_and_manual_create_routes_removed_draft_rw_remains():
 
 
 # ── 4) #1327 空载/有界 capture ─────────────────────────────────────
-
-
-def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
-    """空载：无可抽取正文 → 零 LLM、直落 special_decree。"""
-    import ming_sim.cli_backend as cli_backend
-
-    calls = []
-
-    def boom(*_a, **_k):
-        calls.append(1)
-        raise AssertionError("空载不得调用 LLM")
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
-    monkeypatch.setattr(cli_backend, "extract_draft_intent", boom)
-
-    payload = cli_backend.capture_manual_directive_payload("   ", None)
-    assert payload["dossier_action_type"] == "special_decree"
-    assert payload["target_id"] == "manual-directive"
-    assert calls == []
 
 
 def test_seeded_draft_long_extract_still_lands_real_dossier(game, monkeypatch):

@@ -1,76 +1,27 @@
-"""#117：enrich / apply 路径对 LLM 给的「真值非 list/dict」集合加 isinstance 守卫，不崩回合。
+"""坏持久效果须在真实月度漂移入口响亮失败，事务回滚不留半月进度。
 
-根因：`X.get(key) or []` 只兜 None/假值，兜不住真值非 list（true/数字/字符串）——`for x in 它`
-抛 TypeError（字符串还逐字符迭代）。enrich_initiative_effects.buildings 是直接诱因；同 bug 类还有
-issue-effect 的 economy（经 _apply_economy_list apply choke）与展示用 _format_issue_ongoing。
+容器容忍由 test_effect_origin_558 的结案/持续效果案承接；
+enrich 建筑容器由 test_issue_entities 的国策立项案承接。
 """
 from __future__ import annotations
 
-import ming_sim.cli_backend as cb
-from ming_sim.flows import (
-    _apply_class_dict,
-    _apply_economy_list,
-    _apply_faction_dict,
-    _apply_metric_dict,
-)
+import pytest
 
-def test_enrich_buildings_non_list_no_crash(monkeypatch):
-    """enrich_initiative_effects 的 buildings 被 LLM 给成真值非 list（true/数字/字符串）不抛 TypeError。"""
-    for bad in ("true", "5", '"oops"'):
-        raw = ('{"effect_on_resolve": {"buildings": ' + bad +
-               ', "metrics": {"民心": 1}}, "ongoing_effects": {}, "effect_on_fail": {}}')
-        monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (raw, 1))
-        out = cb.enrich_initiative_effects("练新军", "现状", llm_config=None)
-        assert isinstance(out["effect_on_resolve"], dict)  # 不崩、结构正常
-        assert out["effect_on_resolve"].get("buildings") == []  # 脏非 list 值被源头清成 []（gemini PR#127）
 
-def test_apply_economy_list_non_list_no_crash(read_game):
-    """_apply_economy_list 的 economy 被给成真值非 list（含 dict）时不抛，返回空 applied（#117）。"""
-    db, state, _content = read_game
-    for bad in (True, 5, "oops", {"account": "国库", "delta": -10}):
-        assert _apply_economy_list(db, state, bad) == []
-
-def test_inertia_ongoing_non_dict_no_crash(game):
+@pytest.mark.parametrize("bad", [
+    '"oops"', "5", "true", "[1,2]", "null", "不是合法json",
+])
+def test_inertia_ongoing_non_dict_no_crash(game, bad):
     """#117/#1889：脏 ongoing_effects 不得被吞成空对象蒙混过月；须响亮失败。"""
-    import pytest
     from ming_sim.situation_drift import apply_situation_monthly_drift
 
     db, state, _content = game
     iid = db.insert_issue(state, kind="situation", title="畸形ongoing测试", bar_value=50, inertia=1)
-    from ming_sim.applier import StoredDocumentError
-    for bad in ('"oops"', "5", "true", "[1,2]"):
-        db.conn.execute("UPDATE issues SET ongoing_effects=? WHERE id=?", (bad, iid))
-        db.conn.commit()
-        with pytest.raises(StoredDocumentError):
-            apply_situation_monthly_drift(db, state)
-
-def test_loads_effect_dict_coerces_non_dict():
-    """#117/#1889：loads_effect_dict 对坏 effect-JSON 响亮拒收；空值视为无效果。
-
-    禁吞成 {} 洗绿脏库（#1812 无历史包袱；权威=load_stored_object）。
-    """
-    import pytest
-    from ming_sim.applier import StoredDocumentError
-    from ming_sim.models import loads_effect_dict
-    for bad in ('"oops"', '5', 'true', '[1,2]', 'null', '不是合法json', 5, [1, 2], True):
-        with pytest.raises(StoredDocumentError):
-            loads_effect_dict(bad)
-
-def test_apply_economy_list_skips_non_dict_items(game):
-    """list 内混非 dict 项不崩，跳过非 dict、只落合法项（#117 codex 逐项守）。"""
-    db, state, _content = game
-    out = _apply_economy_list(db, state, [1, "x", None, {"account": "国库", "delta": -3, "reason": "t"}])
-    assert len(out) == 1, f"非 dict 项未被跳过/合法项未保留：{out}"
-    assert out[0].get("account") == "国库"  # 只落合法那一项
-
-def test_apply_metric_faction_class_dict_non_dict_no_crash(read_game):
-    """metrics/factions/class 被给成真值非 dict（issue-effect 未验证路径）时不抛、返回空（#117 同类）。
-
-    faction/class 自迁逐项拒收契约后返回 (已落 delta dict, 拒收项列表)（ADR 0008 决定 1，
-    #14/#63），非 dict 入参 → 空 dict + 空拒收列表 `({}, [])`；metric 仍返 dict。
-    """
-    db, state, _content = read_game
-    for bad in (True, 5, "oops", [1, 2]):
-        assert _apply_metric_dict(state, bad, db=db) == {}
-        assert _apply_faction_dict(db, bad) == ({}, [])
-        assert _apply_class_dict(db, bad) == ({}, [])
+    from ming_sim.applier import StoredDocumentError, atomic
+    db.conn.execute("UPDATE issues SET ongoing_effects=? WHERE id=?", (str(bad), iid))
+    db.conn.commit()
+    before = db.conn.execute("SELECT bar_value, status FROM issues WHERE id=?", (iid,)).fetchone()
+    with pytest.raises(StoredDocumentError), atomic(db):
+        apply_situation_monthly_drift(db, state)
+    after = db.conn.execute("SELECT bar_value, status FROM issues WHERE id=?", (iid,)).fetchone()
+    assert tuple(after) == tuple(before)

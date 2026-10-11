@@ -23,81 +23,12 @@ def _cli_codex_cfg() -> LLMConfig:
         channel="cli", cli_runner="codex", cli_model="gpt-5.5",
     )
 
-def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
-    from ming_sim.db import canonical_secret_order_exclusions
-
-    content = game[2]
-    character = next(
-        ch for ch in content.characters.values() if getattr(ch, "aliases", None)
-    )
-    alias = character.aliases[0]
-    office = character.office_type
-    people, offices = canonical_secret_order_exclusions(
-        content, [alias], [office], "勿使玩家散文成为第二输入源",
-    )
-    assert people == [character.name]
-    assert offices == [office]
 
 # ── enrich_initiative_effects ──
 
-def test_enrich_army_parsed_and_normalized(monkeypatch):
-    canned = json.dumps({
-        "effect_on_resolve": {
-            "metrics": {"皇威": 5},
-            "new_armies": [{"id": "qinjun", "name": "秦兵", "owner_power": "ming",
-                            "manpower": 20000, "maintenance_per_turn": 4, "commander": "孙传庭"}],
-        },
-        "ongoing_effects": {}, "effect_on_fail": {},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    out = cb.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
-    armies = out["effect_on_resolve"]["new_armies"]
-    assert armies[0]["id"] == "qinjun"
-    assert armies[0]["manpower"] == 20000
-
-def test_enrich_building_region_floor(monkeypatch):
-    canned = json.dumps({
-        "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
-        "ongoing_effects": {}, "effect_on_fail": {},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    out = cb.enrich_initiative_effects("设格致局", "")
-    assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
-
-def test_enrich_backend_error_returns_empty_effects(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    out = cb.enrich_initiative_effects("设格致局", "")
-    assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
-
-def test_enrich_nondict_subfields_guarded(monkeypatch):
-    monkeypatch.setattr(
-        cb, "_run_backend",
-        lambda p: ('{"effect_on_resolve": "坏数据", "ongoing_effects": ["x"], "effect_on_fail": 3}', 1),
-    )
-    monkeypatch.setattr(cb, "_trace", lambda r: None)
-    out = cb.enrich_initiative_effects("设局", "")
-    assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
-
-def test_enrich_trace_records_actual_backend(monkeypatch):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"effect_on_resolve":{}}', 1))
-    rec = {}
-    monkeypatch.setattr(cb, "_trace", lambda r: rec.update(r))
-    cb.enrich_initiative_effects("设局", "")
-    assert rec.get("backend") == "codex"
 
 # ── cli_backend_from_env / backend dispatch ──
 
-def test_backend_env(monkeypatch):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    assert cb.cli_backend_from_env() is None
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    assert cb.cli_backend_from_env() == "agy"
-
-def test_backend_env_claude(monkeypatch):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "claude")
-    assert cb.cli_backend_from_env() == "claude"
 
 # ── secret extract keep family ──
 
@@ -418,67 +349,50 @@ def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
 
 # ── trace throat ──
 
-def test_run_backend_empty_tag_is_other_not_prompt_guess(monkeypatch):
-    """公共咽喉 _run_backend_for_config：tag 空时记 other，不从自由 prompt 猜分类。"""
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    monkeypatch.setattr(
-        cb, "_run_codex",
-        lambda prompt, model=None, **kwargs: ("ok", 1),
-    )
-    cb._run_backend_for_config("你扮演被皇帝召见的大臣，回话……", _cli_codex_cfg())
-    assert len(recs) == 1
-    assert recs[0]["tag"] == "other"
 
-def test_run_backend_for_config_traces_every_call(monkeypatch):
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+@pytest.mark.parametrize("tag", ["office_infer", ""])
+def test_run_backend_for_config_traces_every_call(monkeypatch, tmp_path, tag):
+    trace_path = tmp_path / "trace.jsonl"
+    monkeypatch.setattr(cb, "_TRACE_PATH", str(trace_path))
+    monkeypatch.setattr(cb, "_TRACE_DISABLED", False)
     monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, **kwargs: ("外臣", 1))
-    out, attempts = cb._run_backend_for_config("判官名：后金汗", _cli_codex_cfg(), tag="office_infer")
-    assert out == "外臣" and attempts == 1
-    assert len(recs) == 1
-    r = recs[0]
-    assert r["tag"] == "office_infer"
-    assert "后金汗" in r["prompt"] and r["response"] == "外臣"
-    assert r["backend"] == "codex" and r["error"] is None
+    cb._run_backend_for_config("判官名：后金汗", _cli_codex_cfg(), tag=tag)
+    records = [json.loads(line) for line in trace_path.read_text().splitlines()]
+    assert len(records) == 1
+    record = records[0]
+    assert record["tag"] == (tag or "other")
+    assert record["prompt"] == "判官名：后金汗"
+    assert record["response"] == "外臣"
+    assert record["backend"] == "codex" and record["error"] is None
 
-def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
-    """真实 runner 失败后，trace.error 须保留原故障可见诊断（非仅非空）。"""
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+
+def test_run_backend_for_config_traces_on_backend_error(monkeypatch, tmp_path):
+    """真实公共入口失败后，实际 trace 文件保留原故障，而非内部写函数 spy。"""
+    trace_path = tmp_path / "trace.jsonl"
+    monkeypatch.setattr(cb, "_TRACE_PATH", str(trace_path))
+    monkeypatch.setattr(cb, "_TRACE_DISABLED", False)
     injected = RuntimeError("codex 挂了")
 
     def boom(prompt, model=None, **kwargs):
         raise injected
 
     monkeypatch.setattr(cb, "_run_codex", boom)
-    # 官方：ExceptionInfo.value 对象身份
-    # https://docs.pytest.org/en/stable/how-to/assert.html#assertions-about-expected-exceptions
     with pytest.raises(RuntimeError) as ei:
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
     assert ei.value is injected
-    assert len(recs) == 1
-    # 可见诊断须能回溯到原故障来源，不是任意非空串
-    assert recs[0].get("error") == str(injected)
+    record = json.loads(trace_path.read_text())
+    assert record["error"] == str(injected)
 
-def test_office_inference_llm_call_is_traced(monkeypatch):
-    import ming_sim.db as dbmod
-    dbmod._OFFICE_TYPE_LLM_CACHE.clear()
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, **kwargs: ("边镇", 1))
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
-    assert got == "边镇"
-    assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]
+
 
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──
 
 def test_public_cli_support(monkeypatch):
-    for name in ("opencode",):
-        assert not cb.is_supported_cli_runner(name)
-        monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)
-        assert cb.cli_backend_from_env() is None
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import create_chat_model
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "opencode")
+    with pytest.raises(LLMUnavailable):
+        create_chat_model(LLMConfig(api_key="", base_url="", model="m", channel="cli", cli_runner="opencode"))
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_path, runner):
@@ -574,48 +488,31 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
     assert captured["kw"].get("input") in (None, "")  # not stdin
     assert "noise" not in out.lower()
 
-@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
-def test_describe_effective_model_includes_new_runners(runner):
-    from ming_sim.models import LLMConfig
-
-    cfg = LLMConfig(
-        api_key="", base_url="", model="api-fallback", channel="cli",
-        cli_runner=runner, cli_model="live-model",
-    )
-    assert cb.describe_effective_model(cfg) == f"{runner}/live-model"
-
 
 # ── #1256 S2 gate LLM args / config / evidence ──
 
-def test_gate_llm_config_cli_channel():
-    args = SimpleNamespace(channel="cli", runner="codex", model="gpt-5.3-codex-spark", api_key="", base_url="")
-    cfg = cb.gate_llm_config_from_args(args)
-    assert cfg.channel == "cli"
-    assert cfg.cli_runner == "codex" and cfg.cli_model == "gpt-5.3-codex-spark"
-    assert cfg.api_key == "" and cfg.base_url == ""
+@pytest.mark.parametrize("channel,from_env", [("cli", False), ("api", False), ("api", True)])
+def test_gate_llm_config_cli_channel(monkeypatch, channel, from_env):
+    """四闸参数走真实 SDK 构造边界，核对将被调用的通道/模型/凭证。"""
+    from ming_sim.llm_model import create_chat_model
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    for key in ("OPENAI_API_KEY", "MING_SIM_API_KEY", "OPENAI_BASE_URL", "MING_SIM_API_BASE_URL"):
+        monkeypatch.delenv(key, raising=False)
+    if from_env:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
+    args = SimpleNamespace(channel=channel, runner="codex", model="live-model",
+                           api_key="" if from_env or channel == "cli" else "sk-test",
+                           base_url="" if from_env or channel == "cli" else "https://example.test/v1")
+    model = create_chat_model(cb.gate_llm_config_from_args(args))
+    assert model.id == "live-model"
+    if channel == "cli":
+        assert model.backend == "codex"
+        assert model.api_key == "cli-backend"
+    else:
+        assert model.api_key == "sk-test"
+        assert model.base_url == "https://example.test/v1"
 
-def test_gate_llm_config_api_from_args_not_persisted_shape(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("MING_SIM_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("MING_SIM_API_BASE_URL", raising=False)
-    args = SimpleNamespace(
-        channel="api", runner="", model="deepseek-v4-flash",
-        api_key="sk-test", base_url="https://opencode.ai/zen/v1",
-    )
-    cfg = cb.gate_llm_config_from_args(args)
-    assert cfg.channel == "api"
-    assert cfg.model == "deepseek-v4-flash"
-    assert cfg.api_key == "sk-test"
-    assert cfg.base_url == "https://opencode.ai/zen/v1"
-    assert cfg.cli_runner == ""  # api 不写 runner
-
-def test_gate_llm_config_api_from_env(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
-    args = SimpleNamespace(channel="api", runner="", model="m", api_key="", base_url="")
-    cfg = cb.gate_llm_config_from_args(args)
-    assert cfg.api_key == "sk-env" and cfg.base_url == "https://example.test/v1"
 
 def test_gate_llm_config_cli_requires_runner():
     args = SimpleNamespace(channel="cli", runner="", model="m", api_key="", base_url="")
@@ -634,23 +531,6 @@ def test_gate_llm_config_api_requires_key_and_url(monkeypatch):
     with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
 
-def test_gate_evidence_config_honest_cli_and_api():
-    cli_args = SimpleNamespace(channel="cli", runner="claude", model="claude-opus-4-8")
-    cli_cfg = cb.gate_llm_config_from_args(cli_args)
-    cli_block = cb.gate_evidence_config(cli_args, cli_cfg)
-    assert cli_block["channel"] == "cli"
-    assert cli_block["runner"] == "claude"
-    assert cli_block["model"] == "claude-opus-4-8"
-
-    api_args = SimpleNamespace(
-        channel="api", runner="codex", model="deepseek-v4-flash",
-        api_key="sk", base_url="https://opencode.ai/zen/v1",
-    )
-    api_cfg = cb.gate_llm_config_from_args(api_args)
-    api_block = cb.gate_evidence_config(api_args, api_cfg)
-    assert api_block["channel"] == "api"
-    assert api_block["runner"] == ""  # api 如实不挂 cli runner 名
-    assert api_block["model"] == "deepseek-v4-flash"
 
 def test_add_gate_llm_args_uses_gate_cli_runners():
     import argparse
