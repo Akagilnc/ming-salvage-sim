@@ -7,7 +7,6 @@ GameDB 持有 self.content（GameContent），seed 类方法从中读人物/地�
 from __future__ import annotations
 
 import contextlib
-from dataclasses import replace
 import json
 import logging
 import math
@@ -7488,10 +7487,7 @@ class GameDB:
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
         """召对聊天单条消息落库（chat_messages）。
 
-        #976 不变式：分类落定前，**任何**召对行（不分 role）不得进入共享
-        ``character_knowledge_sources``。此处只 insert + hold；投轨唯一出口是
-        ``release_held_audience_knowledge``（分类后 / 月末）。续聊读
-        ``chat_messages`` 本表，不依赖共享投影即时可见。
+        正文只存本表；分类只更新 knowledge_status，不复制知识正文。
 
         Empty ``minister_name`` is allowed for non-audience bookkeeping rows but
         cannot be projected (release parks them as withheld — see N2).
@@ -7546,14 +7542,6 @@ class GameDB:
             self.conn.executemany(
                 "DELETE FROM chat_messages WHERE id = ?",
                 [(mid,) for mid in ids],
-            )
-            self.conn.executemany(
-                "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                [(f"chat_message:{mid}",) for mid in ids],
-            )
-            self.conn.executemany(
-                "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                [(f"chat_message:{mid}",) for mid in ids],
             )
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
@@ -8109,15 +8097,6 @@ class GameDB:
                 self.conn.execute(
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
-                )
-                knowledge_source_ids = [f"chat_message:{message_id}" for message_id in message_ids]
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
-                )
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
                 )
             self.conn.execute(
                 "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
@@ -8692,15 +8671,6 @@ class GameDB:
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
                 )
-                knowledge_source_ids = [f"chat_message:{message_id}" for message_id in message_ids]
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
-                )
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
-                )
             self.conn.execute(
                 """
                 UPDATE chat_turns
@@ -8765,13 +8735,6 @@ class GameDB:
                 sanitize_sqlite_text(str(title or "")),
             ),
         )
-        # Publish only the public counterpart; the private monthly report
-        # and source-scoped facts remain in their own ledgers.
-        if public_report:
-            self.record_public_knowledge_event(
-                state, "邸报", sanitize_sqlite_text(public_report),
-                source_id=f"turn_report:{state.turn}:public", commit=commit,
-            )
         if commit:
             self.conn.commit()
 
@@ -11485,7 +11448,6 @@ class GameDB:
         return triggered
 
 
-
     @staticmethod
     def _grant_allocation_is_monthly(payload: Optional[Dict[str, object]]) -> bool:
         return str((payload or {}).get("cadence") or "").strip() == "每月"
@@ -12309,11 +12271,6 @@ class GameDB:
                     target_kind=canonical_target_kind, target_id=canonical_target_id,
                     origin_ref=f"dossier:{dossier_id}", commit=False,
                 )
-        if roster and action != "secret_order":
-            self.register_character_knowledge_source(
-                state, roster, "assignment", "旨意案卷", text,
-                source_id=f"decree_dossier:{dossier_id}", commit=False,
-            )
         self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         # 拒收镜像归外层 RejectionCollector owner（0150-D2；本核不自建不自镜像）。
         return dossier_id
@@ -12645,17 +12602,6 @@ class GameDB:
                     int(dossier_id),
                 ),
             )
-            if state is not None and str(dossier.get("action_type") or "") != "secret_order":
-                for item in added:
-                    identity = ":".join(str(item.get(key) or "-") for key in (
-                        "character_id", "tier", "role", "delegator_id",
-                    ))
-                    self.register_character_knowledge_source(
-                        state, [item], "assignment", "旨意案卷追加参与",
-                        str(dossier.get("decree_text") or ""),
-                        source_id=f"dossier:{int(dossier_id)}:participant:{identity}",
-                        commit=False,
-                    )
         self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         return added
 
@@ -16025,19 +15971,6 @@ class GameDB:
         # 镜像归外层 collector owner（0150-D2；本方法不自建不自镜像）。
         return applied
 
-    @staticmethod
-    def _state_for_turn(state: GameState, turn: int) -> GameState:
-        """按 turn 回推当时的 year/period；metrics 共享只读。"""
-        delta = int(state.turn) - int(turn)
-        year = int(state.year)
-        period = int(state.period)
-        for _ in range(max(0, delta)):
-            period -= 1
-            if period < 1:
-                period = 12
-                year -= 1
-        return replace(state, year=year, period=period, turn=int(turn))
-
     def _commit_conversational_draft(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, directive_status: str = "draft",
@@ -18152,15 +18085,6 @@ class GameDB:
         self.affairs.bind_from_origin_ref("issues", issue_id, origin_ref)
         if commit:
             self.conn.commit()
-        self.register_character_knowledge_source(
-            state,
-            participant_roster,
-            "assignment",
-            title,
-            stage_text,
-            f"issue:{int(cur.lastrowid)}",
-            commit=commit,
-        )
         return int(cur.lastrowid)
 
     def insert_issue_with_affair_declaration(
@@ -18982,15 +18906,13 @@ class GameDB:
     def _character_knowledge_events(self, character_name: str) -> List[Dict[str, object]]:
         rows = self.conn.execute(
             "SELECT turn, year, period, kind, title, body, source_id "
-            "FROM character_knowledge_events WHERE character_name=? ORDER BY turn, id",
-            (str(character_name or ""),),
-        ).fetchall()
+            "FROM character_knowledge_events WHERE character_name='' ORDER BY turn, id",
+        ).fetchall() if not character_name else []
         result = []
         for row in rows:
             item = {"turn": int(row["turn"]), "year": int(row["year"]), "period": int(row["period"]),
                     "kind": row["kind"], "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
             result.append(item)
-        known_sources = {str(item["source_id"]) for item in result}
         # #883 contract: this is the sole private read seam for secret orders.
         # Briefs deliberately do not carry a shared source id and therefore
         # cannot be materialized into gazettes or public events.
@@ -19001,26 +18923,25 @@ class GameDB:
                 (str(character_name),),
             ).fetchall():
                 source_id = f"secret_order_brief:{int(row['order_id'])}"
-                if source_id in known_sources:
-                    continue
                 result.append({
                     "turn": int(row["turn"]), "year": int(row["year"]),
                     "period": int(row["period"]), "kind": "secret_order_brief",
                     "title": row["title"], "body": row["body"], "source_id": source_id,
                 })
-                known_sources.add(source_id)
         for row in self.conn.execute(
             "SELECT turn, year, period, kind, title, body, source_id, participant_roster "
             "FROM character_knowledge_sources ORDER BY turn, id"
         ).fetchall():
             names = participant_roster_names(row["participant_roster"])
-            if str(row["source_id"]) in known_sources or str(character_name) not in names:
+            if row["kind"] == "public" or not names:
+                if character_name:
+                    continue
+            elif str(character_name) not in names:
                 continue
             item = {"turn": int(row["turn"]), "year": int(row["year"]),
                     "period": int(row["period"]), "kind": row["kind"],
                     "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
             result.append(item)
-            known_sources.add(str(row["source_id"]))
         # Durable records are discovered by their participant_roster column,
         # not by record kind.  This keeps a new producer from needing a reader
         # branch (or a second adapter call) merely to become knowable.
@@ -19029,9 +18950,7 @@ class GameDB:
             selected = {name: name for name in columns}
             id_expr = selected.get("id", "rowid")
             source_expr = selected.get("source_id")
-            # Legacy tables without source_id retain the conventional singular
-            # table prefix (issues -> issue); newer records should persist the
-            # explicit source_id in their own table.
+            # Tables without source_id use their own record identity.
             fallback_prefix = table[:-1] if table.endswith("s") else table
             source_sql = source_expr if source_expr else f"'{fallback_prefix}:' || {id_expr}"
             turn_expr = selected.get("turn") or selected.get("origin_turn") or selected.get("created_turn") or "0"
@@ -19049,8 +18968,6 @@ class GameDB:
             )
             for row in self.conn.execute(query).fetchall():
                 source_id = str(row["source_id"])
-                if source_id in known_sources:
-                    continue
                 names = participant_roster_names(row["participant_roster"])
                 if str(character_name) not in names:
                     continue
@@ -19060,7 +18977,6 @@ class GameDB:
                     "kind": row["kind"] or "assignment", "title": row["title"],
                     "body": row["body"] or "", "source_id": source_id,
                 })
-                known_sources.add(source_id)
         return result
 
     def _participant_roster_tables(self) -> List[tuple[str, set[str]]]:
@@ -19072,7 +18988,7 @@ class GameDB:
         result: List[tuple[str, set[str]]] = []
         for row in tables:
             table = str(row["name"])
-            if table in {"character_knowledge_sources", "decree_dossiers"}:
+            if table in {"character_knowledge_sources", "issues"}:
                 continue
             columns = {
                 str(column["name"])
@@ -19084,71 +19000,6 @@ class GameDB:
                 result.append((table, columns))
         return result
 
-
-    def record_participation_record(
-        self, state: GameState, record: Mapping[str, object], *, kind: str,
-        source_id: str = "",
-        commit: bool = True,
-    ) -> None:
-        """Adapt any durable record carrying participants into the knowledge ledger."""
-        participants: List[str] = []
-        roster = record.get("participant_roster")
-        if isinstance(roster, (list, tuple)):
-            for item in roster:
-                if isinstance(item, Mapping):
-                    name = item.get("character_id") or item.get("name")
-                    if name:
-                        participants.append(str(name))
-        for key in ("participants", "participant_names", "actors"):
-            value = record.get(key)
-            if isinstance(value, str):
-                participants.append(value)
-            elif isinstance(value, Iterable):
-                for item in value:
-                    if isinstance(item, Mapping):
-                        name = item.get("character_id") or item.get("name")
-                        if name:
-                            participants.append(str(name))
-                    else:
-                        participants.append(str(item))
-        for key in ("assignee", "minister_name", "character_name", "actor"):
-            value = record.get(key)
-            if value:
-                participants.append(str(value))
-        roster = [{"character_id": name} for name in dict.fromkeys(participants) if name]
-        self.register_character_knowledge_source(
-            state, roster, kind, str(record.get("title") or kind),
-            str(record.get("body") or record.get("content") or ""),
-            source_id or str(record.get("source_id") or ""),
-            commit=commit,
-        )
-        self.record_character_participation(
-            state, participants, kind, str(record.get("title") or kind),
-            str(record.get("body") or record.get("content") or ""),
-            source_id or str(record.get("source_id") or ""), commit=commit,
-        )
-
-    @staticmethod
-    def _is_audience_chat_shared_channel(kind: str = "", source_id: str = "") -> bool:
-        """召对 chat → shared-ledger channel (#883/#976)."""
-        return str(kind or "") == "audience" or str(source_id or "").startswith("chat_message:")
-
-    def _delete_shared_knowledge_source_ids(
-        self, source_ids: Iterable[str], *, commit: bool = True,
-    ) -> None:
-        """Delete shared ledger rows by source_id (events + sources)."""
-        ids = list(dict.fromkeys(str(sid) for sid in source_ids if str(sid or "").strip()))
-        if not ids:
-            return
-        for sid in ids:
-            self.conn.execute(
-                "DELETE FROM character_knowledge_events WHERE source_id = ?", (sid,),
-            )
-            self.conn.execute(
-                "DELETE FROM character_knowledge_sources WHERE source_id = ?", (sid,),
-            )
-        if commit:
-            self.conn.commit()
 
     def _coerce_positive_message_ids(
         self, message_ids: Optional[Iterable[Any]] = None,
@@ -19264,9 +19115,7 @@ class GameDB:
         lives (speaker vs assignee, 跨人承办).  Confirmation user lines and
         pure-public same-window users are not guessed via (assignee, role=user).
 
-        Also re-withholds already-projected (released/private) pinned rows and
-        deletes any shared knowledge keyed by those source ids (id-based
-        cleanup if anything leaked before classification).
+        Already released pinned messages become withheld in the original ledger.
         """
         pins = self._coerce_positive_message_ids(origin_chat_message_ids)
         if not pins:
@@ -19279,53 +19128,14 @@ class GameDB:
             pins,
         ).fetchall()
         live_ids = [int(row["id"]) for row in rows]
-        source_ids: List[str] = []
         for mid in live_ids:
             self.conn.execute(
                 "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
                 (mid,),
             )
-            source_ids.append(f"chat_message:{mid}")
-        self._delete_shared_knowledge_source_ids(source_ids, commit=False)
         if commit:
             self.conn.commit()
         return live_ids
-
-    def _project_audience_chat_message(
-        self,
-        state: GameState,
-        *,
-        message_id: int,
-        minister_name: str,
-        content: str,
-        origin_turn: Optional[int] = None,
-        commit: bool = False,
-    ) -> str:
-        """Single projection seam for one held audience row (#976 DRY).
-
-        Stamps knowledge with the message's original ``origin_turn`` (not the
-        release-time state.turn).  Only message provenance decides the rail:
-        a non-secret audience line is public even when its speaker separately
-        holds an active secret order.
-        """
-        source_id = f"chat_message:{int(message_id)}"
-        minister = str(minister_name or "").strip()
-        body = str(content or "")
-        proj_turn = int(origin_turn if origin_turn is not None else state.turn)
-        proj_state = state if proj_turn == int(state.turn) else self._state_for_turn(state, proj_turn)
-        self.record_participation_record(
-            proj_state,
-            {"participants": [minister], "title": "召对", "body": body},
-            kind="audience", source_id=source_id, commit=False,
-        )
-        status = "released"
-        self.conn.execute(
-            "UPDATE chat_messages SET knowledge_status=? WHERE id=?",
-            (status, int(message_id)),
-        )
-        if commit:
-            self.conn.commit()
-        return status
 
     def release_held_audience_knowledge(
         self,
@@ -19335,15 +19145,9 @@ class GameDB:
         exclude_message_ids: Optional[Iterable[int]] = None,
         commit: bool = True,
     ) -> int:
-        """唯一投轨出口：held → shared 或 private（#976）。
+        """Update original message visibility after classification or settlement.
 
-        分类后（scoped，仅接令者/口谕 speaker）与月末 settle（全局）调用。
-        withheld 永不放行。接令者 active brief 时只进私有事件轨，不进共享源。
-
-        Message-level provenance: rows whose id is a registered secret-origin
-        pin (or explicitly excluded) are **not** projected — they are parked as
-        withheld so create(A) cannot smuggle B's yet-unclassified oral line into
-        the shared ledger via unfiltered global release.
+        Secret-origin pins stay held or withheld; no prose is copied.
         """
         name_filter = str(minister_name or "").strip()
         name_set = {
@@ -19357,19 +19161,18 @@ class GameDB:
         if name_set:
             placeholders = ",".join("?" for _ in name_set)
             rows = self.conn.execute(
-                f"SELECT id, minister_name, turn, content FROM chat_messages "
+                f"SELECT id, minister_name FROM chat_messages "
                 f"WHERE knowledge_status='held' AND minister_name IN ({placeholders}) "
                 f"ORDER BY id",
                 tuple(sorted(name_set)),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT id, minister_name, turn, content FROM chat_messages "
+                "SELECT id, minister_name FROM chat_messages "
                 "WHERE knowledge_status='held' ORDER BY id",
             ).fetchall()
         if not rows:
             return 0
-        state = self.load_state()
         released = 0
         for row in rows:
             mid = int(row["id"])
@@ -19384,8 +19187,6 @@ class GameDB:
                     )
                 continue
             minister = str(row["minister_name"] or "").strip()
-            content = str(row["content"] or "")
-            origin_turn = int(row["turn"] or state.turn)
             if not minister:
                 # N2: empty minister_name cannot be projected; park as withheld
                 # so the row does not remain stuck in held forever.
@@ -19394,9 +19195,9 @@ class GameDB:
                     (mid,),
                 )
                 continue
-            self._project_audience_chat_message(
-                state, message_id=mid, minister_name=minister, content=content,
-                origin_turn=origin_turn, commit=False,
+            self.conn.execute(
+                "UPDATE chat_messages SET knowledge_status='released' WHERE id=?",
+                (mid,),
             )
             released += 1
         if commit:
@@ -19494,14 +19295,10 @@ class GameDB:
         # #883: secret_order shape never becomes a participation event.
         if kind_text == "secret_order" or is_secret_order_origin(source_text):
             return
-        source_id = source_id or f"{kind}:{state.turn}:{title}"
-        for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
-            self.conn.execute(
-                "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id) VALUES (?,?,?,?,?,?,?,?)",
-                (state.turn, state.year, state.period, name, kind, title, body, source_id),
-            )
-        if commit:
-            self.conn.commit()
+        self.register_character_knowledge_source(
+            state, [{"character_id": name} for name in dict.fromkeys(participants)],
+            kind, title, body, source_id, commit=commit,
+        )
 
     def record_public_knowledge_event(
         self,

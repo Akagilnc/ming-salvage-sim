@@ -200,11 +200,6 @@ def test_dynamic_targets_are_roleless_deduplicated_without_participant_roles(gam
     assert json.loads(row["participants"]) == []
     assert json.loads(row["participant_roster"]) == []
     assert json.loads(row["target_roster"]) == [owner]
-    knowledge = db.conn.execute(
-        "SELECT participant_roster FROM character_knowledge_sources WHERE source_id=?",
-        (f"issue:{result[1]['issue_id']}",),
-    ).fetchone()
-    assert json.loads(knowledge["participant_roster"]) == []
 
 
 def test_dynamic_apply_deduplicates_same_candidate_within_input_snapshot(game):

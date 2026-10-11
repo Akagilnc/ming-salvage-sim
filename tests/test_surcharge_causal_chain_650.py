@@ -220,10 +220,6 @@ def test_repeated_delta_apply_does_not_consume_levy_ledger(game):
     assert _pop(db, "流民", "shaanxi") == before
 
 
-
-
-
-
 # ── AC1 后半：明选有明账——加派基线折入三饷底座（钱真被征上来）───────────────
 
 def test_levy_pass_folds_jiapai_into_sanxiang_targets(game):
@@ -246,7 +242,6 @@ def test_levy_pass_folds_jiapai_into_sanxiang_targets(game):
 
 
 # ── AC2：结算按账入池，口径确定性可断言 ───────────────────────────────────────
-
 
 
 def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
@@ -327,8 +322,6 @@ def test_zero_base_province_gets_no_transfer(game):
     assert _pop(db, "流民", "henan") == pool_before
 
 
-
-
 # ── 持久累积账损坏须 fail-loud，月效来源不得伪归最后一道旨 ───────────────────
 
 @pytest.mark.parametrize("corruption", ["bad_json", "bad_base", "missing_pool"])
@@ -354,21 +347,10 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
         _settle_month(state, db, {}, before_turn=state.turn, content=content, monkeypatch=monkeypatch)
 
 
-
-
 # ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
 
-def _gazette_public_source_present(db, state, name, turn) -> bool:
-    """公开读链是否有 turn_report:<turn>:public 来源行（身份，不取 body）。"""
-    source_id = f"turn_report:{turn}:public"
-    return any(
-        str(item.get("source_id") or "") == source_id
-        for item in db.get_character_knowledge(state, name)["public_events"]
-    )
-
-
 def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it(game, monkeypatch):
-    """自由邸报按独立公开版本入读链；钉 turn 行与公开来源身份，不锁正文。"""
+    """自由邸报在原归档表持久化，不锁正文或知识镜像。"""
     db, state, content = game
     first_turn = state.turn
     first_body = "陕西加派月报。"
@@ -379,7 +361,6 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert db.conn.execute(
         "SELECT turn FROM turn_reports WHERE turn=?", (first_turn,)
     ).fetchone() is not None
-    assert _gazette_public_source_present(db, state, "温体仁", first_turn)
 
     free_body = "陕西流民渐起，关中贼势暗流潜滋。"
     second_turn = state.turn
@@ -391,8 +372,6 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert db.conn.execute(
         "SELECT turn FROM turn_reports WHERE turn=?", (second_turn,)
     ).fetchone() is not None
-    assert _gazette_public_source_present(db, state, "温体仁", second_turn)
-
 
 
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──

@@ -761,7 +761,6 @@ def _secret_order_memorials(order: Any) -> list[str]:
     return texts
 
 
-
 def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any, *, rel: str | None = None) -> str | None:
     """Directory copy of the minister's active secret-order reminder.
 
@@ -1072,26 +1071,18 @@ def _omit_secret_order_audience(entries: Sequence[dict], secret_turn_ids: set[in
     ]
 
 
-def _is_gazette_public_event(item: dict) -> bool:
-    """Turn-report gazette rows have their own directory carrier; exclude from 公开说法."""
-    source_id = str(item.get("source_id") or "")
-    return source_id.startswith("turn_report:") and source_id.endswith(":public")
-
-
 def _write_public_by_month(
     tmp: Path, public_events: list, *, base: str = _PUBLIC_DIR,
 ) -> list[str]:
     """公开说法按月分文件（#1830 既有形态，人物目录／场景人物子树／推演者目录共用）。
 
-    邸报有独立目录载体，不在此再复制同一份 turn_report。``base`` 是目录内
+    邸报直接读归档表，使用独立目录载体。``base`` 是目录内
     相对前缀——场景人物私有子树把同一份材料写在自己名下，准入与人读呈现
     仍走这一个函数（#1830 共用读侧契约）。
     """
     index: list[str] = []
     public_by_month: dict[tuple[int, int], list[str]] = {}
     for item in public_events or []:
-        if _is_gazette_public_event(item):
-            continue
         year = int(item.get("year") or 0)
         period = int(item.get("period") or 0)
         # #1812 P6：title/body 是自由正文，判空只用局部 stripped 副本，写出用原文。
@@ -1122,7 +1113,7 @@ def _write_character_public_layer(
     )
     index.extend(_write_gazette_index(
         tmp,
-        _with_archived_gazette_titles(_character_gazette_rows(public_events), db),
+        db.list_turn_reports(),
         prefix=f"{base}/{_CHARACTER_GAZETTE_DIR}" if base else _CHARACTER_GAZETTE_DIR,
     ))
     return index
@@ -1171,46 +1162,6 @@ def prepare_character_materials(
         _spoken_this_scene(db, character),
     )
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
-
-
-def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, object]]:
-    """Person gazette rows come only from that person's typed public projection.
-
-    Raw ``turn_reports`` aggregates are not an authorization boundary (#883 / #1832).
-    """
-    rows: list[dict[str, object]] = []
-    for item in public_events or []:
-        if not _is_gazette_public_event(item):
-            continue
-        body = str(item.get("body") or "")
-        if not body.strip():
-            continue
-        rows.append({
-            "year": int(item.get("year") or 0),
-            "period": int(item.get("period") or 0),
-            "turn": int(item.get("turn") or 0),
-            "body": body,
-        })
-    return rows
-
-
-def _with_archived_gazette_titles(
-    rows: Sequence[dict[str, object]], db: Any,
-) -> list[dict[str, object]]:
-    """标题只取 turn_reports 已入档字段。缺标题留空，不读正文。"""
-    archived: dict[int, str] = {}
-    for item in db.list_turn_reports():
-        archived[int(item.get("turn") or 0)] = str(item.get("title") or "")
-    stamped: list[dict[str, object]] = []
-    for row in rows:
-        current = str(row.get("title") or "")
-        if current.strip():
-            stamped.append(row)
-            continue
-        copy = dict(row)
-        copy["title"] = archived.get(int(row.get("turn") or 0), "")
-        stamped.append(copy)
-    return stamped
 
 
 def _gazette_index_line(rel: str, year: int, period: int, title: str) -> str:
@@ -1731,9 +1682,7 @@ def _write_world_tree(
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
         tmp,
-        _with_archived_gazette_titles(
-            db.list_turn_reports(), db,
-        ),
+        db.list_turn_reports(),
         prefix=_WORLD_GAZETTE_DIR,
     ))
 
@@ -2268,7 +2217,6 @@ def prepare_scene_materials(
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
 
 
-
 def actual_progress_notes(db: Any, dossier_id: int) -> list[dict[str, object]]:
     """实况轨原文读投影。未提供正文的空串不算一行；显式正文（含空白）原样。"""
     if not hasattr(db, "list_dossier_actual_progress"):
@@ -2281,8 +2229,6 @@ def actual_progress_notes(db: Any, dossier_id: int) -> list[dict[str, object]]:
             continue
         notes.append({"turn": int(row.get("turn") or 0), "note": note})
     return notes
-
-
 
 
 def _write_secret_actual_note_files(tmp: Path, db: Any) -> list[str]:
@@ -2302,7 +2248,6 @@ def _write_secret_actual_note_files(tmp: Path, db: Any) -> list[str]:
         _write_text(tmp / rel, body)
         written.append(rel)
     return written
-
 
 
 def prepare_world_materials(
@@ -2414,7 +2359,6 @@ def _inquiry_monthly_report_rels(
     return written
 
 
-
 def inquiry_source_order_id(source_id: object) -> Optional[int]:
     """从见闻 source_id 取出已声明的密令 id。无标记或非十进制则不是查访读轨。"""
     text = str(source_id or "")
@@ -2425,7 +2369,6 @@ def inquiry_source_order_id(source_id: object) -> Optional[int]:
     if not separator or not token.isascii() or not token.isdecimal():
         return None
     return int(token)
-
 
 
 def inquiry_order_source_suffix(order_id: int) -> str:

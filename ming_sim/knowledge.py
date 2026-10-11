@@ -1,9 +1,7 @@
 """Per-character knowledge projection (#489).
 
-The projection is deliberately a read model: durable participation/public-event
-rows are the source of memory, while the office bucket is rebuilt from current
-world state on every read.  That makes a fresh turn useful and keeps restore
-free of a second copy of the world state.
+Personal records and independent public speech are read from their original
+ledgers. Current office accounts are rebuilt from world state on every read.
 """
 
 from __future__ import annotations
@@ -264,15 +262,6 @@ def _role_roster(db: Any, office_type: str, state: Any) -> str:
     return f"{office_type}本职在册：{roster}。"
 
 
-def _knowledge_source_rows(db: Any, upto_turn: int) -> list[Dict[str, object]]:
-    """Read current source records with their durable participant rosters."""
-    return [dict(row) for row in db.conn.execute(
-        "SELECT turn, year, period, kind, title, body, source_id, participant_roster "
-        "FROM character_knowledge_sources WHERE turn <= ? ORDER BY turn, id",
-        (int(upto_turn),),
-    )]
-
-
 def _household_ledger(db: Any, state: Any, character_name: str) -> str:
     """户部太仓账：保留密支数额，按 typed 密令关联裁去案情语义。"""
     balance = db.conn.execute(
@@ -428,11 +417,9 @@ def build_character_knowledge(
     # restored save.  The characters table is the durable current-world source.
     office_name, office_type = current_character_office(db, character, character_name)
     world, scope = _world(db, state, character_name, office_name, office_type)
-    events = db._character_knowledge_events(character_name)
+    events = db._character_knowledge_events(character_name) if character_name else []
     public_events = db._character_knowledge_events("")
-    public_events.extend(_knowledge_source_rows(db, int(state.turn)))
-    # Issued directives are public by their nature.  Read them here so old
-    # saves and the normal decree path need no second write hook.
+    # Issued directives are public; read their original records.
     for directive in db.list_issued_directives():
         public_events.append({
             "turn": int(directive["turn"]), "year": int(directive["year"]),
@@ -443,8 +430,7 @@ def build_character_knowledge(
         })
     visible_events = [dict(row) for row in events
                       if knowledge_row_visible_to(db, row, character_name)]
-    # Archives are presentation aggregates. Independently recorded public
-    # versions and roster-scoped sources are the sole knowledge inputs.
+    # Public versions and personal sources have separate carriers.
     visible_public = [dict(row) for row in public_events
                       if knowledge_row_visible_to(db, row, character_name)]
     # Public versions have their own durable records; registered sources are
@@ -470,11 +456,6 @@ def build_character_knowledge(
     public_bodies.extend(public_layer_prose(item) for item in public_saying_events)
     visible_public.extend(public_saying_events)
     world["public"] = "\n".join(public_bodies) or world["public"]
-    known_source_ids = {
-        str(row.get("source_id") or "")
-        for row in [*events, *public_events]
-        if row.get("source_id")
-    }
     visible_issues = []
     for issue in db.list_active_issues():
         if not origin_visible_to(db, issue["origin_ref"], character_name):
@@ -484,11 +465,8 @@ def build_character_knowledge(
             participants = participant_roster_names(issue["participant_roster"])
         except (KeyError, IndexError, TypeError):
             participants = set()
-        # Unassigned issues are public; assigned issues are visible only when
-        # this character entered the durable source projection.
-        if participants:
-            if character_name not in participants or source_id not in known_source_ids:
-                continue
+        if participants and character_name not in participants:
+            continue
         if not knowledge_row_visible_to(
             db,
             {"source_id": source_id, "office_type": office_type, "office": office_name},

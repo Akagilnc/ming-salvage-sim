@@ -151,9 +151,7 @@ def test_participation_survives_restore(game):
         state, [minister.name], "audience", "召对议饷", "议定辽饷缓急"
     )
     stored = db.conn.execute(
-        "SELECT source_id FROM character_knowledge_events "
-        "WHERE character_name=? ORDER BY id DESC LIMIT 1",
-        (minister.name,),
+        "SELECT source_id FROM character_knowledge_sources ORDER BY id DESC LIMIT 1"
     ).fetchone()
     before = db.get_character_knowledge(state, minister.name)
 
@@ -164,42 +162,6 @@ def test_participation_survives_restore(game):
     assert before["events"] == after["events"]
     assert any(item["source_id"] == stored["source_id"] for item in after["events"])
 
-def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
-    """撤回本轮后，已删除聊天消息的见闻源不可继续投影到人物上下文。
-
-    #976: user 行先 hold；放行共享轨后才有见闻投影；撤回仍须清掉已放行源。
-    """
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "内阁")
-    marker = "撤回应一并抹去的召对事项"
-
-    chat_turn_id = db.create_chat_turn(state, minister.name, "undo-knowledge", 0)
-    before = db.capture_chat_rollback_snapshot()
-    message_id = db.append_chat_message(minister.name, state.turn, "user", marker)
-    # Pure-public emperor speech is held until release (no secret classification).
-    db.release_held_audience_knowledge()
-    after = db.capture_chat_rollback_snapshot()
-    db.record_chat_turn_rollback_diffs(chat_turn_id, before, after)
-    db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-
-    source_id = f"chat_message:{message_id}"
-    assert any(
-        item.get("source_id") == source_id
-        for item in db.get_character_knowledge(state, minister.name)["events"]
-    )
-
-    db.undo_chat_turn(chat_turn_id)
-
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_events WHERE source_id=?", (source_id,)
-    ).fetchone()[0] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?", (source_id,)
-    ).fetchone()[0] == 0
-    assert not any(
-        item.get("source_id") == source_id
-        for item in db.get_character_knowledge(state, minister.name)["events"]
-    )
 
 def test_delete_chat_messages_removes_chat_derived_knowledge_from_context(game):
     """删除聊天消息时也不能留下可投影的见闻来源。"""
@@ -257,19 +219,6 @@ def test_public_reports_accumulate_across_turns(game):
     assert "test:turn-one" in public_ids
     assert "test:turn-three" in public_ids
 
-def test_participation_record_adapter_covers_assignment_shape(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    db.record_participation_record(
-        state,
-        {"participants": [minister.name], "title": "清丈差事", "body": "奉命督办"},
-        kind="assignment",
-        source_id="assignment:1",
-    )
-
-    view = db.get_character_knowledge(state, minister.name)
-
-    assert any(item["source_id"] == "assignment:1" for item in view["events"])
 
 def test_issue_write_path_projects_participants_across_restore(game):
     db, state, content = game
@@ -291,8 +240,8 @@ def test_issue_write_path_projects_participants_across_restore(game):
     restored = db.load_state()
     after = db.get_character_knowledge(restored, minister.name)
 
-    assert any(item["source_id"] == f"issue:{issue_id}" for item in before["events"])
-    assert before["events"] == after["events"]
+    assert any(item["source_id"] == f"issue:{issue_id}" for item in before["issues"])
+    assert before["issues"] == after["issues"]
 
 
 def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
@@ -324,37 +273,8 @@ def test_issue_roster_is_structured_and_read_side_projection_needs_no_write_hook
         item.get("character_id") == minister.name and item.get("tier") == "主办"
         for item in roster
     )
-    assert any(item["source_id"] == f"issue:{issue_id}" for item in db.get_character_knowledge(state, minister.name)["events"])
+    assert any(item["source_id"] == f"issue:{issue_id}" for item in db.get_character_knowledge(state, minister.name)["issues"])
 
-def test_participation_adapter_reads_structured_roster_without_fake_names(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    db.record_participation_record(
-        state,
-        {
-            "participant_roster": [{"character_id": minister.name, "tier": "主办", "role": "督办"}],
-            "title": "清丈差事",
-            "body": "奉命督办",
-        },
-        kind="assignment",
-        source_id="assignment:structured",
-    )
-
-    view = db.get_character_knowledge(state, minister.name)
-
-    assert any(item["source_id"] == "assignment:structured" for item in view["events"])
-
-def test_new_participation_source_is_projected_without_read_side_type_branch(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    db.record_participation_record(
-        state,
-        {"participants": [minister.name], "title": "新型案卷", "body": "案卷内容"},
-        kind="new_record_type",
-        source_id="new_record:1",
-    )
-
-    assert any(item["source_id"] == "new_record:1" for item in db.get_character_knowledge(state, minister.name)["events"])
 
 def test_participant_roster_is_discovered_from_persistent_record_without_adapter(game):
     db, state, content = game
@@ -371,7 +291,7 @@ def test_participant_roster_is_discovered_from_persistent_record_without_adapter
 
     view = db.get_character_knowledge(state, minister.name)
 
-    assert any(item["source_id"] == f"issue:{issue_id}" for item in view["events"])
+    assert any(item["source_id"] == f"issue:{issue_id}" for item in view["issues"])
 
 
 def test_participant_roster_is_discovered_from_any_persistent_table(game):
@@ -407,42 +327,6 @@ def test_participant_roster_is_discovered_from_any_persistent_table(game):
 
     assert any(item["source_id"] == "custom:1" for item in view["events"])
 
-def test_appended_dossier_participant_learns_only_on_join_turn_after_restore(game):
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    lead, newcomer = [
-        row["name"] for row in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' LIMIT 2"
-        ).fetchall()
-    ]
-    dossier_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="着核定历书。",
-        target_kind="issue", target_id="calendar-copy",
-        participants=[{"character_id": lead, "tier": "主办"}],
-    )
-    created_turn = state.turn
-    state.turn = 7
-    db.append_decree_dossier_participants(dossier_id, [{
-        "character_id": newcomer, "tier": "协办", "delegator_id": lead,
-    }], state=state)
-
-    assert min(item["turn"] for item in db.get_character_knowledge(
-        state, lead,
-    )["events"] if item["source_id"] == f"decree_dossier:{dossier_id}") == created_turn
-    joined = [item for item in db.get_character_knowledge(state, newcomer)["events"]
-              if item["source_id"].startswith(f"dossier:{dossier_id}:participant:")]
-    assert [item["turn"] for item in joined] == [7]
-
-    path = db.path
-    db.close()
-    reopened = GameDB(path, content=content)
-    try:
-        restored = [item for item in reopened.get_character_knowledge(state, newcomer)["events"]
-                    if item["source_id"].startswith(f"dossier:{dossier_id}:participant:")]
-        assert [item["turn"] for item in restored] == [7]
-    finally:
-        reopened.close()
 
 def test_decree_dossier_participant_reads_frozen_metadata_and_text(game):
     db, state, content = game
@@ -534,12 +418,11 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
     )
 
     outsider_rows = db.get_character_knowledge(state, outsider.name)["public_events"]
-    knower_rows = db.get_character_knowledge(state, knower.name)["public_events"]
+    knower_rows = db.get_character_knowledge(state, knower.name)["events"]
     outsider_ids = {item["source_id"] for item in outsider_rows}
     knower_ids = {item["source_id"] for item in knower_rows}
 
     assert "test:durable-public" in outsider_ids
-    assert "test:durable-public" in knower_ids
     assert "test:durable-secret" not in outsider_ids
     assert "test:durable-secret" in knower_ids
     visible_source = next(
