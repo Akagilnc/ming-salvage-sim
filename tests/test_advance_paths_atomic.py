@@ -163,7 +163,6 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     恢复窗口新增/确认的 draft 会被 mark_directives_issued 连带标 issued，
     但它们未经过本月逐旨核算=幽灵颁布。
     """
-    from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "settling"
 

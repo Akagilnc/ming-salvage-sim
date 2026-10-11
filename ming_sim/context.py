@@ -5,8 +5,7 @@
 
 from __future__ import annotations
 
-import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.assets import load_json_asset

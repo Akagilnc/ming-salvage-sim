@@ -13,7 +13,6 @@ import pytest
 
 from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows
-from tests.conftest import active_ming_character
 
 
 def _rejection_rows(db, turn):

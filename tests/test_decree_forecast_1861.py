@@ -445,6 +445,7 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
 
 def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     db, state, content = game
+    state.turn += 1
     night = open_night(db, state)
     minister = next(iter(content.characters.values()))
     pending_id = db.stage_pending_action(
@@ -457,6 +458,10 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     db.conn.execute(
         "UPDATE pending_actions SET night_approved=1, night_id=? WHERE id=?",
         (int(night["id"]), pending_id),
+    )
+    stage_declaration(
+        db, decree_ref=pending_action_decree_ref(pending_id, 1),
+        turn=int(state.turn) - 1, declaration={}, verdict={"decision": "rejected"},
     )
     db.conn.commit()
 
@@ -480,7 +485,7 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
 
     staged = db.staged_declarations.staged_for(
-        pending_action_decree_ref(pending_id, 1),
+        pending_action_decree_ref(pending_id, 1), turn=int(state.turn),
     )
     assert staged
     assert staged[0].status == "staged"
@@ -518,11 +523,11 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
             "held_turn=?, rescript_pending=0 WHERE id=?",
             (state.turn - 1, dossier_id),
         )
-        stage_declaration(
-            db, decree_ref=pending_action_decree_ref(pending_id, 1),
-            declaration={}, turn=int(state.turn) - 1,
-            verdict={"decision": "rejected"},
-        )
+        for ref in (pending_action_decree_ref(pending_id, 1), held_dossier_decree_ref(dossier_id)):
+            stage_declaration(
+                db, decree_ref=ref, declaration={}, turn=int(state.turn) - 1,
+                verdict={"decision": "rejected"},
+            )
         ids.append(dossier_id)
     db.conn.commit()
     open_night(db, state)
@@ -557,7 +562,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)
         stale = db.staged_declarations.staged_for(stale_ref)
-        fresh = db.staged_declarations.staged_for(held_ref)
+        fresh = db.staged_declarations.staged_for(held_ref, turn=int(state.turn))
         assert stale[0].verdict["decision"] == "rejected"
         assert len(fresh) == 1 and fresh[0].status == "staged"
         assert fresh[0].verdict["decision"] == "promulgated"

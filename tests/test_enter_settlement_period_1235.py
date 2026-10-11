@@ -322,7 +322,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
     )
 
 
-def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, monkeypatch):
+def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game):
     """#1235 r2 p2：并发代清洞——A 已 capture 持 _write_gate；B accept 幂等 no-op 后抢锁 409，
     其 finally 以 non-blocking exit 撞锁 skip，不得代清 A 的快照（须立即返回不堵）。
 

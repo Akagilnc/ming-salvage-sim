@@ -267,7 +267,3 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
     assert writeoff is not None and owner_log is not None
     assert writeoff["id"] < owner_log["id"]
-
-
-def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
-    """DB adapter 事实契约（apply_army_deltas）：mutiny_count≥3 拒收回明。"""

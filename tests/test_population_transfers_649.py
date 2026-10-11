@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import pytest
 
-from ming_sim.db import POPULATION_UNIT_PERSONS
 from ming_sim.issues import apply_score_extraction
 from tests.readback_helpers import class_population
 from tests.readback_helpers import global_population as _global_population

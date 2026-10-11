@@ -23,7 +23,7 @@ import pytest
 from ming_sim.audience_translation import list_pending_translations
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.session import GameSession, TurnPhase
+from ming_sim.session import TurnPhase
 from tests.test_audience_extraction_501 import (
     _minister,
     _open_night_with_persisted_reply,
@@ -341,7 +341,7 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
 
 def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monkeypatch):
     """#1353 fold-in r8：外层已持闸时 resolve 不得再抢同一把非重入锁。"""
-    from ming_sim.session import GameSession, TurnPhase
+    from ming_sim.session import TurnPhase
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))

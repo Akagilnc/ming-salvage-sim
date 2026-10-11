@@ -15,7 +15,7 @@ import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-from ming_sim.session import GameSession, TurnPhase
+from ming_sim.session import TurnPhase
 from ming_sim import audience_night as an
 from tests.month_chain_helpers import make_light_session, canned_full_settlement
 from tests.conftest import stub_scene_agent
@@ -57,7 +57,7 @@ def _active_character(content):
     return next(c for c in content.characters.values() if c.status == "active")
 
 
-def _cli_minister_session(game, monkeypatch, *, scene_chat=None):
+def _cli_minister_session(game, *, scene_chat=None):
     """真实 GameDB + 开夜；成功只替模型出口，失败案可注入 scene 异常。"""
     db, state, content = game
     character = _active_character(content)
@@ -142,7 +142,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(game, monk
         seen_before_scene.append(_chat_rows(sess.db, character.name))
         return SimpleNamespace(content="臣领密旨，当令东厂暗中护送赈银。", tools=[])
 
-    sess, character, db, _state = _cli_minister_session(game, monkeypatch)
+    sess, character, db, _state = _cli_minister_session(game)
     agent = SimpleNamespace(run=scene_chat)
     stub_scene_agent(monkeypatch, agent)
     question = "交给洪承畴督办陕西赈灾，东厂暗助护赈银。"
@@ -162,7 +162,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(gam
 
     chat_error = RuntimeError("LLM down")
     sess, character, db, state = _cli_minister_session(
-        game, monkeypatch,
+        game,
         scene_chat=lambda *a, **k: (_ for _ in ()).throw(chat_error),
     )
     prior = "前一轮召对内容"
@@ -182,7 +182,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
     """Ctrl-C 中断中的 CLI 召对也不能留下 user-only 半轮（真实 fail_chat_turn）。"""
 
     sess, character, db, state = _cli_minister_session(
-        game, monkeypatch,
+        game,
         scene_chat=lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
     prior = "前一轮召对内容"
@@ -203,7 +203,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(game, m
     rollback_error = RuntimeError("rollback failed")
 
     sess, character, db, _state = _cli_minister_session(
-        game, monkeypatch,
+        game,
         scene_chat=lambda *a, **k: (_ for _ in ()).throw(chat_error),
     )
 
@@ -227,7 +227,7 @@ def test_terminal_minister_chat_reply_persist_failure_uses_fail_chat_turn(game, 
     fail_calls: list[int] = []
     persist_error = RuntimeError("reply persist failed")
 
-    sess, character, db, _state = _cli_minister_session(game, monkeypatch)
+    sess, character, db, _state = _cli_minister_session(game)
     stub_scene_agent(monkeypatch, SimpleNamespace(content="臣领密旨，当令东厂暗中护送赈银。", tools=[]))
 
     def boom_persist(*_a, **_k):

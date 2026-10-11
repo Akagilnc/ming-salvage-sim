@@ -1977,7 +1977,7 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
 
 
 def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effects(game, monkeypatch):
-    """4a 供料沿邸报作者本月材料读口（含密令来源），不接收代码拼的生效效果清单。"""
+    """4a 供料读取本月原始事实（含密令来源），不接收代码拼的生效效果清单。"""
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
     db, state, content = game
@@ -2090,7 +2090,7 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     monkeypatch.setattr("ming_sim.agents.run_agent_text", model_text)
     config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
     month_chain.run_secret_orders_supply(db, state, config, chain)
-    month_chain.run_gazette_text(db, state, config, chain)
+    month_chain.run_gazette_text(db, state, config)
     feed = feeds["secret_orders_supply"]
     assert "origin_effects" not in feed
     assert "origin_rejections" not in feed
@@ -2129,19 +2129,7 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         for item in (feed.get("eligible_dossiers") or [])
     )
 
-    gazette = feeds["gazette"]
-    assert all(
-        str(row.get("origin_ref") or "") != f"dossier:{dossier_id}"
-        for row in (gazette.get("landed") or [])
-    )
-    assert all(
-        row.get("decree_ref") != f"secret_order:{order_id}"
-        for row in (gazette.get("nominal") or [])
-    )
-    assert all(
-        str((row.get("item") or {}).get("origin_ref") or "") != f"secret_order:{order_id}"
-        for row in (gazette.get("rejections") or [])
-    )
+    assert set(feeds["gazette"]) == {"instruction", "reign_period_label", "due_commitments", "waiting_audience"}
 
 
 def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypatch):

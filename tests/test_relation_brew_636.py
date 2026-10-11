@@ -17,19 +17,15 @@ import json
 
 import httpx
 import sqlite3
-import threading
 
 import pytest
 from openai import APIConnectionError, APITimeoutError
 
 from ming_sim.faction_brew import STANCE_KEY, VIEW_FACTION_STANCE
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
-    build_brew_input,
-    merge_founding_segment,
-    relation_dimension,
 )
 from ming_sim.relations import EMPEROR_NODE
 

@@ -45,7 +45,7 @@ from starlette.concurrency import run_in_threadpool
 from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR, GATE_METRIC_KEYS
 from ming_sim.db import _load_durable_json_list
-from ming_sim.paths import bundled_path, user_data_path, user_data_dir
+from ming_sim.paths import user_data_path, user_data_dir
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,

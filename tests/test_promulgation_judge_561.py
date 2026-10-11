@@ -4,8 +4,6 @@ import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
-from ming_sim.exceptions import LLMContractError
-from ming_sim.models import LLMConfig
 from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict

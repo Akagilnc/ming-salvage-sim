@@ -67,61 +67,19 @@ def run_world_segment_text(
         release_material_tree(prepared.root)
 
 
-def _secret_sourced(db: Any, value: object) -> bool:
-    from ming_sim.knowledge import origin_visible_to
-
-    if isinstance(value, dict):
-        if str(value.get("kind") or "") == "secret_order":
-            return True
-        if value.get("secret_order_id"):
-            return True
-        origin = str(value.get("origin_ref") or value.get("source_id") or "")
-        if not origin_visible_to(db, origin, linked_dossier_id=int(value.get("dossier_id") or 0)):
-            return True
-        orders = value.get("secret_orders")
-        if isinstance(orders, list) and orders:
-            return True
-        return any(_secret_sourced(db, item) for item in value.values())
-    if isinstance(value, list):
-        return any(_secret_sourced(db, item) for item in value)
-    return False
-
-
-def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
-    from ming_sim.knowledge import origin_visible_to
-
-    if not origin_visible_to(db, decree_ref):
-        return True
-    prefix = "pending-action:"
-    if not str(decree_ref).startswith(prefix):
-        return False
-    raw = str(decree_ref)[len(prefix):].split(":", 1)[0]
-    if not raw.isdigit():
-        return False
-    row = db.conn.execute(
-        "SELECT kind FROM pending_actions WHERE id=?", (int(raw),),
-    ).fetchone()
-    return row is not None and str(row["kind"] or "") == "secret_order"
-
-
 def _month_fact_materials(
-    db: Any, state: Any, chain: Dict[str, Any], *, include_secret_sources: bool,
+    db: Any, state: Any, chain: Dict[str, Any],
 ) -> Dict[str, Any]:
     """本月事实材料：名义/预推文、实入、拒收、世界段、请旨答复、月初快照。
 
     材料是事实与原话，不由代码归纳、拼装或投影为「已生效效果」清单。
-    include_secret_sources=False：邸报作者，滤密令来源。
-    include_secret_sources=True：整月密报 run，可读密令来源。
+    整月密报 run 可读密令来源；公开作者只读公开目录。
     """
-    import json
-
-    from ming_sim.knowledge import origin_visible_to
-
     turn = int(state.turn)
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
     rows = db.conn.execute(
-        "SELECT decree_ref, declaration_json, forecast_text, visible_refs_json "
+        "SELECT decree_ref, declaration_json, forecast_text "
         "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
         (turn,),
     ).fetchall()
@@ -139,36 +97,17 @@ def _month_fact_materials(
             raise ValueError(
                 f"settled declaration_json 无效：{decree_ref}"
             ) from exc
-        try:
-            visible = GameDB.parse_engine_payload_json(
-                row["visible_refs_json"],
-                surface=f"settled.visible_refs_json:{decree_ref}",
-            )
-        except ValueError as exc:
-            raise ValueError(
-                f"settled visible_refs_json 无效：{decree_ref}"
-            ) from exc
-        if not include_secret_sources and (
-            _decree_ref_is_secret(db, decree_ref)
-            or _secret_sourced(db, declaration)
-            or _secret_sourced(db, visible)
-        ):
-            continue
         nominal.append({"decree_ref": decree_ref, "declaration": declaration})
         forecast = row["forecast_text"]
         if isinstance(forecast, str) and forecast.strip():
             forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
     for row in db.conn.execute(
-        "SELECT account, delta, category, reason, origin_ref, dossier_id FROM economy_ledger "
+        "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
         "WHERE turn=? ORDER BY id",
         (turn,),
     ):
         origin = str(row["origin_ref"] or "")
-        if not include_secret_sources and not origin_visible_to(
-            db, origin, linked_dossier_id=int(row["dossier_id"] or 0),
-        ):
-            continue
         landed.append({
             "account": row["account"],
             "delta": int(row["delta"]),
@@ -182,18 +121,14 @@ def _month_fact_materials(
     ).fetchone()
     if exists is not None:
         for row in db.conn.execute(
-            "SELECT section, item_json, reason, category, source FROM rejection_reports "
+            "SELECT section, item_json, reason, category FROM rejection_reports "
             "WHERE turn=? ORDER BY id",
             (turn,),
         ):
-            if not include_secret_sources and str(row["source"] or "") == "secret_order":
-                continue
             from ming_sim.db import GameDB
             item = GameDB.parse_engine_payload_json(
                 row["item_json"], surface="rejection_reports.item_json",
             )
-            if not include_secret_sources and _secret_sourced(db, item):
-                continue
             rejections.append({
                 "section": row["section"],
                 "item": item,
@@ -227,11 +162,8 @@ def _month_fact_materials(
     }
 
 
-def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
-    """作者供料：名义、实入、实况、拒收、预推文、世界段、请旨答复、月初快照。
-
-    密令来源的声明、实况与拒收不进这份供料。盘面在推演者目录里，不在这里再抄一份。
-    """
+def _gazette_feed(db: Any, state: Any) -> Dict[str, Any]:
+    """公开目录之外只附日期、可见到期承诺与抵京候见投影。"""
     from ming_sim.audience_night import list_waiting_audience_summons
     from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
@@ -239,7 +171,6 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     from ming_sim.settlement_payload import list_due_commitments
 
     turn = int(state.turn)
-    materials = _month_fact_materials(db, state, chain, include_secret_sources=False)
     due_commitments = [
         item for item in list_due_commitments(db, state)
         if origin_visible_to(db, item["origin_ref"])
@@ -247,7 +178,6 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "instruction": "据已落定的实况写本期邸报。title 由你写，report 是全文。",
         "reign_period_label": reign_period_label(int(state.year), int(state.period)),
-        **materials,
         "due_commitments": due_commitments,
         "waiting_audience": collect_new_arrival_waiting_audience(
             _persisted_transit_arrivals(db, turn),
@@ -293,7 +223,7 @@ def prepare_gazette_author_materials(db: Any, state: Any):
 
 
 def run_gazette_text(
-    db: Any, state: Any, llm_config: Any, chain: Dict[str, Any],
+    db: Any, state: Any, llm_config: Any,
 ) -> tuple[str, str]:
     """批红与全部效果落定后的一次邸报写作。返回作者自写的 (title, report)。"""
     import json
@@ -306,7 +236,7 @@ def run_gazette_text(
     if llm_config is None:
         raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
     prepared = prepare_gazette_author_materials(db, state)
-    message = json.dumps(_gazette_feed(db, state, chain), ensure_ascii=False)
+    message = json.dumps(_gazette_feed(db, state), ensure_ascii=False)
     try:
         agent = create_gazette_author_agent(llm_config, prepared)
         raw = run_agent_text(
@@ -603,7 +533,7 @@ def _run_loaded_month_chain(
             return _pause(db, turn, chain, decree_text, source, "gazette")
 
         def _write_gazette() -> tuple[str, str]:
-            title, report = run_gazette_text(db, state, llm_config, chain)
+            title, report = run_gazette_text(db, state, llm_config)
             db.save_turn_report(state, report, title=title, public_body=report)
             return title, report
 
@@ -1181,7 +1111,7 @@ def _feed_identity_names(feed: Mapping[str, Any]) -> List[str]:
 def build_secret_orders_supply_feed(
     db: Any, state: Any, chain: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """整月密报供料：沿邸报作者本月材料读口，但不滤密令来源；另附密令对象与盘面。
+    """整月密报供料：读取本月原始事实与原话，含密令来源；另附密令对象与盘面。
 
     不拼装「已生效效果」清单，也不另造逐段实际结果账本；专用逐路实况账本已退役（#1900 J18）。
     """
@@ -1207,7 +1137,7 @@ def build_secret_orders_supply_feed(
         item["actual_notes"] = (
             actual_progress_notes(db, int(dossier["id"])) if dossier is not None else []
         )
-    materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
+    materials = _month_fact_materials(db, state, chain)
     return {
         "instruction": (
             "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。"

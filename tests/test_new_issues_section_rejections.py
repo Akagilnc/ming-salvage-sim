@@ -12,7 +12,6 @@ import pytest
 
 import ming_sim.issues as I
 from tests.dossier_test_helpers import promulgated_policy_origin
-from ming_sim.models import Event
 from tests.section_rejection_helpers import game
 
 

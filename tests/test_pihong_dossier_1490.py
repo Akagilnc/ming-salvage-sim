@@ -38,10 +38,10 @@ def _dossier_payload(row):
         return {}
     return loaded if isinstance(loaded, dict) else {}
 
-def _summonable_name(db, content):
+def _summonable_name(db):
     return db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 1").fetchone()[0]
 
-def _658_plant_stalled_deliberation(db, state, content, *, title='议而不决'):
+def _658_plant_stalled_deliberation(db, state, *, title='议而不决'):
     """已落库的无人站台原案，与退役的 deliberate 写核无关。"""
     key = f"rescript_draft:{state.turn}:0"
     did = db.create_decree_dossier(
@@ -56,7 +56,7 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     import ming_sim.decree as decree_mod
     import ming_sim.month_chain as month_chain
     db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='冷场')
+    stalled, _ = _658_plant_stalled_deliberation(db, state, title='冷场')
     stalled_id = int(stalled['id'])
     normal_id = int(db.create_decree_dossier(state, action_type='policy', decree_text='清核河工', target_kind='issue', target_id=f'river-{state.turn}'))
     _fake_settlement_llm(monkeypatch, narrative="预推")
@@ -79,7 +79,7 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
 def test_658_endorsement_provenance_xor(game):
     """#658：背书 provenance 恰为 chat_turn 或 decision_key 之一。"""
     db, state, content = game
-    minister = _summonable_name(db, content)
+    minister = _summonable_name(db)
     did = db.create_decree_dossier(state, action_type='policy', decree_text='试', target_kind='policy', target_id='t')
     chat = db.create_chat_turn(state, minister, '658-xor', 0)
     eid = db.add_dossier_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat)
@@ -98,7 +98,7 @@ def test_658_endorsement_provenance_xor(game):
 def test_658_imperial_push_uses_rescript_original_and_key(game, monkeypatch, historical):
     from tests.month_chain_helpers import make_light_session
     db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content)
+    stalled, _ = _658_plant_stalled_deliberation(db, state)
     did = int(stalled["id"])
     if historical:
         db.conn.execute("UPDATE decree_dossiers SET created_turn=? WHERE id=?", (state.turn - 1, did))
@@ -331,7 +331,7 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
 def test_658_ordinary_edit_does_not_inherit_push_target(game):
     """#658：普通 triad 改草不得继承旧强推 target。"""
     db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='旧强推')
+    stalled, _ = _658_plant_stalled_deliberation(db, state, title='旧强推')
     did = int(stalled['id'])
     dir_id = int(db.add_directive(state, None, '着即强推', 'test-658-edit', dossier_payload={'target_dossier_id': did}))
     db.update_directive_text(dir_id, '着清核河工', dossier_payload={'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'})
@@ -346,9 +346,9 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
         (int(state.turn), 'plant:陕西告饥'),
     )
     db.conn.commit()
-    stalled2, _ = _658_plant_stalled_deliberation(db, state, content, title='改草强推')
+    stalled2, _ = _658_plant_stalled_deliberation(db, state, title='改草强推')
     did2 = int(stalled2['id'])
-    name = _summonable_name(db, content)
+    name = _summonable_name(db)
     cid = int(db.stage_directive_candidate(state.turn, name, payload={'text': '着清核河工原文', 'actor': name, 'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'}))
     db.update_directive_candidate(cid, {'target_dossier_id': did2, 'mode': 'midzhi'})
     staged = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (cid,)).fetchone()['payload_json'])
@@ -365,7 +365,7 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""
     import ming_sim.cli_backend as cli_backend
     db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='混载')
+    stalled, _ = _658_plant_stalled_deliberation(db, state, title='混载')
     did = int(stalled['id'])
     before_dossiers = len(db.list_decree_dossiers())
     before_dirs = db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c']

@@ -53,7 +53,7 @@ def _active_minister(db, content, *, office_type: str | None = None):
     return SimpleNamespace(name=str(row["name"]), office_type=str(row["office_type"] or ""))
 
 
-def _bound_exposure(db, state, monkeypatch):
+def _bound_exposure(db, state):
     army = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()
     executor = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' LIMIT 1"
@@ -148,8 +148,8 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
 @pytest.mark.parametrize("late", [False, True], ids=["open-night", "closed-night"])
 def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch, late):
     db, state, content = game
-    did, actor = _bound_exposure(db, state, monkeypatch)
-    other_did, _ = _bound_exposure(db, state, monkeypatch)
+    did, actor = _bound_exposure(db, state)
+    other_did, _ = _bound_exposure(db, state)
     from ming_sim.due_review import list_due_review_scenes
     exposed = {
         int(str(scene["dossier_id"])) for scene in list_due_review_scenes(db, state)

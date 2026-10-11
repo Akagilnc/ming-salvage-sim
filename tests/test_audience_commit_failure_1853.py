@@ -151,13 +151,10 @@ def test_ineligible_secret_order_is_business_refusal(game, monkeypatch):
     assert item["assignee"] == assignee
     from ming_sim.month_chain import _gazette_feed, _month_fact_materials
 
-    assert not any(
-        row["category"] == "ineligible_power"
-        for row in _gazette_feed(db, state, {})["rejections"]
-    )
+    assert "rejections" not in _gazette_feed(db, state)
     assert any(
         row["category"] == "ineligible_power"
-        for row in _month_fact_materials(db, state, {}, include_secret_sources=True)["rejections"]
+        for row in _month_fact_materials(db, state, {})["rejections"]
     )
     turn = db.conn.execute(
         "SELECT extract_status, error_pack_path FROM chat_turns WHERE id=?", (ctid,),

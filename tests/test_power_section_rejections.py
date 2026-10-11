@@ -10,7 +10,6 @@ except Exception: print [WARN]` 整段吞——连代码异常都被吞掉(违 A
 
 from __future__ import annotations
 
-import json
 
 import pytest
 

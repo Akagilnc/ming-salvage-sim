@@ -12,7 +12,6 @@ from ming_sim.structured_decree import (
     assemble_structured_decree,
 )
 from tests.directive_seed_helpers import seed_manual_draft
-from tests.rescript_test_helpers import sql_rescript_draft
 
 from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     _post_issue_stream,

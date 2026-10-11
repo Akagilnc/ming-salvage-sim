@@ -1,10 +1,6 @@
 import json
 from pathlib import Path
 
-from ming_sim.office_rank import (
-    canonical_office_title,
-    office_rank_band,
-)
 from ming_sim.models import Character
 
 

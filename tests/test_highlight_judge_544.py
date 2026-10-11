@@ -14,14 +14,10 @@ import threading
 import pytest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List
 
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
-from ming_sim.highlight_judge import (
-    DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
-    run_highlight_judge,
-)
+from ming_sim.highlight_judge import run_highlight_judge
 
 
 # ── 单次调用降级（parser 由 run_highlight_judge 真入口覆盖，不另立孤立 parser 钉）──

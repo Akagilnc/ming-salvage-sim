@@ -11,7 +11,6 @@ from __future__ import annotations
 
 
 from ming_sim.db import GameDB
-from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
 from tests.readback_helpers import class_population
 

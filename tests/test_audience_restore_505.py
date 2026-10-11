@@ -22,7 +22,6 @@ import pytest
 from fastapi import HTTPException
 
 import ming_sim.issues as issues_mod
-import web_app
 from ming_sim import audience_night as an
 from tests.conftest import open_hall_turn, stub_scene_agent
 from tests.test_web_audience_night_498 import _FakeAgent

@@ -426,7 +426,7 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
 def _forecast(
     session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
 ) -> None:
-    # 同一 decree_ref（记录号+版本，或留中案卷 id）已有暂存则不再跑模型链。
+    # 同一 decree_ref（记录号+版本，或留中案卷 id）当月已有暂存则不再跑模型链。
     try:
         if session.db.staged_declarations.staged_for(
             str(snapshot["decree_ref"]), turn=int(snapshot["turn"]),
@@ -445,7 +445,7 @@ def _forecast(
             from ming_sim.applier import Provenance, atomic
             from ming_sim.month_chain import _load_chain, _consume_call_failure_for_retry
             with atomic(session.db):
-                if not session.db.staged_declarations.staged_for(ref):
+                if not session.db.staged_declarations.staged_for(ref, turn=int(snapshot["turn"])):
                     stage_declaration(
                         session.db, decree_ref=ref, declaration=declaration,
                         turn=int(snapshot["turn"]), verdict=verdict,
@@ -546,7 +546,7 @@ def schedule_pending_decree_forecast(
     version = int(row["version"] or 1)
     key = ("decree_forecast", action_id, version, nid)
     ref = _current_forecast_ref(session, key)
-    if ref is None or session.db.staged_declarations.staged_for(ref):
+    if ref is None or session.db.staged_declarations.staged_for(ref, turn=int(session.state.turn)):
         return False
     queue = get_session_write_queue(session)
     ticket = queue.claim_if_absent(

@@ -36,7 +36,7 @@ from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse
-from openai.types.chat import ChatCompletion, ChatCompletionMessage, ChatCompletionMessageFunctionToolCall
+from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
 
@@ -54,8 +54,6 @@ from ming_sim.structured_decree import (
     validate_structured_decree_combination,
 )
 from ming_sim.participant_roster import (
-    BARE_INSTITUTION_PARTICIPANT_NAMES as _BARE_INSTITUTION_PARTICIPANT_NAMES,
-    NON_PERSON_PARTICIPANT_NAMES as _NON_PERSON_PARTICIPANT_NAMES,
     is_non_person_participant_name as _is_non_person_participant_name,
 )
 
@@ -2807,20 +2805,7 @@ def resubmit_draft_admission_payload(
         )
     return payload
 
-
-
-
-
-
-
-
-
-
-
-
-def _fake_completion(
-    text: str, model_id: str, tool_calls: list[ChatCompletionMessageFunctionToolCall] | None = None,
-) -> ChatCompletion:
+def _fake_completion(text: str, model_id: str) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
     msg = ChatCompletionMessage(role="assistant", content=text)
     choice = Choice(index=0, message=msg, finish_reason="stop")

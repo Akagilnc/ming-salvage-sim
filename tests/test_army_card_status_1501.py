@@ -12,12 +12,8 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 
 
-import web_app
-from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials
 
 
 _GUANNING_ID = "guanning"
