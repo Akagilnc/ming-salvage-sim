@@ -6,7 +6,7 @@ import pytest
 
 from ming_sim import issues
 from ming_sim.applier import atomic
-from tests.dossier_test_helpers import _cost_events, _sat
+from tests.dossier_test_helpers import _cost_events, _sat, executing_rostered_policy
 
 
 def _dossier(db, state, *, mode="ordinary", roster=None):
@@ -229,11 +229,9 @@ def test_breach_skips_dead_but_records_living_offstage_relations(game):
 
 def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     db, state, _ = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="兴修河渠",
-        target_kind="issue", target_id="river-works",
+    dossier_id = executing_rostered_policy(
+        db, state, token="river-works", decree_text="兴修河渠", roster=[],
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     issue_id = db.insert_issue(
         state, kind="initiative", title="兴修河渠", origin_kind="decree",
         origin_ref=f"dossier:{dossier_id}", cancellable="decree",

@@ -15,6 +15,7 @@ from functools import partial
 
 import pytest
 
+from tests.dossier_test_helpers import executing_staged_policy
 from tests.test_due_review_621 import _insert_staged_commitment as _due_review_commitment
 from ming_sim.due_review import (
     apply_due_review_for_todo,
@@ -46,21 +47,7 @@ from ming_sim.urge_lever import (
 # ── fixtures ──────────────────────────────────────────────────────────
 
 
-def _executing_policy_dossier(db, state, *, token: str = "urge-624", host: str = "倪元璐"):
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        participants=[
-            {"character_id": host, "tier": "主办", "role": "清丈"},
-            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
-        ],
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
+_executing_policy_dossier = partial(executing_staged_policy, token="urge-624")
 
 
 _insert_staged_commitment = partial(_due_review_commitment, title="催办分段之诺")

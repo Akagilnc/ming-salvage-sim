@@ -14,7 +14,7 @@ from ming_sim.materials import list_materials, prepare_character_materials, prep
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, executing_rostered_policy
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 
@@ -146,11 +146,9 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         "UPDATE decree_dossiers SET status='executing', decree_text=? WHERE id=?",
         (_SECRET_DOSSIER_TEXT, secret_did),
     )
-    plain_did = db.create_decree_dossier(
-        state, action_type="policy", decree_text=_PLAIN_DOSSIER_TEXT,
-        target_kind="issue", target_id="plain-dossier-1862",
+    plain_did = executing_rostered_policy(
+        db, state, token="plain-dossier-1862", decree_text=_PLAIN_DOSSIER_TEXT, roster=[],
     )
-    db.apply_dossier_promulgation(state, plain_did, "promulgated")
     for category, reason, origin in (
         (_SECRET_DOSSIER_LEDGER, "密令案卷账", f"dossier:{secret_did}"),
         (_PLAIN_DOSSIER_LEDGER, "普通案卷账", f"dossier:{plain_did}"),

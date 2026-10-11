@@ -1,3 +1,7 @@
+from ming_sim.supervision import SUPERVISION_RELATION
+from tests.readback_helpers import ming_character_name
+
+
 # #1504 typed covert-task contract fixtures (applier-native 万亩 / 实务事功).
 LIAO_PAY_COVERT_TASK = {
     "kind": "核发辽饷",
@@ -145,3 +149,118 @@ def close_issue_with_effect(db, state, title: str, effect: dict, *, content=None
     return apply_issue_tracker_output(db, state, {
         "close_issues": [{"issue_id": issue_id, "reason": "resolved"}],
     }, content=content)
+
+
+def executing_owned_policy(db, state, *, token: str, holder: str = ""):
+    if not holder:
+        holder = ming_character_name(db)
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"清丈差务·{token}",
+        target_kind="issue",
+        target_id=token,
+        executor_kind="character",
+        executor_id=holder,
+        participants=[
+            {"character_id": holder, "tier": "主办", "role": "清丈"},
+        ],
+        payload={"mode": "ordinary", "text": token},
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    return dossier_id, holder
+
+
+def executing_rostered_policy(db, state, *, token: str, roster=None, decree_text=None):
+    """复用信用写端的执行前置，调用方保留真实旨文和责任人名册。"""
+    if roster is None:
+        roster = [
+            {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
+        ]
+    did = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=decree_text if decree_text is not None else f"信用写端·{token}",
+        target_kind="issue",
+        target_id=token,
+        participants=roster,
+    )
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    assert db.get_decree_dossier(did)["status"] == "executing"
+    return did
+
+
+def executing_staged_policy(db, state, *, token: str, host: str = "倪元璐"):
+    return executing_rostered_policy(
+        db, state, token=token, decree_text=f"清丈差务·{token}",
+        roster=[
+            {"character_id": host, "tier": "主办", "role": "清丈"},
+            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
+        ],
+    )
+
+
+def subject_policy_dossier(
+    db, state, *, owner: str, token: str = "subj", decree_text=None,
+):
+    did = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=decree_text if decree_text is not None else f"清丈{token}",
+        target_kind="issue",
+        target_id=f"land-{token}",
+        executor_kind="character",
+        executor_id=owner,
+        participants=[{"character_id": owner, "tier": "主办"}],
+    )
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    return did
+
+
+def executing_subject_policy(
+    db, state, *, owner: str, token: str = "subj", decree_text=None,
+):
+    did = subject_policy_dossier(
+        db, state, owner=owner, token=token, decree_text=decree_text,
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,),
+    )
+    db.conn.commit()
+    return did
+
+
+def audit_policy_dossier(
+    db, state, *, auditor: str, subject_id: int, token: str = "audit", note=None,
+):
+    """稽核方案卷（新 id）→ 稽核 → 被稽案卷（旧 id）。须后建以保证 id 更大。"""
+    aid = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"稽核{token}",
+        target_kind="issue",
+        target_id=f"audit-{token}",
+        executor_kind="character",
+        executor_id=auditor,
+        participants=[{"character_id": auditor, "tier": "主办"}],
+    )
+    db.apply_dossier_promulgation(state, aid, "promulgated")
+    db.add_dossier_links(aid, [{
+        "target_dossier_id": int(subject_id),
+        "relation_type": SUPERVISION_RELATION,
+        "note": note if note is not None else f"稽核案卷{subject_id}",
+    }])
+    return aid
+
+
+def recorded_executing_policy(
+    db, state, decree_text="兴修水利", *, target_kind="issue", target_id="origin-558",
+):
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text=decree_text,
+        target_kind=target_kind, target_id=target_id,
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+    return dossier_id

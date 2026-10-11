@@ -14,6 +14,7 @@ Seams:
 from __future__ import annotations
 
 import json
+from functools import partial
 
 from ming_sim.breach_plea import (
     BREACH_KIND_FUNDING,
@@ -40,6 +41,7 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
 )
+from tests.dossier_test_helpers import executing_owned_policy
 from tests.readback_helpers import decree_cost_event_rows
 
 
@@ -50,28 +52,7 @@ def _cost_events(db, dossier_id, *, identity="breach"):
     return decree_cost_event_rows(db, dossier_id, identity)
 
 
-def _executing_policy_dossier(db, state, *, token: str = "breach-623", holder: str = ""):
-    if not holder:
-        holder = str(db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-            "ORDER BY name LIMIT 1"
-        ).fetchone()["name"])
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        executor_kind="character",
-        executor_id=holder,
-        participants=[
-            {"character_id": holder, "tier": "主办", "role": "清丈"},
-        ],
-        payload={"mode": "ordinary", "text": token},
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id, holder
+_executing_policy_dossier = partial(executing_owned_policy, token="breach-623")
 
 
 def _insert_commitment(

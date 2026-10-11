@@ -11,6 +11,11 @@ Seams:
 
 from __future__ import annotations
 
+from tests.dossier_test_helpers import (
+    subject_policy_dossier as _subject_dossier,
+    audit_policy_dossier as _audit_dossier,
+)
+
 import sqlite3
 
 import pytest
@@ -29,7 +34,6 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.supervision import (
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
-    SUPERVISION_RELATION,
 )
 
 
@@ -66,48 +70,7 @@ def _upright_and_mediocre(db):
     return upright, mediocre
 
 
-def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
-    did = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈{token}",
-        target_kind="issue",
-        target_id=f"land-{token}",
-        executor_kind="character",
-        executor_id=owner,
-        participants=[{"character_id": owner, "tier": "主办"}],
-    )
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    return did
-
-
-def _audit_dossier(db, state, *, auditor: str, subject_id: int, token: str = "audit"):
-    """稽核方案卷（新 id）→ 稽核 → 被稽案卷（旧 id）。须后建以保证 id 更大。"""
-    aid = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"稽核{token}",
-        target_kind="issue",
-        target_id=f"audit-{token}",
-        executor_kind="character",
-        executor_id=auditor,
-        participants=[{"character_id": auditor, "tier": "主办"}],
-    )
-    db.apply_dossier_promulgation(state, aid, "promulgated")
-    db.add_dossier_links(aid, [{
-        "target_dossier_id": int(subject_id),
-        "relation_type": SUPERVISION_RELATION,
-        "note": f"稽核案卷{subject_id}",
-    }])
-    return aid
-
-
-
-
 # ── AC1 事实底 ────────────────────────────────────────────────────
-
-
-
 
 
 def test_ac1_settle_segment_writes_presence(game, monkeypatch):
@@ -129,7 +92,6 @@ def test_ac1_settle_segment_writes_presence(game, monkeypatch):
 
 
 # ── AC2 成对锚观察槽 + 反制硬门 ───────────────────────────────────
-
 
 
 # ── AC4 空子转移读入面差分 ────────────────────────────────────────

@@ -8,6 +8,7 @@ import ming_sim.issues as issue_engine
 from ming_sim.strict_types import validate_affected_parties
 from tests.readback_helpers import faction_satisfaction as _sat
 from tests.readback_helpers import decree_cost_event_rows
+from tests.dossier_test_helpers import executing_rostered_policy
 
 
 def _roster():
@@ -28,14 +29,10 @@ def _roster():
 
 
 def _executing_dossier(db, state, *, roster=None):
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清丈畿辅",
-        target_kind="issue", target_id="land-survey-565",
-        participants=roster if roster is not None else _roster(),
+    return executing_rostered_policy(
+        db, state, token="land-survey-565", decree_text="清丈畿辅",
+        roster=roster if roster is not None else _roster(),
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
 
 
 def _sat_events(db, dossier_id):

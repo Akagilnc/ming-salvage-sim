@@ -7,8 +7,9 @@ import json
 import pytest
 
 from tests.conftest import with_monthly_reports
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
-from tests.dossier_test_helpers import create_test_secret_order
+from tests.dossier_test_helpers import (
+    TYPED_COVERT_TASK, create_test_secret_order, executing_rostered_policy,
+)
 from tests.readback_helpers import active_character_name as _actor
 
 def _people(db, count):
@@ -131,11 +132,9 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
     db.append_decree_dossier_participants(dossier_id, [{
         "character_id": lead, "tier": "主办", "role": "密访",
     }], state=state)
-    plain_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="公开案",
-        target_kind="issue", target_id="plain-secret-auth-1252",
+    plain_id = executing_rostered_policy(
+        db, state, token="plain-secret-auth-1252", decree_text="公开案", roster=[],
     )
-    db.apply_dossier_promulgation(state, plain_id, "promulgated")
     db.append_decree_dossier_participants(plain_id, [{
         "character_id": lead, "tier": "主办", "role": "承办",
     }], state=state)

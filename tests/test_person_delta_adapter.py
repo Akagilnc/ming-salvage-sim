@@ -12,16 +12,13 @@ from ming_sim.models import Character
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.person_delta_adapter import normalize_person_changes
 from tests.conftest import active_ming_character
-from tests.dossier_test_helpers import create_test_secret_order
+from tests.dossier_test_helpers import create_test_secret_order, recorded_executing_policy
 
 
 def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text=decree_text,
-        target_kind="character", target_id=target_id,
+    dossier_id = recorded_executing_policy(
+        db, state, decree_text, target_kind="character", target_id=target_id,
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
     return f"dossier:{dossier_id}"
 
 

@@ -13,6 +13,7 @@ import pytest
 
 from ming_sim import issues
 from ming_sim.models import Event
+from tests.dossier_test_helpers import recorded_executing_policy
 
 
 def _gather_with_gate(db, state, content, gate):
@@ -28,12 +29,9 @@ def _gather_with_gate(db, state, content, gate):
         content.seed_events.remove(ev)
 
 def _promulgated_dossier(db, state, decree_text):
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text=decree_text,
-        target_kind="army", target_id="guanning",
+    dossier_id = recorded_executing_policy(
+        db, state, decree_text, target_kind="army", target_id="guanning",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
     return f"dossier:{dossier_id}"
 
 def _hist_event(eid, gate):

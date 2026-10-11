@@ -1,17 +1,8 @@
 from ming_sim import issues as issue_engine
+from tests.dossier_test_helpers import recorded_executing_policy as _promulgated_policy
 
 
 SPONTANEOUS = "盘面自发"
-
-
-def _promulgated_policy(db, state):
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="兴修水利",
-        target_kind="issue", target_id="origin-558",
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
-    return dossier_id
 
 
 def test_decree_driven_effect_without_any_origin_is_rejected(game):

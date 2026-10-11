@@ -13,6 +13,10 @@ Seams:
 
 from __future__ import annotations
 
+from functools import partial
+
+from tests.dossier_test_helpers import executing_owned_policy
+
 # #1894：#623 的代码生成余波（半途而废局势）已删；该 seed 事件 id 在此仅作
 # 「不得再出现」的负向断言锚，不再由 breach_plea 导出。
 HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
@@ -50,31 +54,12 @@ from ming_sim.situation_drift import (
 )
 from ming_sim.models import TurnPhase, loads_effect_dict
 from ming_sim.staged_commitment import TODO_STATUS_PENDING
-from tests.readback_helpers import ming_character_name as _holder
 
 
 # ── fixtures ──────────────────────────────────────────────────────
 
 
-def _executing_policy_dossier(db, state, *, token: str = "bl-626", holder: str = ""):
-    if not holder:
-        holder = _holder(db)
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        executor_kind="character",
-        executor_id=holder,
-        participants=[
-            {"character_id": holder, "tier": "主办", "role": "清丈"},
-        ],
-        payload={"mode": "ordinary", "text": token},
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id, holder
+_executing_policy_dossier = partial(executing_owned_policy, token="bl-626")
 
 
 def _insert_commitment(

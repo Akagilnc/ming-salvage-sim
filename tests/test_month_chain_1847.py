@@ -24,7 +24,7 @@ from ming_sim.supervision import (
     ORIGIN_MARK_SAME_FACTION_BLIND,
     origin_has_mark,
 )
-from tests.dossier_test_helpers import create_test_secret_order
+from tests.dossier_test_helpers import audit_policy_dossier, create_test_secret_order
 
 
 _WORLD_WITH_QUESTION = (
@@ -1599,22 +1599,9 @@ def _faction_rows(db):
 
 
 def _supervise(db, state, *, auditor: str, subject_id: int, token: str) -> None:
-    audit_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"稽核{token}",
-        target_kind="issue",
-        target_id=f"audit-{token}",
-        executor_kind="character",
-        executor_id=auditor,
-        participants=[{"character_id": auditor, "tier": "主办"}],
+    audit_policy_dossier(
+        db, state, auditor=auditor, subject_id=subject_id, token=token, note=token,
     )
-    db.apply_dossier_promulgation(state, audit_id, "promulgated")
-    db.add_dossier_links(audit_id, [{
-        "target_dossier_id": int(subject_id),
-        "relation_type": "稽核",
-        "note": token,
-    }])
 
 
 def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypatch):

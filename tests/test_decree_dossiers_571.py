@@ -5,7 +5,12 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
+from tests.dossier_test_helpers import (
+    TYPED_COVERT_TASK,
+    create_test_secret_order as _create_secret_order,
+    recorded_executing_policy,
+    rejected_verdict as _rejected_verdict,
+)
 
 def _active_people(db, count):
     people = [
@@ -591,12 +596,9 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
 @pytest.mark.parametrize("invalid_id", [True, 1.5, "1.5", 2 ** 63])
 def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
     db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="奉旨办理",
-        target_kind="issue", target_id="strict-execution-id",
+    dossier_id = recorded_executing_policy(
+        db, state, "奉旨办理", target_id="strict-execution-id",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
 
     result = issue_engine.apply_score_extraction(db, state, {
         "dossier_executions": [{
@@ -609,12 +611,9 @@ def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
 
 def test_dossier_execution_accepts_sqlite_integer_id(game):
     db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="奉旨办理",
-        target_kind="issue", target_id="valid-execution-id",
+    dossier_id = recorded_executing_policy(
+        db, state, "奉旨办理", target_id="valid-execution-id",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
 
     result = issue_engine.apply_score_extraction(db, state, {
         "dossier_executions": [{
@@ -780,12 +779,9 @@ def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(
 
 def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
     db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="持续办理",
-        target_kind="issue", target_id="ongoing-policy",
+    dossier_id = recorded_executing_policy(
+        db, state, "持续办理", target_id="ongoing-policy",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
 
     with pytest.raises(ValueError):
         db.record_dossier_execution(
@@ -825,12 +821,9 @@ def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_
 
 def test_extractor_accepts_transformed_execution_outcome(game):
     db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="奉旨办理而借题行私",
-        target_kind="issue", target_id="transformed-policy",
+    dossier_id = recorded_executing_policy(
+        db, state, "奉旨办理而借题行私", target_id="transformed-policy",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
 
     result = issue_engine.apply_score_extraction(
         db, state, {"dossier_executions": [{

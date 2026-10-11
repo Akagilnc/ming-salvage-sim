@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from tests.dossier_test_helpers import executing_rostered_policy as _executing_dossier
+
 from ming_sim.breach_plea import (
     BREACH_KIND_REMOVE_SPONSOR,
     finalize_persist,
@@ -34,24 +36,6 @@ from ming_sim.urge_lever import (
 
 
 # ── helpers ───────────────────────────────────────────────────────────
-
-
-def _executing_dossier(db, state, *, token: str, roster=None):
-    if roster is None:
-        roster = [
-            {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
-        ]
-    did = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"信用写端·{token}",
-        target_kind="issue",
-        target_id=token,
-        participants=roster,
-    )
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    assert db.get_decree_dossier(did)["status"] == "executing"
-    return did
 
 
 def _transformed_dossier(db, state, *, token: str, roster=None):

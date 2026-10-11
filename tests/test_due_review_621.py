@@ -11,12 +11,13 @@ Seams:
 
 from __future__ import annotations
 
+from functools import partial
 
 import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.audience_night import list_ledger, open_night
-from tests.dossier_test_helpers import promulgated_policy_origin
+from tests.dossier_test_helpers import executing_staged_policy, promulgated_policy_origin
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
@@ -39,21 +40,7 @@ from tests.readback_helpers import decree_cost_event_rows
 
 
 
-def _executing_policy_dossier(db, state, *, token: str = "due-review-621"):
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        participants=[
-            {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
-            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
-        ],
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
+_executing_policy_dossier = partial(executing_staged_policy, token="due-review-621")
 
 
 def _insert_staged_commitment(
