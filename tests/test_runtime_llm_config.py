@@ -260,7 +260,7 @@ def test_save_runtime_llm_can_clear_reasoning_strength_to_default(tmp_path, monk
 
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["reasoning_strength"] == ""
-    assert "reasoning_strength" not in saved["cli"]
+    assert saved["cli"]["reasoning_strength"] == ""
 
 
 def test_load_runtime_llm_preserves_cli_reasoning_strength(tmp_path, monkeypatch):

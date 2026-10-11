@@ -100,6 +100,8 @@ def _slot_number(value: object, caster, default):
 def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
     out: Dict[str, object] = {}
     for k in _API_RUNTIME_FIELDS:
+        if k in {"reasoning_strength", "thinking_level", "advanced_thinking_level"} and k not in data:
+            continue
         if k in _API_NUMERIC_FIELDS:
             caster, default = _API_NUMERIC_FIELDS[k]
             out[k] = _slot_number(data.get(k), caster, default)
@@ -118,6 +120,7 @@ def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
     return {
         k: (normalize_reasoning_strength(data.get(k)) if k == "reasoning_strength" else _slot_text(data, k))
         for k in _CLI_RUNTIME_FIELDS
+        if k != "reasoning_strength" or k in data
     }
 
 
@@ -143,15 +146,15 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
         channel = ""
     api_raw = data.get("api")
     cli_raw = data.get("cli")
-    api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else {})
-    cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
-    api_strength = normalize_reasoning_strength(
-        api_raw.get("reasoning_strength", legacy_reasoning_strength(api_raw))
-        if isinstance(api_raw, dict) else ""
+    api_raw = api_raw if isinstance(api_raw, dict) else {}
+    cli_raw = cli_raw if isinstance(cli_raw, dict) else {}
+    # Reading must not turn absent fields into saved explicit defaults.
+    api = _api_runtime_slot(api_raw)
+    cli = _cli_runtime_slot(cli_raw)
+    active_slot = cli if channel == "cli" else api
+    active_strength = normalize_reasoning_strength(
+        active_slot.get("reasoning_strength", legacy_reasoning_strength(api) if channel != "cli" else "")
     )
-    api["reasoning_strength"] = api_strength
-    cli_strength = normalize_reasoning_strength(cli.get("reasoning_strength"))
-    active_strength = cli_strength if channel == "cli" else api_strength
     return {
         "channel": channel,
         "api": api,
@@ -622,7 +625,11 @@ def save_runtime_llm(
         if api_reasoning_strength is not None
         else normalize_reasoning_strength(existing_api.get("reasoning_strength"))
     )
-    if isinstance(api_payload, dict):
+    if (
+        "reasoning_strength" in existing_api
+        or (active_channel == "api" and reasoning_strength is not None)
+        or api_reasoning_strength is not None
+    ):
         api_payload["reasoning_strength"] = api_strength
     # CLI 槽的 reasoning_strength 像 runner/model/timeout 一样按槽保留：保存 API 通道时不得用
     # API 的空强度覆盖/清掉 CLI 槽已存值（cmr #358 r4：跨通道保存丢失 inactive 槽设置——切回
@@ -631,7 +638,7 @@ def save_runtime_llm(
         cli_strength = strength
     else:
         cli_strength = normalize_reasoning_strength(existing_cli.get("reasoning_strength", ""))
-    if cli_strength:
+    if "reasoning_strength" in existing_cli or (active_channel == "cli" and reasoning_strength is not None):
         cli_payload["reasoning_strength"] = cli_strength
     payload = {
         "channel": active_channel,

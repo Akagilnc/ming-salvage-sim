@@ -196,8 +196,8 @@ export function ApiSettingsModal({
     has_advanced_api_key?: boolean;
     advanced_thinking_level?: string;
     reasoning_strength?: string;
-    api_reasoning_strength?: string;
-    cli_reasoning_strength?: string;
+    api_reasoning_strength?: string | null;
+    cli_reasoning_strength?: string | null;
     reasoning_supported?: boolean;
     reasoning_strengths?: ReasoningStrengthChoice[];
     cli_reasoning_runners?: string[];
