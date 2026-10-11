@@ -37,7 +37,7 @@ def canonical_fiscal_result(
     result["origin_ref"] = str(origin or "").strip()
     result["source_item"] = source
     result["beyond_intent"] = bool(
-        db.coerce_beyond_intent_flag(read_beyond_intent_raw(source))
+        coerce_beyond_intent_flag(read_beyond_intent_raw(source))
     )
     result["applied"] = bool(applied)
     return result

@@ -157,9 +157,7 @@ class CharacterStore:
         )
 
     def affair_id_of(self, name: str) -> int:
-        row = self._conn.execute(
-            "SELECT affair_id FROM characters WHERE name=?", (str(name),),
-        ).fetchone()
+        row = self.field_row('affair_id', str(name))
         if row is None:
             raise KeyError(f"人物不存在：{name}")
         return int(row["affair_id"] or 0)
@@ -170,20 +168,12 @@ class CharacterStore:
     def read_commission_fallback_actor(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 1", params).fetchone()
 
-    def read_commission_fallback_actor_name(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name FROM characters WHERE name=? LIMIT 1', params).fetchone()
 
     def read_assert_characters_exist(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM characters WHERE name=?', params).fetchone()
 
     def read_names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name FROM characters', params).fetchall()
-
-    def read_dead_person_core_subjects(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status FROM characters WHERE name = ?', params).fetchone()
-
-    def read_displace_duplicate_offices_faction(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT faction FROM characters WHERE name=?', params).fetchone()
 
 
     def read_knowledge_items_for_turn(self, params: Any = ()) -> Any:
@@ -213,8 +203,6 @@ class CharacterStore:
     def read_minister_eligible_for_monthly_covert(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT 1 FROM characters WHERE name=? AND status='active'", params).fetchone()
 
-    def read_live_investigation_fact_keys(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT seed_guilt FROM characters WHERE name=?', params).fetchone()
 
     def read_character_faction_integrity(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT faction, integrity FROM characters WHERE name=?', params).fetchone()
@@ -225,8 +213,6 @@ class CharacterStore:
     def read_project_unsettled_summon_kind(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT location, transit_to, status FROM characters WHERE name=?', params).fetchone()
 
-    def read_list_waiting_audience_summons(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT location FROM characters WHERE name=?', params).fetchone()
 
     def read_current_character_office(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT office, office_type FROM characters WHERE name = ?', params).fetchone()
@@ -363,10 +349,6 @@ class CharacterStore:
             params,
         ).fetchall()
 
-    def read_resolve_power_id(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT power_id FROM characters WHERE name=?", params
-        ).fetchone()
 
     def read_apply_historical_deaths(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -385,10 +367,6 @@ class CharacterStore:
             "SELECT portrait_id FROM characters WHERE portrait_id LIKE ?", params
         ).fetchall()
 
-    def read_apply_person_changes_name(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT name FROM characters WHERE name=?", params
-        ).fetchone()
 
     def read_find_pacification_target(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -433,20 +411,12 @@ class CharacterStore:
             params,
         ).fetchone()
 
-    def read_build_faction_denunciation_facts_identity(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT identity FROM characters WHERE name=?", params
-        ).fetchone()
 
     def read_breach_decree_dossier(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT faction,status FROM characters WHERE name=?", params
         ).fetchone()
 
-    def read_dispatch_inquiries(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT office FROM characters WHERE name=?", params
-        ).fetchone()
 
     def read_tick_transit_arrivals(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -498,10 +468,6 @@ class CharacterStore:
             params,
         ).fetchall()
 
-    def read_displace_duplicate_offices_office_type(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT office_type FROM characters WHERE name=?", params
-        ).fetchone()
 
     def read_knowledge_row_visible_to(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -514,10 +480,6 @@ class CharacterStore:
             params,
         ).fetchone()
 
-    def read_register_unlisted_person_record(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT portrait_id FROM characters WHERE name=?", params
-        ).fetchone()
 
     def read_sync_offices_from_db_impl(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -543,25 +505,12 @@ class CharacterStore:
             "SELECT integrity, courage FROM characters WHERE name=?", params
         ).fetchone()
 
-    def read_investigation_fact_difficulty(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT intrigue FROM characters WHERE name=?", params
-        ).fetchone()
 
     def read_investigation_monthly_capacity(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT ability, location, transit_to FROM characters WHERE name=?", params
         ).fetchone()
 
-    def read_investigation_fact_difficulty_characters(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT ability FROM characters WHERE name=?", params
-        ).fetchone()
-
-    def read_is_roster_character(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM characters WHERE name=? LIMIT 1", params
-        ).fetchone()
 
     def read_world_roster_names(self, params: Any = ()) -> Any:
         return self._conn.execute(

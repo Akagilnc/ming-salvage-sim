@@ -1,6 +1,7 @@
 """开局帝国修正（legacy）清算与落库：由 issues.py 清算迁入（ADR 0150 决定 8）。"""
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 import ming_sim.issues as issues
 
@@ -19,13 +20,13 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     rows = db.reign.read_clear_gated_legacies(())
     cleared: List[str] = []
     for row in rows:
-        gate = GameDB.parse_engine_payload_json(
+        gate = parse_engine_payload_json(
             row["clear_gate"],
         )
         if not gate:
             continue
         if issues._gate_passed(gate, state.metrics, db):
-            db.reign.write_clear_gated_legacies((int(row["id"]),))
+            db.reign.write_legacy_statuses([("cleared", int(row["id"]))])
             cleared.append(str(row["name"]))
     if cleared:
         db._legacy_mod_cache = None  # active 集变了，修正符缓存失效

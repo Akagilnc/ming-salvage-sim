@@ -109,10 +109,6 @@ class BuildingStore:
             "SELECT 1 FROM buildings WHERE id = ?", params
         ).fetchone()
 
-    def read_remove_building(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT name FROM buildings WHERE id = ?", params
-        ).fetchone()
 
     def read_add_building_buildings(self, params: Any = ()) -> Any:
         return self._conn.execute(

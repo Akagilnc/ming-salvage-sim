@@ -78,11 +78,9 @@ class PowerStore:
         )
 
     def display_name(self, power_id: str) -> str:
-        row = self.read_power_display_name((str(power_id),))
+        row = self.field_row('name', str(power_id))
         return str(row["name"]) if row else str(power_id)
 
-    def read_power_display_name(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name FROM powers WHERE id = ?', params).fetchone()
 
     def read_apply_issue_entities(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT 1 FROM powers WHERE id=?", params).fetchone()
@@ -100,13 +98,6 @@ class PowerStore:
     def read_apply_character_power_changes(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT id FROM powers", params).fetchall()
 
-    def read_strategic_event_result_preflight_error(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM powers WHERE id = ? LIMIT 1", params
-        ).fetchone()
-
-    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id FROM powers WHERE id=?", params).fetchone()
 
     def write_apply_power_rename(self, params: Any = ()) -> Any:
         return self._conn.execute(

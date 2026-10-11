@@ -544,7 +544,7 @@ def _fiscal_levy_tian_in_force(db: GameDB) -> bool:
     """
     if not _fiscal_levy_catalog_in_force(db, _FISCAL_LEVY_TIAN_KEYS):
         return False
-    row = db.fiscal_config.read_fiscal_levy_tian_in_force()
+    row = db.fiscal_config.row("田赋_base")
     if row is None:
         return True
     return int(row["value"] or 0) > 0
@@ -552,7 +552,7 @@ def _fiscal_levy_tian_in_force(db: GameDB) -> bool:
 
 def _fiscal_levy_liao_declared_scale(db: GameDB) -> float:
     """在征辽饷按声明 base / seed base 计。seed 定额缺失时不另造比例。"""
-    row = db.fiscal_config.read_fiscal_levy_liao_declared_scale()
+    row = db.fiscal_config.row("辽饷_base")
     live = int(row["value"] or 0) if row is not None else 0
     seed = db._seeded_fiscal_config_value("辽饷_base")
     if seed is None or seed <= 0 or live <= 0:

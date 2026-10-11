@@ -140,9 +140,6 @@ class ReignStateStore:
         return self._conn.execute('SELECT turn FROM game_state WHERE id = 1', params).fetchone()
 
 
-    def read_list_economy_moves_for_dossier(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id', params).fetchall()
-
     def read_ledger_paid_this_turn(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT delta FROM economy_ledger WHERE origin_ref=? AND turn=? AND delta<0', params).fetchall()
 
@@ -226,12 +223,14 @@ class ReignStateStore:
         ).fetchone()
         return row is not None and int(row["value"]) == 1
 
-    def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        """Ledger rows for one dossier; beyond_intent via sole coerce_beyond_intent_flag."""
+    def list_economy_moves_for_origin(self, origin: str) -> List[Dict[str, object]]:
+        """Ledger rows for one origin; beyond_intent via sole coerce_beyond_intent_flag."""
         from ming_sim.applier import coerce_beyond_intent_flag
 
         rows: List[Dict[str, object]] = []
-        for row in self.read_list_economy_moves_for_dossier((f"dossier:{int(dossier_id)}",)):
+        for row in self._conn.execute(
+            "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id", (origin,),
+        ).fetchall():
             item = dict(row)
             item["beyond_intent"] = bool(
                 coerce_beyond_intent_flag(item.get("beyond_intent"))
@@ -784,9 +783,9 @@ class ReignStateStore:
             params,
         )
 
-    def write_expire_legacies(self, params: Any = ()) -> Any:
+    def write_legacy_statuses(self, params: Any) -> Any:
         return self._conn.executemany(
-            "UPDATE legacies SET status='expired' WHERE id=?", params
+            "UPDATE legacies SET status=? WHERE id=?", params
         )
 
     def read_record_claim_flow_logs(self, params: Any = ()) -> Any:
@@ -859,10 +858,6 @@ class ReignStateStore:
             params,
         ).fetchall()
 
-    def write_clear_gated_legacies(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE legacies SET status='cleared' WHERE id=?", params
-        )
 
     def write_sync_opening_legacies(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -953,12 +948,6 @@ class ReignStateStore:
             "SELECT origin_chat_turn_id FROM story_ledger_entries WHERE id=?", params
         ).fetchone()
 
-    def write_set_meta_flag(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "INSERT INTO metrics(key, value) VALUES(?, 1) "
-            "ON CONFLICT(key) DO UPDATE SET value=1",
-            params,
-        )
 
     def write_create_chat_turn(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -981,34 +970,17 @@ class ReignStateStore:
             params,
         )
 
-    def write_apply_authority_cost(self, params: Any = ()) -> Any:
+
+    def insert_economy_move(self, params: Any) -> Any:
         return self._conn.execute(
-            "INSERT INTO metrics(key,value) VALUES('皇威',?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            "INSERT INTO economy_ledger "
+            "(turn, year, period, account, delta, balance_after, category, reason, "
+            "event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id, "
+            "origin_ref, beyond_intent) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params,
         )
 
-    def write_record_issue_economy_move(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                INSERT INTO economy_ledger
-                (turn, year, period, account, delta, balance_after, category, reason,
-                 event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id,
-                 origin_ref, beyond_intent)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, NULL, ?, ?)
-                """,
-            params,
-        )
-
-    def write_ensure_opening_ledger(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                    INSERT INTO economy_ledger
-                    (turn, year, period, account, delta, balance_after, category, reason, actor)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-            params,
-        )
 
     def write_restore_interrupted_after_failed_retry(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -1024,17 +996,11 @@ class ReignStateStore:
             "DELETE FROM chat_turn_rollback_items WHERE chat_turn_id = ?", params
         )
 
-    def write_restore_interrupted_after_failed_retry_chat_turns(
-        self, params: Any = ()
-    ) -> Any:
+    def write_chat_turn_status(self, params: Any) -> Any:
         return self._conn.execute(
-            "UPDATE chat_turns SET status = 'interrupted' WHERE id = ?", params
+            "UPDATE chat_turns SET status=? WHERE id=?", params
         )
 
-    def write_fail_chat_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE chat_turns SET status = 'failed' WHERE id = ?", params
-        )
 
     def write_persist_minister_reply(self, params: Any = ()) -> Any:
         return self._conn.execute(

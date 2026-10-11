@@ -30,7 +30,7 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     allowed, so an unrelated person remains invisible.
     """
     conn = db.conn
-    source = CharacterStore(conn).read_displace_duplicate_offices_faction((recommender,))
+    source = CharacterStore(conn).field_row("faction", recommender)
     if source is None:
         return []
     faction = str(source["faction"] or "")

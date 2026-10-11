@@ -108,10 +108,6 @@ class ArmyStore:
     def read_army_register(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name,manpower FROM armies WHERE owner_power='ming' ORDER BY name", params).fetchall()
 
-    def read_apply_military_order_station_effect(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM armies WHERE id = ?", params
-        ).fetchone()
 
     def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -227,10 +223,6 @@ class ArmyStore:
             params,
         ).fetchall()
 
-    def read_apply_dossier_promulgation(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT arrears FROM armies WHERE id=?", params
-        ).fetchone()
 
     def write_apply_region_army_pay_tick(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -256,24 +248,6 @@ class ArmyStore:
             params,
         ).fetchone()
 
-    def write_create_armies_from_extraction(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                        INSERT INTO armies
-                        (id, name, station, station_region, theater, commander, controller, troop_type, manpower,
-                         supply, morale, training, equipment,
-                         province_pay_arrears, central_pay_arrears, pay_source_region,
-                         province_pay_share, central_pay_share, is_tusi, self_funded_pay,
-                         mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-            params,
-        )
-
-    def read_strategic_event_result_preflight_error(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM armies WHERE id = ? LIMIT 1", params
-        ).fetchone()
 
     def ordered_rows(self, *, limit: int | None = None) -> Any:
         sql = "SELECT * FROM armies ORDER BY theater, name"

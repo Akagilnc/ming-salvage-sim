@@ -4,6 +4,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 import json
 import sqlite3
@@ -130,8 +131,7 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     payload = row.get("payload")
     if isinstance(payload, dict):
         return payload
-    from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(
+    return parse_engine_payload_json(
         row.get("payload_json"),
     )
 
@@ -465,8 +465,7 @@ def validate_promulgation_verdicts(
     for dossier in proposed_dossiers:
         payload = dossier.get("payload")
         if not isinstance(payload, dict):
-            from ming_sim.db import GameDB
-            payload = GameDB.parse_engine_payload_json(
+            payload = parse_engine_payload_json(
                 dossier.get("payload_json"),
             )
         action_type = dossier.get("action_type")

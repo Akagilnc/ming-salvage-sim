@@ -5,6 +5,7 @@ GameDB 持有 self.content（GameContent），seed 类方法从中读人物/地�
 """
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 from ming_sim.entities.reign_state.store import POPULATION_UNIT_PERSONS
 from typing import Sequence
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
@@ -57,6 +58,8 @@ from ming_sim.entities.dossier import (
     DOSSIER_REPORT_ORIGIN_REVIEW,
     DOSSIER_REPORT_ORIGIN_RUSH,
     DOSSIER_STATUSES,
+    hydrate_dossier_row,
+    normalize_dossier_mode,
 )
 from ming_sim.schema import ensure_core_schema
 from ming_sim.models import (
@@ -1087,21 +1090,22 @@ class GameDB:
             }
         )
         # #1260：base+rate 两行 creations 同旗（any() 消费者安全；计数型会双计——勿据此改计数语义）。
-        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
-        self.fiscal_config.write_create_fiscal_item(
-            [
-                (
-                    int(turn),
-                    base_key,
-                    max(0, init_value),
-                    "base",
-                    origin_ref,
-                    note,
-                    beyond_flag,
-                ),
-                (int(turn), rate_key, 100, "rate", origin_ref, note, beyond_flag),
-            ]
-        )
+        beyond_flag = coerce_beyond_intent_flag(beyond_intent)
+        for key, value, kind in (
+            (base_key, max(0, init_value), "base"), (rate_key, 100, "rate"),
+        ):
+            self.fiscal_config.append_history(
+                "create",
+                {
+                    "turn": int(turn),
+                    "key": key,
+                    "value": value,
+                    "kind": kind,
+                    "origin_ref": origin_ref,
+                    "reason": note,
+                    "beyond_intent": beyond_flag,
+                },
+            )
         if commit:
             self.conn.commit()
         return base_key
@@ -1361,7 +1365,7 @@ class GameDB:
         # removed rows in a narrow append-only audit so origin -> removal is a
         # single indexed lookup rather than an inference from unrelated logs.
         # #1260：INSERT...SELECT 显式列清单 + beyond_intent 常量（禁 SELECT * 位置漂移）。
-        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
+        beyond_flag = coerce_beyond_intent_flag(beyond_intent)
         self.fiscal_config.remove_items(
             (base_key, rate_key),
             turn=int(turn),
@@ -1624,8 +1628,10 @@ class GameDB:
             ()
         )["total"]
         value = float(total or 0.0)
-        self.fiscal_containers.write_reconcile_central_army_pay_arrears_container(
-            (_CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY, value)
+        self.fiscal_containers.replace(
+            _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY,
+            value,
+            "中央军饷欠账容器：Σ非自养明军 central_pay_arrears",
         )
         return value
 
@@ -1750,7 +1756,7 @@ class GameDB:
             raise DeclarationDataError(f"army {army_id} pay_source_region 未入库：{pay_source_region}")
         if str(row["controlled_by"] or "") != "ming":
             raise DeclarationDataError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
-        fiscal = self.parse_engine_payload_json(row["fiscal"])
+        fiscal = parse_engine_payload_json(row["fiscal"])
         settle = fiscal.get("settle")
         if settle is not None and not isinstance(settle, dict):
             raise ValueError("持久地区财政 settle 须为对象")
@@ -2214,7 +2220,7 @@ class GameDB:
     def _reconcile_army_pay_source_region_container(self, region_id: str) -> None:
         if not region_id:
             return
-        row = self.regions.read_settle_province_tick((region_id,))
+        row = self.regions.field_row('fiscal', region_id)
         if row is None:
             return
         fiscal = _load_durable_json(row["fiscal"], default='{}')
@@ -2423,7 +2429,7 @@ class GameDB:
             if exists:
                 continue
             balance = int(state.metrics[account])
-            self.reign.write_ensure_opening_ledger(
+            self.reign.insert_economy_move(
                 (
                     state.turn,
                     state.year,
@@ -2433,7 +2439,15 @@ class GameDB:
                     balance,
                     "期初",
                     "登基初始账册",
+                    None,
+                    None,
                     "内阁",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "",
+                    0,
                 )
             )
         self.conn.commit()
@@ -2559,9 +2573,7 @@ class GameDB:
         if status not in PERSON_STATUSES:
             raise ValueError(f"character status 非法：{status}")
         # #9：UPDATE 前读旧派系（退场清 office 后仍按当前在朝成员现算，与旧职无关）。
-        prev = self.characters.read_displace_duplicate_offices_faction(
-            (name,)
-        )
+        prev = self.characters.field_row('faction', name)
         # 去职（下狱/革职/流放/致仕/出宫/死）即削职：清空 characters.office，
         # 原职仍留在 character_offices 备档可追溯。复职（active）不动 office。
         ousted = status in PERSON_OUSTED_STATUSES
@@ -2625,7 +2637,7 @@ class GameDB:
         不在此 commit——由调用方统一提交（保事务原子性）。"""
         if faction not in _LEVERAGE_FACTIONS:
             return
-        row = self.factions.read_recompute_faction_leverage((faction,))
+        row = self.factions.field_row('leverage_offset', faction)
         if row is None:
             return
         offset = float(row["leverage_offset"] or 0)
@@ -2677,7 +2689,10 @@ class GameDB:
     def _set_meta_flag(self, key: str) -> None:
         """置 metrics 表里某持久标记=1（幂等 upsert）。不在此 commit——由调用方统一提交，
         与同事务的其它写一并落库或一并回滚。"""
-        self.reign.write_set_meta_flag((key,))
+        self.reign.upsert_metric(
+            key,
+            1,
+        )
 
     def record_person_log(
         self,
@@ -2691,28 +2706,21 @@ class GameDB:
         commit: bool = True,
         origin_ref: str = "",
     ) -> None:
-        if isinstance(normalized, dict):
-            normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
-        else:
-            normalized_text = str(normalized or "")
         if isinstance(source, Provenance):
             source = source.value
-        self.person_logs.write_record_person_log(
-            (
-                state.turn,
-                state.year,
-                state.period,
-                person_name,
-                action,
-                str(payload_summary or ""),
-                str(derived_from or ""),
-                normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
-                str(source or ""),
-                str(origin_ref or ""),
-            )
+        self.person_logs.append(
+            turn=state.turn,
+            year=state.year,
+            period=state.period,
+            person_name=person_name,
+            action=action,
+            payload_summary=payload_summary,
+            derived_from=derived_from,
+            normalized=normalized,
+            source=source,
+            origin_ref=origin_ref,
+            commit=commit,
         )
-        if commit:
-            self.conn.commit()
 
 
     def resolve_power_id(self, character) -> str:
@@ -2721,7 +2729,7 @@ class GameDB:
         DB 为准是关键：招抚归明者（流寇/降将 power_id 经 apply_character_power_changes 翻 ming，
         但 content/内存 power_id 仍是旧势力 bandits/houjin）必须认 DB——否则按内存会把已归明者
         误判为外藩、误拒在朝堂外（见 #125、web_app._character_power_id 同源）。"""
-        row = self.characters.read_resolve_power_id((character.name,))
+        row = self.characters.field_row('power_id', character.name)
         return (row["power_id"] if row else None) or getattr(character, "power_id", "ming") or "ming"
 
     def apply_character_power_changes(
@@ -2815,9 +2823,7 @@ class GameDB:
             self.characters.update(name, {"office": office})
         self._record_character_office(name, office, eff_type, source, region_id=seat)
         # #9：授官改了 office_type/品级权重 → 全重算该人物所属朝堂派系 leverage（commit 前）。
-        faction_row = self.characters.read_displace_duplicate_offices_faction(
-            (name,)
-        )
+        faction_row = self.characters.field_row('faction', name)
         if faction_row is not None:
             self.recompute_faction_leverage(str(faction_row["faction"] or ""))
         if commit:
@@ -2942,9 +2948,7 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         """运行时新建人物（吏部任命/皇帝点名）。已存在同名则不动，避免覆盖既有状态。"""
-        existing = self.characters.read_apply_person_changes_name(
-            (character.name,)
-        )
+        existing = self.characters.field_row('name', character.name)
         if existing is not None:
             return
         character.office = normalize_office(character.office)
@@ -3829,7 +3833,7 @@ class GameDB:
                             value is None
                             or not text_value
                             or text_value.lower() == "null"
-                            or self.powers.read_strategic_event_result_preflight_error((text_value,))
+                            or self.powers.read_apply_issue_entities((text_value,))
                             is None
                         ):
                             rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=f"region_delta 'controlled_by'（地区 '{region_id}'）"
@@ -4637,39 +4641,37 @@ class GameDB:
                 rejections.append(RejectedItem(item=raw, reason=origin_error["reason"], category=origin_error["category"], source=source))
                 continue
             commander = str(item.get("commander") or "")
-            row = (
-                aid,
-                name,
-                str(item.get("station") or ""),
-                station_region,
-                str(item.get("theater") or ""),
-                commander,
-                str(item.get("controller") or commander),
-                str(item.get("troop_type") or ""),
-                max(0, manpower),
-                _score("supply"),
-                _score("morale"),
-                _score("training"),
-                _score("equipment"),
-                province_pay_arrears,
-                central_pay_arrears,
-                pay_source_region,
-                province_pay_share,
-                central_pay_share,
-                1 if is_tusi else 0,
-                1 if self_funded_pay else 0,
-                _score("mobility"),
-                _score("loyalty"),
-                _score("firearm_equipment", 0),
-                _cannon(),  # 随军大炮=门数，clamp 0-12，非 int 兜底 0
-                # #44 新军名义月饷率：缺省/None/0/负/非数 一律落锚点 1.5（salary_rate<=0=免费军=白嫖，禁；
-                # 游戏无自给/屯田军概念）。原 `or 1.5` 漏负值（-1→免费军），改健壮 helper（cmr r3 codex）。
-                _coerce_new_salary_rate(item.get("salary_rate")),
-                str(item.get("status") or "新立"),
-                owner,
-            )
+            row = {
+                'id': aid,
+                'name': name,
+                'station': str(item.get("station") or ""),
+                'station_region': station_region,
+                'theater': str(item.get("theater") or ""),
+                'commander': commander,
+                'controller': str(item.get("controller") or commander),
+                'troop_type': str(item.get("troop_type") or ""),
+                'manpower': max(0, manpower),
+                'supply': _score("supply"),
+                'morale': _score("morale"),
+                'training': _score("training"),
+                'equipment': _score("equipment"),
+                'province_pay_arrears': province_pay_arrears,
+                'central_pay_arrears': central_pay_arrears,
+                'pay_source_region': pay_source_region,
+                'province_pay_share': province_pay_share,
+                'central_pay_share': central_pay_share,
+                'is_tusi': 1 if is_tusi else 0,
+                'self_funded_pay': 1 if self_funded_pay else 0,
+                'mobility': _score("mobility"),
+                'loyalty': _score("loyalty"),
+                'firearm_equipment': _score("firearm_equipment", 0),
+                'cannon_equipment': _cannon(),
+                'salary_rate': _coerce_new_salary_rate(item.get("salary_rate")),
+                'status': str(item.get("status") or "新立"),
+                'owner_power': owner,
+            }
             try:
-                self.armies.write_create_armies_from_extraction(row)
+                self.armies.insert(row)
             except sqlite3.IntegrityError as exc:
                 raise ValueError(f"new_armies INSERT 失败 '{aid}'：{exc}") from exc
             self._reconcile_army_pay_source_region_container(pay_source_region)
@@ -4790,7 +4792,7 @@ class GameDB:
         origin_ref: str = "",
     ) -> bool:
         """拆除/废止建筑（issue 失败或撤销结案）。返回是否真删了一行。"""
-        row = self.buildings.read_remove_building((building_id,))
+        row = self.buildings.field_row('name', building_id)
         if row is None:
             return False
         self.buildings.append_log(
@@ -5177,7 +5179,7 @@ class GameDB:
                     int(row.get("agno_runs_before") or 0),
                 )
                 if uid:
-                    self.reign.write_restore_interrupted_after_failed_retry_chat_turns((ctid,))
+                    self.reign.write_chat_turn_status(("interrupted", ctid))
                     qrow = self.chat_messages.read_build_night_said_so_far(
                         (int(uid),)
                     )
@@ -5188,7 +5190,7 @@ class GameDB:
                         "question": str(qrow["content"]) if qrow is not None else "",
                     })
                 else:
-                    self.reign.write_fail_chat_turn((ctid,))
+                    self.reign.write_chat_turn_status(("failed", ctid))
         return interrupted
 
 
@@ -5226,9 +5228,7 @@ class GameDB:
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),
             )
-            self.reign.write_restore_interrupted_after_failed_retry_chat_turns(
-                (int(chat_turn_id),)
-            )
+            self.reign.write_chat_turn_status(("interrupted", int(chat_turn_id)))
         return restored_pending_action_ids
 
     def create_chat_turn(
@@ -5281,7 +5281,7 @@ class GameDB:
             return []
         turn_row = self._row_dict(row)
         if turn_row["status"] not in {"active", "generating"}:
-            self.reign.write_fail_chat_turn((int(chat_turn_id),))
+            self.reign.write_chat_turn_status(("failed", int(chat_turn_id)))
             self.conn.commit()
             return []
         items = self.reign.read_restore_interrupted_after_failed_retry_chat_turn_rollback_items(
@@ -5304,7 +5304,7 @@ class GameDB:
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.chat_messages.delete_ids(message_ids)
-            self.reign.write_fail_chat_turn((int(chat_turn_id),))
+            self.reign.write_chat_turn_status(("failed", int(chat_turn_id)))
             self.reign._truncate_agno_runs_in_tx(
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),
@@ -5362,10 +5362,12 @@ class GameDB:
         本函数是 update_chat_turn_messages(minister_message_id=...) 的原子替代，须同做该升级。
         """
         with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）；外层 atomic 内 commit 暂停
-            cur = self.chat_messages.write_persist_minister_reply(
-                (minister_name, int(turn), content)
+            message_id = self.chat_messages.insert(
+                minister_name=minister_name,
+                turn=int(turn),
+                content=content,
+                role='minister',
             )
-            message_id = int(cur.lastrowid)
             self.reign.write_persist_minister_reply(
                 (message_id, int(chat_turn_id))
             )
@@ -5562,7 +5564,7 @@ class GameDB:
             if str(item["target_table"]) != "pending_actions":
                 continue
             after_data = _load_durable_json(item["after_json"])
-            before_data = self.parse_engine_payload_json(item["before_json"])
+            before_data = parse_engine_payload_json(item["before_json"])
             pa_id = after_data.get("id")
             if pa_id is None:
                 pa_id = before_data.get("id")
@@ -5769,14 +5771,19 @@ class GameDB:
             event_id = str(d.get("event_id") or "").strip()
             if not event_id:
                 event_id = f"urgent:{int(turn)}:{idx}"
-            self.issues.write_append_rescript_drafts_pending_decisions(
+            self.issues.insert_pending_decision(
                 (
                     int(turn),
                     idx,
                     event_id,
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
+                    "",
+                    "",
                     json.dumps(d.get("options") or [], ensure_ascii=False),
+                    "",
+                    "pending",
+                    "rescript_draft",
                     actor_name,
                     actor_office,
                     actor_faction,
@@ -5900,7 +5907,7 @@ class GameDB:
         if classify_directive_structured_kind(payload) == "push":
             push_id = imperial_push_target_dossier_id(payload)
             assert push_id is not None
-            mode = self._normalize_dossier_mode(
+            mode = normalize_dossier_mode(
                 payload["mode"] if "mode" in payload else "ordinary"
             )
             out: Dict[str, object] = {
@@ -5911,7 +5918,7 @@ class GameDB:
                     out[key] = payload[key]
             return out
         normalized = dict(payload)
-        normalized["mode"] = self._normalize_dossier_mode(
+        normalized["mode"] = normalize_dossier_mode(
             normalized["mode"] if "mode" in normalized else "ordinary"
         )
         action = str(normalized.get("dossier_action_type") or "").strip()
@@ -6234,7 +6241,7 @@ class GameDB:
             # 不得静默改写错误 target_kind；不得等到判后才发现虚假 id。
             if target_kind != "army":
                 raise DecreeMaterializationValidationError("军令 target_kind 须为 army")
-            existing_army = self.armies.read_apply_military_order_station_effect((target_id,))
+            existing_army = self.armies.field_row('id', target_id)
             if existing_army is None:
                 raise DecreeMaterializationValidationError(
                     f"军令引用未入库军队 '{target_id}'（成案前须存在）"
@@ -6281,66 +6288,6 @@ class GameDB:
         if commit and owns_transaction:
             self.conn.commit()
 
-    DOSSIER_MODES = frozenset({"ordinary", "midzhi"})
-
-    @classmethod
-    def _normalize_dossier_mode(cls, value: object) -> str:
-        mode = value.strip() if isinstance(value, str) else value
-        if not isinstance(mode, str) or mode not in cls.DOSSIER_MODES:
-            raise DeclarationDataError(f"案卷 mode 非法：{mode}")
-        return mode
-
-    @classmethod
-    def _dossier_row(cls, row: Any) -> Dict[str, object]:
-        out = dict(row)
-        out["id"] = int(out["id"])
-        out["region_id"] = str(out.get("region_id") or "")
-        for key in (
-            "source_chat_turn_id", "pending_action_id", "directive_id",
-            "due_turn", "created_turn", "created_year", "created_period",
-            "held_turn", "affair_id",
-        ):
-            out[key] = int(out.get(key) or 0)
-        if out.get("secret_order_id") is not None:
-            out["secret_order_id"] = int(out["secret_order_id"])
-        out["rescript_pending"] = bool(out.get("rescript_pending"))
-        try:
-            payload = _load_durable_json(out.get("payload_json"))
-        except ValueError as exc:
-            raise ValueError(f"案卷#{out['id']} payload_json 无效：{exc}") from exc
-        out["payload"] = payload
-        try:
-            out["mode"] = cls._normalize_dossier_mode(
-                payload["mode"] if "mode" in payload else "ordinary"
-            )
-        except DeclarationDataError as exc:
-            raise ValueError(str(exc)) from exc
-        try:
-            stigma = _load_durable_json(out.get("stigma_json"), default='[]')
-        except ValueError as exc:
-            raise ValueError(f"案卷#{out['id']} stigma_json 无效：{exc}") from exc
-        out["stigma"] = stigma
-        if not isinstance(stigma, list):
-            raise TypeError(f"decree_dossiers#{out['id']}.stigma_json must be a list, got {stigma!r}")
-        # 与 project_execution_liability_parties / participant_roster_names 共权威（#1897 E1）。
-        from ming_sim.participant_roster import decode_durable_participant_roster
-        try:
-            out["participant_roster"] = decode_durable_participant_roster(
-                out.get("participant_roster"),
-            )
-        except ValueError as exc:
-            raise ValueError(
-                f"案卷#{out['id']} participant_roster 无效：{exc}"
-            ) from exc
-        try:
-            extension = _load_durable_json(out.get("extension_json"), default='{}')
-        except ValueError as exc:
-            raise ValueError(f"案卷#{out['id']} extension_json 无效：{exc}") from exc
-        signal = extension.get("execution_signal")
-        if signal is not None and not isinstance(signal, dict):
-            raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
-        out["execution_signal"] = signal
-        return out
 
     # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
     DOSSIER_REPORT_ORIGIN_NS = DOSSIER_REPORT_ORIGIN_NS
@@ -6506,7 +6453,7 @@ class GameDB:
         row = self.dossiers.read_dossier_declares_escort((int(dossier_id),))
         if row is None:
             return False
-        payload = self.parse_engine_payload_json(row["payload_json"])
+        payload = parse_engine_payload_json(row["payload_json"])
         return payload_declares_escort(payload)
 
     # #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。
@@ -6898,7 +6845,7 @@ class GameDB:
                 fac, integrity = character_faction_integrity(self, name)
                 if not fac:
                     continue
-                row = self.characters.read_build_faction_denunciation_facts_identity((name,))
+                row = self.characters.field_row('identity', name)
                 identity_val = row["identity"] if row is not None else None
                 meta = {
                     "faction": fac,
@@ -6999,7 +6946,7 @@ class GameDB:
                 (accuser, dossier_id, origin)
             )
             if prior_row is not None:
-                prev_payload = self.parse_engine_payload_json(prior_row["payload_json"])
+                prev_payload = parse_engine_payload_json(prior_row["payload_json"])
                 if not denunciation_case_upgraded(prev_payload, fork_state):
                     continue
 
@@ -7537,7 +7484,7 @@ class GameDB:
         if canonical_assignee:
             normalized_payload["assignee_id"] = canonical_assignee
         normalized_payload.pop("assignee", None)
-        normalized_payload["mode"] = self._normalize_dossier_mode(
+        normalized_payload["mode"] = normalize_dossier_mode(
             normalized_payload["mode"] if "mode" in normalized_payload else "ordinary"
         )
         if action == "appointment":
@@ -7811,93 +7758,6 @@ class GameDB:
                     )
                 raise ValueError("委派人须为同案主办/协办且不得自委派")
 
-    @staticmethod
-    def _normalize_endorsement_fields(
-        *,
-        form: object,
-        endorser_id: object = "",
-        imperial: object = False,
-        source_chat_turn_id: object = 0,
-        decision_key: object = "",
-    ) -> tuple[int, str, str, str, bool]:
-        """背书字段契约唯一权威（#658 / #1897）：类型、form 闭集、御笔/具名、provenance XOR。
-
-        返回 (source_cid, dkey, kind, person, is_imperial)。
-        声明路径抛 DecreeMaterializationValidationError；调用方在持久边界自行升格 ValueError。
-        不查 dossier/character/chat 引用——那是边界上下文，由调用方按有无案卷分别处理。
-        """
-        from ming_sim.action_materialize import DecreeMaterializationValidationError
-        if isinstance(source_chat_turn_id, bool) or not isinstance(source_chat_turn_id, int):
-            raise DecreeMaterializationValidationError(
-                "背书来源对话轮 id 须为整数",
-                failed_fields=("source_chat_turn_id",), category="invalid_item",
-            )
-        if not isinstance(decision_key, str):
-            raise DecreeMaterializationValidationError(
-                "背书 decision_key 须为字符串",
-                failed_fields=("decision_key",), category="invalid_item",
-            )
-        if not isinstance(form, str) or not isinstance(endorser_id, str):
-            raise DecreeMaterializationValidationError(
-                "背书形式与人物须为字符串", failed_fields=("form",), category="invalid_item",
-            )
-        if not isinstance(imperial, bool):
-            raise DecreeMaterializationValidationError(
-                "御笔标记须为布尔", failed_fields=("imperial",), category="invalid_item",
-            )
-        cid = source_chat_turn_id
-        dkey = decision_key.strip()
-        kind, person = form.strip(), endorser_id.strip()
-        is_imperial = imperial
-        # 恰一种 provenance：召对 chat_turn XOR 批红/下旨 decision_key。
-        has_turn = cid > 0
-        has_key = bool(dkey)
-        if has_turn == has_key:
-            raise DecreeMaterializationValidationError(
-                "背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一",
-                failed_fields=("source_chat_turn_id", "decision_key"), category="invalid_item",
-            )
-        if kind not in {"会签", "当面站台", "御笔手敕"}:
-            raise DecreeMaterializationValidationError(
-                "背书形式非法", failed_fields=("form",), category="invalid_item",
-            )
-        if kind == "御笔手敕":
-            if not is_imperial or person:
-                raise DecreeMaterializationValidationError(
-                    "御笔手敕必须使用御笔标记且不得具名大臣",
-                    failed_fields=("form", "imperial"), category="invalid_item",
-                )
-            person = ""
-            is_imperial = True
-        else:
-            if is_imperial or not person:
-                raise DecreeMaterializationValidationError(
-                    "会签/当面站台必须具名背书人",
-                    failed_fields=("form", "endorser_id"), category="invalid_item",
-                )
-        return cid, dkey, kind, person, is_imperial
-
-    def _require_endorsement_shared_refs(
-        self, *, source_cid: int, kind: str, person: str,
-    ) -> None:
-        """背书共同引用唯一权威：来源轮 / 具名人物存在性（#1897 禁平行）。"""
-        from ming_sim.action_materialize import DecreeMaterializationValidationError
-        if source_cid > 0:
-            if not self.reign.chat_turn_exists(source_cid):
-                raise DecreeMaterializationValidationError(
-                    "背书来源对话轮不存在",
-                    failed_fields=("source_chat_turn_id",), category="missing_ref",
-                )
-        if kind != "御笔手敕":
-            if (
-                self.characters.read_assert_characters_exist((person,))
-                is None
-            ):
-                raise DecreeMaterializationValidationError(
-                    "背书人物不存在",
-                    failed_fields=("endorser_id",), category="hallucinated_id",
-                )
-
 
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *, commit: bool = True,
@@ -8142,7 +8002,7 @@ class GameDB:
             if not admitted:
                 continue
             # Same hydrate contract as get/list decree rows (ADR 0005: fail loud).
-            item = self._dossier_row(row)
+            item = hydrate_dossier_row(row)
             item["was_force_promulgated"] = bool(row["was_force_promulgated"])
             visible.append(item)
         return visible
@@ -8159,7 +8019,7 @@ class GameDB:
             except (TypeError, ValueError) as exc:
                 raise KeyError(str(exc)) from exc
             # 缺行/越界 id=模型坏引用→KeyError 逐项拒（同 effect_origin_rejection
-            # 捕 OverflowError）；_dossier_row 解码故障 RuntimeError 穿透
+            # 捕 OverflowError）；hydrate_dossier_row 解码故障 RuntimeError 穿透
             try:
                 dossier = self.dossiers.get(dossier_id)
             except OverflowError as exc:
@@ -8240,8 +8100,12 @@ class GameDB:
                 self.dossiers.write_record_dossier_promulgation(
                     (int(dossier_id),)
                 )
-                self.dossiers.write_record_dossier_promulgation_decree_dossier_decisions(
-                    (int(dossier_id), current_turn)
+                self.dossiers.insert_decision(
+                    int(dossier_id),
+                    current_turn,
+                    decision="rejected",
+                    rescript_action="force_promulgated",
+                    reason="批红强颁",
                 )
                 # #657 §C.8：中旨当下不向派系扇出、不猜受影响派系（正式离心归 M12）。
                 # 预声明 midzhi 打回只落 stigma；强颁只追加皇威。
@@ -8311,7 +8175,10 @@ class GameDB:
         state.metrics["皇威"] = max(
             0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST,
         )
-        self.reign.write_apply_authority_cost((state.metrics["皇威"],))
+        self.reign.upsert_metric(
+            "皇威",
+            state.metrics["皇威"],
+        )
 
     def _apply_override_costs(
         self, state: GameState, dossier_id: int, *, include_authority: bool,
@@ -8721,7 +8588,7 @@ class GameDB:
         )
         # 写前捕获归属：INSERT 后 in_transaction 会使 owns_transaction() 恒 False。
         owns = self.owns_transaction()
-        cur = self.dossiers.write_stage_pending_action(
+        cur = self.dossiers.insert_pending_action(
             (
                 int(turn),
                 str(kind),
@@ -8729,7 +8596,9 @@ class GameDB:
                 None if target_id is None else int(target_id),
                 str(minister_name or ""),
                 json.dumps(payload_data, ensure_ascii=False),
+                "pending",
                 night_id,
+                0,
                 int(source_chat_turn_id or 0),
             )
         )
@@ -8851,16 +8720,12 @@ class GameDB:
                 *rejection, pending_action_id=int(pa["id"]),
             )
             self._record_typed_business_refusal(pa, exc, rejection_collector)
-            self.dossiers.write_dispose_pending_action_apply_exception(
-                (int(pa["id"]),)
-            )
+            self.dossiers.write_pending_action_status(("failed", int(pa["id"])))
             tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
             return
         if self._is_typed_business_refusal(exc):
             self._record_typed_business_refusal(pa, exc, rejection_collector)
-            self.dossiers.write_dispose_pending_action_apply_exception(
-                (int(pa["id"]),)
-            )
+            self.dossiers.write_pending_action_status(("failed", int(pa["id"])))
             tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
             return
         # #1853：真异常留 pending，停止本批；由原轮/月链 error_pack 与失败路径上抛。
@@ -8896,16 +8761,14 @@ class GameDB:
                 ok = self._apply_pending_action(
                     state, pa, payload, content=content)
                 if ok:
-                    self.dossiers.write_run_pending_action_commit_lifecycle(
-                        (int(pa["id"]),)
-                    )
+                    self.dossiers.write_pending_action_status(("committed", int(pa["id"])))
                 else:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     if restore_on_rollback is not None:
                         restore_on_rollback()
                     # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
                     # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
-                    self.dossiers.write_dispose_pending_action_apply_exception((int(pa["id"]),))
+                    self.dossiers.write_pending_action_status(("failed", int(pa["id"])))
                     # 明确业务 False 进入既有拒收报告管线；failed 终态不代替 ADR0015 轨（#1897 L1）。
                     # 坏持久 payload 不得走此路——_apply 须响亮上抛（#1897 E1）。
                     self._record_pending_domain_rejection(
@@ -9069,7 +8932,7 @@ class GameDB:
         ):
             return {"classification": "invalid"}
         # 已持久候选 JSON 腐坏响亮上抛（#1897 E1）。
-        payload = self.parse_engine_payload_json(pa.get("payload_json"))
+        payload = parse_engine_payload_json(pa.get("payload_json"))
         # 归一内真实查询／未分类故障原样上抛；仅 typed 领域拒收归 invalid
         # （与 _apply_pending_action / _commit_conversational_draft 同缝，#1897 E1）。
         from ming_sim.action_materialize import DecreeMaterializationValidationError
@@ -9168,7 +9031,7 @@ class GameDB:
                 if classification == "invalid":
                     cm = atomic(self) if owns_transaction else contextlib.nullcontext()
                     with cm:
-                        self.dossiers.write_dispose_pending_action_apply_exception((int(pa["id"]),))
+                        self.dossiers.write_pending_action_status(("failed", int(pa["id"])))
                         self._record_pending_domain_rejection(
                             rejection_collector, state, pa, prepared["payload"],
                             reason=prepared["reason"],
@@ -9187,7 +9050,7 @@ class GameDB:
                     applied.append(committed)
                 continue
             # 已持久候选解码故障响亮，不洗成空载荷续 apply（#1897 E1）。
-            payload = self.parse_engine_payload_json(pa.get("payload_json"))
+            payload = parse_engine_payload_json(pa.get("payload_json"))
             office_memory_key = None
             office_memory_before = None
             office_memory_had_key = False
@@ -9559,13 +9422,15 @@ class GameDB:
             status = "pending" if str(payload.get("_directive_status") or "draft") == "pending" else "draft"
             # 不回到颁诏 checkpoint 时默认同意为 draft；召对里明确应允只表示接受为候选，
             # 仍写成 pending 交给既有准/驳界面，避免绕过后续颁诏流程（#412）。
-            cur = self.issues.write_apply_pending_action(
+            cur = self.issues.insert_directive(
                 (
                     state.turn,
                     state.year,
                     state.period,
+                    None,
                     actor_db,
                     text,
+                    "大臣拟旨",
                     status,
                     f"由{actor}拟旨入档" if actor else "拟旨入档",
                     json.dumps(payload, ensure_ascii=False),
@@ -9847,27 +9712,6 @@ class GameDB:
         return cur.rowcount > 0
 
 
-    def list_economy_moves_for_origin(self, origin: str) -> List[Dict[str, object]]:
-        rows: List[Dict[str, object]] = []
-        for row in self.reign.read_list_economy_moves_for_dossier(
-            (origin,)
-        ):
-            item = dict(row)
-            # Normalize beyond_intent to bool for adjudicator consumers (#622).
-            item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(
-                item.get("beyond_intent")
-            ))
-            rows.append(item)
-        return rows
-
-    def list_fiscal_effects_for_origin(self, origin: str) -> List[Dict[str, object]]:
-        rows = self.fiscal_config.effects(origin)
-        for item in rows:
-            item["beyond_intent"] = bool(
-                self.coerce_beyond_intent_flag(item.get("beyond_intent"))
-            )
-        return rows
-
     def list_world_effect_history(
         self, origin: str,
     ) -> Dict[str, object]:
@@ -9921,7 +9765,7 @@ class GameDB:
 
     def list_durable_effects_for_origin(self, origin: str) -> List[Dict[str, object]]:
         """Economy/fiscal merge shared by dossier and direct affair origins."""
-        return self.list_economy_moves_for_origin(origin) + self.list_fiscal_effects_for_origin(origin)
+        return self.reign.list_economy_moves_for_origin(origin) + self.fiscal_config.effects_for_origin(origin)
 
     def capture_month_open_snapshot(self, state: GameState) -> bool:
         """点击受理：独立提交点击前四键 + 所属回合。已有本回合行则不覆盖（幂等）。
@@ -10354,40 +10198,6 @@ class GameDB:
         if commit:
             self.conn.commit()
 
-    @staticmethod
-    def _coerce_todo_payload_json(payload_json: object) -> str:
-        """#624：引擎侧 payload_json 序列化；非法非空响亮拒绝，禁静默丢底。"""
-        if payload_json is None:
-            return "{}"
-        if isinstance(payload_json, str):
-            text = payload_json.strip()
-            if not text:
-                return "{}"
-            try:
-                data = json.loads(text)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"next_audience_todos.payload_json JSON 解析失败：{exc}；原值 {text!r}"
-                ) from exc
-            if not isinstance(data, dict):
-                raise ValueError(
-                    f"next_audience_todos.payload_json 须为对象，得 {type(data).__name__}"
-                )
-            return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-        if isinstance(payload_json, dict):
-            return json.dumps(payload_json, ensure_ascii=False, separators=(",", ":"))
-        raise ValueError(
-            f"next_audience_todos.payload_json 类型非法：{type(payload_json).__name__}"
-        )
-
-    @staticmethod
-    def parse_engine_payload_json(raw: object) -> Dict[str, object]:
-        """#624 / ADR 0005 / #1897 E1：引擎侧持久对象解码单一权威。
-
-        SQL NULL/缺省 → {}；已解码对象直接复制；其余交给标准库解码。
-        """
-        return {**_load_durable_json(raw)}
-
 
     def insert_issue(
         self,
@@ -10582,7 +10392,7 @@ class GameDB:
                 "last_advance_turn": state.turn,
             },
         )
-        self.issues.write_advance_issue(
+        self.issues.insert_advance(
             (
                 issue_id,
                 state.turn,
@@ -10639,10 +10449,11 @@ class GameDB:
                 "last_advance_turn": state.turn,
             },
         )
-        self.issues.write_close_issue(
+        self.issues.insert_advance(
             (
                 issue_id,
                 state.turn,
+                "close",
                 reason,
                 actual_delta,
                 from_value,
@@ -10650,6 +10461,7 @@ class GameDB:
                 from_stage_text,
                 to_stage_text,
                 narrative,
+                "{}",
             )
         )
         if commit:
@@ -10708,7 +10520,7 @@ class GameDB:
             if now >= int(r["start_month"]) + dur:
                 expired.append(int(r["id"]))
         if expired:
-            self.reign.write_expire_legacies([(i,) for i in expired])
+            self.reign.write_legacy_statuses([("expired", i) for i in expired])
             if commit:
                 self.conn.commit()
             self._legacy_mod_cache = None  # active 集变了，修正符缓存失效
@@ -10786,12 +10598,17 @@ class GameDB:
                 "last_advance_turn": state.turn,
             },
         )
-        self.issues.write_cancel_issue(
+        self.issues.insert_advance(
             (
                 issue_id,
                 state.turn,
+                "cancel",
+                "",
+                0,
                 int(row["bar_value"]),
                 int(row["bar_value"]),
+                "",
+                "",
                 narrative,
                 json.dumps(applied_cost or {}, ensure_ascii=False),
             )
@@ -10800,21 +10617,6 @@ class GameDB:
             self.conn.commit()
         return self.issues.row(issue_id)
 
-    @staticmethod
-    def coerce_beyond_intent_flag(value: object) -> int:
-        """闭世界肯定识别器：仅契约内肯定表示 →1；缺席/否定/空/畸形一律 →0。
-
-        肯定：True / 非零 int·float / 肯定串集 {"1","true","yes","on","是","有","真"}。
-        开放兜底永不得回归——畸形输入不得捏造肯定标记（0072/0118 真相层）。
-        """
-        if value is None:
-            return 0
-        if isinstance(value, bool):
-            return 1 if value else 0
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return 1 if int(value) != 0 else 0
-        text = str(value).strip().lower()
-        return 1 if text in {"1", "true", "yes", "on", "是", "有", "真"} else 0
 
     def record_issue_economy_move(
         self,
@@ -10861,8 +10663,8 @@ class GameDB:
         if actual == 0:
             return 0
         state.metrics[account] = after
-        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
-        self.reign.write_record_issue_economy_move(
+        beyond_flag = coerce_beyond_intent_flag(beyond_intent)
+        self.reign.insert_economy_move(
             (
                 state.turn,
                 state.year,
@@ -10872,9 +10674,13 @@ class GameDB:
                 after,
                 category,
                 reason,
+                None,
+                None,
+                "事项推演",
                 purpose,
                 target_kind,
                 target_id,
+                None,
                 origin_ref,
                 beyond_flag,
             )
@@ -11182,7 +10988,7 @@ class GameDB:
             if not origin_visible_to(self, f"secret_order:{int(row['order_id'])}", character_name):
                 out.update(pins)
         for row in pending_rows:
-            payload = self.parse_engine_payload_json(
+            payload = parse_engine_payload_json(
                 row["payload_json"],
             )
             mid = self._parse_origin_chat_message_id(payload)
@@ -11462,8 +11268,13 @@ class GameDB:
                 _issued_secret_order=True,
             )
             self.dossiers.write_create_secret_order((int(dossier_id),))
-            self.dossiers.write_create_secret_order_decree_dossier_decisions(
-                (int(dossier_id), int(state.turn))
+            self.dossiers.insert_decision(
+                int(dossier_id),
+                int(state.turn),
+                decision="promulgated",
+                rescript_action="",
+                reason="内批自动顺颁",
+                blocked_layer="palace_rescript",
             )
             if inv_target:
                 # #1896：开案即铺 lane 集并冻结逐证难度——唯一开 lane 的口在
@@ -11810,9 +11621,7 @@ class GameDB:
         why = raw_reason if raw_reason else "奉旨加急"
         with atomic(self):
             if months <= 0:
-                self.character_knowledge.write_rush_secret_order(
-                    (int(state.turn), int(order_id))
-                )
+                self.character_knowledge.write_rush_secret_order_secret_orders((int(state.turn), 0, int(order_id)))
                 status = "active"
                 due_turn = int(state.turn)
             else:

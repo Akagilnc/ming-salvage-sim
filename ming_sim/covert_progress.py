@@ -803,7 +803,7 @@ def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
     if not name:
         return []
     keys: List[str] = []
-    row = db.characters.read_live_investigation_fact_keys((name,))
+    row = db.characters.field_row('seed_guilt', name)
     if row is not None and seed_guilt_counts_as_debt(row["seed_guilt"]):
         keys.append(name)
     for edge in db.person_logs.get_relation_edge_events(person=name, evidence=True):
@@ -819,7 +819,7 @@ def _is_seed_guilt_fact_key(target: str, fact_key: str) -> bool:
 def _seed_guilt_severity(db: Any, target: str) -> str:
     from ming_sim.db import _load_durable_json
 
-    row = db.characters.read_live_investigation_fact_keys((str(target),))
+    row = db.characters.field_row('seed_guilt', str(target))
     if row is None:
         return ""
     return str(_parse_seed_guilt(row["seed_guilt"]).get("severity") or "").strip()
@@ -1054,14 +1054,14 @@ def investigation_fact_difficulty(
     # 该列 NOT NULL INTEGER（content 侧 0–100 校验），故 int 直取、不设解析兜底；
     # 0 是合法值（0–100 闭集下端）且**必须**走 clamp——早前的 `if intrigue > 0`
     # 守卫会让最不会遮掩的人跳过乘子、落回参考值同难度，凭空造出一道非单调的台阶。
-    target_row = db.characters.read_investigation_fact_difficulty((name,))
+    target_row = db.characters.field_row('intrigue', name)
     if target_row is not None:
         difficulty *= max(int(target_row["intrigue"]), _INTRIGUE_MIN) / _INTRIGUE_REFERENCE
 
     # 办案人能力（ADR 0092 带宽①同源）：能力强 → 同难度所需投入更少。
     worker = str(investigator or "").strip()
     if worker:
-        ability_row = db.characters.read_investigation_fact_difficulty_characters((worker,))
+        ability_row = db.characters.field_row('ability', worker)
         if ability_row is not None:
             ability = float(ability_row["ability"])
             # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零，
@@ -1676,7 +1676,7 @@ def originated_quantity_this_turn(
     fields = canonical_fields_for_delivery(unit=unit)
     qty = 0.0
     if "economy_moves" in fields:
-        for item in db.reign.list_economy_moves_for_dossier(did):
+        for item in db.reign.list_economy_moves_for_origin(f"dossier:{int(did)}"):
             if int(item.get("turn") or 0) != current:
                 continue
             if not _delivery_matches_economy(item, delivery):

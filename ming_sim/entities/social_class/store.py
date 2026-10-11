@@ -67,20 +67,12 @@ class ClassStore:
             "SELECT DISTINCT name FROM classes ORDER BY name", params
         ).fetchall()
 
-    def read_apply_levy_driven_transfers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT population FROM classes WHERE name='农民' AND region_id=?", params
-        ).fetchone()
 
     def read_apply_population_transfers(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT population FROM classes WHERE name=? AND region_id=?", params
         ).fetchone()
 
-    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT population FROM classes WHERE name='流民' AND region_id=?", params
-        ).fetchone()
 
     def read_apply_recovery_driven_transfers(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -114,12 +106,5 @@ class ClassStore:
         return self._conn.execute(
             "INSERT INTO population_transfer_ledger "
             "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
-            params,
-        )
-
-    def write_apply_bandit_absorptions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE name='流民' AND region_id=?",
             params,
         )

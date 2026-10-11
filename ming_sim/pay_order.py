@@ -354,14 +354,17 @@ def materialize_pay_order_decree(
             # F1.4 stale until：永久旨覆写旧有期限键 → 同事务清遗留伴随键，
             # 否则旧期限仍使新旨过期。tombstone append-only 审计＋一行 provenance，不增表。
             stale_until = int(current[until_key])
-            db.fiscal_config.write_restore_pay_order_override(
-                (
-                    turn,
-                    until_key,
-                    stale_until,
-                    origin,
-                    "永久旨覆写清旧期限（#653 F1.4 stale until）",
-                )
+            db.fiscal_config.append_history(
+                "remove",
+                {
+                    "removed_turn": turn,
+                    "key": until_key,
+                    "value": stale_until,
+                    "origin_ref": origin,
+                    "reason": "永久旨覆写清旧期限（#653 F1.4 stale until）",
+                    "kind": "override",
+                    "beyond_intent": 0,
+                },
             )
             db.fiscal_config.delete(until_key)
             db.fiscal_config.record_change(
@@ -412,14 +415,19 @@ def restore_pay_order_override(
         if str(row["origin_ref"] or "") != target_origin:
             continue
         old = int(row["value"])
-        db.fiscal_config.write_restore_pay_order_override(
-            (
-                int(turn),
-                key,
-                old,
-                origin,
-                reason if str(reason).strip() else "撤销 override 旨，形状退出格律",
-            )
+        db.fiscal_config.append_history(
+            "remove",
+            {
+                "removed_turn": int(turn),
+                "key": key,
+                "value": old,
+                "origin_ref": origin,
+                "reason": reason
+                if str(reason).strip()
+                else "撤销 override 旨，形状退出格律",
+                "kind": "override",
+                "beyond_intent": 0,
+            },
         )
         db.fiscal_config.delete(key)
         db.fiscal_config.record_change(
@@ -433,14 +441,17 @@ def restore_pay_order_override(
         )
         if until_row is not None and str(until_row["origin_ref"] or "") == target_origin:
             old_until = int(until_row["value"])
-            db.fiscal_config.write_restore_pay_order_override(
-                (
-                    int(turn),
-                    until_key,
-                    old_until,
-                    origin,
-                    "撤销 override 旨，清除期限伴随键",
-                )
+            db.fiscal_config.append_history(
+                "remove",
+                {
+                    "removed_turn": int(turn),
+                    "key": until_key,
+                    "value": old_until,
+                    "origin_ref": origin,
+                    "reason": "撤销 override 旨，清除期限伴随键",
+                    "kind": "override",
+                    "beyond_intent": 0,
+                },
             )
             db.fiscal_config.delete(until_key)
             db.fiscal_config.record_change(

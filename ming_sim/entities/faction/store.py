@@ -54,15 +54,11 @@ class FactionStore:
 
 
     def faction_satisfaction(self, faction: str) -> int:
-        row = self._conn.execute(
-            "SELECT satisfaction FROM factions WHERE name = ?", (faction,)
-        ).fetchone()
+        row = self.field_row('satisfaction', faction)
         return int(row["satisfaction"]) if row else 50
 
     def faction_leverage(self, faction: str) -> int:
-        row = self._conn.execute(
-            "SELECT leverage FROM factions WHERE name = ?", (faction,)
-        ).fetchone()
+        row = self.field_row('leverage', faction)
         return int(row["leverage"]) if row else 50
 
 
@@ -84,10 +80,6 @@ class FactionStore:
             params,
         )
 
-    def read_recompute_faction_leverage(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT leverage_offset FROM factions WHERE name=?", params
-        ).fetchone()
 
     def read_adjust_factions(self, params: Any = ()) -> Any:
         return self._conn.execute(

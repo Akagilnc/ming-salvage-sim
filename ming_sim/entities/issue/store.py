@@ -141,8 +141,10 @@ class IssueStore:
     def insert_directive(self, params: Any) -> Any:
         return self._conn.execute(
             "INSERT INTO turn_directives "
-            "(turn, year, period, event_id, actor, text, source, status, notes, dossier_payload_json, source_pending_action_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", params,
+            "(turn, year, period, event_id, actor, text, source, status, notes, "
+            "dossier_payload_json, source_pending_action_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params,
         )
 
     def add_directive(
@@ -163,11 +165,18 @@ class IssueStore:
         with atomic(SimpleNamespace(conn=self._conn)):
             cursor = self.insert_directive(
                 (
-                    int(turn), int(year), int(period), event_id,
-                    actor or None, text, source, status, notes,
+                    int(turn),
+                    int(year),
+                    int(period),
+                    event_id,
+                    actor or None,
+                    text,
+                    source,
+                    status,
+                    notes,
                     json.dumps(dossier_payload or {}, ensure_ascii=False),
                     0,
-                ),
+                )
             )
             return int(cursor.lastrowid)
 
@@ -274,11 +283,7 @@ class IssueStore:
         ).fetchall()
         self._delete_pending_decision_rows(turn)
         for idx, d in enumerate(decisions):
-            self._conn.execute(
-                """INSERT INTO pending_decisions
-                   (turn, idx, event_id, title, context, rejection_reason, opposition,
-                    options_json, choice_json, status, kind)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
+            self.insert_pending_decision(
                 (
                     turn, idx,
                     str(d.get("event_id") or ""),
@@ -287,6 +292,7 @@ class IssueStore:
                     str(d.get("rejection_reason") or ""),
                     str(d.get("opposition") or ""),
                     json.dumps(d.get("options") or [], ensure_ascii=False),
+                    "", "pending", "decision", "", "", "", 0,
                 ),
             )
         for offset, row in enumerate(draft_rows):
@@ -498,11 +504,7 @@ class IssueStore:
         return int(row["n"]) if row else 0
 
     def has_event_triggered(self, event_id: str) -> bool:
-        row = self._conn.execute(
-            "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered' LIMIT 1",
-            (event_id,),
-        ).fetchone()
-        return row is not None
+        return self.has_event_terminal_state(event_id, "triggered")
 
     def event_terminal_state(self, event_id: str) -> str | None:
         row = self._conn.execute(
@@ -778,41 +780,15 @@ class IssueStore:
                 """,
             params,
         )
-
-    def write_advance_issue(self, params: Any = ()) -> Any:
+    def insert_advance(self, params: Any) -> Any:
         return self._conn.execute(
-            """
-                INSERT INTO issue_advances (
-                    issue_id, turn, trigger_kind, trigger_ref,
-                    delta_bar, from_value, to_value,
-                    from_stage_text, to_stage_text, narrative, metric_delta
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            "INSERT INTO issue_advances "
+            "(issue_id, turn, trigger_kind, trigger_ref, delta_bar, from_value, to_value, "
+            "from_stage_text, to_stage_text, narrative, metric_delta) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params,
         )
 
-    def write_close_issue(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                INSERT INTO issue_advances (
-                    issue_id, turn, trigger_kind, trigger_ref,
-                    delta_bar, from_value, to_value,
-                    from_stage_text, to_stage_text, narrative, metric_delta
-                ) VALUES (?, ?, 'close', ?, ?, ?, ?, ?, ?, ?, '{}')
-                """,
-            params,
-        )
-
-    def write_cancel_issue(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                INSERT INTO issue_advances (
-                    issue_id, turn, trigger_kind, delta_bar,
-                    from_value, to_value, narrative, metric_delta
-                ) VALUES (?, ?, 'cancel', 0, ?, ?, ?, ?)
-                """,
-            params,
-        )
 
     def write_append_rescript_drafts(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -823,25 +799,16 @@ class IssueStore:
             params,
         )
 
-    def write_append_rescript_drafts_pending_decisions(self, params: Any = ()) -> Any:
+    def insert_pending_decision(self, params: Any) -> Any:
         return self._conn.execute(
             """INSERT INTO pending_decisions
-                       (turn, idx, event_id, title, context, options_json, choice_json,
+                       (turn, idx, event_id, title, context, rejection_reason, opposition,
+                        options_json, choice_json,
                         status, kind, actor_name, actor_office, actor_faction, presentation_order)
-                       VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             params,
         )
 
-    def write_apply_pending_action(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                    INSERT INTO turn_directives
-                    (turn, year, period, event_id, actor, text, source, status,
-                     notes,dossier_payload_json, source_pending_action_id)
-                    VALUES (?, ?, ?, NULL, ?, ?, '大臣拟旨', ?, ?, ?, ?)
-                    """,
-            params,
-        )
 
     def write_confirm_directive(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -896,16 +863,6 @@ class IssueStore:
             "SELECT COALESCE(MAX(presentation_order), 0) FROM pending_decisions", params
         ).fetchone()
 
-    def write_ack_due_commitment_issue(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-            INSERT INTO issue_advances (
-                issue_id, turn, trigger_kind, delta_bar,
-                from_value, to_value, narrative, metric_delta
-            ) VALUES (?, ?, 'commitment_ack', 0, ?, ?, ?, '{}')
-            """,
-            params,
-        )
 
     def read_fiscal_levy_petitions_awaiting_verdict(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -945,38 +902,6 @@ class IssueStore:
             params,
         )
 
-    def write_resolve_commitment_issue(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-            INSERT INTO issue_advances (
-                issue_id, turn, trigger_kind, delta_bar,
-                from_value, to_value, narrative, metric_delta
-            ) VALUES (?, ?, 'commitment_resolve', ?, ?, 100, ?, ?)
-            """,
-            params,
-        )
-
-    def write_expire_commitment_issue(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-            INSERT INTO issue_advances (
-                issue_id, turn, trigger_kind, delta_bar,
-                from_value, to_value, narrative, metric_delta
-            ) VALUES (?, ?, 'expire', 0, ?, ?, ?, ?)
-            """,
-            params,
-        )
-
-    def write_apply_situation_monthly_drift(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                        INSERT INTO issue_advances (
-                            issue_id, turn, trigger_kind, delta_bar,
-                            from_value, to_value, narrative, metric_delta
-                        ) VALUES (?, ?, 'ongoing', ?, ?, ?, ?, ?)
-                    """,
-            params,
-        )
 
     def snapshot_directive_rows(self) -> Any:
         return self._conn.execute("SELECT * FROM turn_directives").fetchall()

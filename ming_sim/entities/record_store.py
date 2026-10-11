@@ -122,12 +122,6 @@ class ChatMessageStore:
             "SELECT content FROM chat_messages WHERE id=?", params
         ).fetchone()
 
-    def write_persist_minister_reply(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "INSERT INTO chat_messages (minister_name, turn, role, content) "
-            "VALUES (?, ?, 'minister', ?)",
-            params,
-        )
 
     def read_chat_message_speaker(self, params: Any = ()) -> Any:
         return self._conn.execute(

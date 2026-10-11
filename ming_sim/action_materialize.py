@@ -6,6 +6,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 from ming_sim.exceptions import DeclarationDataError
 
 from ming_sim.models import _load_durable_json_list, _load_durable_json_object
@@ -108,8 +109,7 @@ def _apply_existing_appointment_hit(
             current = session.db.dossiers.read_apply_existing_appointment_hit(
                 (resolved,)
             )
-            from ming_sim.db import GameDB
-            stored = GameDB.parse_engine_payload_json(
+            stored = parse_engine_payload_json(
                 current["payload_json"],
             )
             stored.update(recommendation_fields)
@@ -433,7 +433,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     tid = str(raw_target or "").strip()
     if not tid:
         return ""
-    row = db.armies.read_apply_military_order_station_effect((tid,))
+    row = db.armies.field_row('id', tid)
     if row is not None:
         return str(row["id"])
     armies = getattr(db.content, "armies", None)
@@ -441,9 +441,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
         from ming_sim.matching import canonical_army_id_exact
         matched = canonical_army_id_exact(tid, armies)
         if matched:
-            hit = db.armies.read_apply_military_order_station_effect(
-                (matched,)
-            )
+            hit = db.armies.field_row('id', matched)
             if hit is not None:
                 return str(hit["id"])
     return ""
@@ -759,8 +757,7 @@ def _list_pending_office_rows(
 
 
 def _pending_action_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(
+    return parse_engine_payload_json(
         row.get("payload_json"),
     )
 

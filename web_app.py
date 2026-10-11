@@ -42,7 +42,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ming_sim.db import _load_durable_str_list
-from ming_sim.applier import atomic
+from ming_sim.applier import atomic, parse_engine_payload_json
 from ming_sim.paths import (
     UnsafeSaveNameError,
     user_data_path,
@@ -1053,12 +1053,12 @@ class WebGame:
     def cased_directive_payloads(self) -> List[Dict[str, Any]]:
         """#1764 御案只读投影：已成案·待盖玺（0051 proposed）。
 
-        读 dossiers.directives_with_dossiers + dossier status；不改 list_directives 过滤，
+        读 issues.list_dossiered_draft_directives + dossier status；不改 list_directives 过滤，
         不另立事实源。上游 SELECT td.* + EXISTS 按主键逐行返回，无需 seen 去重。
         过月后 draft 迁出则桌空。
         """
         out: List[Dict[str, Any]] = []
-        for row in self.db.dossiers.directives_with_dossiers(self.state.turn):
+        for row in self.db.issues.list_dossiered_draft_directives(self.state.turn):
             dir_id = int(row["id"])
             dossier = self.db.dossiers.get_for_directive(dir_id)
             if dossier is None:
@@ -1241,10 +1241,10 @@ class WebGame:
             if leg.clear_narrative
         }
         for row in self.db.list_active_legacies(self.state):
-            eff = self.db.parse_engine_payload_json(
+            eff = parse_engine_payload_json(
                 row["modifiers"],
             )
-            clear_gate = self.db.parse_engine_payload_json(
+            clear_gate = parse_engine_payload_json(
                 row["clear_gate"],
             )
             remaining_months = self.db.legacy_remaining_months(row, self.state)

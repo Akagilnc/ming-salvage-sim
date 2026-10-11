@@ -377,7 +377,7 @@ def _strategic_event_result_preflight_error(
             # #1835 S2：领域字段/整数/势力准入交写核；此处只组 noop 快照并消费写核拒收。
             snapshots: List[tuple[object, str, str, object, object]] = []
             seen_fields: set[str] = set()
-            region_row = db.regions.read_strategic_event_result_preflight_error((region_id,))
+            region_row = db.regions.read_assert_commission_grant_target_exists((region_id,))
             if region_row is not None:
                 for raw_field, value in raw_changes.items():
                     field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
@@ -413,7 +413,7 @@ def _strategic_event_result_preflight_error(
             # #1835 S2：炮转移/字段/整数准入复用 apply_army_delta_with_cannon_transfer。
             snapshots = []
             seen_fields = set()
-            army_row = db.armies.read_strategic_event_result_preflight_error(
+            army_row = db.armies.read_assert_commission_grant_target_exists(
                 (army_id,)
             )
             for raw_field, value in raw_changes.items():
@@ -422,7 +422,7 @@ def _strategic_event_result_preflight_error(
                     continue
                 if field == "cannon_transfer_to":
                     transfer_target = str(value)
-                    target_row = db.armies.read_strategic_event_result_preflight_error((transfer_target,))
+                    target_row = db.armies.read_assert_commission_grant_target_exists((transfer_target,))
                     if target_row is not None:
                         snapshots.append(
                             (
@@ -502,7 +502,7 @@ def _strategic_event_result_preflight_error(
             name = character_names._person_change_name(item)
             if action in {"处置", "罢黜"}:
                 target_status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
-                row = db.characters.read_dead_person_core_subjects((name,))
+                row = db.characters.field_row('status', name)
                 if row is not None and str(row["status"] or "") == target_status:
                     return _noop_error(
                         "person",

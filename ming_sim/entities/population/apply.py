@@ -167,7 +167,7 @@ def _apply_population_transfers(
                 )
             )
         region_name = str(
-            db.regions.read_apply_population_transfers((src_region,))["name"]
+            db.regions.field_row('name', src_region)["name"]
             or ""
         )
         applied.append({

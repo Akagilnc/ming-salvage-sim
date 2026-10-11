@@ -138,11 +138,11 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     gid = _in_transit_grant(db, state, amount=ORDERED)
     after_grant_inner = int(state.metrics["内库"])
     assert after_grant_inner == before_inner - ORDERED
-    moves_before = db.reign.list_economy_moves_for_dossier(gid)
+    moves_before = db.reign.list_economy_moves_for_origin(f"dossier:{int(gid)}")
 
     _record_monthly(db, state)
     assert int(state.metrics["内库"]) == after_grant_inner
-    assert db.reign.list_economy_moves_for_dossier(gid) == moves_before
+    assert db.reign.list_economy_moves_for_origin(f"dossier:{int(gid)}") == moves_before
 
     result = settle_delta(
         state, db,
@@ -162,7 +162,7 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert recon["arrived_amount"] == 16
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
-    assert db.reign.list_economy_moves_for_dossier(gid) == moves_before
+    assert db.reign.list_economy_moves_for_origin(f"dossier:{int(gid)}") == moves_before
 
 
 def test_underfunded_closed_grants_excluded_from_monthly_targets(game):

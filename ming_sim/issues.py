@@ -6,6 +6,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 import json
 import re
@@ -505,7 +506,7 @@ def _event_window_expired(ev: Event, state: GameState) -> bool:
 def _dead_person_core_subjects(ev: Event, db: GameDB) -> List[str]:
     dead: List[str] = []
     for name in getattr(ev, "person_core_subjects", []) or []:
-        row = db.characters.read_dead_person_core_subjects((str(name),))
+        row = db.characters.field_row('status', str(name))
         if row is not None and str(row["status"] or "") == "dead":
             dead.append(str(name))
     return dead
@@ -1017,7 +1018,7 @@ def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]
         event_id = str(row["event_id"] or "")
         if not event_id.startswith(_LEVY_PETITION_PREFIX):
             continue
-        choice = GameDB.parse_engine_payload_json(
+        choice = parse_engine_payload_json(
             row["choice_json"],
         )
         rows.append({

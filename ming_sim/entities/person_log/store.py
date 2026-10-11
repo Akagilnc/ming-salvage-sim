@@ -101,7 +101,10 @@ class PersonLogStore:
             normalized_text = json.dumps(dict(normalized), ensure_ascii=False, sort_keys=True)
         else:
             normalized_text = str(normalized or "")
-        cur = self.write_record_person_log(
+        cur = self._conn.execute(
+            "INSERT INTO person_logs "
+            "(turn, year, period, person_name, action, payload_summary, derived_from, "
+            "normalized, source, origin_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 int(turn),
                 int(year),
@@ -228,13 +231,18 @@ class PersonLogStore:
         year: int,
         period: int,
         reason: str = "",
+        item_kind: str = "关系",
     ) -> None:
-        """酿制失败的月份进持久 pending-backlog。"""
+        """关系或派系酿制失败的月份进持久 pending-backlog。"""
         owns = connection_owns_transaction(self._conn)
         try:
             self._conn.execute(
-                "\n                INSERT INTO relation_brew_pending (source, target, year, period, reason)\n                VALUES (?, ?, ?, ?, ?)\n                ON CONFLICT(source, target) DO UPDATE SET\n                    year = excluded.year,\n                    period = excluded.period,\n                    reason = excluded.reason\n                ",
-                (str(source), str(target), int(year), int(period), str(reason)),
+                "INSERT INTO relation_brew_pending "
+                "(source, target, year, period, reason, item_kind) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(source, target) DO UPDATE SET "
+                "year = excluded.year, period = excluded.period, reason = excluded.reason",
+                (str(source), str(target), int(year), int(period), str(reason), item_kind),
             )
             if owns:
                 self._conn.commit()
@@ -267,32 +275,6 @@ class PersonLogStore:
         if owns:
             self._conn.commit()
         return max(int(cur.rowcount or 0), 0)
-
-    def mark_faction_brew_pending(
-        self,
-        *,
-        faction: str,
-        year: int,
-        period: int,
-        reason: str = "",
-    ) -> None:
-        """派系酿制失败月进持久 pending-backlog。"""
-        owns = connection_owns_transaction(self._conn)
-        try:
-            self._conn.execute(
-                "\n                INSERT INTO relation_brew_pending\n                    (source, target, year, period, reason, item_kind)\n                VALUES ('', ?, ?, ?, ?, '派系')\n                ON CONFLICT(source, target) DO UPDATE SET\n                    year = excluded.year,\n                    period = excluded.period,\n                    reason = excluded.reason\n                ",
-                (str(faction), int(year), int(period), str(reason)),
-            )
-            if owns:
-                self._conn.commit()
-        except Exception:
-            if owns:
-                try:
-                    self._conn.rollback()
-                except Exception:
-                    pass
-            raise
-
 
     def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
         row = self._conn.execute(
@@ -393,16 +375,6 @@ class PersonLogStore:
             "SELECT id FROM person_logs WHERE origin_ref=? AND turn=? AND action=?",
             params,
         ).fetchall()
-
-    def write_record_person_log(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                INSERT INTO person_logs
-                (turn, year, period, person_name, action, payload_summary, derived_from, normalized, source, origin_ref)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-            params,
-        )
 
     def edge_snapshot_rows(self) -> Any:
         return self._conn.execute("SELECT * FROM relation_edge_events").fetchall()

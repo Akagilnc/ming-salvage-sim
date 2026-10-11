@@ -24,7 +24,7 @@ def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> in
     if arrived_this_turn:
         return max(0, sum(arrived_this_turn))
     paid = 0
-    for move in db.reign.list_economy_moves_for_dossier(int(dossier_id)):
+    for move in db.reign.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}"):
         delta = int(move.get("delta") or 0)
         if delta < 0:
             paid += -delta
@@ -99,7 +99,7 @@ def _apply_recovery_driven_transfers(
         amount = int(round(raw_persons))
         if amount <= 0:
             continue
-        pool_row = db.classes.read_apply_bandit_absorptions((region_id,))
+        pool_row = db.classes.read_apply_population_transfers(("流民", region_id))
         farmer_row = db.classes.read_apply_recovery_driven_transfers(
             (region_id,)
         )

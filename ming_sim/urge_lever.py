@@ -66,9 +66,8 @@ def derive_opportunity_band(durable_effects: object) -> str:
 
 
 def _parse_payload(raw: object) -> Dict[str, object]:
-    """催办史 payload 读路：与 GameDB.parse_engine_payload_json 合一；腐坏响亮。"""
-    from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(raw)
+    """催办史 payload 读路：与 applier.parse_engine_payload_json 合一；腐坏响亮。"""
+    return parse_engine_payload_json(raw)
 
 
 def _payload_int(payload: Dict[str, object], key: str, default: int = 0) -> int:
@@ -112,9 +111,7 @@ def collect_urge_history(
         if isinstance(dossier, dict):
             so_id = int(dossier.get("secret_order_id") or 0)
         if so_id > 0:
-            so_rows = db.dossiers.read_collect_urge_history(
-                (URGE_PENDING_ACTION, so_id)
-            )
+            so_rows = db.dossiers.urge_history(URGE_PENDING_ACTION, "secret_order", so_id)
             for row in so_rows:
                 payload = _parse_payload(row["payload_json"])
                 out.append({
@@ -197,13 +194,18 @@ def _record_commitment_urge(
         "tightness": tightness,
         "reason": str(reason or ""),
     }
-    db.dossiers.write_record_commitment_urge(
+    db.dossiers.insert_pending_action(
         (
-            int(getattr(state, "turn", 0) or 0),
+            int(getattr(state, 'turn', 0) or 0),
             URGE_PENDING_KIND_COMMITMENT,
             URGE_PENDING_ACTION,
             int(commitment_ref),
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            '',
+            json.dumps(payload, ensure_ascii=False, separators=(',', ':')),
+            'committed',
+            0,
+            0,
+            0,
         )
     )
 

@@ -100,10 +100,10 @@ def victory_status(db: GameDB) -> Dict[str, object]:
     20 年到期走 decree 结局收口（turn>=240），均不在此判。未声明终态则 ongoing。
     京畿 = beizhili，控制权字段 controlled_by（FK powers）；非 'ming' 即京师失守。
     """
-    beizhili = db.regions.read_victory_status(())
+    beizhili = db.regions.row("beizhili")
     if beizhili is not None and str(beizhili["controlled_by"]) != "ming":
         holder_id = str(beizhili["controlled_by"])
-        holder = db.powers.read_power_display_name((holder_id,))
+        holder = db.powers.field_row('name', holder_id)
         holder_name = str(holder["name"]) if holder else holder_id
         return {
             "status": ENDING_CAPITAL_FALLEN,

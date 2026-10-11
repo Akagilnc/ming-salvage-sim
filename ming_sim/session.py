@@ -384,7 +384,7 @@ def register_unlisted_person_record(
         db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         if owns_transaction:
             db.conn.commit()
-    row = db.characters.read_register_unlisted_person_record((name,))
+    row = db.characters.field_row('portrait_id', name)
     if row:
         character.portrait_id = str(row["portrait_id"])
     return character
@@ -514,7 +514,7 @@ def apply_appointment(
     content.characters[name] = character
     db.add_character(state, character, llm_config=llm_config, commit=commit)
     # add_character 已写入并分配 portrait_id，回写到内存对象
-    row = db.characters.read_register_unlisted_person_record((name,))
+    row = db.characters.field_row('portrait_id', name)
     if row:
         character.portrait_id = str(row["portrait_id"])
     return (name, displaced)

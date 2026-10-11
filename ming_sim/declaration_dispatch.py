@@ -749,7 +749,7 @@ def settle_staged_declarations_in_decree_order(
                             visible_refs=item.visible_refs,
                             defer_disclosure=True,
                         ))
-                    db.staged_declarations.mark_settled(decree_ref)
+                    db.staged_declarations.mark_terminal(decree_ref)
                     collector.flush_to_db(db)
                     if alongside is not None:
                         alongside(decree_ref, merged)
@@ -1882,7 +1882,7 @@ def _is_roster_character(db: Any, name: str) -> bool:
     text = str(name or "").strip()
     if not text:
         return False
-    row = db.characters.read_is_roster_character((text,))
+    row = db.characters.read_assert_characters_exist((text,))
     return row is not None
 
 
@@ -1933,7 +1933,7 @@ def _declared_dossier_links(raw: object) -> Optional[List[Dict[str, object]]]:
 def _commission_fallback_actor(db: Any) -> str:
     """场景整场入口无单人大臣锚时，directive.actor 回落殿前常在（王承恩优先）。"""
     for name in ("王承恩", "曹化淳"):
-        row = db.characters.read_commission_fallback_actor_name((name,))
+        row = db.characters.field_row('name', name)
         if row is not None:
             return str(row["name"])
     row = db.characters.read_commission_fallback_actor()
@@ -2188,7 +2188,7 @@ def _dispatch_inquiries(
             continue
         from ming_sim.audience_night import is_inner_court_attendant
 
-        character = db.characters.read_dispatch_inquiries((attendant,))
+        character = db.characters.field_row('office', attendant)
         if not is_inner_court_attendant(character):
             _reject(rejected, item, "受命者不是近侍", "invalid_state", source)
             continue

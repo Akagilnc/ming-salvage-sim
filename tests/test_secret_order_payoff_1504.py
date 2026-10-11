@@ -446,7 +446,7 @@ def test_monthly_actual_does_not_invent_generic_world_package(game):
     ).fetchone()["loyalty"])
     assert after_loyalty == before_loyalty
     assert int(state.metrics.get("内库", 0)) == before_neiku
-    assert db.reign.list_economy_moves_for_dossier(did) == []
+    assert db.reign.list_economy_moves_for_origin(f"dossier:{int(did)}") == []
 
 def test_submit_unlimited_keeps_frozen_target(game):
     db, state, _ = game
@@ -2256,7 +2256,7 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     ).fetchone()["loyalty"])
     assert after_loyalty == before_loyalty
     assert int(state.metrics.get("内库", 0)) == before_neiku
-    assert db.reign.list_economy_moves_for_dossier(did) == []
+    assert db.reign.list_economy_moves_for_origin(f"dossier:{int(did)}") == []
     db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
     db.conn.commit()
     settled, _rejections = settle_due_secret_orders(db, state)

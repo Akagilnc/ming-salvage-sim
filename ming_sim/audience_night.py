@@ -1241,7 +1241,7 @@ def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
     for item in list_unsettled_summons(db):
         if item["kind"] != "waiting":
             continue
-        row = db.characters.read_list_waiting_audience_summons((item["person_name"],))
+        row = db.characters.field_row('location', item['person_name'])
         location = str(row["location"] or "").strip() if row is not None else ""
         # 防御：kind 已判定 waiting；location 仍回填权威行止供汇总读端。
         if location and not is_capital_location(location):
@@ -1342,9 +1342,7 @@ def retire_unsettled_summons_for_inactive(db: Any) -> List[str]:
     """人物已非 active 时确定性结清其全部未结传召（ADR 0096 / ADR 0009）。"""
     settled: List[str] = []
     for item in list_unsettled_summons(db):
-        row = db.characters.read_dead_person_core_subjects(
-            (item["person_name"],)
-        )
+        row = db.characters.field_row('status', item['person_name'])
         status = str(row["status"] or "active").strip() or "active" if row is not None else "active"
         if status == "active":
             continue

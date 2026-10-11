@@ -82,7 +82,7 @@ def apply_levy_driven_transfers(
         if amount <= 0:
             continue
         balance = int(
-            db.classes.read_apply_levy_driven_transfers((region_id,))[
+            db.classes.read_apply_population_transfers(("农民", region_id))[
                 "population"
             ]
         )

@@ -67,18 +67,3 @@ class FiscalContainerStore:
             "\n            SELECT key, value FROM fiscal_containers\n            WHERE key IN ('hub_京运实拨', 'hub_中央军饷实拨', 'hub_京运损耗')\n            ",
             params,
         ).fetchall()
-
-    def write_reconcile_central_army_pay_arrears_container(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            """
-                INSERT INTO fiscal_containers (key, value, note)
-                VALUES (?, ?, '中央军饷欠账容器：Σ非自养明军 central_pay_arrears')
-                ON CONFLICT(key) DO UPDATE SET
-                  value = excluded.value,
-                  note = excluded.note,
-                  updated_at = CURRENT_TIMESTAMP
-                """,
-            params,
-        )

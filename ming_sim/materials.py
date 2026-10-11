@@ -1159,7 +1159,7 @@ def _world_affair_lines(
         # Metadata follows durable dossier links, never the free-prose origin.
         # A public fact or ordinary dossier keeps a mixed affair available.
         if public_only and not facts:
-            dossiers = store.dossiers(affair.id)
+            dossiers = db.dossiers.rows_for_affair(affair.id)
             if dossiers and not any(
                 origin_visible_to(db, "", linked_dossier_id=dossier["id"])
                 for dossier in dossiers
@@ -1454,7 +1454,7 @@ def _world_effect_materials(
     return history
 
 
-# Decoded machine loads from _dossier_row; raw *_json already skipped. Do not
+# Decoded machine loads from hydrate_dossier_row; raw *_json already skipped. Do not
 # re-emit payload/stigma/execution_signal into player-facing material input (P4).
 _DOSSIER_MATERIAL_SKIP = frozenset({
     "office_archive_keys", "payload", "stigma", "execution_signal",
@@ -1649,7 +1649,7 @@ def dossier_paid_amount(db: Any, dossier_id: object) -> int:
         return 0
     return sum(
         max(0, -int(move.get("delta") or 0))
-        for move in db.reign.list_economy_moves_for_dossier(oid)
+        for move in db.reign.list_economy_moves_for_origin(f"dossier:{int(oid)}")
     )
 
 
@@ -1722,7 +1722,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         if status != "executing":
             continue
         dossier_id = int(row["id"])
-        # list_decree_dossiers_for_simulation → _dossier_row 已保证 payload 为对象。
+        # list_decree_dossiers_for_simulation → hydrate_dossier_row 已保证 payload 为对象。
         payload = row["payload"]
         facts.append({
             "id": dossier_id,
@@ -1798,7 +1798,7 @@ def _scene_present_rows(db: Any) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for name in names:
         office = ""
-        row = db.characters.read_dispatch_inquiries((name,))
+        row = db.characters.field_row('office', name)
         if row is not None:
             office = str(row["office"] or "")
         rows.append((name, office))

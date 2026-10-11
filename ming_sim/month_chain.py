@@ -10,6 +10,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 from ming_sim.applier import list_rejection_reports_for_turn
 
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdict_metadata
@@ -17,7 +18,6 @@ import re
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
-from ming_sim.db import GameDB
 from ming_sim.applier import Provenance, atomic
 from ming_sim.models import _load_durable_json_list, _load_durable_json_object
 
@@ -254,9 +254,8 @@ def _month_fact_materials(
         decree_ref = str(row["decree_ref"] or "")
         # 已结算声明是内部机械事实；与 parse_engine_payload_json 同权威，
         # 空串/腐坏响亮，不得洗成空声明供料（#1897 E1/K2）。
-        from ming_sim.db import GameDB
         try:
-            declaration = GameDB.parse_engine_payload_json(row["declaration_json"])
+            declaration = parse_engine_payload_json(row["declaration_json"])
         except ValueError as exc:
             raise ValueError(
                 f"settled declaration_json 无效：{decree_ref}"
@@ -278,9 +277,8 @@ def _month_fact_materials(
     rejections: List[Dict[str, Any]] = []
 
     for row in list_rejection_reports_for_turn(db.conn, turn):
-        from ming_sim.db import GameDB
 
-        item = GameDB.parse_engine_payload_json(
+        item = parse_engine_payload_json(
             row["item_json"],
         )
         rejections.append(
@@ -1903,7 +1901,6 @@ def _advance_after_gazette(
 ) -> bool:
     if chain.get("advanced"):
         return True
-    from ming_sim.db import GameDB
     from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
     from ming_sim.decree import (
         TIMEOUT_TURN, atomic_and_reload,

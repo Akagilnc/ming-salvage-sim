@@ -100,10 +100,6 @@ class RegionStore:
             "SELECT id, name FROM regions ORDER BY id", params
         ).fetchall()
 
-    def read_victory_status(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT * FROM regions WHERE id = 'beizhili'", params
-        ).fetchone()
 
     def read_originated_quantity_this_turn(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -135,10 +131,6 @@ class RegionStore:
             "SELECT controlled_by, fiscal FROM regions WHERE id=?", params
         ).fetchone()
 
-    def read_settle_province_tick(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT fiscal FROM regions WHERE id = ?", params
-        ).fetchone()
 
     def read_region_report(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -162,15 +154,6 @@ class RegionStore:
             "SELECT id, fiscal FROM regions ORDER BY id", params
         ).fetchall()
 
-    def read_apply_population_transfers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT name FROM regions WHERE id=?", params
-        ).fetchone()
-
-    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT controlled_by FROM regions WHERE id=?", params
-        ).fetchone()
 
     def read_resolve_single_region_id(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -183,8 +166,3 @@ class RegionStore:
         return self._conn.execute(
             "SELECT id, kind, controlled_by FROM regions WHERE name=?", params
         ).fetchall()
-
-    def read_strategic_event_result_preflight_error(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM regions WHERE id = ? LIMIT 1", params
-        ).fetchone()

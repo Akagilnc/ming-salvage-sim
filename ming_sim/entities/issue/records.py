@@ -1,6 +1,7 @@
 """issue 立项/推进/承诺结算的写侧实现：由 issues.py 清算迁入（ADR 0150 决定 8）。"""
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 from ming_sim.models import _load_durable_json_list
 
@@ -151,7 +152,7 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
     rows = db.issues.read_latest_commitment_paid_total((issue_id,))
     from ming_sim.models import _load_durable_json_object
     for row in rows:
-        payload = GameDB.parse_engine_payload_json(
+        payload = parse_engine_payload_json(
             row["metric_delta"],
         )
         # No progress field on this advance → keep scanning (legal absence → final 0).
@@ -284,8 +285,20 @@ def _ack_due_commitment_issue(
             "last_advance_turn": state.turn,
         },
     )
-    db.issues.write_ack_due_commitment_issue(
-        (issue_id, state.turn, from_value, from_value, summary)
+    db.issues.insert_advance(
+        (
+            issue_id,
+            state.turn,
+            "commitment_ack",
+            "",
+            0,
+            from_value,
+            from_value,
+            "",
+            "",
+            summary,
+            "{}",
+        )
     )
     return db.issues.row(issue_id)
 

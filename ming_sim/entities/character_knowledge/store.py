@@ -408,12 +408,6 @@ class CharacterKnowledgeStore:
             "SELECT status, turn_issued FROM secret_orders WHERE id = ?", params
         ).fetchone()
 
-    def write_rush_secret_order(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE secret_orders SET due_turn = ?, deadline_span = 0, "
-            "updated_at=CURRENT_TIMESTAMP WHERE id = ?",
-            params,
-        )
 
     def write_rush_secret_order_secret_orders(self, params: Any = ()) -> Any:
         return self._conn.execute(

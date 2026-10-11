@@ -73,7 +73,7 @@ def apply_dossier_promulgation(
                 if db._is_army_pay_grant_payload(payload):
                     _apply_army_pay_grant_effect(db, state, row, payload, dossier_id)
                 if db._grant_allocation_is_monthly(payload):
-                    fiscal = db.fiscal_config.effects_for_dossier(dossier_id)
+                    fiscal = db.fiscal_config.effects_for_origin(f"dossier:{int(dossier_id)}")
                     landed = any(
                         str(item.get("key") or "").endswith("_base")
                         and int(item.get("value") or 0) == amount
@@ -91,7 +91,7 @@ def apply_dossier_promulgation(
                             state.turn, close=True, commit=False,
                         )
                 else:
-                    moves = db.reign.list_economy_moves_for_dossier(dossier_id)
+                    moves = db.reign.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")
                     actual = int(moves[0]["delta"]) if moves else 0
                     if actual != -amount:
                         if policy["execution_surface"] == "in_transit":
@@ -173,9 +173,7 @@ def apply_dossier_promulgation(
                         target_id = str(
                             payload.get("target_id") or row.get("target_id") or ""
                         ).strip()
-                        army = db.armies.read_apply_dossier_promulgation(
-                            (target_id,)
-                        )
+                        army = db.armies.field_row('arrears', target_id)
                         still_owed = (
                             float(army["arrears"] or 0) if army is not None else 0.0
                         )
@@ -240,7 +238,7 @@ def apply_dossier_promulgation(
             ).strip()
             if not target:
                 raise ValueError("招抚案卷缺少 canonical target")
-            person_row = db.characters.read_resolve_power_id((target,))
+            person_row = db.characters.field_row('power_id', target)
             if person_row is None:
                 raise ValueError(f"招抚案卷目标不存在：{target}")
             old_power = str(person_row["power_id"] or "").strip()
@@ -363,7 +361,7 @@ def _apply_army_pay_grant_effect(
     origin_ref = f"dossier:{int(dossier_id)}"
     # 幂等：同案已有补饷流水则不二扣（ready 重放 / 重复 settle 护栏）。
     existing = [
-        m for m in db.reign.list_economy_moves_for_dossier(int(dossier_id))
+        m for m in db.reign.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")
         if str(m.get("purpose") or "") == "补饷"
     ]
     if existing:
@@ -424,7 +422,7 @@ def _apply_military_order_station_effect(
         return
     if not army_id:
         raise ValueError("军令调驻缺少军队 target")
-    existing = db.armies.read_apply_military_order_station_effect((army_id,))
+    existing = db.armies.field_row('id', army_id)
     if existing is None:
         raise ValueError(
             f"军令调驻引用未入库军队 '{army_id}'（既有军调驻不得 new_armies）"
@@ -951,8 +949,9 @@ def _apply_punishment_verdict_effect(
             "压下弹劾", cost_identity="impeachment_suppression",
         ):
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 1)
-            db.reign.write_apply_authority_cost(
-                (state.metrics["皇威"],)
+            db.reign.upsert_metric(
+                '皇威',
+                state.metrics['皇威'],
             )
         if faction and db.dossiers.record_cost_event(
             dossier_id, state.turn, "satisfaction", "faction", faction, -1,

@@ -327,7 +327,7 @@ def apply_person_changes(
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
-            row = db.characters.read_apply_person_changes_name((name,))
+            row = db.characters.field_row('name', name)
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue

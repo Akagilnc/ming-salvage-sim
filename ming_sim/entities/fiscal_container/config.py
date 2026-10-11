@@ -107,9 +107,10 @@ class FiscalConfigStore:
             "WHERE key=? AND origin_ref=? ORDER BY turn,id", (key, origin),
         ).fetchall()
 
-    def effects(self, origin: str) -> list[dict[str, object]]:
+    def effects_for_origin(self, origin: str) -> list[dict[str, object]]:
         return [
-            {**dict(row), "effect_kind": kind}
+            {**dict(row), "effect_kind": kind,
+             "beyond_intent": bool(coerce_beyond_intent_flag(row["beyond_intent"]))}
             for kind, (table, _columns) in _HISTORY.items()
             for row in self._conn.execute(
                 f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY id", (origin,),
@@ -133,20 +134,19 @@ class FiscalConfigStore:
         never commit separately. beyond_intent uses sole durable coerce.
         """
         beyond_flag = coerce_beyond_intent_flag(beyond_intent)
-        self.append_history("change", {
-            "turn": int(turn), "key": key, "old_value": int(old_value),
-            "new_value": int(new_value), "delta": int(new_value) - int(old_value),
-            "origin_ref": origin_ref, "reason": reason, "beyond_intent": beyond_flag,
-        })
-
-    def effects_for_dossier(self, dossier_id: int) -> list[dict[str, object]]:
-        """History rows for one dossier origin; beyond_intent normalized to bool."""
-        origin = f"dossier:{int(dossier_id)}"
-        rows: list[dict[str, object]] = []
-        for item in self.effects(origin):
-            item["beyond_intent"] = bool(coerce_beyond_intent_flag(item.get("beyond_intent")))
-            rows.append(item)
-        return rows
+        self.append_history(
+            "change",
+            {
+                "turn": int(turn),
+                "key": key,
+                "old_value": int(old_value),
+                "new_value": int(new_value),
+                "delta": int(new_value) - int(old_value),
+                "origin_ref": origin_ref,
+                "reason": reason,
+                "beyond_intent": beyond_flag,
+            },
+        )
 
     def read_fiscal_funding_cut_this_turn(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -155,13 +155,6 @@ class FiscalConfigStore:
             params,
         ).fetchone()
 
-    def write_create_fiscal_item(self, params: Any = ()) -> Any:
-        return self._conn.executemany(
-            "INSERT INTO fiscal_config_creations "
-            "(turn, key, value, kind, origin_ref, reason, beyond_intent) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params,
-        )
 
     def read_create_fiscal_item(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -200,15 +193,7 @@ class FiscalConfigStore:
             params,
         ).fetchone()
 
-    def read_fiscal_levy_tian_in_force(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '田赋_base'", params
-        ).fetchone()
 
-    def read_fiscal_levy_liao_declared_scale(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '辽饷_base'", params
-        ).fetchone()
 
     def write_materialize_pay_order_decree(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -217,13 +202,6 @@ class FiscalConfigStore:
             params,
         )
 
-    def write_restore_pay_order_override(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "INSERT INTO fiscal_config_tombstones"
-            " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
-            " VALUES (?, ?, ?, 'override', ?, ?, 0)",
-            params,
-        )
 
     def read_restore_pay_order_override(self, params: Any = ()) -> Any:
         return self._conn.execute(

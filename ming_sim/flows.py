@@ -1,6 +1,7 @@
 """固定月度财政流与数值/经济/派系 delta 应用。L6。"""
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 from ming_sim.models import _load_durable_json_object
 
@@ -86,7 +87,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]
     commerce_total = 0.0
     rows = db.regions.read_province_army_pay_container_total(())
     for row in rows:
-        fiscal = db.parse_engine_payload_json(row["fiscal"])
+        fiscal = parse_engine_payload_json(row["fiscal"])
         salt_total += _as_finite_nonnegative_float(
             f"region {row['id']} fiscal.salt_tax", fiscal.get("salt_tax", 0)
         )

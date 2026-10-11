@@ -1,5 +1,6 @@
 """加派旨记账。调用方拥有事务，本核不提交。"""
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 from ming_sim.constants import _SETTLE_META_JIAPIAI_KEY as SETTLE_META_JIAPIAI_KEY
 
@@ -67,8 +68,7 @@ def _apply_surcharge_decrees(
         if str(row["controlled_by"] or "") != "ming":
             _reject("missing_ref", f"surcharge_decrees 非明省不可加派：{region_id!r}")
             continue
-        from ming_sim.db import GameDB
-        fiscal = GameDB.parse_engine_payload_json(
+        fiscal = parse_engine_payload_json(
             row["fiscal"],
         )
         settle = fiscal.get("settle")

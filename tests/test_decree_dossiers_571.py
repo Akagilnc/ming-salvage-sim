@@ -433,7 +433,7 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert state.metrics["国库"] == before - 10
     assert dossier["status"] == "closed"
     assert dossier["promulgation_decision"] == "rejected"
-    moves = db.reign.list_economy_moves_for_dossier(dossier_id)
+    moves = db.reign.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")
     assert len(moves) == 1
     assert moves[0]["dossier_id"] is None
     assert moves[0]["origin_ref"] == f"dossier:{dossier_id}"
@@ -604,7 +604,7 @@ def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(
     settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': -10, 'category': '重复拨帑', 'origin_ref': f'dossier:{structured_id}'}, {'account': '国库', 'delta': -5, 'category': '水利涌现', 'origin_ref': f'dossier:{narrative_id}'}]}, SettlementContext(content=content))
 
     assert state.metrics["国库"] == before - 15
-    assert len(db.reign.list_economy_moves_for_dossier(structured_id)) == 1
+    assert len(db.reign.list_economy_moves_for_origin(f"dossier:{int(structured_id)}")) == 1
 
 def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(game):
     db, state, content = game
@@ -1268,7 +1268,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     )
 
     assert state.metrics["内库"] == max(0, balance - 10)
-    assert [row["delta"] for row in db.reign.list_economy_moves_for_dossier(dossier_id)] == (
+    assert [row["delta"] for row in db.reign.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")] == (
         [] if expected_actual == 0 else [expected_actual]
     )
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
@@ -1277,7 +1277,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     assert dossier["status"] == status
     assert dossier["execution_outcome"] == outcome
     assert state.metrics["内库"] == max(0, balance - 10)
-    assert len(db.reign.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
+    assert len(db.reign.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")) == int(expected_actual != 0)
     if outcome != "failed":
         assert status == "executing"
         assert dossier_id in {

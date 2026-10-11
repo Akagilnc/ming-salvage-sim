@@ -9,6 +9,7 @@ kind 分派矩阵（法）：
 """
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 from ming_sim.staged_commitment import normalize_commitment_stages
 
 
@@ -104,8 +105,7 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     text = str(origin_context or "")
     if not text.startswith(_META_PREFIX):
         return {}
-    from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(text[len(_META_PREFIX):])
+    return parse_engine_payload_json(text[len(_META_PREFIX):])
 
 
 def commitment_natural_due_turn(row: Any) -> int:
@@ -825,7 +825,7 @@ def _scan_misappropriation(db: Any, state: Any) -> List[int]:
 
 def _sponsor_dismissed(db: Any, name: str) -> bool:
     """罢：status 离岗。"""
-    row = db.characters.read_dead_person_core_subjects((name,))
+    row = db.characters.field_row('status', name)
     if row is None:
         return True
     status = str(row["status"] or "")
@@ -866,7 +866,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
         if did is not None:
             drow = db.dossiers.read_sponsor_transferred((int(did),))
             if drow is not None and str(drow["executor_id"] or "") == name:
-                payload = db.parse_engine_payload_json(drow["payload_json"])
+                payload = parse_engine_payload_json(drow["payload_json"])
                 if isinstance(payload, dict):
                     expected = str(
                         payload.get("executor_office")

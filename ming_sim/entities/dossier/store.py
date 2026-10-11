@@ -25,6 +25,7 @@ from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, dossier_action_poli
 from ming_sim.strict_types import strict_int
 from ming_sim.participant_roster import decode_durable_participant_roster
 from ming_sim.entities.character.store import CharacterStore
+from ming_sim.exceptions import DeclarationDataError
 
 DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
 DOSSIER_TRANSITIONS = {
@@ -332,7 +333,7 @@ CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
 def normalize_dossier_mode(value: object) -> str:
     mode = value.strip() if isinstance(value, str) else value
     if not isinstance(mode, str) or mode not in DOSSIER_MODES:
-        raise ValueError(f"案卷 mode 非法：{mode}")
+        raise DeclarationDataError(f"案卷 mode 非法：{mode}")
     return mode
 
 
@@ -1223,10 +1224,10 @@ class DossierStore:
         )
 
     def insert_decision(
-        self, dossier_id: int, turn: int, *, decision: str, blocked_layer: str,
-        rescript_action: str, reason: str, legal_reason_code: str,
-        primary_opponents_json: str, gatekeeper_id: Optional[str],
-        criteria_snapshot_json: str,
+        self, dossier_id: int, turn: int, *, decision: str, blocked_layer: str = "",
+        rescript_action: str = "", reason: str = "", legal_reason_code: str = "",
+        primary_opponents_json: str = "[]", gatekeeper_id: Optional[str] = None,
+        criteria_snapshot_json: str = "{}",
     ) -> None:
         """Append one row to the append-only verdict history."""
         self._conn.execute(
@@ -1307,7 +1308,8 @@ class DossierStore:
             held_turn=held_turn, turn=current_turn,
         )
         self.insert_decision(
-            int(dossier_id), current_turn,
+            int(dossier_id),
+            current_turn,
             decision=promulgation if decision != "hold" else "rejected",
             blocked_layer=blocked_layer,
             rescript_action=decision if decision in {"hold", "withdrawn"} else "",
@@ -1574,17 +1576,6 @@ class DossierStore:
             }
             for r in rows
         ]
-
-    def directives_with_dossiers(self, turn: int) -> list[dict[str, object]]:
-        """Draft directives whose dossier creation succeeded."""
-        rows = self._conn.execute(
-            """SELECT td.* FROM turn_directives td
-               WHERE td.turn<=? AND td.status='draft'
-                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
-               ORDER BY td.id""",
-            (int(turn),),
-        ).fetchall()
-        return [dict(row) for row in rows]
 
     def upsert_presence(
         self, dossier_id: int, turn: int, *, auditor_name: str,
@@ -2370,12 +2361,12 @@ class DossierStore:
             params,
         )
 
-    def write_stage_pending_action(self, params: Any = ()) -> Any:
+    def insert_pending_action(self, params: Any) -> Any:
         return self._conn.execute(
-            """INSERT INTO pending_actions
-                   (turn, kind, action, target_id, minister_name, payload_json, status,
-                    night_id, night_approved, source_chat_turn_id)
-                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?)""",
+            "INSERT INTO pending_actions "
+            "(turn, kind, action, target_id, minister_name, payload_json, status, night_id, "
+            "night_approved, source_chat_turn_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params,
         )
 
@@ -2435,9 +2426,9 @@ class DossierStore:
             params,
         )
 
-    def write_dispose_pending_action_apply_exception(self, params: Any = ()) -> Any:
+    def write_pending_action_status(self, params: Any) -> Any:
         return self._conn.execute(
-            "UPDATE pending_actions SET status='failed' WHERE id=?", params
+            "UPDATE pending_actions SET status=? WHERE id=?", params
         )
 
     def write_void_pending_actions_for_chat_turn(self, params: Any = ()) -> Any:
@@ -2459,19 +2450,6 @@ class DossierStore:
             params,
         )
 
-    def write_create_secret_order_decree_dossier_decisions(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            """
-                    INSERT INTO decree_dossier_decisions
-                        (dossier_id,turn,decision,blocked_layer,rescript_action,
-                         reason,legal_reason_code)
-                    VALUES (?,?,'promulgated','palace_rescript','',
-                            '内批自动顺颁','')
-                    """,
-            params,
-        )
 
     def write_update_secret_order_sim_note_in_transaction(
         self, params: Any = ()
@@ -2537,18 +2515,6 @@ class DossierStore:
             params,
         )
 
-    def write_record_dossier_promulgation_decree_dossier_decisions(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            """
-                        INSERT INTO decree_dossier_decisions
-                            (dossier_id,turn,decision,rescript_action,reason,
-                             legal_reason_code)
-                        VALUES (?,?,'rejected','force_promulgated','批红强颁','')
-                        """,
-            params,
-        )
 
     def read_current_judge_affected_parties(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -2710,10 +2676,6 @@ class DossierStore:
             params,
         ).fetchone()
 
-    def write_run_pending_action_commit_lifecycle(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE pending_actions SET status='committed' WHERE id=?", params
-        )
 
     def read_discard_pending_decree_forecast(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -2848,27 +2810,6 @@ class DossierStore:
             params,
         ).fetchall()
 
-    def write_record_commitment_urge(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-            INSERT INTO pending_actions
-                (turn, kind, action, target_id, minister_name, payload_json, status)
-            VALUES (?, ?, ?, ?, '', ?, 'committed')
-            """,
-            params,
-        )
-
-    def read_collect_urge_history(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                    SELECT id, turn, kind, action, target_id, payload_json, status
-                    FROM pending_actions
-                    WHERE status='committed' AND action=?
-                      AND kind='secret_order' AND target_id=?
-                    ORDER BY turn, id
-                    """,
-            params,
-        ).fetchall()
 
     def snapshot_rows(self, table: str) -> Any:
         sql = {

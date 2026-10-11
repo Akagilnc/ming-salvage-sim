@@ -1,6 +1,7 @@
 """暗渠旧案财政效果一次性撤销：由 issues.py 清算迁入（ADR 0150 决定 8）。"""
 
 from __future__ import annotations
+from ming_sim.applier import coerce_beyond_intent_flag
 
 
 from typing import Any
@@ -19,7 +20,7 @@ def neutralize_covert_fiscal_effects(
     """Undo one old case's beyond-intent fiscal contribution, once per live incarnation."""
     old_origin = f"dossier:{int(exposed_dossier_id)}"
     receipt_origin = f"dossier:{int(prohibition_dossier_id)}"
-    rows = db.fiscal_config.effects_for_dossier(int(exposed_dossier_id))
+    rows = db.fiscal_config.effects_for_origin(f"dossier:{int(exposed_dossier_id)}")
     raw_keys = {
         str(row.get("key") or "").strip() for row in rows if row.get("beyond_intent")
     }
@@ -68,7 +69,7 @@ def neutralize_covert_fiscal_effects(
             latest_create is not None
             and create_mark > remove_mark
             and str(latest_create["origin_ref"]) == old_origin
-            and bool(db.coerce_beyond_intent_flag(latest_create["beyond_intent"]))
+            and bool(coerce_beyond_intent_flag(latest_create["beyond_intent"]))
         ):
             if key != base_key:
                 continue
@@ -89,7 +90,7 @@ def neutralize_covert_fiscal_effects(
         for row in db.fiscal_config.changes_for(key, old_origin):
             mark = (int(row["turn"]), 2, int(row["id"]))
             if mark > start and bool(
-                db.coerce_beyond_intent_flag(row["beyond_intent"])
+                coerce_beyond_intent_flag(row["beyond_intent"])
             ):
                 contribution += int(row["delta"])
         floor = db.fiscal_config_minimum_value(key) or 0

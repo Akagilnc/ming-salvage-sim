@@ -119,13 +119,18 @@ def _resolve_commitment_issue(
             "last_advance_turn": state.turn,
         },
     )
-    db.issues.write_resolve_commitment_issue(
+    db.issues.insert_advance(
         (
             issue_id,
             state.turn,
+            'commitment_resolve',
+            '',
             100 - from_value,
             from_value,
-            "承诺停止条件已达成，自动结清。",
+            100,
+            '',
+            '',
+            '承诺停止条件已达成，自动结清。',
             json.dumps(metric_delta, ensure_ascii=False),
         )
     )
@@ -149,13 +154,18 @@ def _expire_commitment_issue(
             "last_advance_turn": state.turn,
         },
     )
-    db.issues.write_expire_commitment_issue(
+    db.issues.insert_advance(
         (
             issue_id,
             state.turn,
+            'expire',
+            '',
+            0,
             from_value,
             from_value,
-            "承诺期限已至，停账收尾。",
+            '',
+            '',
+            '承诺期限已至，停账收尾。',
             json.dumps(metric_delta, ensure_ascii=False),
         )
     )
@@ -395,13 +405,17 @@ def apply_situation_monthly_drift(
                     else f"持续效果落账 (折扣 {int(scale*100)}%)"
                 )
             )
-            db.issues.write_apply_situation_monthly_drift(
+            db.issues.insert_advance(
                 (
                     issue_id,
                     state.turn,
+                    'ongoing',
+                    '',
                     actual_bar,
                     from_bar,
                     int(to_bar),
+                    '',
+                    '',
                     narrative,
                     json.dumps(metric_delta, ensure_ascii=False),
                 )
