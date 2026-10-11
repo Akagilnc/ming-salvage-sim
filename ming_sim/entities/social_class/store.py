@@ -80,33 +80,11 @@ class ClassStore:
             (int(turn), source, target, int(amount), reason, origin_ref),
         )
 
-    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT population FROM classes WHERE name='流民' AND region_id=?", params).fetchone()
-
-    def read_apply_recovery_driven_transfers(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT 1 FROM classes WHERE name='农民' AND region_id=?", params).fetchone()
-
     def read_surcharge_population_pool_members(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')", params).fetchall()
-
-    def read_apply_levy_driven_transfers(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT population FROM classes WHERE name='农民' AND region_id=?", params).fetchone()
 
     def read_class_rows(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name, region_id, population, satisfaction, leverage, agenda FROM classes WHERE region_id = ? ORDER BY name', params).fetchall()
 
-    def read_class_report(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            SELECT c.name, c.region_id, c.satisfaction, c.leverage, r.name AS region_name\n            FROM classes c\n            LEFT JOIN regions r ON r.id = c.region_id\n            WHERE c.region_id <> '' AND c.satisfaction <= 30 AND c.leverage >= 60\n            ORDER BY c.satisfaction ASC, c.leverage DESC\n            ", params).fetchall()
-
     def read_names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT DISTINCT name FROM classes', params)
-
-    def read_adjust_classes(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT satisfaction, leverage FROM classes WHERE name = ? AND region_id = ?', params).fetchone()
-
-    def read_ordered_names(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT DISTINCT name FROM classes ORDER BY name', params).fetchall()
-
-
-    def read_apply_population_transfers(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT population FROM classes WHERE name=? AND region_id=?', params).fetchone()

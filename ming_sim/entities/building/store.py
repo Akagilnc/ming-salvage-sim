@@ -90,16 +90,3 @@ class BuildingStore:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             tuple(row.get(column) for column in _LOG_COLUMNS),
         )
-
-
-    def read_buildings_report(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM buildings WHERE region_id = ? ORDER BY category, name', params).fetchall()
-
-    def read_buildings_report_(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM buildings ORDER BY region_id, category, name', params).fetchall()
-
-    def read_compute_budget_lines(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT category, condition, maintenance, output_metric, output_amount FROM buildings', params).fetchall()
-
-    def read_apply_fixed_period_flows(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings', params).fetchall()

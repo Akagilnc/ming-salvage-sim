@@ -13,7 +13,6 @@ import json
 from typing import Any, Dict, List, Mapping, Optional
 
 from ming_sim.applier import connection_owns_transaction
-from ming_sim.entities.column_write import upsert_by_pk
 
 
 _SCHEMA_SQL = """
@@ -45,23 +44,8 @@ def ensure_schema(conn: Any) -> None:
     conn.executescript(_SCHEMA_SQL)
 
 
-_EDGE_COLUMNS = frozenset({
-    "id", "source", "target", "event_kind", "context", "origin", "origin_round", "turn",
-    "year", "period", "evidence", "affair_id", "created_at",
-})
-
-
 class PersonLogStore:
     """Single write port for ``person_logs``; reads return plain dicts."""
-
-    def edge_snapshot_rows(self) -> Any:
-        return self._conn.execute("SELECT * FROM relation_edge_events").fetchall()
-
-    def restore_edge(self, row: Mapping[str, object]) -> None:
-        upsert_by_pk(self._conn, "relation_edge_events", row, pk="id", allowed=_EDGE_COLUMNS, what="relation_edge_events")
-
-    def delete_edge(self, row_id: object) -> None:
-        self._conn.execute("DELETE FROM relation_edge_events WHERE id=?", (row_id,))
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
@@ -135,9 +119,6 @@ class PersonLogStore:
         row = self._conn.execute(sql, params).fetchone()
         return int(row[0]) if row is not None else 0
 
-    def write_record_relation_edge_event(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n            INSERT OR IGNORE INTO relation_edge_events\n                (source, target, event_kind, context, origin, origin_round,\n                 turn, year, period, evidence)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ', params)
-
     def write_delete_relation_edge_events_for_chat_turn(self, params: Any = ()) -> Any:
         return self._conn.execute('DELETE FROM relation_edge_events WHERE origin LIKE ?', params)
 
@@ -156,9 +137,6 @@ class PersonLogStore:
             )
             total += int(cur.rowcount)
         return total
-
-    def read_record_relation_edge_event(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n            SELECT id FROM relation_edge_events\n            WHERE source = ? AND target = ? AND event_kind = ? AND context = ? AND origin = ?\n            ', params).fetchone()
 
     def read_guofu_targets_of_0056(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT DISTINCT target FROM relation_edge_events WHERE source='皇帝' AND event_kind='辜负' AND turn=? AND origin LIKE ?", params).fetchall()
@@ -318,9 +296,6 @@ class PersonLogStore:
 
     def write_mark_faction_brew_pending(self, params: Any = ()) -> Any:
         return self._conn.execute("\n                INSERT INTO relation_brew_pending\n                    (source, target, year, period, reason, item_kind)\n                VALUES ('', ?, ?, ?, ?, '派系')\n                ON CONFLICT(source, target) DO UPDATE SET\n                    year = excluded.year,\n                    period = excluded.period,\n                    reason = excluded.reason\n                ", params)
-
-    def write_apply_faction_brew_result(self, params: Any = ()) -> Any:
-        return self._conn.execute("DELETE FROM relation_brew_pending WHERE item_kind = '派系' AND target = ?", params)
 
     def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
         row = self._conn.execute(

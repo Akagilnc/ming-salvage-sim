@@ -258,10 +258,6 @@ class StagedDeclarationStore:
             self._conn.commit()
         return int(cur.rowcount or 0)
 
-    def read_month_fact_materials(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT decree_ref, declaration_json, forecast_text, visible_refs_json FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id", params).fetchall()
-
-
 def _load_questions(raw: object) -> list[dict]:
     questions = load_stored_list(raw, label="questions_json")
     if any(not isinstance(question, dict) for question in questions):

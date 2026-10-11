@@ -2350,16 +2350,6 @@ class DossierStore:
             raise KeyError(f"案卷不存在：{dossier_id}")
         return int(row["affair_id"] or 0)
 
-    def snapshot_rows(self, table: str) -> Any:
-        sql = {
-            "decree_dossiers": "SELECT * FROM decree_dossiers",
-            "decree_dossier_decisions": "SELECT * FROM decree_dossier_decisions",
-            "dossier_reported_progress": "SELECT * FROM dossier_reported_progress",
-            "pending_actions": "SELECT * FROM pending_actions",
-            "decree_dossier_links": "SELECT * FROM decree_dossier_links",
-        }[table]
-        return self._conn.execute(sql).fetchall()
-
     def set_affair_id_if_unbound(self, dossier_id: int, affair_id: int) -> int:
         from ming_sim.entities.column_write import bind_affair_once
 

@@ -17,9 +17,6 @@ FACTION_COLUMNS = frozenset({
 class FactionStore:
     """Single write port for factions."""
 
-    def snapshot_rows(self) -> Any:
-        return self._conn.execute("SELECT * FROM factions").fetchall()
-
     def has_any(self) -> bool:
         return self._conn.execute("SELECT 1 FROM factions LIMIT 1").fetchone() is not None
 
@@ -81,12 +78,6 @@ class FactionStore:
             [(row["leverage"], row["leverage_offset"], row["name"]) for row in rows],
         )
 
-    def read_snapshot_person_write_state(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name, leverage, leverage_offset FROM factions', params).fetchall()
-
-    def read_recompute_faction_leverage(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT leverage_offset FROM factions WHERE name=?', params).fetchone()
-
     def read_faction_satisfaction(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT satisfaction FROM factions WHERE name = ?', params).fetchone()
 
@@ -102,23 +93,11 @@ class FactionStore:
         return int(row["leverage"]) if row else 50
 
 
-    def read_adjust_factions(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT satisfaction, leverage FROM factions WHERE name = ?', params).fetchone()
-
-    def read_build_faction_denunciation_facts(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name FROM factions ORDER BY name', params).fetchall()
-
-    def read_build_promulgation_judge_context(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name,leverage,agenda FROM factions ORDER BY name', params).fetchall()
-
     def read_names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name FROM factions', params).fetchall()
 
     def read_faction_context_with_db(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT agenda, satisfaction, leverage FROM factions WHERE name = ?', params).fetchone()
-
-    def write_apply_faction_brew_result(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n                INSERT INTO faction_stance_summaries\n                    (faction, stance_segment, last_event_id,\n                     last_brewed_turn, last_brewed_year, last_brewed_period)\n                VALUES (?, ?, ?, ?, ?, ?)\n                ON CONFLICT(faction) DO UPDATE SET\n                    stance_segment = excluded.stance_segment,\n                    last_event_id = excluded.last_event_id,\n                    last_brewed_turn = excluded.last_brewed_turn,\n                    last_brewed_year = excluded.last_brewed_year,\n                    last_brewed_period = excluded.last_brewed_period,\n                    updated_at = CURRENT_TIMESTAMP\n                ', params)
 
     def get_faction_stance_summaries(self) -> list[dict]:
         rows = self.read_get_faction_stance_summaries()
