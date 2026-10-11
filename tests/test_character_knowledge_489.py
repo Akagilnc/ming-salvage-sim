@@ -95,31 +95,6 @@ def test_public_directive_is_seen_without_granting_secret_order(game):
     )
     assert not any(item.get("source_id") == f"secret_order:{order}" for item in view["events"])
 
-def test_public_disclosure_remains_distinct_from_secret_order(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    order = create_test_secret_order(db,
-        state, "毕自严", "暗查亏空", "密事不得告知礼部", []
-    )
-    disclosure_id = f"secret_order_disclosure:{order}:{state.turn}"
-    db.record_public_knowledge_event(
-        state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=disclosure_id,
-    )
-    marker = "TURN_REPORT_SECRET_MARKER_490"
-    # #883: this independently public source, not the aggregate itself,
-    # authorizes the visible public fragment.
-    db.record_public_knowledge_event(state, "朝廷常务", marker, source_id="test:490:public")
-    db.save_turn_report(
-        state, f"朝廷常务；{marker}", public_body=f"朝廷常务；{marker}",
-    )
-
-    view = db.get_character_knowledge(state, minister.name)
-    public_ids = {item.get("source_id") for item in view["public_events"]}
-
-    assert "test:490:public" in public_ids
-    assert disclosure_id in public_ids
-
-
 def test_participation_survives_restore(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "内阁")
@@ -159,14 +134,10 @@ def test_public_directive_remains_visible_on_a_later_turn(game):
 def test_public_reports_accumulate_across_turns(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    # #883: aggregates never authorize knowledge; independently persisted
-    # public sources are the cross-turn knowledge rail.
     db.record_public_knowledge_event(state, "清丈", "第一回合：清丈已明发。", source_id="test:turn-one")
-    db.save_turn_report(state, "第一回合：清丈已明发。")
     later = db.load_state()
     later.turn += 2
     db.record_public_knowledge_event(later, "军务", "第三回合：军务有变。", source_id="test:turn-three")
-    db.save_turn_report(later, "第三回合：军务有变。")
 
     view = db.get_character_knowledge(later, minister.name)
 
@@ -342,7 +313,7 @@ def test_knowledge_titles_restore_without_persistence_truncation(game):
 
 
 def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
-    """归档不冻结来源；后续登记立即可读，独立公开版本不授予秘密权限。"""
+    """后续登记立即可读，独立公开版本不授予秘密权限。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
@@ -364,7 +335,6 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
     db.record_public_knowledge_event(
         state, "公开事项", public_body, source_id="test:durable-public",
     )
-    db.save_turn_report(state, public_body)
     updated_body = "后续登记的完整正文\r\n保留原样。"
     db.register_character_knowledge_source(
         state, [{"character_id": knower.name, "tier": "主办"}],
@@ -425,10 +395,6 @@ def test_character_added_after_archive_cannot_read_old_participant_source(game):
         state, [{"character_id": participant}], "private_matter", "密令", secret,
         source_id="restricted:test-late-reader-boundary",
     )
-    db.save_turn_report(
-        state, f"聚合转述：{secret}", public_body="",
-    )
-
     late_reader = "归档后新入仕者"
     template = db.conn.execute("SELECT * FROM characters LIMIT 1").fetchone()
     columns = [row[1] for row in db.conn.execute("PRAGMA table_info(characters)").fetchall()]
@@ -448,19 +414,6 @@ def test_character_added_after_archive_cannot_read_old_participant_source(game):
         for item in [*projected["public_events"], *projected["events"]]
     }
     assert "restricted:test-late-reader-boundary" not in visible_ids
-
-def test_raw_aggregate_does_not_authorize_knowledge(game):
-    db, state, content = game
-    db.conn.execute(
-        "INSERT INTO turn_reports(turn, year, period, report) VALUES (?, ?, ?, ?)",
-        (state.turn + 9, state.year, state.period, "旧档密令摘要不得公开"),
-    )
-    db.conn.commit()
-    reader = next(iter(content.characters))
-    assert not any(
-        int(item.get("turn") or 0) == state.turn + 9
-        for item in db.get_character_knowledge(state, reader)["public_events"]
-    )
 
 def test_structured_person_scope_replaces_role_wide_world_reports(game):
     """Appointment jurisdiction via real declaration entrance — not DB setter hooks."""

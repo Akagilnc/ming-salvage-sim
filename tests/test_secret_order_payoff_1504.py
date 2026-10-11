@@ -22,11 +22,9 @@ from ming_sim.covert_progress import (
     CovertContractError,
     apply_investigation_spoliation,
     build_covert_task_contract,
-    decide_secret_order_settlement,
     investigation_clue_records,
     live_investigation_fact_keys,
     read_covert_task_contract,
-    seed_guilt_counts_as_debt,
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
     settle_due_secret_orders,
@@ -35,7 +33,6 @@ from ming_sim.applier import Provenance
 from ming_sim.month_chain import build_secret_orders_supply_feed
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_score_extraction
-from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
     if investigation_target:

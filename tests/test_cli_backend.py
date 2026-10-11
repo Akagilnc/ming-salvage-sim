@@ -25,11 +25,6 @@ def _cli_codex_cfg() -> LLMConfig:
     )
 
 
-def _patch_backend(monkeypatch, payload: str):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
-
-
-
 # ── cli_backend_from_env / backend dispatch ──
 
 def test_backend_env(monkeypatch):

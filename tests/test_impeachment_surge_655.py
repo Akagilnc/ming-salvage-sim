@@ -3,10 +3,8 @@
 """
 import json
 
-import ming_sim.agents as agents_mod
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates
-from ming_sim.models import LLMConfig
 
 
 def _candidate_world(db, state, *, participants=None, execution_note="名实已乖，旨外受益"):

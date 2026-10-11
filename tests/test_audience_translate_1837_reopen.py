@@ -20,7 +20,6 @@ from ming_sim.audience_night import (
 from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.session import GameSession
 from tests.month_chain_helpers import make_light_session
 from tests.recommendation_rows import recommendation_events
 

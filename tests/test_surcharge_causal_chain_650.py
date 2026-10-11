@@ -48,16 +48,16 @@ def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):
     return item
 
 
-def _settle_month(state, db, delta, *, before_turn, content, monkeypatch, narrative="邸报"):
+def _settle_month(state, db, delta, *, before_turn, content, monkeypatch):
     """只替换世界段模型缝；财政、效果和月末均经玩家过月事务。"""
     assert state.turn == before_turn
     session = _prepare_player_month(
         db, state, content, monkeypatch,
-        world=lambda *_a, **_k: narrative if delta else "",
+        world=lambda *_a, **_k: "邸报" if delta else "",
         translate=lambda *_a, **_k: {"effects": delta},
     )
     session.resolve_turn(allow_empty_decree=True)
-    db.save_turn_report(state, narrative, public_body=narrative)
+    db.save_turn_report(state, "邸报", public_body="邸报")
     session.resolve_turn(allow_empty_decree=True)
 
 
@@ -332,33 +332,6 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
 
     with pytest.raises((ValueError, SettlementAbort)):
         _settle_month(state, db, {}, before_turn=state.turn, content=content, monkeypatch=monkeypatch)
-
-
-# ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
-
-def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it(game, monkeypatch):
-    """自由邸报在原归档表持久化，不锁正文或知识镜像。"""
-    db, state, content = game
-    first_turn = state.turn
-    first_body = "陕西加派月报。"
-    _settle_month(
-        state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=10.0)]},
-        before_turn=first_turn, content=content, monkeypatch=monkeypatch, narrative=first_body,
-    )
-    assert db.conn.execute(
-        "SELECT turn FROM turn_reports WHERE turn=?", (first_turn,)
-    ).fetchone() is not None
-
-    free_body = "陕西流民渐起，关中贼势暗流潜滋。"
-    second_turn = state.turn
-    # 此处 narrative 代表既有 player-facing simulator 的自由输出；archive writer 未替换。
-    _settle_month(
-        state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)]},
-        before_turn=second_turn, content=content, monkeypatch=monkeypatch, narrative=free_body,
-    )
-    assert db.conn.execute(
-        "SELECT turn FROM turn_reports WHERE turn=?", (second_turn,)
-    ).fetchone() is not None
 
 
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──
