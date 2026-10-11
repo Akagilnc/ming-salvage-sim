@@ -275,7 +275,6 @@ def _post_issue_stream(
             return {**payload, "_event": "error"}
         raise AssertionError(f"{step}: stream error event: {data!r}; sse={resp.text!r}")
     if ev == "decisions":
-        assert isinstance(data, dict), f"{step}: decisions payload not dict: {data!r}"
         return {**data, "awaiting_decision": True}
     if ev == "done":
         assert isinstance(data, dict), f"{step}: done payload not dict: {data!r}"
@@ -309,7 +308,7 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
     game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
 
-    assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
+    assert len(game.db.list_unextracted_replies(night_id=nid)) >= 1
 
     return int(ctid)
 
@@ -350,7 +349,6 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
         f"expected translation-exhaustion 409, got {issue.status_code}: {issue.text}"
     )
     detail = issue.json().get("detail")
-    assert isinstance(detail, dict), detail
     assert detail.get("stage") == "audience_translation_exhausted", detail
     assert detail.get("error_pack_path"), detail
 

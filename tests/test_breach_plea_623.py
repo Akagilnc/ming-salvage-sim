@@ -1078,11 +1078,11 @@ def test_remove_sponsor_persist_writes_credit_edge(game):
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
     result = finalize_persist(db, state, todo, commit=True)
     assert result["breach_0056"] is False
-    edges = list(db.conn.execute(
+    edges = db.conn.execute(
         "SELECT event_kind, target, origin FROM relation_edge_events "
         "WHERE target=? AND event_kind='辜负' ORDER BY id",
         (holder,),
-    ).fetchall())
+    ).fetchall()
     assert edges, "撤人坚持须写 0079 辜负边"
     assert any(f"issue:{cid}" in str(e["origin"] or "") for e in edges)
 
@@ -1125,12 +1125,12 @@ def test_same_sponsor_two_commitments_both_remove_edges(game):
     rb = finalize_persist(db, state, tb, commit=True)
     assert ra["breach_0056"] is False
     assert rb["breach_0056"] is False
-    edges = list(db.conn.execute(
+    edges = db.conn.execute(
         "SELECT origin FROM relation_edge_events "
         "WHERE target=? AND event_kind='辜负' AND turn=? "
         "AND origin LIKE 'issue:%breach_plea%' ORDER BY id",
         (holder, int(state.turn)),
-    ).fetchall())
+    ).fetchall()
     origins = [str(e["origin"] or "") for e in edges]
     assert any(
         o.startswith(f"issue:{cid_a}:breach_plea") for o in origins
@@ -1293,11 +1293,11 @@ def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
     result = finalize_persist(db, state, todo, commit=True)
     assert result["breach_0056"] is True
     assert _cost_events(db, did, identity="breach")
-    edges = list(db.conn.execute(
+    edges = db.conn.execute(
         "SELECT event_kind, target, origin FROM relation_edge_events "
         "WHERE target=? AND event_kind='辜负' AND turn=? ORDER BY id",
         (holder, int(state.turn)),
-    ).fetchall())
+    ).fetchall()
     assert edges, "撤人/0056 须落辜负边"
     # 同人同回合不重复（0056 已写则 0079 跳过）
     assert len(edges) == 1
@@ -1332,10 +1332,10 @@ def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
     result = finalize_persist(db, state, todo, commit=True)
     assert result["breach_0056"] is True, "absorbed funding 须触发 0056"
     assert _cost_events(db, did, identity="breach")
-    edges = list(db.conn.execute(
+    edges = db.conn.execute(
         "SELECT event_kind, target, origin FROM relation_edge_events "
         "WHERE target=? AND event_kind='辜负' AND turn=? ORDER BY id",
         (holder, int(state.turn)),
-    ).fetchall())
+    ).fetchall()
     assert edges, "撤人边/0056 辜负不得丢"
     assert len(edges) == 1, "同人辜负不重复"

@@ -121,9 +121,7 @@ def public_layer_events(db: Any, *, for_public_feed: bool = False) -> list[dict[
 def _json_name_list(raw: object) -> list[str]:
     # 与 db 持久 list 权威同缝；腐坏响亮，不 catch-to-[]（#1897 E1）。
     from ming_sim.db import _load_durable_str_list
-    return list(
-        _load_durable_str_list(raw)
-    )
+    return _load_durable_str_list(raw)
 
 
 def _json_target_map(raw: object) -> dict[str, list[str]]:
@@ -134,8 +132,8 @@ def _json_target_map(raw: object) -> dict[str, list[str]]:
     )
     result: dict[str, list[str]] = {}
     for key, values in targets.items():
-        if key in {"people", "offices"} and isinstance(values, list) and values:
-            result[str(key)] = [str(name) for name in values]
+        if key in {"people", "offices"} and values:
+            result[key] = list(values)
         elif key not in {"people", "offices"} and isinstance(values, list) and values:
             result[str(key)] = [str(name) for name in values if str(name).strip()]
     return result

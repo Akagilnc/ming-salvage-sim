@@ -262,7 +262,6 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
     # #1842：转译单轮失败标 pending；过月耗尽 → SettlementAbort（HTTP 409 + typed stage）。
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
-    assert isinstance(detail, dict), detail
     assert detail.get("stage") == "audience_translation_exhausted", detail
     pack = detail.get("error_pack_path")
     assert pack, detail
@@ -324,7 +323,6 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
     # #1842：转译耗尽 → SettlementAbort（HTTP 409 + typed stage）；issue 与 advance 同形。
     assert resp.status_code == 409, resp.text
     detail = resp.json().get("detail")
-    assert isinstance(detail, dict), detail
     assert detail.get("stage") == "audience_translation_exhausted", detail
     assert detail.get("error_pack_path"), detail
     # join-before-close：close 钩未跑

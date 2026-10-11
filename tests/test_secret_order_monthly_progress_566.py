@@ -252,6 +252,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     import ming_sim.decree as decree
     import ming_sim.session as session_mod
     import web_app
+    from fastapi.testclient import TestClient
 
     db, state, content = game
     turn = state.turn
@@ -301,22 +302,16 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
 
         monkeypatch.setattr(web_app, "get_game", lambda: web_game)
         monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
-        invoke = web_app.api_advance_without_edict
-    else:
-        invoke = session.advance_without_decree
-
     # cli：session 层 RuntimeError 原样穿透。
     # web：#1433 可读错误包契约——Exception → 500 + {"message": str(e)}（回滚语义不变）。
     if entry == "web":
-        with pytest.raises(web_app.HTTPException) as exc_info:
-            invoke()
-        assert exc_info.value.status_code == 500
-        detail = exc_info.value.detail
-        assert isinstance(detail, dict)
-        assert detail.get("message") == str(fiscal_fault)
+        with TestClient(web_app.app, raise_server_exceptions=False) as client:
+            response = client.post("/api/decree/advance_without_edict", json={})
+        assert response.status_code == 500
+        assert response.json()["detail"]["message"] == str(fiscal_fault)
     else:
         with pytest.raises(RuntimeError) as ei:
-            invoke()
+            session.advance_without_decree()
         assert ei.value is fiscal_fault
 
     after = _rollback_snapshot(db, state, pending_ids)

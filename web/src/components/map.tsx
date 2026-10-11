@@ -365,7 +365,7 @@ export function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; se
       return {
         id: group.regionId,
         name: node?.region?.name || group.regionId,
-        controlledBy: MAP_DISPLAY_POWER_OVERRIDES[group.regionId] || String(node?.region?.controlled_by || "ming"),
+        controlledBy: MAP_DISPLAY_POWER_OVERRIDES[group.regionId] || (node?.region?.controlled_by || "ming"),
         unrest: node?.region?.unrest || 0,
         risk: node?.risk || 0,
         labelX: node?.x ?? 50,

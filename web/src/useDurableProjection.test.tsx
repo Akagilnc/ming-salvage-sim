@@ -41,7 +41,7 @@ describe("持久刷新协调器（#499 App 消费的 useDurableProjection）", (
     let stateCall = 0;
     let ordersCall = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/game/state")) {
         stateCall += 1;
         if (stateCall === 1) { await oldGate; return jsonResp({ marker: "old-done", map_nodes: [] }); }  // 旧 done 的 state，迟到
@@ -88,7 +88,7 @@ describe("持久刷新协调器（#499 App 消费的 useDurableProjection）", (
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/game/state")) { await gate; return jsonResp({ marker: "old", map_nodes: [] }); }
       return jsonResp({});
     }));

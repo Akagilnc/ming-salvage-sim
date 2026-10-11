@@ -301,7 +301,7 @@ export function useSettlementFlow({
     const periodLabel = next?.previous_reign_period_label
       || embedded?.previous_reign_period_label
       || "";
-    if (report.trim() || String(attendantMessage || "").trim()) {
+    if (report.trim() || (attendantMessage || "").trim()) {
       receipt.setGazetteReading({
         report,
         attendantMessage: attendantMessage || undefined,
@@ -326,8 +326,8 @@ export function useSettlementFlow({
       // Free prose cheat: preserve raw; trim only emptiness (#1834 F16).
       const cheatPayload = cheatDirective;
       const body: Record<string, unknown> = { cheat: cheatPayload };
-      if (expectedTurn != null && Number.isFinite(Number(expectedTurn))) {
-        body.expected_turn = Number(expectedTurn);
+      if (expectedTurn != null && Number.isFinite(expectedTurn)) {
+        body.expected_turn = expectedTurn;
       }
       const response = await fetch("/api/decree/issue/stream", {
         method: "POST",
@@ -345,7 +345,7 @@ export function useSettlementFlow({
           Number(errData?.status_code) === 409
           && expectedTurn != null
           && Number.isFinite(serverTurn)
-          && serverTurn > Number(expectedTurn)
+          && serverTurn > expectedTurn
         ) {
           receipt.reload();
           return;
@@ -472,8 +472,8 @@ export function useSettlementFlow({
         {
           method: "POST",
           body: JSON.stringify(
-            expectedTurn != null && Number.isFinite(Number(expectedTurn))
-              ? { expected_turn: Number(expectedTurn) }
+            expectedTurn != null && Number.isFinite(expectedTurn)
+              ? { expected_turn: expectedTurn }
               : {},
           ),
         },
@@ -508,7 +508,7 @@ export function useSettlementFlow({
         Number(detail?.status_code) === 409
         && expectedTurn != null
         && Number.isFinite(serverTurn)
-        && serverTurn > Number(expectedTurn)
+        && serverTurn > expectedTurn
       ) {
         receipt.reload();
         return;

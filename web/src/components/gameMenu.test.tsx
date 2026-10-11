@@ -743,7 +743,7 @@ describe("#1732 GameMenu · 就地消解", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       calls.push({ url, init });
-      if (String(url) === "/api/saves" && !init?.method) {
+      if (url === "/api/saves" && !init?.method) {
         return Promise.resolve({
           ok: true,
           json: async () => ({ saves: [{ name: "slot_a", mtime: 1, size: 2048 }] }),
@@ -770,7 +770,7 @@ describe("#1732 GameMenu · 就地消解", () => {
     await act(async () => {
       cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(calls.some((c) => String(c.url).includes("/load"))).toBe(false);
+    expect(calls.some((c) => c.url.includes("/load"))).toBe(false);
 
     await act(async () => {
       loadBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -783,7 +783,7 @@ describe("#1732 GameMenu · 就地消解", () => {
       yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
-    expect(calls.some((c) => String(c.url).includes("/api/saves/slot_a/load") && c.init?.method === "POST")).toBe(true);
+    expect(calls.some((c) => c.url.includes("/api/saves/slot_a/load") && c.init?.method === "POST")).toBe(true);
     expect(onAfterLoad).toHaveBeenCalled();
     cleanup();
   });
@@ -824,7 +824,7 @@ describe("#1732 GameMenu · 就地消解", () => {
       yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
-    expect(calls.some((c) => String(c.url).includes("/api/saves/keep") && c.init?.method === "DELETE")).toBe(true);
+    expect(calls.some((c) => c.url.includes("/api/saves/keep") && c.init?.method === "DELETE")).toBe(true);
     expect(onRefresh).toHaveBeenCalled();
     cleanup();
   });

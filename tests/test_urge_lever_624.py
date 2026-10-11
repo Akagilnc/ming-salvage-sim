@@ -258,7 +258,6 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     ]
     assert len(grace) == 1
     payload = grace[0].get("payload_json")
-    assert isinstance(payload, dict)
     assert payload.get("truth") in {"genuine", "pretextual"}
     assert "grace_fake" in payload
 
@@ -348,7 +347,7 @@ def test_urge_history_restore_from_committed_pending_ac7(game):
     db2 = GameDB(path)
     hist = collect_urge_history(db2, commitment_ref=issue_id)
     assert len(hist) >= 1
-    assert int(hist[0]["deadline_months"]) == 3  # restore 结构字段；不锁 reason 散文
+    assert hist[0]["deadline_months"] == 3  # restore 结构字段；不锁 reason 散文
 
 
 def test_rush_without_issue_fail_closed_no_remonstrance(game):
@@ -430,9 +429,9 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
     assert one.get("rejected") is True
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     # 仍 pending，未被 failed/连坐吞
-    costs = list(db.conn.execute(
+    costs = db.conn.execute(
         "SELECT * FROM decree_cost_events WHERE dossier_id=?", (dossier_id,),
-    ).fetchall())
+    ).fetchall()
     assert costs == []
 
 

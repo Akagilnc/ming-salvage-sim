@@ -1501,7 +1501,7 @@ class WebGame:
 
     def memorial_payloads(self) -> List[Dict[str, Any]]:
         """#1726 奏疏收件箱投影：进度奏报 + 派系检举；正文原样，已读位随存档。"""
-        return list(self.db.list_player_memorials())
+        return self.db.list_player_memorials()
 
     def mark_memorials_read(self, keys: List[str]) -> Dict[str, Any]:
         self.db.mark_memorials_read(keys)
@@ -1521,12 +1521,8 @@ class WebGame:
         }
         for row in self.db.list_active_legacies(self.state):
             # Durable legacies JSON: reuse authoritative loud read (F39); no parallel wash-to-{}.
-            eff = self.db.parse_engine_payload_json(
-                row["modifiers"], surface="legacies.modifiers",
-            )
-            clear_gate = self.db.parse_engine_payload_json(
-                row["clear_gate"], surface="legacies.clear_gate",
-            )
+            eff = self.db.parse_engine_payload_json(row["modifiers"])
+            clear_gate = self.db.parse_engine_payload_json(row["clear_gate"])
             remaining_months = self.db.legacy_remaining_months(row, self.state)
             clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")
             if not clear_condition and clear_gate:
@@ -2069,19 +2065,15 @@ class WebGame:
         if chat_turn_id:
             # 单一事务插入回话、链接 turn 并升为 active，避免提交后出现未链接回话。
             # 失败须上抛，禁 catch 后仍返回成功。
-            minister_message_id = int(
-                self.db.persist_minister_reply(
-                    minister_name,
-                    turn,
-                    answer,
-                    chat_turn_id,
-                )
+            minister_message_id = self.db.persist_minister_reply(
+                minister_name,
+                turn,
+                answer,
+                chat_turn_id,
             )
         else:
             # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
-            minister_message_id = int(
-                self.db.append_chat_message(minister_name, turn, "minister", answer)
-            )
+            minister_message_id = self.db.append_chat_message(minister_name, turn, "minister", answer)
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         from ming_sim.audience_night import get_open_night
         open_night = get_open_night(self.db)
@@ -2961,7 +2953,7 @@ def _accept_settlement_period(game) -> bool:
     if db is None or state is None:
         return False
     from ming_sim.month_open_snapshot import accept_settlement_period
-    return bool(accept_settlement_period(db, state))
+    return accept_settlement_period(db, state)
 
 
 def _settlement_entry_lock(game) -> threading.Lock:
@@ -3142,7 +3134,7 @@ class _NonBlockingWebWriteGate:
         self._lock.release()
 
     def locked(self) -> bool:
-        return bool(self._lock.locked())
+        return self._lock.locked()
 
     def __enter__(self) -> "_NonBlockingWebWriteGate":
         self.acquire()
@@ -3689,7 +3681,7 @@ def _c7_try_fulfill_archive(path: str) -> bool:
             if not os.path.exists(norm):
                 moved_ok = True
             else:
-                moved_ok = bool(_archive_move_db_files(norm))
+                moved_ok = _archive_move_db_files(norm)
         except Exception as _caught_failure:
             logger.exception(
                 "C7 archive execute failed path=%s error=%s",
@@ -4279,7 +4271,7 @@ async def api_menu_status() -> Dict[str, Any]:
     # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
     # 并把字面量钉死（CMR R1 Claude+Gemini concur）。resolved 仅供「当前后端」展示行。
     cli_model_saved = str(cli_slot.get("model") or "").strip()
-    cli_model = cli_model_saved or str(cli_model_from_env(cli_runner, "")).strip()
+    cli_model = cli_model_saved or cli_model_from_env(cli_runner, "").strip()
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     has_api_key = _has_real_api_key(runtime.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
     base_url = runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", "")

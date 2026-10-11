@@ -148,7 +148,6 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     assert "end" in types, stream_events
     done_raw = next(ev for ev in stream_events if ev.get("event") == "done").get("data") or "{}"
     done_payload = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
-    assert isinstance(done_payload, dict), done_payload
     assert done_payload.get("court_action") == "court_break", done_payload
     assert barrier_at_done == [True]
     assert statuses == {

@@ -65,11 +65,6 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
         )
     names: set[str] = set()
     for idx, name in enumerate(raw):
-        if not isinstance(name, str):
-            raise TypeError(
-                f"event {origin_ref!r} audiences[{idx}] must be str, "
-                f"got {type(name).__name__}"
-            )
         stripped = name.strip()
         if stripped:
             names.add(stripped)
@@ -97,14 +92,14 @@ def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
     keys = row.keys()
     raw_names = row["excluded_names"] if "excluded_names" in keys else None
     names_list = _load_durable_str_list(raw_names)
-    excluded_names = {str(name) for name in names_list}
+    excluded_names = set(names_list)
     raw_targets = row["excluded_targets"] if "excluded_targets" in keys else None
     # 空串/腐坏不得洗成合法空对象——与 db._load_exclusion_targets 同权威（#1897 E1）。
     targets = _load_exclusion_targets(
         raw_targets, surface="knowledge excluded_targets",
     )
-    people = {str(name) for name in targets.get("people", [])}
-    offices = {str(name) for name in targets.get("offices", [])}
+    people = set(targets["people"])
+    offices = set(targets["offices"])
     return excluded_names, people, offices
 
 

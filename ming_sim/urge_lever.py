@@ -63,9 +63,7 @@ def derive_opportunity_band(durable_effects: object) -> str:
 def _parse_payload(raw: object) -> Dict[str, object]:
     """催办史 payload 读路：与 GameDB.parse_engine_payload_json 合一；腐坏响亮。"""
     from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(
-        raw, surface="pending_actions.payload_json",
-    )
+    return GameDB.parse_engine_payload_json(raw)
 
 
 def collect_urge_history(
@@ -118,7 +116,7 @@ def collect_urge_history(
                   AND kind='secret_order' AND target_id=?
                 ORDER BY turn, id
                 """,
-                (URGE_PENDING_ACTION, int(so_id)),
+                (URGE_PENDING_ACTION, so_id),
             ).fetchall()
             for row in so_rows:
                 payload = _parse_payload(row["payload_json"])
@@ -155,8 +153,8 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             # get_decree_dossier 已解码名册为 list[dict]。
             roster = dossier.get("participant_roster") or []
             for item in roster:
-                if isinstance(item, dict) and str(item.get("tier") or "") == "主办":
-                    name = str(item.get("character_id") or "").strip()
+                if item.get("tier") == "主办":
+                    name = item["character_id"]
                     if name:
                         break
     if not name:
@@ -167,14 +165,14 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
         if row is not None:
             roster = decode_durable_participant_roster(row["participant_roster"])
             for item in roster:
-                cand = str(item.get("character_id") or "").strip()
+                cand = item["character_id"]
                 if cand:
                     name = cand
                     break
             if not name:
                 parts = _load_durable_str_list(row['participants'])
                 if parts:
-                    name = str(parts[0]).strip()
+                    name = parts[0].strip()
     integrity, courage = 50, 50
     if name:
         crow = db.conn.execute(
@@ -202,7 +200,7 @@ def _record_commitment_urge(
     tightness = max(0, int(old_due) - int(new_due))
     payload = {
         "stage_idx": int(stage_idx),
-        "old_due": int(old_due),
+        "old_due": old_due,
         "new_due": int(new_due),
         "deadline_months": int(deadline_months),
         "tightness": tightness,
@@ -302,7 +300,7 @@ def rush_staged_commitment_stage(
 
     stages[target_i] = {
         **target_stage,
-        "due_turn": int(new_due),
+        "due_turn": new_due,
     }
     stages_blob = stages_to_json(stages)
 
@@ -337,8 +335,8 @@ def rush_staged_commitment_stage(
     return {
         "commitment_ref": int(commitment_ref),
         "stage_idx": int(stage_idx),
-        "old_due": int(old_due),
-        "due_turn": int(new_due),
+        "old_due": old_due,
+        "due_turn": new_due,
         "deadline_months": months,
         "reason": why,
     }

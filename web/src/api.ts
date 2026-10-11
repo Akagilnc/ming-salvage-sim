@@ -25,8 +25,7 @@ export class ApiRequestError extends Error {
 export const normalizeApiError = (error: any, fallback: string): ApiErrorDetail => {
   const detail = error?.detail ?? error;
   if (detail && typeof detail === "object") {
-    const turnRaw = detail.turn;
-    const turnNum = typeof turnRaw === "number" ? turnRaw : Number(turnRaw);
+    const turnNum = Number(detail.turn);
     return {
       ...detail,
       message: detail.message || detail.detail || fallback,

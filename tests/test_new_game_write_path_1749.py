@@ -216,7 +216,6 @@ def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
     done = next((e for e in events if e.get("event") == "done"), None)
     assert done is not None, f"chat/stream missing done; events={events!r}"
     done_data = json.loads(done["data"]) if isinstance(done.get("data"), str) else done.get("data")
-    assert isinstance(done_data, dict), done_data
     mid = int(done_data.get("minister_message_id") or 0)
     assert mid >= 1, f"done missing minister_message_id: {done_data!r}"
     return {

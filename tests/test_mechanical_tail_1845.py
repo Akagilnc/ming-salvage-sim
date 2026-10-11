@@ -398,12 +398,12 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
 
     def _reports():
         if in_tail:
-            tail_reads_under_gate.append(bool(gate.locked()))
+            tail_reads_under_gate.append(gate.locked())
         return orig_reports()
 
     def _save_state(game_state):
         if threading.current_thread() is threading.main_thread():
-            main_saves_under_gate.append(bool(gate.locked()))
+            main_saves_under_gate.append(gate.locked())
         return orig_save_state(game_state)
 
     monkeypatch.setattr(db, "list_turn_reports", _reports)

@@ -238,10 +238,8 @@ def build_promulgation_judge_context(
         "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
         "ORDER BY d.turn,d.dossier_id,d.id"
     ).fetchall():
-        from ming_sim.db import GameDB
-        payload = GameDB.parse_engine_payload_json(
-            item["payload_json"], surface="decree.history.payload_json",
-        )
+        from ming_sim.db import _load_durable_json
+        payload = _load_durable_json(item["payload_json"])
         mode = str(payload.get("mode") or "ordinary")
         rescript_action = str(item["rescript_action"] or "")
         forced = rescript_action == "force_promulgated"

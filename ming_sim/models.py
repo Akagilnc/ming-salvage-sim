@@ -40,7 +40,7 @@ def loads_effect_dict(raw: object) -> Dict[str, object]:
     """
     from ming_sim.db import GameDB
 
-    return GameDB.parse_engine_payload_json(raw, surface="effect_json")
+    return GameDB.parse_engine_payload_json(raw)
 
 
 def _nonzero_int(raw: object) -> bool:

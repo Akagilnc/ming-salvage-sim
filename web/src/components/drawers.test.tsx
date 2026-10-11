@@ -96,7 +96,7 @@ async function renderCourtList(
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      if (String(url).includes("/api/court_layout")) {
+      if (url.includes("/api/court_layout")) {
         return { ok: true, json: async () => ({ layout: "{}" }) } as Response;
       }
       return { ok: true, json: async () => ({}) } as Response;
@@ -267,7 +267,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
-        if (String(url).includes("/api/court_layout")) return pending as unknown as Response;
+        if (url.includes("/api/court_layout")) return pending as unknown as Response;
         return { ok: true, json: async () => ({}) } as Response;
       })
     );
@@ -364,8 +364,8 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
       resolveLayout = r;
     });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (String(url).includes("/api/court_layout")) {
-        if (init && String(init.method || "GET").toUpperCase() === "POST") {
+      if (url.includes("/api/court_layout")) {
+        if (init && (init.method || "GET").toUpperCase() === "POST") {
           return { ok: true, json: async () => ({}) } as Response;
         }
         return pending as unknown as Response;
@@ -450,7 +450,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     // POST 载荷须含合并结果：张瑞图服务端位 + 施凤来本地拖位；不得只剩默认布局
     const posts = fetchMock.mock.calls.filter(
-      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+      (c) => c[0].includes("/api/court_layout") && c[1] && ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(posts.length).toBeGreaterThan(0);
     const lastPost = posts[posts.length - 1];
@@ -474,8 +474,8 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
       resolveLayout = r;
     });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (String(url).includes("/api/court_layout")) {
-        if (init && String(init.method || "GET").toUpperCase() === "POST") {
+      if (url.includes("/api/court_layout")) {
+        if (init && (init.method || "GET").toUpperCase() === "POST") {
           return { ok: true, json: async () => ({}) } as Response;
         }
         return pending as unknown as Response;
@@ -538,7 +538,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     // 合并完成前不得 POST
     const postsBefore = fetchMock.mock.calls.filter(
-      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+      (c) => c[0].includes("/api/court_layout") && c[1] && ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(postsBefore.length).toBe(0);
 
@@ -559,7 +559,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     // 仍无 POST
     const postsMid = fetchMock.mock.calls.filter(
-      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+      (c) => c[0].includes("/api/court_layout") && c[1] && ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(postsMid.length).toBe(0);
 
@@ -589,7 +589,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     // 完成后 POST 一次且载荷完整
     const posts = fetchMock.mock.calls.filter(
-      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+      (c) => c[0].includes("/api/court_layout") && c[1] && ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(posts.length).toBe(1);
     const body = JSON.parse(String((posts[0][1] as RequestInit).body));
@@ -654,8 +654,8 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     // 判官 mutation 反例：把 drawers.tsx 回退至 57dc9cfe（副作用回到 setState updater 内），
     // StrictMode 双调 updater → commitSave 两发 → 本测试必须转红；非 StrictMode 不具判别力。
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (String(url).includes("/api/court_layout")) {
-        if (init && String(init.method || "GET").toUpperCase() === "POST") {
+      if (url.includes("/api/court_layout")) {
+        if (init && (init.method || "GET").toUpperCase() === "POST") {
           return { ok: true, json: async () => ({}) } as Response;
         }
         return { ok: true, json: async () => ({ layout: "{}" }) } as Response;
@@ -715,9 +715,9 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     // 纯化 updater：同一次松手只允许一次 POST（StrictMode 双调下旧实现会发两发）
     const posts = fetchMock.mock.calls.filter(
       (c) =>
-        String(c[0]).includes("/api/court_layout") &&
+        c[0].includes("/api/court_layout") &&
         c[1] &&
-        String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+        ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(posts.length).toBe(1);
     const body = JSON.parse(String((posts[0][1] as RequestInit).body));
@@ -772,7 +772,7 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
       vi.stubGlobal(
         "fetch",
         vi.fn(async (url: string) => {
-          if (String(url).includes("/api/court_layout")) {
+          if (url.includes("/api/court_layout")) {
             return { ok: true, json: async () => ({ layout: "{}" }) } as Response;
           }
           return { ok: true, json: async () => ({}) } as Response;

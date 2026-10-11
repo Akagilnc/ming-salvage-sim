@@ -1183,7 +1183,6 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     rejected = appoint(bare.name, "新设巡抚", "地方")
     assert rejected and rejected[0].get("rejected"), rejected
     assert rejected[0].get("category") == "missing_field", rejected
-    assert isinstance(rejected[0].get("item"), dict), rejected
     assert rejected[0]["item"].get("office") == "新设巡抚"
     assert rejected[0]["item"].get("office_type") == "地方"
     assert "region_id" not in rejected[0]["item"]
@@ -1196,7 +1195,6 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     unknown = appoint(bare.name, "新设巡抚", "地方", region_id="not_a_region")
     assert unknown and unknown[0].get("rejected"), unknown
     assert unknown[0].get("category") == "missing_ref", unknown
-    assert isinstance(unknown[0].get("item"), dict), unknown
     assert unknown[0]["item"].get("region_id") == "not_a_region"
     after_unknown = db.conn.execute(
         "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),

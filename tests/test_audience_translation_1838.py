@@ -206,9 +206,9 @@ def _drain_scene_owner(sess, db, *, timeout_s: float = 5.0) -> None:
 
 def _active_chat_turn(db, state, night_id: int) -> int:
     """建可撤回的存活轮（status=active；挂夜默认 generating 不可 undo）。"""
-    return int(db.create_chat_turn(
+    return db.create_chat_turn(
         state, "殿上", "s", 0, night_id=int(night_id), status="active",
-    ))
+    )
 
 
 

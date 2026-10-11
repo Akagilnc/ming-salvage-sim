@@ -90,7 +90,7 @@ def _apply_existing_appointment_hit(
         if annotate:
             mode_mark = resolve_directive_mode(
                 extracted=extracted_mode,
-                existing=_office_payload(row).get("mode"),
+                existing=_pending_payload_dict(row).get("mode"),
             )
             pending_id = _annotate_office_pending_path(
                 session.db,
@@ -109,7 +109,7 @@ def _apply_existing_appointment_hit(
             current = session.db.conn.execute(
                 "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
             ).fetchone()
-            stored = dict(_pending_payload_dict(current))
+            stored = _pending_payload_dict(current)
             stored.update(recommendation_fields)
             session.db.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -845,7 +845,7 @@ def _list_pending_office_rows(
     """本夜/本回合 pending 人事候选（kind=office）。不另建索引。"""
     rows = list(pend_for_minister or [])
     if not rows:
-        rows = list(db.list_pending_actions(int(turn)))
+        rows = db.list_pending_actions(int(turn))
     out: List[Dict[str, Any]] = []
     for row in rows:
         if row.get("kind") != "office":
@@ -857,19 +857,10 @@ def _list_pending_office_rows(
 
 
 def _pending_payload_dict(row: Mapping[str, Any]) -> Dict[str, Any]:
-    """已持久 pending 候选载荷：复用引擎读路，腐坏响亮（#1897 E1 / ADR 0005）。"""
-    from ming_sim.db import GameDB
+    """SQL pending 载荷解码；调用方直接读写对象，腐坏自然响亮。"""
+    from ming_sim.db import _load_durable_json
 
-    return dict(
-        GameDB.parse_engine_payload_json(
-            row["payload_json"],
-            surface="pending_actions.payload_json",
-        )
-    )
-
-
-def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    return _pending_payload_dict(row)
+    return _load_durable_json(row["payload_json"])
 
 
 def _match_office_row_by_name_office(
@@ -896,7 +887,7 @@ def _match_office_row_by_name_office(
     key = _canonical_minister_key(content, want_name, db) if want_name else ""
     hits: List[Dict[str, Any]] = []
     for row in rows:
-        payload = _office_payload(row)
+        payload = _pending_payload_dict(row)
         staged_name = str(payload.get("name") or "").strip()
         if not staged_name:
             continue
@@ -942,7 +933,7 @@ def _annotate_office_pending_path(
     if not mode_mark and not tenure_mark and not seat:
         return 0
     pending_id = int(row["id"])
-    payload = dict(_office_payload(row))
+    payload = _pending_payload_dict(row)
     changed = False
     if mode_mark in {"midzhi", "ordinary"} and payload.get("mode") != mode_mark:
         payload["mode"] = mode_mark
@@ -1316,11 +1307,11 @@ def stage_assignment_candidate(
         staged["commitment_kind"] = "until_stop"
     # #620 AC2 / #1890 / ADR 0142：分段里程碑是机械事实（到期判账），只承接
     # **显式结构化** stages——JSON 数组串或已结构化列表，一律走库层
-    # stages_to_json 的严格串行面：非 JSON 字符串响亮 ValueError（由交办分派
+    # normalize_commitment_stages 的严格准入面：非 JSON 字符串响亮 ValueError（由交办分派
     # 的既有 except 收成 durable 拒收）。全仓已无任何接缝从散文正则反推年诺。
-    from ming_sim.staged_commitment import stages_to_json
+    from ming_sim.staged_commitment import normalize_commitment_stages
     try:
-        stages_norm = json.loads(stages_to_json(stages))
+        stages_norm = normalize_commitment_stages(stages)
     except (TypeError, ValueError) as exc:
         raise DecreeMaterializationValidationError(
             str(exc), failed_fields=("stages",),

@@ -230,7 +230,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         transit_to="beizhili",
         distance_remaining=0.5,
         speed_factor=1.0,
-        start_turn=int(turn) - 1,
+        start_turn=turn - 1,
         content=content,
     )
     record_summon_in_transit(

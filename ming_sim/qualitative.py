@@ -76,7 +76,6 @@ def qualitative_band(value: object, words: tuple[str, ...], default: int = 0) ->
     if value is None:
         index = qualitative_bucket(default, (20, 40, 60, 80), 0) - (1 if default else 0)
     else:
-        int(value)
         index = qualitative_bucket(value, (20, 40, 60, 80), default)
     index = max(0, index)
     index = min(index, len(words) - 1)

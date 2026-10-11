@@ -155,17 +155,15 @@ def write_credit_event(
     )
     if existing is not None:
         return existing
-    return int(
-        db.record_relation_edge_event(
-            source=source,
-            target=target,
-            event_kind=kind,
-            context=context,
-            origin=origin,
-            turn=int(state.turn),
-            year=int(state.year),
-            period=int(state.period),
-        )
+    return db.record_relation_edge_event(
+        source=source,
+        target=target,
+        event_kind=kind,
+        context=context,
+        origin=origin,
+        turn=int(state.turn),
+        year=int(state.year),
+        period=int(state.period),
     )
 
 
@@ -177,9 +175,9 @@ def _sponsor_names(db: Any, dossier_id: int) -> List[str]:
     names: List[str] = []
     seen: Set[str] = set()
     for p in parties:
-        if str(p.get("responsibility") or "") != "primary":
+        if p["responsibility"] != "primary":
             continue
-        name = str(p.get("character_id") or "").strip()
+        name = p["character_id"]
         if name and name not in seen:
             seen.add(name)
             names.append(name)
@@ -272,22 +270,15 @@ def record_fulfillment_credit(
     return out
 
 
-def _roster_entries(dossier: Dict[str, object]) -> List[Dict[str, object]]:
-    roster = dossier.get("participant_roster") or []
-    if not isinstance(roster, list):
-        return []
-    return [e for e in roster if isinstance(e, dict)]
-
-
 def _pawn_car_pairs(roster: Sequence[Dict[str, object]]) -> List[Tuple[str, str]]:
     """卒=带委派人的主办/协办本人；车=其 delegator_id。"""
     pairs: List[Tuple[str, str]] = []
     seen: Set[Tuple[str, str]] = set()
     for entry in roster:
-        tier = str(entry.get("tier") or "").strip()
+        tier = entry["tier"]
         if tier not in {"主办", "协办"}:
             continue
-        pawn = str(entry.get("character_id") or "").strip()
+        pawn = entry["character_id"]
         car = str(entry.get("delegator_id") or "").strip()
         if not pawn or not car or pawn == car:
             continue
@@ -466,18 +457,16 @@ def resolve_disposition_credit_from_extraction(
         dossier = db.get_decree_dossier(int(did))
         if not isinstance(dossier, dict) or not _is_exposed_transformed(dossier):
             continue
-        roster = _roster_entries(dossier)
+        roster = dossier.get("participant_roster") or []
         parties = project_execution_liability_parties(roster)
         primary_ids = {
-            str(p["character_id"])
+            p["character_id"]
             for p in parties
-            if str(p.get("responsibility") or "") == "primary"
-            and str(p.get("character_id") or "").strip()
+            if p["responsibility"] == "primary"
         }
         liability_ids = {
-            str(p["character_id"])
+            p["character_id"]
             for p in parties
-            if str(p.get("character_id") or "").strip()
         }
 
         punitive, covered, by_person_ctx, group_ctx = _group_person_sets(group)

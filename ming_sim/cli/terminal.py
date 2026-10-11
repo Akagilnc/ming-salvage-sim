@@ -492,7 +492,7 @@ def _report_cli_hitl_gap(session: GameSession, result) -> str:
         return ""
     if not result.awaiting:
         return result.report
-    decisions = list(result.decisions or []) or list(session.pending_decisions())
+    decisions = list(result.decisions or []) or session.pending_decisions()
     print("\n【月末重大抉择】CLI 暂无亲裁能力，不能代为批红；请使用网页版提交亲裁。")
     for decision in decisions:
         title = decision.get("title") if isinstance(decision, dict) else decision

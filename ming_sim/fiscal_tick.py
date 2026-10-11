@@ -62,8 +62,6 @@ def _resolve_haircut_param(p: Dict[str, Any]) -> Dict[str, int]:
     raw = p.get("due_haircut_bp")
     if raw is None:
         return {}
-    if not isinstance(raw, dict):
-        raise ValueError(f"param due_haircut_bp 非字典：{raw!r}")
     out: Dict[str, int] = {}
     for hk, bp in raw.items():
         if hk not in _DUE_KEYS:
@@ -130,8 +128,6 @@ def _oracle_effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
     raw_h = p.get("due_haircut_bp")
     haircuts: Dict[str, int] = {}
     if raw_h is not None:
-        if not isinstance(raw_h, dict):
-            raise ValueError(f"param due_haircut_bp 非字典：{raw_h!r}")
         for hk, bp in raw_h.items():
             if hk not in _DUE_KEYS:
                 raise ValueError(f"due_haircut_bp 含未知科目 {hk}")
@@ -162,30 +158,21 @@ def settle_tick(
 ) -> FiscalTickResult:
     """单省单月财政 tick。st=开账(CASH/CLAIM/官民田/隐田)，p=本月参数(率/额/Due)，
     actions=本月动作(玩家旨意/事件灌入)。返回新末态 + 流水分解；坏输入/守恒破一律 raise。"""
-    # ── 容器型验形（最前置）：st/p 非 dict、actions 非 list/tuple → ValueError，否则下方
-    #    `sk in st` / `rq in p` / `for a in actions` 抛 TypeError 逃逸调用方隔离（cmr R3 concur）──
-    if not isinstance(st, dict):
-        raise ValueError("st 非字典")
-    if not isinstance(p, dict):
-        raise ValueError("p 非字典")
+    # 动作名单不能把空对象或字符串消费成合法空/字符名单。
     if not isinstance(actions, (list, tuple)):
         raise ValueError("actions 非 list/tuple")
     # ── 必填参数 presence（缺省不默认 0——火耗率缺省成 0 = 静默改经济学）──
     for rq in ("三饷应征", "火耗率", "逋赋率", "起运定额", "Due"):
         if rq not in p:
             raise ValueError(f"param {rq} 缺失")
-    # ── 开账 stock 全面验形（前置于下方 float 构造：float([]) 等非数值会 TypeError 早于守门、
-    #    逃逸调用方 (ValueError/守恒破) 隔离炸 pre_settle，cmr ship-pre R1/R2；CLAIM 也拦——
-    #    负军饷欠→偿还环凭空生钱）──
+    # 开账金额须为有限非负数，拒 bool 和数字串；负欠额会凭空生钱。
     for sk in (*CASH_KEYS, *CLAIM_KEYS, "官民田", "隐田"):
-        if sk in st and st[sk] is None:
-            raise ValueError(f"开账 stock {sk} 为 None")
         _sraw = st.get(sk, 0)
         if isinstance(_sraw, bool) or not isinstance(_sraw, (int, float)):
             raise ValueError(f"开账 stock {sk} 非数值")
-        if not math.isfinite(float(_sraw)):
+        if not math.isfinite(_sraw):
             raise ValueError(f"开账 stock {sk} 非有限值(NaN/inf)")
-        if float(_sraw) < 0:
+        if _sraw < 0:
             raise ValueError(f"开账 stock {sk} 为负")
 
     cash = {k: float(st.get(k, 0)) for k in CASH_KEYS}
@@ -197,18 +184,15 @@ def settle_tick(
     C0 = {k: cash[k] for k in CASH_KEYS if k.startswith("C_")}
     claim0 = dict(claim)
     cash_in = cash_out = 0.0
-    # Due 在任何折算消费前验形，避免坏容器先逃成 TypeError/AttributeError。
     _due = p["Due"]
-    if isinstance(_due, bool) or not isinstance(_due, dict):
-        raise ValueError("Due 非字典")
     for hk, dv in _due.items():
         if hk not in _DUE_KEYS:
             raise ValueError(f"Due 含未知科目 {hk}")
         if isinstance(dv, bool) or not isinstance(dv, (int, float)):
             raise ValueError(f"Due[{hk}] 非数值")
-        if not math.isfinite(float(dv)):
+        if not math.isfinite(dv):
             raise ValueError(f"Due[{hk}] 非有限值(NaN/inf)")
-        if float(dv) < 0:
+        if dv < 0:
             raise ValueError(f"Due[{hk}] 为负")
 
     # ── #653 偿还序 override ＋ Due 折发系数（ADR 0090）：缺省=祖制默认序、无折 ──
@@ -241,21 +225,15 @@ def settle_tick(
 
     # ── 输入校验 fail-loud（NaN/inf/非数/负/未知 action/越界 eff/语义违例）──
     for a in actions:
-        if not isinstance(a, dict):  # 非 dict action（含「误传单 dict→迭代出 key 串」）→ ValueError，
-            raise ValueError(f"action 非字典: {a!r}")  # 否则 a.get/a["type"] 抛 AttributeError 逃逸隔离（cmr R2 codex）
         if "type" not in a:
             raise ValueError(f"action 缺 type: {a}")
-        if not isinstance(a["type"], str):  # 非 str type（如 list）unhashable → `not in SET` 抛 TypeError 逃逸（cmr R3 gemini）
-            raise ValueError(f"action type 非字符串: {a}")
         for nf in ("cost", "amount", "挖隐田", "eff"):
             if nf not in a:
                 continue  # 字段可选，缺省走默认值
             v = a[nf]
-            if v is None:  # 显式 None（非缺省）→ ValueError；否则下方 < / 乘法对 None 抛 TypeError（cmr R2 codex）
-                raise ValueError(f"{nf} 为 None: {a}")
             if isinstance(v, bool) or not isinstance(v, (int, float)):
                 raise ValueError(f"{nf} 非数值: {a}")
-            if not math.isfinite(float(v)):
+            if not math.isfinite(v):
                 raise ValueError(f"{nf} 非有限值(NaN/inf): {a}")
         if a["type"] not in KNOWN_ACTIONS:
             raise ValueError(f"unknown action: {a['type']}")
@@ -280,7 +258,7 @@ def settle_tick(
         if v is not None:
             if isinstance(v, bool) or not isinstance(v, (int, float)):
                 raise ValueError(f"param {pk} 非数值")
-            if not math.isfinite(float(v)):
+            if not math.isfinite(v):
                 raise ValueError(f"param {pk} 非有限值(NaN/inf)")
             if v < 0:
                 raise ValueError(f"param {pk} 为负")

@@ -29,22 +29,18 @@ _SENTINEL_BASE = 474747
 
 
 def _log_rows(db) -> list[sqlite3.Row]:
-    return list(
-        db.conn.execute(
-            "SELECT turn, faction, axis, kind, base, legitimacy_pct, amount, "
-            "source_name, reason_code, source, idem_key "
-            "FROM centrifuge_log ORDER BY id"
-        ).fetchall()
-    )
+    return db.conn.execute(
+        "SELECT turn, faction, axis, kind, base, legitimacy_pct, amount, "
+        "source_name, reason_code, source, idem_key "
+        "FROM centrifuge_log ORDER BY id"
+    ).fetchall()
 
 
 def _cache_rows(db) -> list[sqlite3.Row]:
-    return list(
-        db.conn.execute(
-            "SELECT faction, axis, blood_debt, wariness "
-            "FROM faction_axis_debt ORDER BY faction, axis"
-        ).fetchall()
-    )
+    return db.conn.execute(
+        "SELECT faction, axis, blood_debt, wariness "
+        "FROM faction_axis_debt ORDER BY faction, axis"
+    ).fetchall()
 
 
 def _overdraw_map(db) -> dict[str, int]:

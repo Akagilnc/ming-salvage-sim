@@ -21,9 +21,9 @@ function projectFollowDraftFromOption(option: PendingDecision["options"][number]
   const s = (v: unknown) => (v == null || v === "" ? undefined : String(v));
   return {
     action: "follow_draft",
-    label: String(option.label),
-    hint: String(option.hint || ""),
-    draft_capability: String(option.draft_capability || ""),
+    label: option.label,
+    hint: (option.hint || ""),
+    draft_capability: (option.draft_capability || ""),
     action_type: s(option.action_type),
     assignee_name: s(option.assignee_name),
     target_kind: s(option.target_kind),
@@ -35,14 +35,14 @@ function projectFollowDraftFromOption(option: PendingDecision["options"][number]
 }
 
 function isRescriptDraft(d: PendingDecision | undefined): boolean {
-  return String(d?.kind || "") === "rescript_draft";
+  return (d?.kind || "") === "rescript_draft";
 }
 
 function decisionKeyOf(d: PendingDecision, fallbackIdx: number): string | undefined {
-  if (d.decision_key) return String(d.decision_key);
+  if (d.decision_key) return d.decision_key;
   // 仅 #657 案头行（带 kind）合成键；旧 decision-only 载荷不强制 decision_key
   if (!d.kind) return undefined;
-  const kind = String(d.kind || "decision");
+  const kind = (d.kind || "decision");
   const turn = d.source_turn ?? d.turn ?? 0;
   return `${kind}:${turn}:${d.idx ?? fallbackIdx}`;
 }
@@ -135,7 +135,7 @@ export function DecisionModal({
         cur.options.find((o) => o.label === pick.label) ||
         cur.options[0];
       if (!opt) {
-        setPick({ action, label: String(pick.label || ""), hint: String(pick.hint || "") });
+        setPick({ action, label: (pick.label || ""), hint: (pick.hint || "") });
         return;
       }
       const s = (v: unknown) => (v == null || v === "" ? undefined : String(v));
@@ -150,8 +150,8 @@ export function DecisionModal({
         : undefined;
       setPick({
         action,
-        label: String(opt.label),
-        hint: String(opt.hint || ""),
+        label: opt.label,
+        hint: (opt.hint || ""),
         action_type: s(opt.action_type) || "assignment",
         assignee_name: s(opt.assignee_name) || "",
         name: s((opt as { name?: unknown }).name) || "",

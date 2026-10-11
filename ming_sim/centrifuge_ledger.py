@@ -261,7 +261,6 @@ def _resolve_target_faction_identity(
     faction = row["faction"]
     if not isinstance(faction, str) or not faction.strip():
         raise _abort(turn, f"派生 faction 非法：{faction!r}")
-    faction = str(faction)
     fac_row = conn.execute(
         "SELECT 1 FROM factions WHERE name = ?", (faction,)
     ).fetchone()

@@ -98,9 +98,7 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     if not text.startswith(_META_PREFIX):
         return {}
     # 有前缀的机读元数据：腐坏 JSON/非对象响亮，不 catch-to-{}（#1897 E1）。
-    return GameDB.parse_engine_payload_json(
-        text[len(_META_PREFIX):], surface="breach_plea.origin_context.meta",
-    )
+    return GameDB.parse_engine_payload_json(text[len(_META_PREFIX):])
 
 
 def commitment_natural_due_turn(row: Any) -> int:
@@ -125,7 +123,7 @@ def _issue_row(db: Any, commitment_ref: int) -> Any:
 
 
 def list_active_commitments(db: Any) -> List[Any]:
-    return list(db.conn.execute(
+    return db.conn.execute(
         """
         SELECT * FROM issues
         WHERE status='active'
@@ -133,7 +131,7 @@ def list_active_commitments(db: Any) -> List[Any]:
           AND commitment_kind != ''
         ORDER BY id
         """
-    ).fetchall())
+    ).fetchall()
 
 
 def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
@@ -145,15 +143,13 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
-    from ming_sim.db import GameDB
-
     names: List[str] = []
     # 承诺名册走共同权威；腐坏响亮，不 catch-to-[]（#1897 E1）。
     from ming_sim.participant_roster import decode_durable_participant_roster
     roster = decode_durable_participant_roster(row["participant_roster"])
     for item in roster:
         if item.get("tier") == "主办":
-            cid = str(item.get("character_id") or "").strip()
+            cid = item["character_id"]
             if cid:
                 names.append(cid)
     origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
@@ -163,8 +159,8 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
         dossier = db.get_decree_dossier(int(did))
         if dossier is not None:
             for item in dossier.get("participant_roster") or []:
-                if isinstance(item, dict) and item.get("tier") == "主办":
-                    cid = str(item.get("character_id") or "").strip()
+                if item.get("tier") == "主办":
+                    cid = item["character_id"]
                     if cid and cid not in names:
                         names.append(cid)
             exec_id = str(dossier.get("executor_id") or "").strip()
@@ -195,7 +191,7 @@ def _dedicated_accounts(row: Any) -> List[str]:
     from ming_sim.db import _load_durable_str_list
     tags = _load_durable_str_list(tags_raw)
     for tag in tags:
-        t = str(tag or "").strip()
+        t = tag.strip()
         if t.startswith("专款:"):
             _add(t.split(":", 1)[1].strip())
 
@@ -625,12 +621,10 @@ def apply_persist_revoke_tail(
             reason=reason,
         )
     if apply_0056 and did > 0:
-        breach_applied = bool(
-            db.breach_decree_dossier(
+        breach_applied = db.breach_decree_dossier(
                 state, did, reason=reason, commit=False,
                 close_target=close_target,
             )
-        )
         if breach_applied:
             # 0056 写 origin=dossier:{id}:breach；bind_origin_round 附 |round:T
             # 只收本调用刚落的边（breach_applied 门控 = 本调用实写）
@@ -763,7 +757,7 @@ def finalize_persist(
         "breach_0056": breach_applied,
         # 案卷终局（执行格 outcome/note、半途后果）不在此返回：那是执行格判官
         # 本月的 dossier_executions 判决，经 apply_score_extraction 落账。
-        "target_dossier_id": int(target_dossier_id),
+        "target_dossier_id": target_dossier_id,
         "authority_reclaims": tail.get("authority_reclaims") or [],
         "stopped_issue_ids": tail.get("stopped_issue_ids") or [],
         "consumed": bool(consumed),
@@ -1045,7 +1039,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     from ming_sim.participant_roster import decode_durable_participant_roster
     roster = decode_durable_participant_roster(commitment_row["participant_roster"])
     for item in roster:
-        if str(item.get("character_id") or "").strip() != name:
+        if item["character_id"] != name:
             continue
         if item.get("tier") != "主办":
             continue

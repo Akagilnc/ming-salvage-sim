@@ -34,7 +34,7 @@ def accept_settlement_period(db: "GameDB", state: "GameState") -> bool:
     phase = str(state.turn_phase or "")
     if phase in FRONT_HALF_DONE_PHASES:
         return False
-    return bool(db.capture_month_open_snapshot(state))
+    return db.capture_month_open_snapshot(state)
 
 
 def _clear_settlement_display_if_orphan(

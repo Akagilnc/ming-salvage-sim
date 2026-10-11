@@ -134,7 +134,7 @@ def _transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
     for k in _TRANSPORT_RUNTIME_FIELDS:
         caster, default = _TRANSPORT_NUMERIC_FIELDS[k]
         value = _slot_number(data.get(k), caster, default)
-        if not (isinstance(value, (int, float)) and value > 0):
+        if not value > 0:
             value = default
         out[k] = value
     return out
@@ -155,9 +155,9 @@ def cli_idle_timeout_seconds(data: Dict[str, object]) -> float:
     cli = data.get("cli") if isinstance(data, dict) else None
     source = cli if isinstance(cli, dict) else {}
     value = _slot_number(source.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS)
-    if not (isinstance(value, (int, float)) and value > 0):
+    if not value > 0:
         value = CLI_DEFAULT_TIMEOUT_SECONDS
-    return float(value)
+    return value
 
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:

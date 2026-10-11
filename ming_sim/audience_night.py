@@ -129,8 +129,8 @@ def _travel_tone_tag(value: object) -> str:
 def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
     from ming_sim.issues import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
     tones = [
-        normalize_travel_tone(str(tag)[len(_SUMMON_TRAVEL_TONE_PREFIX):])
-        for tag in tags if str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX)
+        normalize_travel_tone(tag[len(_SUMMON_TRAVEL_TONE_PREFIX):])
+        for tag in tags if tag.startswith(_SUMMON_TRAVEL_TONE_PREFIX)
     ]
     return max(tones or ["常行"], key=TRAVEL_SPEED_BY_TONE.__getitem__)
 _SUMMON_ORIGIN_PREFIX = "传召源#"
@@ -383,10 +383,10 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "night_id": int(raw["night_id"]),
             "seq": int(raw["seq"]),
             "order_key": None if ok is None else float(ok),
-            "person_names": list(_json_list(raw.get("person_names"))),
+            "person_names": _json_list(raw.get("person_names")),
             "audibility": str(raw.get("audibility") or AUDIBILITY_PUBLIC),
             "body": str(raw.get("body") or ""),
-            "tags": list(_json_list(raw.get("tags"))),
+            "tags": _json_list(raw.get("tags")),
             "source_chat_turn_id": int(raw.get("source_chat_turn_id") or 0),
             "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
             "origin_ref": str(raw.get("origin_ref") or ""),
@@ -505,7 +505,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             content = str(row["content"] or "")
             # #544：只走 GameDB._parse_highlights_json 唯一真源（SELECT 已点名该列）
             hl: List[str] = (
-                list(db._parse_highlights_json(row["highlights_json"]))
+                db._parse_highlights_json(row["highlights_json"])
                 if role == "minister"
                 else []
             )
@@ -595,7 +595,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     events.sort(key=lambda item: (item[0], item[1]))
     return [item[2] for item in events]
 def _allocate_seq(db: Any, night_id: int) -> int:
-    return int(db.allocate_night_seq(int(night_id)))
+    return db.allocate_night_seq(int(night_id))
 
 
 def _character_status(db: Any, name: str) -> str:
@@ -1088,8 +1088,9 @@ def close_night(
         night = get_night(db, night_id)
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
+    night_id = night["id"]
     if night["status"] == NIGHT_STATUS_CLOSED:
-        return {"closed": True, "night_id": int(night_id), "already": True}
+        return {"closed": True, "night_id": night_id, "already": True}
 
     # #1898：同次收夜只补跑一次。OPEN 分支在冻结 CLOSING 前补跑；进来时已是
     # CLOSING 的崩溃恢复口在 on_closing 后补跑（那是另一次收夜尝试）。两条分支
@@ -1100,7 +1101,7 @@ def close_night(
             db, night_id, write_gate=write_gate,
         )
         _catch_up_night_translations(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            db, night_id, llm_config=llm_config, write_gate=write_gate,
             game_state=state, translate_fn=translate_fn, write_queue=write_queue,
         )
         with gate:
@@ -1117,7 +1118,7 @@ def close_night(
                 on_closing()
             night = get_night(db, night_id) or night
         _catch_up_night_translations(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            db, night_id, llm_config=llm_config, write_gate=write_gate,
             game_state=state, translate_fn=translate_fn, write_queue=write_queue,
         )
 
@@ -1125,21 +1126,21 @@ def close_night(
 
     def _advance(step: int) -> None:
         nonlocal cursor
-        _set_night_fields(db, night_id, close_commit_cursor=int(step))
-        cursor = int(step)
+        _set_night_fields(db, night_id, close_commit_cursor=step)
+        cursor = step
         if on_step is not None:
             on_step(step, get_night(db, night_id) or {})
-        if crash_after_step is not None and int(crash_after_step) == int(step):
+        if crash_after_step is not None and int(crash_after_step) == step:
             raise AudienceNightError(
                 f"收夜提交崩溃注入：step={step}",
                 code="close_crash",
-                detail={"night_id": int(night_id), "step": int(step)},
+                detail={"night_id": night_id, "step": step},
             )
 
     # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
     with gate:
         _commit_night_approved(
-            db, state, int(night_id),
+            db, state, night_id,
             kinds=_CLOSE_COMMIT_KINDS_OFFICE,
             content=content,
         )
@@ -1147,7 +1148,7 @@ def close_night(
             _advance(CLOSE_STEP_COMMIT_OFFICE)
 
         _commit_night_approved(
-            db, state, int(night_id),
+            db, state, night_id,
             kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
             content=content,
             directive_status="draft",
@@ -1160,21 +1161,21 @@ def close_night(
         night = get_night(db, night_id) or night
         cursor = int(night["close_commit_cursor"] or 0)
         if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
-            fault_cursor = int(cursor)
+            fault_cursor = cursor
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
             raise AudienceNightError(
-                f"收夜案卷前提未落定（night_id={int(night_id)}, cursor={fault_cursor}）",
+                f"收夜案卷前提未落定（night_id={night_id}, cursor={fault_cursor}）",
                 code="close_prerequisites_incomplete",
-                detail={"night_id": int(night_id), "cursor": fault_cursor},
+                detail={"night_id": night_id, "cursor": fault_cursor},
             )
         if cursor < CLOSE_STEP_FINALIZE:
             commit_fresh_summons_for_night(
-                db, state, int(night_id), content=content,
+                db, state, night_id, content=content,
             )
-            publish_night_directives(db, int(night_id))
+            publish_night_directives(db, night_id)
             # #1838 reopen：不写收夜旁白账与代码兜底句；收讫以 status=closed 为准。
             _set_night_fields(
                 db, night_id,
@@ -1186,7 +1187,7 @@ def close_night(
 
     return {
         "closed": True,
-        "night_id": int(night_id),
+        "night_id": night_id,
         "already": False,
         "night": final,
         "auto": bool(auto),
@@ -1274,20 +1275,20 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:
             continue
         origin = next(
-            (str(tag)[len(_SUMMON_ORIGIN_PREFIX):] for tag in tags
-             if str(tag).startswith(_SUMMON_ORIGIN_PREFIX)),
+            (tag[len(_SUMMON_ORIGIN_PREFIX):] for tag in tags
+             if tag.startswith(_SUMMON_ORIGIN_PREFIX)),
             "",
         )
         names = _json_list(row["person_names"])
         if not origin or not names:
             continue
-        person_name = str(names[0])
+        person_name = names[0]
         projected.append({
             "entry_id": int(row["id"]), "night_id": int(row["night_id"]),
             "person_name": person_name, "origin_id": origin,
             "kind": _project_unsettled_summon_kind(db, tags, person_name),
             **({"travel_tone": _travel_tone_from_tags(tags)}
-               if any(str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX) for tag in tags)
+               if any(tag.startswith(_SUMMON_TRAVEL_TONE_PREFIX) for tag in tags)
                else {}),
         })
     return projected
@@ -1377,7 +1378,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         ).fetchone()
         if row is None:
             continue
-        tags = list(_json_list(row["tags"]))
+        tags = _json_list(row["tags"])
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
@@ -1425,7 +1426,7 @@ def settle_summon_origin(
 def retire_unsettled_summons_for_inactive(db: Any) -> List[str]:
     """人物已非 active 时确定性结清其全部未结传召（ADR 0096 / ADR 0009）。"""
     settled: List[str] = []
-    for item in list(list_unsettled_summons(db)):
+    for item in list_unsettled_summons(db):
         row = db.conn.execute(
             "SELECT status FROM characters WHERE name=?",
             (item["person_name"],),
@@ -1450,7 +1451,7 @@ def settle_unsettled_summons_for_person(
     if not name:
         return []
     settled: List[str] = []
-    for item in list(list_unsettled_summons(db)):
+    for item in list_unsettled_summons(db):
         if item["person_name"] != name:
             continue
         origin = str(item["origin_id"])
@@ -1706,10 +1707,10 @@ def dismiss_from_audience(
         if open_n is None:
             return None
         nid = int(open_n["id"])
-    if name not in present_names_at(db, int(nid)):
+    if name not in present_names_at(db, nid):
         return None
     return append_ledger_entry(
-        db, int(nid),
+        db, nid,
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
         body="",
@@ -1935,7 +1936,7 @@ def audience_scene_recap(
             return ""
         nid = int(open_n["id"])
     bodies: List[str] = []
-    for entry in audible_entries_for(db, int(nid), name):
+    for entry in audible_entries_for(db, nid, name):
         # #1897：场面正文原样入回顾；判空用局部副本。
         body = str(entry.get("body") or "")
         if body.strip():
@@ -1960,7 +1961,7 @@ def presence_roster(db: Any, night_id: int) -> List[Dict[str, Any]]:
     seen: set[str] = set()
     for entry in list_ledger(db, int(night_id)):
         delta = _presence_delta(entry)
-        names = [str(name) for name in entry.get("person_names") or []]
+        names = entry.get("person_names") or []
         if delta == PRESENCE_ENTER:
             for name in names:
                 if name not in seen:
@@ -2010,7 +2011,7 @@ def rescript_summon_origin_consumed(
     if entry is None:
         return False
     # 持久 tags 走故事账列表权威；腐坏响亮，不洗空（#1897 E1）。
-    tags = list(_json_list(entry.get("tags")))
+    tags = _json_list(entry.get("tags"))
     return TAG_ENTER in tags
 
 
@@ -2031,8 +2032,8 @@ def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
         "body": str(raw.get("body") or ""),
         "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
         "origin_ref": str(raw.get("origin_ref") or ""),
-        "tags": list(_json_list(raw.get("tags"))),
-        "person_names": list(_json_list(raw.get("person_names"))),
+        "tags": _json_list(raw.get("tags")),
+        "person_names": _json_list(raw.get("person_names")),
     }
 
 

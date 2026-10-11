@@ -360,7 +360,7 @@ def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
     raises from AffairStore.affair_id_for_issue (F39) — never wash into unlinked.
     """
     iid = int(issue_id)  # type: ignore[arg-type]
-    return int(db.affairs.affair_id_for_issue(iid))
+    return db.affairs.affair_id_for_issue(iid)
 
 
 def _own_affair_lines(
@@ -2106,9 +2106,7 @@ def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
     from ming_sim.urge_lever import list_urge_audience_scenes
 
     lines: list[str] = []
-    for scene in list(list_due_review_scenes(db, state)) + list(
-        list_urge_audience_scenes(db, state)
-    ):
+    for scene in list_due_review_scenes(db, state) + list_urge_audience_scenes(db, state):
         if not isinstance(scene, dict):
             continue
         lines.append(json.dumps(scene, ensure_ascii=False, sort_keys=True))

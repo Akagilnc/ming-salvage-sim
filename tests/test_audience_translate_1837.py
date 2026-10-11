@@ -61,9 +61,9 @@ def _scene_turn(sess, db, state, message: str, *, night_id: int | None = None):
     if nid <= 0:
         open_n = get_open_night(db)
         nid = int(open_n["id"]) if open_n else 0
-    ctid = int(db.create_chat_turn(
+    ctid = db.create_chat_turn(
         state, "殿上", "test-sess", 0, night_id=nid or None,
-    ))
+    )
     result = sess.scene_chat(message, chat_turn_id=ctid)
     fut = persist_and_schedule_scene(sess, db, result)
     if fut is not None:
@@ -192,7 +192,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         )
         sess = _sess(db, state, content, monkeypatch, translate_fn=failed_translation)
         # 真召对入口：回话先落库、后台转译失败，留下待补轮。
-        ctid = int(db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=nid))
+        ctid = db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=nid)
         result = sess.scene_chat("准", chat_turn_id=ctid)
         future = persist_and_schedule_scene(sess, db, result)
         assert future is not None
@@ -705,7 +705,7 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
     sess = _sess(db, state, content, monkeypatch, translate_fn=boom)
-    ctid = int(db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=None))
+    ctid = db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=None)
     # 开夜由 scene_chat 内部 ensure
     result = sess.scene_chat("边饷如何？", chat_turn_id=ctid)
     fut = persist_and_schedule_scene(sess, db, result)
@@ -761,9 +761,9 @@ def test_appointment_without_text_is_rejected_not_templated(game):
 
 def _active_chat_turn(db, state, night_id: int) -> int:
     """建可撤回的存活轮（status=active；挂夜默认 generating 不可 undo）。"""
-    return int(db.create_chat_turn(
+    return db.create_chat_turn(
         state, "殿上", "s", 0, night_id=int(night_id), status="active",
-    ))
+    )
 
 
 def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(

@@ -320,7 +320,7 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     assert game.reply_retries("殿上") == []
     # 回话行水位：chat_turns.minister_message_id 挂接；不锁 content 正文（#1897 T1）。
     mid = game.db.conn.execute(
-        "SELECT minister_message_id FROM chat_turns WHERE id=?", (int(chat_turn_id),),
+        "SELECT minister_message_id FROM chat_turns WHERE id=?", (chat_turn_id,),
     ).fetchone()["minister_message_id"]
     assert mid is not None
     assert game.db.conn.execute(

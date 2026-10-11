@@ -181,7 +181,7 @@ def cancel_turn_translation(chat_turn_id: int, *, write_queue: Any, gate_held: b
             else:
                 fut.cancel()
             return 0
-        return int(write_queue.cancel_key(("audience_translation", ctid)))
+        return write_queue.cancel_key(("audience_translation", ctid))
 
 
 def _observe_finished_future(

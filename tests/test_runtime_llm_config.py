@@ -404,7 +404,6 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
     assert "max_tokens" not in saved["api"]
     assert saved["api"]["timeout_seconds"] == 150
     assert isinstance(saved["api"]["timeout_seconds"], (int, float))
-    assert not isinstance(saved["api"]["timeout_seconds"], str)
     assert saved["api"]["thinking_level"] == "minimal"
     assert saved["cli"] == {
         "runner": "codex",

@@ -69,8 +69,6 @@ def validate_verdict_affected_parties(
     #657 §C.8 later-wins：mode=midzhi 不猜/不强制 affected_parties（顺颁与打回皆然）；
     ordinary 打回仍须非空 typed 清单；ordinary 顺颁必须省略。
     """
-    if not isinstance(verdict, dict):
-        raise ValueError("案卷 verdict 须为对象")
     decision = verdict.get("decision")
     present = "affected_parties" in verdict
     if mode == "midzhi":
@@ -101,8 +99,6 @@ def validate_rejection_verdict(
     character_ids: object,
 ) -> None:
     """Validate the complete ADR 0066 shape against authoritative DB identities."""
-    if not isinstance(verdict, dict):
-        raise ValueError("打回判决须为对象")
     opponents = verdict.get("primary_opponents")
     snapshot = verdict.get("criteria_snapshot")
     string_list = lambda value: (isinstance(value, list) and all(

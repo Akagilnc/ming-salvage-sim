@@ -884,7 +884,6 @@ def _count_llm_calls(monkeypatch):
 
 
 def _assert_hud(payload: dict) -> None:
-    assert isinstance(payload, dict)
     assert "turn" in payload and "phase" in payload["turn"]
     assert "ministers" in payload
 

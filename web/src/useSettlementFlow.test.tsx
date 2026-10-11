@@ -339,7 +339,7 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(String(url)).toContain("/api/decree/advance_without_edict");
+    expect(url).toContain("/api/decree/advance_without_edict");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({ expected_turn: 5 });
     // #1852：写成即推进走 loadState + 本面阅读，不整页 reload
@@ -450,7 +450,7 @@ describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload 
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
-        if (String(url).includes("/api/decree/advance_without_edict")) {
+        if (url.includes("/api/decree/advance_without_edict")) {
           return {
             ok: true,
             json: async () => ({
@@ -544,7 +544,7 @@ describe("#1277 useSettlementFlow — issueDecree 令牌与 409 幂等", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(String(url)).toContain("/api/decree/issue/stream");
+    expect(url).toContain("/api/decree/issue/stream");
     expect(reload).toHaveBeenCalledTimes(1);
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
     cleanup();
@@ -563,7 +563,7 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
-        if (String(url).includes("/api/decree/issue/stream")) return sseDecisionsResponse();
+        if (url.includes("/api/decree/issue/stream")) return sseDecisionsResponse();
         throw new Error(`unexpected fetch: ${url}`);
       }),
     );

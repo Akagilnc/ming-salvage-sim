@@ -68,14 +68,11 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     sql += " ORDER BY id"
     rows = db.conn.execute(sql, tuple(params)).fetchall()
     out: List[str] = []
-    from ming_sim.db import GameDB
+    from ming_sim.db import _load_durable_json
 
     for row in rows:
         # 已持久 pending 载荷腐坏响亮，不静默成空摘要（#1897 E1 / ADR 0005）。
-        payload = GameDB.parse_engine_payload_json(
-            row["payload_json"],
-            surface="pending_actions.payload_json",
-        )
+        payload = _load_durable_json(row["payload_json"])
         # #1897：pending 摘要供料保留 payload 自由正文，禁 strip。
         text = str(payload.get("text") or row["action"] or "")
         brief = text if text else str(row["kind"] or "")
@@ -114,11 +111,11 @@ def build_night_said_so_far(
     def _before_cutoff(seq: int, turn_id: int) -> bool:
         if cutoff_id <= 0 or cutoff_seq is None:
             return True
-        if int(seq) < int(cutoff_seq):
+        if seq < cutoff_seq:
             return True
-        if int(seq) > int(cutoff_seq):
+        if seq > cutoff_seq:
             return False
-        return int(turn_id) < int(cutoff_id)
+        return turn_id < cutoff_id
 
     lines: List[str] = []
     # 故事账（入殿等）按夜序；对话轮按 night_seq。两者分列后按既有材料口径
@@ -162,7 +159,7 @@ def build_night_said_so_far(
                 entry_seq = entry.get("order_key")
                 if entry_seq is None:
                     entry_seq = entry.get("seq") or 0
-                if float(entry_seq) >= float(cutoff_seq):
+                if float(entry_seq) >= cutoff_seq:
                     continue
         body = str(entry.get("body") or "")
         if body.strip():

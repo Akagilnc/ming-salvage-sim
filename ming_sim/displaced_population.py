@@ -22,7 +22,7 @@ from ming_sim.constants import (
     RECOVERY_OUTCOME_FACTORS,
     RECOVERY_PERSONS_PER_WAN,
 )
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, _load_durable_json
 from ming_sim.flows import _apply_population_transfers
 from ming_sim.models import GameState
 
@@ -62,10 +62,7 @@ def apply_levy_driven_transfers(
     for row in rows:
         region_id = str(row["id"])
         try:
-            from ming_sim.db import GameDB
-            fiscal = GameDB.parse_engine_payload_json(
-                row["fiscal"], surface=f"regions.fiscal:{region_id}",
-            )
+            fiscal = _load_durable_json(row["fiscal"])
         except ValueError as exc:
             raise ValueError(f"{region_id}.fiscal 持久 JSON 损坏，无法结算加派账") from exc
         # 财政月效的动态成员只包括已有 settle 基座的明省；legacy/内容扩展中
@@ -170,12 +167,8 @@ def apply_recovery_driven_transfers(
             continue
         # payload_json 是引擎自己写的持久列，解析失败＝账本腐值，必须响亮失败
         # 交外层事务回滚；静默 continue 会让这案赈济回流无声消失（#1897 E1）。
-        from ming_sim.db import GameDB
         try:
-            payload = GameDB.parse_engine_payload_json(
-                row["payload_json"],
-                surface=f"displaced.dossier#{dossier_id}.payload_json",
-            )
+            payload = _load_durable_json(row["payload_json"])
         except ValueError as exc:
             raise ValueError(
                 f"dossier {dossier_id}.payload_json 持久 JSON 损坏，无法结算回流"

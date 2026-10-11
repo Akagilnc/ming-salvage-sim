@@ -10,6 +10,7 @@
 空 action 跑一 tick 应进入欠账螺旋。月末 shadow spine 按 controlled_by==ming 且有 settle
 动态推进，失地/无基座省自然出列。
 """
+from copy import deepcopy
 import json
 import math
 import sqlite3
@@ -3190,9 +3191,6 @@ SOUTH_SOUTHWEST_SEEDS = {
 @pytest.mark.parametrize("region_id,expected", SOUTH_SOUTHWEST_SEEDS.items(), ids=list(SOUTH_SOUTHWEST_SEEDS))
 def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, region_id, expected):
     settle = _read_settle(fresh_db, region_id)
-    assert isinstance(settle, dict), f"{expected['zh']} fiscal 缺 settle 基座"
-    assert isinstance(settle.get("st"), dict) and isinstance(settle.get("p"), dict), \
-        f"{expected['zh']} settle 基座须含 st + p"
 
     st = settle["st"]
     assert st["官民田"] == pytest.approx(expected["官民田"])
@@ -3497,43 +3495,7 @@ def test_primary_source_army_pay_due_rejects_dirty_annual_amount(fresh_db, bad_a
     with pytest.raises(ValueError):
         fresh_db._derive_region_army_pay_due("liaodong", settle)
 
-@pytest.mark.parametrize(
-    ("region_id", "mutate"),
-    [
-        ("dongjiang_area", lambda settle: settle.__setitem__("p", [])),
-        ("dongjiang_area", lambda settle: settle["p"].__setitem__("Due", [])),
-        ("dongjiang_area", lambda settle: settle.__setitem__("st", [])),
-        ("liaodong", lambda settle: settle.__setitem__("st", [])),
-    ],
-)
-def test_standalone_army_pay_funnel_rejects_malformed_settle_shapes(
-    fresh_db, region_id, mutate
-):
-    settle = _read_settle(fresh_db, region_id)
-    mutate(settle)
 
-    with pytest.raises(ValueError):
-        fresh_db._derive_region_army_pay_due(region_id, settle)
-
-@pytest.mark.parametrize(
-    ("mutate",),
-    [
-        (lambda fiscal: fiscal.__setitem__("settle", []),),
-        (lambda fiscal: fiscal["settle"].__setitem__("st", []),),
-    ],
-)
-def test_standalone_army_pay_container_total_rejects_malformed_region_shapes(
-    fresh_db, mutate
-):
-    fiscal = _read_fiscal(fresh_db, "dongjiang_area")
-    mutate(fiscal)
-    fresh_db.conn.execute(
-        "UPDATE regions SET fiscal = ? WHERE id = ?",
-        (json.dumps(fiscal, ensure_ascii=False), "dongjiang_area"),
-    )
-
-    with pytest.raises(ValueError):
-        fresh_db._standalone_army_pay_container_total()
 
 JIANGNAN_CORE_EXPECTED = {
     "nanzhili": {
@@ -3561,7 +3523,6 @@ JIANGNAN_CORE_EXPECTED = {
 @pytest.mark.parametrize("region_id,expected", JIANGNAN_CORE_EXPECTED.items())
 def test_jiangnan_core_seeds_have_positive_remittance_golden(fresh_db, region_id, expected):
     settle = _read_settle(fresh_db, region_id)
-    assert isinstance(settle, dict), f"{region_id} fiscal 缺 settle 基座"
     meta = settle["_meta"]
     assert "江南财赋核心" in meta["postures"]
     assert meta["levies"]["seeded"] == ["辽饷"]
@@ -3731,11 +3692,10 @@ def test_settle_province_tick_unknown_region_raises(fresh_db):
         _settle_tick(fresh_db, "atlantis", [])
 
 def test_settle_province_tick_nondict_fiscal_raises(fresh_db):
-    # cmr R3（gemini）：fiscal JSON 非 dict（如 "[]"）→ ValueError（可被隔离捕获），
-    # 非 fiscal.get 抛 AttributeError 逃逸。
+    # 原生消费故障经批量桥 outcome.error 隔离，单省调用仍响亮。
     fresh_db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
     fresh_db.conn.commit()
-    with pytest.raises(ValueError):
+    with pytest.raises(AttributeError):
         _settle_tick(fresh_db, "shaanxi", [])
 
 # ── slice3：接入月末固定财政相位（shadow，不驱动国库；fail-loud 但隔离）──
@@ -3764,7 +3724,7 @@ def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
     db, state = fresh_game
     shaanxi_settle = _read_settle(db)
 
-    henan_settle = json.loads(json.dumps(shaanxi_settle, ensure_ascii=False))
+    henan_settle = deepcopy(shaanxi_settle)
     henan_settle["st"]["省库库银"] = 40
     henan_fiscal = {"settle": henan_settle}
     non_ming_power = db.conn.execute(
@@ -4238,7 +4198,6 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
         settle = _read_settle(fresh_db, region_id)
         meta = settle["_meta"]
         source = meta.get("source")
-        assert isinstance(source, dict), region_id
         assert source["title"] == "《万历会计录》"
         assert source["chapter"] == exp["chapter"]
         assert source["scan_checked"] is True

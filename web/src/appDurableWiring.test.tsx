@@ -95,7 +95,7 @@ afterEach(() => {
 describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）", () => {
   it("#1276 邸报木牌重开 gazette；史册头起居注另入口解析近臣像", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -146,7 +146,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const minister = (name: string) => ({ name, office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false });
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       calls.push(`${init?.method || "GET"} ${decodeURIComponent(u.pathname)}`);
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -183,7 +183,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     // 关档后夜仍未收：重挂从状态口进入殿上，卷轴停在已存最后一轮。
     unmountTrackedRoots();
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const path = new URL(String(url), "http://t.local").pathname;
+      const path = new URL(url, "http://t.local").pathname;
       if (path.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (path.endsWith("/api/game/state")) return jsonResp({
         ...makeState(1, [], [minister("杨嗣昌"), minister("洪承畴")]),
@@ -214,7 +214,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     let finishStream!: () => void;
     const streamGate = new Promise<void>((resolve) => { finishStream = resolve; });
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       calls.push({ path: decodeURIComponent(u.pathname), body: typeof init?.body === "string" ? init.body : undefined });
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [order] });
@@ -262,7 +262,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(calls.filter((call) => call.path.endsWith("/api/audience/chat/stream")).length).toBe(streamCallsBeforeDone);
   });
 
-  it("typed SSE error 经真实召对链只向玩家呈现结构化 message", async () => {
+  it("typed SSE error 经真实召对链保留提供方真因", async () => {
     const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false };
     const detail = {
       code: "llm_run_error",
@@ -270,7 +270,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       provider_message: "provider stack trace",
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -302,7 +302,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     });
 
     const alert = host.querySelector('[role="alert"]')!;
-    expect(alert.textContent).toBe(detail.message);
+    expect(alert.textContent).toBe(detail.provider_message);
     // #1808：非结算通道不得泄漏到普通 HUD 告警位
     expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
   });
@@ -311,7 +311,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false };
     let historyReads = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const path = new URL(String(url), "http://t.local").pathname;
+      const path = new URL(url, "http://t.local").pathname;
       if (path.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -364,7 +364,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const paths: string[] = [];
     const roster = [{ id: "a", name: "温体仁", office: "首辅", summary: "", status: "active" }];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       paths.push(`${init?.method || "GET"} ${u.pathname}`);
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -425,7 +425,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     let releaseRefresh!: () => void;
     const refreshGate = new Promise<void>((r) => { releaseRefresh = r; });
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -504,7 +504,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     let releaseRefresh!: () => void;
     const refreshGate = new Promise<void>((r) => { releaseRefresh = r; });
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -655,7 +655,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     let translated = false;
     let replied = false;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const path = new URL(String(url), "http://t.local").pathname;
+      const path = new URL(url, "http://t.local").pathname;
       if (path.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -735,7 +735,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const staleGate = new Promise<void>((r) => { releaseStale = r; });
     let stateCall = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/directives/1") && init?.method === "DELETE") return jsonResp({ directives: [] });
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -782,7 +782,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         dossier_progress: [{ turn: 0 }],
       };
       vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-        const u = new URL(String(url), "http://t.local");
+        const u = new URL(url, "http://t.local");
         if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
         if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [autoOpenOrder] });
         if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -808,7 +808,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         dossier_progress: [{ turn: 0 }],
       };
       vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-        const u = new URL(String(url), "http://t.local");
+        const u = new URL(url, "http://t.local");
         if (u.pathname.endsWith("/api/directives/1") && init?.method === "DELETE") return jsonResp({ directives: [] });
         if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
         if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [autoOpenOrder] });
@@ -836,7 +836,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   it("经真实 App 退出到主菜单（exitToMenu 全链，含 beginDurableMutation 代次归属）", async () => {
     vi.stubGlobal("confirm", () => true);
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1));
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -989,7 +989,7 @@ const stubSettlementFetch = (
   route?: (url: URL, init?: RequestInit) => Promise<Response | void> | Response | void,
 ) => {
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-    const u = new URL(String(url), "http://t.local");
+    const u = new URL(url, "http://t.local");
     if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
     if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
     if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves });
@@ -1078,7 +1078,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       },
     });
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       paths.push(`${init?.method || "GET"} ${u.pathname}`);
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -1153,7 +1153,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       issues: [{ id: 1, kind: "situation", title: MIDCOURSE_ISSUE, status: "open", progress: 10, fail_condition: "" }],
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -1268,7 +1268,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       closed_this_turn: [],
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -1367,7 +1367,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
     };
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -1427,7 +1427,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(retry).toBeTruthy();
 
     const streamPosts = () => fetchMock.mock.calls.filter(([url, init]) => {
-      const path = new URL(String(url), "http://t.local").pathname;
+      const path = new URL(url, "http://t.local").pathname;
       return path.endsWith("/api/decree/issue/stream") && init?.method === "POST";
     }).length;
     const streamPostsBeforeDismiss = streamPosts();
@@ -1496,7 +1496,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     let liveState: Record<string, unknown> = oldGameState;
     vi.stubGlobal("confirm", () => true);
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -1617,7 +1617,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       const closedSpy = vi.spyOn(closedAuto, "shouldAutoOpenClosedIssuesAfterSettlement").mockReturnValue(true);
 
       vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-        const u = new URL(String(url), "http://t.local");
+        const u = new URL(url, "http://t.local");
         if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
         if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [autoOpenOrder] });
         if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -1687,7 +1687,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       },
     });
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -1760,7 +1760,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -1880,7 +1880,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     let stateFail = false;
     let failedReads = 0;
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -2097,7 +2097,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       pending_decisions: [d],
     });
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -2154,7 +2154,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       releaseResolve = resolve;
     });
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -2212,7 +2212,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     };
     const settlingState = settlementBaseState("settling");
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -2327,7 +2327,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       ...settlementBaseState("settling"),
       budget: { ...settlementBaseState("settling").budget, settled_army_pay: null },
     }, [{ name: "auto_begin", mtime: 1, size: 1024 }], (url, init) => {
-      loadRequests.push({ path: url.pathname, method: String(init?.method || "GET") });
+      loadRequests.push({ path: url.pathname, method: (init?.method || "GET") });
       if (loadRequests.length === 1) return firstLoad;
       return jsonResp({ turn: { year: 1627, period: 10, turn: 5 } });
     });
@@ -2848,7 +2848,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_decisions: [],
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -2941,7 +2941,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_decisions: [],
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       requests.push(`${init?.method ?? "GET"} ${u.pathname}`);
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -3026,7 +3026,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_decisions: [],
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -3128,7 +3128,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       source: "大臣拟旨", actor: "毕自严", notes: "", dossier_status: "proposed",
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
@@ -3308,7 +3308,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_decisions: [],
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       paths.push(`${init?.method || "GET"} ${u.pathname}`);
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -3348,7 +3348,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_decisions: [],
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       paths.push(`${init?.method || "GET"} ${u.pathname}`);
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -3398,7 +3398,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   it("#1402 offstage 起复接 openModal(edict)，不触发召对写", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
+      const u = new URL(url, "http://t.local");
       calls.push(`${init?.method || "GET"} ${u.pathname}`);
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });

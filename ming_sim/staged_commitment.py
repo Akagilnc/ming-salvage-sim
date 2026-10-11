@@ -63,8 +63,6 @@ def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
     """
     from ming_sim.strict_types import strict_int
 
-    if not isinstance(data, (list, tuple)):
-        raise ValueError(f"stages_json 须为 JSON 数组，得 {type(data).__name__}")
     out: List[Dict[str, object]] = []
     for idx, item in enumerate(data):
         if not isinstance(item, dict):
@@ -93,7 +91,7 @@ def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
             stage_idx=stage_idx, due_turn=due_turn,
             criterion_text=criterion, origin_context=origin_context,
         ))
-    out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
+    out.sort(key=lambda s: (s["stage_idx"], s["due_turn"]))
     return out
 
 

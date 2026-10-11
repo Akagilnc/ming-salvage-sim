@@ -41,10 +41,10 @@ def _recon_rejections(db):
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
     ).fetchone() is None:
         return []   # 尚无任何拒收落库，表未建
-    return list(db.conn.execute(
+    return db.conn.execute(
         "SELECT section, category, source, reason, item_json "
         "FROM rejection_reports ORDER BY id"
-    ).fetchall())
+    ).fetchall()
 
 
 def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_id="shaanxi",

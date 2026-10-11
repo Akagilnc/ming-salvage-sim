@@ -1821,7 +1821,7 @@ class GameSession:
             dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
                 self.state, record_rejections=is_last,
             )
-        dossiered_directives = list(self.db.list_dossiered_draft_directives(self.state))
+        dossiered_directives = self.db.list_dossiered_draft_directives(self.state)
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
         # colliding with durable turn_directives ids.
@@ -1950,7 +1950,7 @@ class GameSession:
         )
 
         self._assert_awaiting_decision_submit()
-        desk = list(self.db.list_rescript_desk(int(self.state.turn)))
+        desk = self.db.list_rescript_desk(int(self.state.turn))
         ctx = self.db.get_resolve_context(self.state.turn)
         # #389/#1897/#1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
         # 标题不补绑。scope 只收 kind='decision'，rescript_draft 行不动。
@@ -2028,7 +2028,7 @@ class GameSession:
                 agent, json.dumps(payload, ensure_ascii=False), tag="rescript-revise",
             )
             data = _parse_rescript_json_strict(raw)
-            if not isinstance(data, dict) or "items" in data:
+            if "items" in data:
                 raise ValueError("改票 LLM 须输出 {\"options\":[...]}，禁 monthly items[]")
             options_raw = data.get("options")
             if not isinstance(options_raw, list) or not options_raw:
@@ -2079,8 +2079,6 @@ class GameSession:
             )
             raw = run_agent_text(agent, prompt, tag="rescript-deliberate")
             obj = _parse_rescript_json_strict(str(raw or ""))
-            if not isinstance(obj, dict):
-                raise ValueError("deliberate LLM 意愿须为 object")
             # #1897：deliberate 自由 title/body 原样；stance 为封闭枚举可归一。
             title = str(obj.get("title") or "")
             body = str(obj.get("body") or "")

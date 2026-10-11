@@ -595,7 +595,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
                 # 持久化行确认在飞
                 assert game.db.conn.execute(
                     "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
-                assert int(game._runtime_write_queue().inflight_count()) >= 1
+                assert game._runtime_write_queue().inflight_count() >= 1
                 # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
                 # 不触发确认抽取 LLM。
                 game.db.stage_directive_candidate(

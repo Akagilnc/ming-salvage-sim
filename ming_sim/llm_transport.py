@@ -125,13 +125,11 @@ def transport_policy_from_mapping(data: object) -> TransportPolicy:
     if not isinstance(data, dict):
         return default_transport_policy()
     src = data.get("transport") if isinstance(data.get("transport"), dict) else data
-    if not isinstance(src, dict):
-        return default_transport_policy()
     slot = transport_runtime_slot(src)
     return TransportPolicy(
-        max_attempts=int(slot["max_attempts"]),
-        attempt_timeout_seconds=float(slot["attempt_timeout_seconds"]),
-        retry_interval_seconds=float(slot["retry_interval_seconds"]),
+        max_attempts=slot["max_attempts"],
+        attempt_timeout_seconds=slot["attempt_timeout_seconds"],
+        retry_interval_seconds=slot["retry_interval_seconds"],
         idle_timeout_seconds=cli_idle_timeout_seconds(data),
     )
 

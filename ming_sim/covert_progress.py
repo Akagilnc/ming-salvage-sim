@@ -299,7 +299,7 @@ def canonicalize_delivery_unit(unit: object, target: object) -> tuple[str, float
         raise CovertContractError("密令确认交付目标必须为正数")
     if raw not in CANONICAL_UNITS:
         raise CovertContractError("密令确认交付单位须为万两/人犯/万亩")
-    return raw, float(qty)
+    return raw, qty
 
 
 def _require_effect_sign(raw: object) -> int:
@@ -401,7 +401,7 @@ def build_covert_task_contract(
         if qty <= 0.0:
             raise CovertContractError("密令确认交付目标必须为正数")
         delivery = {
-            "target_units": float(qty),
+            "target_units": qty,
             "effect_sign": _require_effect_sign(effect_sign),
             "canonical_fields": [],
             "investigation_target": inv_target,
@@ -665,8 +665,6 @@ def require_covert_task_contract(dossier: Mapping[str, object] | None) -> Dict[s
 
 def contract_target_units(contract: Mapping[str, object]) -> float:
     delivery = contract.get("delivery")
-    if not isinstance(delivery, Mapping):
-        raise CovertContractError("typed contract 缺少 delivery")
     try:
         target = float(delivery.get("target_units"))
     except (TypeError, ValueError) as exc:
@@ -808,7 +806,7 @@ def _is_seed_guilt_fact_key(target: str, fact_key: str) -> bool:
 
 
 def _seed_guilt_severity(db: Any, target: str) -> str:
-    from ming_sim.db import GameDB
+    from ming_sim.db import _load_durable_json
 
     row = db.conn.execute(
         "SELECT seed_guilt FROM characters WHERE name=?",
@@ -822,9 +820,7 @@ def _seed_guilt_severity(db: Any, target: str) -> str:
     text = str(raw or "").strip()
     if not text:
         return ""
-    parsed = GameDB.parse_engine_payload_json(
-        text, surface="characters.seed_guilt",
-    )
+    parsed = _load_durable_json(text)
     return str(parsed.get("severity") or "").strip()
 
 
@@ -843,8 +839,6 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
     lanes: List[Dict[str, object]] = []
     seen: set[str] = set()
     for idx, item in enumerate(raw):
-        if not isinstance(item, Mapping):
-            raise ValueError(f"fact_lanes[{idx}] 须为对象")
         key = str(item.get("fact_key") or "").strip()
         if not key:
             raise ValueError(f"fact_lanes[{idx}] 缺 fact_key")
@@ -1834,7 +1828,7 @@ def apply_monthly_covert_actual_progress(
     不再是必填（#1895 同批废旧查案的意愿底档），缺省只落事实投入。
     """
     owns = db.owns_transaction() if commit else False
-    orders = list(db.list_secret_orders(status="active"))
+    orders = db.list_secret_orders(status="active")
     by_sel = _selection_map(selections)
     applied: List[Dict[str, object]] = []
     turn = int(state.turn)
@@ -2117,9 +2111,9 @@ def settle_due_secret_orders(
             actual = investigation_lane_actual_units(db, did)
             target = contract_target_units(contract)
         else:
-            actual = float(db.sum_dossier_actual_progress_units(did))
+            actual = db.sum_dossier_actual_progress_units(did)
             target = contract_target_units(contract)
-        reports = list(db.list_dossier_progress(did))
+        reports = db.list_dossier_progress(did)
         verdict = decide_secret_order_settlement({
             "actual_units": actual,
             "target_units": target,

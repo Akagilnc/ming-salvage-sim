@@ -171,19 +171,13 @@ def _month_fact_materials(
         # 空串/腐坏响亮，不得洗成空声明供料（#1897 E1/K2）。
         from ming_sim.db import GameDB
         try:
-            declaration = GameDB.parse_engine_payload_json(
-                row["declaration_json"],
-                surface=f"settled.declaration_json:{decree_ref}",
-            )
+            declaration = GameDB.parse_engine_payload_json(row["declaration_json"])
         except ValueError as exc:
             raise ValueError(
                 f"settled declaration_json 无效：{decree_ref}"
             ) from exc
         try:
-            visible = GameDB.parse_engine_payload_json(
-                row["visible_refs_json"],
-                surface=f"settled.visible_refs_json:{decree_ref}",
-            )
+            visible = GameDB.parse_engine_payload_json(row["visible_refs_json"])
         except ValueError as exc:
             raise ValueError(
                 f"settled visible_refs_json 无效：{decree_ref}"
@@ -230,9 +224,7 @@ def _month_fact_materials(
             if not include_secret_sources and str(row["source"] or "") == "secret_order":
                 continue
             from ming_sim.db import GameDB
-            item = GameDB.parse_engine_payload_json(
-                row["item_json"], surface="rejection_reports.item_json",
-            )
+            item = GameDB.parse_engine_payload_json(row["item_json"])
             if not include_secret_sources and (
                 _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):

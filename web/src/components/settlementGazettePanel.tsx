@@ -15,7 +15,7 @@ export function SettlementGazettePanel({
   periodLabel?: string;
   onDismiss: () => void;
 }) {
-  const rawAttendant = String(attendantMessage || "");
+  const rawAttendant = (attendantMessage || "");
   const masthead = periodLabel || "邸报";
   const bodyRef = React.useRef<HTMLDivElement | null>(null);
 

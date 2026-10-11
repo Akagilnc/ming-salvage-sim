@@ -318,7 +318,7 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
         {"key": key, "delta": 1, "origin_ref": origin, "beyond_intent": True},
     ]}, content, None, dossier_ids_at_input={did})
     assert all(not item.get("rejected") for item in setup["fiscal_creates"])
-    historical_rows = list(db.list_fiscal_effects_for_dossier(did))
+    historical_rows = db.list_fiscal_effects_for_dossier(did)
     # 现役唯一补饷路按分源欠销账：固定饷源份额并同步两源欠，不走已退役的标量直写分支。
     db.conn.execute(
         """
@@ -471,12 +471,12 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
         "key": "暗渠新项_rate", "account": "国库", "direction": "income", "init_value": 6,
         "origin_ref": origin, "beyond_intent": True,
     }]}, content, None, dossier_ids_at_input={did})
-    before = list(db.list_fiscal_effects_for_dossier(did))
+    before = db.list_fiscal_effects_for_dossier(did)
     prohibition = _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert "暗渠新项_base" not in db.get_fiscal_config()
-    assert list(db.list_fiscal_effects_for_dossier(did)) == before
+    assert db.list_fiscal_effects_for_dossier(did) == before
     tombstones = db.conn.execute(
         "SELECT key FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",
         (f"dossier:{prohibition}",),

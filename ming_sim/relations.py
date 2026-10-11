@@ -56,8 +56,6 @@ def settlement_edge_origin(origin_ref: object, kind: str) -> str:
     只作非空谓词（与 F1 context 同一纪律）。bind_origin_round 在写口内再附
     ``|round:N``（N=当前回合），TD-1 的 origin 回指由既有绑定机制承担，此处
     不重复拼 round。禁在调用侧另拼第二套 origin。"""
-    if not isinstance(origin_ref, str):
-        raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
     if not origin_ref.strip():
         raise ValueError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
     return f"{origin_ref}:relation:{validate_edge_kind(kind)}"
@@ -79,8 +77,6 @@ def _validated_settlement_origin(
     放行。精确匹配同时封死自带 round/turn 的伪造值（origin_round 一律由当前
     回合同步绑定，TD-1 不容伪造）；案卷授权核验复用
     GameDB.effect_origin_rejection 既有 API，不另立平行守门。"""
-    if not isinstance(origin_ref, str):
-        raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
     if origin_ref == SETTLEMENT_ORIGIN_SENTINEL:
         return origin_ref
     match = _DOSSIER_ORIGIN_RE.fullmatch(origin_ref)
@@ -232,7 +228,7 @@ def _capture_one_interaction(
     for target in targets:
         # r2 F2 基数：每「施动者→受动者」有序对恰一行；N 方联名=牵头者→各联署者
         # N-1 行；联署者互不写边、不做对称翻倍——由这个机械展开保证。
-        edge_id = int(db.record_relation_edge_event(
+        edge_id = db.record_relation_edge_event(
             source=source,
             target=target,
             event_kind=kind,
@@ -241,7 +237,7 @@ def _capture_one_interaction(
             turn=turn,
             year=int(state.year),
             period=int(state.period),
-        ))
+        )
         out.append({
             "source": source, "target": target, "event_kind": kind,
             "origin": origin, "edge_id": edge_id,

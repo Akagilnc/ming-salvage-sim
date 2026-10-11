@@ -192,7 +192,7 @@ def _history_backed_truncate_anchor(
     if not session_id:
         return None
     # game_db 已非 None：直调必备 GameDB 截缝，禁 hasattr 能力缺失兼容。
-    keep = int(game_db.agno_runs_length(session_id))
+    keep = game_db.agno_runs_length(session_id)
     return game_db, session_id, keep
 
 

@@ -379,14 +379,14 @@ def open_hall_turn(
     if night is None or str(night.get("status") or "") != NIGHT_STATUS_OPEN:
         night = ensure_open_night_for_audience(db, state)
     night_id = int(night["id"])
-    ctid = int(db.create_chat_turn(
+    ctid = db.create_chat_turn(
         state,
         minister_name,
         agno_session_id or f"test:{minister_name}",
         int(agno_runs_before or 0),
         night_id=night_id,
         status="generating",
-    ))
+    )
     name = str(minister_name or "").strip()
     if name and name != SCENE_CHAT_SPEAKER:
         ensure_summon_enter(

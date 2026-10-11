@@ -157,7 +157,6 @@ def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
 
 def _assert_next_accepted(stream) -> None:
     accepted = next(stream)
-    assert isinstance(accepted, dict)
     assert accepted["type"] == "accepted"
     assert isinstance(accepted["campaign_id"], str)
     assert isinstance(accepted["night_id"], int)

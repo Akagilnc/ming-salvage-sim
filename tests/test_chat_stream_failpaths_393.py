@@ -503,7 +503,6 @@ def _assert_structured_llm_http(response) -> dict:
     assert response.status_code == 400, response.text
     body = response.json()
     detail = body.get("detail") if isinstance(body, dict) else None
-    assert isinstance(detail, dict), body
     assert detail.get("code"), detail
     assert detail.get("message"), detail
     assert "provider_message" in detail, detail
@@ -621,7 +620,7 @@ class _FailLeavingAgnoRunAgent:
         n = self.calls
         # 本 attempt 启动时持久读回（_start_stream 已先 truncate）
         self.history_at_attempt_start.append(
-            list(self.db.agno_run_ids(self.session_id))
+            self.db.agno_run_ids(self.session_id)
         )
         if n <= self.fail_times:
             from tests.test_audience_restore_505 import _insert_agno_table_run

@@ -151,9 +151,7 @@ def structured_decree_prompt_contract() -> str:
 
 def transport_keys_to_canonical(raw: Mapping[str, object]) -> Dict[str, object]:
     """运输键归一；同义键合并，后写不覆盖已有非空 canonical。"""
-    if not isinstance(raw, Mapping):
-        raise ValueError("structured decree raw 须为 object")
-    out: Dict[str, object] = dict(raw)
+    out: Dict[str, object] = {**raw}
     for src, dest in _TRANSPORT_KEY_ALIASES.items():
         if src not in raw:
             continue

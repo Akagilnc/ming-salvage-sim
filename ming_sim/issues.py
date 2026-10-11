@@ -32,6 +32,7 @@ from ming_sim.distance import DistanceMatrix
 from ming_sim.paths import bundled_path
 from ming_sim.db import (
     GameDB,
+    _load_durable_json,
     POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
@@ -514,9 +515,7 @@ def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     raw = row["stop_condition"] if "stop_condition" in keys else ""
     if not raw:
         return {}
-    gate = GameDB.parse_engine_payload_json(
-        raw, surface="issues.stop_condition",
-    )
+    gate = _load_durable_json(raw)
     return {str(k): str(v) for k, v in gate.items()}
 
 
@@ -558,19 +557,12 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
         (issue_id,),
     ).fetchall()
     for row in rows:
-        payload = GameDB.parse_engine_payload_json(
-            row["metric_delta"], surface="economy_flows.metric_delta",
-        )
+        payload = GameDB.parse_engine_payload_json(row["metric_delta"])
         # No progress field on this advance → keep scanning (legal absence → final 0).
         if "commitment_progress" not in payload:
             continue
         progress = payload.get("commitment_progress")
         # Present but not an object = durable shape fault; do not skip-wash to 0 (F39).
-        if not isinstance(progress, dict):
-            raise ValueError(
-                "commitment_progress 须为对象，"
-                f"得 {type(progress).__name__}: {progress!r}"
-            )
         # Missing/empty paid_total → 0 (legal default). Present non-int is shape fault.
         raw = progress.get("paid_total", 0)
         if raw is None or raw == "":
@@ -1245,33 +1237,23 @@ def _apply_fiscal_levy_targets(
     region_entries: List[Dict[str, object]] = []
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
-        fiscal = GameDB.parse_engine_payload_json(
-            row["fiscal"], surface=f"regions.fiscal:{region_id}",
-        )
-        settle = fiscal.get("settle")
-        if settle is None:  # 合法无基座省：不入饷率分母
-            continue
         # 显式持久坏态＝账本故障：真因上抛、本轮中止，不出列成「分母不全」后照常出成功（ADR 0005 / 0021 决定9）。
+        fiscal = _load_durable_json(row["fiscal"])
         try:
-            if not isinstance(settle, dict):
-                raise ValueError(f"{region_id}.settle 非字典")
-            p = settle.get("p")
+            settle = fiscal.get("settle")
+            if settle is None:  # 合法无基座省：不入饷率分母
+                continue
+            p = {**settle.get("p")}
             st = settle.get("st")
-            if not isinstance(p, dict):
-                raise ValueError(f"{region_id}.settle.p 非字典")
-            if not isinstance(st, dict):
-                raise ValueError(f"{region_id}.settle.st 非字典")
             meta_raw = settle.get("_meta")
             if meta_raw is None:
                 meta_raw = {}
-            if not isinstance(meta_raw, dict):
-                raise ValueError(f"{region_id}.settle._meta 非字典")
-            meta = dict(meta_raw)
+            meta = {**meta_raw}
             liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
             land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
             base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
             _validate_fiscal_levy_share_meta(meta, region_id)
-        except ValueError as exc:
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
             raise _SubstrateHubFixedFlowAbort(
                 f"[fiscal-levy] {region_id} settle 持久坏态，本{TURN_UNIT}饷率通道中止：{exc}"
             ) from exc
@@ -1286,7 +1268,7 @@ def _apply_fiscal_levy_targets(
             "land": land,
             "base_transport": base_transport,
         })
-    total_land = sum(max(0.0, float(item["land"])) for item in region_entries)
+    total_land = sum(max(0.0, item["land"]) for item in region_entries)
     touched = 0
     for item in region_entries:
         region_id = str(item["region_id"])
@@ -1295,8 +1277,8 @@ def _apply_fiscal_levy_targets(
         p = item["p"]
         meta_raw = item["meta_raw"]
         meta = item["meta"]
-        liao_seed = float(item["liao_seed"])
-        land = float(item["land"])
+        liao_seed = item["liao_seed"]
+        land = item["land"]
         land_denominator = _fiscal_levy_land_denominator(
             meta,
             total_land,
@@ -1320,7 +1302,7 @@ def _apply_fiscal_levy_targets(
             _LIAN_LEVY_NATIONAL_MONTHLY,
             region_id,
         )
-        base_transport = float(item["base_transport"])
+        base_transport = item["base_transport"]
         target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
         target_jiao = jiao_seed if jiao_in_force else 0.0
         target_lian = lian_seed if lian_levy_approved else 0.0
@@ -1342,7 +1324,7 @@ def _apply_fiscal_levy_targets(
             current_sanxiang = _as_float(raw_sanxiang, ctx=f"{region_id}.settle.p.三饷应征")
             current_transport = _as_float(raw_transport, ctx=f"{region_id}.settle.p.起运定额")
         target_transport = base_transport + target_sanxiang
-        next_p = dict(p)
+        next_p = p
         next_p["三饷应征"] = target_sanxiang
         next_p["起运定额"] = target_transport
         meta[_SETTLE_META_LIAO_SEED_KEY] = liao_seed
@@ -3503,10 +3485,7 @@ def _strategic_event_result_preflight_error(
                 return _noop_error("region", region_id, raw_field, value)
             return ""
         if field in FISCAL_SCORE_FIELDS:
-            from ming_sim.db import GameDB
-            fiscal = GameDB.parse_engine_payload_json(
-                row["fiscal"], surface=f"regions.fiscal:{region_id}",
-            )
+            fiscal = _load_durable_json(row["fiscal"])
             old_value = int(fiscal.get(field, 50))
             delta = int(value)
             net_pct = int(((legacy_mods.get("regions") or {})
@@ -4620,14 +4599,14 @@ def apply_issue_tracker_output(
                     )
                 from ming_sim.staged_commitment import (
                     stages_source_from_issue_item,
-                    stages_to_json,
+                    normalize_commitment_stages,
                 )
                 # 分段承诺只认显式结构化 stages：走库层严格串行面，非 JSON 散文串
                 # 响亮 ValueError（由本段既有 except 收成 durable 拒收）。引擎不再
                 # 从 stage_text/title 的散文里正则抠年份（ADR 0142 / 御批 2026-09-30）。
-                stages_for_commitment = json.loads(stages_to_json(
+                stages_for_commitment = normalize_commitment_stages(
                     stages_source_from_issue_item(ni),
-                ))
+                )
                 has_stages = bool(stages_for_commitment)
                 if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
                     raise ValueError("ongoing_effects、end_turn 或 stages 至少一项必填")
@@ -4805,10 +4784,10 @@ def apply_issue_tracker_output(
                 continue
         from ming_sim.staged_commitment import (
             stages_source_from_issue_item,
-            stages_to_json,
+            normalize_commitment_stages,
         )
         stages_norm = (
-            json.loads(stages_to_json(stages_source_from_issue_item(ni)))
+            normalize_commitment_stages(stages_source_from_issue_item(ni))
             if is_commitment
             else []
         )
@@ -5426,9 +5405,7 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
     """
     from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
 
-    if not isinstance(extracted, dict):
-        raise ValueError(f"delta 必须是 object(dict)，实得 {type(extracted).__name__}")
-    cleaned = dict(extracted)
+    cleaned = {**extracted}
     rejections: list[tuple[str, dict, str]] = []
     for key, value in list(extracted.items()):
         if key == "_module_rejections":
@@ -6636,10 +6613,7 @@ def _apply_surcharge_decrees(
         if str(row["controlled_by"] or "") != "ming":
             _reject("missing_ref", f"surcharge_decrees 非明省不可加派：{region_id!r}")
             continue
-        from ming_sim.db import GameDB
-        fiscal = GameDB.parse_engine_payload_json(
-            row["fiscal"], surface=f"regions.fiscal:{region_id}",
-        )
+        fiscal = _load_durable_json(row["fiscal"])
         settle = fiscal.get("settle")
         if settle is None:
             _reject(
@@ -6686,9 +6660,7 @@ def _apply_surcharge_decrees(
         # Free prose surcharge reason: preserve raw; no length gate/crop (#1834 F16).
         reason = str(item.get("reason") or "")
         meta_raw = settle.get("_meta")
-        if meta_raw is not None and not isinstance(meta_raw, dict):
-            raise RuntimeError(f"surcharge_decrees {region_id!r} settle._meta 持久坏态（非对象）")
-        meta = dict(meta_raw or {})
+        meta = {} if meta_raw is None else {**meta_raw}
         old = max(0.0, float(meta.get(SETTLE_META_JIAPIAI_KEY, 0) or 0))
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
         meta[SETTLE_META_JIAPIAI_KEY] = new
@@ -8784,9 +8756,7 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     ).fetchall()
     cleared: List[str] = []
     for row in rows:
-        gate = GameDB.parse_engine_payload_json(
-            row["clear_gate"], surface="legacies.clear_gate",
-        )
+        gate = GameDB.parse_engine_payload_json(row["clear_gate"])
         if not gate:
             continue
         if _gate_passed(gate, state.metrics, db):

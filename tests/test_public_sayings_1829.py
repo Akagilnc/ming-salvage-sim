@@ -149,9 +149,9 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
     session.temporary_characters = {}
     session.agno_db = None
     session._write_gate = threading.Lock()
-    chat_turn_id = int(db.create_chat_turn(
+    chat_turn_id = db.create_chat_turn(
         state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
-    ))
+    )
     reply = session.scene_chat(
         f"密令：对外只说{claim}，瞒着{excluded_name}，不要让他得知。",
         chat_turn_id=chat_turn_id,

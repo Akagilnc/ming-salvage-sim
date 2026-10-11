@@ -1048,17 +1048,17 @@ def _attach_commission_escort(
 
     # 形状闸（ADR 0053 条目结构）→ 存在性闸（既有 KeyError 缝 → hallucinated_id）
     # → canon/非人归一。strict 面已抛 DMVE；不扩 ValueError 洗内部故障（#1897 E1）。
-    shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
+    shaped = db._normalize_participant_roster(entries, strict_structured=True)
     if not shaped:
         raise DecreeMaterializationValidationError(
             "押解声明 escort.escortees 须含 ADR 0053 参与人条目",
             failed_fields=("escort",),
         )
     _assert_characters_exist(
-        db, [str(entry["character_id"]) for entry in shaped],
+        db, [entry["character_id"] for entry in shaped],
     )
     roster = normalize_draft_person_roster(
-        list(entries), db=db, content=getattr(db, "content", None),
+        entries, db=db, content=getattr(db, "content", None),
     )
     # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
     # 复用 GameDB 现役 normalize + equality 追加（同 _merge_directive_payload）。
@@ -1070,7 +1070,7 @@ def _attach_commission_escort(
         roster,
     )
     record: Dict[str, Any] = {
-        "escortees": [str(entry["character_id"]) for entry in roster],
+        "escortees": [entry["character_id"] for entry in roster],
     }
     if note is not None:
         record["note"] = note
@@ -2650,10 +2650,8 @@ def _dispatch_promises(
             ):
                 _reject(rejected, item, "只有新建密令可用非空 typed new_content 修改", "invalid_shape", source)
                 continue
-            from ming_sim.db import GameDB
-            payload = dict(GameDB.parse_engine_payload_json(
-                row["payload_json"], surface="pending_actions.payload_json",
-            ))
+            from ming_sim.db import _load_durable_json
+            payload = _load_durable_json(row["payload_json"])
             payload["content"] = new_content
             db.conn.execute(
                 "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
@@ -2712,10 +2710,8 @@ def _dispatch_promises(
             else:
                 changed = False
                 if kind == "directive" and declared_mode is not None:
-                    from ming_sim.db import GameDB
-                    payload = dict(GameDB.parse_engine_payload_json(
-                        row["payload_json"], surface="pending_actions.payload_json",
-                    ))
+                    from ming_sim.db import _load_durable_json
+                    payload = _load_durable_json(row["payload_json"])
                     if payload.get("mode", "ordinary") != declared_mode:
                         payload["mode"] = declared_mode
                         if int(row["night_approved"] or 0):

@@ -362,7 +362,7 @@ def test_proposed_revoke_does_not_restore_override(game):
         target_id=str(target),
         payload={"revoke_target_dossier_id": target},
     )
-    before_cfg = dict(db.get_fiscal_config())
+    before_cfg = db.get_fiscal_config()
     with pytest.raises(PayOrderKeyError):
         restore_pay_order_override(
             db,
@@ -407,7 +407,7 @@ def test_rejected_revoke_does_not_restore_override(game):
         payload={"revoke_target_dossier_id": target},
     )
     db.apply_dossier_verdicts(state, [rejected_verdict(revoke)])
-    before_cfg = dict(db.get_fiscal_config())
+    before_cfg = db.get_fiscal_config()
     with pytest.raises(PayOrderKeyError):
         restore_pay_order_override(
             db,

@@ -74,8 +74,6 @@ def _stable_json(obj: object) -> str:
 
 def canonical_choice(raw: object) -> Dict[str, object]:
     """确定性规范化 choice：键序固定、缺省填协议默认、decision_key/action/capability 必在。"""
-    if not isinstance(raw, dict):
-        raise ValueError("choice 须为 object")
     out: Dict[str, object] = {}
     # 保留并规范化已知键
     decision_key = str(raw.get("decision_key") or "").strip()
@@ -603,8 +601,6 @@ def run_prewrite_llms(
         if deliberate_runner is None:
             raise RuntimeError("deliberate 需要 deliberate_runner")
         out = deliberate_runner(it)
-        if not isinstance(out, dict):
-            raise ValueError("deliberate LLM 输出须为 object")
         return it.decision_key, out
 
     # 一次短生命周期 pool：全部 start → wait → join
@@ -759,8 +755,8 @@ def map_rescript_option_or_choice(
             amount=src.get("amount"),
             account=src.get("account"),
         )
-        ga = str(shaped["grant_action"])
-        account = str(shaped["account"])
+        ga = shaped["grant_action"]
+        account = shaped["account"]
         payload["grant_action"] = ga
         payload["account"] = account
         g_kind, g_tid = _grant_target({
@@ -805,7 +801,7 @@ def map_rescript_option_or_choice(
             payload["execution_surface"] = "terminal"
             payload["name"] = target_id
         else:
-            payload["amount"] = int(shaped["amount"])
+            payload["amount"] = shaped["amount"]
             cadence = str(src.get("cadence") or "").strip() or "一次性"
             payload["cadence"] = cadence
             if ga == "协饷" and cadence == "一次性":
@@ -987,7 +983,7 @@ def _create_from_mapped(
         executor_id = assignee
     due_turn = 0
     due_turn = int(normalized.get("due_turn") or 0)
-    return list(db.create_decree_dossiers(
+    return db.create_decree_dossiers(
         state,
         action_type=emitted,
         decree_text=decree_text or str(normalized.get("label") or emitted),
@@ -999,7 +995,7 @@ def _create_from_mapped(
         status=status,
         due_turn=due_turn,
         commit=False,
-    ))
+    )
 
 
 def _apply_hold(db: Any, state: Any, item: ValidatedItem) -> None:
@@ -1047,8 +1043,6 @@ def _normalize_deliberate_will(
     candidate_ids: Sequence[str],
 ) -> Dict[str, object]:
     """校验 deliberate prewrite shape；非法 supporter 整批响亮失败。"""
-    if not isinstance(will, Mapping):
-        raise ValueError(f"deliberate 缺 prewrite 意愿：{item.decision_key}")
     title = str(will.get("title") or item.row.get("title") or "廷议")
     body = str(will.get("body") or will.get("stance") or will.get("text") or "")
     if not body.strip():
@@ -1062,8 +1056,6 @@ def _normalize_deliberate_will(
     supporters: List[str] = []
     seen: set[str] = set()
     for raw in raw_supporters:
-        if not isinstance(raw, str):
-            raise ValueError(f"非法站台身份（非字符串）：{raw!r}")
         name = raw.strip()
         if not name:
             raise ValueError("非法站台身份：空串")
@@ -1119,7 +1111,7 @@ def _apply_deliberate(
         "target_id": f"deliberation:{item.decision_key}",
         "locality_scope": "none",
     }
-    dossier_id = int(db.create_decree_dossier(
+    dossier_id = db.create_decree_dossier(
         state,
         action_type="policy",
         decree_text=body if body.strip() else title,
@@ -1128,7 +1120,7 @@ def _apply_deliberate(
         payload=payload,
         status="proposed",
         commit=False,
-    ))
+    )
     for name in supporters:
         db.add_dossier_endorsement(
             dossier_id,
@@ -1235,10 +1227,7 @@ def _apply_return_revise(
         stamped.append(normalize_rescript_layer_a_option(opt))
     old_round = int(item.row.get("revision_round") or 0)
     old_options = item.row.get("options") or []
-    prior = list(item.row.get("prior_options_json") or [])
-    if not isinstance(prior, list):
-        prior = []
-    prior = list(prior) + [old_options]
+    prior = (item.row.get("prior_options_json") or []) + [old_options]
     # CAS 含旧 revision_round
     cur = db.conn.execute(
         "UPDATE pending_decisions SET revision_round = ?, options_json = ?, "
@@ -1464,10 +1453,7 @@ def clear_return_revise_choice_anchors(
     for r in rows:
         from ming_sim.db import GameDB
         try:
-            choice = GameDB.parse_engine_payload_json(
-                r["choice_json"],
-                surface=f"pending_decisions.choice_json:turn={r['turn']}:idx={r['idx']}",
-            )
+            choice = GameDB.parse_engine_payload_json(r["choice_json"])
         except ValueError as exc:
             raise ValueError(
                 f"return_revise 清锚 choice_json 损坏："

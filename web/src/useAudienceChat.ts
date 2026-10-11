@@ -110,8 +110,8 @@ export function useAudienceChat(
       // generation + 面板守卫：更新的 load/send/reset 已发生或已切人 → 陈旧快照，拒收返 null。
       if (chatGenRef.current !== gen || selectedMinisterRef.current !== minister) return null;
       dispatchChat({ type: "history", history: data.history });
-      setCurrentCampaignId(String(data.campaign_id || ""));
-      setCurrentNightId(Number(data.night_id || 0));
+      setCurrentCampaignId((data.campaign_id || ""));
+      setCurrentNightId((data.night_id || 0));
       return data;
     },
     [selectedMinisterRef],
@@ -180,7 +180,7 @@ export function useAudienceChat(
               if (panelMatches() && hl.highlights?.length) {
                 dispatchChat({
                   type: "highlights",
-                  chatTurnId: Number(hl.chat_turn_id || 0),
+                  chatTurnId: (hl.chat_turn_id || 0),
                   highlights: hl.highlights,
                 });
               }

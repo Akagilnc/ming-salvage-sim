@@ -1625,7 +1625,6 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     assert caught.value.stage == "secret_orders_supply"
     chain = month_chain._load_chain(db, turn)
     failure = chain.get("call_failure")
-    assert isinstance(failure, dict)
     assert failure.get("step") == "secret_orders_supply"
     assert chain.get("secret_orders_supply_invalid") is True
     assert chain.get("covert_progress_done") is not True

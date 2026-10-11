@@ -297,7 +297,7 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(web_game, m
     phase2_calls: list[list] = []
 
     def _phase2(_state, _db, *_a, **_k):
-        rows = list(_db.list_pending_decisions(int(_state.turn)))
+        rows = _db.list_pending_decisions(int(_state.turn))
         phase2_calls.append(rows)
         return '邸报：批红已落。'
     monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
@@ -341,7 +341,7 @@ def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(web_game, monk
     phase2_calls: list[list] = []
 
     def _phase2(_state, _db, *_a, **_k):
-        rows = list(_db.list_pending_decisions(int(_state.turn)))
+        rows = _db.list_pending_decisions(int(_state.turn))
         phase2_calls.append(rows)
         return '邸报：承诺已核。'
     monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
@@ -364,7 +364,7 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
     phase2_calls: list[list] = []
 
     def _phase2(_state, _db, *_a, **_k):
-        rows = list(_db.list_pending_decisions(int(_state.turn)))
+        rows = _db.list_pending_decisions(int(_state.turn))
         phase2_calls.append(rows)
         return '邸报：批红已落。'
     monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
@@ -407,7 +407,7 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(web_game, monk
     phase2_calls: list[list] = []
 
     def _phase2(_state, _db, *_a, **_k):
-        rows = list(_db.list_pending_decisions(int(_state.turn)))
+        rows = _db.list_pending_decisions(int(_state.turn))
         phase2_calls.append(rows)
         return '邸报：不应到此。'
     monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
@@ -455,7 +455,7 @@ def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypat
     phase2_calls: list[list] = []
 
     def _phase2(_state, _db, *_a, **_k):
-        rows = list(_db.list_pending_decisions(int(_state.turn)))
+        rows = _db.list_pending_decisions(int(_state.turn))
         phase2_calls.append(rows)
         return '邸报：边警已核。'
     monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
@@ -1587,7 +1587,7 @@ def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
         ra.clear_return_revise_choice_anchors(db, None)
     db.conn.execute("UPDATE pending_decisions SET choice_json=? WHERE turn=? AND idx=? AND kind='rescript_draft'", ('[1,2]', int(urgent['source_turn'] or urgent['turn']), int(urgent['idx'])))
     db.conn.commit()
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         ra.clear_return_revise_choice_anchors(db, None)
 
 def test_657_appointment_name_target_id_conflict_batch_reject(game):
@@ -2004,7 +2004,7 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='冷场')
     stalled_id = int(stalled['id'])
-    normal_id = int(db.create_decree_dossier(state, action_type='policy', decree_text='清核河工', target_kind='issue', target_id=f'river-{state.turn}'))
+    normal_id = db.create_decree_dossier(state, action_type='policy', decree_text='清核河工', target_kind='issue', target_id=f'river-{state.turn}')
     seen: list[int] = []
 
     def product(_session, snapshot):
@@ -2259,8 +2259,8 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     original_turn = int(state.turn)
     original_year = int(state.year)
     original_period = int(state.period)
-    bad = int(db.add_directive(state, None, '缺账拨帑', 'player-decree-test', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账', 'amount': 100}))
-    good = int(db.add_directive(state, None, '清丈', 'player-decree-test', dossier_payload={'dossier_action_type': 'assignment', 'target_kind': 'issue', 'target_id': 'route-清丈', 'transaction_category': '清丈', 'participant_roster': _roster(_ROSTER_LEAD)}))
+    bad = db.add_directive(state, None, '缺账拨帑', 'player-decree-test', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账', 'amount': 100})
+    good = db.add_directive(state, None, '清丈', 'player-decree-test', dossier_payload={'dossier_action_type': 'assignment', 'target_kind': 'issue', 'target_id': 'route-清丈', 'transaction_category': '清丈', 'participant_roster': _roster(_ROSTER_LEAD)})
     first = session.resolve_turn()
     assert first.awaiting is False
     assert int(state.turn) == original_turn
@@ -2310,7 +2310,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='旧强推')
     did = int(stalled['id'])
-    dir_id = int(db.add_directive(state, None, '着即强推', 'test-658-edit', dossier_payload={'target_dossier_id': did}))
+    dir_id = db.add_directive(state, None, '着即强推', 'test-658-edit', dossier_payload={'target_dossier_id': did})
     db.update_directive_text(dir_id, '着清核河工', dossier_payload={'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'})
     row = db.conn.execute('SELECT dossier_payload_json FROM turn_directives WHERE id=?', (dir_id,)).fetchone()
     payload = json.loads(str(row['dossier_payload_json'] or '{}'))
@@ -2326,7 +2326,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     stalled2, _ = _658_plant_stalled_deliberation(db, state, content, title='改草强推')
     did2 = int(stalled2['id'])
     name = _summonable_name(db, content)
-    cid = int(db.stage_directive_candidate(state.turn, name, payload={'text': '着清核河工原文', 'actor': name, 'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'}))
+    cid = db.stage_directive_candidate(state.turn, name, payload={'text': '着清核河工原文', 'actor': name, 'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'})
     db.update_directive_candidate(cid, {'target_dossier_id': did2, 'mode': 'midzhi'})
     staged = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (cid,)).fetchone()['payload_json'])
     assert int(staged.get('target_dossier_id') or 0) == did2

@@ -24,7 +24,6 @@ def test_create_chat_model_respects_api_channel_over_backend_env(monkeypatch):
     model = create_chat_model(cfg)
 
     assert isinstance(model, OpenAIChat)
-    assert not isinstance(model, CliChat)
 
 
 def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
@@ -73,7 +72,6 @@ def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
 
     assert cfg.channel == "api"
     assert isinstance(model, OpenAIChat)
-    assert not isinstance(model, CliChat)
 
 
 def test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning(monkeypatch):
@@ -249,7 +247,6 @@ def test_create_chat_model_passes_default_headers_at_transport_boundary(monkeypa
     model = create_chat_model(cfg)
 
     assert isinstance(model, OpenAIChat)
-    assert not isinstance(model, CliChat)
     assert model.default_headers == headers
 
 

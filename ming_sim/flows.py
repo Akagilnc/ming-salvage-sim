@@ -114,14 +114,9 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
             fiscal = _load_durable_json(row["fiscal"], default='{}')
         except (TypeError, ValueError) as exc:
             raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运") from exc
-        if not isinstance(fiscal, dict):
-            raise ValueError(f"region {region_id!r} fiscal 非字典，无法投影起运")
+        settle = fiscal.get("settle")
         if "settle" not in fiscal:
             continue
-        settle = fiscal.get("settle")
-        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
-                or not isinstance(settle.get("p"), dict):
-            raise ValueError(f"region {region_id!r} 无 settle 财政基座，无法投影起运")
         result = settle_tick(copy.deepcopy(settle["st"]), copy.deepcopy(settle["p"]), [])
         remittance_total += float((result.breakdown or {}).get("起运到京", 0.0) or 0.0)
     return remittance_total
@@ -389,8 +384,6 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
         settle = fiscal.get("settle")
         if settle is None:
             continue
-        if not isinstance(settle, dict) or not isinstance(settle.get("p"), dict):
-            raise ValueError(f"region {row['id']} settle.p 持久坏态，无法计京运补需求")
         p = settle["p"]
         raw = p.get("拨付gross", 0)
         if raw is None:
@@ -900,7 +893,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 bool(row["is_tusi"]), bool(row["self_funded_pay"]),
                 float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
             )
-    except ValueError as exc:
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise _SubstrateHubFixedFlowAbort(
             f"substrate_hub 军饷饷源校验失败：{exc}"
         ) from exc
@@ -916,7 +909,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             max(0.0, float(state.metrics.get("国库", 0) or 0)),
             central_due_by_army,
         )
-    except ValueError as exc:
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise _SubstrateHubFixedFlowAbort(
             f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
         ) from exc
@@ -1100,7 +1093,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
                 _CENTRAL_TAICANG_SINK_LOSS_RATE,
             )
-        except ValueError as exc:
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
             raise _SubstrateHubFixedFlowAbort(
                 f"substrate_hub 太仓入库 hub 分配失败：{exc}"
             ) from exc
@@ -1158,7 +1151,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         db._reconcile_central_army_pay_arrears_container()
         try:
             db.assert_army_pay_source_container_conservation()
-        except ValueError as exc:
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
             raise _SubstrateHubFixedFlowAbort(
                 f"substrate_hub 军饷饷源守恒失败：{exc}"
             ) from exc

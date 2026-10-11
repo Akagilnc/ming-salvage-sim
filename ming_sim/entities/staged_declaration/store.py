@@ -259,9 +259,7 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
     if "verdict_json" not in row.keys() or row["verdict_json"] is None:
         verdict = None
     else:
-        verdict = GameDB.parse_engine_payload_json(
-            row["verdict_json"], surface=f"staged_declarations.verdict_json:{decree_ref}",
-        )
+        verdict = GameDB.parse_engine_payload_json(row["verdict_json"])
     if "questions_json" not in row.keys() or row["questions_json"] is None:
         questions = None
     else:
@@ -271,15 +269,9 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=decree_ref,
-        declaration=GameDB.parse_engine_payload_json(
-            row["declaration_json"],
-            surface=f"staged_declarations.declaration_json:{decree_ref}",
-        ),
+        declaration=GameDB.parse_engine_payload_json(row["declaration_json"]),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
-        visible_refs=GameDB.parse_engine_payload_json(
-            row["visible_refs_json"],
-            surface=f"staged_declarations.visible_refs_json:{decree_ref}",
-        ),
+        visible_refs=GameDB.parse_engine_payload_json(row["visible_refs_json"]),
         verdict=verdict,
         questions=questions,
         forecast_text=None if forecast_text is None else (

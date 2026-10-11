@@ -156,7 +156,7 @@ export function HistoryDetailView({
       ) : null}
 
       {/* trim 仅判空，DOM 写原文（P6 零删改；与递话对称） */}
-      {String(detail?.report || "").trim() ? (
+      {(detail?.report || "").trim() ? (
         <section className="document-section">
           <h3 className="extraction-section-title">月末邸报奏报</h3>
           <pre className="memorial-text">{detail!.report}</pre>
@@ -164,7 +164,7 @@ export function HistoryDetailView({
       ) : null}
 
       {/* #671/#1745：史册月档复用递话槽（抵京/拒收等）；泛标「递话」，不误标抵京专属。trim 仅判空，DOM 写原文（P6 零删改） */}
-      {String(detail?.attendant_message || "").trim() ? (
+      {(detail?.attendant_message || "").trim() ? (
         <section className="document-section" data-testid="history-attendant">
           <h3 className="extraction-section-title">递话</h3>
           <pre className="memorial-text">{detail!.attendant_message}</pre>

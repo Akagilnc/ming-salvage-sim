@@ -108,8 +108,8 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         dossier = db.get_decree_dossier(did) or {}
         actors = {str(dossier.get("executor_id") or "").strip()}
         for participant in dossier.get("participant_roster") or []:
-            if isinstance(participant, Mapping) and participant.get("tier") in {"主办", "协办"}:
-                actors.add(str(participant.get("character_id") or "").strip())
+            if participant.get("tier") in {"主办", "协办"}:
+                actors.add(participant["character_id"])
         actors.discard("")
         successful = lambda x: isinstance(x, Mapping) and not x.get("rejected")
         # Identity is the successfully promulgated case-bound dossier, never an

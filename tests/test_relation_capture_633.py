@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-import json
+from copy import deepcopy
 
 from ming_sim.issues import apply_score_extraction
 from ming_sim.relations import (
@@ -119,8 +119,8 @@ def test_replayed_delta_does_not_double_write(game):
             "来源引用": "盘面自发",
         }],
     }
-    apply_score_extraction(db, state, json.loads(json.dumps(delta)), content=content)
-    apply_score_extraction(db, state, json.loads(json.dumps(delta)), content=content)
+    apply_score_extraction(db, state, deepcopy(delta), content=content)
+    apply_score_extraction(db, state, deepcopy(delta), content=content)
     rows = [r for r in _edge_rows(db) if r["event_kind"] == "协作"]
     assert len(rows) == 1
 
@@ -283,9 +283,9 @@ def test_settlement_edge_origin_rejects_missing_and_non_string():
 
     from ming_sim.relations import settlement_edge_origin
 
-    with pytest.raises(ValueError):
+    with pytest.raises(AttributeError):
         settlement_edge_origin(None, "联名")
-    with pytest.raises(ValueError):
+    with pytest.raises(AttributeError):
         settlement_edge_origin(123, "联名")
     with pytest.raises(ValueError):
         settlement_edge_origin("   ", "联名")
