@@ -14598,8 +14598,8 @@ class GameDB:
         source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
-        与原地更新（同回合同大臣至多一条、last-write-wins）互补：本方法给
-        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。
+        与 update_directive_candidate（按候选 id 原地改正文）互补：本方法给
+        「一夜拟多道各自独立」用，后者给「补充/修改某一道草稿」用。返回新行 id。
 
         ``source_chat_turn_id``（#1890）：本道交办的来源轮，随新行落库。"""
         return self.stage_pending_action(
@@ -14647,7 +14647,7 @@ class GameDB:
         night_id: Optional[int] = None,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
-        未持源夜时与原地更新分支同纪律——把归属迁到当前开着的夜并清
+        未持源夜时把归属迁到当前开着的夜并清
         night_approved，使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入
         源夜则盖源夜。返回该行 id（不存在/非 pending 则 0）。
         **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
