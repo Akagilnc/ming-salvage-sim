@@ -85,6 +85,7 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
         "commissions": [{
             "text": commission_text,
             "grant": {
+                "grant_action": "协饷",
                 "amount": 150000, "account": "国库", "purpose": "补饷",
                 "target_kind": "army", "target_id": army_id,
             },

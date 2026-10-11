@@ -26,6 +26,7 @@ import pytest
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.audience_translate import _default_translate_runner as _real_audience_translate_runner
 from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.wait_utils import _await_condition_or_task
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -38,7 +39,6 @@ import ming_sim.agents as agents_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
-from ming_sim.session import ChatTurnResult
 
 
 # ── canned LLM 边界（唯一 fake）────────────────────────────────────────
@@ -82,7 +82,6 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     from tests.month_chain_helpers import canned_full_settlement
     from types import SimpleNamespace
     canned_full_settlement(monkeypatch, narrative=narrative)
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(agents_mod, "create_decree_forecast_agent", lambda *a, **k: SimpleNamespace())
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
 
@@ -329,23 +328,6 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
 from tests.test_chat_stream_failpaths_393 import _parse_sse
 
 
-async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
-    """成功事件或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。
-
-    事件与 task 同时终态时仍消费 task 异常——不得因 ev 先置位而吞掉 worker 失败。
-    """
-    while not ev.is_set() and not task.done():
-        await asyncio.sleep(0)
-    if task.done():
-        exc = task.exception()
-        if exc is not None:
-            raise exc
-        if not ev.is_set():
-            raise AssertionError("worker finished without expected success event")
-        return
-    # ev 已置位且 task 仍在跑（如 started 后 hang on allow）——成功会合。
-
-
 async def _drain_tasks(*tasks: asyncio.Task) -> None:
     """排空全部任务并消费异常；永不向外抛，避免 finally 收尾替换主体原错。"""
     for task in tasks:
@@ -385,7 +367,7 @@ async def _start_hanging_chat(client, monkeypatch):
         client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
     try:
         # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
-        await _await_event_or_task(started, task)
+        await _await_condition_or_task(started.is_set, task)
     except BaseException:
         # 移交前失败：释放 allow 并排空；已终态则 drain 只消费，不替换原错。
         allow.set()
@@ -409,7 +391,6 @@ async def _start_hanging_chat(client, monkeypatch):
 # ── ④ TOCTOU：等 gate 期间相位翻到亲裁 → 持锁内权威复查经真实 /chat/stream SSE 拒 ──
 def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
     game = web_game
-    minister = _active_minister(game)
     # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
     _agent = _FakeAgent()
     stub_scene_agent(monkeypatch, _agent)
@@ -422,8 +403,11 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
             try:
                 chat_task = asyncio.create_task(
                     client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
-                # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
-                await _wait_for(lambda: game._runtime_write_queue().inflight_count() > 0)
+                # 等真实在飞领票（锁前查之后、抢 gate 之前）或 worker 终态——读队列 inflight，不读已删兼容属性
+                await _await_condition_or_task(
+                    lambda: game._runtime_write_queue().inflight_count() > 0,
+                    chat_task,
+                )
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
             finally:
                 game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
@@ -445,9 +429,6 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
         dossier_payload=_POLICY_FIELDS,
     )
     game.db.ensure_dossiers_for_draft_directives(game.state)
-
-    registered_paths = {route.path for route in web_app.app.routes}
-    assert "/api/decree/write" not in registered_paths
 
     async def scenario():
         async with _client() as client:
@@ -528,9 +509,9 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
 
                 issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
                 # 屏障见票或 issue 终态；失败不挂死。
-                await _await_event_or_task(observed_ticket_inflight, issue_task)
+                await _await_condition_or_task(observed_ticket_inflight.is_set, issue_task)
                 allow.set()                                   # 放行回话落档 + 放票
-                await _await_event_or_task(observed_ticket_clear, issue_task)
+                await _await_condition_or_task(observed_ticket_clear.is_set, issue_task)
 
                 chat_resp = await chat_task
                 issue_resp = await issue_task
@@ -593,7 +574,7 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
 
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):
     """Legacy saves with only turn_directives.status=pending remain operable at the
-    same end-turn service seam; retired player confirm/reject routes stay absent."""
+    same end-turn service seam via advance_without_edict."""
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
@@ -616,10 +597,6 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
             "target_id": "already-dossiered",
         },
     )
-
-    registered_paths = {route.path for route in web_app.app.routes}
-    assert "/api/directives/{directive_id}/confirm" not in registered_paths
-    assert "/api/directives/{directive_id}/reject" not in registered_paths
 
     async def scenario():
         async with _client() as client:
@@ -687,7 +664,7 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
                 issue_task = asyncio.create_task(
                     issue_client.post("/api/decree/issue/stream", json={})
                 )
-                await _await_event_or_task(observed_ticket_inflight, issue_task)
+                await _await_condition_or_task(observed_ticket_inflight.is_set, issue_task)
                 assert not issue_task.done(), (
                     "issue must wait for chat ticket, not forge elapsed 409"
                 )

@@ -188,4 +188,3 @@ function SecretOrderDetailBlock({ title, text, tone = "default" }: { title: stri
     </section>
   );
 }
-

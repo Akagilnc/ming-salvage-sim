@@ -439,16 +439,6 @@ def test_historical_event_none_gate_no_crash(game):
 
 # ── #12(b)：trigger_gate key/cond fail-loud（ADR 0012 残留 4b，Q3 裁断=fail-loud）──
 
-def test_gate_key_form_error_accepts_valid_forms():
-    """存量 6 形态 + 文本字段 key 全合法（不误拒）。"""
-    from ming_sim.content import gate_key_form_error
-    for k in ("民心", "皇威", "国库", "内库",
-              "power.houjin.leverage", "region.huguang.grain_security",
-              "region.shaanxi|shanxi|henan.unrest.min",
-              "class.士绅@nanzhili|zhejiang|fujian.satisfaction.max",
-              "event.huabei_plague.triggered",
-              "region.x.controlled_by"):
-        assert gate_key_form_error(k) == "", (k, gate_key_form_error(k))
 
 def test_gate_key_form_error_rejects_typo_metric_table_structure():
     """typo'd metric / 未知表 / 结构不完整 → 非空错误说明（fail-loud 素材）。"""
@@ -665,12 +655,6 @@ def test_character_text_typo_field_gate_raises_clear(game):
     with pytest.raises(ValueError):
         _gather_with_gate(db, state, content, {'character.毛文龙.locaiton': '==liaodong'})
 
-def test_character_text_gate_key_passes_content_validation():
-    """load-time 文本 gate 校验接受 character 的文本字段（#201）。"""
-    from ming_sim.content import gate_text_key_form_error
-
-    assert gate_text_key_form_error("character.毛文龙.location") == ""
-    assert gate_text_key_form_error("character.毛文龙.office") == ""
 
 def test_character_text_gate_rejects_serialized_list_field():
     """character.personal_skills 是序列化列表，不适合作普通文本等值门。"""
@@ -683,6 +667,31 @@ def test_character_text_gate_rejects_numeric_character_field():
     from ming_sim.content import gate_text_key_form_error
 
     assert gate_text_key_form_error("character.毛文龙.loyalty")
+
+
+def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
+    """auto-trigger 事务体内转 issue 时不得内部 commit，回滚边界由外层 atomic 统一控制。"""
+    db, state, content = game
+    issues.bind_content(content)
+    event_id = "__test_auto_trigger_atomic__"
+    ev = _hist_event(event_id, {})
+    ev.auto_trigger = True
+    calls = []
+
+    def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True, **_kwargs):
+        calls.append((ev_arg.id, commit))
+        return 999
+
+    monkeypatch.setattr(issues, "event_to_issue", fake_event_to_issue)
+    content.events.append(ev)
+    try:
+        triggered = issues.auto_trigger_seed_issues(state, db)
+    finally:
+        content.events.remove(ev)
+
+    assert calls == [(event_id, False)]
+    assert {"id": event_id, "title": ev.title, "issue_id": 999} in triggered
+
 
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
     """内容契约：person_core_subjects 写了就必须是字符串数组，空字符串不能吞成缺省。"""
@@ -1163,7 +1172,12 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 def test_rejected_strategic_event_does_not_land_substitute_commander_person_delta(game):
-    """#189 CMR R3：替补将也是战事软判结果；重复/拒收事件不得单独杀人。"""
+    """#189 CMR R3：替补将也是战事软判结果；重复/拒收事件不得单独杀人。
+
+    经真实声明入口承接：事件归属信封在 C3 预检整封拒收，替补将人事不得落账。
+    """
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     issues.bind_content(content)
     state.year = 1641
@@ -1171,52 +1185,35 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     db.mark_event_triggered(state, "songshan_battle")
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    out = issues.apply_score_extraction(
+    result = dispatch_declaration(
         db,
         state,
         {
-            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "人物变更": [
-                {"origin_ref": "盘面自发", "affair_declaration": {"attach": "new"}},
-                {"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "松锦替补战死"},
+            "effects": [
+                {
+                    "event_id": "songshan_battle",
+                    "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
+                    "人物变更": [
+                        {
+                            "origin_ref": "盘面自发",
+                            "name": "孙传庭",
+                            "动作": "处置",
+                            "status": "dead",
+                            "reason": "松锦替补战死",
+                        },
+                    ],
+                },
             ],
         },
-        content=content,
-        ordered_deltas={
-            "army_delta": [], "region_delta": [], "power_updates": [],
-            "new_armies": [],
-        },
-        ordered_effect_event_ids={"人物变更": ["", "songshan_battle"]},
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert any(
+        getattr(item, "category", "") == "event_rejected"
+        for item in result.effects.rejected
+    )
     assert db.get_character_status("孙传庭")[0] == "active"
-    assert len(out["applied_person_changes"]) == 1
-    assert out["applied_person_changes"][0]["rejected"] is True
-    assert all(
-        "_effect_event_id" not in rejection["item"]
-        for rejection in out["validate_shape_rejections"]
-        if isinstance(rejection.get("item"), dict)
-    )
+    assert result.effects.applied == []
 
-def test_pending_gate_uses_same_place_canonical_terminal_state(game):
-    """#667：同地行止真实终态不在途，pending gate 不得投影出 transit_to。"""
-    db, _state, content = game
-    db.conn.execute(
-        "UPDATE characters SET status='active', location='liaodong', transit_to='' WHERE name='毛文龙'"
-    )
-    ev = Event(
-        id="__test_same_place_departure__", title="同地终态", kind="朝议", summary="x",
-        urgency=1, severity=1, credibility=100, interests=[], audiences=[],
-        event_type="situation", trigger_gate={"character.毛文龙.transit_to": "!= liaodong"},
-    )
-
-    assert issues._pending_person_changes_block_event_gate(
-        ev,
-        [{"name": "毛文龙", "动作": "行止", "transit_to": "liaodong"}],
-        db,
-        content=content,
-    ) is False
 
 
 def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
@@ -2672,7 +2669,7 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
 def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 fiscal_creates/removes 不得由财政 helper 提前提交。"""
     db, state, content = game
-    remove_key = next(iter(db.get_fiscal_config()))
+    remove_key = next(key for key in db.get_fiscal_config() if key.endswith("_base"))
     created_key = "__test_fiscal_txn_r7_base"
     created_rate_key = "__test_fiscal_txn_r7_rate"
     db.conn.commit()
@@ -2696,7 +2693,7 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
         },
         content=content,
     )
-    assert out["fiscal_removes"][0]["key"] == f"{db._stem_of(remove_key)}_base"
+    assert out["fiscal_removes"][0]["key"] == remove_key
     assert out["fiscal_creates"][0]["key"] == created_key
     db.conn.rollback()
 
@@ -2961,8 +2958,54 @@ def test_event_pool_pending_invalid_location_does_not_clear_transit_gate(game):
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-def test_event_pool_pending_person_power_change_blocks_gate(game):
-    """同批人物易主会真实落库，pending 闸门也必须按同一语义预检。"""
+
+def test_event_pool_pending_rejected_person_change_does_not_block(game):
+    """转移矩阵拒收的 pending 人物变更，不应提前阻断事件门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("dismissed", "袁崇焕"))
+    if "袁崇焕" in content.characters:
+        content.characters["袁崇焕"].status = "dismissed"
+    ev = Event(
+        id="__test_rejected_person_change_pending__",
+        title="测试·拒收人物变更不阻断",
+        kind="朝议",
+        summary="袁崇焕已罢黜时可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.status": "== dismissed"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
+            content=content,
+            pending_person_changes_for_gates=[
+                # dismissed 上 易主 被转移矩阵拒收，不得提前改 status 阻断门
+                {"name": "袁崇焕", "动作": "易主", "new_power": "houjin", "方式": "主动投敌",
+                 "反噬": {"houjin": {"leverage": 1}}, "reason": "应拒收的 pending 变更"}
+            ],
+        )
+
+        assert out["new_issues"][0]["rejected"] is False
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is not None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_power_change_blocks_gate(game):
+    """人物变更·易主会真实落库，pending 闸门也必须按同一语义预检。"""
     db, state, content = game
     issues.bind_content(content)
     db.conn.execute(

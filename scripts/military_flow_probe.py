@@ -150,7 +150,7 @@ def main() -> int:
             results.append({
                 "label": label,
                 "decree": decree,
-                "report_head": report[:1600],
+                "report_head": report,
                 "snapshot": _query_snapshot(sess),
             })
             sess.end_turn()
@@ -165,7 +165,7 @@ def main() -> int:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(text, encoding="utf-8")
         print(f"[probe] wrote {out_path}")
-    print(text[:4000])
+    print(text)
     return 0
 
 

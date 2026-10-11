@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 
 from ming_sim.applier import Provenance
 from ming_sim.db import GameDB
+from ming_sim.models import _load_durable_json_object
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.session_write_queue import get_session_write_queue
 
@@ -302,7 +303,7 @@ def _submit_tail(
             logger.exception("[mechanical-tail] turn=%s 后台执行失败，等待玩家重试", closed_turn)
             from ming_sim.error_pack import write_error_pack
 
-            def record_failure() -> None:
+            def record_failure(exc: Exception = exc) -> None:
                 pack_path = write_error_pack(
                     session.db, session.state, exc=exc,
                 )
@@ -450,11 +451,8 @@ def ensure_mechanical_tails(session: Any) -> None:
         _submit_tail(
             session,
             closed_turn=turn,
-            settled_year=int(tail.get("settled_year") or 0),
-            settled_period=int(tail.get("settled_period") or 0),
-            ending_outcome=GameDB.optional_object(
-                tail.get("ending_outcome"),
-                surface="month_chain.mechanical_tail.ending_outcome",
-            ),
+            settled_year=int(tail["settled_year"]),
+            settled_period=int(tail["settled_period"]),
+            ending_outcome=_load_durable_json_object(tail.get("ending_outcome"), surface="ending_outcome"),
             source=source,
         )

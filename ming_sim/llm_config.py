@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import logging
 import os
 from typing import Dict, Optional
 
@@ -21,6 +22,7 @@ from ming_sim.models import (
 from ming_sim.paths import user_data_path
 
 RUNTIME_LLM_PATH = user_data_path("runtime_llm.json")
+logger = logging.getLogger(__name__)
 
 _API_RUNTIME_FIELDS = (
     "base_url",
@@ -167,41 +169,24 @@ def cli_idle_timeout_seconds(data: Dict[str, object]) -> float:
 
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
+    """只认显式 channel + api/cli/transport 槽；不迁扁平旧档、不重造顶层 alias。"""
     channel = str(data.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
-        # 扁平旧配置只有「存在真实 API key」才推断 api。占位符 + 默认数值字段
-        # （timeout 等）不算 api 信号，否则旧 CLI-env 存档被误升成显式
-        # API、env CLI 后端被忽略，假 key 还会被送上 API 路径。
-        channel = "api" if is_real_api_key(data.get("api_key")) else ""
+        channel = ""
     api_raw = data.get("api")
     cli_raw = data.get("cli")
     transport_raw = data.get("transport")
-    api_source = api_raw if isinstance(api_raw, dict) else data
-    api = _api_runtime_slot(api_source)
+    api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else {})
     cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
     transport = _transport_runtime_slot(
         transport_raw if isinstance(transport_raw, dict) else {}
     )
-    migrated_api_strength = (
-        normalize_reasoning_strength(api.get("reasoning_strength"))
-        or normalize_reasoning_strength(data.get("reasoning_strength") if channel != "cli" else "")
-        or legacy_reasoning_strength(api_source)
-    )
-    if migrated_api_strength:
-        api["reasoning_strength"] = migrated_api_strength
-    cli_strength = normalize_reasoning_strength(cli.get("reasoning_strength"))
-    active_strength = cli_strength if channel == "cli" else migrated_api_strength
-    out = {
+    return {
         "channel": channel,
         "api": api,
         "cli": cli,
         "transport": transport,
     }
-    # Transitional API aliases keep existing callers working while the UI/API
-    # slices move to explicit slots. Keep these even when CLI is active.
-    out.update(api)
-    out["reasoning_strength"] = active_strength
-    return out
 
 
 def normalize_openai_base_url(base_url: str) -> str:
@@ -429,9 +414,19 @@ def load_runtime_llm() -> Dict[str, object]:
     try:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+    except json.JSONDecodeError:
+        # Documented safe empty-config fallback; leave cause via existing logger.
+        logger.exception("load_runtime_llm JSON corrupt path=%s", RUNTIME_LLM_PATH)
+        return {}
+    except OSError:
+        logger.exception("load_runtime_llm failed path=%s", RUNTIME_LLM_PATH)
         return {}
     if not isinstance(data, dict):
+        # Documented safe empty-config fallback; preserve root-type cause.
+        logger.error(
+            "load_runtime_llm non-object root path=%s type=%s",
+            RUNTIME_LLM_PATH, type(data).__name__,
+        )
         return {}
     return _normalize_runtime_llm(data)
 
@@ -514,7 +509,7 @@ def save_runtime_llm(
         strength_source = (
             existing_cli.get("reasoning_strength", "")
             if active_channel == "cli"
-            else existing_api.get("reasoning_strength") or existing.get("reasoning_strength", "")
+            else existing_api.get("reasoning_strength", "")
         )
         strength = normalize_reasoning_strength(strength_source)
     else:
@@ -548,7 +543,6 @@ def save_runtime_llm(
     transport_payload = _transport_runtime_slot(transport_src)
     payload = {
         "channel": active_channel,
-        "reasoning_strength": strength,
         "api": api_payload,
         "cli": cli_payload,
         "transport": transport_payload,

@@ -70,7 +70,15 @@ def persist_answers(db: Any, state: Any, choices: list, *, content: Any = None) 
                  row["source_turn"], row["idx"], row["kind"]),
             )
             event_id = str(row.get("event_id") or "")
-            from ming_sim.month_chain import _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX
+            from ming_sim.month_chain import _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX, _LEVY_PETITION_PREFIX
+            if row["kind"] == "decision" and event_id.startswith(_LEVY_PETITION_PREFIX):
+                db.record_event_petition_answer(
+                    state, event_id[len(_LEVY_PETITION_PREFIX):], choice,
+                    {"title": row["title"], "context": row["context"],
+                     "options": [opt["label"] for opt in row["options"]]},
+                    commit=False,
+                )
+                continue
             if row["kind"] == "decision" and event_id and not event_id.startswith(
                 ("dossier:", "deliberation:", _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX)
             ):

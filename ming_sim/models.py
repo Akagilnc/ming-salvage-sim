@@ -1,14 +1,11 @@
-"""数据类：游戏实体与状态容器。L0 叶子模块。
-
-CourtContext 的 state/db 注解用字符串前向引用，避免 import db.py。
-"""
+"""数据类：游戏实体与状态容器。L0 叶子模块。"""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES,
@@ -33,15 +30,114 @@ from ming_sim.constants import (
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 
 
-def loads_effect_dict(raw: object) -> Dict[str, object]:
-    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口。
+def _load_durable_json_list(raw: object, *, surface: str) -> list:
+    """Durable JSON array column: corrupt / wrong top-level fail loud (#1897 E1).
 
-    真空→{}；腐坏/非对象响亮 ValueError（#1834 F39，不得洗成空 effect）。
-    放 models 避免 db↔issues 循环——调用方 lazy 取 GameDB 解析助手。
+    SQL NULL may default to empty list; empty string / non-str / non-list must not
+    be falsy-washed into a legal empty array.
     """
-    from ming_sim.db import GameDB
+    if isinstance(raw, list):
+        value = raw
+    else:
+        if raw is None:
+            text = "[]"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
+    if not isinstance(value, list):
+        raise ValueError(f"{surface} 须为列表，得 {type(value).__name__}")
+    return value
 
-    return GameDB.parse_engine_payload_json(raw, surface="effect_json")
+
+def _load_durable_str_list(raw: object, *, surface: str) -> list:
+    """Durable string-array column: list + each member str (#1897 E1)."""
+    return _require_str_list_members(
+        _load_durable_json_list(raw, surface=surface), surface=surface,
+    )
+
+
+def _load_durable_json_object(raw: object, *, surface: str) -> dict:
+    """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1).
+
+    SQL NULL may default to empty object; empty string / non-str / non-object
+    must not be falsy-washed into a legal empty object.
+    """
+    if isinstance(raw, dict):
+        value = raw
+    else:
+        if raw is None:
+            text = "{}"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
+    return value
+
+
+def _require_str_list_members(values: list, *, surface: str) -> list:
+    """Each durable list member must already be str — no str() wash (#1897 E1)."""
+    out: list = []
+    for index, item in enumerate(values):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"{surface}[{index}] 须为字符串，得 {type(item).__name__}"
+            )
+        out.append(item)
+    return out
+
+
+def require_persistent_string_list(
+    raw: object, *, surface: str, field: str,
+) -> list:
+    """Durable object/list member of names.
+
+    Missing/None → []. Non-list, null member, empty or non-scalar → loud failure.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"{surface}.{field} 须为数组，得 {type(raw).__name__}"
+        )
+    out: list = []
+    for index, item in enumerate(raw):
+        if item is None:
+            raise ValueError(f"{surface}.{field}[{index}] 不得为 null")
+        if not isinstance(item, (str, int, float)) or isinstance(item, bool):
+            raise ValueError(
+                f"{surface}.{field}[{index}] 须为标量名，得 {type(item).__name__}"
+            )
+        text = str(item)
+        if not text:
+            raise ValueError(f"{surface}.{field}[{index}] 不得为空")
+        out.append(text)
+    return out
+
+
+def loads_persistent_name_list(raw: object, *, surface: str = "name_list") -> list:
+    """Durable JSON name list: missing/empty → []; corrupt/null member raises."""
+    data = _load_durable_json_list(raw, surface=surface)
+    return require_persistent_string_list(data, surface=surface, field="items")
+
+
+def loads_effect_dict(raw: object) -> Dict[str, object]:
+    """Single durable effect-object decoder; corrupt state fails loud."""
+    return _load_durable_json_object(raw, surface="effect_json")
 
 
 def _nonzero_int(raw: object) -> bool:
@@ -196,48 +292,6 @@ def _person_effect_has_work(raw: object) -> bool:
     return False
 
 
-def _character_effect_has_work(raw: object) -> bool:
-    if not isinstance(raw, list):
-        return False
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        if not _nonempty_text(item.get("name")):
-            continue
-        loyalty = item.get("loyalty")
-        if (
-            not isinstance(loyalty, bool)
-            and isinstance(loyalty, int)
-            and loyalty != 0
-        ):
-            return True
-    return False
-
-
-def _character_status_effect_has_work(raw: object) -> bool:
-    if not isinstance(raw, list):
-        return False
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        if _nonempty_text(item.get("name")) and _nonempty_text(item.get("status")):
-            return True
-    return False
-
-
-def _character_power_effect_has_work(raw: object) -> bool:
-    if not isinstance(raw, list):
-        return False
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        if _nonempty_text(item.get("name")) and (
-            _nonempty_text(item.get("new_power")) or _nonempty_text(item.get("power_id"))
-        ):
-            return True
-    return False
-
-
 def _power_renames_effect_has_work(raw: object) -> bool:
     if not isinstance(raw, list):
         return False
@@ -273,7 +327,6 @@ def _legacy_effect_has_work(raw: object) -> bool:
 
 def effect_dict_has_work(raw: object) -> bool:
     """Return whether an effect/ongoing payload has semantic work, not just a non-empty shell."""
-    from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS
 
     effect = loads_effect_dict(raw)
     if not effect:
@@ -305,13 +358,7 @@ def effect_dict_has_work(raw: object) -> bool:
         ),
         _building_effect_has_work(effect.get("buildings")),
         _new_armies_effect_has_work(effect.get("new_armies")),
-        *(
-            _character_effect_has_work(effect.get(key)) if key == "character"
-            else _person_effect_has_work(effect.get(key))
-            for key in PERSON_EFFECT_KEYS
-        ),
-        _character_status_effect_has_work(effect.get("character_status_changes")),
-        _character_power_effect_has_work(effect.get("character_power_changes")),
+        _person_effect_has_work(effect.get("人物变更")),
         _power_renames_effect_has_work(effect.get("power_renames")),
         _legacy_effect_has_work(effect.get("legacy")),
     )
@@ -424,17 +471,16 @@ def is_vassal_prince(character: "Character") -> bool:
     受守面清单（新增同类面时一并加，勿漏）：
     - web_app: visible_in_court / in_talent_pool / api_create_secret_order
     - materials: 人物/朝臣名册.txt
-    - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
+    - session: can_summon（召对 choke，覆盖 session/web/CLI choose_minister 三路）/ list_ministers（召见阶段名册）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
-    - session: can_summon（召对 choke，覆盖 session/web/CLI choose_minister 三路）
     - db: create_secret_order（密令唯一 DB 写口 choke）/ _commit_office_action 罢免（玩家罢免）
     roster 类同时排 后宫/未仕，用 office_type in ('后宫','宗藩','未仕')；本 helper 只判宗藩这一面。
 
     **规则边界（玩家动作 vs 世界事件，cmr R7 拍）**：守的是「皇帝把宗室当朝堂命官来召见/任免/
     罢免/下密令」这类玩家动作面。**世界段叙事处置故意不守**——宗室可因世界事件
-    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），转译产生的 character_status_changes 的
-    罢黜/处置路（issues.apply_person_status_changes）应允许改宗藩状态；况且 dismiss/dead 不改
-    office_type，宗藩照旧不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。
+    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），转译产生的「人物变更」罢黜/处置路
+    （issues 人物变更落库）应允许改宗藩状态；况且 dismiss/dead 不改 office_type，宗藩照旧
+    不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。
 
     容 None（防御，R3 gemini）：传 None 返 False，使本判据不比调用点的存在性检查更严。"""
     return character is not None and character.office_type == VASSAL_PRINCE_OFFICE_TYPE
@@ -488,6 +534,7 @@ class Event:
     # 硬触发开关、也是「这是世界事件」的唯一权威标记，不另开第二个归属字段。
     auto_trigger: bool = False
     terminal_reason_labels: List[str] = field(default_factory=list)  # 封闭结局标签集；空=无专用白名单
+    # #1891：程序默认结局桩退役，饷率结局只由皇帝亲裁经同一写口置定。
     # 以下为可选「精调 issue 字段」：原 opening_crises 那种手调危机用，立项时 event_to_issue 优先读这些，
     # 缺省（0/空）则按 severity/kind 自动推导。合并 opening_crises → seed_events 后承接其手调值。
     bar_value: int = 0                                            # 0=自动推导
@@ -670,13 +717,6 @@ class GameState:
         if self.period > 12:
             self.period = 1
             self.year += 1
-
-
-@dataclass
-class CourtContext:
-    state: "GameState"
-    db: "object"  # GameDB；用 object 注解避免 import db.py 造成环
-    previous_summary: str = ""
 
 
 def period_label(year: int, month: int) -> str:

@@ -302,6 +302,7 @@ def extract_agent_text(run_output: object) -> str:
     # #1834 F26：不从成功正文词表猜认证/连接故障；只认结构化 status / 原生异常。
     # #1465 ④ / P7 / ADR 0046：玩家可见走系统层人话，禁固定戏内话术；
     # 机器横幅只进 provider_message（与 map_run_error_event 同权威）。
+    # 成功正文不得按散文词表推断认证故障（ADR 0142 / #1891 A）。
     if _run_output_status_is_error(run_output):
         from ming_sim.llm_transport import (
             ClassifiedFailure,
@@ -314,7 +315,7 @@ def extract_agent_text(run_output: object) -> str:
             raise transport_failure_unavailable(
                 remembered, attempts=1, exhausted=False,
             )
-        pmsg = text.strip() or "run status=ERROR"
+        pmsg = text if text.strip() else "run status=ERROR"
         raise transport_failure_unavailable(
             ClassifiedFailure(
                 retryable=False,

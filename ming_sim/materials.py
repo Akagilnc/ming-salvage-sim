@@ -9,6 +9,8 @@ live agent session.
 
 from __future__ import annotations
 
+from ming_sim.models import loads_persistent_name_list
+
 import hashlib
 import json
 import re
@@ -144,19 +146,6 @@ def _resolve_inside(root: Path, rel: str) -> Path:
     return candidate
 
 
-def _materials_invocation_dir(db: Any, state: Any) -> Path:
-    from ming_sim.audience_night import get_open_night
-
-
-    night = get_open_night(db)
-    key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    return (
-        _materials_campaign_dir(db) / key / uuid.uuid4().hex
-    )
-
-
-
-
 def _empty_uuid_invocation_parent(path: Path) -> Optional[Path]:
     parent = path.parent
     name = parent.name
@@ -234,12 +223,6 @@ def _publish_material_tree(
     return dest, list(index or [])
 
 
-def character_materials_root(db: Any, state: Any, character: Any) -> Path:
-    return _materials_invocation_dir(db, state) / _safe_segment(
-        getattr(character, "name", "")
-    )
-
-
 def list_materials(root: Path, path: str = "") -> List[str]:
     base = _resolve_inside(root, path)
     root_r = Path(root).resolve()
@@ -306,24 +289,6 @@ def material_tools(root: Any) -> list:
     list_materials_tool.__name__ = "list_materials"
     read_material_tool.__name__ = "read_material"
     return [list_materials_tool, read_material_tool]
-
-
-def _present_names(db: Any, character: Any) -> List[str]:
-    from ming_sim.audience_night import get_open_night, present_names_at
-
-    name = str(getattr(character, "name", "") or "")
-    night = get_open_night(db)
-    if night is None:
-        return [name] if name else []
-    names = sorted(present_names_at(db, int(night["id"])))
-    return names or ([name] if name else [])
-
-
-def _spoken_this_scene(db: Any, character: Any) -> str:
-    from ming_sim.audience_night import audience_scene_recap
-
-    # #1812 P6：本场对话记录是自由正文，不得 strip；判空留给调用方按需处理。
-    return str(audience_scene_recap(db, getattr(character, "name", "")) or "")
 
 
 def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
@@ -554,7 +519,7 @@ def _character_affair_lines(
         title = f"尚未入档旨稿#{int(row['id'])}"
         # #1812 P6：raw body 是草稿自由正文，判空只用局部 stripped 副本。
         # sqlite3.Row / dict 同形：下标读取，禁 .get（Row 无此方法）。
-        body = str(row["text"] if "text" in row.keys() else "")
+        body = str(row["text"])
         text = f"{body}（尚未入档）" if body.strip() else "尚未入档"
         lines.append((dir_key, title, text, text, True))
     for dir_key, title, directory_text, opening_text, is_handling in _own_affair_lines(
@@ -575,8 +540,8 @@ def _opening_affair_lines(
     """Opening min-set: 正经手事务 ⊂ unique visible matter projection.
 
     `matter_lines` is the one frozen `_character_affair_lines` projection
-    `prepare_character_materials` already computed for this call — the
-    directory tree is built from the same object (#1812: one projection per
+    the scene caller already computed for this call — the directory tree
+    is built from the same object (#1812: one projection per
     prepare, not a second independent recompute here). Each affair's single
     identity and `is_handling` verdict (dossier participant, or a linked
     issue that passes the existing participant/audience gate) is already
@@ -631,37 +596,6 @@ def _carryover_drafts(db: Any, state: Any) -> list[dict]:
         if int(row["turn"]) < int(state.turn)
         and db.get_dossier_for_directive(int(row["id"])) is None
     ]
-
-
-def minimal_opening_context(
-    character: Any,
-    state: Any,
-    present: Sequence[str],
-    affairs: Sequence[tuple[str, str]],
-    spoken: str,
-) -> str:
-    """Canonical minimal opening: identity/office, present, date, affairs, spoken.
-
-    ``affairs`` is the same (title, situation) pairs as scene opening
-    (``_opening_affair_lines``) — one authority projection (F45).
-    """
-    name = str(getattr(character, "name", "") or "")
-    office = str(getattr(character, "office", "") or "")
-    parts = [
-        f"身份：{name}，{office}",
-        f"在场：{'、'.join(present) if present else name}",
-        f"日期：{int(state.year)}年{int(state.period)}月",
-    ]
-    if affairs:
-        parts.append("正经手事务：")
-        parts.extend(f"- {title}：{situation}" for title, situation in affairs)
-    else:
-        parts.append("正经手事务：（无）")
-    parts.append("本场已说的话：")
-    # #1812 P6：spoken 是自由正文，判空只用局部 stripped 副本，写出用原文。
-    parts.append(spoken if spoken.strip() else "（尚无）")
-    parts.append("材料在当前目录。根目录 INDEX 一行一项。其余想读自己读。")
-    return "\n".join(parts)
 
 
 def _secret_order_memorials(order: Any) -> list[str]:
@@ -719,7 +653,7 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any, *, 
             due_text = (
                 f"；御限剩 {max(0, due_turn - int(state.turn))} 月" if due_turn else ""
             )
-            lines.append(f"  - #{o['id']}「{o['title']}」 {tag}{due_text}")
+            lines.append(f"  - #{o['id']}「{o['title']}」{due_text}")
             content = str(o.get("content") or "")
             if content:
                 lines.append(content)
@@ -1049,37 +983,6 @@ def _write_character_public_layer(
     return index
 
 
-def prepare_character_materials(
-    db: Any,
-    state: Any,
-    character: Any,
-    *,
-    dest_root: Optional[Path] = None,
-) -> PreparedMaterials:
-    name = str(getattr(character, "name", "") or "")
-    knowledge = db.get_character_knowledge(state, name)
-    # One authority projection with scene materials (F45 / ADR 0154).
-    matter_lines = _character_affair_lines(db, state, name, knowledge)
-
-    dest, index = _publish_material_tree(
-        dest_root,
-        character_materials_root(db, state, character),
-        lambda tmp: _write_tree(tmp, db, state, character, knowledge, matter_lines),
-    )
-
-    affairs = _opening_affair_lines(db, name, matter_lines)
-    from types import SimpleNamespace
-    from ming_sim.knowledge import current_character_office
-
-    office, office_type = current_character_office(db, character, name)
-    current_character = SimpleNamespace(name=name, office=office, office_type=office_type)
-    opening = minimal_opening_context(
-        current_character, state, _present_names(db, character), affairs,
-        _spoken_this_scene(db, character),
-    )
-    return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
-
-
 def _gazette_index_line(rel: str, year: int, period: int, title: str) -> str:
     """一行 = 路径、年月、已入档标题。无标题时只留路径，不另造标题。"""
     shown = str(title or "")
@@ -1119,7 +1022,7 @@ def _write_gazette_index(
 # 推演者三层全看（实况 + 人物经历 + 公开说法），另有盘面（0155 读取形态段）。
 # 开场最小集 = 当前盘面全量 + 开着的事务清单；其余（各人经历、公开说法、历月
 # 邸报）按需自读。夜里预推段与过月世界段读同一目录（同 night/turn key，与
-# character_materials_root 同构）；预推产物本身不进目录（0157 原则）——本模块
+# 身份材料子树同构）；预推产物本身不进目录（0157 原则）——本模块
 # 只备读，不提供任何暂存写入口，天然不会把预推产物写进来。
 
 
@@ -1297,8 +1200,11 @@ def _world_affair_lines(
         # Metadata follows durable dossier links, never the free-prose origin.
         # A public fact or ordinary dossier keeps a mixed affair available.
         if public_only and not facts:
-            dossier_refs = store.origin_refs(affair.id)[1:]
-            if dossier_refs and not any(origin_visible_to(db, ref) for ref in dossier_refs):
+            dossiers = store.dossiers(affair.id)
+            if dossiers and not any(
+                origin_visible_to(db, "", linked_dossier_id=dossier["id"])
+                for dossier in dossiers
+            ):
                 continue
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         directory_text = "\n".join([
@@ -1792,21 +1698,28 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
     """
     if not isinstance(payload, Mapping) and not isinstance(row, Mapping):
         return {}
+    # #1853 J8-R2：resolve_revoke_decree_target_ids 为 GameDB 必备接口；
+    # 只捕获业务拒收（ValueError/TypeError→无原旨可读），禁 AttributeError 缺方法软空。
+    from ming_sim.exceptions import RevokeOriginUnresolved
+
     try:
         target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
-    except (TypeError, ValueError):
+    except RevokeOriginUnresolved:
         return {}
     dossier = db.get_decree_dossier(int(target_dossier_id))
     if dossier is None:
         return {}
+    from ming_sim.participant_roster import decode_durable_participant_roster
+
     roster = [
         {
             "character_id": str(item.get("character_id") or ""),
             "tier": str(item.get("tier") or ""),
             "role": str(item.get("role") or ""),
         }
-        for item in (dossier.get("participant_roster") or [])
-        if isinstance(item, dict)
+        for item in decode_durable_participant_roster(
+            dossier.get("participant_roster") or [],
+        )
     ]
     progress = [
         {
@@ -1940,16 +1853,11 @@ def _character_projection_from_db_row(row: Any) -> Any:
     from ming_sim.models import Character
 
     def _int(key: str, default: int = 0) -> int:
-        try:
-            return int(row[key])
-        except (KeyError, TypeError, ValueError):
-            return default
+        value = row[key]
+        return default if value is None else int(value)
 
     def _str(key: str, default: str = "") -> str:
-        try:
-            value = row[key]
-        except (KeyError, IndexError, TypeError):
-            return default
+        value = row[key]
         return default if value is None else str(value)
 
     return Character(

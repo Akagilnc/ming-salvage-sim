@@ -330,6 +330,7 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     assert rejection["category"] == "invalid_state"
 
 
+
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
     """AC1：scene_chat 转译 → 一条组合暂存 → 应允收夜 → 任免与拨帑两类效果全。
 
@@ -562,7 +563,9 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     ).fetchone() is not None
 
 
-def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
+
+@pytest.mark.parametrize("message", ["留下听着", "今日就到这里吧"])
+def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch, message):
     """AC3：CLI 与 API 通道产出同一形状，不再前缀+二次分类两套路。"""
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
@@ -607,7 +610,7 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
         before = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
-        result, _ = _scene_turn(sess, db, state, edict)
+        result, _ = _scene_turn(sess, db, state, message)
         after = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]

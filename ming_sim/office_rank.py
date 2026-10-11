@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ming_sim.assets import load_json_asset
+from ming_sim.assets import load_json_asset, require_dict, require_list
 
 FIRST_APPOINTMENT_HIGH_OFFICE_THRESHOLD = 4
 DEFAULT_LEVERAGE_MULTIPLIER = 1.0
@@ -18,8 +18,7 @@ _UNOFFICED_TYPES = frozenset({"", "未仕", "生员", "乡绅", "富商", "布�
 
 
 def _table() -> dict[str, Any]:
-    data = load_json_asset("offices.json")
-    return data if isinstance(data, dict) else {}
+    return require_dict(load_json_asset("offices.json"), "offices.json")
 
 
 def concurrent_office_titles(office: object) -> list[str]:
@@ -42,8 +41,13 @@ def canonical_office_title(office: object) -> str:
 
 
 def _iter_rank_rules(table: dict[str, Any]) -> list[dict[str, Any]]:
-    rules = table.get("rank_rules") or []
-    return [rule for rule in rules if isinstance(rule, dict)]
+    # 静态 offices.json 内容：成员坏即响亮（ADR 0005），不静默丢规则。
+    rules = table.get("rank_rules")
+    if rules is None:
+        return []
+    if not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
+        raise ValueError("offices.json rank_rules 须为对象数组")
+    return list(rules)
 
 
 def _match_rank_rule(
@@ -63,7 +67,7 @@ def _match_rank_rule(
         title_specific = int(
             required_field == "rank_band" and "leverage_multiplier" in rule
         )
-        for stem in rule.get("stems") or []:
+        for stem in require_list(rule.get("stems", []), "offices.json.rank_rules.stems"):
             token = str(stem or "").strip()
             if not token or token not in text:
                 continue
@@ -96,7 +100,7 @@ def office_rank_band(office: object, office_type: object = "") -> int:
             for stem in entry.get("stems", [])
         ):
             return int(entry["rank_band"])
-    return int((table.get("fallback") or {}).get("rank_band", 9))
+    return int(require_dict(table.get("fallback", {}), "offices.json.fallback").get("rank_band", 9))
 
 
 def office_leverage_multiplier(office: object) -> float:
@@ -117,7 +121,7 @@ def office_leverage_multiplier(office: object) -> float:
         for rule in _iter_rank_rules(table):
             if "leverage_multiplier" not in rule:
                 continue
-            for stem in rule.get("stems") or []:
+            for stem in require_list(rule.get("stems", []), "offices.json.rank_rules.stems"):
                 token = str(stem or "").strip()
                 if not token or token not in part:
                     continue

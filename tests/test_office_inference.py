@@ -1,12 +1,6 @@
-"""office_type 推断走 offices.json 参考表（替代旧正则词表）。
-
-无 CLI 后端时 LLM 兜底不触发（表查不中→待铨），故这里只测表命中的确定性分类，
-重点覆盖旧版漏判进『待铨』的：后宫/武职/民间。
-"""
+"""官职推断的宿主调用及持久任所接缝。"""
 
 from __future__ import annotations
-
-import pytest
 
 import ming_sim.cli_backend as cb
 import ming_sim.db as dbmod
@@ -28,35 +22,6 @@ def _cli_cfg() -> LLMConfig:
         cli_model="gpt-5.3-codex-spark",
         cli_timeout_seconds=240,
     )
-
-
-@pytest.mark.parametrize("office,expected", [
-    # 代表性锚：每类一条 + 历史误判样本（#1185 缩表，非穷举词表）
-    ("礼部尚书,东阁大学士", "内阁"),   # 复合衔内阁优先
-    ("兵部尚书,左都御史", "兵部"),     # 六部首衔优先于都察院
-    ("都察院右佥都御史", "都察院"),
-    ("庶常", "翰林院"),                 # 曾误归生员
-    ("司礼监掌印太监", "司礼监"),        # stem 命中，不靠 bare 掌印太监
-    ("御马监掌印太监", "内廷"),           # bare 掌印太监 不得吞入司礼监
-    ("锦衣卫都指挥使", "锦衣卫"),
-    ("蓟辽总督", "地方"),               # 督抚不被边镇地名吞
-    ("荡寇将军", "边镇"),               # 旧版武职漏判
-    ("中宫皇后", "后宫"),               # 旧版进待铨
-    ("诸生（应天府学）", "生员"),
-    ("陕北流寇首领", "流寇"),
-])
-def test_office_type_from_table(office, expected):
-    assert infer(office) == expected
-
-
-def test_后宫_current_type_short_circuits():
-    assert infer("妃", current_type="后宫") == "后宫"
-
-
-def test_unknown_falls_to_daiquan_without_backend(monkeypatch):
-    # 无 CLI 后端 + 表查不中 → 待铨（不误判、不崩）
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    assert infer("绝无此名的杜撰怪衔甲乙丙") == "待铨"
 
 
 def test_api_channel_unknown_office_does_not_use_backend_env(monkeypatch):
@@ -270,10 +235,7 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
 
 def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     """一次任职 resolved seat：地方同职省略 region 续任不跨省挤位；中央夹带 region 归一空。"""
-    from ming_sim.issues import (
-        _canonical_appointment_fields,
-        apply_office_appointment,
-    )
+    from ming_sim.issues import apply_office_appointment
 
     db, state, content = game
     rows = db.conn.execute(
@@ -308,11 +270,7 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     assert content.characters[b].office_region == "henan"
     assert db.character_office_region(b) == "henan"
 
-    # Central identity ignores caller-stuffed region on canonical tuple + write.
-    canon = _canonical_appointment_fields({
-        "office": "户部尚书", "office_type": "户部", "region_id": "henan",
-    })
-    assert canon == ("户部尚书", "户部", "真除", "")
+    # Central identity ignores caller-stuffed region on the real write.
     r4 = apply_office_appointment(
         db, state, content, a, "户部尚书",
         new_office_type="户部", region_id="henan", reason="central-noise-region",

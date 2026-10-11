@@ -1,5 +1,6 @@
 """ADR 0009 person archive schema contract."""
 
+
 from ming_sim.content import load_character_content
 from ming_sim.models import Character
 

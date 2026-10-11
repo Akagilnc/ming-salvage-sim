@@ -200,4 +200,4 @@ An imperial jade seal UI button for a Chinese Ming dynasty strategy game. Red ca
 | 史册 | `history-book.png` | 御案上 x1555–1820 |
 | 玉玺 | `edict-seal-large.png` | 右下 x2105–2480 |
 
-> 生图走中转网关有已知 400 bug，绕法见 `portrait-gen` skill。批量跑可复用 `scripts/gen_portraits.py` 思路。
+> 生图走中转网关有已知 400 bug，绕法见 `portrait-gen` skill。

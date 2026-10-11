@@ -18,7 +18,6 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import ming_sim.agents as agents_mod
 import ming_sim.cli_backend as cli_backend
 import web_app
 from tests.conftest import stub_webgame_boundary

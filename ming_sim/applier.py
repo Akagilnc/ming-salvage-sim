@@ -1,7 +1,7 @@
 """结算落库统一拒收契约与事务边界（ADR 0008 S0 骨架）。
 
 契约住此模块；各 section 适配器将原地迁入（PR2）。
-公开类型：Provenance / RejectedItem / SectionResult / ApplyContext / RejectionCollector。
+公开类型：Provenance / RejectedItem / SectionResult / RejectionCollector。
 """
 
 from __future__ import annotations
@@ -79,7 +79,8 @@ class _SuspendableConnection(sqlite3.Connection):
                 callback_errors.append(exc)
         if callback_errors:
             raise RuntimeError(
-                f"runtime commit callback failed ({len(callback_errors)} error(s))"
+                f"runtime commit callback failed ({len(callback_errors)} error(s)): "
+                f"{callback_errors[0]}"
             ) from callback_errors[0]
 
     def rollback(self) -> None:
@@ -102,7 +103,8 @@ class _SuspendableConnection(sqlite3.Connection):
                 self.execute("BEGIN")
         if callback_errors:
             raise RuntimeError(
-                f"runtime rollback callback failed ({len(callback_errors)} error(s))"
+                f"runtime rollback callback failed ({len(callback_errors)} error(s)): "
+                f"{callback_errors[0]}"
             ) from callback_errors[0]
 
     def __enter__(self) -> "_SuspendableConnection":
@@ -288,18 +290,6 @@ class SectionResult:
 # ---------------------------------------------------------------------------
 # 决定 1：适配器入参上下文
 # ---------------------------------------------------------------------------
-
-@dataclass
-class ApplyContext:
-    """适配器入参，持结算所需的全部外部依赖。
-
-    source 由调用方在调用前传入。
-    """
-
-    db: Any          # GameDB（不在 applier 层导入 GameDB 避免循环）
-    state: Any       # GameState
-    content: Any     # GameContent
-    source: Provenance
 
 
 # ---------------------------------------------------------------------------

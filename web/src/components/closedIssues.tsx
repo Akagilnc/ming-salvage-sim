@@ -39,4 +39,3 @@ function ClosedGroup({ title, items, cls }: { title: string; items: ClosedIssue[
     </div>
   );
 }
-

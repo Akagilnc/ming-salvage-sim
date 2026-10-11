@@ -22,6 +22,7 @@ import tempfile
 import time
 import threading
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional
 
@@ -56,7 +57,6 @@ from ming_sim.llm_config import (
     cli_supports_reasoning_strength,
     REASONING_STRENGTH_CHOICES,
     real_api_key_or_empty,
-    load_llm_config,
     load_runtime_llm,
     normalize_openai_base_url,
     normalize_thinking_level,
@@ -65,23 +65,11 @@ from ming_sim.llm_config import (
     save_runtime_llm,
     _slot_header_table,
 )
-from ming_sim.agents import _dump_llm_messages
-from ming_sim.llm_model import extract_agent_text, verify_llm_available
-from ming_sim.llm_transport import (
-    bind_transport_sdk_budget,
-    audience_transport_policy,
-    empty_output_failure,
-    is_stream_activity_event,
-    map_run_error_event,
-    run_transport_stream,
-    transport_attempts_public,
-    transport_failure_unavailable,
-)
+from ming_sim.llm_model import verify_llm_available
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
-    AudienceAdmission,
     _is_summonable_court_minister,
 )
 from ming_sim.highlight_judge import (
@@ -97,7 +85,6 @@ from ming_sim.session_write_queue import (
     get_session_write_queue,
 )
 from ming_sim.token_stats import tlog
-from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.models import (
     API_DEFAULT_TIMEOUT_SECONDS,
@@ -106,6 +93,8 @@ from ming_sim.models import (
     LLMConfig,
     TurnPhase,
     loads_effect_dict,
+    _load_durable_json_object,
+    loads_persistent_name_list,
     reign_period_label,
 )
 logger = logging.getLogger(__name__)
@@ -556,6 +545,16 @@ def _has_real_api_key(value: object) -> bool:
     return is_real_api_key(value)
 
 
+def _runtime_api_slot(runtime: Dict[str, Any]) -> Dict[str, Any]:
+    slot = runtime.get("api") if isinstance(runtime, dict) else None
+    return slot if isinstance(slot, dict) else {}
+
+
+def _runtime_cli_slot(runtime: Dict[str, Any]) -> Dict[str, Any]:
+    slot = runtime.get("cli") if isinstance(runtime, dict) else None
+    return slot if isinstance(slot, dict) else {}
+
+
 def _llm_config_from_runtime(
     runtime: Dict[str, Any],
     *,
@@ -575,22 +574,24 @@ def _llm_config_from_runtime(
     env_runner = cli_backend_from_env()
     if channel not in VALID_CHANNELS:
         channel = "cli" if env_runner else "api"
-    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    cli_slot = _runtime_cli_slot(runtime)
+    api_slot = _runtime_api_slot(runtime)
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
-    legacy_reasoning = (
-        legacy_reasoning_strength({
+    # 槽位优先；无槽值时复用 load_llm_config 同源的环境 thinking→strength 权威（非持久扁平迁移）。
+    slot_strength = normalize_reasoning_strength(
+        cli_slot.get("reasoning_strength") if channel == "cli" else api_slot.get("reasoning_strength")
+    )
+    env_strength = (
+        ""
+        if channel == "cli"
+        else legacy_reasoning_strength({
             "advanced_model": advanced_model,
             "advanced_thinking_level": advanced_thinking_level,
             "thinking_level": thinking_level,
         })
-        if channel != "cli"
-        else ""
     )
-    reasoning_strength = normalize_reasoning_strength(
-        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
-        or runtime.get("reasoning_strength", "")
-    ) or legacy_reasoning
+    reasoning_strength = slot_strength or env_strength
     # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     if channel == "cli":
@@ -599,8 +600,8 @@ def _llm_config_from_runtime(
         # 占位符不当真 key：清空让下游空检查报「未配 API key」，
         # 而不是拿假 key 去探 OpenAI（误导性 412）。
         api_key = ""
-    # #1794：附加头只属 API 槽；load_runtime_llm 已归一并顶层 alias，扁平单读。
-    default_headers = dict(runtime.get("default_headers") or {})
+    # #1794：附加头只属 API 槽。
+    default_headers = dict(api_slot.get("default_headers") or {})
     return LLMConfig(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
@@ -706,8 +707,6 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
     return _character_power_id(character, db) == "ming"
 
 
-
-
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
@@ -741,18 +740,19 @@ class WebGame:
         timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS)
         # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
         runtime = load_runtime_llm()
-        base_url = runtime.get("base_url") or base_url
-        model = runtime.get("model") or model
+        api_slot = _runtime_api_slot(runtime)
+        base_url = api_slot.get("base_url") or base_url
+        model = api_slot.get("model") or model
         # 占位符不当真 key：stale cli-backend 不该覆盖真实 env key（否则 api 通道
         # 启动被清空报「未配 API key」，而 menu 用 env key 判 ready，二者矛盾）。
-        _rt_api_key = runtime.get("api_key")
+        _rt_api_key = api_slot.get("api_key")
         api_key = _rt_api_key if is_real_api_key(_rt_api_key) else api_key
-        thinking_level = runtime.get("thinking_level") or thinking_level
-        advanced_model = runtime.get("advanced_model") or advanced_model
-        advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
-        advanced_api_key = real_api_key_or_empty(runtime.get("advanced_api_key")) or advanced_api_key
-        advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
-        timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
+        thinking_level = api_slot.get("thinking_level") or thinking_level
+        advanced_model = api_slot.get("advanced_model") or advanced_model
+        advanced_base_url = api_slot.get("advanced_base_url") or advanced_base_url
+        advanced_api_key = real_api_key_or_empty(api_slot.get("advanced_api_key")) or advanced_api_key
+        advanced_thinking_level = api_slot.get("advanced_thinking_level") or advanced_thinking_level
+        timeout_seconds = float(api_slot.get("timeout_seconds") or timeout_seconds)
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
@@ -1166,7 +1166,7 @@ class WebGame:
         return {
             "id": int(row["id"]),
             "event_id": row["event_id"] or "",
-            "event_title": (row["event_title"] if "event_title" in row.keys() else "") or "",
+            "event_title": row["event_title"] or "",
             "actor": row["actor"] or "",
             "text": row["text"],
             "source": row["source"],
@@ -1345,9 +1345,7 @@ class WebGame:
                 "phase": row["phase"],
                 "stage_text": row["stage_text"],
                 "severity": int(row["severity"]),
-                "tags": list(_load_durable_json_list(
-                    row["tags"], surface="issues.tags",
-                )),
+                "tags": loads_persistent_name_list(row["tags"], surface="legacies.tags"),
                 "inertia": int(row["inertia"] or 0),
                 "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
                 "fail_condition": _humanize_condition(row["fail_condition"] or ""),
@@ -1568,6 +1566,7 @@ class WebGame:
             if turn_phase == TurnPhase.SETTLING.value or month_failure is not None:
                 from ming_sim.error_pack import (
                     latest_error_pack_for_turn,
+                    _read_complete_pack_manifest,
                     settlement_abort_message,
                 )
                 if month_failure is not None:
@@ -1582,12 +1581,17 @@ class WebGame:
                     pack_path = latest_error_pack_for_turn(
                         self.db.path, int(self.state.turn),
                     )
+                    manifest = (
+                        _read_complete_pack_manifest(Path(pack_path)) if pack_path else None
+                    )
                     settlement_recovery = {
                         "retryable": True,
                         "error_pack_path": pack_path or "",
                         "message": (
-                            settlement_abort_message(pack_path)
-                            if pack_path
+                            settlement_abort_message(
+                                pack_path, reason=str(manifest["exception_message"]),
+                            )
+                            if manifest is not None
                             else "上月结算未完成（进度已保存）。"
                         ),
                     }
@@ -2247,7 +2251,6 @@ class WebGame:
         return payload
 
 
-
     def _trail_highlight_judge_after_reply(
         self,
         minister_reply: str,
@@ -2393,7 +2396,6 @@ class WebGame:
             "audience-startup-extraction-catchup",
             ticket_key=("startup",),
         )
-
 
 
     def pending_translation_retries(
@@ -2766,7 +2768,6 @@ class WebGame:
             # #1353 r11：只以 end 收束——失败路径先 error 再 end，禁 error 单终态截断。
             if item.get("type") == "end":
                 break
-
 
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
@@ -4058,8 +4059,8 @@ async def api_menu_status() -> Dict[str, Any]:
     channel = str(runtime.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
         channel = "cli" if env_runner else "api"
-    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
-    api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
+    cli_slot = _runtime_cli_slot(runtime)
+    api_slot = _runtime_api_slot(runtime)
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 兜底成默认名的 resolved 值。
     # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
@@ -4067,12 +4068,11 @@ async def api_menu_status() -> Dict[str, Any]:
     cli_model_saved = str(cli_slot.get("model") or "").strip()
     cli_model = cli_model_saved or str(cli_model_from_env(cli_runner, "")).strip()
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
-    has_api_key = _has_real_api_key(runtime.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
-    base_url = runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", "")
-    model = runtime.get("model") or os.environ.get("OPENAI_MODEL", "")
+    has_api_key = _has_real_api_key(api_slot.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
+    base_url = api_slot.get("base_url") or os.environ.get("OPENAI_BASE_URL", "")
+    model = api_slot.get("model") or os.environ.get("OPENAI_MODEL", "")
     reasoning_strength = normalize_reasoning_strength(
-        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
-        or runtime.get("reasoning_strength", "")
+        cli_slot.get("reasoning_strength") if channel == "cli" else api_slot.get("reasoning_strength")
     )
     cli_reasoning_strength = normalize_reasoning_strength(cli_slot.get("reasoning_strength"))
     api_reasoning_strength = normalize_reasoning_strength(api_slot.get("reasoning_strength"))
@@ -4082,8 +4082,8 @@ async def api_menu_status() -> Dict[str, Any]:
         else _api_reasoning_supported_for_effective_model(
             str(base_url),
             str(model),
-            str(runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", "")),
-            str(runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", "")),
+            str(api_slot.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", "")),
+            str(api_slot.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", "")),
         )
     )
     # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
@@ -4116,14 +4116,14 @@ async def api_menu_status() -> Dict[str, Any]:
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
             # #1271：能力名单自 cli_backend 单源导出，供前端 fallback 消费（禁前端硬编码）。
             "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
-            "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
-            "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
-            "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
-            "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
-            "has_advanced_api_key": _has_real_api_key(runtime.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
+            "timeout_seconds": float(api_slot.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
+            "thinking_level": api_slot.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
+            "advanced_model": api_slot.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
+            "advanced_base_url": api_slot.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
+            "has_advanced_api_key": _has_real_api_key(api_slot.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
             "advanced_thinking_level": "",
-            # #1794：设置页读回附加请求头表（API 槽）；归一后扁平单读。
-            "default_headers": dict(runtime.get("default_headers") or {}),
+            # #1794：设置页读回附加请求头表（API 槽）。
+            "default_headers": dict(api_slot.get("default_headers") or {}),
         },
     }
 
@@ -4668,8 +4668,9 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     if not (base_url and model):
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
     existing = load_runtime_llm()
+    existing_api = _runtime_api_slot(existing)
     if not api_key:
-        for candidate in (existing.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
+        for candidate in (existing_api.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
             if _has_real_api_key(candidate):
                 api_key = str(candidate).strip()
                 break
@@ -4677,12 +4678,12 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="api_key 未配置，请填写。")
     # advanced_api_key 留空：复用已存的（避免覆盖成空）。
     if advanced_model and not advanced_api_key:
-        advanced_api_key = real_api_key_or_empty(existing.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
+        advanced_api_key = real_api_key_or_empty(existing_api.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
     # #1794：请求体显式带头表则用之（含空表清空）；省略则装入档内头表（旧客户端兼容）。
     if request.default_headers is not None:
         default_headers = _slot_header_table(request.default_headers)
     else:
-        default_headers = _slot_header_table(existing.get("default_headers"))
+        default_headers = _slot_header_table(existing_api.get("default_headers"))
     normalized_base_url = normalize_openai_base_url(base_url)
     config = LLMConfig(
         api_key=api_key,
@@ -4754,7 +4755,12 @@ app.add_middleware(
 
 @app.get("/api/game/state")
 async def api_state() -> Dict[str, Any]:
-    return get_game().state_payload()
+    try:
+        return get_game().state_payload()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=_settlement_sse_error_data(exc)) from exc
 
 
 @app.post("/api/game/mechanical_tail/retry")
@@ -4966,7 +4972,6 @@ async def api_audience_chat_history() -> Dict[str, Any]:
             minister_name=SCENE_CHAT_SPEAKER,
         )],
     }
-
 
 
 @app.post("/api/audience/chat")

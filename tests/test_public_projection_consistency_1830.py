@@ -13,12 +13,12 @@ render_character_knowledge 的整体重投影 人物/<名>/见闻.txt——world
 
 from __future__ import annotations
 
+from tests.material_helpers import prepare_identity_materials
 from ming_sim.audience_night import get_open_night, open_night, present_names_at, summon_enter
 from ming_sim.materials import (
     _safe_segment,
     list_materials,
     material_tools,
-    prepare_character_materials,
     prepare_scene_materials,
     prepare_world_materials,
     read_material,
@@ -97,7 +97,7 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
     )
 
     scene = prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
-    solo = prepare_character_materials(db, state, character, dest_root=tmp_path / "solo")
+    solo = prepare_identity_materials(db, state, character, dest_root=tmp_path / "solo")
     world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
 
     scene_by_month, scene_gazette = _public_layer(
@@ -174,7 +174,7 @@ def test_rebuild_adds_only_the_new_record_own_carrier(game, tmp_path):
     _seed_public_world(db, state)
 
     before = _public_layer(
-        prepare_character_materials(
+        prepare_identity_materials(
             db, state, character, dest_root=tmp_path / "before",
         ).root,
         "公开说法/",
@@ -186,7 +186,7 @@ def test_rebuild_adds_only_the_new_record_own_carrier(game, tmp_path):
     )
     record_public_saying(db, later, "后落公开说法")
     after = _public_layer(
-        prepare_character_materials(
+        prepare_identity_materials(
             db, state, character, dest_root=tmp_path / "after",
         ).root,
         "公开说法/",

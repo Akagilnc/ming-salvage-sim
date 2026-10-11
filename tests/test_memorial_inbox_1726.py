@@ -9,7 +9,6 @@ from tests.dossier_test_helpers import executing_subject_policy, executing_roste
 
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
-import threading
 
 from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
@@ -18,6 +17,11 @@ from tests.readback_helpers import active_character_name as _active_name
 
 def _unread_count(db) -> int:
     return sum(1 for m in db.list_player_memorials() if m.get("unread"))
+
+
+def _unread(db) -> int:
+    """未读奏报数（进度 + 检举）：list_player_memorials 投影的 unread 位计数。"""
+    return sum(1 for row in db.list_player_memorials() if row.get("unread"))
 
 
 def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):

@@ -71,27 +71,27 @@ def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game)
     assert json.loads(row["choice_json"]) == {"label": "斩"}
 
 def test_mark_event_triggered_upgrades_pending_choice_row(game):
-    """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。"""
+    """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。
+
+    终态本身照旧晋级，source 照旧记晋级来源，choice 与 reason 照旧保留。
+    #1899（R4）：此前此用例还断言时刻列保留批红回合，那是**已删**的时序比较补丁的
+    配套断言（比较本身已删，时刻保留失去依据）；按「被改动作废的旧物随同改动删除」，
+    时刻断言一并删除，此处只留仍然成立的终态／来源／choice 契约。
+    """
     import json
     db, state, content = game
     eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "留"})
-    trigger_turn = state.turn + 1
-    trigger_year = state.year + 1
-    trigger_period = 7
-    state.turn = trigger_turn
-    state.year = trigger_year
-    state.period = trigger_period
+    state.turn = state.turn + 1
+    state.year = state.year + 1
+    state.period = 7
 
     db.mark_event_triggered(state, eid, source="event_pool")
 
     row = db.conn.execute(
-        "SELECT turn, year, period, terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        "SELECT terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
         (eid,),
     ).fetchone()
-    assert row["turn"] == trigger_turn
-    assert row["year"] == trigger_year
-    assert row["period"] == trigger_period
     assert row["terminal_state"] == "triggered"
     assert row["source"] == "event_pool"
     assert row["terminal_reason"] == "留"
@@ -171,8 +171,7 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
         lambda: sess.add_directive("新草案"),
         lambda: sess.update_directive(1, "改"),
         lambda: sess.delete_directive(1),
-        # #1341：set_decree 已删；冻结面只覆盖逐道草案变更器 + write_decree
-        lambda: sess.write_decree(),
+        # #1341：set_decree / session.write_decree 已删；冻结面只覆盖逐道草案变更器
     ):
         with pytest.raises(ValueError):
             call()

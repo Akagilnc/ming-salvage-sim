@@ -8,6 +8,10 @@ CI 终线：`ci.yml` `timeout-minutes: 20`（现行 :19，实质成立）。
 - Q2 接缝不变式是否声称「N 秒内完成」？
 - Q3 CI 20min 是否已承接最终挂死？
 
+### 撤回注记（#1891/#1899 TEST-C1 残余；留史，不抹行）
+
+当时处置把 `tests.wait_utils.ObservingLock` 写作 beat／menu／web_chat 争锁观测的**共享活单源**。其后这些调用方已退役，该类只剩定义、全仓零代码消费者，于 TEST-C1 残余轮删除。下表凡写「ObservingLock／共享单源／`tests.wait_utils` 单源」的行**保留为当时处置史**，**不再**主张其为现行共享活单源；现行 `tests/wait_utils.py` 仅保留仍有消费者的 `wait_until`／`_await_condition_or_task`／`reset_menu_path_leases`。
+
 ---
 
 ## 0. 扫描 revision、原始命令与计数差异
@@ -207,7 +211,7 @@ A 表原 wait(数字) 计数、C sleep 计数、F `timeout=` 计数**不改**；
 
 | 位置 | Q1 | Q2 | Q3 | 判定 | 处置（本轮） |
 | --- | --- | --- | --- | --- | --- |
-| `menu_lifecycle` 持闸 drain/shutdown | 无 | close 须 `gate.acquire` | 是 | 缺陷 | **ObservingLock.contending**（共享单源）：drain 真到 close acquire；**不用** has_open_barrier 冒充 wait |
+| `menu_lifecycle` 持闸 drain/shutdown | 无 | close 须 `gate.acquire` | 是 | 缺陷 | **ObservingLock.contending**（史：当时共享单源；现行已删，见文首撤回）：drain 真到 close acquire；**不用** has_open_barrier 冒充 wait |
 | `menu_lifecycle` drain vs 在飞 B | 无 | drain 不得先于 B 票清 | 是 | 缺陷 | **observe `wait_prior`** 后再负向；B delta 保留 |
 | `enter_settlement` / `qa_c2` clear 持闸 | 无 | clear 须持 gate | 是 | **有效** | **保留** T-gate-final |
 | `travel_gating` close vs 未完 scene | 无 | barrier 不得越过未完 scene | 是 | 缺陷 | **observe `wait_prior`**（非 has_open_barrier 领票） |
@@ -215,7 +219,7 @@ A 表原 wait(数字) 计数、C sleep 计数、F `timeout=` 计数**不改**；
 | `web_audience_night` issue vs 在飞 chat | 无 | issue 须进屏障等票 | 是 | 缺陷 | `wait_prior` 观测 inflight>1 |
 | `pihong` single-flight 第二路 | 无 | 外部契约=单 origin body/单 chat_turn/单月推进；**不**拥有「N 秒内 coalesce」 | 是 | **纠正主张** | **诊断**：B 不能与 A 并发进 `join_retained`；auto_close 可能挡住 B，但绕过 auto_close 外部断言仍绿 → **不**把 auto_close/入口观察叫等待证，**不**给生产添等待。处置：A 持 gen 时观测 B 抵达 settlement entry（inflight≥2）+ 外部 single-flight 结果；删 sleep 赌窗与 future.result(timeout) |
 | `beat` sibling join | 无 | join 须排空 sibling | 是 | 缺陷 | `wait_until(not registry.has(11))` 证 join 已 pop 入 drain；**禁止** join 调用前 `join_entered.set()` |
-| `beat` close 持闸 persist/cleanup | 无 | 须抵达 write_gate.acquire | 是 | 缺陷 | **ObservingLock.contending**（`tests.wait_utils` 单源）；**不用** gen_done+is_alive+gate.locked 空窗 |
+| `beat` close 持闸 persist/cleanup | 无 | 须抵达 write_gate.acquire | 是 | 缺陷 | **ObservingLock.contending**（史：当时 `tests.wait_utils` 单源；现行已删，见文首撤回）；**不用** gen_done+is_alive+gate.locked 空窗 |
 | `web_chat` drain vs 非流式 chat | 无 | drain 等票 | 是 | 缺陷 | sealed 观测 + not drain_done |
 
 **不造**：生产测试钩子、墙钟终线、杀进程护栏、平行证明套件、调用前信号、保持锁定状态替代抵达证明。
@@ -387,7 +391,7 @@ A 表原 wait(数字) 计数、C sleep 计数、F `timeout=` 计数**不改**；
 | relation_brew 死枝 | bare 后死 | `release.wait()` |
 | 失效 `import time` | 死 import | 删；**menu_lifecycle 的 time 供 monkeypatch，保留** |
 | 同步 wait helper 三合一 | 重复 | **本类已结**：`tests/wait_utils.py` |
-| beat/menu 四份 `_ObservingGate` + web_chat `_ObservingWriteGate` | 同构重复 | **合并** → `tests.wait_utils.ObservingLock`；禁生产钩子/通用锁框架；holding/timeout 支路已删 |
+| beat/menu 四份 `_ObservingGate` + web_chat `_ObservingWriteGate` | 同构重复 | **合并** → `tests.wait_utils.ObservingLock`（史：#1723 当时共享单源；调用方后退役 → 零引用，#1891/#1899 TEST-C1 残余已删；见文首撤回）；禁生产钩子/通用锁框架；holding/timeout 支路已删 |
 
 ---
 

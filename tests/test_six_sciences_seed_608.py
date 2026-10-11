@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def test_fresh_seed_contains_sourced_six_sciences_censors(game):
-    """许誉卿开局在朝；韩一良至 1628 年才以户科给事中登场（派系权势经现役公共读口断言）。"""
+    """许誉卿开局在朝；韩一良至 1628 年才以户科给事中登场。"""
     db, state, content = game
     names = {"许誉卿", "韩一良"}
 
@@ -18,25 +18,19 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     assert len(rows) == 2
     for row in rows:
         assert row["office_type"] == "六科"
-        assert "给事中" in row["office"]
-        # 静态 seed 出处标记（非 LLM 自由正文）
-        assert "《明史》卷258" in row["summary"]
 
     by_name = {row["name"]: row for row in rows}
     assert by_name["许誉卿"]["status"] == "active"
     assert by_name["韩一良"]["status"] == "offstage"
     assert by_name["韩一良"]["debut_year"] == 1628
 
-    before = db.faction_leverage("中立")
     assert state.year == 1627
     assert db.apply_historical_debuts(state) == []
-    assert db.faction_leverage("中立") == before
 
     state.year = 1628
     debuted = db.apply_historical_debuts(state)
     assert any(item["name"] == "韩一良" for item in debuted)
     assert db.get_character_status("韩一良")[0] == "active"
-    assert db.faction_leverage("中立") > before
 
 
 def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game):

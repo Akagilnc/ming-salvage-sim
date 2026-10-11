@@ -18,7 +18,7 @@ from ming_sim.army_pay import (
     settle_hub_central_army_pay,
 )
 from ming_sim.assets import format_wanliang_amount
-from ming_sim.constants import TURN_UNIT
+from ming_sim.constants import SCORE_METRICS as ISSUE_METRIC_KEYS, TURN_UNIT
 from ming_sim.db import GameDB, _load_durable_json_object
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
@@ -29,6 +29,8 @@ from ming_sim.token_stats import tlog
 
 # ── 固定财政 / substrate hub ──────────────────────────────────────────────────
 
+# 皇庄增量租率：没收藩王庄田转皇庄后，每万亩每月增加内库收入（万两）
+# 基准皇庄收入走 fiscal_config.皇庄_base；此常数只用于增量计算
 _CENTRAL_TAICANG_HUMAN_LOSS_RATE = "central_taicang_human_loss_rate"
 _CENTRAL_TAICANG_SINK_LOSS_RATE = "central_taicang_sink_loss_rate"
 _CENTRAL_JINGYUN_HUMAN_LOSS_RATE = "central_jingyun_human_loss_rate"
@@ -49,11 +51,19 @@ def raise_fixed_period_flow_abort_if_needed(
         return
     pack_path = write_error_pack(db, state, exc=exc)
     raise SettlementAbort(
-        settlement_abort_message(pack_path),
+        settlement_abort_message(pack_path, reason=str(exc)),
         turn=int(getattr(state, "turn", 0)),
         stage="fixed_fiscal",
         error_pack_path=pack_path,
     ) from exc
+
+
+
+
+
+
+
+
 
 
 def _as_finite_nonnegative_float(label: str, value: object) -> float:
@@ -90,7 +100,9 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]
         try:
             fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路") from exc
+            raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路：{exc}") from exc
+        if not isinstance(fiscal, dict):
+            raise ValueError(f"region {row['id']} fiscal 非字典，无法汇总盐商旁路")
         salt_total += _as_finite_nonnegative_float(
             f"region {row['id']} fiscal.salt_tax", fiscal.get("salt_tax", 0)
         )
@@ -113,7 +125,7 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
         try:
             fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运") from exc
+            raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运：{exc}") from exc
         if not isinstance(fiscal, dict):
             raise ValueError(f"region {region_id!r} fiscal 非字典，无法投影起运")
         if "settle" not in fiscal:
@@ -277,11 +289,13 @@ def compute_budget_lines(
     省级起运/盐商/太仓＝substrate hub 投影；皇庄＝fiscal_config 基准；
     军饷预算分列京运补与中央份额拟拨，不预演分配或损耗；
     建筑＝按 condition 折产/维护；
-    其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
+    其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。
+    现役仅 substrate_hub 路径。"""
     cfg = db.get_fiscal_config()
     hub_income_lines, hub_expense_lines = _substrate_hub_budget_income_lines(
         db, state, project_missing=project_substrate_hub
     )
+    nk_huang = 0
     # #1366 军饷预算只陈列结算前拟拨事实：京运补与中央份额分开，
     # 均不受当月国库能力或未来转运损耗影响。
     rows = db.conn.execute(
@@ -358,7 +372,6 @@ def compute_budget_lines(
     return budget
 
 
-ISSUE_METRIC_KEYS = {"民心", "皇威"}
 ISSUE_METRIC_LOCK_CAPS = {
     "民心": 8, "皇威": 5,
 }
@@ -541,17 +554,12 @@ def _apply_metric_dict(
     # 传 db 时，民心/皇威 增量先过帝国修正 %（base>=0 ×(1+net/100)，base<0 ×(1-net/100)），再夹 cap。
     mods = db.legacy_modifiers(state) if db is not None else {}
     applied: Dict[str, int] = {}
-    # isinstance 守卫：issue-effect 路径（enrich/stored，未过 sanitize_delta_shape）的 metrics 可能
-    # 被 LLM 给成真值非 dict，`or {}` 兜不住→.items() 抛 AttributeError 崩回合（#117 同类，顶层 delta
-    # 已由 sanitize_delta_shape 保 dict，此守卫只对未验证的 issue-effect 调用点生效、不误伤）。
-    metric_delta = metric_delta if isinstance(metric_delta, dict) else {}
     for key, val in metric_delta.items():
         if key not in ISSUE_METRIC_KEYS:
             continue
-        try:
-            d = int(val)
-        except (TypeError, ValueError):
+        if val in (None, ""):
             continue
+        d = int(val)
         net_pct = int(mods.get(key, 0) or 0)
         if net_pct and db is not None:
             d = db.apply_legacy_pct(d, net_pct)
@@ -592,13 +600,18 @@ def _apply_economy_list(
     allow_pay_arrears_pool=True 仅供承诺结算内部使用，表示该承诺的 arrears
     stop gate 已经给出范围，可在 pay_arrears_pool_army_ids 内按优先级池偿还。
     """
-    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
+    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
     applied: List[Dict[str, object]] = []
-    # isinstance 守卫：issue-effect 的 economy（来自 enrich，未经 schema 清洗）可能被 LLM 给成真值
-    # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117
-    # 同 bug 类，与 _apply_issue_buildings 的 list 守卫一致）。此处是 economy 应用 choke，护全部调用点。
+    # LLM 输入侧（issue 效果）：非数组／成员非对象不静默跳过，逐项拒收留痕（ADR 0008 决定1）。
+    if economy is not None and not isinstance(economy, list):
+        applied.append({"account": "", "rejected": True, "category": "invalid_shape",
+                        "reason": f"economy 须为数组，得 {type(economy).__name__}",
+                        "item": {"raw_value": economy}})
     for move in (economy if isinstance(economy, list) else []):
-        if not isinstance(move, dict):  # list 内混非 dict 项（[1,"x"]）也守，免 move.get 抛 AttributeError（#117 codex）
+        if not isinstance(move, dict):
+            applied.append({"account": "", "rejected": True, "category": "invalid_shape",
+                            "reason": f"economy 成员须为对象，得 {type(move).__name__}",
+                            "item": {"raw_value": move}})
             continue
         # 先解析 delta：None/"" = 缺额 → 0 no-op；bool/float/坏串 → bad_delta（_strict_int 拒
         # bool/float，与 faction/region/army 同约）。no-op（可解析的 0/缺额）行无钱动 → 静默跳，
@@ -1205,6 +1218,7 @@ def _advance_province_fiscal_substrate(
     )
     for outcome in outcomes:
         if outcome.error is not None:
+            # settle_tick 契约失败（坏态/守恒破）→ fail-loud 中止本月固定财政
             exc = outcome.error
             tlog(
                 f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
@@ -1273,7 +1287,6 @@ def _apply_faction_dict(
     """
     cleaned: Dict[str, object] = {}
     rejected: List[Dict[str, object]] = []
-    faction_delta = faction_delta if isinstance(faction_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, val in faction_delta.items():
         if isinstance(val, dict):
             entry: Dict[str, int] = {}
@@ -1517,7 +1530,6 @@ def _apply_class_dict(
 
     cleaned: Dict[str, Dict[str, int]] = {}
     rejected: List[Dict[str, object]] = []
-    class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, fields in class_delta.items():
         if isinstance(fields, dict):
             fields = _canonical_item_fields(fields)

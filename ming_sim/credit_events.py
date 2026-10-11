@@ -20,7 +20,10 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ming_sim.breach_plea import _extract_ref_ids
-from ming_sim.participant_roster import project_execution_liability_parties
+from ming_sim.participant_roster import (
+    decode_durable_participant_roster,
+    project_execution_liability_parties,
+)
 from ming_sim.relations import CREDIT_DIRECTION, CREDIT_EDGE_KINDS, EMPEROR_NODE
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
@@ -273,10 +276,9 @@ def record_fulfillment_credit(
 
 
 def _roster_entries(dossier: Dict[str, object]) -> List[Dict[str, object]]:
-    roster = dossier.get("participant_roster") or []
-    if not isinstance(roster, list):
-        return []
-    return [e for e in roster if isinstance(e, dict)]
+    return decode_durable_participant_roster(
+        dossier.get("participant_roster") or [],
+    )
 
 
 def _pawn_car_pairs(roster: Sequence[Dict[str, object]]) -> List[Tuple[str, str]]:
@@ -305,10 +307,11 @@ def _is_exposed_transformed(dossier: Dict[str, object]) -> bool:
 
 def _person_change_items(extracted: Dict[str, object]) -> List[Dict[str, object]]:
     """消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在 apply_score_extraction）。"""
-    raw = extracted.get("人物变更") or extracted.get("person_changes") or []
-    if not isinstance(raw, list):
-        return []
-    return [it for it in raw if isinstance(it, dict)]
+    from ming_sim.person_delta_adapter import normalize_person_changes
+    return [
+        it for it in normalize_person_changes(extracted)
+        if isinstance(it, dict)
+    ]
 
 
 def _item_dossier_id(item: Dict[str, object]) -> Optional[int]:

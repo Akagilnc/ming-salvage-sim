@@ -140,7 +140,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             courage=int_field(item, "courage", f"characters.json.characters[{idx}]"),
             style=str_field(item, "style", f"characters.json.characters[{idx}]"),
             power_id=str_field(item, "power_id", f"characters.json.characters[{idx}]"),
-            location=str(item.get("location") or "").strip(),
+            location=str(item.get("location") or ""),
             office_region=str(item.get("office_region") or "").strip(),
             transit_to=str(item.get("transit_to") or "").strip(),
             birth_year=int(item.get("birth_year") or 0),
@@ -300,7 +300,9 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             string_list(item["terminal_reason_labels"], f"{filename}[{idx}].terminal_reason_labels")
             if "terminal_reason_labels" in item else []
         )
-        gate_raw = item.get("trigger_gate") or {}
+        gate_raw = item.get("trigger_gate")
+        if gate_raw is None:
+            gate_raw = {}
         if not isinstance(gate_raw, dict):
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
         trigger_gate: Dict[str, str] = {}
@@ -342,7 +344,7 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
                 trigger_class=trigger_class,
-                category=str(item.get("category") or "").strip(),
+                category=str(item.get("category") or ""),
                 person_core_subjects=(
                     string_list(item["person_core_subjects"], f"{filename}[{idx}].person_core_subjects")
                     if "person_core_subjects" in item else []
@@ -357,10 +359,10 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 stage_text=str(item.get("stage_text") or ""),
                 region_hint=str(item.get("region_hint") or ""),
                 issue_tags=string_list(item.get("tags"), f"{filename}[{idx}].tags") if item.get("tags") else [],
-                ongoing_effects=dict(item.get("ongoing_effects") or {}),
-                effect_on_trigger=dict(item.get("effect_on_trigger") or {}),
-                effect_on_resolve=dict(item.get("effect_on_resolve") or {}),
-                effect_on_fail=dict(item.get("effect_on_fail") or {}),
+                ongoing_effects=require_dict({} if item.get("ongoing_effects") is None else item["ongoing_effects"], f"{filename}[{idx}].ongoing_effects"),
+                effect_on_trigger=require_dict({} if item.get("effect_on_trigger") is None else item["effect_on_trigger"], f"{filename}[{idx}].effect_on_trigger"),
+                effect_on_resolve=require_dict({} if item.get("effect_on_resolve") is None else item["effect_on_resolve"], f"{filename}[{idx}].effect_on_resolve"),
+                effect_on_fail=require_dict({} if item.get("effect_on_fail") is None else item["effect_on_fail"], f"{filename}[{idx}].effect_on_fail"),
             )
         )
     if not events:
@@ -449,7 +451,7 @@ def load_region_content() -> Dict[str, Region]:
             status=str_field(item, "status", ctx),
             controlled_by=str_field(item, "controlled_by", ctx),
             fiscal=fiscal,
-            on_restore=dict(item.get("on_restore") or {}),
+            on_restore=require_dict({} if item.get("on_restore") is None else item["on_restore"], f"{ctx}.on_restore"),
         )
     if not regions:
         raise SystemExit("regions.json 必须至少定义一个地区。")
@@ -698,7 +700,6 @@ class GameContent:
     game_world_prompt: str = ""
     scene_agent_prompt: str = ""
 
-    decree_writer_prompt: str = ""
     gazette_author_prompt: str = ""
     ending_summary_prompt: str = ""
     rescript_draft_prompt: str = ""
@@ -736,7 +737,6 @@ class GameContent:
             fiscal_items=load_fiscal_config(),
             game_world_prompt=load_text_asset("prompts/game_world.md"),
             scene_agent_prompt=load_text_asset("prompts/scene_agent.md"),
-            decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             gazette_author_prompt=load_text_asset("prompts/gazette_author.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
             rescript_draft_prompt=load_text_asset("prompts/rescript_draft.md"),

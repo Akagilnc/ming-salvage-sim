@@ -9,7 +9,6 @@ summon_enter 落入殿账；断言推导器读账的机器承重态（在场/不
 """
 
 from __future__ import annotations
-from tests.conftest import open_hall_turn
 
 import pytest
 
@@ -79,70 +78,6 @@ def test_dismiss_noop_when_not_present(game):
         an.dismiss_from_audience(db, "  ", night_id=nid)
     assert ei.value.code == "empty_person"
 
-
-# ── AC1 真实入口 tracer：CLI 玩家「退下」口令 → 引擎告退账 → 名单即时去人 ──
-
-
-from tests.month_chain_helpers import make_light_session as _cli_session
-
-
-def _active_minister(db, content):
-    return next(
-        c for c in content.characters.values()
-        if db.get_character_status(c.name)[0] == "active"
-        and getattr(c, "power_id", "ming") == "ming"
-        and getattr(c, "office_type", "") != "后宫"
-    )
-
-
-def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
-    """AC1 真实入口：起聊入殿 → 「退下」口令 → 告退账落地、present 即时去人。"""
-    import ming_sim.cli.terminal as term
-
-    db, state, content = game
-    character = _active_minister(db, content)
-    session = _cli_session(db, state, content)
-    from types import SimpleNamespace
-    from tests.conftest import stub_scene_agent
-    session.llm_config = SimpleNamespace(channel="api")
-    stub_scene_agent(monkeypatch, SimpleNamespace(content="臣有本奏。", tools=[]))
-    answers = iter(["退下"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-
-    assert term.minister_chat(session, character, selected=True) == "dismiss"
-
-    nid = int(an.get_open_night(db)["id"])
-    last = an.list_ledger(db, nid)[-1]
-    assert TAG_EXIT in last["tags"] and character.name in last["person_names"]
-    assert character.name not in an.present_names_at(db, nid)
-
-
-def test_court_break_writes_no_exit_ledger(game, monkeypatch):
-    """负向：退朝不落个人告退账（#526 收夜链 ≠ dismiss 告退）。"""
-
-    import ming_sim.cli.terminal as term
-    db, state, content = game
-    character = _active_minister(db, content)
-    session = _cli_session(db, state, content)
-    from types import SimpleNamespace
-    from tests.conftest import stub_scene_agent
-    session.llm_config = SimpleNamespace(channel="api")
-    stub_scene_agent(monkeypatch, SimpleNamespace(content="臣有本奏。", tools=[]))
-    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(an.get_open_night(db)["id"])
-    answers = iter(["朕问卿边事如何？", "退朝"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-
-    assert term.minister_chat(session, character) == "court_break"
-    from tests.test_session_write_queue_1353 import wait_pending_writes
-    wait_pending_writes(session)
-
-    exits = [
-        e for e in an.list_ledger(db, nid)
-        if TAG_EXIT in e["tags"] and character.name in e["person_names"]
-    ]
-    assert exits == []  # 未落个人告退账
-    assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
 
 
 # ── L1 R2：court_action=dismiss 单缝——非流式 web /api/audience/chat

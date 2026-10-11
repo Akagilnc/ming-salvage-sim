@@ -1,11 +1,12 @@
 """#1830 S1：材料目录骨架与目录读取。
 
-Seams: prepare_character_materials (directory + opening min set),
+Seams: prepare_identity_materials (directory + opening min set),
 list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 """
 
 from __future__ import annotations
 
+from tests.material_helpers import prepare_identity_materials
 import json
 
 import pytest
@@ -15,7 +16,6 @@ from ming_sim.materials import (
     _safe_segment,
     list_materials,
     material_tools,
-    prepare_character_materials,
     read_material,
 )
 
@@ -41,7 +41,7 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
         year=state.year, period=state.period, turn=state.turn,
     )
     dest = tmp_path / "materials"
-    prepared = prepare_character_materials(db, state, character, dest_root=dest)
+    prepared = prepare_identity_materials(db, state, character, dest_root=dest)
 
     names = list_materials(prepared.root)
     assert "INDEX.txt" in names
@@ -62,8 +62,8 @@ def test_same_requested_root_creates_independent_material_invocations(game, tmp_
     character = _active_minister(db, content)
     requested = tmp_path / "materials"
 
-    first = prepare_character_materials(db, state, character, dest_root=requested)
-    second = prepare_character_materials(db, state, character, dest_root=requested)
+    first = prepare_identity_materials(db, state, character, dest_root=requested)
+    second = prepare_identity_materials(db, state, character, dest_root=requested)
 
     # 契约＝同请求根下两次 prepare 得独立树；不靠 INDEX 裸读证明隔离。
     assert first.root != second.root
@@ -99,7 +99,7 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     )
     db.conn.commit()
 
-    prepared = prepare_character_materials(db, state, character, dest_root=tmp_path / "materials")
+    prepared = prepare_identity_materials(db, state, character, dest_root=tmp_path / "materials")
     names = list_materials(prepared.root)
     region_name = db.conn.execute(
         "SELECT name FROM regions WHERE id=?", ("shaanxi",),
@@ -144,7 +144,7 @@ def test_matter_carriers_follow_affair_authority_not_parallel_issue_projection(g
     )
     db.conn.commit()
 
-    prepared = prepare_character_materials(
+    prepared = prepare_identity_materials(
         db, state, character, dest_root=tmp_path / "materials",
     )
     matter_paths = {
@@ -170,7 +170,7 @@ def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
 
     db.list_referenceable_dossiers = boom
     try:
-        prepare_character_materials(db, state, character, dest_root=tmp_path / "m")
+        prepare_identity_materials(db, state, character, dest_root=tmp_path / "m")
         raise AssertionError("expected fail loud")
     except RuntimeError as exc:
         assert exc is fault
@@ -179,7 +179,7 @@ def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
 def test_read_material_stays_inside_directory(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
-    prepared = prepare_character_materials(
+    prepared = prepare_identity_materials(
         db, state, character, dest_root=tmp_path / "m",
     )
     try:
@@ -227,7 +227,7 @@ def test_character_materials_read_archived_public_gazettes(
     )
     db.conn.commit()
 
-    prepared = prepare_character_materials(
+    prepared = prepare_identity_materials(
         db, state, character, dest_root=tmp_path / "char-gaz",
     )
     names = list_materials(prepared.root)
@@ -253,7 +253,7 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
     create_test_secret_order(
         db, state, character.name, "长密令", original, [], deadline_months=6,
     )
-    prepared = prepare_character_materials(
+    prepared = prepare_identity_materials(
         db, state, character, dest_root=tmp_path / "secret-ok",
     )
     secret_path = next(p for p in list_materials(prepared.root) if p.startswith("密令/"))
@@ -268,7 +268,7 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
 
     monkeypatch.setattr(db, "get_active_secret_orders_for_minister", boom)
     with pytest.raises(RuntimeError) as ei:
-        prepare_character_materials(
+        prepare_identity_materials(
             db, state, character, dest_root=tmp_path / "secret-fail",
         )
     assert ei.value is fault

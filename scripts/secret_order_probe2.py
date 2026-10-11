@@ -54,8 +54,9 @@ def main() -> None:
         sess, DECREE, notes="催曹化淳呈册",
         probe_id="secret-order-followup",
     )
-    _ = sess.resolve_turn(decree=DECREE)
-    # 只打结构化密令状态；#1847 禁止用邸报自由措辞子串筛段落。
+    report = sess.resolve_turn(decree=DECREE)
+    print("\n========== 邸报 ==========\n")
+    print(report)
     print("\n========== 密令状态 ==========\n")
     for o in sess.db.list_secret_orders():
         print(f"#{o['id']} status={o['status']} title={o['title']!r}")

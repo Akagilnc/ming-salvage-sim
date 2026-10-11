@@ -797,12 +797,12 @@ def _iter_cli_runner_text(
 
     次数只在 llm_transport（run_with_transport / run_transport_stream）；此处禁
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
-    - 静默超阈值 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
+    - 静默超预算 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
     - 空输出 → llm_empty_output（可重试）
     - stdin 未送达 / 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从
       成功正文或 stderr 散文抠认证/连接状态）
 
-    静默预算只认 transport 策略 idle（= 设置页那一格的静默判死阈值，CLI 与 API 同权威）。
+    静默预算只认 transport 策略 idle（= 设置页那一格的静默判死预算，CLI 与 API 同权威）。
     """
     from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
 
@@ -858,7 +858,7 @@ def _iter_cli_runner_text(
         text = stdout_text if stdout_text.strip() else final_text
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
-            raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
+            raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr}")
         if not text.strip():
             raise transport_failure_unavailable(
                 empty_output_failure(), attempts=1, exhausted=False,
@@ -1088,7 +1088,7 @@ def _run_backend_for_config(
     finally:
         _trace({
             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "seq": -1, "tag": tag or "other",
+            "seq": -1, "tag": tag or "?",
             "backend": _backend_label(llm_config), "model_id": model_id,
             "dur_s": round(time.monotonic() - t0, 1), "attempts": attempts,
             "wants_json": False,
@@ -1343,7 +1343,7 @@ def _draft_intent_army_grounding_facts(content: Any) -> str:
         army_id = str(getattr(army, "id", None) or key or "").strip()
         if not army_id:
             continue
-        name = str(getattr(army, "name", None) or army_id).strip()
+        name = str(getattr(army, "name", None) or army_id)
         aliases = [
             alias for alias in army_identity_aliases(army)
             if alias not in (army_id, name)
@@ -2199,55 +2199,6 @@ def extract_draft_intent_with_roster_heal(
         return validated
 
 
-def _stalled_deliberation_push_facts(db: Any) -> str:
-    """#658：自由下旨可强推的 stalled 廷议＋active issue 投影（候选相关切片）。"""
-    if db is None:
-        return ""
-    # #1849：供料库读失败是代码/IO 错，一律响亮上抛（ADR 0005）。此前静默洗成
-    # 空事实块，抽取遂在缺御笔强推事实下照常出产、写入口再覆盖原草稿——
-    # 失败被消解成合法产物（失败诚实宪法）。
-    rows = db.list_decree_dossiers(status="proposed")
-    lines: List[str] = []
-    for row in rows or []:
-        payload = row["payload"]
-        if str(payload.get("deliberation_state") or "") != "stalled":
-            continue
-        did = int(row["id"])
-        try:
-            issue = db.conn.execute(
-                "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' "
-                "LIMIT 1",
-                (f"dossier:{did}",),
-            ).fetchone()
-            if issue is None:
-                continue
-            # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
-            # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
-            # 题/正文为 LLM 供料：原话过手，strip 只判空（#1897 E2 / P6）。
-            title_raw = (
-                payload.get("title")
-                or payload.get("target_id")
-                or issue["title"]
-                or ""
-            )
-            title = title_raw if isinstance(title_raw, str) else str(title_raw or "")
-            body_raw = payload.get("text") or row.get("decree_text") or ""
-            body = body_raw if isinstance(body_raw, str) else str(body_raw or "")
-            # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
-            lines.append(
-                f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
-            )
-        except (TypeError, ValueError, KeyError) as exc:
-            # #1849：坏项隔离留痕（ADR 0005：只拒该项、不带走整批，但必须记原因）。
-            _log(f"强推案卷事实跳过坏行（dossier={row.get('id')!r}）：{exc}")
-            continue
-    if not lines:
-        return ""
-    return (
-        "【可御笔强推的议而不决案卷】仅当皇帝明确强推下列事项时填目标案卷ID；"
-        "否则目标案卷ID留 null。\n"
-        + "\n".join(lines) + "\n"
-    )
 
 
 def extract_draft_intent(
@@ -2278,7 +2229,6 @@ def extract_draft_intent(
         correction_block = str(correction_feedback)
     if correction_block.strip() and not correction_block.endswith("\n"):
         correction_block += "\n"
-    stalled_push_facts = _stalled_deliberation_push_facts(db)
     open_affair_facts = _draft_intent_open_affair_facts(db)
     from ming_sim.action_clusters import (
         assert_action_candidate_shape,
@@ -2340,12 +2290,11 @@ def extract_draft_intent(
         + structured_decree_prompt_contract() + "\n"
         '非拨帑旨填共同契约目标/属地/事务类别/承办字段及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
         '同一句交办只写一处事务声明（attach 仅 new|existing）；无声明不自建。\n'
-        "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
+        "御笔强推既有案卷亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
         + army_facts
         + pay_order_facts
-        + stalled_push_facts
         + open_affair_facts
         + "【皇帝】" + (player_message or "（无）") + "\n"
         + "【大臣回话】" + (minister_reply or "（无）") + "\n"

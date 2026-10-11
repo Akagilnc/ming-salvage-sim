@@ -82,48 +82,6 @@ def test_load_runtime_llm_non_dict_payload_returns_empty(tmp_path, monkeypatch):
         assert llm_config.load_runtime_llm() == {}, f"payload={payload!r} 应回落空 dict"
 
 
-def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
-    path = tmp_path / "runtime_llm.json"
-    path.write_text(
-        json.dumps(
-            {
-                "base_url": "https://api.example.com/v1",
-                "model": "gpt-test",
-                "api_key": "sk-test",
-                "timeout_seconds": 120,
-                "thinking_level": "medium",
-                "advanced_model": "gpt-advanced",
-                "advanced_base_url": "https://advanced.example.com/v1",
-                "advanced_api_key": "sk-advanced",
-                "advanced_thinking_level": "high",
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-
-    runtime = llm_config.load_runtime_llm()
-
-    assert runtime["channel"] == "api"
-    assert runtime["api"] == {
-        "base_url": "https://api.example.com/v1",
-        "model": "gpt-test",
-        "api_key": "sk-test",
-        "timeout_seconds": 120,
-        "thinking_level": "medium",
-        "advanced_model": "gpt-advanced",
-        "advanced_base_url": "https://advanced.example.com/v1",
-        "advanced_api_key": "sk-advanced",
-        "advanced_thinking_level": "",
-        "reasoning_strength": "high",
-        "default_headers": {},
-    }
-    assert runtime["reasoning_strength"] == "high"
-    assert runtime["cli"]["runner"] == ""
-    assert runtime["cli"]["model"] == ""
-
-
 def test_save_runtime_llm_persists_channel_slots(tmp_path, monkeypatch):
     path = tmp_path / "runtime_llm.json"
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
@@ -168,7 +126,8 @@ def test_save_runtime_llm_persists_api_reasoning_strength(tmp_path, monkeypatch)
     )
 
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["reasoning_strength"] == "high"
+    assert saved["api"]["reasoning_strength"] == "high"
+    assert "reasoning_strength" not in saved
 
 
 def test_save_runtime_llm_api_save_preserves_cli_reasoning_strength(tmp_path, monkeypatch):
@@ -226,7 +185,7 @@ def test_save_runtime_llm_cli_save_preserves_api_reasoning_strength(tmp_path, mo
 
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["channel"] == "cli"
-    assert saved["reasoning_strength"] == "high"
+    assert "reasoning_strength" not in saved
     assert saved["api"]["reasoning_strength"] == "low"
     assert saved["cli"]["reasoning_strength"] == "high"
 
@@ -247,7 +206,7 @@ def test_save_runtime_llm_cli_save_can_seed_api_reasoning_strength(tmp_path, mon
 
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["channel"] == "cli"
-    assert saved["reasoning_strength"] == "off"
+    assert "reasoning_strength" not in saved
     assert saved["api"]["reasoning_strength"] == "high"
     assert saved["cli"]["reasoning_strength"] == "off"
 
@@ -276,11 +235,11 @@ def test_save_runtime_llm_can_clear_reasoning_strength_to_default(tmp_path, monk
     llm_config.save_runtime_llm("", "", "", channel="cli", reasoning_strength="")
 
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["reasoning_strength"] == ""
+    assert "reasoning_strength" not in saved
     assert "reasoning_strength" not in saved["cli"]
 
 
-def test_load_runtime_llm_exposes_api_aliases_when_cli_is_active(tmp_path, monkeypatch):
+def test_load_runtime_llm_keeps_inactive_api_slot_without_top_level_aliases(tmp_path, monkeypatch):
     path = tmp_path / "runtime_llm.json"
     path.write_text(
         json.dumps(
@@ -302,9 +261,12 @@ def test_load_runtime_llm_exposes_api_aliases_when_cli_is_active(tmp_path, monke
     runtime = llm_config.load_runtime_llm()
 
     assert runtime["channel"] == "cli"
-    assert runtime["base_url"] == "https://api.example.com/v1"
-    assert runtime["model"] == "gpt-test"
-    assert runtime["api_key"] == "sk-test"
+    assert runtime["api"]["base_url"] == "https://api.example.com/v1"
+    assert runtime["api"]["model"] == "gpt-test"
+    assert runtime["api"]["api_key"] == "sk-test"
+    assert "base_url" not in runtime
+    assert "model" not in runtime
+    assert "api_key" not in runtime
 
 
 def test_load_runtime_llm_preserves_cli_reasoning_strength(tmp_path, monkeypatch):
@@ -409,25 +371,6 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
     }
 
 
-def test_load_runtime_flat_cli_backend_placeholder_not_api_channel(tmp_path, monkeypatch):
-    # ship-pre CMR Group A'：真实扁平旧配置（占位符 key + 默认 timeout/
-    # base_url/model + 旧档残留 max_tokens）不该被推成 channel=api。
-    # 只有「存在真实 API key」才推 api。
-    path = tmp_path / "runtime_llm.json"
-    path.write_text(json.dumps({
-        "api_key": "cli-backend",
-        "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
-        "max_tokens": 8000,
-        "timeout_seconds": 180,
-    }), encoding="utf-8")
-    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-
-    out = llm_config.load_runtime_llm()
-
-    assert out["channel"] != "api"
-
-
 def test_cli_backend_active_explicit_cli_bogus_runner_false_despite_env(monkeypatch):
     # ship-pre CMR Group F'：显式 channel=cli + 不支持 runner，即便 env 有 agy
     # 也不该误报 active（否则执行期 _run_backend_for_config 仍会崩）。
@@ -455,20 +398,6 @@ def test_create_chat_model_unsupported_cli_runner_raises_unavailable(monkeypatch
 
     with _pytest.raises(LLMUnavailable):
         create_chat_model(cfg)
-
-
-def test_for_role_advanced_drops_placeholder_key():
-    # ship-pre CMR round-4：advanced_api_key 占位符不该泄漏到 advanced 角色的 OpenAI client。
-    from ming_sim.llm_config import for_role
-    from ming_sim.models import LLMConfig
-
-    cfg = LLMConfig(
-        api_key="sk-main", base_url="https://api.x/v1", model="m",
-        advanced_model="gpt-adv", advanced_api_key="cli-backend", channel="api",
-    )
-    adv = for_role(cfg, "simulator")
-
-    assert adv.api_key == "sk-main"
 
 
 def test_load_llm_config_api_mode_clears_placeholder(monkeypatch):
@@ -535,9 +464,7 @@ def test_runtime_llm_transport_nonpositive_falls_back_to_defaults(tmp_path, monk
     静默判死阈值同理，且它的真源是设置页那一格（cli.timeout_seconds）——坏值回落
     CLI_DEFAULT_TIMEOUT_SECONDS。
     """
-    from ming_sim.llm_transport import transport_policy_from_mapping
     from ming_sim.models import (
-        CLI_DEFAULT_TIMEOUT_SECONDS,
         TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
         TRANSPORT_DEFAULT_MAX_ATTEMPTS,
         TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
@@ -559,11 +486,6 @@ def test_runtime_llm_transport_nonpositive_falls_back_to_defaults(tmp_path, monk
     assert out["transport"]["max_attempts"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
     assert out["transport"]["attempt_timeout_seconds"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     assert out["transport"]["retry_interval_seconds"] == TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    policy = transport_policy_from_mapping(out)
-    assert policy.max_attempts == TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    assert policy.attempt_timeout_seconds == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
-    assert policy.retry_interval_seconds == TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    assert policy.idle_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
     # 保存路径同样经单权威：显式 0 不得落盘为 0
     llm_config.save_runtime_llm(
         base_url="https://x/v1",
@@ -601,7 +523,7 @@ def test_runtime_llm_default_headers_roundtrip_and_empty_is_status_quo(tmp_path,
 
     loaded = llm_config.load_runtime_llm()
     assert loaded["api"]["default_headers"] == headers
-    assert loaded["default_headers"] == headers  # 顶层 API alias 与槽同值
+    assert "default_headers" not in loaded  # 不再重造顶层 alias
 
     # 未配置 → 空表
     path.write_text(json.dumps({
@@ -662,4 +584,3 @@ def test_runtime_llm_cli_save_preserves_api_default_headers(tmp_path, monkeypatc
     assert saved["channel"] == "cli"
     assert saved["api"]["default_headers"] == {"X-Session": "keep-me"}
     assert saved["api"]["api_key"] == "sk-api"
-

@@ -5,12 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-import ming_sim.audience_night as audience_night
-import ming_sim.simulation as simulation
-from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
-from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from tests.test_declaration_dispatch_1835 import _minister
 
 
@@ -32,9 +28,6 @@ def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
     else:
         body["affair_id"] = int(affair_id)
     return body
-
-
-
 
 
 
@@ -123,9 +116,6 @@ def test_same_name_affairs_are_not_merged_and_illegal_attach_is_rejected(game):
 
 
 
-
-
-
 def test_typed_affair_new_issues_share_provenance(game):
     db, state, content = game
     existing = db.affairs.open(
@@ -160,14 +150,13 @@ def test_typed_affair_new_issues_share_provenance(game):
 
 
 
-
 def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):
     """战略人物越权来源逐项拒收；已声明的合法同批战果仍落账。"""
     db, state, content = game
     issues_mod.bind_content(content)
     state.year = 1638
     state.period = 9
-    authorized = db.affairs.open(
+    db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
     )

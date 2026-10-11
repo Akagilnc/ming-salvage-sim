@@ -1,6 +1,6 @@
 """#1356/#1292：删除固定开局邸报（P7）。
 
-钉测只保票面行为：
+钉测只保开局无固定邸报的现役行为：
 1. t0 previous_summary 严格空
 2. 空壳可关闭（前端 vitest）
 3. 首月真报出现
@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import pytest
+
+
 
 def test_new_game_t0_previous_summary_strictly_empty(game):
     """① t0：previous_summary 严格空串；turn_reports 无 seed 行。"""
@@ -27,6 +29,7 @@ def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     assert db.previous_turn_summary(state) == ""
     label = db.previous_turn_reign_period_label(state)
     assert label == ""
+
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_state_payload_t0_previous_summary_empty(game):

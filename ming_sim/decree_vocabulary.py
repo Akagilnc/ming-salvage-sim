@@ -128,7 +128,6 @@ DOSSIER_OUTCOME_CN = {
     "transformed": "变形",
 }
 
-
 def format_public_progress_disclosure(progress_rows: object) -> str:
     """公开披露面：progress_band + memorial_text 的 join 渲染（#622 AC6 面2 单源）。"""
     return "\n".join(

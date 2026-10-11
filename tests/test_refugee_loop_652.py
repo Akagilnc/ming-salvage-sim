@@ -542,8 +542,11 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     assert result.advanced is True
     assert int(state.turn) == closed_turn + 1
 
+    arrived = sum(int(row["arrived_amount"]) for row in db.list_dossier_reconciliations(shaanxi_id)
+                  if int(row["turn"]) == closed_turn)
+    assert arrived > 0
     expected = int(round(
-        amount * RECOVERY_PERSONS_PER_WAN * RECOVERY_OUTCOME_FACTORS["fulfilled"]
+        arrived * RECOVERY_PERSONS_PER_WAN * RECOVERY_OUTCOME_FACTORS["fulfilled"]
     ))
     loaded = GameDB(_database_path(db), content)
     try:

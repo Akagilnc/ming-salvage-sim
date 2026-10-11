@@ -317,6 +317,7 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     ).fetchone()[0] == 1, "未撤销密令的 brief 不应受级联影响"
     assert msg_u == 0 and msg_m == 0
     assert msg_b == 1, "early B public message wrongly deleted"
+    assert db.get_active_secret_orders_for_minister(a.name) == []
 
 
 @pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])

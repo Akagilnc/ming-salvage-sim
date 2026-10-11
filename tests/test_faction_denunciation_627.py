@@ -12,8 +12,6 @@ Seams:
 
 from __future__ import annotations
 
-import json
-
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import executing_subject_policy as _subject_dossier
 from ming_sim.supervision import (
@@ -23,6 +21,7 @@ from ming_sim.supervision import (
     origin_has_mark,
 )
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
+
 from tests.dossier_test_helpers import create_test_secret_order
 
 # ── helpers ───────────────────────────────────────────────────────
@@ -89,6 +88,7 @@ def _escalate_fork(db, state, dossier_id: int, *, token: str = "esc"):
         state, "国库", 3, "再浮收", f"升级{token}",
         origin_ref=f"dossier:{dossier_id}", beyond_intent=True, commit=True,
     )
+
 
 def _scripted_entry(
     *,

@@ -1,14 +1,24 @@
 """#565 执行格终值链 + 委派连坐（唯一契约 r3）。"""
 
+
 import json
 
 import pytest
 
 import ming_sim.issues as issue_engine
+from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.strict_types import validate_affected_parties
 from tests.readback_helpers import faction_satisfaction as _sat
 from tests.readback_helpers import decree_cost_event_rows
 from tests.dossier_test_helpers import executing_rostered_policy
+
+
+def _liability_parties(db, dossier_id):
+    """存储读面：已删 list_execution_liability_parties → 现役 project + dossier roster。"""
+    dossier = db.get_decree_dossier(dossier_id)
+    if dossier is None:
+        raise KeyError(f"案卷不存在：{dossier_id}")
+    return project_execution_liability_parties(dossier.get("participant_roster"))
 
 
 def _roster():
@@ -119,7 +129,7 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
     # 连坐归属读结构化责任面，不写入 execution_note 原文
     liable_ids = {
         str(p["character_id"])
-        for p in db.list_execution_liability_parties(dossier_id)
+        for p in _liability_parties(db, dossier_id)
     }
     assert {"倪元璐", "徐光启"} <= liable_ids
     note = db.get_decree_dossier(dossier_id)["execution_note"]
@@ -201,7 +211,7 @@ def test_dead_liable_party_skips_satisfaction_but_stays_on_liability_roster(game
     # 已故主办仍在结构化责任面；execution_note 保持 LLM 原文
     liable_ids = {
         str(p["character_id"])
-        for p in db.list_execution_liability_parties(dossier_id)
+        for p in _liability_parties(db, dossier_id)
     }
     assert "倪元璐" in liable_ids
     note = db.get_decree_dossier(dossier_id)["execution_note"]
@@ -265,7 +275,7 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     ]
     dossier_id = _executing_dossier(db, state, roster=roster)
 
-    parties = db.list_execution_liability_parties(dossier_id)
+    parties = _liability_parties(db, dossier_id)
     by_id = {p["character_id"]: p["responsibility"] for p in parties}
     assert by_id == {"倪元璐": "primary", "徐光启": "secondary"}
 
@@ -305,7 +315,7 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
     dossier_id = _executing_dossier(db, state, roster=roster)
 
     # 读端：一人一档，徐光启只返回 primary
-    parties = db.list_execution_liability_parties(dossier_id)
+    parties = _liability_parties(db, dossier_id)
     by_id = {p["character_id"]: p["responsibility"] for p in parties}
     assert by_id == {"倪元璐": "primary", "徐光启": "primary"}
     assert sum(1 for p in parties if p["character_id"] == "徐光启") == 1
@@ -354,7 +364,7 @@ def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):
     )
     db.conn.commit()
 
-    parties = db.list_execution_liability_parties(dossier_id)
+    parties = _liability_parties(db, dossier_id)
     ids = [p["character_id"] for p in parties]
     roles = {p["character_id"]: p["responsibility"] for p in parties}
     assert "倪元璐" in ids

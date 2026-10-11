@@ -105,10 +105,14 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         if payload.get("decision"):
             continue
         origin = f"dossier:{did}"
+        from ming_sim.participant_roster import decode_durable_participant_roster
+
         dossier = db.get_decree_dossier(did) or {}
         actors = {str(dossier.get("executor_id") or "").strip()}
-        for participant in dossier.get("participant_roster") or []:
-            if isinstance(participant, Mapping) and participant.get("tier") in {"主办", "协办"}:
+        for participant in decode_durable_participant_roster(
+            dossier.get("participant_roster") or [],
+        ):
+            if participant.get("tier") in {"主办", "协办"}:
                 actors.add(str(participant.get("character_id") or "").strip())
         actors.discard("")
         successful = lambda x: isinstance(x, Mapping) and not x.get("rejected")

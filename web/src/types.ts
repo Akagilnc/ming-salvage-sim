@@ -292,61 +292,16 @@ export type DossierDecision =
   | "withdrawn"
   | "hold";
 
-/** #657 急务六动作 */
-export type RescriptDeskAction =
-  | "follow_draft"
-  | "return_revise"
-  | "midzhi"
-  | "deliberate"
-  | "hold"
-  | "summon";
-
 export type DecisionChoice = {
   label?: string;
   hint?: string;
   note?: string;
   dossier_id?: number | null;
   dossier_decision?: DossierDecision;
-  /** #657 案头行键 */
+  /** 案头行键 */
   decision_key?: string;
-  /** #657 急务动作 */
-  action?: RescriptDeskAction | string;
-  draft_capability?: string;
-  /** §C.4 capability 派生闭集（仅补缺口，不新并行类型） */
-  summon_target?: string;
-  action_type?: string;
-  target_kind?: string;
-  target_id?: string;
-  locality_scope?: string;
-  region_id?: string;
-  transaction_category?: string;
-  assignee_name?: string;
-  name?: string;
-  title?: string;
-  commitment_kind?: string;
-  stop_condition?: string;
-  end_turn?: number;
-  deadline_months?: number;
-  station?: string;
-  due_turn?: number;
-  office?: string;
-  grant_action?: string;
-  amount?: number;
-  account?: string;
-  cadence?: string;
-  execution_surface?: string;
-  appoint_action?: string;
-  appointment_tenure?: string;
-  punish_action?: string;
-  privilege?: string;
-  /** #1778 决定 3 / C.4：票拟参与名单；中旨 choice 显式携带（§C.7） */
-  participant_roster?: Array<{
-    character_id?: string;
-    tier?: string;
-    role?: string;
-    delegator_id?: string | null;
-    [key: string]: unknown;
-  }>;
+  /** decision 轨动作；0055 三选写 dossier_decision */
+  action?: string;
 };
 
 export type DecisionOption = {
@@ -354,36 +309,6 @@ export type DecisionOption = {
   hint: string;
   dossier_id?: number;
   dossier_decision?: DossierDecision;
-  /** #657 层 A 票拟字段 · §C.4 闭集 */
-  draft_capability?: string;
-  action_type?: string;
-  assignee_name?: string;
-  name?: string;
-  target_kind?: string;
-  target_id?: string;
-  locality_scope?: string;
-  region_id?: string;
-  transaction_category?: string;
-  title?: string;
-  commitment_kind?: string;
-  stop_condition?: string;
-  end_turn?: number;
-  deadline_months?: number;
-  station?: string;
-  due_turn?: number;
-  office?: string;
-  grant_action?: string;
-  account?: string;
-  amount?: number;
-  cadence?: string;
-  execution_surface?: string;
-  appoint_action?: string;
-  appointment_tenure?: string;
-  punish_action?: string;
-  privilege?: string;
-  summon_target?: string;
-  /** #1778 决定 3 / C.4：票拟参与名单 */
-  participant_roster?: DecisionChoice["participant_roster"];
   [key: string]: unknown;
 };
 
@@ -397,15 +322,10 @@ export type PendingDecision = {
   options: DecisionOption[];
   choice?: DecisionChoice | null;
   status?: string;
-  /** #657 案头 */
-  kind?: "decision" | "rescript_draft" | string;
+  kind?: "decision" | string;
   decision_key?: string;
   source_turn?: number;
   turn?: number;
-  revision_round?: number;
-  actor_name?: string;
-  actor_office?: string;
-  actor_faction?: string;
 };
 
 /** #1855：重开落点三值 —— 后端状态口真源；前端契约单定义。 */

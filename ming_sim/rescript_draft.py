@@ -31,20 +31,19 @@ def run_rescript_text(session, *, officers: list, backlog: list, answer: dict | 
     """External model seam. Reuse role materials and native API/CLI reading tools."""
     from ming_sim.agents import create_rescript_draft_agent
     from ming_sim.llm_transport import audience_transport_policy
-    from ming_sim.materials import prepare_character_materials, prepare_world_materials, _character_projection_from_db_row
+    from ming_sim.materials import write_identity_materials, identity_material_rel, prepare_world_materials
 
     if session.llm_config is None:
         raise LLMUnavailable("票拟缺少模型配置", stage="rescript-draft")
     with TemporaryDirectory(prefix="ming-rescript-") as tmp:
         perspectives = []
-        for idx, row in enumerate(officers):
+        prepared = SimpleNamespace(root=Path(tmp), index_lines=())
+        if answer is None:
+            write_identity_materials(prepared, session.db, session.state, [row["name"] for row in officers])
+        for row in officers:
             officer = {"name": row["name"], "office": row["office"], "faction": row["faction"]}
             if answer is None:
-                prepared = prepare_character_materials(
-                    session.db, session.state, _character_projection_from_db_row(row),
-                    dest_root=Path(tmp) / str(idx),
-                )
-                officer.update(materials=str(idx), opening=prepared.opening)
+                officer.update(materials=str(Path(identity_material_rel(row["name"])).parent))
             perspectives.append(officer)
         world = None
         if answer is not None:

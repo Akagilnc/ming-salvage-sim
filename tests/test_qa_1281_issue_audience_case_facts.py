@@ -1,17 +1,18 @@
 """#1281: issue materials = knowledge visibility ∪ audience-named supplement.
 
-Contracts run through prepare_character_materials (F45): the retired
-project_issue_materials helper is not a second authority.
+Contracts run through live identity and scene material entries (F45).
 """
 
 from __future__ import annotations
 
+from tests.material_helpers import prepare_identity_materials
 import json
 from dataclasses import replace
 
 import pytest
 
-from ming_sim.materials import _safe_segment, list_materials, prepare_character_materials
+from ming_sim.materials import _safe_segment, list_materials, prepare_scene_materials
+from ming_sim import audience_night as an
 
 
 AUDIENCE_NAME = "郭允厚"
@@ -42,10 +43,10 @@ def test_issue_materials_keep_knowledge_visibility_without_audience_veto(game, t
     assert any(int(row["id"]) == issue_id for row in audience_knowledge.get("issues") or [])
     assert any(int(row["id"]) == issue_id for row in outsider_knowledge.get("issues") or [])
 
-    audience = prepare_character_materials(
+    audience = prepare_identity_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "audience",
     )
-    outsider = prepare_character_materials(
+    outsider = prepare_identity_materials(
         db, state, content.characters[NON_AUDIENCE_NAME], dest_root=tmp_path / "outsider",
     )
     expected = {f"事务/{_safe_segment(f'issue-{issue_id}')}/当前情况.txt"}
@@ -64,7 +65,7 @@ def test_empty_audience_is_empty_supplement_not_knowledge_veto(game, tmp_path):
     knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
     assert any(int(item["id"]) == issue_id for item in knowledge.get("issues") or [])
 
-    prepared = prepare_character_materials(
+    prepared = prepare_identity_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
     )
     assert _issue_paths(prepared, issue_id) == {
@@ -86,10 +87,10 @@ def test_audience_supplement_grants_originating_issue_outside_knowledge(game, tm
     assert all(int(item["id"]) != issue_id for item in audience_knowledge.get("issues") or [])
     assert all(int(item["id"]) != issue_id for item in outsider_knowledge.get("issues") or [])
 
-    audience = prepare_character_materials(
+    audience = prepare_identity_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "audience",
     )
-    outsider = prepare_character_materials(
+    outsider = prepare_identity_materials(
         db, state, content.characters[NON_AUDIENCE_NAME], dest_root=tmp_path / "outsider",
     )
     assert _issue_paths(audience, issue_id) == {
@@ -117,10 +118,10 @@ def test_malformed_event_audience_fails_loud_from_material_entry(
         "UPDATE events SET audiences=? WHERE id=?", (stored_audiences, row["origin_ref"]),
     )
 
+    night = an.open_night(db, state)
+    an.summon_enter(db, int(night["id"]), AUDIENCE_NAME)
     with pytest.raises(expected_exc):
-        prepare_character_materials(
-            db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
-        )
+        prepare_scene_materials(db, state, dest_root=tmp_path / "materials")
 
 
 def test_tuple_audience_container_fails_loud_from_content_fallback(game, tmp_path):
@@ -136,11 +137,11 @@ def test_tuple_audience_container_fails_loud_from_content_fallback(game, tmp_pat
     content.event_by_id[content_only_ref] = replace(
         source, id=content_only_ref, audiences=(AUDIENCE_NAME,),  # type: ignore[arg-type]
     )
+    night = an.open_night(db, state)
+    an.summon_enter(db, int(night["id"]), AUDIENCE_NAME)
     try:
         with pytest.raises(TypeError):
-            prepare_character_materials(
-                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
-            )
+            prepare_scene_materials(db, state, dest_root=tmp_path / "materials")
     finally:
         content.event_by_id.pop(content_only_ref, None)
 
@@ -161,7 +162,7 @@ def test_malformed_knowledge_issue_id_fails_loud_from_material_entry(game, tmp_p
     db.get_character_knowledge = poisoned_knowledge  # type: ignore[method-assign]
     try:
         with pytest.raises(ValueError):
-            prepare_character_materials(
+            prepare_identity_materials(
                 db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
             )
     finally:
@@ -171,6 +172,8 @@ def test_malformed_knowledge_issue_id_fails_loud_from_material_entry(game, tmp_p
 def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path):
     """audience 账本读失败须从材料入口冒出；来源保真：原异常对象，不锁诊断措辞。"""
     db, state, content = game
+    night = an.open_night(db, state)
+    an.summon_enter(db, int(night["id"]), AUDIENCE_NAME)
     real_conn = db.conn
     fault = RuntimeError("audience ledger read failed")
 
@@ -186,9 +189,7 @@ def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path
     db.conn = FailingEventAudienceConnection()
     try:
         with pytest.raises(RuntimeError) as ei:
-            prepare_character_materials(
-                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
-            )
+            prepare_scene_materials(db, state, dest_root=tmp_path / "materials")
         assert ei.value is fault
     finally:
         db.conn = real_conn

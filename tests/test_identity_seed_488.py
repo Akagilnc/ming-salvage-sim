@@ -42,6 +42,7 @@ def test_identity_and_seed_guilt_survive_restore(game):
     assert content.characters["魏忠贤"].identity == before["identity"]
     assert content.characters["魏忠贤"].seed_guilt == guilt
 
+
 _DIG_7_REQUIRED_SEED_NAMES = {
     "韩爌", "张瑞图", "来宗道", "施凤来", "黄立极", "王绍徽", "毕自严", "杨嗣昌",
     "温体仁", "钱龙锡", "刘鸿训", "钱谦益", "李标", "孙承宗", "崔呈秀", "王在晋",

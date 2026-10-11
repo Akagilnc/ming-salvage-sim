@@ -19,6 +19,7 @@ from __future__ import annotations
 import threading
 
 import pytest
+from tests.month_chain_helpers import canned_full_settlement
 
 from ming_sim.audience_translation import list_pending_translations
 import web_app
@@ -181,10 +182,163 @@ def test_empty_startup_catchup_claims_zero_tickets(web_game):
     q = game._runtime_write_queue()
     # fresh WebGame 无未抽回话；init 时 spawn 必须早退，队列空。
     assert q.inflight_count() == 0
-    assert game._runtime_write_queue().inflight_count() == 0
     # 显式再调仍不领票。
     game._spawn_startup_extraction_catch_up()
     assert q.inflight_count() == 0
+
+
+def test_barrier_waits_trail_ticket_then_auto_close(web_game, monkeypatch):
+    """#1353 生产接缝屏障钉：尾随领票未完成时 entry 不得抢跑；完成后一次过。"""
+    game = web_game
+    q = game._runtime_write_queue()
+    # 空库 startup 不得占票；本钉只见自领 1 票（全量 xdist 顺序依赖根因）。
+    assert q.inflight_count() == 0
+    ticket = game._mark_pending_write(key=("turn", 1))
+    assert ticket is not None
+    assert q.inflight_count() == 1
+
+    order: list[str] = []
+    trail_holding = threading.Event()
+    release = threading.Event()
+    entry_done = threading.Event()
+
+    def trail_worker() -> None:
+        trail_holding.set()
+        release.wait()
+        order.append("trail_end")
+        game._complete_pending_write(ticket)
+
+    t = threading.Thread(target=trail_worker, name="trail-barrier", daemon=True)
+    t.start()
+    et = None
+    try:
+        trail_holding.wait()
+
+        def track_auto_close(_g, **_k):
+            order.append("auto_close")
+
+        monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
+        monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
+
+        def run_entry() -> None:
+            with web_app._settlement_period_entry(game, write_cm=web_app._game_write_gate):
+                order.append("body")
+            entry_done.set()
+
+        et = threading.Thread(target=run_entry, name="settlement-entry", daemon=True)
+        et.start()
+        # 确定性：trail 未放行前 entry 不得完成（事件握手，不靠 sleep 判胜负）
+        assert not entry_done.is_set()
+        assert "auto_close" not in order
+        assert "body" not in order
+
+        order.append("release")
+    finally:
+        release.set()
+        t.join()
+        if et is not None:
+            et.join()
+    assert not t.is_alive() and not et.is_alive()
+    assert order == ["release", "trail_end", "auto_close", "body"], order
+    assert q.inflight_count() == 0
+
+
+def test_production_seam_cancel_blocks_trail_write(web_game):
+    """生产接缝撤回钉：暂停腿 → cancel_key → 放行，TicketedWriteGate 零写。"""
+    from ming_sim.session_write_queue import TicketCancelled
+
+    game = web_game
+    q = game._runtime_write_queue()
+    ticket = game._mark_pending_write(key=("turn", 4242))
+    assert ticket is not None
+
+    entered = threading.Event()
+    release = threading.Event()
+    wrote = {"n": 0}
+    outcome: dict = {}
+
+    def paused_trail() -> None:
+        entered.set()
+        release.wait()
+        gate = game._ticketed_write_gate(ticket)
+        try:
+            with gate:
+                wrote["n"] += 1
+            outcome["ok"] = True
+        except TicketCancelled as exc:
+            outcome["cancelled"] = type(exc).__name__
+        finally:
+            game._complete_pending_write(ticket)
+
+    th = threading.Thread(target=paused_trail, daemon=True)
+    th.start()
+    try:
+        entered.wait()
+        n = q.cancel_key(("turn", 4242))
+        assert n == 1
+    finally:
+        release.set()
+        th.join()
+    assert not th.is_alive()
+    assert wrote["n"] == 0
+    assert outcome.get("cancelled") == "TicketCancelled"
+    assert "ok" not in outcome
+
+
+def test_production_seam_post_barrier_ticket_ordered(web_game, monkeypatch):
+    """生产接缝：屏障已领后再领票，后票写不得越过屏障（经 ticketed gate）。"""
+    game = web_game
+    game._runtime_write_queue()
+    order: list[str] = []
+    barrier_in = threading.Event()
+    release_barrier = threading.Event()
+    late_claimed = threading.Event()
+    late_done = threading.Event()
+
+    def track_auto_close(_g, **_k):
+        barrier_in.set()
+        late_claimed.wait()
+        order.append("barrier")
+        release_barrier.wait()
+
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
+    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
+
+    def run_entry() -> None:
+        with web_app._settlement_period_entry(game, write_cm=web_app._game_write_gate):
+            order.append("body")
+
+    et = threading.Thread(target=run_entry, daemon=True)
+    et.start()
+    lt = None
+    try:
+        barrier_in.wait()
+
+        late = game._mark_pending_write(key=("turn", 77))
+        assert late is not None
+        late_claimed.set()
+
+        def late_write() -> None:
+            gate = game._ticketed_write_gate(late)
+            with gate:
+                order.append("late")
+            game._complete_pending_write(late)
+            late_done.set()
+
+        lt = threading.Thread(target=late_write, daemon=True)
+        lt.start()
+        assert "late" not in order
+        assert not late_done.is_set()
+    finally:
+        late_claimed.set()
+        release_barrier.set()
+        et.join()
+        if lt is not None:
+            lt.join()
+    # barrier 写（auto_close）先于后票；body 在 barrier 返回后
+    assert order.index("barrier") < order.index("late")
+    assert order.index("barrier") < order.index("body")
+
 
 def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch):
     """K10a：wait_in_flight 只依工人终态放行，不按 elapsed 伪造 409。"""
@@ -201,7 +355,6 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     # 确定性握手：主线程入轮询 → worker 发终态 → 主线程因终态返回
     # （禁 sleep 毫秒窗；禁把 SUT 包进 waiter 线程 try/finally 吞异常假绿）
     waiter_polling = threading.Event()
-    worker_published = threading.Event()
     real_list = an.list_in_flight_chat_turns
 
     def _list_tracking(db_arg, night_id_arg):
@@ -217,7 +370,6 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
             "UPDATE chat_turns SET status='active' WHERE id=?", (ctid,)
         )
         db.conn.commit()
-        worker_published.set()
 
     wt = threading.Thread(
         target=_worker_terminal, name="worker-terminal-1353", daemon=True,
@@ -227,7 +379,6 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
         # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
         # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
         an.wait_in_flight_clear(db, nid)
-        worker_published.wait()
     finally:
         waiter_polling.set()
         wt.join()
@@ -273,7 +424,6 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
     game._run_startup_extraction_catch_up(pending_ticket=ticket)
     assert seen.get("ticketed_contract") is True
     assert seen.get("bare_lock") is not True
-    assert ticket._done is True
 
 def test_ticketed_write_gate_rejects_none(web_game):
     """无票不得回落裸 runtime write_gate。"""
@@ -355,7 +505,7 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     assert gate.acquire(blocking=False)
 
     # 合法真实前置：无旨月 + 外部 LLM 缝 canned；不替 resolve_directives（被测持闸在其后）。
-    _canned_full_settlement(monkeypatch, narrative="持闸落相位探针邸报。")
+    canned_full_settlement(monkeypatch, narrative="持闸落相位探针邸报。")
 
     try:
         result = sess.resolve_turn(

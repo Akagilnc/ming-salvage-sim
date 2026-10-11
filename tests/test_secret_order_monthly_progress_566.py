@@ -1,5 +1,6 @@
 """#566: production settlement owns the durable monthly progress rail."""
 
+from tests.material_helpers import prepare_identity_materials
 import threading
 
 import pytest
@@ -238,7 +239,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     """A post-fiscal fault cannot expose preview-time directive materialization."""
     from types import SimpleNamespace
     import ming_sim.decree as decree
-    import ming_sim.session as session_mod
     import web_app
 
     db, state, content = game
@@ -260,19 +260,13 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     def fail_after_real_flows(flow_db, flow_state):
         ledger_before = _rows(flow_db, "economy_ledger")
         metrics_before = dict(flow_state.metrics)
-        result = original_flows(flow_db, flow_state)
+        original_flows(flow_db, flow_state)
         observed["fiscal_written"] = _rows(flow_db, "economy_ledger") != ledger_before
         observed["metrics_written"] = dict(flow_state.metrics) != metrics_before
         assert observed == {"fiscal_written": True, "metrics_written": True}
         raise fiscal_fault
 
     monkeypatch.setattr(decree, "apply_fixed_period_flows", fail_after_real_flows)
-    monkeypatch.setattr(
-        session_mod, "write_decree_with_agno",
-        lambda _config, _state, directives, db=None: "\n".join(
-            str(item["text"]) for item in directives
-        ),
-    )
     from tests.month_chain_helpers import make_light_session
     session = make_light_session(db, state, content)
 
@@ -289,19 +283,20 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     else:
         invoke = session.advance_without_decree
 
-    # cli：session 层 RuntimeError 原样穿透。
-    # web：#1433 可读错误包契约——Exception → 500 + {"message": str(e)}（回滚语义不变）。
+    # W4 统一停住契约：保留原错为 cause，Web 报告同一失败包。
     if entry == "web":
         with pytest.raises(web_app.HTTPException) as exc_info:
             invoke()
-        assert exc_info.value.status_code == 500
+        assert exc_info.value.status_code == 409
         detail = exc_info.value.detail
         assert isinstance(detail, dict)
         assert detail.get("message") == str(fiscal_fault)
     else:
-        with pytest.raises(RuntimeError) as ei:
+        from ming_sim.exceptions import SettlementAbort
+        with pytest.raises(SettlementAbort) as ei:
             invoke()
-        assert ei.value is fiscal_fault
+        assert ei.value.__cause__ is fiscal_fault
+        assert ei.value.stage == "pre_settle"
 
     after = _rollback_snapshot(db, state, pending_ids)
     for key in ("pending", "directives", "dossiers", "orders", "knowledge", "metrics", "clock"):

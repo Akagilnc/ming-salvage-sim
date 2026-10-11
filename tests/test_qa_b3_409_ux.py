@@ -16,7 +16,7 @@ from fastapi import HTTPException
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import ClassifiedWriteGate
-from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
+from ming_sim.models import TurnPhase
 
 
 # ── #1301 玩家面 409 去裸 night_id ──────────────────────────────────────────
@@ -44,35 +44,6 @@ def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
         an.assert_night_accepts_player_input(object(), what="阅折")
     assert other.value.code == "night_closing"
     assert other.value.detail == {"night_id": 42, "what": "阅折"}
-
-
-# ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
-
-def _front_half_detail(phase: str) -> str:
-    game = SimpleNamespace(
-        state=SimpleNamespace(turn_phase=phase),
-        _write_gate=ClassifiedWriteGate(),
-    )
-    with pytest.raises(HTTPException) as ei:
-        with web_app._serialized_web_write(game):
-            pass
-    assert ei.value.status_code == 409
-    detail = str(ei.value.detail)
-    assert detail
-    return detail
-
-
-def test_serialized_web_write_phase_messages_cover_front_half_done():
-    """#1306 全 FRONT_HALF_DONE 相位均 409，详情只按 awaiting / 其余两支分叉。"""
-    awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)
-    other = _front_half_detail(TurnPhase.SETTLING.value)
-    assert awaiting != other
-    for phase in FRONT_HALF_DONE_PHASES:
-        detail = _front_half_detail(phase)
-        if phase == TurnPhase.AWAITING_DECISION.value:
-            assert detail == awaiting
-        else:
-            assert detail == other
 
 
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────

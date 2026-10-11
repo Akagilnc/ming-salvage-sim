@@ -7,6 +7,8 @@ Seams:
 
 from __future__ import annotations
 
+from tests.material_helpers import prepare_identity_materials
+
 import json
 from types import SimpleNamespace
 
@@ -133,7 +135,6 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     )
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "世界段" if effects else "")
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": effects or {}})
-    monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: "诏")
     session = make_light_session(db, state, content)
     session._write_gate = ClassifiedWriteGate()
     before = int(state.turn)
@@ -441,8 +442,7 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
 
     from ming_sim.audience_night import summon_enter
     from ming_sim.materials import (
-        prepare_character_materials,
-        prepare_scene_materials,
+            prepare_scene_materials,
         release_material_tree,
     )
 
@@ -494,7 +494,7 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     }
     from ming_sim.materials import _safe_segment
     rel = f"密令/查访月报/{visible}.txt"
-    character_tree = prepare_character_materials(db, state, attendant)
+    character_tree = prepare_identity_materials(db, state, attendant)
     try:
         assert rel in character_tree.index_lines
         assert f"密令/查访月报/{hidden}.txt" not in character_tree.index_lines

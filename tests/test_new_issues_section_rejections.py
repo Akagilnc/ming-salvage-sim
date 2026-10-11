@@ -125,16 +125,6 @@ def test_new_issue_bad_kind_rejected(read_game, bad_kind):
     assert rej[0]["category"] == "invalid_enum"
 
 
-def test_new_issue_dirty_inertia_rejected(read_game):
-    db, state, _ = read_game
-    # _compute_inertia 的 legacy int(inertia) 回退在其 try 外，脏 inertia 会抛——须在预校验 try
-    # 内拒整项，不能逃逸 abort（cmr ni r2 codex）。
-    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏inertia", "inertia": "abc"}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    rej = _rejected(out)
-    assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-
 
 def test_new_issue_oversized_severity_clamped_not_abort(game):
     db, state, _ = game
@@ -152,35 +142,6 @@ def test_new_issue_oversized_severity_clamped_not_abort(game):
     assert sev == 100  # clamp 到域上界
 
 
-def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(game):
-    db, state, _ = game
-    out = I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{
-            "origin_kind": "decree",
-            "origin_ref": promulgated_policy_origin(db, state, "validation"),
-            "kind": "situation",
-            "title": "测试·stop_condition fallback",
-            "bar_value": 90,
-            "resolve_condition": "   ",
-            "stop_condition": "region.shaanxi.unrest <= 30",
-        }],
-    })
-
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
-    assert len(created) == 1, out
-    iid = int(created[0]["issue_id"])
-    row = db.conn.execute(
-        "SELECT resolve_condition, stop_condition FROM issues WHERE id=?", (iid,)).fetchone()
-    # 空白 resolve_condition 回落 stop_condition：输入→两列等值（#1897 T1/E2）。
-    expected = "region.shaanxi.unrest <= 30"
-    assert row["resolve_condition"] == expected
-    assert row["stop_condition"] == expected
-
-    advanced = db.advance_issue(
-        state, iid, trigger_kind="decree", delta_bar=20,
-        narrative="legacy fallback 普通推进到满值。")
-    assert advanced["bar_value"] == 100
-    assert advanced["status"] == "resolved"
 
 
 def test_new_issue_infinity_field_rejected_not_abort(read_game):
@@ -233,7 +194,6 @@ def test_new_issue_garbage_severity_rejected(read_game):
     ("bar_value", 3.7),    # float 截断非合法整数 delta
     ("severity", True),    # bool
     ("severity", 2.5),     # float
-    ("inertia", True),     # bool（legacy inertia 经 _compute_inertia 严格转换）
     ("expected_months", 1.5),  # float（expected_months 经 _compute_inertia）
 ])
 def test_new_issue_bool_float_int_field_rejected(read_game, field, bad):

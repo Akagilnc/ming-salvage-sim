@@ -2,7 +2,7 @@
 
 真实入口：草稿落桌（#1849 后走现行 capture 核 + session.add_directive；
 独立手拟新增 Web 口已退役）→ POST /api/decree/issue/stream；
-下月供料经 session.write_decree → write_decree_with_agno 真实投影。
+下月供料经草案读改与月链接缝。
 断言 SSE 终态与 turn_directives / rejection_reports / dossier 结构化字段。
 
 本文件只断言结构化事实（供料入参 / 案卷字段 / DB 终态 / 错误包 manifest），
@@ -26,10 +26,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import ming_sim.cli_backend as cb
-import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 import web_app
-from ming_sim.decree import write_decree_with_agno as _real_write_decree_with_agno
 from ming_sim.error_pack import latest_error_pack_for_turn
 from tests.army_pay_helpers import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import (
@@ -259,24 +257,6 @@ def _rejection_rows(game, directive_id: int):
     ).fetchall()
 
 
-def _write_decree_capture_payloads(monkeypatch, game) -> list[dict]:
-    """恢复真实 write_decree_with_agno；截 agent.run 入参 JSON（拟诏真实入口）。"""
-    captured: list[dict] = []
-
-    class _CapturingAgent:
-        def run(self, text):
-            captured.append(json.loads(text) if isinstance(text, str) else dict(text))
-            return type("RunOut", (), {"content": "奉天承运，诏曰：着户部清核辽饷。"})()
-
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", _real_write_decree_with_agno)
-    monkeypatch.setattr(
-        decree_mod, "create_decree_writer_agent",
-        lambda *a, **k: _CapturingAgent(),
-    )
-    game.session.write_decree()
-    return captured
-
-
 def test_draft_admission_resubmit_success_advances_month(admission_game, monkeypatch):
     """补交路：原抽坏 → 第一次重写仍坏 → 第二次重写成案 → 月推进。
 
@@ -388,15 +368,12 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     _finish_month_after_gazette(game, turn)
     assert source_turn < int(game.state.turn)
 
-    # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
-    # （跨月未入档边界的外部可见契约；不直调私有 _carryover_drafts）
-    payloads = _write_decree_capture_payloads(monkeypatch, game)
-    assert payloads
-    feed_item = next(
-        d for d in payloads[0]["directives"]
-        if str(d.get("text") or "") == str(row["text"] or "")
+    # 跨月 carryover：draft 仍在、无案卷——不经已退出的 write_decree 供料 helper。
+    assert any(
+        int(r["id"]) == did and int(r["turn"]) < int(game.state.turn)
+        for r in game.db.list_directives(game.state, statuses=("draft",))
     )
-    assert feed_item.get("admission_status") == "上月未入档"
+    assert game.db.get_dossier_for_directive(did) is None
 
     # 刷新/恢复：同库重开身份一致、无重复案卷
     db_path = str(game.db.path)
@@ -639,7 +616,6 @@ def test_exhaust_zero_dossier_system_simulation_no_decree(
     # 陈旧拟诏稿：旧行为会把它当本月已颁送入 resolve（player_decree 误计）
     stale = "陈旧拟诏稿·不得视为本月已颁·#1769"
     game.session.last_decree = stale
-    game.session._decree_draft_fingerprint = ((did, "stale"),)
 
     resolve_calls: list[dict] = []
     real_resolve = session_mod.resolve_directives

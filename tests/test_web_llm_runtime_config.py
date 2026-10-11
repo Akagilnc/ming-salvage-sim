@@ -33,10 +33,6 @@ def test_menu_status_active_cli_unsupported_runner_not_ready_despite_preserved_a
         "channel": "cli",
         "api": {"base_url": "https://api.example.com/v1", "model": "gpt-api", "api_key": "sk-real-key"},
         "cli": {"runner": "bogus", "model": "gpt-5.5", "timeout_seconds": "240"},
-        # 顶层别名暴露 API 槽（_normalize_runtime_llm 行为）。
-        "base_url": "https://api.example.com/v1",
-        "model": "gpt-api",
-        "api_key": "sk-real-key",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -59,7 +55,6 @@ def test_menu_status_active_cli_placeholder_api_key_not_counted(monkeypatch):
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": "cli-backend"},
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
-        "api_key": "cli-backend",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -81,7 +76,6 @@ def test_menu_status_reports_reasoning_strength_capability_for_cli_runner(monkey
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": ""},
         "cli": {"runner": "agy", "model": "", "timeout_seconds": "240", "reasoning_strength": "high"},
-        "reasoning_strength": "high",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -130,11 +124,13 @@ def test_menu_status_uses_advanced_model_for_api_reasoning_capability(monkeypatc
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "api",
-        "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
-        "api_key": "sk-test",
-        "advanced_base_url": "https://api.example.com/v1",
-        "advanced_model": "gpt-5",
+        "api": {
+            "base_url": "https://api.deepseek.com/v1",
+            "model": "deepseek-chat",
+            "api_key": "sk-test",
+            "advanced_base_url": "https://api.example.com/v1",
+            "advanced_model": "gpt-5",
+        },
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -572,7 +568,7 @@ def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch)
     saved = []
     monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
     monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved.append((a, k)))
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api_key": "cli-backend"})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api": {"api_key": "cli-backend"}})
 
     with pytest.raises(web_app.HTTPException) as exc:
         asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(

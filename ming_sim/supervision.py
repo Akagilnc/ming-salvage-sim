@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ming_sim.appointment_tenure import normalize_appointment_tenure
-from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.qualitative import qualitative_character_axis
 
 # 监督关系：本票只记「稽核」在场（护卫属 #567 押解口径，不入钝化事实底）

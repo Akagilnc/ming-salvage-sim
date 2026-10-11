@@ -9,13 +9,10 @@ from __future__ import annotations
 
 import json
 import threading
-import sqlite3
 from pathlib import Path
 
 import pytest
 
-import ming_sim.decree as decree_mod
-from ming_sim.exceptions import SettlementAbort
 
 def test_attempt_derived_from_existing_dirs(game, monkeypatch, tmp_path):
     """同 turn 写两次包 → attempt=1,2（从错误目录文件数推导，不从 DB）。"""

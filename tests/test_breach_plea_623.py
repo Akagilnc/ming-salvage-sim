@@ -688,7 +688,6 @@ def test_persist_leaves_execution_verdict_to_model(game):
     ).fetchone()["status"] == "dropped"
 
 
-
 def test_persist_remove_sponsor_no_0056(game):
     """0041③：撤人坚持不触发 0056；案卷终局仍归模型判决。"""
     db, state, content = game
@@ -824,7 +823,6 @@ def test_kind_gate_apply_only_finalizes_staged(game):
         "stage_idx": 0, "due_turn": state.turn,
         "criterion_text": "火器", "origin_context": "三年火器",
     }]
-    from ming_sim.issues import apply_score_extraction as ase
     # 用 staged 写端
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     cid_staged, _ = _insert_commitment(

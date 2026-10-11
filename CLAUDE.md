@@ -8,7 +8,7 @@
 - **[docs/DELTA_SCHEMA.md](docs/DELTA_SCHEMA.md)** — 我产 delta JSON 的格式契约：顶层字段、字段约束、白名单、踩过的坑。**产 delta 前查。**
 - **[docs/SETTLEMENT_FLOW.md](docs/SETTLEMENT_FLOW.md)** — 月末结算管线：玩家月链顺序 + 不变式 + 接口层。**写过月 / 结算时查。**
 - **[TODOS.md](TODOS.md)** — 待修 bug + 探针工程待办。**每回合结算前扫一眼有无"本月要顺手修"的项**。
-- **[docs/FISCAL_PROVINCE_SUBSTRATE.md](docs/FISCAL_PROVINCE_SUBSTRATE.md)** — 省级财政基座设计（三饷/火耗/起运存留/宗禄/逋赋/隐田），**22 轮跨模型评审已收敛，现 v23（2026-06-10 拍板补「三饷计火耗」：火耗应派=(正赋+三饷)×火耗率）**；可执行 spike `spike_settle_tick.py`（G1–G22 全 PASS，5 层断言+独立 oracle，~20 mutation 自验全咬）。**状态：`ming_sim` 已 port 省级 tick/DB bridge；新档已接入 substrate hub cutover，明控且已 seed 的省级起运、盐税、商税、太仓亏空、边饷 hub 与中央军饷开始驱动国库和分源欠饷；旧档保留 legacy 财政引擎**（见 [Milestone #1](https://github.com/Akagilnc/ming-salvage-sim/milestone/1) / Epic #65 / #261）。**非每回合必查；要动省级财政机制时查。**
+- **[docs/FISCAL_PROVINCE_SUBSTRATE.md](docs/FISCAL_PROVINCE_SUBSTRATE.md)** — 省级财政基座设计（三饷/火耗/起运存留/宗禄/逋赋/隐田），**22 轮跨模型评审已收敛，现 v23（2026-06-10 拍板补「三饷计火耗」：火耗应派=(正赋+三饷)×火耗率）**；可执行 spike `spike_settle_tick.py`（G1–G22 全 PASS，5 层断言+独立 oracle，~20 mutation 自验全咬）。**状态：`ming_sim` 已 port 省级 tick/DB bridge；现役仅 substrate hub：明控且已 seed 的省级起运、盐税、商税、太仓亏空、边饷 hub 与中央军饷驱动国库和分源欠饷（#1812 清退 legacy 双轨）**（见 [Milestone #1](https://github.com/Akagilnc/ming-salvage-sim/milestone/1) / Epic #65 / #261）。**非每回合必查；要动省级财政机制时查。**
 - **[docs/AUDIENCE_NORTH_STAR.md](docs/AUDIENCE_NORTH_STAR.md)** — 召对体验**北极星案例**（单场·越次召对·杨嗣昌 + 连场·乾清宫一夜）：召对记录全文 + 海报 html + 小红书卡 + 王承恩递话旁白层 + 召对流程用词。**做 / 评召对时对着它比。**
 - **[M11「北极星·召对效果」总计划/进度 = issue #486](https://github.com/Akagilnc/ming-salvage-sim/issues/486)**（pinned tracker，2026-07-02 立）——10 大方向执行顺序 + 排序逻辑 + 4.5 试玩检查点 + 进展评论日志。**做召对 / M11 相关工作先看它**；阶段进展只用 #486 评论追加，**别另建 md 工作清单**（工作清单曾以 M11-work-order.md 形态存在，已废转 tracker）。层级：#486（顺序）→ #470-479（大方向）→ 各自 sub-issues（方向/PRD/切片，原生挂接带进度条）。
 
@@ -26,7 +26,7 @@
 
 **总纲（宪法级，2026-08-18 owner 拍；一切立法/票面/判词不得绕开，抵触即违宪）**：引擎存在的唯一理由是 LLM 记忆有限——**引擎=物理事实账本**，负责记录、记住、提供世界的物理事实，是唯一不会忘的东西（P1 因此是第一铁律），但引擎不是游戏本体。**物理事实和人（皇帝、大臣）能看见的没有任何强制关联**：奏报可载假象、账面可虚存、国库数字可以是假的（看着有花不出不稀奇）——真相只活在账本，呈现层是「人在说话」，而人会骗人。
 
-- **P1 决策当回合全量落库（第一铁律）**：凡下旨，机械后果**必须当回合全量落进 DB**，不许只活在邸报——带经费/俸/饷→`fiscal_creates`；练兵/募营/调将镇地→`new_armies`+`office_changes`；抄没/缴获/一次性→`economy_moves`；人物升黜→`office_changes`/`character_status_changes`。**判据**：restore 只读 DB 能无损接续=到位；需"我记得"补=漏了。（context 压缩后只剩 DB，挂叙事的后果全丢——探针实测最痛点。）
+- **P1 决策当回合全量落库（第一铁律）**：凡下旨，机械后果**必须当回合全量落进 DB**，不许只活在邸报——带经费/俸/饷→`fiscal_creates`；练兵/募营/调将镇地→`new_armies`+`人物变更`；抄没/缴获/一次性→`economy_moves`；人物升黜→`人物变更`。**判据**：restore 只读 DB 能无损接续=到位；需"我记得"补=漏了。（context 压缩后只剩 DB，挂叙事的后果全丢——探针实测最痛点。）
 - **P3 品味护栏 → [docs/ROLE_FIDELITY.md](docs/ROLE_FIDELITY.md)**：国策=旨意的具体后果（建军/人物去向/营建/财政/局势的此刻实体后果），**不是科技树/进度面板**；真护栏=皇帝角色保真 + 冰汽时代式高压求生（破局可真）；长线发展须「diegetic 形态 + 史实合理尺度」两轴过。⚠️ 只写 docs、不进游戏 prompt。全文与理由变更史见专档。
 - **P2 军备/城防建模（数据轴，判战永远 LLM 软判，代码只 clamp 不算胜负）**：军队 `firearm_equipment` 0-100（鸟铳，野战+守城）、`cannon_equipment` 随军红夷炮门数 cap 12（野战带不动多）；地区 `city_level` 0-5（静态史实分级，京师5）、`cannon` 城防红夷炮门数 cap=`city_level×8`（城头炮，守城关键）。佛郎机轻炮归 firearm；随军炮利攻、城防炮利守。
 - **P4 呈现层：DB 有数，皇帝无表（用户核心原则，2026-06-12 拍）**：玩家（皇帝）**永不见裸数值**——忠诚/能力/家产等一律定性叙事呈现（「军事能力优秀」，不是「98」；家产例外——按 0122 报约数放行：「家赀约数十万两」式奏报口吻合法，0143 沿用）；皇帝透过奏对/行为/传闻读人，不看角色卡。数值照旧活在 DB 供引擎（与 P2 不冲突：P2 管引擎侧建模，P4 管呈现侧翻译）。配套方向（机制未设计，勿擅自展开）：锦衣卫可查家产但不保证准、精度拟挂目标「阴谋」类能力；叙事可留线索（「国丈哭穷」本身就是信息）。落 prompt 时用正向表述（「以奏疏口吻定性描述人物」），不写「不要显示数值」式负向句。

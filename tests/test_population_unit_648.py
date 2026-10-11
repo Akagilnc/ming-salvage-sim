@@ -102,6 +102,7 @@ def test_new_save_regions_seed_persons_scale(game):
 
 # ── 旧档双口径（F4）───────────────────────────────────────────────────────
 
+# ── 五项 mutation 验收矩阵（AC4+AC8 合并，逐项钉期望口径）──────────────
 
 # ── 五项 mutation 验收矩阵（AC4+AC8 合并，逐项钉新旧档期望口径）──────────────
 
@@ -165,7 +166,7 @@ def test_web_region_payload_has_no_population_wan_projection(web_game):
 # ── on_restore 收复单位接缝（ADR 0088：content 静态真源已全线「人」）───────────
 
 JIANZHOU_OPENING_POP_PERSONS = 1200000  # 新档开局建州人口（人）
-JIANZHOU_RESTORE_POP_PERSONS = 900000   # content on_restore 90（万）→ 迁「人」
+JIANZHOU_RESTORE_POP_PERSONS = 900000   # content on_restore 预置按「人」落库
 
 
 def _settle_region_delta(db, state, content, delta):

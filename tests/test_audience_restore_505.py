@@ -32,6 +32,7 @@ from web_app import FRONT_HALF_DONE_PHASES
 # ── 真实开局 / 重开 helpers ──────────────────────────────────────────
 
 
+
 def _active_minister(db, content) -> str:
     for name, ch in content.characters.items():
         if getattr(ch, "power_id", "ming") != "ming":
@@ -91,9 +92,6 @@ def _reopen(path, content):
     return _open_db(path, content, first=False)
 
 
-# ── AC1/AC4 账本逐条一致、恢复路径未删任何账 ──────────────────────────
-
-
 def test_reopen_reconcile_preserves_ledger_exactly(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -113,10 +111,6 @@ def test_reopen_reconcile_preserves_ledger_exactly(restore_env):
         assert ledger_after == ledger_before
     finally:
         db2.close()
-    # keep db handle count sane for fixture teardown
-
-
-# ── AC3 半途回话丢弃 + 问话保留、不阻塞、可重试 ──────────────────────
 
 
 def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
@@ -187,9 +181,6 @@ def test_reconcile_does_not_delete_question_row(restore_env):
         assert after == before  # 一条问话都不删
     finally:
         db2.close()
-
-
-# ── AC2 纯奏对零账目段寸步不丢 ───────────────────────────────────────
 
 
 def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
@@ -437,9 +428,6 @@ def test_retry_rejected_in_settlement_phase(web_game):
     ).fetchone()["c"] == 0
 
 
-# ── finding5：reconcile 截断在飞轮的 Agno runs 到本轮起点（retry 上下文不双倍）──
-
-
 def _ensure_agno_runs_table(db) -> None:
     # Columns match Agno 3 SqliteDb so public get_session can read mixed-state.
     db.conn.execute(
@@ -473,19 +461,6 @@ def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
             (rid, session_id, i, json.dumps({"run_id": rid}), i + 1),
         )
     db.conn.commit()
-
-
-def _insert_agno_table_run(db, session_id: str, run_id: str, run_index: int) -> None:
-    """Insert one Agno 3 table run row (shared by transport failpath fixtures)."""
-    _ensure_agno_runs_table(db)
-    db.conn.execute(
-        "INSERT INTO agno_runs "
-        "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
-        "VALUES (?, ?, 'agent', 'FAILED', ?, ?, ?)",
-        (run_id, session_id, run_index, json.dumps({"run_id": run_id}), run_index + 1),
-    )
-    db.conn.commit()
-
 
 def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     env = restore_env
@@ -547,26 +522,29 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
 
 
 def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
-    """#1716：fresh Agno 3 首轮已落 run 后，公开 chat_stream 第二轮须受理。
+    """#1716：fresh Agno 3 首轮已落 run 后，生产 _start_chat_turn 第二轮须受理。
 
-    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送读 runs 长度；
+    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送在 _start_chat_turn 读 runs 长度；
     旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
     断言第二轮 create 成功且 agno_runs_before=既有 run 数。
     """
     game = web_game
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="戌时")
-    sid = f"scene-night-{int(night['id'])}"
+    minister = _active_minister(game.db, game.content)
+    an.open_night(game.db, game.state)
+    sid = game._minister_agno_session_id()
+    # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
     _seed_agno_v3_runs(game.db, sid, run_count=1)
     assert game.db.agno_runs_length(sid) == 1
 
-    events = list(game.chat_stream(an.SCENE_CHAT_SPEAKER, "剿抚孰先？"))
-    assert any(ev.get("type") == "accepted" for ev in events)
+    chat_turn_id, _snapshot = game._start_chat_turn(minister)
     row = game.db.conn.execute(
-        "SELECT agno_session_id, agno_runs_before FROM chat_turns ORDER BY id DESC LIMIT 1"
+        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
+        (chat_turn_id,),
     ).fetchone()
     assert row is not None
     assert row["agno_session_id"] == sid
     assert int(row["agno_runs_before"]) == 1
+    assert row["status"] == "generating"
 
 
 def test_load_save_reconciles_interrupted_orphan(web_game):

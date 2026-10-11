@@ -72,7 +72,7 @@ class Affair:
 
 
 class AffairStore:
-    """World-record home for affairs. Close only by explicit declaration."""
+    """World-record home for affairs. Birth and pointers only; no close action."""
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
@@ -315,12 +315,6 @@ class AffairStore:
     def origin_ref(affair_id: int) -> str:
         return f"{_ORIGIN_AFFAIR}:{int(affair_id)}"
 
-    def origin_refs(self, affair_id: int) -> tuple[str, ...]:
-        self.get(affair_id)
-        refs = [self.origin_ref(affair_id)]
-        refs.extend(f"{_ORIGIN_DOSSIER}:{int(row['id'])}" for row in self.dossiers(affair_id))
-        return tuple(refs)
-
     def affair_id_for_issue(self, issue_id: int) -> int:
         row = self._conn.execute(
             "SELECT affair_id FROM issues WHERE id=?", (int(issue_id),)
@@ -390,6 +384,7 @@ class AffairStore:
         return self.origin_ref(affair_id)
 
 
+
 def parse_positive_affair_id(raw: object) -> int:
     """Affair identity: reject bool/float/超 SQLite 界, keep integer-string compat, require >0."""
     value = strict_sqlite_id(raw, accept_numeric_strings=True)
@@ -417,7 +412,7 @@ def parse_affair_declaration(
         if not name.strip() or not origin.strip():
             raise ValueError("新事务声明须有名字与起因")
         key = str(raw.get("birth_key") or "").strip()
-        identity = str(raw.get("identity") or "").strip()
+        identity = str(raw.get("identity") or "")
         out: dict[str, object] = {"attach": _ATTACH_NEW, "name": name, "origin": origin}
         if key:
             out["birth_key"] = key
@@ -427,7 +422,7 @@ def parse_affair_declaration(
     try:
         affair_id = parse_positive_affair_id(raw.get("affair_id"))
     except (TypeError, ValueError) as exc:
-        raise ValueError("接到已开事务须有 affair_id") from exc
+        raise ValueError(f"接到已开事务 affair_id 无效：{exc}") from exc
     return {"attach": attach, "affair_id": affair_id}
 
 

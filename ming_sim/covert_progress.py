@@ -22,6 +22,7 @@ from ming_sim.centrifuge_ledger import CENTRIFUGE_AXES
 from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 from ming_sim.value_matrix import (
+    normalize_axis,
     normalize_axes,
     normalize_direction,
 )
@@ -137,25 +138,22 @@ def progress_units_for_state(state: object) -> float:
 _DEBT_SEVERITIES = frozenset({"轻", "中", "重"})
 
 
+def _parse_seed_guilt(seed_guilt: object) -> dict:
+    """Durable characters.seed_guilt object. Legal empty → {}. Corrupt raises."""
+    if seed_guilt == "":
+        return {}
+    if isinstance(seed_guilt, Mapping):
+        return dict(seed_guilt)
+    from ming_sim.models import _load_durable_json_object
+    return _load_durable_json_object(seed_guilt, surface="characters.seed_guilt")
+
+
 def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
     """真相底只收结构化罪情。severity ∈ {轻, 中, 重} 才入罪谱。
 
-    crime 是说明散文，不承重。解析失败、非对象、severity 为空或「无」，都不造罪
-    （W4/#1896：裸散文／解析失败不造罪）。
+    crime 是说明散文，不承重。合法空／severity 为空或「无」都不造罪；腐坏 JSON 响亮。
     """
-    if isinstance(seed_guilt, Mapping):
-        guilt: object = seed_guilt
-    else:
-        text = str(seed_guilt or "").strip()
-        if not text:
-            return False
-        try:
-            parsed = json.loads(text)
-        except (TypeError, ValueError):
-            return False
-        if not isinstance(parsed, Mapping):
-            return False
-        guilt = parsed
+    guilt = _parse_seed_guilt(seed_guilt)
     severity = str(guilt.get("severity") or "").strip()
     return severity in _DEBT_SEVERITIES
 
@@ -171,7 +169,7 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         source = nested
     else:
         source = payload
-    kind = str(source.get("kind") or payload.get("kind") or "").strip()
+    kind = str(source.get("kind") or payload.get("kind") or "")
     axes = source.get("axes")
     if axes is None:
         axes = payload.get("axes")
@@ -229,17 +227,17 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         or source.get("investigation_target")
         or payload.get("investigation_target")
         or ""
-    ).strip()
+    )
     investigation_fact = str(
         delivery.get("investigation_fact")
         or source.get("investigation_fact")
         or payload.get("investigation_fact")
         or ""
-    ).strip()
-    if not kind and not unit and target is None and not normalize_axes(axes) and not investigation_target:
+    )
+    if not kind.strip() and not unit and target is None and not normalize_axes(axes) and not investigation_target.strip():
         return None
     out: Dict[str, object] = {}
-    if kind:
+    if kind.strip():
         out["kind"] = kind
     if axes is not None:
         out["axes"] = axes
@@ -368,15 +366,15 @@ def build_covert_task_contract(
             investigation_target = extracted.get("investigation_target")
         if investigation_fact is None:
             investigation_fact = extracted.get("investigation_fact")
-    resolved_kind = str(kind or "").strip()
-    if not resolved_kind:
+    resolved_kind = str(kind or "")
+    if not resolved_kind.strip():
         raise CovertContractError("密令确认缺少差务类型")
     axis_list = normalize_axes(axes)
     if not axis_list:
         raise CovertContractError("密令确认缺少价值轴")
     direction_i = normalize_direction(direction, default=1)
-    inv_target = str(investigation_target or "").strip()
-    if inv_target:
+    inv_target = str(investigation_target or "")
+    if inv_target.strip():
         try:
             qty = float(delivery_target_units)
         except (TypeError, ValueError):
@@ -398,8 +396,8 @@ def build_covert_task_contract(
             "investigation_target": inv_target,
             "delivery": delivery,
         }
-        inv_fact = str(investigation_fact or "").strip()
-        if inv_fact:
+        inv_fact = str(investigation_fact or "")
+        if inv_fact.strip():
             # 线索所指事实：汇案时按它把真实线索绑到对应实证（J9）。
             contract["investigation_fact"] = inv_fact
             delivery["investigation_fact"] = inv_fact
@@ -425,8 +423,8 @@ def build_covert_task_contract(
                     raise CovertContractError("密令确认补饷必须指定 target_kind=army 与有效 target_id")
                 delivery["target_kind"] = kind_text
                 delivery["target_id"] = id_text
-    category_text = str(category or "").strip()
-    if category_text:
+    category_text = str(category or "")
+    if category_text.strip():
         delivery["category"] = category_text
     account_text = str(account or "").strip()
     if account_text:
@@ -591,8 +589,8 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
         _reject("direction 非法")
     inv_target = str(
         raw.get("investigation_target") or delivery.get("investigation_target") or ""
-    ).strip()
-    if inv_target:
+    )
+    if inv_target.strip():
         try:
             qty = float(delivery.get("target_units"))
         except (TypeError, ValueError) as exc:
@@ -639,7 +637,10 @@ def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[
     # CONTRACT_KEY 缺席 → None；present 坏值由 coerce 响亮。
     if CONTRACT_KEY not in payload:
         return None
-    return coerce_covert_task_contract(payload.get(CONTRACT_KEY))
+    contract = coerce_covert_task_contract(payload[CONTRACT_KEY])
+    if contract is None:
+        raise CovertContractError("密令案卷 typed covert-task contract 腐坏")
+    return contract
 
 
 def require_covert_task_contract(dossier: Mapping[str, object] | None) -> Dict[str, object]:
@@ -656,7 +657,7 @@ def contract_target_units(contract: Mapping[str, object]) -> float:
     try:
         target = float(delivery.get("target_units"))
     except (TypeError, ValueError) as exc:
-        raise CovertContractError("typed contract 缺少可数目标") from exc
+        raise CovertContractError(f"typed contract delivery.target_units 非数值：{exc}") from exc
     if target <= 0.0:
         raise CovertContractError("typed contract 目标必须为正数")
     return target
@@ -743,8 +744,8 @@ def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str,
                 return False
             if str(item.get("target_id") or "").strip() != str(delivery.get("target_id") or "").strip():
                 return False
-    category = str(delivery.get("category") or "").strip()
-    if str(item.get("category") or "").strip() != category:
+    category = str(delivery.get("category") or "")
+    if str(item.get("category") or "") != category:
         return False
     account = str(delivery.get("account") or "").strip()
     if str(item.get("account") or "").strip() != account:
@@ -753,10 +754,7 @@ def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str,
 
 
 def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
-    try:
-        delta = float(row["delta"] or 0)
-    except (TypeError, ValueError, KeyError):
-        return False
+    delta = float(row["delta"] or 0)
     sign = int(delivery.get("effect_sign") or 0)
     return (
         ((sign < 0 and delta < 0) or (sign > 0 and delta > 0))
@@ -808,16 +806,7 @@ def _seed_guilt_severity(db: Any, target: str) -> str:
     ).fetchone()
     if row is None:
         return ""
-    raw = row["seed_guilt"]
-    if isinstance(raw, Mapping):
-        return str(raw.get("severity") or "").strip()
-    text = str(raw or "").strip()
-    if not text:
-        return ""
-    parsed = GameDB.parse_engine_payload_json(
-        text, surface="characters.seed_guilt",
-    )
-    return str(parsed.get("severity") or "").strip()
+    return str(_parse_seed_guilt(row["seed_guilt"]).get("severity") or "").strip()
 
 
 def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]]:
@@ -959,7 +948,9 @@ def _append_investigation_log(
     """
     payload = _dossier_payload_map(db, dossier_id)
     raw = payload.get(key)
-    items = list(raw) if isinstance(raw, list) else []
+    if raw is not None and not isinstance(raw, list):
+        raise ValueError(f"{key} 须为数组，得 {type(raw).__name__}")
+    items = list(raw or [])
     items.append(dict(entry))
     payload[key] = items
     db.update_decree_dossier_payload(int(dossier_id), payload)
@@ -1065,10 +1056,7 @@ def investigation_fact_difficulty(
             "SELECT ability FROM characters WHERE name=?", (worker,),
         ).fetchone()
         if ability_row is not None:
-            try:
-                ability = float(ability_row["ability"])
-            except (TypeError, ValueError):
-                ability = _ABILITY_REFERENCE
+            ability = float(ability_row["ability"])
             # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零，
             # 不另立「能力为零则拒绝」的闸，也不把前置因子覆盖成常数。
             # 解析失败或非有限值仍按参考能力（乘子为 1）。
@@ -1145,11 +1133,8 @@ def investigation_monthly_capacity(
         return _CAPACITY_MIN  # 未到差：无差可查，投入为零
     capacity = 1.0
     if row is not None:
-        try:
-            ability = float(row["ability"])
-        except (TypeError, ValueError):
-            ability = _ABILITY_CAPACITY_REFERENCE
-        # 零参与同一带宽公式。解析失败或非有限值用参考能力。
+        ability = float(row["ability"])
+        # 零参与同一带宽公式。非有限值用参考能力。
         if math.isfinite(ability):
             capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
                 (ability - _ABILITY_CAPACITY_REFERENCE) / _ABILITY_CAPACITY_REFERENCE
@@ -1188,8 +1173,10 @@ def record_investigation_source_clue(
         return  # 无指针的开案不是一条来源线索，不造
     payload = _dossier_payload_map(db, int(dossier_id))
     clues = payload.get(INVESTIGATION_CLUES_KEY)
-    if not isinstance(clues, list):
+    if clues is None:
         clues = []
+    elif not isinstance(clues, list):
+        raise ValueError(f"{INVESTIGATION_CLUES_KEY} 须为数组，得 {type(clues).__name__}")
     clues.append({
         "pending_action_id": 0,
         "origin_chat_message_ids": [],
@@ -1246,8 +1233,7 @@ def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:
 
 def investigation_clue_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
     """案卷已并入的真实线索（各源汇案），含是否已被本月核算消费。"""
-    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_CLUES_KEY)
-    return [dict(x) for x in raw if isinstance(x, Mapping)] if isinstance(raw, list) else []
+    return _mapping_members(_dossier_payload_map(db, dossier_id).get(INVESTIGATION_CLUES_KEY), INVESTIGATION_CLUES_KEY)
 
 
 def _route_pointerless_clue(lanes: List[Dict[str, object]], target: str) -> str:
@@ -1526,13 +1512,24 @@ def _investigation_tips(db: Any, dossier_id: int, target: str) -> List[Dict[str,
     ]
 
 
+def _mapping_members(raw: object, key: str) -> List[Dict[str, object]]:
+    """持久对象列表读口：缺省（None）为空；非列表或非对象成员响亮失败，不静默丢弃。"""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{key} 须为数组，得 {type(raw).__name__}")
+    out: List[Dict[str, object]] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"{key}[{index}] 须为对象，得 {type(item).__name__}")
+        out.append(dict(item))
+    return out
+
+
 def _tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
     if not int(dossier_id or 0):
         return []
-    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_TIPS_KEY)
-    if not isinstance(raw, list):
-        return []
-    return [dict(x) for x in raw if isinstance(x, Mapping)]
+    return _mapping_members(_dossier_payload_map(db, dossier_id).get(INVESTIGATION_TIPS_KEY), INVESTIGATION_TIPS_KEY)
 
 
 def investigation_tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
@@ -1544,10 +1541,7 @@ def investigation_action_records(db: Any, dossier_id: int) -> List[Dict[str, obj
     """4a 供料读口：本案已落账的人物真实行动声明（查法／压案）。"""
     if not int(dossier_id or 0):
         return []
-    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_ACTS_KEY)
-    if not isinstance(raw, list):
-        return []
-    return [dict(x) for x in raw if isinstance(x, Mapping)]
+    return _mapping_members(_dossier_payload_map(db, dossier_id).get(INVESTIGATION_ACTS_KEY), INVESTIGATION_ACTS_KEY)
 
 
 def apply_investigation_spoliation(
@@ -1598,7 +1592,7 @@ def _investigation_target_of(contract: Mapping[str, object]) -> str:
     delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
     return str(
         contract.get("investigation_target") or delivery.get("investigation_target") or ""
-    ).strip()
+    )
 
 
 def _investigation_fact_of(contract: Mapping[str, object]) -> str:
@@ -1606,7 +1600,7 @@ def _investigation_fact_of(contract: Mapping[str, object]) -> str:
     delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
     return str(
         contract.get("investigation_fact") or delivery.get("investigation_fact") or ""
-    ).strip()
+    )
 
 
 def find_active_investigation_order_id(db: Any, target: str) -> int:
@@ -1647,8 +1641,10 @@ def merge_investigation_confirmation(
     payload = _dossier_payload_map(db, did)
     turn = int(getattr(state, "turn", 0) or 0)
     sources = payload.get(INVESTIGATION_PROVENANCE_KEY)
-    if not isinstance(sources, list):
+    if sources is None:
         sources = []
+    elif not isinstance(sources, list):
+        raise ValueError(f"{INVESTIGATION_PROVENANCE_KEY} 须为数组，得 {type(sources).__name__}")
     sources.append({
         "pending_action_id": int(pending_action_id or 0),
         "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
@@ -1658,8 +1654,10 @@ def merge_investigation_confirmation(
     key = str(fact_key or "").strip()
     if key:
         clues = payload.get(INVESTIGATION_CLUES_KEY)
-        if not isinstance(clues, list):
+        if clues is None:
             clues = []
+        elif not isinstance(clues, list):
+            raise ValueError(f"{INVESTIGATION_CLUES_KEY} 须为数组，得 {type(clues).__name__}")
         clues.append({
             "pending_action_id": int(pending_action_id or 0),
             "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
@@ -1963,8 +1961,8 @@ def _apply_investigation_selection(
     ]
     existing = existing_rows[0] if existing_rows else None
     declaration = _investigation_declaration(sel)
-    invalid = str(declaration.get("invalid") or "").strip()
-    if invalid:
+    invalid = str(declaration.get("invalid") or "")
+    if invalid.strip():
         return {
             "order_id": oid,
             "dossier_id": did,

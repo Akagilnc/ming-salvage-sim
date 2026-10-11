@@ -8,6 +8,12 @@ from __future__ import annotations
 
 import json
 import re
+
+from ming_sim.models import (
+    _load_durable_json_object,
+    loads_persistent_name_list,
+    require_persistent_string_list,
+)
 from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
@@ -380,16 +386,9 @@ def build_character_knowledge(
         if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         else:
-            # 已持久 target_roster 腐坏响亮，不洗成空名单改准入（#1897 E1）。
-            from ming_sim.db import _load_durable_json_list
-
-            target_roster = _load_durable_json_list(
-                issue["target_roster"],
-                surface=f"弹劾潮#{int(issue['id'])}.target_roster",
+            target_roster = loads_persistent_name_list(
+                issue["target_roster"], surface="issues.target_roster",
             )
-            target_roster = [
-                str(target).strip() for target in target_roster if str(target).strip()
-            ]
         visible_issues.append({
             "id": int(issue["id"]), "kind": issue["kind"],
             "origin_kind": issue["origin_kind"], "origin_ref": issue["origin_ref"],

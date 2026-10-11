@@ -95,8 +95,8 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
             msgs = getattr(last, "messages", None)
             if last is not None:
                 run_src = last
-        except Exception as exc:  # noqa: BLE001 — dump 是调试旁路，不中断主路径但须留真因
-            tlog(f"[DUMP-LLM] get_last_run_output failed: {type(exc).__name__}: {exc}")
+        except Exception as exc:  # noqa: BLE001 — dump 是调试旁路，任何异常都不该断结算
+            tlog(f"[{tag}] dump get_last_run_output failed: {type(exc).__name__}: {exc}")
             msgs = None
     if not msgs:
         return
@@ -370,7 +370,7 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
         data = json.loads(raw)
     except json.JSONDecodeError as error:
         raise LLMContractError(
-            f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",
+            f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw}", raw_value=raw,
         ) from error
     if not isinstance(data, dict):
         abort_llm_contract(stage, "顶层必须是 JSON object", raw)
@@ -449,19 +449,6 @@ def create_promulgation_judge_agent(
     )
 
 
-def create_decree_writer_agent(llm_config: LLMConfig) -> Agent:
-    # 一次性 agent：add_history_to_context=False，无需持久化 → 不传 db，免得每次往
-    # <db>.emperor.db 的 agno_sessions 累积 runs 撑爆存档。
-    return Agent(
-        name="诏书润色官",
-        id="decree-writer",
-        model=create_chat_model(llm_config, temperature=0.3, top_p=0.9),
-        instructions=[_ctx().game_world_prompt, _ctx().decree_writer_prompt],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
 def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
     """#544 / ADR 0045：大臣奏对高亮判官——生成完成后的独立机器面短调用。"""
     return Agent(
@@ -477,9 +464,6 @@ def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
         add_history_to_context=False,
         markdown=False,
     )
-
-
-
 
 
 def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
@@ -522,6 +506,7 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     """
     from ming_sim.settlement_payload import decision_prompt_contract
     from ming_sim.materials import material_tools
+    from ming_sim.month_chain import LEVY_HANDOFF_RULE
 
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[world-segment] 使用模型 {describe_effective_model(cfg)}")
@@ -535,6 +520,9 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         "已经落账的旨不要重算，也不要写月末邸报。",
         "本段只写推演结果。",
         decision_prompt_contract(),
+        "若本段消息含 levy_petitions，请饷与议停只按交接契约写并停在问处："
+        + LEVY_HANDOFF_RULE,
+        "消息没有 levy_petitions 时，若需要皇帝裁决，在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
         "开场只有最小集。其余材料在当前目录，按需自读。",
         # #1893：候选事实在世界目录里（盘面/候选事件与弹劾潮.txt），本段自读、
         # 自行判定本月哪些真发生、哪个派系是否发难；不选的照实不写。
@@ -749,4 +737,3 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         add_history_to_context=False,
         markdown=False,
     )
-

@@ -69,4 +69,3 @@ export function EndingModal({ ending, failure, onClose, onRetry }: { ending: End
     </FullscreenModal>
   );
 }
-

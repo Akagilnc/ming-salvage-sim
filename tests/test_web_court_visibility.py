@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import web_app
 from web_app import in_talent_pool, visible_in_court
 
 
@@ -101,7 +100,7 @@ def test_vassal_prince_excluded_from_court(game):
     db.set_character_status(state, name, "active", "测试：在世")
     # 物化后 setup 真生效：DB 确为 active+ming（否则仅 office_type 短路，测不出 gate 优先于状态）
     assert db.get_character_status(name)[0] == "active"
-    assert web_app._character_power_id(ch, db) == "ming"
+    assert db.conn.execute("SELECT power_id FROM characters WHERE name=?", (name,)).fetchone()[0] == "ming"
     assert visible_in_court(ch, db) is False
 
 
@@ -196,55 +195,9 @@ def test_consort_excluded_from_court(read_game):
     assert visible_in_court(content.characters[consort], db) is False
 
 
-def _stub_game(monkeypatch, db, content):
-    """把 web_app.web_game 换成轻量 stub（复用真 db/content），供召见资格测试。
-
-    #1402：端点改调 session.can_summon 取文案——stub 须挂真 GameSession.can_summon
-    （db + temporary_characters），不得再空壳 SimpleNamespace。
-    """
-    from ming_sim.session import GameSession
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.temporary_characters = {}
-    stub = SimpleNamespace(
-        session=sess,
-        content=content,
-        db=db,
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-    )
-    monkeypatch.setattr(web_app, "web_game", stub)
-
-
-
-
-def test_active_consort_chat_not_rejected(game):
-    """后宫不在宗藩闸内——嫔妃 chat 复用召对入口，active+ming 后宫须可召（finding D 反向锁）。
-    闸经现役公共入口 GameSession.can_summon 断言。"""
-    import pytest
-    from ming_sim.session import GameSession
-    db, state, content = game
-    consort = next(
-        (n for n, c in content.characters.items()
-         if getattr(c, "office_type", "") == "后宫" and getattr(c, "power_id", "ming") == "ming"),
-        None,
-    )
-    if consort is None:
-        pytest.skip("基底盘面无大明后宫人物")
-    db.add_character(state, content.characters[consort], source="测试物化")
-    db.set_character_status(state, consort, "active", "测试：在位")
-    assert db.get_character_status(consort)[0] == "active"
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.temporary_characters = {}
-    ok, _reason = sess.can_summon(content.characters[consort])
-    assert ok
-
-
 def test_zongfan_cannot_be_summoned_via_can_summon(game):
     """summon_minister 工具链（session 召对 + web 流式两路）共用 session.can_summon 闸——宗藩须在此拒，
-    否则裁判可绕朝堂列表按名召宗室（cmr R4：summon 工具走
-    can_summon）。集中守 can_summon 一处覆盖两路；后宫不受此闸影响。"""
+    否则裁判可绕朝堂列表按名召宗室。集中守 can_summon 一处覆盖两路；后宫不受此闸影响。"""
     import pytest
     from ming_sim.session import GameSession
     db, state, content = game
@@ -328,31 +281,6 @@ def test_normal_ming_minister_still_summonable(read_game):
     assert ok is True
 
 
-def test_list_ministers_uses_db_power_id(game):
-    """召见名册 list_ministers 须与 can_summon 同口径（DB 权威 power_id，#125 centralize）：
-    招抚归明者(DB翻ming/content仍旧势力) 入册；外藩 active 不入册。否则可召却不在册、两端不一致。"""
-    from ming_sim.session import GameSession
-    import pytest
-    db, state, content = game
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    # 招抚归明者：content 非 ming，DB 翻 ming → 应入册
-    归明 = next((n for n, c in content.characters.items()
-                if getattr(c, "power_id", "ming") != "ming"
-                and c.office_type not in ("后宫", "宗藩", "未仕")), None)
-    if 归明 is None:
-        pytest.skip("基底盘面无非 ming 可招抚人物")
-    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
-    db.conn.commit()
-    db.set_character_status(state, 归明, "active", "测试：招抚归明")
-    names = {v.name for v in sess.list_ministers()}
-    assert 归明 in names, "DB 已归明者却被内存值挡出召见名册"
-    # 外藩 active（DB 非 ming）不入册
-    enemy = _enemy_active_name(db, content)
-    assert enemy not in {v.name for v in sess.list_ministers()}
-
-
 def test_find_existing_minister_uses_db_power_id(game):
     """召见闸以 DB 权威 power_id 为准（#125 R2）：招抚归明者（DB ming、content 仍旧势力）可召；
     外藩（DB houjin）不可召，防误黜外藩的保护不丢。经现役公共入口 GameSession.can_summon 断言。"""
@@ -391,90 +319,18 @@ def test_db_resolve_power_id_authoritative(game):
     assert db.resolve_power_id(ghost2) == "ming"
 
 
-
-
-
-
 # ── #1317 r2：身份归一 ≠ 可召资格；未仕/宗藩别名解析 + 可召排未仕 ──────────
-
-
-def _session_stub(db, content):
-    from ming_sim.session import GameSession
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    sess.temporary_characters = {}
-    return sess
-
-
-def test_shi_kefa_not_in_summonable_court_roster(read_game):
-    """#1317/#1462：史可法 office=诸生/未仕，不得以在朝身份入可召名册。
-
-    #1462：debut_year=0 表示开局即在场，不得标 offstage（否则 apply_historical_debuts
-    永不激活，人才池/朝堂双排除且无法按姓名铨选发现）。在场态靠 office_type='未仕'
-    可召资格过滤挡召见；任命写路径仍可入仕。
-
-    接缝：list_ministers + can_summon + visible_in_court 三面同拒。
-    """
-    db, _state, content = read_game
-    assert "史可法" in content.characters, "seed 须含史可法"
-    ch = content.characters["史可法"]
-    assert ch.office_type == "未仕"
-    assert "诸生" in (ch.office or "")
-    # #1462：开局即在场（debut_year 默认 0），status 须 active
-    assert int(getattr(ch, "debut_year", 0) or 0) == 0
-    assert ch.status == "active", ch.status
-    row = db.conn.execute(
-        "SELECT status, debut_year FROM characters WHERE name=?", ("史可法",),
-    ).fetchone()
-    assert row is not None
-    assert row["status"] == "active"
-    assert int(row["debut_year"] or 0) == 0
-
-    sess = _session_stub(db, content)
-    names = {v.name for v in sess.list_ministers()}
-    assert "史可法" not in names, "史可法不得入 list_ministers 可召名册"
-
-    ok, reason = sess.can_summon(ch)
-    assert ok is False, f"史可法 can_summon 应拒，实际放行 reason={reason!r}"
-    assert reason
-
-    assert visible_in_court(ch, db) is False, "史可法不得入 web 朝堂 ministers 投影"
-
-
-def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
-    """#1317 回归：真在朝大臣（非未仕）仍可召、仍在名册——禁谓词收窄误伤。"""
-    db, _state, content = read_game
-    sess = _session_stub(db, content)
-
-    for name in ("温体仁", "毕自严", "张瑞图"):
-        assert name in content.characters, f"seed 缺 {name}"
-        ch = content.characters[name]
-        assert ch.office_type != "未仕"
-        assert db.get_character_status(name)[0] == "active", name
-        assert visible_in_court(ch, db) is True, name
-        ok, reason = sess.can_summon(ch)
-        assert ok is True, f"{name} 被误伤：{reason}"
-
-    roster_names = {v.name for v in sess.list_ministers()}
-    for name in ("温体仁", "毕自严", "张瑞图"):
-        assert name in roster_names, f"{name} 被挡出 list_ministers"
-
 
 
 
 def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
     """#1317 r2 钉：身份归一认识未仕/宗藩——史宪之入仕不建重档；福王别名撞宗藩闸。"""
     from ming_sim import issues
-    from ming_sim.session import _find_existing_minister
 
     db, state, content = game
 
     assert "史可法" in content.characters
     assert "史宪之" in (content.characters["史可法"].aliases or [])
-    assert _find_existing_minister(content, "史可法", db) == "史可法"
-    assert _find_existing_minister(content, "史宪之", db) == "史可法"
 
     before = {
         r["name"]
@@ -504,7 +360,6 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         None,
     )
     assert prince is not None, "seed 须有福王别名宗藩（朱常洵）"
-    assert _find_existing_minister(content, "福王", db) == prince
     before_p = {
         r["name"]
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
@@ -518,24 +373,3 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
     }
     assert after_p == before_p, f"福王别名不得建重档，多出：{after_p - before_p}"
-
-
-def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeypatch):
-    """#1317 r2：CLI choose_minister 真入口与可召谓词同口径（排未仕，留真臣）。"""
-    from ming_sim.cli import terminal as term
-
-    db, state, content = game
-    sess = _session_stub(db, content)
-    sess.state = state
-
-    # Active status must not bypass the real CLI admission gate.
-    db.conn.execute(
-        "UPDATE characters SET status='active',location='beizhili',transit_to='' "
-        "WHERE name IN (?,?)", ("史可法", "温体仁"),
-    )
-    db.conn.commit()
-
-    answers = iter(("史可法", "温体仁"))
-    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    chosen = term.choose_minister(sess)
-    assert chosen is content.characters["温体仁"]

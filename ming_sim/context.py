@@ -116,12 +116,7 @@ def victory_status(db: GameDB) -> Dict[str, object]:
     return {"status": ENDING_ONGOING, "summary": ""}
 
 
-# 地区/军队名称匹配实现在 matching.py；此处提供绑定 GameContent 的便捷封装。
-from ming_sim.matching import match_region_id_from_text as _match_region
-
-
-def match_region_id_from_text(text: str) -> Optional[str]:
-    return _match_region(text, _ctx().regions)
+# 地区/军队名称匹配权威在 matching.py；此处不再挂无消费者便捷封装。
 
 
 def _identity_bucket(value: object) -> str:

@@ -13,6 +13,7 @@ import threading
 from concurrent.futures import Future
 
 import pytest
+from tests.test_month_chain_1843 import _forbid_extractor
 
 import ming_sim.month_chain as month_chain
 from ming_sim.applier import Provenance
@@ -20,13 +21,6 @@ from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
 from tests.test_faction_brew_637 import _dual_brew_fn_factory
 import ming_sim.mechanical_tail as tail_mod
-
-
-def _forbid_extractor(monkeypatch):
-    monkeypatch.setattr(
-        "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
-    )
-
 
 def _archive_and_stub_world(db, state, monkeypatch):
     from tests.month_chain_helpers import empty_rescript_response
@@ -39,7 +33,6 @@ def _archive_and_stub_world(db, state, monkeypatch):
     )
     monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
 
-
 class _DeferredExecutor:
     """已有接缝：提交只记账，由测试在调用线程上执行。"""
 
@@ -48,24 +41,20 @@ class _DeferredExecutor:
         self.future = Future()
         return self.future
 
-
 def _install_deferred(monkeypatch):
     executor = _DeferredExecutor()
     monkeypatch.setattr("ming_sim.audience_translation._executor", executor)
     return executor
 
-
 def _run_deferred(executor):
     executor.fn()
     executor.future.set_result(None)
-
 
 def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monkeypatch):
     """提交到受管后台票；无需线程即可核实尾工作不在前台调用栈执行。"""
     db, state, content = game
     closed_turn = int(state.turn)
     closed_year, closed_period = int(state.year), int(state.period)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     brew_calls = []
     original_brew = tail_mod._run_relation_brew
@@ -99,13 +88,11 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
     }]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
-
 def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     """崩溃后只留 DB 未完标记时，同过月入口续接，不因重开跳过或重复执行。"""
     db, state, content = game
     closed_turn = int(state.turn)
     closed_year, closed_period = int(state.year), int(state.period)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
 
     from ming_sim.mechanical_tail import ensure_mechanical_tails
@@ -152,14 +139,12 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     assert calls == [closed_turn]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
-
 def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch):
     """模型耗尽须留下失败凭据并阻断下次过月。"""
     from ming_sim.exceptions import LLMUnavailable
 
     db, state, content = game
     closed_turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
 
     def boom(*_a, **_k):
@@ -187,7 +172,6 @@ def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch
     from ming_sim.exceptions import SettlementAbort
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
-
 
 def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     """过月真实酿制腿不能把模型耗尽藏在单条 degraded 报告中。"""
@@ -239,7 +223,6 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
     assert WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state)) is None
 
-
 def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
     """Web 共用过月 barrier 入口先恢复 pending 尾，再等待队列。"""
     import ming_sim.audience_translation as audience_translation
@@ -278,14 +261,12 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
     session.await_translations_before_month()
     assert order == ["barrier"]
 
-
 def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch):
     """后台程序异常须传播至 Future 观察面并保留 pending，后续入口能重提。"""
     import ming_sim.audience_translation as audience_translation
 
     db, state, content = game
     closed_turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -356,7 +337,6 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     """过月入口：模型原文落总评。"""
     db, state, content = game
     closed_turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
     monkeypatch.setattr(

@@ -45,17 +45,15 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
         target=lambda: (web_app._drain_and_close_session(game), done.set()),
         daemon=True,
     )
+    thread.start()
     try:
-        thread.start()
         # While the live queue gate is held, drain must not close the session.
         assert not done.is_set()
         assert closed == []
-
     finally:
-        gate.release()
+        if gate.locked():
+            gate.release()
         thread.join()
-
-    done.wait()
     assert closed == [1]
     assert not gate.locked()
 
@@ -72,20 +70,23 @@ def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path)
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
     _reset_path_leases()
-    assert web_app._register_holder(db_path, fake_game) is not None
+    entry = web_app._register_holder(db_path, fake_game)
+    assert entry is not None
     monkeypatch.setattr(web_app, "web_game", fake_game)
 
     gate.acquire()
 
-    result = asyncio.run(web_app.api_menu_exit())
+    try:
+        result = asyncio.run(web_app.api_menu_exit())
 
-    assert result == {"ok": True}
-    assert web_app.web_game is None
-    assert closed == []
-
-    gate.release()
-
-    wait_until(lambda: closed == [1])
+        assert result == {"ok": True}
+        assert web_app.web_game is None
+        assert closed == []
+    finally:
+        gate.release()
+        if entry.close_op is not None:
+            entry.close_op.done.wait()
+    assert closed == [1]
     assert not gate.locked()
 
 
@@ -105,7 +106,8 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
     _reset_path_leases()
-    assert web_app._register_holder(old_db, fake_old_game) is not None
+    entry = web_app._register_holder(old_db, fake_old_game)
+    assert entry is not None
     monkeypatch.setattr(web_app, "web_game", fake_old_game)
     monkeypatch.setenv("MING_SIM_DB", old_db)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
@@ -115,15 +117,17 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
 
     gate.acquire()
 
-    result = asyncio.run(web_app.api_menu_new_game())
+    try:
+        result = asyncio.run(web_app.api_menu_new_game())
 
-    assert "state" in result
-    assert web_app.web_game is fake_new_game
-    assert closed == []  # 旧 session 尚未关闭（gate 被模拟 worker 持有）
-
-    gate.release()
-
-    wait_until(lambda: closed == [1])
+        assert "state" in result
+        assert web_app.web_game is fake_new_game
+        assert closed == []  # 旧 session 尚未关闭（gate 被模拟 worker 持有）
+    finally:
+        gate.release()
+        if entry.close_op is not None:
+            entry.close_op.done.wait()
+    assert closed == [1]
     assert not gate.locked()
 
 
@@ -399,17 +403,15 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
         done.set()
 
     thread = threading.Thread(target=lambda: asyncio.run(run_shutdown()), daemon=True)
+    thread.start()
     try:
-        thread.start()
         assert not done.is_set()
         assert closed == []
         assert killed == []
-
     finally:
-        gate.release()
+        if gate.locked():
+            gate.release()
         thread.join()
-
-    done.wait()
     assert closed == [1]
     wait_until(lambda: bool(killed))
 
@@ -441,32 +443,21 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
     runtime.session = SimpleNamespace(close=lambda: closed.append(1))
 
     runtime._write_gate.acquire()
-    done = threading.Event()
     thread = threading.Thread(
-        target=lambda: (web_app._drain_and_close_session(runtime), done.set()),
+        target=lambda: web_app._drain_and_close_session(runtime),
         daemon=True,
     )
     try:
         thread.start()
-
-        # seal 后 claim 返回 None；探测时若尚未 seal 则 complete 掉误领票据，不为测试补 is_sealed API。
-        def _queue_rejects_new_claims() -> bool:
-            ticket = runtime._write_queue.claim(("__seal_probe__",))
-            if ticket is None:
-                return True
-            runtime._write_queue.complete(ticket)
-            return False
-
-        wait_until(_queue_rejects_new_claims)
+        # drain 先 seal 再领 barrier 并抢 gate；等 barrier 在册即 seal 已完成，
+        # 再单次 claim 验拒新票。禁把 claim 放进 wait 谓词（成功票会泄漏成 prior）。
+        wait_until(lambda: runtime._runtime_write_queue().has_open_barrier())
         assert runtime._mark_pending_write() is None
-        # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
         assert runtime._runtime_write_queue().inflight_count() <= 1
-
     finally:
-        runtime._write_gate.release()
+        if runtime._write_gate.locked():
+            runtime._write_gate.release()
         thread.join()
-
-    done.wait()
     assert closed == [1]
 
 

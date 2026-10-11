@@ -43,6 +43,13 @@ class LLMContractError(Exception):
     pass
 
 
+class RevokeOriginUnresolved(ValueError):
+    """撤回成命目标无合法案卷来源：判后物化拒收；只读供料方按「无原旨可读」捕获。
+
+    仅此一型可被供料方捕获；坏持久载荷、目标事项缺失等仍是普通 ValueError 上抛。
+    """
+
+
 class OfficeAppointmentRejection(ValueError):
     """Local office appointment write rejection with ADR 0015 category.
 
@@ -51,6 +58,21 @@ class OfficeAppointmentRejection(ValueError):
     """
 
     def __init__(self, message: str, *, category: str) -> None:
+        super().__init__(message)
+        self.category = category
+
+
+class RosterInputError(ValueError):
+    """案卷参与人新增项的输入契约拒收：只拒该项，不是既存资料故障。
+
+    继承 ValueError 以保持 DB 写界面对直接调用方的既有类型；结算适配器必须
+    只认本类做逐项拒收，不得 ``except ValueError`` 连同持久故障一起捕。
+    既存 schema／引用／委派／office_archive_keys 仍抛普通 ValueError／JSON 错。
+    """
+
+    def __init__(
+        self, message: str, *, category: str = "invalid_participant_roster",
+    ) -> None:
         super().__init__(message)
         self.category = category
 

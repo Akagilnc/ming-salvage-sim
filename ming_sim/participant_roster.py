@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from typing import Dict, List, Mapping
 
+
 # ADR 0053 机械三档闭集（唯一真源）：归一缝、票拟层 A shape 与 prompt 契约共引，
 # 禁第二份字面量。主办可多人（北极星实证：倪元璐＋黄道周合力清丈畿辅）。
 PARTICIPANT_TIERS = ("主办", "协办", "知情")
-PARTICIPANT_LEAD_TIER = "主办"
-
 # 卫/司 类机关整词（单字留作姓、整词才判机关）。词表单源：assignee-hint 子串与
 # 参与人裸机构 fullmatch 共用，防漂移。
 INSTITUTION_PARTICIPANT_TOKENS = (
@@ -77,21 +76,26 @@ def decode_durable_participant_roster(
         if not isinstance(item, dict):
             raise ValueError("participant_roster 每项须为对象")
         entry = dict(item)
+        for field in ("role", "delegator_id"):
+            value = entry.get(field)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(
+                    f"参与人 {field} 须为字符串，得 {type(value).__name__}"
+                )
         # 人物主键：案卷/连坐必非空 str；knowledge 取名可回落 name 键。
         cid_raw = entry.get("character_id")
         if cid_raw is None and not require_tier:
             cid_raw = entry.get("name")
-        if require_tier or cid_raw is not None:
-            if not isinstance(cid_raw, str):
-                raise ValueError(
-                    f"参与人 character_id 须为字符串，得 "
-                    f"{type(cid_raw).__name__}"
-                )
-            cid = cid_raw.strip()
-            if require_tier and not cid:
-                raise ValueError("参与人 character_id 不能为空")
-            if cid:
-                entry["character_id"] = cid
+        if not isinstance(cid_raw, str):
+            raise ValueError(
+                f"参与人 character_id 须为字符串，得 "
+                f"{type(cid_raw).__name__}"
+            )
+        cid = cid_raw.strip()
+        if not cid:
+            raise ValueError("参与人 character_id 不能为空")
+        if cid:
+            entry["character_id"] = cid
         if "tier" not in entry or entry.get("tier") is None:
             if require_tier:
                 raise ValueError("participant_roster 缺 tier")
@@ -179,11 +183,6 @@ def project_execution_liability_parties(
         delegator_raw = item.get("delegator_id")
         if delegator_raw is None:
             continue
-        if not isinstance(delegator_raw, str):
-            raise ValueError(
-                f"参与人 delegator_id 须为字符串，得 "
-                f"{type(delegator_raw).__name__}"
-            )
         delegator = delegator_raw.strip()
         if (
             delegator

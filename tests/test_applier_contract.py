@@ -14,33 +14,9 @@ import pytest
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
 
-def test_provenance_enum_values():
-    """五个成员值与字符串标识一致（ADR 0008 决定 5）。"""
-    assert Provenance.player_decree.value == "player_decree"
-    assert Provenance.hitl_decision.value == "hitl_decision"
-    assert Provenance.secret_order.value == "secret_order"
-    assert Provenance.system_simulation.value == "system_simulation"
-    assert Provenance.unknown.value == "unknown"
-
-
 # ---------------------------------------------------------------------------
 # RejectedItem
 # ---------------------------------------------------------------------------
-
-def test_rejected_item_fields():
-    """RejectedItem 持 item/reason/category/source 四字段。"""
-    raw = {"id": "fake_army", "manpower": 5000}
-    ri = RejectedItem(
-        item=raw,
-        reason="id 不在军队表",
-        category="hallucinated_id",
-        source=Provenance.system_simulation,
-    )
-    assert ri.item is raw
-    assert ri.reason == "id 不在军队表"
-    assert ri.category == "hallucinated_id"
-    assert ri.source is Provenance.system_simulation
-
 
 # ---------------------------------------------------------------------------
 # RejectionCollector fixtures

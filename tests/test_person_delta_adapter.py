@@ -1,5 +1,6 @@
 """ADR 0009 person delta normalization behavior."""
 
+from tests.material_helpers import prepare_identity_materials
 import copy
 import json
 
@@ -10,7 +11,6 @@ from ming_sim.db import GameDB
 from ming_sim.exceptions import PendingActionRefusal
 from ming_sim.models import Character
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
-from ming_sim.person_delta_adapter import normalize_person_changes
 from tests.conftest import active_ming_character
 from tests.dossier_test_helpers import create_test_secret_order, recorded_executing_policy
 
@@ -32,19 +32,18 @@ def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
                 "动作": "易主",
                 "new_power": "houjin",
                 "方式": "主动投敌",
-                "反噬": {"houjin": {"leverage": 3}},
+                "反噬": {"houjin": {"leverage": 1}},
                 "origin_ref": "盘面自发",
             }
         ],
     }
-    normalized = normalize_person_changes(extracted)
-    assert [item["name"] for item in normalized] == ["孔有德"]
-
     applied = issues.apply_score_extraction(
         db, state, extracted, content=None,
     )
     assert "person_changes" not in applied
     assert "world_advance" not in applied
+    assert "pairing_warnings" not in applied
+    assert "applied_person_changes" in applied
 
 
 def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
@@ -417,6 +416,37 @@ def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_wri
     assert changes[0]["reason"]
     assert changes[0]["category"] == "invalid_enum"
     assert changes[0]["item"] == item
+
+def test_apply_score_extraction_rejects_invalid_power_way(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_power = content.characters[name].power_id
+
+    try:
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "人物变更": [
+                    {
+                        "name": name,
+                        "origin_ref": "盘面自发", "动作": "易主",
+                        "new_power": "houjin",
+                        "方式": "乱写方式",
+                        "反噬": {},
+                    }
+                ]
+            },
+            content=content,
+        )
+
+        row = db.conn.execute("SELECT power_id FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["power_id"] == old_power
+        assert content.characters[name].power_id == old_power
+        assert applied["applied_person_changes"][0]["rejected"] is True
+        assert applied["applied_person_changes"][0]["category"] == "invalid_enum"
+    finally:
+        content.characters[name].power_id = old_power
 
 
 def test_apply_score_extraction_rejects_power_move_without_backlash_side_effect(game):
@@ -1608,7 +1638,6 @@ def _materialize_active_prince(db, state, content):
 
 def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
     """在朝名册的结构化成员不含 active 宗藩；材料目录仍可备好。"""
-    from ming_sim.materials import prepare_character_materials
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     minister_name = next(
@@ -1617,7 +1646,7 @@ def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
         and getattr(c, "office_type", "") not in ("后宫", "宗藩")
         and db.get_character_status(n)[0] == "active"
     )
-    prepare_character_materials(db, state, content.characters[minister_name])
+    prepare_identity_materials(db, state, content.characters[minister_name])
     court = {row["name"] for row in db.current_court_roster_rows(state)}
     assert name not in court
 
@@ -1634,17 +1663,6 @@ def test_apply_office_appointment_rejects_vassal_prince(game):
     row = db.conn.execute("SELECT office_type, status FROM characters WHERE name=?", (name,)).fetchone()
     assert row["office_type"] == "宗藩", "宗藩 office_type 被授官改写=反解隐藏"
     assert row["status"] == "offstage", "宗藩被授官路径翻成 active"
-
-
-def test_list_ministers_excludes_active_prince(read_game):
-    """召见阶段名册 GameSession.list_ministers 与各 roster 同口径排除 active 宗藩（cmr R5）。"""
-    from ming_sim.session import GameSession
-    db, state, content = read_game
-    name = _materialize_active_prince(db, state, content)
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    assert name not in [v.name for v in sess.list_ministers()], f"宗藩 {name} 漏进 list_ministers"
 
 
 def test_create_secret_order_rejects_vassal_prince(read_game):
@@ -1931,6 +1949,46 @@ def test_set_character_status_clears_stale_reason_code_when_missing(game):
         content.characters[name].office = old_office
 
 
+def test_person_status_change_clears_transit_to_after_person_travel(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+    old_transit_to = content.characters[name].transit_to
+
+    try:
+        issues.apply_score_extraction(
+            db,
+            state,
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}]},
+            content=content,
+        )
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "人物变更": [
+                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "status clear transit", "origin_ref": "盘面自发"}
+                ]
+            },
+            content=content,
+        )
+
+        row = db.conn.execute(
+            "SELECT status, transit_to FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "dismissed"
+        assert row["transit_to"] == ""
+        assert content.characters[name].status == "dismissed"
+        assert content.characters[name].transit_to == ""
+        assert applied["applied_person_changes"] == [
+            {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "status clear transit"}
+        ]
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
+        content.characters[name].transit_to = old_transit_to
+
 def test_political_marker_is_audit_only_no_status_premigration(game):
     """决定4：政治标记派生（起复/昭雪/夺情）为纯审计记录，不执行 status 迁移原语——
     不得在绑名分前先 set_character_status(active)，避免「先置 active、名分未绑」幽灵态。
@@ -2136,6 +2194,39 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
     ).fetchone()["office"]
     assert now_office == orig_office, \
         f"falsy-return 后半落库未回滚：victim office={now_office!r} 期望 {orig_office!r}"
+
+
+def test_displaced_holder_transit_to_cleared(game):
+    """5b r7（codex-b R1）：顶替全腾缺时，被挤下来的旧任若正在赴任途中，transit_to 须清——
+    否则人才池里「听用候铨」的他还挂着去老职位的路线（三面同步 stale）。"""
+    from ming_sim.issues import _displace_duplicate_offices
+    db, state, content = game
+    names = [
+        r["name"] for r in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+            "AND office_type!='后宫' ORDER BY rowid LIMIT 2"
+        ).fetchall()
+    ]
+    old, new_holder = names[0], names[1]
+    db.conn.execute(
+        "UPDATE characters SET office='蓟辽总督', office_type='督抚', transit_to='liaodong' WHERE name=?",
+        (old,),
+    )
+    db.conn.commit()
+    if old in content.characters:
+        content.characters[old].office = "蓟辽总督"
+        content.characters[old].office_type = "督抚"
+        content.characters[old].transit_to = "liaodong"
+
+    _displace_duplicate_offices(db, content, new_holder, "蓟辽总督")
+
+    row = db.conn.execute(
+        "SELECT office, transit_to FROM characters WHERE name=?", (old,)
+    ).fetchone()
+    assert row["office"] == "听用候铨", "全腾缺旧任应落听用候铨"
+    assert (row["transit_to"] or "") == "", f"被顶替者 transit_to 须清，实际 {row['transit_to']!r}"
+    if old in content.characters:
+        assert getattr(content.characters[old], "transit_to", "") == "", "内存 transit_to 也须清"
 
 
 def test_historical_death_tick_sets_reason_code(game):

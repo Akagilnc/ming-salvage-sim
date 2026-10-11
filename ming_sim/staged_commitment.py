@@ -15,6 +15,9 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Sequence
 
+from ming_sim.models import _load_durable_json_list, _load_durable_json_object
+from ming_sim.strict_types import strict_int
+
 ENTRY_KIND_STAGED = "staged_commitment"
 # #624 / ADR 0078：反催谏 / 求宽限（0075 同款 next_audience_todos 通道；不进 due-review 白名单）
 ENTRY_KIND_RUSH_REMONSTRANCE = "rush_remonstrance"
@@ -61,7 +64,6 @@ def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
     不得跳段洗成合法身份。整数字段复用 ``strict_int``；正文转换复用
     ``_stage_text_fields``（#1897 K2），不复制别名/回填规则。
     """
-    from ming_sim.strict_types import strict_int
 
     if not isinstance(data, (list, tuple)):
         raise ValueError(f"stages_json 须为 JSON 数组，得 {type(data).__name__}")
@@ -118,7 +120,7 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             data = json.loads(text)
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                f"stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
+                f"stages_json 须为 JSON 数组字符串，解析失败：{exc}；原值 {text!r}"
             ) from exc
     if not isinstance(data, (list, tuple)):
         raise ValueError(f"stages_json 须为 JSON 数组，得 {type(data).__name__}")

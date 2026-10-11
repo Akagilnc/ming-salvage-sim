@@ -63,7 +63,6 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
     report = "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
     canned_full_settlement(monkeypatch, narrative=report)
     _forbid_extractor(monkeypatch)
-    monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: decree)
     actor = next(iter(game.content.characters.values())).name
     affair = db.affairs.open(name="辽饷", origin="旨意", year=state.year, period=state.period, turn=state.turn)
     _stage_edict(db, state, actor, decree, "辽饷", 0, affair.id)
@@ -78,7 +77,8 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
         event, payload = asyncio.run(_serialized_terminal_event("resolve", [{"decision_key": decisions[0]["decision_key"], "label": "发帑"}]))
 
     assert event == expected_event
-    assert payload["decree"] == "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
+    assert payload["decree"] == ""  # 不再有自动合成的整篇诏书。
+    assert any(row["decree_text"] == decree for row in db.list_decree_dossiers())
     if expected_event == "decisions":
         assert payload["decisions"] == decisions
         assert payload["decisions"][0]["context"] == memorial["context"]

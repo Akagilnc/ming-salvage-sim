@@ -7,6 +7,7 @@ city_level：静态结构属性(改一级需五年十年，暂不做变更机制
 
 from __future__ import annotations
 
+
 def test_city_level_tiers_by_history(read_game):
     db, _, _ = read_game
 

@@ -23,7 +23,7 @@ def load_text_asset(relative_path: str) -> str:
     path = os.path.join(CONTENT_DIR, relative_path)
     try:
         with open(path, "r", encoding="utf-8") as file:
-            text = file.read().strip()
+            text = file.read()
     except OSError as error:
         raise SystemExit(f"设定文件缺失或不可读：{path} ({error})") from error
     return (
@@ -92,11 +92,11 @@ def int_field(data: Dict[str, object], key: str, path: str) -> int:
     try:
         return int(data[key])
     except (KeyError, TypeError, ValueError) as error:
-        raise SystemExit(f"设定字段应为整数：{path}.{key}") from error
+        raise SystemExit(f"设定字段应为整数：{path}.{key}：{error}") from error
 
 
 def str_field(data: Dict[str, object], key: str, path: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
         raise SystemExit(f"设定字段应为非空字符串：{path}.{key}")
-    return value.strip()
+    return value

@@ -15,13 +15,11 @@ def _make_midzhi_dossier(db, state, *, target_id="river-works"):
         payload={"mode": "midzhi"},
     )
 
-
 def _rejected_verdict(dossier_id):
     # Preserve suite-specific gatekeeper/band/reason differences via builder knobs.
     return rejected_verdict(
         dossier_id, "强盛", gatekeeper_id="韩爌", reason="科臣封驳",
     )
-
 
 @pytest.mark.parametrize(
     ("emperor_text", "extracted_mode", "expected"),
@@ -40,7 +38,6 @@ def test_manual_mode_uses_typed_extractor_judgment(
     )
     assert cli_backend.capture_manual_directive_payload(emperor_text)["mode"] == expected
 
-
 def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(monkeypatch):
     extracted = json.dumps({
         "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
@@ -56,7 +53,6 @@ def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(
 
     assert payload["mode"] == "midzhi"
 
-
 def test_predeclared_midzhi_promulgation_persists_stigma(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
@@ -66,7 +62,6 @@ def test_predeclared_midzhi_promulgation_persists_stigma(game):
         "source_action": "promulgated",
     }]
 
-
 def test_missing_dossier_mode_defaults_to_ordinary(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
@@ -75,7 +70,6 @@ def test_missing_dossier_mode_defaults_to_ordinary(game):
     )
 
     assert db.get_decree_dossier(dossier_id)["mode"] == "ordinary"
-
 
 @pytest.mark.parametrize(
     ("caller_mode", "minister_text", "expected"),
@@ -99,7 +93,6 @@ def test_declared_staging_uses_typed_mode_not_minister_text(
     dossiers = db.list_decree_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == expected
-
 
 def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     db, state, _content = game
@@ -127,7 +120,6 @@ def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     dossiers = db.list_decree_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == "ordinary"
-
 
 def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
     db, state, _content = game
@@ -157,7 +149,6 @@ def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
         "source_action": "rejected",
     }]
 
-
 def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
@@ -174,7 +165,6 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
          "source_action": "rejected"},
     ]
 
-
 def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
@@ -189,25 +179,8 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
         "source_action": "force_promulgated",
     }]
 
-
-# ---------------------------------------------------------------------------
-# #657 片2：canonical / capability 回验
-# ---------------------------------------------------------------------------
-
-
-
-
-
-
-
-@pytest.mark.parametrize(
-    "labels, expect_empty",
-    [
-        (["", "乙"], True),  # 空白 label 拒收整块
-        (["甲", " 甲 "], False),  # #1897：label 原样为键，空白变体非歧义重复
-    ],
-)
-def test_decision_parser_rejects_empty_or_ambiguous_labels(labels, expect_empty):
+@pytest.mark.parametrize("labels", [["", "乙"], ["甲", "甲"]])
+def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     from ming_sim.settlement_payload import parse_decision_blocks
 
     block = {
@@ -216,10 +189,4 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels, expect_empty)
     }
     raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
     decisions = parse_decision_blocks(raw)
-    if expect_empty:
-        assert decisions == []
-    else:
-        assert decisions == [{
-            "title": block["title"], "context": block["context"],
-            "options": block["options"],
-        }]
+    assert decisions == []

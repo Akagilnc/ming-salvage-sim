@@ -8,7 +8,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.db import GameDB
 
 
 def test_expenditure_not_amplified_by_legacy(game):

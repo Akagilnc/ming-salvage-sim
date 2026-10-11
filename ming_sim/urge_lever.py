@@ -11,6 +11,10 @@
 
 from __future__ import annotations
 
+from ming_sim.participant_roster import decode_durable_participant_roster
+
+from ming_sim.models import _load_durable_json_list
+
 import json
 from typing import Any, Dict, List, Optional
 
@@ -23,7 +27,6 @@ from ming_sim.staged_commitment import (
     normalize_commitment_stages,
     stages_to_json,
 )
-from ming_sim.token_stats import tlog
 
 # pending_actions 史源 kind（committed 行；DELETE 仅清 pending）
 URGE_PENDING_KIND_COMMITMENT = "commitment"
@@ -44,21 +47,15 @@ def derive_opportunity_band(durable_effects: object) -> str:
             continue
         for key in ("delta", "amount", "new_value", "old_value"):
             if key in row and row.get(key) is not None:
-                try:
-                    if key == "old_value":
-                        continue
-                    total_abs += abs(int(row.get(key) or 0))
-                except (TypeError, ValueError):
-                    pass
+                if key == "old_value":
+                    continue
+                total_abs += abs(int(row.get(key) or 0))
                 break
         else:
             # fiscal change: |new-old|
-            try:
-                nv = int(row.get("new_value") or 0)
-                ov = int(row.get("old_value") or 0)
-                total_abs += abs(nv - ov)
-            except (TypeError, ValueError):
-                pass
+            nv = int(row.get("new_value") or 0)
+            ov = int(row.get("old_value") or 0)
+            total_abs += abs(nv - ov)
     if total_abs <= 0:
         return "none"
     if total_abs >= _OPPORTUNITY_HIGH_ABS:
@@ -72,6 +69,12 @@ def _parse_payload(raw: object) -> Dict[str, object]:
     return GameDB.parse_engine_payload_json(
         raw, surface="pending_actions.payload_json",
     )
+
+
+def _payload_int(payload: Dict[str, object], key: str, default: int = 0) -> int:
+    """外层字段整数成员：缺省（None）取默认，坏值响亮失败，不回零。"""
+    value = payload.get(key)
+    return default if value is None else int(value)
 
 
 def collect_urge_history(
@@ -100,11 +103,11 @@ def collect_urge_history(
             "turn": int(row["turn"] or 0),
             "kind": str(row["kind"] or ""),
             "target_id": int(row["target_id"] or 0),
-            "old_due": int(payload.get("old_due") or 0),
-            "new_due": int(payload.get("new_due") or 0),
-            "deadline_months": int(payload.get("deadline_months") or 0),
-            "tightness": int(payload.get("tightness") or 0),
-            "stage_idx": int(payload.get("stage_idx") or 0),
+            "old_due": _payload_int(payload, "old_due"),
+            "new_due": _payload_int(payload, "new_due"),
+            "deadline_months": _payload_int(payload, "deadline_months"),
+            "tightness": _payload_int(payload, "tightness"),
+            "stage_idx": _payload_int(payload, "stage_idx"),
             "reason": str(payload.get("reason") or ""),
             "source": "commitment",
         })
@@ -136,14 +139,14 @@ def collect_urge_history(
                     "turn": int(row["turn"] or 0),
                     "kind": str(row["kind"] or ""),
                     "target_id": int(row["target_id"] or 0),
-                    "old_due": int(payload.get("old_due") or 0),
-                    "new_due": int(payload.get("new_due") or 0),
+                    "old_due": _payload_int(payload, "old_due"),
+                    "new_due": _payload_int(payload, "new_due"),
                     "deadline_months": int(
                         payload.get("deadline_months")
                         if payload.get("deadline_months") is not None
                         else 1
                     ),
-                    "tightness": int(payload.get("tightness") or 0),
+                    "tightness": _payload_int(payload, "tightness"),
                     "stage_idx": -1,
                     "reason": str(payload.get("reason") or ""),
                     "source": "secret_order",
@@ -154,10 +157,10 @@ def collect_urge_history(
 
 def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional[int]) -> Dict[str, object]:
     """承办人：案卷主办优先，否则 issue participants 首名；缺省中性档。"""
+
     name = ""
     # 名册/参与人持久列表：腐坏响亮，不 catch-to-[]（#1897 E1）。
     from ming_sim.db import _load_durable_str_list
-    from ming_sim.participant_roster import decode_durable_participant_roster
     if dossier_id is not None:
         dossier = db.get_decree_dossier(int(dossier_id))
         if isinstance(dossier, dict):
@@ -194,14 +197,8 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             (name,),
         ).fetchone()
         if crow is not None:
-            try:
-                integrity = int(crow["integrity"])
-            except (TypeError, ValueError):
-                integrity = 50
-            try:
-                courage = int(crow["courage"])
-            except (TypeError, ValueError):
-                courage = 50
+            integrity = int(crow["integrity"])
+            courage = int(crow["courage"])
     return {"name": name, "integrity": integrity, "courage": courage}
 
 

@@ -1,7 +1,7 @@
 """动作档 FieldSpec 登记表（#515 / #1871）。
 
 唯一真源：ACTION_CLUSTERS（由 action_materialize.install 装入）。
-提供 kind/fields 枚举与 shape 校验；分类器候选链与 materialize_fn 已删。
+提供 kind/fields 枚举、shape 校验与 prompt 投影；分类器候选链与 materialize_fn 已删。
 
 范围（ADR 0039 / #513）：机械聚类挂点，不是 25 词语义表。
 """
@@ -169,7 +169,6 @@ def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-
 class ActionCandidateShapeError(ValueError):
     pass
 
@@ -282,13 +281,9 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if isinstance(raw, (dict, list, tuple)):
                 s = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
             else:
-                # Free prose → materials: preserve extractor bytes (incl. edge whitespace).
-                # Machine keys / ids still strip. No length crop (#1834 F16).
-                s = (
-                    str(raw or "")
-                    if name in _FREE_PROSE_FIELD_NAMES
-                    else str(raw or "").strip()
-                )
+                # Non-enum values are transported verbatim; identities are
+                # normalized by their consumers, not by trimming every string.
+                s = str(raw or "")
             out[name] = s
     if "draft_text" in obj:
         out["draft_text"] = obj.get("draft_text")
@@ -304,4 +299,3 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if key in obj and obj.get(key) not in (None, ""):
                 out[key if key != "承办人" else "assignee"] = obj.get(key)
     return out
-

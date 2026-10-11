@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from ming_sim.models import _load_durable_json_list, _load_durable_json_object
+
 import json
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -26,7 +28,6 @@ from ming_sim.action_clusters import (
 
 
 # ── handlers（委派既有 stage，不另造落库）────────────────────────────
-
 
 
 
@@ -116,8 +117,6 @@ def _apply_existing_appointment_hit(
         return resolved
 
 
-
-
 def stage_pacification_candidate(
     db: Any,
     turn: int,
@@ -200,9 +199,6 @@ def punish_actions_allowed() -> frozenset:
 def punish_actions_effective() -> frozenset:
     """可物化的惩处动作（排除分类器占位「无」）。"""
     return punish_actions_allowed() - {"无"}
-
-
-
 
 
 def issue_dispositions_allowed() -> frozenset:
@@ -371,8 +367,6 @@ def stage_punishment_candidate(
     )
 
 
-
-
 GRANT_ACTIONS = frozenset({
     "无", "赏赉", "发内帑", "加衔", "荫叙", "赈灾", "招抚屯田", "项目经费", "协饷",
 })
@@ -440,9 +434,6 @@ def require_grant_allocation_shape(
         raise ValueError("grant 金钱缺正 amount")
     out["amount"] = amt
     return out
-
-
-
 
 
 def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
@@ -751,9 +742,6 @@ def assert_responsible_bodies_org_only(
             raise ValueError(f"responsible_bodies 禁个人名：{name}")
 
 
-
-
-
 def _list_pending_office_rows(
     db: Any,
     turn: int,
@@ -833,9 +821,6 @@ def _match_office_row_by_name_office(
             continue
         hits.append(row)
     return hits
-
-
-
 
 
 def _annotate_office_pending_path(
@@ -1164,18 +1149,13 @@ def stage_assignment_candidate(
             "交办旨意缺少正文", failed_fields=("text",),
         )
     # 题名只认结构化锚；不得从正文/皇帝散文截取
-    raw_title = str(title or "")
-    tid = str(target_id or "")
-    if raw_title.strip():
-        matter_title = raw_title
-    else:
-        matter_title = tid
+    matter_title = str(title or "") or str(target_id or "").strip()
     if not matter_title.strip():
         raise DecreeMaterializationValidationError(
             "交办旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
         )
-    matter_id = tid or matter_title
+    matter_id = str(target_id or "").strip() or matter_title
     actor = str(minister_name or "").strip()
     if not actor:
         return 0

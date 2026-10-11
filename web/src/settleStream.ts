@@ -55,11 +55,11 @@ export async function consumeSettleStream(
     const raw = body?.detail ?? body;
     const serverMsg =
       typeof raw === "string"
-        ? raw.trim()
+        ? raw
         : raw && typeof raw === "object"
-          ? String(raw.message || raw.detail || "").trim()
+          ? String(raw.message || raw.detail || "")
           : "";
-    if (serverMsg) throw new Error(serverMsg);
+    if (serverMsg.trim()) throw new Error(serverMsg);
     throw new Error(`${httpErrorLabel}：HTTP ${response.status}`);
   }
   if (!response.body) {

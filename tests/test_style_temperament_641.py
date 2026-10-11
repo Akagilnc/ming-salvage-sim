@@ -13,10 +13,9 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as issues
-from ming_sim.content import GameContent
+
 from ming_sim.decree import reload_state_from_db
 from ming_sim.situation_drift import apply_situation_monthly_drift
-from ming_sim.person_archive_contract import format_person_actions
 
 PERSON = "毛文龙"
 NEW_STYLE = "旧恨未消，却更沉得住气，临事少作张扬。"

@@ -8,17 +8,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence
+from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence
 
 from agno.db.sqlite import SqliteDb
-from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim.agents import (
-    _dump_llm_messages,
-    create_decree_writer_agent,
     create_promulgation_judge_agent,
     parse_agent_json,
     run_agent_text,
@@ -27,26 +23,21 @@ from ming_sim.applier import (
     Provenance, RejectedItem, RejectionCollector, atomic,
     mirror_rejections_after_commit,
 )
-from ming_sim.constants import TURN_UNIT
-from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
 from ming_sim.error_pack import (
-    _next_attempt,
     rejections_jsonl_path,
-    settlement_abort_message,
-    write_error_pack,
 )
 from ming_sim.exceptions import (
     LLMContractError,
-    LLMUnavailable,
-    SettlementAbort,
 )
-from ming_sim.faction_brew import VIEW_FACTION_STANCE
-from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
+from ming_sim.flows import (
+    _SubstrateHubFixedFlowAbort,
+    apply_fixed_period_flows,
+    raise_fixed_period_flow_abort_if_needed,
+)
 from ming_sim.issues import (
     apply_historical_fiscal_rates,
 )
-from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
 from ming_sim.participant_roster import resolve_dossier_owner_name
@@ -62,15 +53,6 @@ from ming_sim.token_stats import tlog
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
-
-# 逐旨／世界段请旨解析工具位于 ming_sim.settlement_payload，不从邸报抽取。
-# 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
-from ming_sim.settlement_payload import (  # noqa: E402
-    _DECISION_RE,
-    bind_decision_options,
-    parse_decision_blocks,
-)
-
 
 @dataclass
 class ResolveResult:
@@ -271,7 +253,7 @@ def build_promulgation_judge_context(
         "gatekeepers": gatekeepers,
         "promulgation_history": history,
         "current_events": [
-            {key: row[key] for key in ("id", "title", "status") if key in row.keys()}
+            {key: row[key] for key in ("id", "title", "status")}
             for row in issue_rows
         ],
     }
@@ -588,54 +570,6 @@ def _rescript_decisions(
     return decisions
 
 
-def write_decree_with_agno(
-    llm_config: LLMConfig,
-    state: GameState,
-    directives: List[sqlite3.Row],
-    db: Optional[GameDB] = None,
-) -> str:
-    if not directives:
-        raise LLMContractError("无草案不能拟诏。")
-    # 已办结密令的 result 作为实质证据清单注入——皇帝下旨拿人/定罪时可引为依据。
-    closed_evidence: List[Dict[str, object]] = []
-    if db is not None:
-        for o in db.list_secret_orders(status="done"):
-            if o.get("result"):
-                closed_evidence.append({
-                    "id": int(o["id"]), "title": o["title"],
-                    "assignee": o["minister_name"], "evidence": o["result"],
-                })
-    # #1769：跨月未成案 draft 在既有 directives 投影上标 admission_status（输入侧；
-    # 不新建通知；不另抽 helper）。
-    current_turn = int(state.turn)
-    directive_feed: List[Dict[str, object]] = []
-    for row in directives:
-        item: Dict[str, object] = {"text": str(row["text"] or "")}
-        if int(row["turn"]) < current_turn:
-            item["admission_status"] = "上月未入档"
-        directive_feed.append(item)
-    payload = {
-        "turn": {"year": state.year, "period": state.period, "turn": state.turn},
-        "directives": directive_feed,
-        "closed_secret_orders": closed_evidence,
-        "instruction": "合并成一份正式诏书正文。closed_secret_orders 是已办结密令查得的实证，"
-                       "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
-    }
-    try:
-        agent = create_decree_writer_agent(llm_config)
-        run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-        _dump_llm_messages(run_output, "拟诏", agent=agent)
-        text = extract_agent_text(run_output)
-    except LLMUnavailable:
-        raise
-    except Exception as error:
-        raise llm_unavailable_from_error(error, "拟诏") from error
-    if not text.strip():
-        raise LLMContractError("拟诏输出为空。")
-    # #1834 F16 / #671：判空用副本；拟诏正文保原文进入 last_decree / 供料链。
-    return text
-
-
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     """Whether the month has durable work that must enter resolve_directives.
 
@@ -683,15 +617,16 @@ def resolve_directives(
     # 前括号之后按旨序核算，再跑世界段。批红、邸报与推进是后续阶段的交接，
     # 不在本入口用 extractor 落账。
 
-    # 1) 前括号确定性结算：玩家月链的唯一准备入口。
-    prepare_resolve_front_half(
-        state, db,
-        decree_text=decree_text,
-        content=content,
-        source=source,
+    # 前括号仍由同一事务准备；持久消费异常也交现役月链失败接缝。
+    from ming_sim.month_chain import _guard_month_call, _load_chain, run_player_month_chain
+    _guard_month_call(
+        db, state, _load_chain(db, int(state.turn)),
+        decree_text=decree_text, source=source, step="pre_settle",
+        operation=lambda: prepare_resolve_front_half(
+            state, db, decree_text=decree_text, content=content, source=source,
+        ),
     )
 
-    from ming_sim.month_chain import run_player_month_chain
     return run_player_month_chain(
         state, db, agno_db, llm_config,
         decree_text=decree_text,
@@ -702,7 +637,7 @@ def resolve_directives(
 
 
 def _provenance_from_stored(value: object) -> Provenance:
-    """从 ctx 持久值还原 Provenance（#146 恢复路）。
+    """从 ctx 持久值还原 Provenance：实例或枚举 value 字符串。
 
     接受 Provenance 实例与已存的枚举值字符串；空/缺省回落 system_simulation。
     非空非法持久值保留真实解析失败，不冒称系统来源、不做历史误序列化适配。
@@ -973,7 +908,14 @@ def pre_settle(
             )
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
-            fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            try:
+                fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            except ValueError as exc:
+                # 饷率通道读到持久 settle 坏形状：属固定财政段的坏态，与固定流水同一中止面
+                # （整月回滚、错误包、stage=fixed_fiscal），原因链保留。
+                raise _SubstrateHubFixedFlowAbort(
+                    f"饷率通道结算失败：{type(exc).__name__}: {exc}"
+                ) from exc
             if fiscal_levies:
                 tlog(
                     f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
@@ -1098,5 +1040,10 @@ def resolve_decisions_phase2(
         content=content,
         source=_provenance_from_stored(ctx.get("source")),
         cheat_directive=cheat_directive,
+    )
+    state.turn_phase = (
+        TurnPhase.AWAITING_DECISION.value if result.awaiting
+        else TurnPhase.ISSUED.value if result.advanced or state.ended
+        else TurnPhase.SETTLING.value
     )
     return result.report

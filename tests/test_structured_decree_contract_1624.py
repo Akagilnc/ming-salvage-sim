@@ -18,7 +18,6 @@ from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     tracer_client,
 )
 
-
 # #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
 _OWNER_ROSTER = [
     {"character_id": "毕自严", "tier": "主办", "role": "总核赈务", "delegator_id": None},
@@ -39,6 +38,8 @@ _OWNER_OPTION = {
     "participant_roster": [dict(item) for item in _OWNER_ROSTER],
 }
 
+
+
 def _owner_manual_backend_json() -> str:
     # 附件 r3 回显形态：LLM 误带执行面=immediate；assignment 不得透传落库。
     return json.dumps({
@@ -54,6 +55,7 @@ def _owner_manual_backend_json() -> str:
         "执行面": "immediate",
         "参与人": [dict(item) for item in _OWNER_ROSTER],
     }, ensure_ascii=False)
+
 
 def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
     """#1778 决定 3/5：主办＝旨意自带名单里的主办，逐字钉进案卷（不是职司表推出的人）。"""
@@ -73,8 +75,6 @@ def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
         assert db.conn.execute(
             "SELECT 1 FROM characters WHERE name=?", (name,),
         ).fetchone() is not None, f"参与人未建档：{name!r}"
-
-
 
 
 def test_shared_validate_rejects_region_id_and_category_holes():

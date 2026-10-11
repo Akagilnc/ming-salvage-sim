@@ -1,17 +1,11 @@
 """#173：物理移除退役的 armies.maintenance_per_turn 列。月饷由 army_needed(按兵力派生)唯一承载。
 
-本文件验删列后的契约——维护费彻底不再是字段：
-  · schema 无该列；
+本文件验现役契约——维护费不再是字段：
   · 建军唯一必填=manpower（维护费键给了也当未知键忽略；inf 等极值不崩建军）；
   · army_delta 写维护费/军费 → 别名已删 → 当非法字段逐项拒收（同信封合法字段照落）；
-  · 月饷纯由兵力派生（army_needed），与已删的维护费无关；
-  · extractor 写端 prompt 不再教军队维护费。
-（PR2「写端脱钩」时维护费列尚在的脏值/严格度语义已随列删除一并退场。）
 """
 
 import pytest
-
-from ming_sim.army_pay import army_needed
 
 
 def _pseudo(title="测试"):
@@ -51,20 +45,6 @@ def test_new_army_inf_manpower_rejected_not_crash(read_game):
     }])
     assert created[0].get("rejected"), "inf manpower 应拒建军"
     assert db.conn.execute("SELECT id FROM armies WHERE id='inf_army'").fetchone() is None
-
-
-# ── 月饷纯由兵力派生，与已删的维护费无关 ──────────────────────────────
-
-def test_pay_derives_from_manpower(game):
-    # 两军缺省 salary_rate 落同一锚点，兵力多者 army_needed 严格更大 → 月饷由兵力派生（非维护费）。
-    db, state, _ = game
-    db.create_armies_from_extraction(state, [
-        {"id": "pay_lo", "name": "少兵营", "owner_power": "ming", "manpower": 10000, **_pay_source()},
-        {"id": "pay_hi", "name": "多兵营", "owner_power": "ming", "manpower": 40000, **_pay_source()},
-    ])
-    lo = db.conn.execute("SELECT * FROM armies WHERE id='pay_lo'").fetchone()
-    hi = db.conn.execute("SELECT * FROM armies WHERE id='pay_hi'").fetchone()
-    assert army_needed(hi) > army_needed(lo) > 0, "兵力多者月饷应更大（月饷随兵力派生）"
 
 
 # ── army_delta 写维护费 → 非法字段拒收（别名已删） ────────────────────

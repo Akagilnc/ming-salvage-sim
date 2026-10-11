@@ -8,7 +8,7 @@
       --directive "辽东大凌河祖大寿被困粮尽，朝廷救援不至，准其降清，power 由 ming 转 houjin"
 
 可多次 --directive。--decree 可选，传入则跳过 LLM 写诏，直接拿来当诏书文本喂 simulator。
-不传 --decree 时仍走 write_decree_with_agno（要 LLM），但完全不走 minister chat。
+不传 --decree 时不再经旧合并诏文 LLM；草案经成案接缝入月链。
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--start-ym", default="", help="开局年月，如 1631.08；空=默认开局")
     p.add_argument("--directive", action="append", required=True,
                    help="一条诏书草案文本，可多次传入")
-    p.add_argument("--decree", default="", help="最终诏书文本；空=由 LLM 写诏")
+    p.add_argument("--decree", default="", help="最终诏书文本；空=不经旧合并写诏前置")
     p.add_argument("--cheat", default="", help="作弊强制结算项，拼到邸报最前喂 extractor 当既成事实")
     p.add_argument("--resume", action="store_true",
                    help="续跑既有 DB，不清库；默认不清库（脚本本身不删 DB）")
@@ -113,9 +113,9 @@ def main() -> int:
         try:
             session.db.conn.execute(sql)
             session.db.conn.commit()
-            print(f"[sql] OK: {sql[:120]}")
+            print(f"[sql] OK: {sql}")
         except Exception as e:
-            print(f"[sql] FAIL: {sql[:120]} → {e}", file=sys.stderr)
+            print(f"[sql] FAIL: {sql} → {e}", file=sys.stderr)
             return 2
 
     for sequence, text in enumerate(args.directive, start=1):
@@ -123,7 +123,7 @@ def main() -> int:
             session, text, notes="direct-probe",
             probe_id="direct-decree", sequence=sequence,
         )
-        print(f"[directive] id={view.id} text={text[:60]}")
+        print(f"[directive] id={view.id} text={text}")
 
     session.enter_review()
 
@@ -131,7 +131,7 @@ def main() -> int:
     report = session.resolve_turn(decree=args.decree, cheat_directive=args.cheat)
     print(f"[resolve] 完成。Report 字符数={len(report)}")
     print("---- REPORT 头 300 ----")
-    print(report[:300])
+    print(report)
     print("----")
 
     session.end_turn()

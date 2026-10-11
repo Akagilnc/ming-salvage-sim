@@ -17,7 +17,7 @@ import threading
 
 import web_app
 from ming_sim.models import TurnPhase
-from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
+from tests.conftest import MONTH_OPEN_KEYS
 from tests.test_chat_stream_failpaths_393 import _parse_sse
 from tests.test_enter_settlement_period_1235 import _click_before
 

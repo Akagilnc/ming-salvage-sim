@@ -12,12 +12,12 @@ TurnPhase.X.value——pin 的是**落盘字符串值本身**，有意 enum 无�
 """
 
 from __future__ import annotations
+from tests.conftest import clear_resolve_rows
 
 import sqlite3
 
 import pytest
 
-import ming_sim.decree as decree_mod
 from ming_sim.decree import pre_settle
 from tests.dossier_test_helpers import create_test_secret_order
 from tests.readback_helpers import economy_ledger_count as _ledger_count
@@ -158,7 +158,7 @@ def test_enter_review_does_not_clobber_settling(game):
 
     抹成 reviewing 后 pre_settle 守门失效=同回合二次财政 tick。
     """
-    from ming_sim.session import GameSession, TurnPhase
+    from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "settling"
     db.save_state(state)
@@ -194,6 +194,7 @@ def test_advance_without_edict_refused_after_settling(game):
 # ---------------------------------------------------------------------------
 # cmr S4 r2 修复回归（F1 第三推进尾 / F2 HITL 相位耐崩+守门）
 # ---------------------------------------------------------------------------
+
 
 def test_pre_settle_guard_covers_awaiting_decision(game):
     """守门扩到 AWAITING_DECISION：该相位只可能在 pre_settle 已提交后出现（cmr S4 r2 F2b）。
@@ -288,6 +289,7 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     res = sess.resolve_turn()
     assert res.awaiting is True
     assert res.decisions
+    clear_resolve_rows(db, state.turn)
 
 
 def test_guarded_early_return_does_not_consume_pending(game):
@@ -316,22 +318,6 @@ def test_guarded_early_return_does_not_consume_pending(game):
     assert statuses and all(s == "pending" for s in statuses)
 
 
-def test_write_decree_raises_at_awaiting_not_resolveresult(game):
-    """write_decree(-> str) 在 awaiting 态响亮拒绝，不返回 ResolveResult（cmr S4 r4，3/3）。
-
-    r3 的全局替换把守门误贴进了 write_decree——web 会把 dataclass 序列化进
-    {"decree": ...}，terminal 把 repr 当诏书正文打印。
-    """
-    from ming_sim.session import GameSession
-    db, state, content = game
-    state.turn_phase = "awaiting_decision"
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-
-    with pytest.raises(ValueError):
-        sess.write_decree()
 
 
 def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):

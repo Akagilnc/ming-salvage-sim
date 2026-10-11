@@ -292,6 +292,7 @@ def test_faction_apply_db_error_propagates_loudly_not_disguised(game):
 # ------------------------------- P5：关系与派系同批条目并行不串行
 
 def test_relation_and_faction_items_share_single_batch_in_parallel(game):
+    """同批 1 关系＋2 派系必须并行进入调用缝（P5）。"""
     db, state, _ = game
     _add_edge(db, state, source="毕自严", target="王绍徽", kind="站台",
               context="毕自严当面替王绍徽担名。", origin="audience:turn-1")

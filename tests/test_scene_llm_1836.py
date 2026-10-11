@@ -107,37 +107,6 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     assert any(p.startswith(f"人物/{_safe_segment(target)}/") for p in list_materials(prepared.root))
     assert result.court_action == ""
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
-    from ming_sim.cli.terminal import minister_chat
-
-    db, state, content = game
-    character = content.characters["王绍徽"]
-    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
-    sess.schedule_pending_scene_translation = lambda result: None
-    calls = []
-
-    class FakeAgent:
-        tools = []
-
-        def run(self, message):
-            calls.append(message)
-            return SimpleNamespace(content="臣在。", tools=[])
-
-    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
-    answers = iter(["边饷如何？", "done"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-
-    assert minister_chat(sess, character, selected=True) == "dismiss"
-    assert calls == [f"宣{character.name}", "边饷如何？"]
-    night = get_open_night(db)
-    assert night is not None
-    entries = [e for e in list_ledger(db, int(night["id"])) if TAG_ENTER in e["tags"] and character.name in e["person_names"]]
-    assert len(entries) == 1
-    assert entries[0]["origin_chat_turn_id"] > 0
-    # 首轮对话轮带结构化 minister_message_id（admission origin 身份）；不验 opening 正文／次数壳。
-    first = list_chat_turns_for_night(db, int(night["id"]))[0]
-    assert int(first["minister_message_id"] or 0) > 0
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatch):

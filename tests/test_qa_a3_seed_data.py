@@ -12,7 +12,7 @@ from ming_sim.intelligence import OFFICE_SLOTS
 def test_active_seed_characters_do_not_occupy_office_slots():
     """不变式：active seed 人物 normalize_office 不得等于 OFFICE_SLOTS 任一 title。
 
-    office_vacancies 以精确等值匹配 holder；未票面任命不得字面占虚悬缺。
+    未票面任命不得字面占虚悬缺（office_slots 等值匹配）。
     """
     slot_titles = {slot[0] for slot in OFFICE_SLOTS}
     assert slot_titles, "OFFICE_SLOTS 不得为空"

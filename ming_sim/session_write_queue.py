@@ -107,6 +107,7 @@ class ClassifiedWriteGate:
         with self._cv:
             return self._held
 
+
     def is_held_by_translation(self) -> bool:
         with self._cv:
             return self._held and self._kind == HOLDER_TRANSLATION
@@ -254,6 +255,7 @@ class SessionWriteQueue:
         with self._cond:
             self._sealed = False
 
+
     def has_open_barrier(self) -> bool:
         """True while a month-advance/close barrier ticket is still open."""
         with self._cond:
@@ -323,6 +325,7 @@ class SessionWriteQueue:
             ticket._claims += 1
             self._by_key.setdefault(key, set()).add(ticket.seq)
             return ticket
+
 
     def cancel(self, ticket: Optional[WriteTicket]) -> None:
         """Mark cancelled and release. In-flight legs must check ticket.cancelled."""
@@ -503,6 +506,7 @@ class SessionWriteQueue:
         """
         with self.ticketed_gate(ticket):
             return fn()
+
 
 # Lazy-install path is fixture/partial-wiring only (GameSession/WebGame eager).
 # Module lock + double-check keeps concurrent first-touch from forking ledgers.

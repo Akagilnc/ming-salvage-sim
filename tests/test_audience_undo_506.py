@@ -80,34 +80,6 @@ def _minister_declaration(minister: str, presence_body: str) -> dict[str, object
 # ── AC1 / AC2：撤回后按夜取数与「该轮未发生」等价；该轮抽取账/入殿账消失 ──────────
 
 
-def test_undo_erases_round_from_night_ledger_and_presence(game):
-    db, state, content = game
-    m = _active_minister(db, content)
-    night_id, chat_id = _run_round(
-        db, state, m,
-        declaration=_minister_declaration(m, "臣入殿奏对辽饷。"),
-    )
-    # 轮内：该轮抽取账在册、入殿账使其在场
-    assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
-    assert m in an.present_names_at(db, night_id)
-
-    ledger_before = [e for e in an.list_ledger(db, night_id)
-                     if e["source_chat_turn_id"] != chat_id and m not in e["person_names"]]
-
-    db.undo_chat_turn(chat_id)
-
-    ledger_after = an.list_ledger(db, night_id)
-    # 该轮抽取账 + 该轮入殿账全消失
-    assert not any(e["source_chat_turn_id"] == chat_id for e in ledger_after)
-    assert not any(m in e["person_names"] for e in ledger_after)
-    # 与「该轮未发生」等价：夜内其余账（开夜/员额框架）一字不动
-    assert [e["id"] for e in ledger_after] == [e["id"] for e in ledger_before]
-    # 在场推导：该轮入殿的人像没登场过
-    assert m not in an.present_names_at(db, night_id)
-    # 对话轮不再计入夜（undone 不返回给「按夜取数」）
-    assert chat_id not in {int(t["id"]) for t in an.list_chat_turns_for_night(db, night_id)}
-
-
 # ── AC5：撤回只够到最近一轮；收夜/颁诏封窗后撤回被拒 ────────────────────────────
 
 

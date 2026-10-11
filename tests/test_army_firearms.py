@@ -16,6 +16,7 @@ def _pay_source():
         "central_pay_share": 0.0,
     }
 
+
 def test_new_army_defaults_zero_firearm(game):
     """新建军未指定火器/大炮时默认 0（列默认值 + 落库兜底）。"""
     db, state, _ = game

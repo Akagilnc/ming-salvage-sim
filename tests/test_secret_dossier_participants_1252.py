@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 
 import pytest
 
@@ -31,7 +30,6 @@ def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
     return lead, int(order_id), int(dossier["id"])
 
 # ── S1: 私读缝 ──────────────────────────────────────────────
-
 
 
 def test_s1_public_projection_filter_unchanged(game):
@@ -205,8 +203,6 @@ def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority
     }, secret_dossier_ids_at_input=authority)
     assert result["secret_dossier_participants"][0]["rejected"] is True
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
-
-
 
 
 # ── S3: prompt 正向特征化 + DELTA_SCHEMA ─────────────────────

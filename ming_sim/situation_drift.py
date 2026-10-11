@@ -40,17 +40,17 @@ from ming_sim.issues import (
     _commitment_stop_gate,
     _ctx,
     _gate_passed,
-    _invalid_monthly_mapping_shape,
-    _merged_mapping_effect,
     _monthly_economy_items,
-    _monthly_mapping_effect,
+    _merged_mapping_effect,
     _monthly_ongoing_effects_has_work,
     _monthly_person_rating_changes,
     _spawn_legacy_from_effect,
     commitment_progress_payload,
 )
-from ming_sim.models import GameState, loads_effect_dict
-from ming_sim.staged_commitment import is_stage_derived_end_turn
+from ming_sim.models import (
+    GameState, loads_effect_dict,
+    _load_durable_json_list, _load_durable_json_object,
+)
 from ming_sim.token_stats import tlog
 
 
@@ -181,18 +181,11 @@ def _apply_monthly_ongoing_entities(
     applied: Dict[str, object] = {}
     rejections: List[Dict[str, object]] = []
 
-    factions, faction_shape_rejections = _monthly_mapping_effect(effect, "factions", "faction_delta")
-    classes, class_shape_rejections = _monthly_mapping_effect(effect, "classes", "class_delta")
-    region_delta, region_shape_rejections = _monthly_mapping_effect(effect, "region_delta", "regions")
-    army_delta, army_shape_rejections = _monthly_mapping_effect(effect, "army_delta", "armies")
-    power_updates, power_shape_rejections = _monthly_mapping_effect(effect, "power_updates")
-    rejections.extend(
-        faction_shape_rejections
-        + class_shape_rejections
-        + region_shape_rejections
-        + army_shape_rejections
-        + power_shape_rejections
-    )
+    factions = _merged_mapping_effect(effect, "factions", "faction_delta")
+    classes = _merged_mapping_effect(effect, "classes", "class_delta")
+    region_delta = _merged_mapping_effect(effect, "region_delta", "regions")
+    army_delta = _merged_mapping_effect(effect, "army_delta", "armies")
+    power_updates = _merged_mapping_effect(effect, "power_updates")
 
     if factions:
         faction_result = _apply_faction_dict(db, factions)
@@ -362,9 +355,9 @@ def apply_situation_monthly_drift(
         issue_id = int(row["id"])
         bar = int(row["bar_value"])
         inertia = int(row["inertia"])
-        commitment_kind = str(row["commitment_kind"] if "commitment_kind" in row.keys() else "").strip()
-        is_commitment = bool(commitment_kind)
-        commitment_stop_gate = _commitment_stop_gate(row) if is_commitment else {}
+        commitment_kind = str(row["commitment_kind"]).strip()
+        commitment_stop_gate = _commitment_stop_gate(row)
+        is_commitment = bool(commitment_kind or commitment_stop_gate)
         parent_origin_ref: Optional[str] = None
 
         # 1) inertia 漂移：每月对所有进行中 issue 都走一格
@@ -386,10 +379,21 @@ def apply_situation_monthly_drift(
                     continue
                 if new_row["status"] == "resolved":
                     effect = loads_effect_dict(new_row["effect_on_resolve"])
-                    # #1847: free title/tag phrase pairing warn deleted.
-                    _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], origin_ref=parent_origin_ref) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-                    inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+                    _apply_metric_dict(
+                        state, _load_durable_json_object(
+                            effect.get("metrics"), surface="issue_effect.metrics",
+                        ), db=db,
+                    )
+                    inertia_rejections.extend(r for r in _apply_economy_list(
+                        db, state, _load_durable_json_list(
+                            effect.get("economy"), surface="issue_effect.economy",
+                        ), origin_ref=parent_origin_ref,
+                    ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+                    inertia_rejections.extend(_apply_faction_dict(
+                        db, _load_durable_json_object(
+                            effect.get("factions"), surface="issue_effect.factions",
+                        ),
+                    ).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
                     _apply_issue_buildings(
                         db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT,
                         f"局势#{issue_id}结案", origin_ref=parent_origin_ref,
@@ -410,9 +414,21 @@ def apply_situation_monthly_drift(
                     continue
                 elif new_row["status"] == "failed":
                     effect = loads_effect_dict(new_row["effect_on_fail"])
-                    _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], origin_ref=parent_origin_ref) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-                    inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+                    _apply_metric_dict(
+                        state, _load_durable_json_object(
+                            effect.get("metrics"), surface="issue_effect.metrics",
+                        ), db=db,
+                    )
+                    inertia_rejections.extend(r for r in _apply_economy_list(
+                        db, state, _load_durable_json_list(
+                            effect.get("economy"), surface="issue_effect.economy",
+                        ), origin_ref=parent_origin_ref,
+                    ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+                    inertia_rejections.extend(_apply_faction_dict(
+                        db, _load_durable_json_object(
+                            effect.get("factions"), surface="issue_effect.factions",
+                        ),
+                    ).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
                     _apply_issue_buildings(
                         db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT,
                         f"局势#{issue_id}失败", origin_ref=parent_origin_ref,
@@ -449,91 +465,90 @@ def apply_situation_monthly_drift(
                     _expire_commitment_issue(db, state, row, commit=commit_local)
                     continue
 
-        # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（真空→{}；腐坏/非对象响亮）。
+        # 2) Consume durable effects even when the semantic work query finds no delta.
         if is_commitment and ongoing_has_work:
             ongoing = _commitment_ongoing_effects_for_settlement(row, ongoing)
         metric_part: Dict[str, int] = {}
         economy_part: List[Dict[str, object]] = []
         applied_monthly_parts: Dict[str, object] = {}
-        if _monthly_ongoing_effects_has_work(ongoing):
-            if parent_origin_ref is None:
-                parent_origin_ref = _canonical_issue_origin(db, row)
-            # 折扣系数：bar 越高（越好）越少扣
-            # bar=0~40 → 100%, bar=40~80 → 60%, bar=80~100 → 30%
-            if bar >= 80:
-                scale = 0.3
-            elif bar >= 40:
-                scale = 0.6
-            else:
-                scale = 1.0
-
-            # metrics. Commitment issues represent a concrete monthly promise;
-            # do not let the ordinary issue health discount erase it into a no-op.
-            metric_scale = 1.0 if is_commitment else scale
-            _om = ongoing.get("metrics")  # #117 同类：stored ongoing 的 metrics 真值非 dict 守卫
-            for k, v in (_om if isinstance(_om, dict) else {}).items():
-                if k not in ISSUE_METRIC_KEYS:
-                    continue
-                # 持久 ongoing_effects.metrics 的数值腐坏必须响亮失败交外层事务回滚；
-                # 静默跳过会让 bar 照涨而该项世界后果无声消失（#1901 J5）。
-                raw = int(v)
-                scaled = int(round(raw * metric_scale))
-                if scaled == 0:
-                    continue
-                cap = ISSUE_METRIC_LOCK_CAPS.get(k, 5)
-                already = period_metric_acc.get(k, 0)
-                remaining = cap - abs(already)
-                if remaining <= 0:
-                    continue
-                if scaled > 0:
-                    allowed = min(scaled, remaining)
-                else:
-                    allowed = max(scaled, -remaining)
-                if allowed == 0:
-                    continue
-                state.metrics[k] = int(state.metrics.get(k, 0)) + allowed
-                period_metric_acc[k] = already + allowed
-                metric_part[k] = allowed
-
-            # economy
-            issue_monthly_rejections: List[Dict[str, object]] = []
-            pay_arrears_pool_army_ids = (
-                _commitment_arrears_gate_army_ids(row)
-                if is_commitment and _commitment_gate_references_arrears(row)
-                else None
-            )
-            allow_pay_arrears_pool = (
-                is_commitment
-                and (
-                    not commitment_stop_gate
-                    or bool(pay_arrears_pool_army_ids)
-                )
-            )
-            _eco_out = _apply_economy_list(
-                db,
-                state,
-                _monthly_economy_items(ongoing),
-                allow_pay_arrears_pool=allow_pay_arrears_pool,
-                pay_arrears_pool_army_ids=pay_arrears_pool_army_ids,
-                origin_ref=parent_origin_ref,
-            )
-            economy_rejections = [r for r in _eco_out if r.get("rejected")]
-            issue_monthly_rejections.extend(economy_rejections)
-            inertia_rejections.extend(economy_rejections)  # economy 拒收不蒸发（#14）
-            economy_part = [r for r in _eco_out if not r.get("rejected")]
-
-            applied_monthly_parts, monthly_rejections = _apply_monthly_ongoing_entities(
-                db,
-                state,
-                ongoing,
-                f"局势#{issue_id}持续效果",
-                applied_person_changes=applied_person_changes,
-                origin_ref=parent_origin_ref,
-            )
-            issue_monthly_rejections.extend(monthly_rejections)
-            inertia_rejections.extend(monthly_rejections)
+        if parent_origin_ref is None:
+            parent_origin_ref = _canonical_issue_origin(db, row)
+        # 折扣系数：bar 越高（越好）越少扣
+        # bar=0~40 → 100%, bar=40~80 → 60%, bar=80~100 → 30%
+        if bar >= 80:
+            scale = 0.3
+        elif bar >= 40:
+            scale = 0.6
         else:
-            issue_monthly_rejections = []
+            scale = 1.0
+
+        # metrics. Commitment issues represent a concrete monthly promise;
+        # do not let the ordinary issue health discount erase it into a no-op.
+        metric_scale = 1.0 if is_commitment else scale
+        _om = ongoing.get("metrics")
+        if _om is not None and not isinstance(_om, dict):
+            raise ValueError(f"ongoing_effects.metrics 须为对象，得 {type(_om).__name__}")
+        for k, v in (_om or {}).items():
+            if k not in ISSUE_METRIC_KEYS:
+                continue
+            # 持久 ongoing_effects.metrics 的数值腐坏必须响亮失败交外层事务回滚；
+            # 静默跳过会让 bar 照涨而该项世界后果无声消失（#1901 J5）。
+            raw = int(v)
+            scaled = int(round(raw * metric_scale))
+            if scaled == 0:
+                continue
+            cap = ISSUE_METRIC_LOCK_CAPS.get(k, 5)
+            already = period_metric_acc.get(k, 0)
+            remaining = cap - abs(already)
+            if remaining <= 0:
+                continue
+            if scaled > 0:
+                allowed = min(scaled, remaining)
+            else:
+                allowed = max(scaled, -remaining)
+            if allowed == 0:
+                continue
+            state.metrics[k] = int(state.metrics.get(k, 0)) + allowed
+            period_metric_acc[k] = already + allowed
+            metric_part[k] = allowed
+
+        # economy
+        issue_monthly_rejections: List[Dict[str, object]] = []
+        pay_arrears_pool_army_ids = (
+            _commitment_arrears_gate_army_ids(row)
+            if is_commitment and _commitment_gate_references_arrears(row)
+            else None
+        )
+        allow_pay_arrears_pool = (
+            is_commitment
+            and (
+                not commitment_stop_gate
+                or bool(pay_arrears_pool_army_ids)
+            )
+        )
+        _eco_out = _apply_economy_list(
+            db,
+            state,
+            _monthly_economy_items(ongoing),
+            allow_pay_arrears_pool=allow_pay_arrears_pool,
+            pay_arrears_pool_army_ids=pay_arrears_pool_army_ids,
+            origin_ref=parent_origin_ref,
+        )
+        economy_rejections = [r for r in _eco_out if r.get("rejected")]
+        issue_monthly_rejections.extend(economy_rejections)
+        inertia_rejections.extend(economy_rejections)  # economy 拒收不蒸发（#14）
+        economy_part = [r for r in _eco_out if not r.get("rejected")]
+
+        applied_monthly_parts, monthly_rejections = _apply_monthly_ongoing_entities(
+            db,
+            state,
+            ongoing,
+            f"局势#{issue_id}持续效果",
+            applied_person_changes=applied_person_changes,
+            origin_ref=parent_origin_ref,
+        )
+        issue_monthly_rejections.extend(monthly_rejections)
+        inertia_rejections.extend(monthly_rejections)
 
         paid_this_month = sum(
             abs(int(r.get("delta") or 0))

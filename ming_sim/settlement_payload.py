@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 # 逐旨／世界段预推的请旨机标；不解析邸报正文。
 # 只匹配显式机标本体；邻接 whitespace 属原文，不得一并消费（P6 / #671 / ADR 0142）
 _DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
-MAX_DECISIONS_PER_TURN = 5
 
 
 def decision_prompt_contract() -> str:
@@ -25,21 +24,19 @@ def decision_prompt_contract() -> str:
         '{"title":"请旨标题","context":"请旨全文","options":'
         '[{"label":"拟批","hint":"拟办说明"},{"label":"另一拟批","hint":"说明"}]}'
         '<<END>>，随后停笔；问后内容不属于本段。'
-        f'每段至多 {MAX_DECISIONS_PER_TURN} 个请旨，每问 2–3 项；'
         'title/context/label/hint 是原文字符串。'
         '关联事件可显式交 event_id，无事件的来源可交 origin_ref。'
     )
 
 
 def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
-    """Bind raw option labels to stored options; empty/duplicate labels rejected."""
+    """Bind verbatim labels to stored options, rejecting ambiguous decisions."""
     bound: Dict[str, Dict[str, object]] = {}
     if not isinstance(options, list):
         raise ValueError("decision options 须为 list")
     for option in options:
         if not isinstance(option, dict):
-            continue
-        # #1897：label 原样作键；判空用局部副本。
+            raise ValueError("decision option 须为 object")
         label = str(option.get("label") or "")
         if not label.strip() or label in bound:
             raise ValueError(f"decision option label 为空或重复：{label!r}")
@@ -50,20 +47,17 @@ def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
 def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
     """读取世界段请旨机标中的决策列表，不改写原文。
 
-    每块须含 title/context/options（2-3 项，每项 label + 可选 hint）。
-    解析失败的块忽略，最多取 MAX_DECISIONS_PER_TURN 条。
+    每块须含 title/context/options（每项 label + 可选 hint）。
+    解析失败的块忽略；已形成的请旨与拟批原样保留。
     """
     decisions: List[Dict[str, object]] = []
     for m in _DECISION_RE.finditer(text or ""):
-        if len(decisions) >= MAX_DECISIONS_PER_TURN:
-            break
         try:
             obj = json.loads(m.group(1))
-        except (json.JSONDecodeError, TypeError):
+        except (TypeError, ValueError, json.JSONDecodeError):
             continue
         if not isinstance(obj, dict):
             continue
-        # #1897：请旨自由字段原样；判空用局部副本，不把 strip 写回。
         title = str(obj.get("title") or "")
         raw_opts = obj.get("options")
         if not title.strip() or not isinstance(raw_opts, list):
@@ -89,7 +83,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
         decision = {
             "title": title,
             "context": str(obj.get("context") or ""),
-            "options": options[:3],
+            "options": options,
         }
         explicit_event_id = str(obj.get("event_id") or "").strip()
         origin_ref = str(obj.get("origin_ref") or "").strip()

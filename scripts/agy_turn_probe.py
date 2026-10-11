@@ -17,7 +17,7 @@ import sys
 import time
 
 from ming_sim.models import LLMConfig
-from ming_sim.session import GameSession, TurnPhase
+from ming_sim.session import GameSession
 from scripts.probe_directive_contract import add_narrative_probe_directive
 
 
@@ -45,7 +45,7 @@ def main() -> int:
             session, text, notes="agy-probe",
             probe_id="agy-turn", sequence=sequence,
         )
-        print(f"[directive] id={v.id} {text[:50]}")
+        print(f"[directive] id={v.id} {text}")
 
     session.enter_review()
     t0 = time.monotonic()
@@ -64,8 +64,8 @@ def main() -> int:
     after = dict(session.state.metrics)
 
     print(f"\n[resolve] 完成，耗时 {dt:.0f}s。phase={session.current_phase()}")
-    print("---- 邸报头 400 字 ----")
-    print((report_text or "")[:400])
+    print("---- 邸报 ----")
+    print(report_text or "")
     print("---- 盘面变化 ----")
     for k in ("国库", "内库", "民心", "皇威", "兵force" if "兵force" in after else "军心"):
         if k in before or k in after:

@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from ming_sim.models import _load_durable_str_list
+
 import contextlib
 import json
 import logging
@@ -170,12 +172,6 @@ NIGHT_STATUS_CLOSED = "closed"
 CLOSE_STEP_COMMIT_OFFICE = 1
 CLOSE_STEP_TRANSFER_CANDIDATES = 2
 CLOSE_STEP_FINALIZE = 3
-CLOSE_STEPS = (
-    CLOSE_STEP_COMMIT_OFFICE,
-    CLOSE_STEP_TRANSFER_CANDIDATES,
-    CLOSE_STEP_FINALIZE,
-)
-
 # 在飞回话：轮询间隔；wait 只消费既有 chat turn/worker 终态，不按 elapsed 伪造失败（#1353 K10a）。
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
@@ -207,10 +203,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _json_list(value: Any) -> List[Any]:
-    """故事账 tags/person_names 持久字符串列表：腐坏/非 str 成员响亮，禁 str() 洗（#1897 E1）。"""
-    from ming_sim.db import _load_durable_str_list
-    return _load_durable_str_list(value, surface="story_ledger_entries.json_list")
 
 
 def _row_dict(row: Any) -> Dict[str, Any]:
@@ -379,10 +371,10 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "night_id": int(raw["night_id"]),
             "seq": int(raw["seq"]),
             "order_key": None if ok is None else float(ok),
-            "person_names": list(_json_list(raw.get("person_names"))),
+            "person_names": list(_load_durable_str_list(raw.get("person_names"), surface="story_ledger_entries.person_names")),
             "audibility": str(raw.get("audibility") or AUDIBILITY_PUBLIC),
             "body": str(raw.get("body") or ""),
-            "tags": list(_json_list(raw.get("tags"))),
+            "tags": list(_load_durable_str_list(raw.get("tags"), surface="story_ledger_entries.tags")),
             "source_chat_turn_id": int(raw.get("source_chat_turn_id") or 0),
             "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
             "origin_ref": str(raw.get("origin_ref") or ""),
@@ -1266,9 +1258,8 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     ).fetchall()
     projected: List[Dict[str, Any]] = []
     for row in rows:
-        # Story-ledger list columns: reuse _json_list → _load_durable_str_list (F39).
         # Wrong object shape must not become empty unsettled-summon facts.
-        tags = _json_list(row["tags"])
+        tags = _load_durable_str_list(row["tags"], surface="story_ledger_entries.tags")
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:
             continue
         origin = next(
@@ -1276,7 +1267,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
              if str(tag).startswith(_SUMMON_ORIGIN_PREFIX)),
             "",
         )
-        names = _json_list(row["person_names"])
+        names = _load_durable_str_list(row["person_names"], surface="story_ledger_entries.person_names")
         if not origin or not names:
             continue
         person_name = str(names[0])
@@ -1375,7 +1366,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         ).fetchone()
         if row is None:
             continue
-        tags = list(_json_list(row["tags"]))
+        tags = list(_load_durable_str_list(row["tags"], surface="story_ledger_entries.tags"))
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
@@ -1408,7 +1399,7 @@ def settle_summon_origin(
             "SELECT tags FROM story_ledger_entries WHERE id=?", (item["entry_id"],)
         ).fetchone()
         tags = [
-            tag for tag in _json_list(row["tags"]) if tag != TAG_SUMMON_UNSETTLED
+            tag for tag in _load_durable_str_list(row["tags"], surface="story_ledger_entries.tags") if tag != TAG_SUMMON_UNSETTLED
         ]
         tags.append(TAG_SUMMON_SETTLED)
         db.conn.execute(
@@ -1538,7 +1529,7 @@ def update_summon_travel_tone(
     if row is None:
         raise KeyError(f"传召账不存在：{entry_id}")
     tags = [
-        t for t in _json_list(row["tags"])
+        t for t in _load_durable_str_list(row["tags"], surface="story_ledger_entries.tags")
         if not t.startswith(_SUMMON_TRAVEL_TONE_PREFIX)
     ]
     tags.append(_travel_tone_tag(tone))
@@ -1716,6 +1707,8 @@ def dismiss_from_audience(
         origin_chat_turn_id=origin_chat_turn_id,
         allow_closing=allow_closing,
     )
+
+
 
 
 def normalize_audience_command_verdict(raw: Any) -> str:
@@ -1905,38 +1898,6 @@ def reproject_night_protagonist(db: Any, night_id: int) -> str:
         (name, int(night_id)),
     )
     return name
-
-
-SCENE_RECAP_HEADER = "【殿上先前所闻】"
-
-
-def audience_scene_recap(
-    db: Any, person_name: str, *, night_id: Optional[int] = None,
-) -> str:
-    """连场组装：某人在场时段所闻的殿上公开对话，渲染为可读回顾块（#507 presence-aware）。
-
-    宣下一个不断场、前一位留殿侧侍立时，对话流按在场名单送入组装：侍立者补话可引用
-    其在场时段殿上公开对话（AC2 区间取数）。未在场者 / 无开夜 / 区间无公开对话 →
-    空串（AC3 负向：未在场者的组装输入不含殿内对话）。区间与可闻性判据复用
-    audible_entries_for（御前低语不流入、入殿前不闻），不另立第二套在场/可闻性真源。"""
-    name = str(person_name or "").strip()
-    if not name:
-        return ""
-    nid = night_id
-    if nid is None:
-        open_n = get_open_night(db)
-        if open_n is None:
-            return ""
-        nid = int(open_n["id"])
-    bodies: List[str] = []
-    for entry in audible_entries_for(db, int(nid), name):
-        # #1897：场面正文原样入回顾；判空用局部副本。
-        body = str(entry.get("body") or "")
-        if body.strip():
-            bodies.append(body)
-    if not bodies:
-        return ""
-    return SCENE_RECAP_HEADER + "\n" + "\n".join(bodies)
 
 
 def _is_command_entry(entry: Dict[str, Any]) -> bool:

@@ -26,17 +26,6 @@ _ROSTER_LEAD = '毕自严'
 
 _ROSTER = [{'character_id': _ROSTER_LEAD, 'tier': '主办', 'role': '总核', 'delegator_id': None}]
 
-def _dossier_payload(row):
-    if not isinstance(row, dict):
-        return {}
-    payload = row.get('payload')
-    if isinstance(payload, dict) and payload:
-        return payload
-    try:
-        loaded = json.loads(str(row.get('payload_json') or '{}'))
-    except (TypeError, ValueError):
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
 
 def _summonable_name(db):
     return db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 1").fetchone()[0]
@@ -74,7 +63,7 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     assert stalled_id not in seen
     assert normal_id in seen
     assert db.get_decree_dossier(stalled_id)['status'] == 'proposed'
-    assert _dossier_payload(db.get_decree_dossier(stalled_id)).get('deliberation_state') == 'stalled'
+    assert db.get_decree_dossier(stalled_id)['payload'].get('deliberation_state') == 'stalled'
 
 def test_658_endorsement_provenance_xor(game):
     """#658：背书 provenance 恰为 chat_turn 或 decision_key 之一。"""
@@ -277,7 +266,6 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     canned_full_settlement(monkeypatch)
     import ming_sim.cli_backend as cb
     monkeypatch.setattr(cb, '_run_backend_for_config', lambda *_a, **_k: (json.dumps({'拟旨意图': '拟旨', '动作类型': 'grant_allocation', '目标类型': 'issue', '目标ID': 'route-缺账', '颁布方式': '普通', '施行范围': '无', '参与人': [], 'entries': []}, ensure_ascii=False), {}))
-    monkeypatch.setattr(session_mod, 'write_decree_with_agno', lambda *_a, **_k: '诏曰清丈。')
     session = make_light_session(db, state, content)
     original_turn = int(state.turn)
     original_year = int(state.year)

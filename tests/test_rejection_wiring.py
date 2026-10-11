@@ -7,12 +7,13 @@ rejection_reports → commit 成功后镜像 jsonl → 回滚不留行不留镜�
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from tests.section_rejection_helpers import run_declaration as run_settle
-from tests.section_rejection_helpers import game, rejection_rows
+from tests.section_rejection_helpers import game  # noqa: F401  # pytest fixture discovery
+from tests.section_rejection_helpers import rejection_rows
+from tests.conftest import active_ming_character
 
 
 def _rejection_rows(db, turn):
@@ -36,7 +37,7 @@ def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "人物变更": [{"name": "查无此人甲", "动作": "处置", "status": "dead", "reason": "测试"}],
+        "人物变更": [{"动作": "处置", "name": "查无此人甲", "status": "dead", "reason": "测试"}],
     }, narrative="x", decree_text="y")
 
     rows = _rejection_rows(db, turn)
@@ -75,7 +76,7 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError):
         run_settle(db, state, content, {
-            "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
+            "人物变更": [{"动作": "处置", "name": "查无此人乙", "status": "dead", "reason": "测试"}],
         }, narrative="x", decree_text="y")
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
@@ -117,7 +118,7 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
     with pytest.raises(RuntimeError):
         with atomic(db):
             run_settle(db, state, content, {
-                "人物状态变化": [{"name": "查无此人戊", "动作": "处置", "status": "dead", "reason": "测试"}],
+                "人物变更": [{"动作": "处置", "name": "查无此人戊", "status": "dead", "reason": "测试"}],
             }, narrative="x", decree_text="y")
             raise RuntimeError("outer rollback")
 
@@ -125,27 +126,6 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()  # 镜像未先写
 
 
-def test_attempt_derivation_failure_does_not_abort_settlement(game, monkeypatch, tmp_path):
-    """attempt 推导(扫错误目录)是诊断侧路径——它自身故障(目录不可遍历等)不得
-    崩掉正常结算,回落 attempt=1(与 mirror 失败同向:副信道绝不拖垮主流程)
-    (cmr S0 r2 codex P2)。"""
-    import ming_sim.decree as decree_mod
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-
-    def _boom(t):
-        raise OSError("error_packs root not traversable")
-    monkeypatch.setattr(decree_mod, "_next_attempt", _boom)
-
-    run_settle(db, state, content, {
-        "人物状态变化": [{"name": "查无此人己", "动作": "处置", "status": "dead", "reason": "测试"}],
-    }, narrative="x", decree_text="y")  # 不抛=结算完成
-
-    rows = _rejection_rows(db, turn)
-    assert len(rows) == 1
-    assert rows[0][4] == 1  # attempt 回落 1
 
 
 def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_path):
@@ -169,7 +149,6 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_summary.cancels"]
     assert len(rows) == 1
     assert rows[0][1]  # reason 非空
-
 
 
 

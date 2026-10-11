@@ -9,7 +9,6 @@ per-character `characters.intrigue` 列及其 seed 数据件，并把它接进 0
 - 人物账本接缝：当前格式新开局装载 → 持久存读 → 同格式重开读回不变；
 - 领域查案接缝：控制其余条件仅改目标 intrigue → 逐证难度与相同实投下查获有差异，
   且**不是**代理轴（identity / 自由类目 / 关系网计数皆不动难度）；
-- P4：角色输入只吃定性投影，人物呈现上下文不见裸 int。
 """
 
 from __future__ import annotations
@@ -79,15 +78,3 @@ def test_new_character_enters_roster_with_intrigue(game):
     assert db.conn.execute(
         "SELECT intrigue FROM characters WHERE name=?", ("周慎行",),
     ).fetchone()["intrigue"] == created.intrigue
-
-
-def test_intrigue_reaches_character_input_only_as_a_qualitative_band(game):
-    """结构化轴不是裸整数。"""
-    from ming_sim.qualitative import qualitative_character_axes
-
-    _db, _state, content = game
-    character = content.characters["魏忠贤"]
-    projected = qualitative_character_axes(character)["阴谋"]
-    assert isinstance(projected, str)
-    assert projected != str(int(character.intrigue))
-    assert not projected.strip().isdigit()

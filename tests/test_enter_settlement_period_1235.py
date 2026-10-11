@@ -20,7 +20,7 @@ import time
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
-from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
+from tests.conftest import MONTH_OPEN_KEYS
 from tests.conftest import stub_audience_translate
 
 _IN_FLIGHT_DETAIL = "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。"
@@ -118,7 +118,6 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
-    before = _click_before(game.state)
     turn = int(game.state.turn)
     nid, ctid = _open_night_with_unextracted_reply(game, minister)
 
@@ -175,7 +174,6 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
-    before = _click_before(game.state)
     turn = int(game.state.turn)
     _open_night_with_unextracted_reply(game, minister)
     game.db.add_directive(
@@ -390,14 +388,12 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
         finally:
             done.set()
 
+    t = threading.Thread(target=_peer_exit, daemon=True)
+    t.start()
     try:
-        t = threading.Thread(target=_peer_exit, daemon=True)
-        t.start()
         # 他持 write_gate 时 blocking exit 须堵在 acquire，不得无门完成清快照
         assert not done.is_set(), "exit 不得在 write_gate 仍被他持时无门完成"
         assert game.db.get_month_open_snapshot(turn) is not None
-        gate.release()
-        done.wait()
     finally:
         if gate.locked():
             gate.release()
@@ -489,10 +485,9 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         assert exit_settlement_display_on_failure(game.db, game.state) is True
         assert game.db.get_month_open_snapshot(turn) is None
     finally:
-        gate.release()
+        if gate.locked():
+            gate.release()
         t.join()
-
-    b_done.wait()
     assert "err" not in b_result, b_result.get("err")
     assert b_result.get("status") == 200, b_result
     # SSE 事件字段；复用既有解析，不扫整流正文。
@@ -565,7 +560,6 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
 
         # B：同窗并发过月——卡在 barrier 等待 A，不得代清 A 快照
         b_started = threading.Event()
-        b_done = threading.Event()
         b_result: dict = {}
 
         def _run_b():
@@ -580,8 +574,6 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
                 b_result["body"] = resp_b.text
             except Exception as exc:  # noqa: BLE001
                 b_result["err"] = exc
-            finally:
-                b_done.set()
 
         t_b = threading.Thread(target=_run_b, daemon=True)
         t_b.start()
@@ -598,8 +590,6 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
         t_a.join()
         if t_b is not None:
             t_b.join()
-    a_done.wait()
-    b_done.wait()
     assert "err" not in a_result, a_result.get("err")
     assert a_result.get("status") == 409, a_result
     assert "err" not in b_result, b_result.get("err")

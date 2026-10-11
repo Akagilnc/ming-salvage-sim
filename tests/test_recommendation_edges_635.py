@@ -7,6 +7,7 @@ reason 非空为落账闸（缺失则任命与双边同事务 fail-loud 回滚�
 """
 
 import pytest
+from tests.recommendation_rows import recommendation_events
 
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
@@ -80,7 +81,7 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
     assert zhiyu["context"] == reason
 
     # restore：只读重建 GameState 后，任命与双边无损接续（P1/TD-5）。
-    restored = db.load_state()
+    db.load_state()
     restored_char = content.characters[row["name"]]
     assert restored_char.office == "巡盐御史"
     restored_legs = [e for e in db.get_relation_edge_events()
@@ -200,10 +201,3 @@ def test_appointment_without_recommendation_writes_no_edges(game):
 
 # ---------------------------------------------------------------------------
 # PR #1519 庭裁 Y1/Y2/Y3：工具受理点唯一准入 + 生产链逐字透传真入口回归。
-
-import inspect
-import json
-
-from ming_sim.models import CourtContext
-from ming_sim.session import GameSession
-from tests.recommendation_rows import recommendation_events

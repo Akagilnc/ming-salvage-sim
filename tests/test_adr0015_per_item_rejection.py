@@ -1,9 +1,5 @@
 import json
-
-import pytest
-
-from tests.section_rejection_helpers import game
-
+from tests.section_rejection_helpers import game  # noqa: F401  # pytest fixture discovery
 
 
 
@@ -29,10 +25,6 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
     assert row["reason"] == "坏"
     assert row["category"] == "invalid_enum"
     assert row["source"] == "player_decree"
-
-
-
-
 
 
 def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):

@@ -8,21 +8,17 @@ CLI 和 Web 各自只做 I/O 包装。
 from __future__ import annotations
 
 import logging
-import re
+import sqlite3
 import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
-
-if TYPE_CHECKING:
-    from ming_sim.materials import PreparedMaterials
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
-from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.materials import prepare_scene_materials
 from ming_sim.registry import create_scene_agent
@@ -51,13 +47,12 @@ from ming_sim.decree import (
     _requires_full_settlement,
     resolve_decisions_phase2,
     resolve_directives,
-    write_decree_with_agno,
 )
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
-from ming_sim.audience_night import is_inner_court_attendant
-from ming_sim.llm_model import create_agno_db, extract_agent_text
-from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
+from ming_sim.audience_night import CMD_CLOSE_NIGHT
+from ming_sim.llm_model import create_agno_db
+from ming_sim.models import Character, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
 
 logger = logging.getLogger(__name__)
@@ -98,7 +93,9 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
             try:
                 _os.remove(_os.path.join(saves_dir, stale))
             except OSError:
-                logger.exception("prune_auto_saves failed removing %s", stale)
+                logger.exception(
+                    "prune_auto_saves failed to remove %s", stale,
+                )
 
 
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
@@ -131,15 +128,6 @@ class DirectiveView:
     source: str
     notes: str
     actor: str = ""
-
-
-@dataclass
-class MinisterView:
-    name: str
-    office: str
-    office_type: str
-    faction: str
-    status: str
 
 
 @dataclass
@@ -321,7 +309,7 @@ def register_unlisted_person_record(
     try:
         db.add_character(
             state, character,
-            source=str(source_label or "").strip(),
+            source=str(source_label or ""),
             llm_config=llm_config,
             commit=False,
         )
@@ -362,12 +350,13 @@ def _appointment_intent_is_current_office_noop(
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
     归一到在册原始名，再查当前 office。"""
+    conn = getattr(db, "conn", None)
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
-    if not clean_name or not desired:
+    if conn is None or not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    row = db.conn.execute(
+    row = conn.execute(
         "SELECT status, office FROM characters WHERE name = ?",
         (canonical,),
     ).fetchone()
@@ -505,23 +494,19 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         office_type = infer_office_type_from_office(
             row["office"], row["office_type"], llm_config, use_llm=False
         )
-        import json as _json
+        from ming_sim.models import _load_durable_json_object, loads_persistent_name_list
 
-        # aliases/personal_skills 持久字符串数组：腐坏响亮（#1897 E1）。
-        # seed_guilt 写口允许文字值，不在此按 JSON 对象硬解（判词 J966 明示排除）。
-        from ming_sim.db import _load_durable_str_list
-        aliases = _load_durable_str_list(
-            row["aliases"], surface=f"characters#{name}.aliases",
+        aliases = loads_persistent_name_list(row["aliases"], surface="characters.aliases")
+        personal_skills = loads_persistent_name_list(
+            row["personal_skills"], surface="characters.personal_skills",
         )
-        personal_skills = _load_durable_str_list(
-            row["personal_skills"], surface=f"characters#{name}.personal_skills",
-        )
-        try:
-            seed_guilt = _json.loads(row["seed_guilt"] or "{}")
-        except (TypeError, ValueError):
-            seed_guilt = {}
-        if not isinstance(seed_guilt, dict):
-            seed_guilt = {}
+        from ming_sim.covert_progress import _parse_seed_guilt
+        seed_guilt = _parse_seed_guilt(row["seed_guilt"])
+        for guilt_key, guilt_value in seed_guilt.items():
+            if not isinstance(guilt_value, str):
+                raise ValueError(
+                    f"characters.seed_guilt[{guilt_key!r}] 须为字符串，得 {type(guilt_value).__name__}"
+                )
         characters[name] = Character(
             name=name,
             office=row["office"],
@@ -552,7 +537,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             summary=row["summary"],
             identity=int(row["identity"]),
             intrigue=int(row["intrigue"]),
-            seed_guilt={str(key): str(value) for key, value in seed_guilt.items()},
+            seed_guilt=dict(seed_guilt),
             # 任所 thrives only on character_offices; restore into Character for
             # runtime projection (materials scope / travel gate / seat identity).
             office_region=str(row["office_region"] or "").strip(),
@@ -629,8 +614,7 @@ class GameSession:
             self.debuts_this_turn: List[Dict[str, str]] = []
             self.previous_summary = ""
             self.last_decree = ""
-            # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
-            self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
+            self._begun = False
             # #1353：per-session 单写者票据队列（CLI/Web 共用）；write_gate 并入队列。
             from ming_sim.session_write_queue import SessionWriteQueue
             self._write_queue = SessionWriteQueue()
@@ -687,7 +671,6 @@ class GameSession:
         self.previous_summary = self.db.previous_turn_summary(self.state) or ""
         tlog(f"[接档] begin_turn 读档+历史 tick+人物同步+奏报 {time.monotonic() - _t:.1f}s")
         self.last_decree = ""
-        self._decree_draft_fingerprint = ()
         # awaiting_decision 必须保活：刷新页时仍要弹决策点续跑结算，不可重置成 summoning。
         # settling 同样保活（ADR 0008 S4）：pre_settle 前半段已提交，重载若被重置回 summoning，
         # 守门失效=恢复入口认不出「前半段已完成」会二次重跑前半段（白名单外即被重置）。
@@ -724,32 +707,9 @@ class GameSession:
         self.auto_save("begin")
 
     def note_chat_rollback(self, deleted_committed_draft_ids: Optional[List[int]] = None) -> None:
-        """P1-2：撤回召对若删了 write_decree 已 commit 的对话草案（committed draft），
-        本份生成的诏书正文（last_decree）含被撤回的指令——必须作废，使颁诏须重生成，
-        不能原样颁出。普通撤回（未删 committed draft）不动有效生成稿。"""
+        """P1-2：撤回召对若删了已 commit 的对话草案，作废本份 last_decree 存稿。"""
         if deleted_committed_draft_ids:
             self.last_decree = ""
-            self._decree_draft_fingerprint = ()
-
-    def _draft_fingerprint(self, directives) -> Tuple[Tuple[int, str], ...]:
-        def _has_mapping_key(row, key: str) -> bool:
-            if isinstance(row, dict):
-                return key in row
-            keys = getattr(row, "keys", None)
-            return callable(keys) and key in keys()
-
-        def _mapping_get(row, key: str, default=None):
-            if isinstance(row, dict):
-                return row.get(key, default)
-            return row[key] if _has_mapping_key(row, key) else default
-
-        return tuple(
-            sorted(
-                (int(_mapping_get(d, "id")), str(_mapping_get(d, "text", "") or ""))
-                for d in directives
-                if _has_mapping_key(d, "id") and _mapping_get(d, "id") is not None
-            )
-        )
 
     def refresh_runtime_after_chat_rollback(self) -> None:
         """撤回召对副作用后，用 DB 真相刷新内存人物表。"""
@@ -758,23 +718,6 @@ class GameSession:
 
     # ── 召见阶段 ──────────────────────────────────────────────────────────
 
-    def list_ministers(self) -> List[MinisterView]:
-        # 状态以 DB 为准（历史卒/登场/罢黜均落 DB）；offstage 未登场者不进名单。
-        # 可召资格单真源 _is_summonable_court_minister（#1317 r2：身份归一∧非宗藩∧非未仕；
-        # 与 can_summon/visible_in_court/CLI/事实块同口径。resolve 惰性入参，禁第二份类型表）。
-        views: List[MinisterView] = []
-        resolve = self.db.resolve_power_id
-        for c in self.content.characters.values():
-            if not _is_summonable_court_minister(c, resolve_power_id=resolve):
-                continue
-            status, _ = self.db.get_character_status(c.name)
-            if status == "offstage":
-                continue
-            views.append(MinisterView(
-                name=c.name, office=c.office, office_type=c.office_type,
-                faction=c.faction, status=status,
-            ))
-        return views
 
     def _character(self, name: str) -> Character:
         return character_from_name(name)
@@ -794,7 +737,7 @@ class GameSession:
         raise ValueError(f"人物未建档：{clean_name}")
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
-        # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster 同口径
+        # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster / is_vassal_prince 同口径
         # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
         if is_vassal_prince(character):
@@ -1076,20 +1019,24 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
-        # 收夜口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
-        # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
-        # - #1812 §5 / #1834 F18：旧「留下听着」「今日就到这里吧」不再代码裁断；
-        #   走下方场景调用＋统一转译。
-        audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
-        if audience_command_verdict and audience_command_verdict != CMD_NONE:
+        if self._recognize_audience_command_verdict(message_text) == CMD_CLOSE_NIGHT:
             ctid = int(chat_turn_id or 0)
-            # 生产：ctid>0 只标 court_break，由 epilogue 收夜（join 转译）；
-            # ctid==0 当场 close_night。
+            # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
+            # ctid==0 的当场收夜分支随同步转译一并删除。
             if ctid > 0:
                 self._mark_control_turn_translation_done(ctid)
                 result.court_action = "court_break"
                 return result
+            close_night(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=getattr(self, "_write_gate", None),
+                write_queue=self._write_queue,
+            )
+            result.court_action = "court_break"
+            return result
 
         # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
         xuan_fragment = recognize_xuan_command(message_text)
@@ -1124,12 +1071,14 @@ class GameSession:
                     )
                     xuan_ctid = int(chat_turn_id or 0)
                     if xuan_ctid > 0:
-                        owns = connection_owns_transaction(self.db.conn)
                         self.db.conn.execute(
                             "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
                             (target.name, xuan_ctid),
                         )
-                        if owns:
+                        if (
+                            not bool(getattr(self.db.conn, "_commit_suspended", False))
+                            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
+                        ):
                             self.db.conn.commit()
                     if on_protagonist_changed is not None:
                         on_protagonist_changed()
@@ -1426,30 +1375,6 @@ class GameSession:
             return
         self._set_phase(TurnPhase.SUMMONING)
 
-    def write_decree(self) -> str:
-        """生成诏书。要求无 pending 残留、≥1 条 draft。"""
-        if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
-            # -> str 契约：亲裁期不能拟诏，响亮拒绝走既有 ValueError 错误路径
-            # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
-            raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
-        self._refuse_if_settling()
-        # #498 AC8：拟诏（write_decree）不是收夜触发器——收夜只在真实颁诏/过回合边界
-        # （resolve_turn / advance_without_decree）发生。夜内可拟多道旨并继续斟酌（#497/#502）。
-        # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
-        # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
-        # 拟诏是 preview：只据已 draft 的候选生成诏书，绝不在此把未表态 pending 默认同意成 draft
-        # （#497：未表态只到真实颁诏/过回合才 default-agree；拟诏改 pending status = 制造持久副作用）。
-        # 无 draft 可预览 → 响亮拒绝，不为 preview 造持久态。
-        directives = self.db.list_directives(self.state, statuses=("draft",))
-        if not directives:
-            raise ValueError("无草案不能拟诏（未表态拟旨须先准驳，或于颁诏时默认同意）。")
-        decree = write_decree_with_agno(self.llm_config, self.state, directives, db=self.db)
-        self.last_decree = decree
-        # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
-        # 草案），凭此判定 last_decree 已陈旧、强制重生成纳入新 draft，不许把新 draft 标记
-        # 为已颁却不进诏书正文。
-        self._decree_draft_fingerprint = self._draft_fingerprint(directives)
-        return decree
 
     # #1341/#1338：set_decree 已删——裸设总诏正文绕过逐道草案结构化，违 P1；
     # Web PATCH /api/decree 同步拆除。改稿只走 add_directive / update_directive。
@@ -1496,7 +1421,7 @@ class GameSession:
                     self.db, self.state, exc=durable_exc,
                 )
                 raise SettlementAbort(
-                    settlement_abort_message(pack_path),
+                    settlement_abort_message(pack_path, reason=str(durable_exc)),
                     turn=int(self.state.turn),
                     stage="directive_admission_resubmit",
                     error_pack_path=pack_path,
@@ -1570,7 +1495,7 @@ class GameSession:
                     self.db, self.state, exc=exc,
                 )
                 raise SettlementAbort(
-                    settlement_abort_message(pack_path),
+                    settlement_abort_message(pack_path, reason=str(exc)),
                     turn=int(self.state.turn),
                     stage="directive_admission_resubmit",
                     error_pack_path=pack_path,
@@ -1598,7 +1523,7 @@ class GameSession:
                     self.db, self.state, exc=write_exc,
                 )
                 raise SettlementAbort(
-                    settlement_abort_message(pack_path),
+                    settlement_abort_message(pack_path, reason=str(write_exc)),
                     turn=int(self.state.turn),
                     stage="directive_admission_resubmit",
                     error_pack_path=pack_path,
@@ -1651,6 +1576,7 @@ class GameSession:
             pending_tails = _pending_mechanical_tails(self.db)
             if failure or pending_tails:
                 exc = RuntimeError(
+                    str(failure[1]["error"]) if failure else
                     f"机械尾未终结，不能过月：{[turn for turn, _ in pending_tails]}"
                 )
                 pack_path = (
@@ -1665,7 +1591,7 @@ class GameSession:
                             self.db, self.state, exc=pending_exc,
                         )
                 raise SettlementAbort(
-                    settlement_abort_message(pack_path),
+                    settlement_abort_message(pack_path, reason=str(exc)),
                     turn=int(self.state.turn),
                     stage="mechanical_tail_pending",
                     error_pack_path=pack_path,
@@ -1687,7 +1613,7 @@ class GameSession:
                     self.db, self.state, exc=exc,
                 )
                 raise SettlementAbort(
-                    settlement_abort_message(pack_path),
+                    settlement_abort_message(pack_path, reason=str(exc)),
                     turn=int(self.state.turn),
                     stage="audience_translation_exhausted",
                     error_pack_path=pack_path,
@@ -1804,61 +1730,38 @@ class GameSession:
             )
         dossiered_directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
-        # Negative preview ids participate in stale-decree fingerprinting without
-        # colliding with durable turn_directives ids.
+        # Negative preview ids stay distinct from durable turn_directives ids.
         pending_directives = self.db.preview_pending_directives(
             self.state, content=getattr(self, "content", None),
         )
         directives = list(dossiered_directives)
         directives.extend(pending_directives)
         if pending_directives and recovered_source is None and (decree or "").strip():
-            # The supplied decree predates these durable candidates; regenerate from
-            # the complete read-only view rather than issuing unseen directives.
+            # 显式 decree 早于 durable 候选；清空以免把未入档旨当已颁。
             decree = ""
             self.last_decree = ""
-            self._decree_draft_fingerprint = ()
         settlement_due = _requires_full_settlement(self.state, self.db)
         # Pending non-directive actions (secret orders etc.) enter resolve_directives
         # so pre_settle owns materialization with the rest of the settlement spine.
         pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
         # #1769 耗尽：产物错 draft 留到下月；不得把引擎拒因串透传给皇帝，不得挡月份。
-        # 真拒因已在 rejection_reports 留痕（#1591 保留面）。
         product_exhaust = bool(dossier_rejections)
         # #1769 零成案耗尽与退朝无旨同形：不把 last_decree/显式 decree 当本月已颁。
-        # 混合好旨（dossiered 非空）仍走 player_decree、仍计已颁。
         if product_exhaust and not dossiered_directives:
             decree = ""
             self.last_decree = ""
-            self._decree_draft_fingerprint = ()
         if not directives and not settlement_due and not pending_action_due:
-            # 恢复态且有存诏：免草案要求（零草案 settling 属真实恢复态，
-            # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
                     and (self.last_decree or "").strip()):
                 directives = [{"text": self.last_decree}]
             elif allow_empty_decree or recovered_source is not None or product_exhaust:
-                # #1274：无旨月 / 结算中恢复 — decrees=[] 走完整链，不拒。
-                # #1769：补交耗尽仍无成案旨 — 月照过，draft 跨月保留。
                 pass
             else:
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
-        # P1-1（不变式：不许颁发早于尚未纳入草案的生成稿）：玩家拟诏后又回对话新建草案时，
-        # last_decree 只覆盖旧 draft 集，会把新 draft 标记为已颁却不进诏书正文。此处比对
-        # 当前 draft 集与 last_decree 覆盖的指纹——不一致则作废陈旧生成稿，强制下方重生成
-        # 纳入全部 draft。recovered_source 恢复路用存档真源、不在此列（指纹空、不触发）。
-        if recovered_source is None and (self.last_decree or "").strip():
-            current_fingerprint = self._draft_fingerprint(directives)
-            if (current_fingerprint
-                    and current_fingerprint != getattr(self, "_decree_draft_fingerprint", ())):
-                self.last_decree = ""
-                self._decree_draft_fingerprint = ()
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
-        decree_text = decree or self.last_decree
-        if not decree_text and directives:
-            decree_text = write_decree_with_agno(
-                self.llm_config, self.state, directives, db=self.db
-            )
+        # #1816/#1812：旧合并诏文 LLM 前置已撤；decree_text 仅显式/恢复存稿，不另造生成器。
+        decree_text = decree or self.last_decree or ""
         self.last_decree = decree_text
         # 恢复 fallthrough 把存档真源穿透传入（#146 cmr r2）；正常颁诏 recovered_source is None
         # → 省略 source 参数走默认 player_decree（行为不变）。
@@ -1968,7 +1871,7 @@ class GameSession:
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。失败非致命（不阻断月链），但必须留异常真因（ADR 0005）。"""
+        不碰用户手动存档。失败静默（自动存档不应阻断游戏）。"""
         try:
             import os as _os
             saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好

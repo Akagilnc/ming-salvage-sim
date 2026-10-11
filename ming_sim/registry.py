@@ -35,7 +35,6 @@ def create_scene_agent(
     )
     if hasattr(chat_model, "materials_dir"):
         chat_model.materials_dir = str(prepared.root)
-    # #1847 N6：bundled 戏文底是自由正文，判空用局部副本，注入用原文。
     scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "")
     if not scene_prompt.strip():
         # 无 bundled prompt 时的最低特征化底（真源仍是 content/prompts/scene_agent.md）。

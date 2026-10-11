@@ -18,7 +18,6 @@ XINGKAI  = "/System/Library/AssetsV2/com_apple_MobileAsset_Font8/13b8ce423f92087
 PALATINO = "/System/Library/Fonts/Palatino.ttc"
 
 GOLD  = (255, 235, 130)
-DGOLD = (255, 205,  55)
 DARK  = ( 30,  10,   0)   # near-black stroke
 
 def font(path, size):

@@ -30,7 +30,6 @@ def _restore_content(content):
         if ch is not None:
             ch.office, ch.status, ch.office_type, ch.faction = office, status, office_type, faction
 
-import ming_sim.decree as decree_mod
 from ming_sim.decree import pre_settle, reload_state_from_db
 
 

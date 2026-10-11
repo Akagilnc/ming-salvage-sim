@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from ming_sim.models import _load_durable_json_object
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 
@@ -279,7 +280,7 @@ def build_c0_declaration_shape() -> str:
     dossier_link_types = "|".join(sorted(DOSSIER_LINK_TYPES))
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
-            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **EMPTY_EXTRACTION},
+            {"event_id": "效果属于某事件时填该事件 id（战果，或本段已答请饷的结局，且与该项事件结局的键相同）；未填即独立", **EMPTY_EXTRACTION},
             ensure_ascii=False, indent=2,
         ).splitlines()
     )
@@ -407,7 +408,7 @@ def build_audience_translate_prompt(
     said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
     grounding = str(target_grounding or "")
-    grounding_block = f"{grounding}\n" if grounding else ""
+    grounding_block = f"{grounding}\n" if grounding.strip() else ""
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
         "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"

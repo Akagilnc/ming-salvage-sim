@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tests.material_helpers import prepare_identity_materials
 import json
 
 import pytest
@@ -9,7 +10,7 @@ import pytest
 import ming_sim.month_chain as month_chain
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
-from ming_sim.materials import list_materials, prepare_character_materials, prepare_world_materials, read_material, release_material_tree
+from ming_sim.materials import list_materials, prepare_world_materials, read_material, release_material_tree
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
@@ -29,10 +30,8 @@ _PLAIN_DOSSIER_FACT = "PLAIN_DOSSIER_FACT_1862"
 _TITLE = "关山烽火"
 _REPORT = "本月实况正文"
 
-
 def _llm() -> LLMConfig:
     return LLMConfig(api_key="test", base_url="http://127.0.0.1:9", model="gazette-test")
-
 
 def _session(db, state, content, monkeypatch):
     _forbid_extractor(monkeypatch)
@@ -41,7 +40,6 @@ def _session(db, state, content, monkeypatch):
     session.llm_config = _llm()
     session._write_gate = session._write_queue.write_gate
     return session
-
 
 def test_author_waits_until_rescript_is_done(game, monkeypatch):
     db, state, content = game
@@ -68,7 +66,6 @@ def test_author_waits_until_rescript_is_done(game, monkeypatch):
     held = session.resolve_turn(allow_empty_decree=True)
     assert held.stage == "rescript"
     assert held.advanced is False
-
 
 def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     db, state, content = game
@@ -341,7 +338,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     # 本人自己的密令简报确以 typed 来源落在他自己的见闻里（非公开层）。
     assert f"secret_order_brief:{order_id}" in event_ids
     assert f"secret_order_brief:{order_id}" not in public_ids
-    prepared = prepare_character_materials(db, state, character)
+    prepared = prepare_identity_materials(db, state, character)
     try:
         # 公开说法/邸报/ 载体在册（路径键，非正文）。亲历载体见下。
         assert any(
@@ -362,7 +359,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
     finally:
         release_material_tree(world_tree.root)
-
 
 def test_gazette_failure_retries_report_only(game, monkeypatch):
     db, state, content = game

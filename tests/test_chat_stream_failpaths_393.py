@@ -25,7 +25,6 @@ from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
 from tests.conftest import stub_audience_translate, stub_scene_agent
 
-
 def _assert_write_path_free(runtime) -> None:
     """Drain admitted background writes before probing failpath gate cleanup."""
     queue = runtime._runtime_write_queue()
@@ -655,7 +654,6 @@ def test_chat_stream_typed_429_preserved(monkeypatch, web_game):
     response = _post_chat_stream(monkeypatch, web_game)
     events = _parse_sse(response.text)
     detail = events[-1][1]
-    max_a = default_transport_policy().max_attempts
     assert detail.get("status_code") == 429
     assert detail.get("code") == "llm_run_error"
     assert detail.get("provider_message") == reason

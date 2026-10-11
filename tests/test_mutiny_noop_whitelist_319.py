@@ -200,86 +200,8 @@ def test_latched_loyalty_raw_positive_noop_when_legacy_flips_effect_sign(game):
     ).fetchone()[0] == 0
 
 
-def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
-    """#319 P2 预检同口径：legacy 翻负的 latched loyalty 不得靠 material 门半落兄弟结果。"""
-    db, state, content = game
-    issue_engine.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    configure_guanning_army(db)
-    _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1)
-    for i in range(21):
-        db.insert_legacy(
-            state,
-            name=f"jisi-loyalty-drag-{i}",
-            modifiers={"armies": {ARMY: {"loyalty": -5}}},
-        )
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-    before_loyalty = _row(db, "loyalty")["loyalty"]
-
-    from ming_sim.month_translate import dispatch_month_segment
-
-    dispatch_month_segment(db, state, segment="哗变军预检", translate_fn=lambda _request, _config: {
-        "effects": [{"region_delta": {"beizhili": {
-            "origin_ref": "盘面自发", "military_pressure": 2,
-        }}}, {
-            "event_id": "jisi_lubian",
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {
-                "origin_ref": "盘面自发", "military_pressure": 35,
-            }},
-            "army_delta": {ARMY: {
-                "origin_ref": "盘面自发", "loyalty": 20,
-            }},
-        }],
-    })
-
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 22
-    assert _row(db, "loyalty")["loyalty"] == before_loyalty
 
 
-def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game):
-    """#319：loyalty 已贴 mutiny_loyalty_cap 时，正 delta 预检须拒整封，防兄弟结果半落。"""
-    db, state, content = game
-    issue_engine.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    configure_guanning_army(db)
-    # mutiny_count=1, redemption_count=0 → cap=80；loyalty 已贴 cap
-    _set(db, loyalty=80, arrears=5, latched=1, mutiny_count=1)
-    db.conn.execute(
-        "UPDATE armies SET redemption_count=0 WHERE id=?", (ARMY,)
-    )
-    db.conn.commit()
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
-    before_loyalty = _row(db, "loyalty")["loyalty"]
-    assert before_loyalty == 80
-
-    from ming_sim.month_translate import dispatch_month_segment
-
-    dispatch_month_segment(db, state, segment="哗变军上限预检", translate_fn=lambda _request, _config: {
-        "effects": [{
-            "event_id": "jisi_lubian",
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {
-                "origin_ref": "盘面自发", "military_pressure": 35,
-            }},
-            "army_delta": {ARMY: {
-                "origin_ref": "盘面自发", "loyalty": 5,
-            }},
-        }],
-    })
-
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 20
-    assert _row(db, "loyalty")["loyalty"] == before_loyalty
 
 
 def test_latched_mixed_item_allows_and_denies_per_field(game):

@@ -2,13 +2,11 @@ import json
 
 from ming_sim.covert_levy import (
     ENTRY_KIND, PROHIBITION_ACTION, active_prohibition_dossier,
-    army_pay_fact_for_dossier, settle_exposure_from_canonical_actions,
+    settle_exposure_from_canonical_actions,
     write_exposure_todos,
 )
 from ming_sim.issues import apply_score_extraction
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
-from ming_sim.simulation import EMPTY_EXTRACTION
-from types import SimpleNamespace
 
 
 

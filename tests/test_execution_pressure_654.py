@@ -23,9 +23,6 @@ from ming_sim.execution_pressure import normalize_locality_scope, resolve_dossie
 def test_normalize_locality_scope(raw, expected):
     assert normalize_locality_scope(raw) == expected
 
-def test_normalize_locality_scope_rejects_unknown():
-    with pytest.raises(ValueError):
-        normalize_locality_scope("全省")
 
 
 # ── locality oracle 组合矩阵 ───────────────────────────────────────

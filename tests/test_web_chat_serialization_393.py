@@ -5,6 +5,7 @@ import asyncio
 import threading
 
 import web_app
+from tests.wait_utils import _await_condition_or_task
 from tests.test_web_audience_night_498 import _FakeAgent
 from tests.conftest import stub_scene_agent
 
@@ -85,6 +86,8 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(we
     assert row["status"] == "interrupted"
     assert row["error_pack_path"]
     assert [r["content"] for r in runtime.db.conn.execute("SELECT content FROM chat_messages WHERE role='user'")] == ["请奏"]
+    # 新开夜可并发唤起留中案预推；等这些既有写票落定，再核查无泄漏。
+    assert runtime._runtime_write_queue().wait_idle()
     assert runtime._runtime_write_queue().inflight_count() == 0
 
 
@@ -96,17 +99,22 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(web_game, monkeypa
     stub_scene_agent(monkeypatch, _FakeAgent(started=entered, allow=release, answer="臣已知悉。"))
 
     async def drive_first_event():
-        response = await web_app.api_audience_chat_stream( web_app.ChatRequest(message="请奏"))
+        response = await web_app.api_audience_chat_stream(web_app.ChatRequest(message="请奏"))
         iterator = response.body_iterator
+        async def consume():
+            return [chunk async for chunk in iterator]
+
+        stream_task = asyncio.create_task(consume())
 
         async def tick():
-            await asyncio.to_thread(entered.wait)
+            # entered 或 stream 终态；请求先失败须传播，禁无限等 thread Event（无 deadline）。
+            await _await_condition_or_task(entered.is_set, stream_task)
             events.append("tick")
             release.set()
 
         watcher = asyncio.create_task(tick())
         try:
-            chunks = [chunk async for chunk in iterator]
+            chunks = await stream_task
             events.append("stream")
         finally:
             release.set()
@@ -137,9 +145,12 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(web_ga
     turn = int(web_game.state.turn)
 
     async def drive_concurrent_state_probe():
+        chat_task = asyncio.create_task(
+            web_app.api_audience_chat(web_app.ChatRequest(message="边饷如何？")),
+        )
         async def state_probe():
-            await asyncio.to_thread(chat_entered.wait)
             try:
+                await _await_condition_or_task(chat_entered.is_set, chat_task)
                 payload = await web_app.api_state()
                 # 先落成功标记再放行：set() 先执行则 chat 线程可先记 "chat"，
                 # 与外部断言的严格顺序无 happens-before（#1722 判牒）。
@@ -150,7 +161,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(web_ga
             return payload
 
         chat_result, state_payload = await asyncio.gather(
-            web_app.api_audience_chat(web_app.ChatRequest(message="边饷如何？")),
+            chat_task,
             state_probe(),
         )
         return chat_result, state_payload
@@ -172,4 +183,6 @@ def test_nonstream_chat_rejects_when_session_draining(web_game):
 
     events = list(runtime.chat_stream("殿上", "边饷如何？"))
     assert events and events[0].get("type") == "error"
+    # 新开夜可并发唤起留中案预推；等这些既有写票落定，再核查无泄漏。
+    assert runtime._runtime_write_queue().wait_idle()
     assert runtime._runtime_write_queue().inflight_count() == 0

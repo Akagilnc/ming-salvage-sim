@@ -32,7 +32,7 @@
   "new_armies":       [],  // 建军
   "power_updates":    {},  // dict[power_id -> {字段}]
   "bandit_absorptions": [], // #652 流民投贼吸收请求（吃池顶）
-  "world_advance":    {},  // dict[势力名 -> "stance/态度文 ≤40字"]
+  "world_advance":    {},  // dict[势力名 -> "stance/态度文"]
 
   // ── 局势 / 案卷 ──
   "issue_advances":   [],  // 推进既有 issue
@@ -75,8 +75,8 @@ C0 效果字段须用 `EMPTY_EXTRACTION` 中的键；条目字段别名由 `ITEM
 |---|---|---|
 | `account` | **必须** `国库` 或 `内库` | 不在表内整条丢 |
 | `delta` | **必须** int 且 **非零** | 0 直接丢 |
-| `category` | ≤40 字 | 自由文本 |
-| `reason` | ≤80 字 | 自由文本 |
+| `category` | 自由文本 | 自由文本 |
+| `reason` | 自由文本 | 自由文本 |
 | `purpose` | 可选 `补饷` / `其它` | 补饷会跟 army arrears 联动 |
 | `target_kind` | `purpose=补饷` 时必填 `army` | 配合 target_id 用 |
 | `target_id` | `purpose=补饷` 时必填合法 army_id | 缺失或不存在则整条拒收不扣账 |
@@ -105,8 +105,8 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 |---|---|
 | `source` | `<class_name>@<region_id>` 省级行（如 `农民@shaanxi`）；全国行（region_id 空）不合法 |
 | `target` | 同上；须与 source **同 region_id**（跨省在途归 #475 预留，本契约不做） |
-| `amount` | 拟转正整数（严格 int，拒数字串/float/bool）；单位为「人」，与 armies `manpower` 同刻度 |
-| `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民（**仅引擎 recovery 单核可写**，声明段申报整项拒收，#652）。方向出阵即拒 |
+| `amount` | 拟转正整数（严格 int，拒数字串/float/bool）；单位「人」，全线禁混刻度 |
+| `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民（**仅引擎 recovery 单核可写**，extractor 申报整项拒收，#652）。方向出阵即拒 |
 | `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
 
 - applier 将拟转数额封顶为当时 source 省级行实有余额，并在同一事务中 source 减、target 增同一实数额；已应用记录的 `amount` 是实际转移量。
@@ -122,11 +122,11 @@ canonical 段形＝list；中英别名：`流民投贼` / `投贼吸收`。LLM �
 |---|---|
 | `region_id` | 须有 `流民@region_id` 省级行 |
 | `power_id` | 流寇股：`bandits` 或 `bandit_*`，须已入库 |
-| `requested_count` | 正整数（严格 int）；单位为「人」 |
+| `requested_count` | 正整数（严格 int）；单位「人」 |
 | `origin_ref` | 必填 `dossier:<id>` 或 `盘面自发` |
 
 - 流寇 `power_updates.military_strength` **正增量**整项拒收（必须走本段）；负增量（剿股）仍走 `power_updates`。
-- 人口单位口径为「人」。
+- 现役人口池档可写。
 - item 字段中英别名：`地区编号`→region_id、`势力编号`→power_id、`请求口数`/`请求人数`/`拟吸口数`→requested_count。
 
 ### `surcharge_decrees` — 下旨加派（#650/ADR 0089 明渠）
@@ -137,12 +137,12 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 |---|---|
 | `region_id` | 明省且已有 settle 财政基座，并同时物化 `农民@region_id`、`流民@region_id` 两条省级人口行（未知省/非明省/无基座或人口池逐项拒收留痕） |
 | `monthly_amount` | **必填**数值（万两/月增量）：正＝加派累加；负＝停征/蠲免减账；账面钳 ≥0；显式 0＝静默无操作不落；缺失＝`invalid_enum` 逐项拒收 |
-| `reason` | 可选 ≤120 字 |
+| `reason` | 可选自由文本 |
 | `origin_ref` | **必填且仅接受**具有效果资格的 `dossier:<正整数>`（案卷须存在且已颁或强颁）；不得使用 `盘面自发` |
 
 - item 字段中英别名：`地区编号`→region_id、`月增额`/`月额`→monthly_amount。
 - 同批 `(origin_ref, region_id)` 仅首项成功，重复项逐项拒收。
-- 须已物化人口池（`农民@region_id` / `流民@region_id`）且走 substrate hub 财政的档可写入、消费。历史正账若农民/流民两行皆无则安全出列，仅缺一行视为损坏并 fail-loud。
+- 现役人口池档可写入、消费。历史正账若农民/流民两行皆无则安全出列，仅缺一行视为损坏并 fail-loud。
 - 无旨不入账：段空＝累积账不动；停征后入池止（出口回流归 S5 #652）。
 
 ### `region_delta` — 地区变化
@@ -161,7 +161,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 |---|---|
 | `key` | **必须**非空（key 在 `fiscal_config` 表里，如 `liao_xiang_rate`）|
 | `delta` | int（无损整数串 `"5"` 可）；0/缺省/null = 无操作不记拒；bool/float/坏串 → 整项拒收留痕（v0.8.x PR2-S3）|
-| `reason` | ≤120 字 |
+| `reason` | 自由文本 |
 | `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；每次调整独立留存来源历史 |
 | `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）；#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
@@ -173,14 +173,14 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `direction` | **必须** `income` 或 `expense`（吃中文别名 `收`/`支`/`收入`/`支出`/`进账`/`出账`）|
 | `init_value` | 非负 int（无损整数串 `"300"` 可）；缺省/null = 0；在场负值或非 int（bool/float/坏串）→ 整项拒收留痕（rejection_reports），不再静默 clamp（v0.8.x PR2-S3） |
 | `display` | 缺省=key 去 `_base`/`_rate` 后缀（归一 stem）|
-| `reason` | ≤120 字 |
+| `reason` | 自由文本 |
 | `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；base/rate 两行共享此唯一来源 |
 | `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）；#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
 > 用于「新设关税岁额折月二十万」「新立宗藩裁革月省禄米三十万」这类**常设新增**。一次性进账（抄没/缴获）不属此类，归 `economy_moves`。
 
 ### `fiscal_removes` — 裁撤月度收支
-- `key` 非空 + `reason` ≤120
+- `key` 非空 + `reason` 自由文本
 - `origin_ref` **必填**，只能是 `dossier:<id>` 或 `盘面自发`；裁撤历史永久留存
 - `beyond_intent` 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）：#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否
 - 整项永久取消才属此类；只降税率/削禄米不算（用 `fiscal_changes`）。
@@ -215,14 +215,14 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 ### `world_advance` — 四方动向
 - key：势力名（`后金` `蒙古` `朝鲜` `流寇` 等）
-- value：stance/态度文，**≤40 字**，紧凑一句话；丢"无新动"。
+- value：stance/态度文，紧凑一句话；丢"无新动"。
 
 ### `issue_advances` — 推进既有 issue
 | 字段 | 约束 |
 |---|---|
 | `issue_id` | int，必须是 `issues` 表里已有的 id |
 | `delta_bar` | int 进度增量（正=推向 bar=100，负=回退） |
-| `narrative` | ≤120 字，本月这条 issue 的实况 |
+| `narrative` | 自由文本，本月这条 issue 的实况 |
 | `stage_text` | 可选，覆盖 issue 阶段文案 |
 | `inertia_delta` | 可选 int |
 | `origin_kind` | 可选 |
@@ -257,12 +257,12 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `origin_kind` | **必须** `"decree"` |
 | `origin_ref` | 承诺 issue 必填，指回诏书 / 旨意来源 |
 | `kind` | 默认 `initiative`；若用 `situation` 则按系统危机走 |
-| `title` | ≤60 字 |
+| `title` | 自由文本 |
 | `bar_value` | int，默认 25 |
 | `expected_months` | int |
 | `end_turn` | int，硬时限承诺到期回合；默认 0 |
 | `commitment_kind` | 空或 `"until_stop"`；承诺 issue 专用标记，不能只靠 `origin_kind=decree` 区分 |
-| `resolve_condition` | 文本；普通 issue 叙事结案条件（承诺停止条件只认 `stop_condition`） |
+| `resolve_condition` | 文本；普通事项结案条件（承诺停止条件用 `stop_condition`） |
 | `stop_condition` | dict；落库到 `issues.stop_condition` 时以 JSON 字符串保存。条件 dict 用 `{"army.guanning.arrears":"<=0"}` 这种形态：key 带表/对象/字段，operator 写在 value 内 |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |
@@ -444,8 +444,8 @@ ADR 0054／0058 已署修订与 #1812 删简验收一并退役；不另造替代
 | `罢黜` | — | `reason_code` | 清职名分并落 `dismissed`；政治反应由裁判另产 |
 | `调任` | `office` | `office_type` / `faction` / `任别` | 旧职解绑、新职绑定；若目标现无职名分，执行位可归一为 `任命` |
 | `处置` | `status` | `子动作` / `reason_code` | 状态迁移：下狱、流放、致仕、放归、赐死、卒、起复、昭雪、夺情等 |
-| `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应 |
-| `行止` | 非空 `transit_to` | `行程语气`、`reason_code` | 唯一 payload 为 `动作:"行止"` + `transit_to`；不得提供 `location`；语气闭合枚举 `常行`/`加急`/`星夜兼程`，默认常行；引擎据矩阵持久化剩余距离及 1.0/1.5/2.0 系数，声明不得提供数值 |
+| `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应；`不明` 不在白名单 |
+| `行止` | 非空 `transit_to` | `行程语气`、`reason_code` | 唯一 payload 为 `动作:"行止"` + `transit_to`；不得提供 `location`；语气闭合枚举 `常行`/`加急`/`星夜兼程`，默认常行；引擎据矩阵持久化剩余距离及 1.0/1.5/2.0 系数，extractor 不得提供数值 |
 
 行止任一端无法解析为 canonical region 时不产机械项、仅保留叙事；显式非法 region/语气逐项拒收。canonical 非对角矩阵值为 NaN、+∞、-∞、缺键或非正值均属于系统契约故障，写前响亮失败并由事务回滚。同 region 直接落位而不进入在途；同目的地重复幂等且不重置账；在途改道拒收。迁出 active 时完整清空在途账；抵达仅由引擎事实写路产生，不接受人物变更 payload 抵达。
 | `评定` | `loyalty` | — | 人物忠诚软判增量（integer，非新值），用于安抚/离心等叙事裁判后的结构化数值变化 |
@@ -457,7 +457,7 @@ ADR 0054／0058 已署修订与 #1812 删简验收一并退役；不另造替代
 
 #190 流寇招安：`易主(new_power:"ming", 方式:"主动归附")` 的 `反噬` 若写势力削弱，只能指向该人物当前原势力股；写到其它流寇股会整条拒收，防「招张献忠却削李自成」。头目已死时不能 `易主`，其遗留孤儿股只能走 `power_updates` 剿股。
 
-> 人物变更只认 canonical 键 `人物变更`（ADR 0009）。旧四 key 与 legacy 翻译层已退役；`person_delta_adapter.normalize_person_changes` 仅从 `人物变更` 读取并归一 `动作` 键。
+> **只认 `人物变更`**：appointments / character_status_changes / character_power_changes / office_changes 四旧 key 已随 #1812／#1891／#1899 退役，不再有内部翻译层。`person_delta_adapter.normalize_person_changes` 只规范化 `人物变更`。
 
 ### `secret_order_updates` / `covert_exec_selections`
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact` + 可选布尔 `disclosed`（中文键 `泄漏结论`；可省略）。`disclosed`/`泄漏结论`：密令情节已**实际公开**才为 true（被目击、闹至公堂、承办人被拿获、目标公开反击、明发上谕、科道公开参劾等）；为 true 时触发 `secret_order_disclosure:` 公开知识事件（简报升公共面的唯一闸）。风声/警觉/暴露风险仍为不填或 false。
@@ -508,9 +508,9 @@ ADR 0054／0058 已署修订与 #1812 删简验收一并退役；不另造替代
 |---|---|---|
 | `new_issues[].origin_kind` | 不填 | **必填** `decree` / `event_pool` / `impeachment_surge` |
 | `new_issues[].kind` | 写 `reform` | 白名单 `situation` / `initiative`；改革/试点都用 `initiative` |
-| `new_issues[].title` | — | ≤60 字 |
+| `new_issues[].title` | — | 自由文本 |
 | `close_issues[].reason` | 填了 `result` 没填 `reason` | close_issues 要 **`reason`** 字段（不是 result），空则整条被跳过。注：若同时用 `issue_advances` 把 bar 推满（≥100），issue 会**自动 resolved**，不依赖 close_issues |
-| `power_updates` 字段 | 写 `{"stance":...}` 或 `{"satisfaction":...}` | **实际守门只收三个字段：`威望`(leverage) / `实力`(military_strength) / `经济`(supply——英文 canonical 是 supply,别名表把 经济 映到它;写 `economy` 不被认会拒)。** 连 `satisfaction` / `cohesion` / `stance` / `leader` / `agenda` 全被拒，逐项拒收留痕落 `rejection_reports`（不再 print WARN——v0.8.x PR2-S1;supply 一直在白名单内,旧坑表把它列进被拒名单是 doc 错误）。改外势态度文用 `world_advance`（≤40字）；改归附倾向只能动 leverage/military_strength/supply。本文档上方 `power_updates` 段已按运行时守门收敛。〔崇祯二年五、六月结算实测，turn 8/9〕|
+| `power_updates` 字段 | 写 `{"stance":...}` 或 `{"satisfaction":...}` | **实际守门只收三个字段：`威望`(leverage) / `实力`(military_strength) / `经济`(supply——英文 canonical 是 supply,别名表把 经济 映到它;写 `economy` 不被认会拒)。** 连 `satisfaction` / `cohesion` / `stance` / `leader` / `agenda` 全被拒，逐项拒收留痕落 `rejection_reports`（不再 print WARN——v0.8.x PR2-S1;supply 一直在白名单内,旧坑表把它列进被拒名单是 doc 错误）。改外势态度文用 `world_advance`；改归附倾向只能动 leverage/military_strength/supply。本文档上方 `power_updates` 段已按运行时守门收敛。〔崇祯二年五、六月结算实测，turn 8/9〕|
 
 每踩一坑就补到这张表里，下次别再来一遍。
 

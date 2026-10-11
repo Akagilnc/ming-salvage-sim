@@ -2,7 +2,6 @@ import json
 from tests.month_chain_helpers import make_light_session
 
 import pytest
-import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
 from tests.dossier_test_helpers import (
@@ -231,12 +230,6 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     assert [item["character_id"] for item in roster] == [lead, good]
 
 
-
-
-
-
-
-
 @pytest.mark.parametrize("authority", [None, set()])
 def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
     game, authority,
@@ -288,6 +281,7 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
     ]
     assert len({row["id"] for row in dossiers[-2:]}) == 2
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
+
 
 def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
     db, state, content = game
@@ -840,6 +834,7 @@ def test_extractor_accepts_transformed_execution_outcome(game):
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "transformed"
 
+
 # #1849 / ADR 0152 决定 1：Web 独立手拟新增口（POST /api/directives）已退役，
 # 拟旨落桌走 CLI 手拟同款 capture 核 + session.add_directive，覆盖面不减。
 # 旧「web/cli」入口轴已随之失去用途（函数不再读它），只留行为维度。
@@ -1012,56 +1007,6 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
     assert db.list_decree_dossiers() == []
-
-def test_final_decree_edit_path_removed_no_bypass(game):
-    """#1341/#1338：裸设总诏入口已拆——无 set_decree、无 PATCH /api/decree，
-    既有草案正文不被旁路改写；OpenAPI 不再广告死路。"""
-    import web_app
-    from ming_sim.session import GameSession
-
-    db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "拨十两赈济", "手动新增",
-        dossier_payload={
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief",
-            "amount": 10, "account": "国库",
-            "execution_surface": "immediate",
-        },
-    )
-
-    assert not any(
-        getattr(r, "path", None) == "/api/decree"
-        and "PATCH" in (getattr(r, "methods", None) or set())
-        for r in web_app.app.routes
-    )
-    # 草案未被旁路改写为案卷；可编辑草案列表身份仍在
-    assert db.get_dossier_for_directive(directive_id) is None
-    assert len(db.list_directives(state)) == 1
-
-def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
-    game, monkeypatch,
-):
-    import ming_sim.cli.terminal as terminal
-    from ming_sim.session import GameSession
-
-    db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "着修河工", "手动新增",
-        dossier_payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue", "target_id": "river-works",
-        },
-    )
-    db.ensure_dossiers_for_draft_directives(state)
-    session = make_light_session(db, state, _content)
-    answers = iter([f"edit {directive_id}", f"del {directive_id}", "back"])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-
-    assert session.list_directives() == []
-    assert terminal.review_directives(session) == "back"
-    assert db.get_dossier_for_directive(directive_id) is not None
-    assert len(db.list_directives(state)) == 1
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
     from ming_sim.db import GameDB
@@ -1382,9 +1327,6 @@ def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
         "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
     ).fetchone()["status"]
     assert status == "draft"
-    rej = db.conn.execute(
-        "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
-    ).fetchall()
 
 def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
     db, state, _content = game

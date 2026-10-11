@@ -418,9 +418,9 @@ def _dispatch_effects(
     召对夜里的 effects 表示旨意办理结果，仍只是预推候选；当场实况由各自
     section 承接，不能借 effects 绕过 ADR 0157 的过月落账边界。
 
-    #1844：effects 数组按交代先后逐笔落账——后来的效果读到先前实际落账后的
-    存量；不按实体段固定类别顺序重排跨类因果。一次 apply 内按旨序交错字段，
-    批次性副作用（回流等）仍只核算一次。
+    #1844/#1899：effects 对象与数组均走同一 effect_sequence 逐笔落账——后来的
+    效果读到先前实际落账后的存量；不按实体段固定类别顺序重排跨类因果。单对象
+    即单步序列，不另开对象专用编排。批次性副作用（回流等）仍只核算一次。
     """
     if raw is None or raw == {}:
         return SectionResult(applied=[], rejected=[])
@@ -469,7 +469,7 @@ def _dispatch_effects(
         return SectionResult(applied=[], rejected=rejected)
 
     refs = visible_refs or {}
-    rejected_events = preflight_declared_event_effects(
+    rejected_effects = preflight_declared_event_effects(
         db, state, [(event_id, clean) for _, event_id, clean in clean_items],
         open_affair_ids=set(refs.get("affairs", ())),
     )
@@ -479,10 +479,11 @@ def _dispatch_effects(
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     declared_effect_event_ids: list[str] = []
     accepted_effect = False
-    for item, event_id, clean in clean_items:
-        if event_id in rejected_events:
+    accepted_event_ids: list[str] = []
+    for index, (item, event_id, clean) in enumerate(clean_items):
+        if index in rejected_effects:
             rejected.append(RejectedItem(
-                item=dict(item), reason=rejected_events[event_id],
+                item=dict(item), reason=rejected_effects[index],
                 category="event_rejected", source=source,
             ))
             continue
@@ -535,7 +536,7 @@ def _dispatch_effects(
         ordered_effect_event_ids=ordered_effect_event_ids,
         declared_effect_event_ids=declared_effect_event_ids,
         prior_shape_rejections=shape_rejections,
-        effect_sequence=effect_sequence if isinstance(raw, list) else None,
+        effect_sequence=effect_sequence,
         defer_disclosure=defer_disclosure,
     )
     # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。
@@ -935,12 +936,6 @@ def _commission_grant_payload(
     from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 
     grant_action = str(grant.get("grant_action") or grant.get("action") or "").strip()
-    # 兼容 C0 旧形：未写 grant_action 但给了协饷五字段 → 视作协饷。
-    if not grant_action:
-        if any(grant.get(k) not in (None, "") for k in (
-            "amount", "account", "purpose", "target_kind", "target_id",
-        )):
-            grant_action = "协饷"
     if grant_action not in (GRANT_ACTIONS - {"无"}):
         raise DecreeMaterializationValidationError(
             f"拨帑 grant_action 非法或缺失：{grant_action!r}",
@@ -1062,11 +1057,12 @@ def _attach_commission_escort(
     )
     # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
     # 复用 GameDB 现役 normalize + equality 追加（同 _merge_directive_payload）。
-    from ming_sim.db import GameDB
 
     existing = payload.get("participant_roster")
-    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
-        existing if isinstance(existing, list) else [],
+    if existing is not None and not isinstance(existing, list):
+        raise ValueError(f"payload.participant_roster 须为数组，得 {type(existing).__name__}")
+    payload["participant_roster"] = GameDB.merge_decode_durable_participant_roster(
+        existing or [],
         roster,
     )
     record: Dict[str, Any] = {
@@ -1121,7 +1117,6 @@ def _attach_commission_staging_fields(
             # 不整表替换——否则押解人的职责与机械档从真源消失，只剩投影。
             # 复用 GameDB 现役 normalize + equality 追加（#1900 J19），不另维规则。
             # 委派链走共同 validator 准入（#1897 E1），不拖到收夜才抛。
-            from ming_sim.db import GameDB
 
             if db is not None:
                 from ming_sim.cli_backend import normalize_draft_person_roster
@@ -1132,10 +1127,12 @@ def _attach_commission_staging_fields(
                     validate_delegations=False,
                 )
             existing = payload.get("participant_roster")
+            if existing is not None and not isinstance(existing, list):
+                raise ValueError(f"payload.participant_roster 须为数组，得 {type(existing).__name__}")
             # 新交办名单走既有严格参与人语义（ADR 0053／#1900 J19）：
             # 拒字符串兼容与缺档猜「知情」；完整条目 equality 合并不变。
-            merged = GameDB.merge_participant_roster_entries(
-                existing if isinstance(existing, list) else [],
+            merged = GameDB.merge_decode_durable_participant_roster(
+                existing or [],
                 roster,
             )
             if db is not None:
@@ -2626,7 +2623,6 @@ def _dispatch_promises(
             ):
                 _reject(rejected, item, "只有新建密令可用非空 typed new_content 修改", "invalid_shape", source)
                 continue
-            from ming_sim.db import GameDB
             payload = dict(GameDB.parse_engine_payload_json(
                 row["payload_json"], surface="pending_actions.payload_json",
             ))
@@ -2688,7 +2684,6 @@ def _dispatch_promises(
             else:
                 changed = False
                 if kind == "directive" and declared_mode is not None:
-                    from ming_sim.db import GameDB
                     payload = dict(GameDB.parse_engine_payload_json(
                         row["payload_json"], surface="pending_actions.payload_json",
                     ))

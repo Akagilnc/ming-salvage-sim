@@ -5,6 +5,21 @@ from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _r
 from tests.dossier_test_helpers import create_test_secret_order
 
 
+def _list_dossier_link_rejections(db, source_dossier_id=None, *, pending_action_id=None):
+    """存储读面：已删 list_dossier_link_rejections 的现役替身（同表同过滤）。"""
+    if (source_dossier_id is None) == (pending_action_id is None):
+        raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
+    if pending_action_id is not None:
+        column, value = "pending_action_id", pending_action_id
+    else:
+        column, value = "source_dossier_id", source_dossier_id
+    rows = db.conn.execute(
+        f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
+        (int(value),),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _make_dossier(db, state, text):
     return db.create_decree_dossier(
         state,

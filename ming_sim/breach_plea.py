@@ -22,7 +22,13 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from ming_sim.models import loads_effect_dict
+from ming_sim.models import (
+    loads_effect_dict,
+    _load_durable_json_object,
+    loads_persistent_name_list,
+    require_persistent_string_list,
+)
+from ming_sim.participant_roster import decode_durable_participant_roster
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
@@ -92,37 +98,23 @@ def encode_plea_meta(meta: Dict[str, object]) -> str:
 
 
 def decode_plea_meta(origin_context: object) -> Dict[str, object]:
-    from ming_sim.db import GameDB
+    """Machine-marked plea metadata is durable structure, not free prose.
 
-    text = str(origin_context or "").strip()
+    Missing prefix → no meta ({}). Prefixed but corrupt/non-object → raise.
+    """
+    text = str(origin_context or "")
     if not text.startswith(_META_PREFIX):
         return {}
-    # 有前缀的机读元数据：腐坏 JSON/非对象响亮，不 catch-to-{}（#1897 E1）。
-    from ming_sim.db import _load_durable_json_object
-    return _load_durable_json_object(
-        text[len(_META_PREFIX):],
-        surface="breach_plea.origin_context.meta",
-    )
+    raw = text[len(_META_PREFIX):]
+    return _load_durable_json_object(raw, surface="breach_plea.meta")
 
 
 def commitment_natural_due_turn(row: Any) -> int:
     """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
-    try:
-        keys = row.keys()  # sqlite3.Row
-    except Exception:
-        keys = list(row.keys()) if isinstance(row, dict) else []
-    stages_raw = row["stages_json"] if "stages_json" in keys else (
-        row.get("stages_json") if isinstance(row, dict) else None
-    )
-    stages = normalize_commitment_stages(stages_raw)
+    stages = normalize_commitment_stages(row["stages_json"])
     if stages:
         return max(int(s["due_turn"]) for s in stages)
-    try:
-        end_turn = int(row["end_turn"] if "end_turn" in keys else (
-            row.get("end_turn") if isinstance(row, dict) else 0
-        ) or 0)
-    except (TypeError, ValueError):
-        end_turn = 0
+    end_turn = int(row["end_turn"] or 0)
     return end_turn if end_turn > 0 else 0
 
 
@@ -146,10 +138,7 @@ def list_active_commitments(db: Any) -> List[Any]:
 
 def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
     refs: Set[str] = {f"issue:{int(commitment_ref)}"}
-    try:
-        origin = str(row["origin_ref"] or "").strip()
-    except (TypeError, KeyError, IndexError):
-        origin = ""
+    origin = str(row["origin_ref"] or "").strip()
     if origin:
         refs.add(origin)
     return refs
@@ -160,24 +149,22 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
 
     names: List[str] = []
     # 承诺名册走共同权威；腐坏响亮，不 catch-to-[]（#1897 E1）。
-    from ming_sim.participant_roster import decode_durable_participant_roster
     roster = decode_durable_participant_roster(row["participant_roster"])
     for item in roster:
         if item.get("tier") == "主办":
             cid = str(item.get("character_id") or "").strip()
             if cid:
                 names.append(cid)
-    try:
-        origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
-    except Exception:
-        origin_ref = ""
+    origin_ref = row["origin_ref"]
     did = parse_dossier_id(origin_ref)
     if did is not None:
         # get_decree_dossier 已响亮解码名册；再消费其结构化列表。
         dossier = db.get_decree_dossier(int(did))
         if dossier is not None:
-            for item in dossier.get("participant_roster") or []:
-                if isinstance(item, dict) and item.get("tier") == "主办":
+            for item in decode_durable_participant_roster(
+                dossier.get("participant_roster") or [],
+                ):
+                if item.get("tier") == "主办":
                     cid = str(item.get("character_id") or "").strip()
                     if cid and cid not in names:
                         names.append(cid)
@@ -202,27 +189,21 @@ def _dedicated_accounts(row: Any) -> List[str]:
             seen.add(acc)
             accounts.append(acc)
 
-    try:
-        keys = row.keys()
-    except Exception:
-        keys = []
-
-    tags_raw = row["tags"] if "tags" in keys else None
-    # issues.tags 持久字符串数组：腐坏响亮（#1897 E1）。
-    from ming_sim.db import _load_durable_str_list
-    tags = _load_durable_str_list(tags_raw, surface="issues.tags")
+    tags = loads_persistent_name_list(row["tags"], surface="issues.tags")
     for tag in tags:
-        t = str(tag or "").strip()
+        t = tag.strip()
         if t.startswith("专款:"):
             _add(t.split(":", 1)[1].strip())
 
-    ongoing_raw = row["ongoing_effects"] if "ongoing_effects" in keys else "{}"
-    ongoing = loads_effect_dict(ongoing_raw or "{}")
-    economy = ongoing.get("economy") if isinstance(ongoing, dict) else None
-    if isinstance(economy, list):
+    ongoing = loads_effect_dict(row["ongoing_effects"])
+    economy = ongoing.get("economy")
+    if economy is not None:
+        if not isinstance(economy, list):
+            raise ValueError(f"ongoing_effects.economy 须为数组，得 {type(economy).__name__}")
         for item in economy:
-            if isinstance(item, dict):
-                _add(item.get("account"))
+            if not isinstance(item, dict):
+                raise ValueError(f"ongoing_effects.economy 成员须为对象，得 {type(item).__name__}")
+            _add(item.get("account"))
     return accounts
 
 
@@ -232,12 +213,10 @@ def plea_kind_set(meta: Dict[str, object]) -> Set[str]:
     primary = str(meta.get("breach_kind") or "").strip()
     if primary:
         kinds.add(primary)
-    absorbed = meta.get("absorbed_breach_kinds") or []
-    if isinstance(absorbed, list):
-        for raw in absorbed:
-            kind = str(raw or "").strip()
-            if kind:
-                kinds.add(kind)
+    for kind in require_persistent_string_list(
+        meta.get("absorbed_breach_kinds"), surface="breach_plea.meta", field="absorbed_breach_kinds",
+    ):
+        kinds.add(kind)
     return kinds
 
 
@@ -297,10 +276,9 @@ def _merge_plea_kind_into_todo(
     """同回合第二类松手：显式并入既有 pending，log+meta 记全被吞类。"""
     meta = decode_plea_meta(todo.get("origin_context"))
     primary = str(meta.get("breach_kind") or "")
-    absorbed = meta.get("absorbed_breach_kinds")
-    if not isinstance(absorbed, list):
-        absorbed = []
-    absorbed_list = [str(x) for x in absorbed if str(x or "").strip()]
+    absorbed_list = require_persistent_string_list(
+        meta.get("absorbed_breach_kinds"), surface="breach_plea.meta", field="absorbed_breach_kinds",
+    )
     kind = str(breach_kind or "").strip()
     if kind and kind != primary and kind not in absorbed_list:
         absorbed_list.append(kind)
@@ -363,10 +341,10 @@ def write_breach_plea_todo(
     if existing is not None:
         existing_meta = decode_plea_meta(existing.get("origin_context"))
         existing_primary = str(existing_meta.get("breach_kind") or "")
-        absorbed = existing_meta.get("absorbed_breach_kinds") or []
-        known = {existing_primary}
-        if isinstance(absorbed, list):
-            known.update(str(x) for x in absorbed if x)
+        known = {existing_primary, *require_persistent_string_list(
+            existing_meta.get("absorbed_breach_kinds"),
+            surface="breach_plea.meta", field="absorbed_breach_kinds",
+        )}
         if kind in known:
             # 同类幂等：返回既有 id
             return int(existing["id"])
@@ -436,7 +414,9 @@ def project_breach_plea_scene(todo: Dict[str, object]) -> Dict[str, object]:
         "criterion_text": str(todo.get("criterion_text") or label),
         "commitment_title": str(meta.get("commitment_title") or ""),
         "reason": str(meta.get("reason") or ""),
-        "absorbed_breach_kinds": list(meta.get("absorbed_breach_kinds") or []),
+        "absorbed_breach_kinds": require_persistent_string_list(
+            meta.get("absorbed_breach_kinds"), surface="breach_plea.meta", field="absorbed_breach_kinds",
+        ),
         "channel": "audience_pending",
     }
 
@@ -461,10 +441,7 @@ def _spent_amount_and_fiscal_count(
     """已投入：金额（economy 负流水绝对值）与 fiscal 条数分账。"""
     spent_amount = 0
     fiscal_count = 0
-    try:
-        origin = str(row["origin_ref"] or "")
-    except Exception:
-        origin = ""
+    origin = str(row["origin_ref"] or "")
     did = parse_dossier_id(origin)
     if did is not None:
         for mv in db.list_economy_moves_for_dossier(int(did)):
@@ -492,7 +469,7 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     if row is None:
         return FOUNDATION_JUST_STARTED
     stages = normalize_commitment_stages(
-        row["stages_json"] if "stages_json" in row.keys() else None
+        row["stages_json"]
     )
     n_stages = len(stages)
     bar = int(row["bar_value"] or 0)
@@ -855,16 +832,16 @@ def expire_breach_pleas_on_due(
 
 def _promised_monthly_amount(row: Any) -> int:
     ongoing = loads_effect_dict(row["ongoing_effects"] or "{}")
-    economy = ongoing.get("economy") if isinstance(ongoing, dict) else None
+    economy = ongoing.get("economy")
     total = 0
-    if isinstance(economy, list):
+    if economy is not None:
+        if not isinstance(economy, list):
+            raise ValueError(f"ongoing_effects.economy 须为数组，得 {type(economy).__name__}")
         for it in economy:
             if not isinstance(it, dict):
-                continue
-            try:
-                delta = int(it.get("delta") or 0)
-            except (TypeError, ValueError):
-                delta = 0
+                raise ValueError(f"ongoing_effects.economy 成员须为对象，得 {type(it).__name__}")
+            raw_delta = it.get("delta")
+            delta = 0 if raw_delta is None else int(raw_delta)
             if delta < 0:
                 total += -delta
             elif delta > 0:
@@ -1060,7 +1037,6 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
 
     # 承诺 roster 只读结构化 office 身份；role 是自由职分，腐坏名册响亮。
     expected = ""
-    from ming_sim.participant_roster import decode_durable_participant_roster
     roster = decode_durable_participant_roster(commitment_row["participant_roster"])
     for item in roster:
         if str(item.get("character_id") or "").strip() != name:
@@ -1075,7 +1051,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     # 案卷 executor office 快照（结构化 office 字段，非自由 role）
     if not expected:
         did = parse_dossier_id(
-            commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
+            commitment_row["origin_ref"]
         )
         if did is not None:
             drow = db.get_decree_dossier(int(did))
