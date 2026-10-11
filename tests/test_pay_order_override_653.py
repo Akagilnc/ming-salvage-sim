@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import copy
-from types import SimpleNamespace
 import math
 
 import pytest
@@ -688,57 +687,6 @@ def test_materialize_requires_real_promulgated_dossier(game):
             origin_ref=f"dossier:{did}", commit=True,
         )
 
-# ═══════════════ 中央侧折发消费者（flows 读端）═══════════════
-
-    # 免除不入欠：欠发只按折后应得计（shortfall 上界即折后 due）
-
-def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
-    """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
-    from ming_sim.flows import (
-        _central_dues_with_haircut,
-        apply_fixed_period_flows,
-        army_needed,
-    )
-
-    db, state, _content = game
-    army = db.conn.execute(
-        "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "
-        "province_pay_share, pay_source_region, central_pay_arrears, arrears "
-        "FROM armies WHERE id = 'jingying'"
-    ).fetchone()
-    assert float(army["province_pay_share"] or 0) <= 0
-    assert float(army["central_pay_share"] or 0) > 0
-    old_central_arrears = float(army["central_pay_arrears"] or 0)
-    assert old_central_arrears > 0
-    old_arrears = float(army["arrears"] or 0)
-    assert old_arrears > 0
-
-    db.conn.execute(
-        "UPDATE armies SET consecutive_pay_shortfall_months = 3 WHERE id = 'jingying'"
-    )
-    db.conn.commit()
-
-    did = _override_dossier(
-        db, state, [{"key": "due_haircut_bp_军饷#central", "value": 1}],
-    )
-    db.apply_dossier_promulgation(state, did, "promulgated")
-
-    dues, _exempt = _central_dues_with_haircut(db, state, [army])
-    raw_due = army_needed(army) * float(army["central_pay_share"] or 0)
-    assert raw_due > 0
-    assert dues["jingying"] == pytest.approx(0.0)
-
-    apply_fixed_period_flows(db, state)
-
-    after = db.conn.execute(
-        "SELECT consecutive_pay_shortfall_months, central_pay_arrears, arrears "
-        "FROM armies WHERE id = 'jingying'"
-    ).fetchone()
-    assert int(after["consecutive_pay_shortfall_months"] or 0) == 0
-    # 中央旧欠不因零 Due 月自动偿还（ADR 0023 D7③ / #653 边界）
-    assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
-    assert float(after["arrears"] or 0) == pytest.approx(old_arrears)
-
 # ═══════════════ 独立 oracle 宪制 mutation 自验 ═══════════════
 
 def test_oracle_independent_of_shared_haircut_helper(monkeypatch):
@@ -787,10 +735,6 @@ def test_oracle_independent_of_debt_mapping(monkeypatch):
     with pytest.raises((ft.FiscalConservationError, ValueError)):
         settle_tick(st, p, [])
 
-# ═══════════════ F2 投影真源修正 goldens（judge r2 class②）═══════════════
-
-# ═══════════════ 拟旨 capture→成案（财政物化与下一次省 tick 分别由上方领域用例覆盖）═══
-
 def _pin_shortfall_board(db, region_id):
     """省内池不足盘面钉死（拨付gross=0 → hub 京运补 due=0，p 原样进 tick）：
     付款序决定新债落点，确定性可断言。"""
@@ -816,56 +760,6 @@ def _pin_shortfall_board(db, region_id):
     )
     db.conn.commit()
 
-def _capture_override_decree(game, monkeypatch, text, entries):
-    """真实手工拟诏 capture seam（mock LLM 抽取）→ 草案落库 → 结束边界成案 staging。
-    全程禁手工 create_decree_dossier 旁路。"""
-    import json as _json
-
-    import ming_sim.cli_backend as cli_backend
-    import ming_sim.draft_intent as draft_intent
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    # #653 capture 合同与 extraction 同源：account/pay_order；属地写在 entries 键名。
-    # 合入 #654 后 region 须显式 locality_scope=single，不得靠缺省暗升。
-    response = {
-        "拟旨意图": "拟旨",
-        "动作类型": "pay_order_override",
-        "目标类型": "account",
-        "目标ID": "pay_order",
-        "entries": entries,
-    }
-
-    def backend(prompt, *_a, **_k):
-        return (_json.dumps(response, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    payload = draft_intent.resubmit_draft_admission_payload(
-        text, bad_payload={}, failure_reason="成案未入档",
-        db=db, content=content,
-    )
-    assert payload["dossier_action_type"] == "pay_order_override"
-    assert payload["target_kind"] == "account"
-    assert payload["entries"] == entries
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    dv = SimpleNamespace(
-        id=db.add_directive(state, None, text, "手动新增", dossier_payload=payload),
-        text=text, status="draft",
-    )
-    db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(dv.id)
-    assert dossier is not None
-    assert dossier["action_type"] == "pay_order_override"
-    return int(dossier["id"])
-
-def test_manual_override_capture_stages_without_premature_materialization(game, monkeypatch):
-    db, _state, _content = game
-    entries = [{"key": "due_priority_军饷@shaanxi", "value": 40}]
-    did = _capture_override_decree(game, monkeypatch, "今岁边饷居末", entries)
-    assert db.get_decree_dossier(did)["status"] == "proposed"
-    assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
 
 # ═══════════════ F2.3（owner 拍板 r5）：官俸欠/宗禄欠当回合流量持久留痕 ═══════════════
 

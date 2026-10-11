@@ -126,6 +126,7 @@ def test_save_runtime_llm_persists_channel_slots(tmp_path, monkeypatch):
 
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["channel"] == "cli"
+    assert "reasoning_strength" not in saved
     assert saved["api"]["model"] == "gpt-test"
     assert saved["api"]["api_key"] == "sk-test"
     assert "max_tokens" not in saved["api"]
@@ -151,7 +152,7 @@ def test_save_runtime_llm_persists_api_reasoning_strength(tmp_path, monkeypatch)
     )
 
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["reasoning_strength"] == "high"
+    assert saved["api"]["reasoning_strength"] == "high"
 
 
 def test_save_runtime_llm_api_save_preserves_cli_reasoning_strength(tmp_path, monkeypatch):
@@ -209,7 +210,6 @@ def test_save_runtime_llm_cli_save_preserves_api_reasoning_strength(tmp_path, mo
 
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["channel"] == "cli"
-    assert saved["reasoning_strength"] == "high"
     assert saved["api"]["reasoning_strength"] == "low"
     assert saved["cli"]["reasoning_strength"] == "high"
 
@@ -230,7 +230,6 @@ def test_save_runtime_llm_cli_save_can_seed_api_reasoning_strength(tmp_path, mon
 
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["channel"] == "cli"
-    assert saved["reasoning_strength"] == "off"
     assert saved["api"]["reasoning_strength"] == "high"
     assert saved["cli"]["reasoning_strength"] == "off"
 
@@ -259,7 +258,6 @@ def test_save_runtime_llm_can_clear_reasoning_strength_to_default(tmp_path, monk
     llm_config.save_runtime_llm("", "", "", channel="cli", reasoning_strength="")
 
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["reasoning_strength"] == ""
     assert saved["cli"]["reasoning_strength"] == ""
 
 
@@ -397,8 +395,6 @@ def test_cli_backend_active_explicit_cli_bogus_runner_false_despite_env(monkeypa
     cfg = LLMConfig(api_key="cli-backend", base_url="", model="", channel="cli", cli_runner="bogus")
 
     assert cli_backend.cli_backend_active(cfg) is False
-
-
 
 
 def test_create_chat_model_unsupported_cli_runner_raises_unavailable(monkeypatch):

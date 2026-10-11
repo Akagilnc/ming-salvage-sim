@@ -618,7 +618,6 @@ def normalize_office(office: str) -> str:
     return ",".join(parts)
 
 COURT_OFFICE_TYPES = {"内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"}
-MINISTRY_OFFICE_TYPES = COURT_OFFICE_TYPES - {"内阁"}
 
 _OFFICES_TABLE: Optional[Dict[str, object]] = None
 _OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
@@ -1473,8 +1472,7 @@ class GameDB:
                 time_of_day TEXT NOT NULL DEFAULT '',
                 location TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'open',
-                -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEPS
-                -- endorsement-bound 是 CLOSE_STEPS 中的一步，不另设平行列
+                -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEP_*
                 close_commit_cursor INTEGER NOT NULL DEFAULT 0,
                 -- 夜内事件单调序源：账本 seq 与 chat night_seq 同桶递增
                 next_event_seq INTEGER NOT NULL DEFAULT 0,

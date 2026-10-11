@@ -1,7 +1,4 @@
-"""数据类：游戏实体与状态容器。L0 叶子模块。
-
-CourtContext 的 state/db 注解用字符串前向引用，避免 import db.py。
-"""
+"""数据类：游戏实体与状态容器。L0 叶子模块。"""
 
 from __future__ import annotations
 
@@ -673,13 +670,6 @@ class GameState:
         if self.period > 12:
             self.period = 1
             self.year += 1
-
-
-@dataclass
-class CourtContext:
-    state: "GameState"
-    db: "object"  # GameDB；用 object 注解避免 import db.py 造成环
-    previous_summary: str = ""
 
 
 def period_label(year: int, month: int) -> str:

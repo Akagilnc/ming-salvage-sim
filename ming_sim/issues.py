@@ -11,7 +11,7 @@ import math
 import re
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.action_materialize import DecreeMaterializationValidationError
 from ming_sim.applier import atomic, connection_owns_transaction
@@ -2513,7 +2513,6 @@ def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
 
 
 TRAVEL_SPEED_BY_TONE = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
-TravelTone = Literal[*TRAVEL_SPEED_BY_TONE]
 
 
 def normalize_travel_tone(value: object) -> str:

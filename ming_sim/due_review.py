@@ -40,9 +40,6 @@ _AUDIENCE_LANE_URGE = "urge"
 _AUDIENCE_LANE_COVERT_LEVY = "covert_levy"
 _AUDIENCE_LANE_UNKNOWN = "unknown"
 
-# #624 四缝白名单钉：仅 staged 进 due-review 终裁（由分派矩阵派生，非平行谓词）
-DUE_REVIEW_ENTRY_KIND_WHITELIST = frozenset({ENTRY_KIND_STAGED})
-
 
 def normalize_audience_entry_kind(entry_kind: object) -> str:
     text = str(entry_kind or ENTRY_KIND_STAGED).strip()

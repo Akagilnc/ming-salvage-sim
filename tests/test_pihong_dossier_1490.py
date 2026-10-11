@@ -363,25 +363,3 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game, monkeypatch):
     assert 'dossier_action_type' not in staged
     assert 'target_kind' not in staged
     assert 'target_id' not in staged
-
-
-def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
-    """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""
-    import ming_sim.cli_backend as cli_backend
-    import ming_sim.draft_intent as draft_intent
-    db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, title='混载')
-    did = int(stalled['id'])
-    before_dossiers = len(db.list_decree_dossiers())
-    before_dirs = db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c']
-
-    def backend_mixed(prompt, *_a, **_k):
-        return (json.dumps({'拟旨意图': '拟旨', '动作类型': 'policy', '目标类型': 'issue', '目标ID': 'river', '目标案卷ID': did}, ensure_ascii=False), 1)
-    monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_mixed)
-    with pytest.raises(ValueError):
-        draft_intent.resubmit_draft_admission_payload(
-            '混载旨文', bad_payload={}, failure_reason="成案未入档",
-            db=db, content=content,
-        )
-    assert len(db.list_decree_dossiers()) == before_dossiers
-    assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs

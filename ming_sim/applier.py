@@ -1,7 +1,7 @@
 """结算落库统一拒收契约与事务边界（ADR 0008 S0 骨架）。
 
 契约住此模块；各 section 适配器将原地迁入（PR2）。
-公开类型：Provenance / RejectedItem / SectionResult / ApplyContext / RejectionCollector。
+公开类型：Provenance / RejectedItem / SectionResult / RejectionCollector。
 """
 
 from __future__ import annotations
@@ -283,23 +283,6 @@ class SectionResult:
             applied=self.applied + other.applied,
             rejected=self.rejected + other.rejected,
         )
-
-
-# ---------------------------------------------------------------------------
-# 决定 1：适配器入参上下文
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ApplyContext:
-    """适配器入参，持结算所需的全部外部依赖。
-
-    source 由调用方在调用前传入。
-    """
-
-    db: Any          # GameDB（不在 applier 层导入 GameDB 避免循环）
-    state: Any       # GameState
-    content: Any     # GameContent
-    source: Provenance
 
 
 # ---------------------------------------------------------------------------

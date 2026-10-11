@@ -663,7 +663,6 @@ def save_runtime_llm(
         cli_payload["reasoning_strength"] = cli_strength
     payload = {
         "channel": active_channel,
-        "reasoning_strength": strength,
         "api": api_payload,
         "cli": cli_payload,
     }

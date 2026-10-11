@@ -2,7 +2,6 @@ import json
 
 import pytest
 
-import ming_sim.cli_backend as cli_backend
 import ming_sim.draft_intent as draft_intent
 from tests.dossier_test_helpers import rejected_verdict
 
@@ -22,43 +21,6 @@ def _rejected_verdict(dossier_id):
     return rejected_verdict(
         dossier_id, "强盛", gatekeeper_id="韩爌", reason="科臣封驳",
     )
-
-
-@pytest.mark.parametrize(
-    ("emperor_text", "extracted_mode", "expected"),
-    [("中旨直发，清核仓场", "普通", "ordinary"),
-     ("清核仓场", "midzhi", "midzhi")],
-)
-def test_manual_mode_uses_typed_extractor_judgment(
-    monkeypatch, emperor_text, extracted_mode, expected,
-):
-    extracted = json.dumps({
-        "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-        "目标ID": "granary", "颁布方式": extracted_mode,
-    }, ensure_ascii=False)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
-    )
-    assert draft_intent.resubmit_draft_admission_payload(
-        emperor_text, bad_payload={}, failure_reason="成案未入档",
-    )["mode"] == expected
-
-
-def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(monkeypatch):
-    extracted = json.dumps({
-        "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-        "目标ID": "granary",
-    }, ensure_ascii=False)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
-    )
-
-    payload = draft_intent.resubmit_draft_admission_payload(
-        "增列核验期限", bad_payload={}, failure_reason="成案未入档",
-        existing_mode="midzhi",
-    )
-
-    assert payload["mode"] == "midzhi"
 
 
 def test_predeclared_midzhi_promulgation_persists_stigma(game):
@@ -197,11 +159,6 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
 # ---------------------------------------------------------------------------
 # #657 片2：canonical / capability 回验
 # ---------------------------------------------------------------------------
-
-
-
-
-
 
 
 @pytest.mark.parametrize(
