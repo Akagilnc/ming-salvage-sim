@@ -30,7 +30,6 @@ from ming_sim.error_pack import (
 from ming_sim.exceptions import (
     LLMContractError,
 )
-from ming_sim.faction_brew import VIEW_FACTION_STANCE
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
 from ming_sim.entities.fiscal.levy import apply_historical_fiscal_rates
 from ming_sim.entities.issue.legacy import clear_gated_legacies
@@ -38,7 +37,6 @@ from ming_sim.issues import gather_impeachment_surge_candidates
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
-from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,
 )

@@ -1,9 +1,8 @@
-"""数据类：游戏实体与状态容器。L0 叶子模块。
-"""
+"""数据类：游戏实体与状态容器。L0 叶子模块。"""
 
 from __future__ import annotations
-
 import json
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List
@@ -280,12 +279,16 @@ FRONT_HALF_DONE_PHASES = (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.
 # 改为从这里 re-export，保留既有 import 路径。
 CODEX_DEFAULT_MODEL = "gpt-5.5"
 CLAUDE_DEFAULT_MODEL = "claude-opus-4-8"
+# channel=cli 但未声明 runner 时的兜底 runner（宿主只由运行配置选；无 env 分派）。单一真源。
+CLI_DEFAULT_RUNNER = "agy"
 # 设置页那一格（cli.timeout_seconds 槽）的默认值 = 静默判死阈值（秒）：距上次新内容
 # 这么久没有新动静，就判这次调用已死并重试。#1465 切片③ owner 2026-09-07 拍：这一格
 # 从「总超时/子进程墙钟」改接空转轴，CLI 与 API 同吃这一个权威（llm_transport 的
 # TransportPolicy.idle_timeout_seconds 由它兜底），默认 60 秒。
 CLI_DEFAULT_TIMEOUT_SECONDS = 60.0
 VALID_CHANNELS = frozenset({"api", "cli"})  # 合法执行通道集合，新增通道只改这里
+API_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+API_DEFAULT_MODEL = "gpt-4o-mini"
 API_DEFAULT_TIMEOUT_SECONDS = 180.0  # API 请求默认超时（秒）单一真源（#58）
 # #1465 transport 统一策略默认值（单真源；次数/超时/空转进 runtime 可覆盖，代码零硬编码）
 TRANSPORT_DEFAULT_MAX_ATTEMPTS = 3  # 总计 3 attempts（初试 1 + 重试 2；第一次不叫重试）
@@ -307,7 +310,7 @@ class LLMConfig:
     advanced_api_key: str = ""  # 空=复用主 api_key；非空=advanced 角色专用 key
     advanced_thinking_level: str = ""  # legacy input only; unified reasoning_strength owns reasoning
     reasoning_strength: str = ""  # 抽象推理强度：off/low/medium/high；空=沿用后端默认/旧配置
-    channel: str = ""  # ""=沿用旧 env 探针；api=OpenAI 兼容 API；cli=本地 CLI runner
+    channel: str = ""  # ""=未声明（按 API 路径）；api=OpenAI 兼容 API；cli=本地 CLI runner
     cli_runner: str = ""  # codex | claude（名单真源=_CLI_BACKENDS）
     cli_model: str = ""  # CLI runner 的模型名/档位，由具体后端解释
     cli_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS  # 静默判死阈值（秒），设置页那一格；同模块常量直接引用

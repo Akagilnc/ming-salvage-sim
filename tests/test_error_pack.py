@@ -6,9 +6,14 @@ attempt 从目录文件数推导，中止提示自带路径指引。
 """
 
 from __future__ import annotations
+import asyncio
+import pytest
+from ming_sim.exceptions import SettlementAbort
+import threading
+
+import asyncio
 
 import json
-import threading
 from pathlib import Path
 
 import pytest
@@ -33,6 +38,7 @@ def test_attempt_derived_from_existing_dirs(game, monkeypatch, tmp_path):
     context = json.loads((Path(p1) / "resolve_context.json").read_text(encoding="utf-8"))
     assert context["simulator_payload"]["month_chain"] == {}
 
+
 def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path):
     """在 atomic 内写包 → backup_to 守卫响亮拒绝（钉住「包必须在 atomic 外」约束）。"""
     from ming_sim.applier import atomic
@@ -53,6 +59,7 @@ def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path)
 
 
 
+
 def test_rejections_jsonl_path_in_error_dir(monkeypatch, tmp_path):
     """拒收 jsonl 与错误包集中同一 user-data 错误目录（决定 7：一次打包全带走）。"""
     from ming_sim.error_pack import error_packs_root, rejections_jsonl_path
@@ -61,6 +68,7 @@ def test_rejections_jsonl_path_in_error_dir(monkeypatch, tmp_path):
     jsonl = Path(rejections_jsonl_path())
     assert jsonl.parent == error_packs_root()
     assert jsonl.name == "rejections.jsonl"
+
 
 # ---------------------------------------------------------------------------
 # cmr S6 r1 修复回归（F2 attempt 防覆盖 / F3 mirror 父目录 / F4 中断不降级）
@@ -85,6 +93,7 @@ def test_attempt_never_overwrites_existing_pack(game, tmp_path, monkeypatch):
     assert pack.endswith("attempt3")  # max+1，不是 len+1=2
     assert (stale / "manifest.json").read_text(encoding="utf-8") == '{"sentinel": "keep me"}'
 
+
 def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
     """rejections_jsonl_path 开箱可写：父目录就位，mirror 直接 append（cmr S6 r1 F3）。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -104,52 +113,42 @@ def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
     lines = open(path, encoding="utf-8").readlines()
     assert len(lines) == 1
 
-def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
-    """SettlementAbort 在 /api/decree/issue/stream 回结构化 SSE error，玩家看得到指引。"""
-    import asyncio
-    import json
+
+def test_web_issue_endpoint_returns_structured_abort(monkeypatch, tmp_path):
+    """现役 SSE 入口原样保留 SettlementAbort 的结构化字段。"""
     import web_app
-    from ming_sim.exceptions import SettlementAbort
+    from tests.issue_stream_helpers import IssueStreamError, consume_issue_stream_response
 
-    class _StubSession:
-        def await_translations_before_month(self, after_drain=None):
-            if after_drain is not None:
-                after_drain()
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    runtime = web_app.WebGame(fresh=True, db_path=str(tmp_path / "game.db"))
+    abort = SettlementAbort("fixture abort", turn=runtime.state.turn,
+                            stage="extract", error_pack_path="/tmp/x")
 
-        def resolve_turn(
-            self, cheat_directive="", write_gate_already_held=False,
-        ):
-            raise SettlementAbort(
-                "本月结算失败，进度已保存，可重试。\n错误包已生成：/tmp/x\n请把该文件夹发给作者，以便排查。",
-                turn=3, stage="extract", error_pack_path="/tmp/x")
+    def _abort(cheat_directive="", write_gate_already_held=False):
+        assert write_gate_already_held is True
+        raise abort
 
-    class _StubGame:
-        _write_gate = threading.Lock()
-        session = _StubSession()
-        class state:
-            ended = False
-            turn = 3
-            turn_phase = "summoning"
+    monkeypatch.setattr(runtime.session, "resolve_turn", _abort)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
-    monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
-
-    async def _consume():
+    async def _run():
         response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
-        chunks = [
-            chunk.decode() if isinstance(chunk, bytes) else chunk
-            async for chunk in response.body_iterator
-        ]
-        return "".join(chunks)
+        assert response.status_code == 200
+        return await consume_issue_stream_response(response, step="error_pack issue/stream")
 
-    serialized = asyncio.run(_consume())
-    from tests.test_chat_stream_failpaths_393 import _parse_sse
-    events = _parse_sse(serialized)
-    assert events, serialized
-    assert events[-1][0] == "error", events[-1]
-    detail = events[-1][1]
-    assert detail["stage"] == "extract"
-    assert detail["error_pack_path"] == "/tmp/x"
-    assert detail["turn"] == 3
+    try:
+        with pytest.raises(IssueStreamError) as ei:
+            asyncio.run(_run())
+        payload = ei.value.payload
+        assert payload.get("stage") == abort.stage
+        assert payload.get("error_pack_path") == abort.error_pack_path
+        assert payload.get("turn") == abort.turn
+    finally:
+        runtime.session.close()
+
+
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1
@@ -169,6 +168,7 @@ def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp
 
     m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
     assert m["attempt"] == 8  # 7+1，不被 X/99/文件项带偏
+
 
 def test_version_read_failure_falls_back_to_unknown(game, monkeypatch, tmp_path):
     """VERSION 缺失/读失败 → manifest.version='unknown'，写包不失败

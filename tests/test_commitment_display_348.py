@@ -21,8 +21,10 @@ def _row(*, end_turn, origin_turn, ongoing_effects=None, stop_condition=""):
     }
 
 
+
 def _progress(months_elapsed, paid_total=0, **extra):
     return {"months_elapsed": months_elapsed, "paid_total": paid_total, **extra}
+
 
 
 class TestCommitmentTimedBarValue:
@@ -40,6 +42,7 @@ class TestCommitmentTimedBarValue:
                  stop_condition=json.dumps({"army.guanning.arrears": "<=0"})),
         ) is None
         assert commitment_timed_bar_value(_progress(0), _row(end_turn=17, origin_turn=5)) is None
+
 
 
 class TestTimedBarIntegration:

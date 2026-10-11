@@ -49,9 +49,11 @@ class _RunContent:
         self.content = content
 
 
+
 class RunCompletedEvent:  # 类名须为 RunOutput / RunCompletedEvent（web_app 按 type(event).__name__ 判终帧）
     content = ""
     tools: list = []
+
 
 
 class _FakeAgent:
@@ -77,6 +79,7 @@ class _FakeAgent:
         return None
 
 
+
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
     """替换月链中的拟诏、世界段、转译和邸报模型调用；其余结算路径真跑。"""
     from tests.month_chain_helpers import canned_full_settlement
@@ -84,6 +87,8 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     canned_full_settlement(monkeypatch, narrative=narrative)
     monkeypatch.setattr(agents_mod, "create_decree_forecast_agent", lambda *a, **k: SimpleNamespace())
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
+
+
 
 
 @pytest.fixture
@@ -116,6 +121,7 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         pass
 
 
+
 def _active_minister(game) -> str:
     for name, ch in game.content.characters.items():
         if getattr(ch, "power_id", "ming") != "ming":
@@ -127,12 +133,15 @@ def _active_minister(game) -> str:
     raise AssertionError("no active ming minister")
 
 
+
 def _count(db, table: str) -> int:
     return int(db.conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"])
 
 
+
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=web_app.app), base_url="http://t")
+
 
 
 def test_persisted_reply_before_translation_admission_has_no_retry_button(web_game):
@@ -153,6 +162,7 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
     before, retry = asyncio.run(scenario())
     assert before["translation_retries"] == []
     assert retry.status_code == 404
+
 
 
 @pytest.mark.parametrize("night_status", [an.NIGHT_STATUS_CLOSING, an.NIGHT_STATUS_CLOSED])
@@ -179,6 +189,7 @@ def test_pending_translation_retries_original_round_after_night_seal(web_game, m
         "SELECT body FROM story_ledger_entries WHERE source_chat_turn_id=?", (ctid,),
     )] == ["臣领旨。"]
     assert an.get_night(game.db, nid)["status"] == night_status
+
 
 
 @pytest.mark.parametrize("failure", ["code", "429", "503", "timeout"])
@@ -363,6 +374,7 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
     assert stale.status_code == 404
 
 
+
 def _parse_sse(text: str) -> list[dict]:
     events: list[dict] = []
     for block in text.strip().split("\n\n"):
@@ -377,21 +389,15 @@ def _parse_sse(text: str) -> list[dict]:
     return events
 
 
-async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
-    """成功事件或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。
 
-    事件与 task 同时终态时仍消费 task 异常——不得因 ev 先置位而吞掉 worker 失败。
-    """
-    while not ev.is_set() and not task.done():
+async def _await_progress_or_task(ready, task: asyncio.Task) -> None:
+    """进度或 worker 终态均可唤醒；终态异常原样传播，正常早退也须报红。"""
+    while not ready() and not task.done():
         await asyncio.sleep(0)
     if task.done():
-        exc = task.exception()
-        if exc is not None:
-            raise exc
-        if not ev.is_set():
-            raise AssertionError("worker finished without expected success event")
-        return
-    # ev 已置位且 task 仍在跑（如 started 后 hang on allow）——成功会合。
+        await task
+        assert ready(), "worker finished without expected progress"
+
 
 
 async def _drain_tasks(*tasks: asyncio.Task) -> None:
@@ -411,16 +417,10 @@ async def _drain_tasks(*tasks: asyncio.Task) -> None:
         task.exception()
 
 
-async def _wait_for(pred, task=None) -> None:
-    """轮询真实状态直至成立；永久不成立 → CI job 终线。"""
-    while not pred():
-        if task is not None and task.done():
-            task.result()
-            raise AssertionError("chat ended before claiming its write ticket")
-        await asyncio.sleep(0)
 
 
-async def _start_hanging_chat(game, client, minister, monkeypatch):
+
+async def _start_hanging_chat(client, monkeypatch):
     """经真实 /chat/stream ASGI 请求起一轮回话并卡在生成中（在飞）。
     返回 (chat_task, allow)：chat_task 是仍在跑的 SSE 请求；置位 allow 后回话收尾。
 
@@ -436,13 +436,14 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
         client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
     try:
         # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
-        await _await_event_or_task(started, task)
+        await _await_progress_or_task(started.is_set, task)
     except BaseException:
         # 移交前失败：释放 allow 并排空；已终态则 drain 只消费，不替换原错。
         allow.set()
         await _drain_tasks(task)
         raise
     return task, allow
+
 
 
 # ── ① AC10 成功等待分支：在飞时触发颁诏 → 回话在超时内落档 → 收夜后颁诏、推进回合 ──
@@ -460,7 +461,7 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
 # ── ④ TOCTOU：等 gate 期间相位翻到亲裁 → 持锁内权威复查经真实 /chat/stream SSE 拒 ──
 def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
     game = web_game
-    minister = _active_minister(game)
+    _active_minister(game)
     # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
     _agent = _FakeAgent()
     stub_scene_agent(monkeypatch, _agent)
@@ -474,10 +475,13 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
                 chat_task = asyncio.create_task(
                     client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
-                await _wait_for(lambda: game._runtime_write_queue().inflight_count() > 0, chat_task)
+                await _await_progress_or_task(
+                    lambda: game._runtime_write_queue().inflight_count() > 0, chat_task,
+                )
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
             finally:
                 game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
+                await _drain_tasks(chat_task)
             return _parse_sse((await chat_task).text)
 
     events = asyncio.run(scenario())
@@ -488,6 +492,7 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
     assert _count(game.db, "chat_turns") == turns0
 
 
+
 # ── ⑤ 已成案旨无公开拟诏、改稿、删除工作面 ─────────────────────────────
 def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     game = web_game
@@ -496,9 +501,6 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
         dossier_payload=_POLICY_FIELDS,
     )
     game.db.ensure_dossiers_for_draft_directives(game.state)
-
-    registered_paths = {route.path for route in web_app.app.routes}
-    assert "/api/decree/write" not in registered_paths
 
     async def scenario():
         async with _client() as client:
@@ -511,7 +513,8 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
             )
 
     edit, delete, state = asyncio.run(scenario())
-    assert edit.status_code == 404
+    # #1902：改稿路由已不存在（404/405 皆可），不再是「路由在、草案不可改」的语义。
+    assert edit.status_code in (404, 405)
     assert delete.status_code == 409
     body = state.json()
     # 候选列表仍滤掉已成案（list_directives 语义不变）
@@ -523,7 +526,9 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     assert int(match["dossier_id"]) > 0
     assert match["dossier_status"] == "proposed"
     assert match["source"] == "手动新增"
-    assert "着户部核边饷" in str(match["text"])
+    assert match["text"] == "着户部核边饷"
+
+
 
 
 def test_night_approved_directive_closes_into_month_end_without_second_review(web_game, monkeypatch):
@@ -549,7 +554,7 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
     events = asyncio.run(scenario())
 
     assert events[-1]["event"] == "done"
-    assert not ({"confirm", "reject", "pending_review"} & {event["event"] for event in events})
+    assert not ({"confirm", "reject", "pending_review"} & {name for name, _ in events})
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
     assert int(game.state.turn) == turn_before + 1
     assert not game.db.list_night_approved_pending(int(night["id"]), kind="directive")
@@ -558,6 +563,7 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
         (turn_before,),
     ).fetchall()
     assert any(str(row["text"] or "") == text for row in rows), rows
+
 
 
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):
@@ -586,17 +592,17 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
         },
     )
 
-    registered_paths = {route.path for route in web_app.app.routes}
-    assert "/api/directives/{directive_id}/confirm" not in registered_paths
-    assert "/api/directives/{directive_id}/reject" not in registered_paths
-
     async def scenario():
         async with _client() as client:
             state = (await client.get("/api/game/state")).json()
+            confirm = await client.post(f"/api/directives/{directive_id}/confirm")
+            reject = await client.post(f"/api/directives/{directive_id}/reject")
             advance = await client.post("/api/decree/advance_without_edict")
-            return state, advance
+            return state, confirm, reject, advance
 
-    state_payload, response = asyncio.run(scenario())
+    state_payload, confirm, reject, response = asyncio.run(scenario())
+    assert confirm.status_code in (404, 405)
+    assert reject.status_code in (404, 405)
     assert dossiered_id not in {row["id"] for row in state_payload["directives"]}
     # #1855：夜未收时真 HTTP 状态口投影 audience（非手造轻壳）
     assert state_payload["reopen_landing"] == "audience"
@@ -607,6 +613,9 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
     assert int(game.db.load_state().turn) == turn_before + 1
     # #1855：推进后落本月盘面（复用本案真实过月，不另造 mock 伪全链）
     assert game.state_payload()["reopen_landing"] == "month"
+
+
+
 
 
 def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
@@ -627,7 +636,7 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
 
         async with _client() as chat_client, _client() as adv_client:
             # 取得 chat 所有权后即进入释放责任区间；sibling 尚未创建时按实际存在收尾。
-            chat_task, allow = await _start_hanging_chat(game, chat_client, minister, monkeypatch)
+            chat_task, allow = await _start_hanging_chat(chat_client, monkeypatch)
             t = None
             adv_task = None
             try:
@@ -655,5 +664,6 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
     assert ticks >= mid_ticks
     # #1353 K10a：工人终态后继续，不按在飞 elapsed 造 409
     assert status == 200, f"advance after chat terminal expected 200, got {status}"
+
 
 import ming_sim.agents as agents_mod

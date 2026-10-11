@@ -4,7 +4,7 @@ import json
 
 from ming_sim.covert_levy import (
     ENTRY_KIND, PROHIBITION_ACTION, active_prohibition_dossier,
-    army_pay_fact_for_dossier, settle_exposure_from_canonical_actions,
+    settle_exposure_from_canonical_actions,
     write_exposure_todos,
 )
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
@@ -27,6 +27,7 @@ def _bound_case(db, state):
     )
     return did, int(cur.lastrowid), str(army["id"]), str(executor)
 
+
 def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypatch):
     db, state, _ = game
     did, issue_id, _, executor = _bound_case(db, state)
@@ -46,6 +47,7 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
     assert scene["dossier_id"] == did and scene["executor_id"] == executor
     assert scene["channels"] == ["稽核"]
     assert build_due_review_input(db, todo)["commitment_ref"] == issue_id
+
 
 def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
     from ming_sim.applier import Provenance
@@ -73,6 +75,7 @@ def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
     todos = db.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
 
+
 def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
     from tests.test_month_chain_1843 import _prepare_player_month
 
@@ -90,6 +93,7 @@ def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
     session.resolve_turn(allow_empty_decree=True)
     todos = db.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
+
 
 def test_rejected_canonical_results_neither_consume_nor_create_channel(game, monkeypatch):
     db, state, _ = game
@@ -114,6 +118,7 @@ def test_rejected_canonical_results_neither_consume_nor_create_channel(game, mon
     db.conn.execute("DELETE FROM decree_dossier_links")
     assert write_exposure_todos(db, state, rejected) == 0
 
+
 def test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_generic_fork(game):
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
@@ -125,6 +130,7 @@ def test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_ge
         "VALUES (?,?, '稽核','查账')", (did, did),
     )
     assert write_exposure_todos(db, state) == 0  # #651 additionally requires actual effect
+
 
 def _exposed_todo(db, state, monkeypatch, did):
     db.conn.execute(
@@ -141,6 +147,7 @@ def _exposed_todo(db, state, monkeypatch, did):
         "VALUES (?,?, '稽核','查账')", (did, did),
     )
     assert write_exposure_todos(db, state) == 1
+
 
 def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatch):
     """#1843 reopen：查办经真实 dispatch 逐段入口落到待办 consumed（两腿齐备）。"""
@@ -192,6 +199,7 @@ def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatc
     payload = json.loads(consumed["payload_json"] or "{}")
     assert payload.get("decision") == "查办"
 
+
 def _promulgated_prohibition(db, state, exposed_id):
     prohibition_id = db.create_decree_dossier(
         state, action_type=PROHIBITION_ACTION, decree_text="严禁借饷摊派于民",
@@ -203,6 +211,7 @@ def _promulgated_prohibition(db, state, exposed_id):
         (prohibition_id,),
     )
     return prohibition_id
+
 
 def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(game, monkeypatch):
     db, state, content = game
@@ -265,6 +274,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     assert row["status"] == "consumed"
     assert json.loads(row["payload_json"] or "{}").get("decision") == "默许"
 
+
 def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, monkeypatch):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
@@ -274,6 +284,7 @@ def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, mo
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert db.list_next_audience_todos(status="pending") == []
+
 
 def test_prohibition_reminder_is_consumed_after_later_payoff(game, monkeypatch):
     db, state, _ = game
@@ -286,6 +297,7 @@ def test_prohibition_reminder_is_consumed_after_later_payoff(game, monkeypatch):
     db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert db.list_next_audience_todos(status="pending") == []
+
 
 def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game):
     db, state, content = game
@@ -330,6 +342,7 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     assert all(current_rows[(row["effect_kind"], row["id"])] == row for row in historical_rows)
     assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 6
 
+
 def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, monkeypatch):
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
@@ -364,6 +377,7 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 0
     assert db.get_fiscal_config()[key2] == 3
 
+
 def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
@@ -378,6 +392,7 @@ def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
     _promulgated_prohibition(db, state, did)
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert db.get_fiscal_config()[key] == 10
+
 
 def test_prohibition_removes_live_covert_creation_without_rewriting_history(game, monkeypatch):
     db, state, content = game
@@ -396,6 +411,7 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
         (f"dossier:{prohibition}",),
     ).fetchall()
     assert [row["key"] for row in tombstones] == ["暗渠新项_base", "暗渠新项_rate"]
+
 
 def test_zero_pay_receipts_are_not_durable_tacit_effects(game, monkeypatch):
     from ming_sim.entities.economy.apply import _apply_economy_list
@@ -420,6 +436,7 @@ def test_zero_pay_receipts_are_not_durable_tacit_effects(game, monkeypatch):
         "population_transfers": [{"origin_ref": origin, "reason": "摊派"}],
     }) == 0
 
+
 def test_force_promulgated_history_is_the_canonical_prohibition_authority(game):
     db, state, _ = game
     exposed, _, _, _ = _bound_case(db, state)
@@ -440,6 +457,7 @@ def test_force_promulgated_history_is_the_canonical_prohibition_authority(game):
     )
     assert db.dossier_authorizes_effects(prohibition) is True
     assert active_prohibition_dossier(db, exposed)["id"] == prohibition
+
 
 def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game, monkeypatch):
     from ming_sim.supervision import compose_denunciation_origin
@@ -464,6 +482,7 @@ def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game,
     )
     assert write_exposure_todos(db, state) == 1
 
+
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
@@ -484,6 +503,7 @@ def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch)
     assert write_exposure_todos(db, state, real) == 1
     todo = db.list_next_audience_todos(status="pending")[0]
     assert todo["payload_json"]["channels"] == ["民变自长"]
+
 
 def _realize_fork(db, state, did):
     """经现役写口造真实分叉（不替换读端）：有奏报『有成』、执行格 transformed、旨外 durable 经济效果。"""

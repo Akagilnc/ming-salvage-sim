@@ -171,17 +171,15 @@ export type CasedDirective = {
 };
 
 /** #1764：本地在飞/失败项（仅会话态，非持久真源）。
- * create：无 directiveId，自渲染为会话卡。
- * save/delete：directiveId 绑定所属草案卡的进行态/失败真因。
+ * #1902 J4：拟诏台手写新建/改稿入口已退役，前端不再有无 directiveId 的会话卡，
+ * 故此项恒绑定所属草案卡（现役唯一消费者是删除进行态与失败真因）。
  */
 export type LocalDirectiveItem = {
   localKey: string;
-  text: string;
   phase: "inflight" | "failed";
   error?: string;
-  /** 本地卡只由草稿的改／删产生，故必有归属草案。 */
   directiveId: number;
-  op?: "save" | "delete";
+  op: "delete";
 };
 
 export type Issue = {
@@ -473,12 +471,15 @@ export type LLMConfigInfo = {
   has_advanced_api_key: boolean;
   advanced_thinking_level: string;
   reasoning_strength?: string;
-  api_reasoning_strength?: string;
-  cli_reasoning_strength?: string;
+  api_reasoning_strength?: string | null;
+  cli_reasoning_strength?: string | null;
+  effective_reasoning_strengths?: Record<"api" | "cli", string>;
   reasoning_supported?: boolean;
   reasoning_strengths?: ReasoningStrengthChoice[];
   /** Backend capability list from cli_backend.CLI_REASONING_STRENGTH_RUNNERS (#1271). */
   cli_reasoning_runners?: string[];
+  /** Backend list cli_backend.CLI_REASONING_FLOOR_RUNNERS: off 档实取低（#1271）。 */
+  cli_reasoning_floor_runners?: string[];
   has_api_key: boolean;
   cli_runner?: string;
   cli_model?: string;
@@ -500,8 +501,8 @@ export type LLMConfigInfo = {
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
     reasoning_strength?: string;
-    api_reasoning_strength?: string;
-    cli_reasoning_strength?: string;
+    api_reasoning_strength?: string | null;
+    cli_reasoning_strength?: string | null;
     cli_runner?: string;
     cli_model?: string;
     cli_timeout_seconds?: number;
@@ -517,6 +518,7 @@ export type DossierProgressReport = {
   memorial_text: string;
   is_terminal: boolean;
   origin?: string;
+
 };
 
 export type SecretOrder = {
@@ -536,7 +538,6 @@ export type SecretOrder = {
   turn_closed: number | null;
 };
 
-export type ProposedDirective = { id: number; text: string; status: string; notes: string };
 
 /** #505：崩溃后待重试的中断回话（系统层恢复，非内容选项）。 */
 export type ReplyRetry = {
@@ -579,11 +580,7 @@ export type ChatResponse = {
   pending_directive_count?: number;
   can_undo_last_chat?: boolean;
   court_action?: string;
-  next_minister?: string;
-  proposed_directive?: ProposedDirective | null;
-  secret_order_id?: number;
-  // #670：成功记召机面控制码（SUMMON_FRESH / SUMMON_IN_TRANSIT）；禁止写入 setError/danger note。
-  admission?: string;
+
 };
 
 export type ChatUndoResponse = {
@@ -656,12 +653,14 @@ export type MenuStatus = {
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
     reasoning_strength?: string;
-    api_reasoning_strength?: string;
-    cli_reasoning_strength?: string;
+    api_reasoning_strength?: string | null;
+    cli_reasoning_strength?: string | null;
+    effective_reasoning_strengths?: Record<"api" | "cli", string>;
     reasoning_supported?: boolean;
     reasoning_strengths?: ReasoningStrengthChoice[];
     /** Backend capability list from cli_backend.CLI_REASONING_STRENGTH_RUNNERS (#1271). */
     cli_reasoning_runners?: string[];
+    cli_reasoning_floor_runners?: string[];
     /** #1794：API 通道附加请求头表（名→值）；空表＝现状。 */
     default_headers?: Record<string, string>;
   };

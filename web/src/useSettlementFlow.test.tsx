@@ -193,6 +193,7 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       .mockResolvedValueOnce(null)
       .mockRejectedValueOnce(pollError)
       .mockResolvedValueOnce(settledState);
+    // #1902 N6：实际异常对象留痕（非日志措辞锁）——生产侧 console.warn 带原 Error。
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { host, cleanup } = mountHarness({ initial: inflightState, loadState });
 
@@ -223,6 +224,7 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
     expect(host.querySelector('[data-testid="pending-count"]')?.textContent).toBe("1");
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
     expect(vi.getTimerCount()).toBe(0);
+    warn.mockRestore();
     cleanup();
   });
 });

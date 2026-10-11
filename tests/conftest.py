@@ -93,6 +93,21 @@ def _opening_game(content, workdir):
             db.close()
 
 
+
+
+def wait_for_background_jobs(db):
+    """Join fixture-owned native writes before the next direct DB access."""
+    from ming_sim.decree_forecast import _owner_for
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    owners = list(getattr(db, "_test_session_owners", ()))
+    owner = _owner_for(db)
+    if owner is not None and owner not in owners:
+        owners.append(owner)
+    for owner in owners:
+        assert get_session_write_queue(owner).wait_idle()
+
+
 def own_session_until_game_teardown(db, owner) -> None:
     """让 ``game`` fixture 在关闭 SQLite 前排空该 session 的已接纳工作。"""
     owners = getattr(db, "_test_session_owners", None)
@@ -394,15 +409,15 @@ def open_hall_turn(
         NIGHT_STATUS_CLOSING,
         NIGHT_STATUS_OPEN,
         SCENE_CHAT_SPEAKER,
-        ensure_open_night_for_audience,
         ensure_summon_enter,
         get_open_night,
+        open_night,
     )
     night = get_open_night(db)
     if night is not None and str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
-        ensure_open_night_for_audience(db, state)  # raises
+        open_night(db, state)  # raises
     if night is None or str(night.get("status") or "") != NIGHT_STATUS_OPEN:
-        night = ensure_open_night_for_audience(db, state)
+        night = open_night(db, state)
     night_id = int(night["id"])
     ctid = int(db.create_chat_turn(
         state,

@@ -31,8 +31,6 @@ from ming_sim.action_clusters import (
 # ── handlers（委派既有 stage，不另造落库）────────────────────────────
 
 
-
-
 def _same_direction_office_hits(
     db: Any,
     turn: int,
@@ -84,7 +82,7 @@ def _apply_existing_appointment_hit(
     tenure / region_id 等字段标记原样补写。
     """
     from ming_sim.applier import atomic
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     with atomic(session.db):
         resolved = int(row["id"])
@@ -138,11 +136,12 @@ def stage_pacification_candidate(
     Reused by audience translation; commit resolves the target through
     _find_pacification_target.  ``source_chat_turn_id``（#1890）随新行落库。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     target = str(target_id or "").strip()
     if not target:
         return 0
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
     body = str(text or "")
     if not body.strip():
         return 0
@@ -239,7 +238,7 @@ def stage_punishment_candidate(
 
     ``source_chat_turn_id``（#1890）随新行落库。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     target = str(target_id or "").strip()
     action = str(punish_action or "").strip()
@@ -292,6 +291,7 @@ def stage_punishment_candidate(
         action not in punish_actions_effective() and disposition != "压下"
     ):
         return 0
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
     body = str(text or "")
     if not body.strip():
         return 0
@@ -1071,7 +1071,9 @@ def stage_assignment_candidate(
     #1565/0142：题名=显式 title|结构化 target_id 锚；正文唯一真源=payload.text；
     禁散文截题、禁空正文借题名伪造成功、禁缺锚静默丢单。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
+
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
 
     body = str(text or "")
     if not body.strip():
@@ -1183,6 +1185,7 @@ def stage_assignment_candidate(
         night_id=night_id,
     )
 
+
 def stage_revoke_decree_candidate(
     db: Any,
     turn: int,
@@ -1206,7 +1209,8 @@ def stage_revoke_decree_candidate(
     ``night_id`` / ``source_chat_turn_id``：与其它 stage_*_candidate 同缝，贯穿源夜源轮
     （#1897 E1 / ADR 0038 迟到转译），不得退回当前开夜或 0 轮。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
+
 
     if str(target_candidate or "").strip() == "含糊":
         return 0

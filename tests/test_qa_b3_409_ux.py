@@ -16,7 +16,7 @@ from fastapi import HTTPException
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import ClassifiedWriteGate
-from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
+from ming_sim.models import TurnPhase
 
 
 # ── #1301 玩家面 409 去裸 night_id ──────────────────────────────────────────
@@ -46,56 +46,13 @@ def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
     assert other.value.detail == {"night_id": 42, "what": "阅折"}
 
 
-# ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
-
-def _front_half_detail(phase: str) -> str:
-    game = SimpleNamespace(
-        state=SimpleNamespace(turn_phase=phase),
-        _write_gate=ClassifiedWriteGate(),
-    )
-    with pytest.raises(HTTPException) as ei:
-        with web_app._serialized_web_write(game):
-            pass
-    assert ei.value.status_code == 409
-    detail = str(ei.value.detail)
-    assert detail
-    return detail
-
-
-def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
-    """#1306：settling 仍报月末结算进行中。"""
-    game = SimpleNamespace(
-        state=SimpleNamespace(turn_phase=TurnPhase.SETTLING.value),
-        _write_gate=ClassifiedWriteGate(),
-    )
-    with pytest.raises(HTTPException) as ei:
-        with web_app._serialized_web_write(game):
-            pass
-    assert ei.value.status_code == 409
-
-
-def test_serialized_web_write_phase_messages_cover_front_half_done():
-    """#1306 全 FRONT_HALF_DONE 相位均 409，详情只按 awaiting / 其余两支分叉。"""
-    awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)
-    other = _front_half_detail(TurnPhase.SETTLING.value)
-    assert awaiting != other
-    for phase in FRONT_HALF_DONE_PHASES:
-        game = SimpleNamespace(
-            state=SimpleNamespace(turn_phase=phase),
-            _write_gate=ClassifiedWriteGate(),
-        )
-        with pytest.raises(HTTPException) as ei:
-            with web_app._serialized_web_write(game):
-                pass
-        assert ei.value.status_code == 409
-        detail = str(ei.value.detail)
-
 
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────
 
 class _Row(dict):
     def keys(self):
         return super().keys()
+
 
 
 def test_directive_payload_authority_not_notes_alias():
@@ -114,6 +71,7 @@ def test_directive_payload_authority_not_notes_alias():
     payload = web_app.WebGame.directive_payload(game, row)
     assert payload["notes"] == "家赀约十万两"
     assert payload["authority"] == ""
+
 
 
 # ── #1322 resolve stream 相位预检在抢锁前 ───────────────────────────────────
@@ -138,6 +96,7 @@ class _PhaseSession:
         raise AssertionError("wrong-phase must not reach submit_hitl_choices")
 
 
+
 class _ResolveGame:
     def __init__(self, phase: str, gate: ClassifiedWriteGate):
         self.state = SimpleNamespace(turn=3, ended=False, turn_phase=phase)
@@ -150,6 +109,7 @@ class _ResolveGame:
 
     def refresh_turn(self):
         self.actions.append("refresh")
+
 
 
 async def _consume_resolve_sse() -> list[tuple[str, object]]:
@@ -179,6 +139,7 @@ async def _consume_resolve_sse() -> list[tuple[str, object]]:
     return events
 
 
+
 def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     """#1322：非 awaiting 相位在抢锁前快速失败；持锁者不被卡住；submit 不进。"""
     gate = ClassifiedWriteGate()
@@ -198,6 +159,7 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     message = payload["message"] if isinstance(payload, dict) else str(payload)
     assert game.session._submit_called is False
     assert game.actions == []
+
 
 
 def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch):

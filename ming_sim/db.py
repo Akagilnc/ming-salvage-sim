@@ -25,8 +25,7 @@ from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
     BUILDING_CATEGORIES, BUILDING_FIELD_LABELS, BUILDING_OUTPUT_METRICS,
     BUILDING_QUANTITY_FIELDS, BUILDING_SCORE_FIELDS, BUILDING_TEXT_FIELDS,
-    ECONOMY_ACCOUNTS, GATE_METRIC_KEYS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
-    POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
+    ECONOMY_ACCOUNTS, GATE_METRIC_KEYS, POWER_FIELD_LABELS, POWER_FIELD_ALIASES, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS,
     DOSSIER_LINK_TYPES, SALARY_RATE_ANCHOR, TURN_UNIT,
     DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR,
@@ -88,6 +87,11 @@ from ming_sim.token_stats import tlog
 
 logger = logging.getLogger(__name__)
 
+# 结构化 id 字段入库前归一（trim）；其余 TEXT 字段（灾情/状况/番号等）原值入库。
+_STRUCTURED_ID_FIELDS = frozenset({"controlled_by", "station_region", "owner_power"})
+
+# ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
+# 同刻度）。#1843：双单位/save_meta 标已退役，读口恒为「人」。
 POPULATION_UNIT_PERSONS = "人"
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -643,12 +647,14 @@ def _office_type_from_table(text: str) -> str:
 
 def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     """表查不中（生造/罕见官名）时，CLI 后端在场则交 LLM 判 office_type（取 allowed_types）。
-    否则返回 ''。结果按官名缓存，避免重复调用。"""
-    try:
-        from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
-    except ImportError as exc:
-        tlog(f"[office_infer] import failed: {type(exc).__name__}: {exc}")
-        return ""
+    否则返回 ''。结果按官名缓存，避免重复调用。
+
+    只对 typed LLMUnavailable 降级空串；import/schema/TypeError 等代码故障原样上抛，
+    且失败不得写入缓存当「已分类」（#1902 AUXILIARY-LLM-CODE-FAULTS）。
+    """
+    from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
+    from ming_sim.exceptions import LLMUnavailable
+
     if not cli_backend_active(llm_config):
         return ""
     if text in _OFFICE_TYPE_LLM_CACHE:
@@ -660,14 +666,14 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
         "只输出一个类型词（不要任何别的字），必须严格取自：" + "、".join(allowed) + "。\n"
         "官名：" + text + "\n类型："
     )
-    out = ""
     try:
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
         cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
         out = cand if cand in allowed_set else ""
-    except Exception as exc:
-        tlog(f"[office_infer] backend failed: {type(exc).__name__}: {exc}")
-        out = ""
+    except LLMUnavailable as exc:
+        # 明确模型/宿主不可用 → 空串，上游落「待铨」；不缓存，免瞬时故障锁死分类。
+        logger.warning("office_type LLM 不可用，退空串 text=%r：%s", text, exc)
+        return ""
     _OFFICE_TYPE_LLM_CACHE[text] = out
     return out
 
@@ -5437,8 +5443,8 @@ class GameDB:
             if alias and alias not in merged_aliases:
                 merged_aliases.append(alias)
         new_aliases = "，".join(merged_aliases)
-        new_status = str(status or row["status"] or "")  # Free prose F21
-        new_last_action = str(last_action or reason or row["last_action"] or "")  # Free prose F21
+        new_status = str(status or row["status"] or "")
+        new_last_action = str(last_action or reason or row["last_action"] or "")
         if old_name == new_name and old_aliases == new_aliases and row["status"] == new_status and row["last_action"] == new_last_action:
             return None
         self.conn.execute(
@@ -5764,7 +5770,9 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 else:  # REGION_TEXT_FIELDS
-                    text_value = str(value).strip() if field == "controlled_by" else str(value)
+                    text_value = str(value).strip()
+                    # 判等/入库同一口径：结构化 id 比归一值，自由文本比原值（trim 只供判空）。
+                    kept = text_value if field in _STRUCTURED_ID_FIELDS else str(value)
                     if field == "controlled_by":
                         if (
                             value is None
@@ -5778,14 +5786,15 @@ class GameDB:
                             rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=f"region_delta 'controlled_by'（地区 '{region_id}'）"
                                     f"必须是 powers.id 中的非空真实势力 id：{value!r}", category="invalid_enum", source=source))
                             continue
-                    if not text_value or text_value == str(old_value):
+                    if not text_value or kept == str(old_value):
                         continue
                     if require_origin:
                         origin_error = self.effect_origin_rejection(origin_ref)
                         if origin_error:
                             rejections.append(RejectedItem(item={"region_id": region_id, "field": field, "value": value}, reason=origin_error["reason"], category=origin_error["category"], source=source))
                             continue
-                    stored_new = text_value
+                    # 结构化 id 字段归一后入库；自由文本（灾情/状况）原值入库。
+                    stored_new = kept
                     log_delta = None
                 if require_origin and field not in REGION_TEXT_FIELDS:
                     origin_error = self.effect_origin_rejection(origin_ref)
@@ -6342,8 +6351,9 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 elif field in ARMY_TEXT_FIELDS:
-                    text_value = str(value).strip() if field == "station_region" else str(value)
-                    if not text_value or text_value == str(old_value):
+                    text_value = str(value).strip()
+                    kept = text_value if field in _STRUCTURED_ID_FIELDS else str(value)
+                    if not text_value or kept == str(old_value):
                         continue
                     # #659：station_region 非空须为已入库 regions.id；禁止从 station 文本反推。
                     if field == "station_region":
@@ -6355,7 +6365,7 @@ class GameDB:
                                     "army_id": army_id, "field": field, "value": value,
                                 }, reason=f"army_delta.station_region 未入库 region_id：{text_value}", category="invalid_enum", source=source))
                             continue
-                    stored_new = text_value
+                    stored_new = kept
                     log_delta = None
                 else:
                     # field 已过 _ARMY_VALID_SET 校验，能落到此处=合法字段未被任一
@@ -6691,7 +6701,7 @@ class GameDB:
             (
                 building_id,
                 region_id,
-                (str(name or "") if str(name or "").strip() else "无名建筑"),
+                name if name.strip() else "无名建筑",
                 category,
                 max(1, min(5, int(level))),
                 max(0, min(100, int(condition))),
@@ -6699,7 +6709,7 @@ class GameDB:
                 max(0, min(100, int(risk))),
                 output_metric,
                 max(0, int(output_amount)),
-                str(status or "") or "新立，尚在筹建。",
+                status if status.strip() else "新立，尚在筹建。",
                 origin,
                 state.turn,
             ),
@@ -6809,10 +6819,10 @@ class GameDB:
                     stored_new = text_value
                     log_delta = None
                 elif field in BUILDING_TEXT_FIELDS:
-                    text_value = str(value or "")
-                    if not text_value or text_value == str(old_value):
+                    text_value = str(value).strip()
+                    if not text_value or str(value) == str(old_value):
                         continue
-                    stored_new = text_value
+                    stored_new = str(value)
                     log_delta = None
                 else:
                     print(f"[WARN] building_delta 未处理字段 '{field}' → 跳过")
@@ -7026,10 +7036,8 @@ class GameDB:
         for item in list(phrases or []):
             if not isinstance(item, str):
                 continue
-            # Free prose highlight phrases: preserve raw; strip only emptiness (#1834 F16).
-            phrase = item
-            if phrase.strip():
-                clean.append(phrase)
+            if item.strip():
+                clean.append(item)
         payload = json.dumps(clean, ensure_ascii=False)
         self.conn.execute(
             "UPDATE chat_messages SET highlights_json = ? WHERE id = ?",
@@ -7044,15 +7052,6 @@ class GameDB:
             raw, surface="chat_messages.highlights_json",
         )
 
-    def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
-        ids = [int(mid) for mid in message_ids if mid is not None]
-        if not ids:
-            return
-        with self.conn:
-            self.conn.executemany(
-                "DELETE FROM chat_messages WHERE id = ?",
-                [(mid,) for mid in ids],
-            )
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
         """读出全部召对记录，按大臣分组，供进程启动时恢复内存缓存。"""
@@ -7171,14 +7170,6 @@ class GameDB:
 
     def _json_dump_row(self, row: Dict[str, Any]) -> str:
         return json.dumps(row, ensure_ascii=False, sort_keys=True)
-
-    def _json_load_row(self, raw: str) -> Dict[str, Any]:
-        if not raw:
-            return {}
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            raise ValueError(f"回滚快照须为对象，得 {type(data).__name__}")
-        return data
 
     def _table_exists(self, table: str) -> bool:
         row = self.conn.execute(
@@ -7321,7 +7312,8 @@ class GameDB:
         where = " AND ".join(clauses)
         rows = self.conn.execute(
             f"""
-            SELECT t.id, t.minister_name, t.turn, t.error_pack_path, m.content AS question
+            SELECT t.id, t.minister_name, t.turn, t.user_message_id, t.error_pack_path,
+                   m.content AS question
             FROM chat_turns t
             JOIN chat_messages m ON m.id = t.user_message_id
             WHERE {where}
@@ -7334,6 +7326,9 @@ class GameDB:
                 "chat_turn_id": int(r["id"]),
                 "minister_name": str(r["minister_name"]),
                 "turn": int(r["turn"]),
+                # 建轮归属与问话归属是两个身份（#1902 T1/F2）：重试取数方据此把回话
+                # 挂回原问话的那位大臣，而不是挂到建轮的「殿上」上。
+                "user_message_id": int(r["user_message_id"] or 0),
                 "question": str(r["question"]),
                 "error_pack_path": str(r["error_pack_path"] or ""),
             }
@@ -7964,7 +7959,9 @@ class GameDB:
                     self._discard_deleted_directive_forecast(target_id)
                 self._delete_row_in_tx(table, target_id)
             elif strategy in {"restore_row", "restore_deleted_row"}:
-                before_row = self._json_load_row(item["before_json"])
+                before_row = self.parse_engine_payload_json(
+                    item["before_json"], surface="chat_turn_rollback_items.before_json",
+                )
                 if table == "pending_actions" and before_row.get("kind") == "directive":
                     pending_id = int(before_row["id"])
                     restored_directive_ids.add(pending_id)
@@ -8101,8 +8098,12 @@ class GameDB:
         for item in items:
             if str(item["target_table"]) != "pending_actions":
                 continue
-            after_data = self._json_load_row(item["after_json"] or "") or {}
-            before_data = self._json_load_row(item["before_json"] or "") or {}
+            after_data = self.parse_engine_payload_json(
+                item["after_json"], surface="chat_turn_rollback_items.after_json",
+            )
+            before_data = self.parse_engine_payload_json(
+                item["before_json"], surface="chat_turn_rollback_items.before_json",
+            )
             pa_id = after_data.get("id")
             if pa_id is None:
                 pa_id = before_data.get("id")
@@ -9300,6 +9301,7 @@ class GameDB:
     DOSSIER_REPORT_ORIGIN_RUSH = "dossier-report:rush"
     DOSSIER_REPORT_ORIGIN_REVIEW = "dossier-report:review_claim"
 
+
     @classmethod
     def _normalize_dossier_report_origin(
         cls, origin: object, *, is_terminal: bool = False,
@@ -10418,7 +10420,8 @@ class GameDB:
                 continue
             if not fork_state["fork"]:
                 continue
-            # #1897：案卷 decree_text 自由正文原样供料，禁 strip/截断。
+            # Free decree body for material feed: carry full original (P6 / ADR 0142).
+            # No strip-assign, no fixed-length clip — next model reads the real 旨文.
             case_summary = str(row["decree_text"] or "")
             # 物理事实：奏报面 / 执行格 / 旨外——直接复用 fork 读端（类型已保证）
             forked_dossiers.append({
@@ -13747,7 +13750,6 @@ class GameDB:
         "draft" for decree-checkpoint default approval, "pending" for chat-approved
         candidates that must still pass the later准/驳 interface.
         返回已落库动作摘要。"""
-        from ming_sim.action_materialize import DecreeMaterializationValidationError
 
         if kind_filter is not None and kind_filter_exclude is not None:
             raise ValueError("kind_filter and kind_filter_exclude are mutually exclusive")
@@ -15405,7 +15407,7 @@ class GameDB:
         """
         out: List[Dict[str, object]] = []
         for r in self.conn.execute(
-            "SELECT rowid, event_id, turn, year, period, terminal_state, terminal_reason, choice_json "
+            "SELECT event_id, turn, year, period, terminal_state, terminal_reason, choice_json "
             "FROM event_triggers"
         ).fetchall():
             raw = str(r["choice_json"] or "").strip()
@@ -15435,6 +15437,9 @@ class GameDB:
             # 无 petition 键＝普通事件 choice，合法跳过；键在而值非对象＝坏已有资料。
             if "petition" not in payload:
                 continue
+            payload = self.parse_engine_payload_json(
+                raw, surface="event_triggers.choice_json",
+            )
             petition = payload.get("petition")
             if not isinstance(petition, dict):
                 from ming_sim.exceptions import SettlementAbort
@@ -15599,7 +15604,7 @@ class GameDB:
             return dict(raw)
         try:
             return _load_durable_json_object(raw, surface=surface)
-        except ValueError as exc:
+        except ValueError:
             preview = repr(raw)[:80] if not isinstance(raw, str) else repr(raw[:80])
             tlog(f"[{surface}] 持久 JSON 解码失败：{preview}")
             raise
@@ -16476,6 +16481,7 @@ class GameDB:
             for row in self.list_dossier_durable_effects(int(dossier_id))
         )
 
+
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         """案卷口：构造 origin 后委托唯一经济读权威。"""
         return self.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")
@@ -16625,26 +16631,30 @@ class GameDB:
                 tuple(referenced),
             ).fetchall()
         }
-        from ming_sim.participant_roster import is_non_person_participant_name
+        from ming_sim.participant_roster import (
+            UnknownParticipantRefError,
+            is_non_person_participant_name,
+        )
 
         def _roster_ref_error(label: str, name: str):
-            # #1380：拒「皇帝」等非人通称时给人话提示，禁裸「参与人物不存在：皇帝」
-            msg = (
-                f"{label}不存在：{name}。"
-                + (
+            # #1380：拒「皇帝」等非人通称时给人话提示；控制面认类型不认词面（#1902 T2）。
+            if is_non_person_participant_name(name):
+                msg = (
+                    f"{label}不存在：{name}。"
                     f"人物参与人须为朝堂名册中的大臣姓名，"
                     f"不可填「{name}」等非人通称或机构名。"
                     if is_non_person_participant_name(name)
                     else f"请填写朝堂名册中已有的大臣姓名。"
                 )
-            )
+            else:
+                msg = (
+                    f"{label}不存在：{name}。"
+                    f"请填写朝堂名册中已有的大臣姓名。"
+                )
             if as_durable:
-                return ValueError(f"已持久名册{msg}")
-            # #654：声明侧名册拒收是领域终态 → typed 错误
-            from ming_sim.action_materialize import DecreeMaterializationValidationError
-            return DecreeMaterializationValidationError(
-                msg, category="invalid_state",
-            )
+                return ValueError(f"已持久名册坏引用：{msg}")
+            return UnknownParticipantRefError(label, name, msg)
+
 
         for item in entries:
             character_id = str(item.get("character_id") or "").strip()
@@ -16974,7 +16984,6 @@ class GameDB:
         # 先经 _find_existing_minister 把别名（如「福王」）解到规范 key，再校资格、并以规范名落库——
         # 否则别名绕过资格闸（codex+CodeRabbit R2 concur），且按别名存会让后续按规范名查不到此令
         # （CodeRabbit R3 Major）。lazy import 避 db↔session 循环。
-        from ming_sim.action_materialize import DecreeMaterializationValidationError
         if self.content is not None:
             from ming_sim.session import _find_existing_minister
             minister_name = _find_existing_minister(self.content, minister_name, self) or minister_name
@@ -17159,6 +17168,7 @@ class GameDB:
     ) -> bool:
         """按**精确 id** 更新 active 密令要旨（title/content/tags/限期）。
         返回是否更新（id 存在且状态为 active）。不写月度奏报。
+
 
         tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。
 
@@ -17526,7 +17536,6 @@ class GameDB:
         reason: str = "",
     ) -> Dict[str, object]:
         """缩短 active 密令期限。deadline_months<=0 表示本月到期对账。"""
-        from ming_sim.action_materialize import DecreeMaterializationValidationError
         row = self.conn.execute(
             "SELECT id, title, status, due_turn FROM secret_orders WHERE id = ?",
             (int(order_id),),
@@ -17743,6 +17752,7 @@ class GameDB:
             }
             for row in rows
         ]
+
 
     def apply_seed_founding_segment(
         self,

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from ming_sim.constants import TURN_UNIT
 from ming_sim.assets import load_json_asset
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
@@ -141,8 +140,11 @@ def minister_dossier(character: Character) -> str:
     # 存在性用 strip 探测；选用时传原串（禁把裁剪值当正文，P6 / ADR 0142）。
     style_present = bool(raw_style.strip())
     if dossier is None:
-        raw_summary = character.summary or ""
-        identity = raw_summary if raw_summary.strip() else "未有专门 dossier，以官职、性情和任事处作通用特征化"
+        # 原文运输：summary 只用 strip 判空，非空即原值进入档料（P6 / ADR 0142）。
+        identity = (
+            character.summary if (character.summary or "").strip()
+            else "未有专门 dossier，以官职、性情和任事处作通用特征化"
+        )
         temperament = raw_style if style_present else "以官职与任事处推知其处世分寸"
         skills = "、".join(character.personal_skills) or "未留专长档案"
         motivation = f"在{character.office or '所任官署'}任事并完成本分"

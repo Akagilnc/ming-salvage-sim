@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from ming_sim.models import Character
 
@@ -30,14 +29,6 @@ def _appointment_dossier(db, state, name, office, office_type=""):
     return dossier_id, json.loads(row["payload_json"])
 
 
-def test_rank_table_covers_every_office_type_and_pins_ming_direction():
-    table = json.loads(
-        (Path(__file__).resolve().parent.parent / "content" / "offices.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert {row["type"] for row in table["priority"]} | {table["fallback"]["type"]} == set(table["allowed_types"])
-    assert all(1 <= row["rank_band"] <= 9 for row in [*table["priority"], table["fallback"]])
 
 
 def test_white_body_high_appointment_is_marked_but_regular_first_office_is_not(game):

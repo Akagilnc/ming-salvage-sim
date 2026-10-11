@@ -29,6 +29,7 @@ class StructuredDecreeCombinationError(DeclarationDataError):
     failed_fields：本不变式可修字段边界（单条）；
     field_failures：权威结构化失败事实（field/current/expected）；运输层只携带；
     heal 只从纠错轮采纳边界内字段，保留首抽名册与未失败结构。
+    #1902 R1：批抽 draft_failures 已随无消费者批次模式清退。
     """
 
     def __init__(
@@ -119,10 +120,6 @@ def _as_str(value: object) -> str:
     return str(value)
 
 
-def _transaction_categories() -> frozenset[str]:
-    return duty_route_categories()
-
-
 def structured_decree_prompt_contract() -> str:
     """三入口共用结构化旨意契约（唯一真源；禁入口平行复述）。
 
@@ -130,7 +127,7 @@ def structured_decree_prompt_contract() -> str:
     target×locality 可接受面由 TARGET_KIND_LOCALITY_SCOPES 投影（与 assert 同真源）；
     不手抄第二份矩阵。
     """
-    cats = "|".join(sorted(_transaction_categories()))
+    cats = "|".join(sorted(duty_route_categories()))
     kinds = "|".join(sorted(TARGET_KINDS))
     matrix_face = project_target_locality_matrix_prompt()
     return (
@@ -275,8 +272,8 @@ def validate_structured_decree_combination(
         )
 
     cat = _as_str(payload.get("transaction_category") or "").strip()
-    cats = sorted(_transaction_categories())
-    if cat and cat not in _transaction_categories():
+    cats = sorted(duty_route_categories())
+    if cat and cat not in duty_route_categories():
         _combo_fail(
             f"transaction_category 非法：{cat!r}",
             field_failures=(

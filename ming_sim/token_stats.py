@@ -146,31 +146,3 @@ def install_token_stats_patch() -> None:
         Completions.create = patched_create  # type: ignore
         AsyncCompletions.create = patched_acreate  # type: ignore
         _TOKEN_PATCH_INSTALLED = True
-
-
-def print_token_summary() -> None:
-    if not TOKEN_STATS:
-        print("[TOKEN-SUMMARY] no LLM calls captured")
-        return
-    print("\n========== TOKEN USAGE SUMMARY ==========")
-    grand: Dict[str, int] = {}
-    for model_id, bucket in TOKEN_STATS.items():
-        hit_rate = (bucket["cached"] / bucket["prompt"] * 100) if bucket["prompt"] else 0
-        cc = bucket.get("cache_creation", 0)
-        cc_part = f" cache_creation={cc}" if cc else ""
-        print(
-            f"  {model_id}: calls={bucket['calls']} prompt={bucket['prompt']} "
-            f"cached={bucket['cached']} ({hit_rate:.1f}%){cc_part} completion={bucket['completion']} "
-            f"reasoning={bucket['reasoning']} total={bucket['total']}"
-        )
-        for key, value in bucket.items():
-            grand[key] = grand.get(key, 0) + int(value)
-    grand_hit = (grand.get("cached", 0) / grand.get("prompt", 0) * 100) if grand.get("prompt") else 0
-    grand_cc = grand.get("cache_creation", 0)
-    grand_cc_part = f" cache_creation={grand_cc}" if grand_cc else ""
-    print(
-        f"  TOTAL: calls={grand.get('calls',0)} prompt={grand.get('prompt',0)} "
-        f"cached={grand.get('cached',0)} ({grand_hit:.1f}%){grand_cc_part} completion={grand.get('completion',0)} "
-        f"reasoning={grand.get('reasoning',0)} total={grand.get('total',0)}"
-    )
-    print("=========================================")

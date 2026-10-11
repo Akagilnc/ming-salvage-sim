@@ -73,7 +73,6 @@ export function App() {
   const [haremGroup, setHaremGroup] = React.useState("全部");
   const [selectedMinister, setSelectedMinister] = React.useState<string>("");
   const [activeModal, setActiveModal] = React.useState<ModalName>("none");
-  const [decree, setDecree] = React.useState("");
   const [report, setReport] = React.useState("");
   const [busy, setBusy] = React.useState("");
   const [error, setError] = React.useState("");
@@ -126,7 +125,6 @@ export function App() {
     refreshLabelMaps(data);
     setState(data);
     setSelectedNodeId((current) => current || data.map_nodes[0]?.id || "");
-    setDecree(data.last_decree || "");
     setReport(data.last_report || "");
   }, []);
   const { refresh: refreshDurableProjection, beginMutation: beginDurableMutation } = useDurableProjection(applyDurableState, setSecretOrders);
@@ -178,19 +176,12 @@ export function App() {
     loadHistoryProjection,
     runAudienceTurn,
     invalidateAudienceScroll,
-    currentNightId,
   });
 
-  // 诏书台动作群（useEdictActions.ts）：草案 save/delete 与本地会话态归属。
+  // 诏书台动作群（useEdictActions.ts）：#1902 后只剩删旧草稿与本地会话态归属。
   const {
-    editingDirectiveId,
-    editingDirectiveText,
-    setEditingDirectiveText,
     localDirectives,
     resetLocalEdictState,
-    startEditDirective,
-    cancelEditDirective,
-    saveDirective,
     deleteDirective,
   } = useEdictActions({ setError, setState, beginDurableMutation });
 
@@ -478,21 +469,6 @@ export function App() {
     setMapIntelOpen(true);
   };
 
-  const toggleFavorite = async (minister: Minister) => {
-    setBusy(minister.favorite ? "移出收藏" : "加入收藏");
-    setError("");
-    try {
-      await api<{ favorites: string[] }>(`/api/favorites/${encodeURIComponent(minister.name)}`, {
-        method: minister.favorite ? "DELETE" : "POST",
-      });
-      await loadState();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
   // #1236：核账门控唯一谓词 = 状态口 settlement_display（刷新/持久）。
   // #1796：busy==="月末结算" = 同会话切核账期面（立即收拟诏）；#1852 退役进度/推敲等待卡。
   // 绝不升格为刷新真源、不挡必达三面。settlementFace 仅同会话 OR。
@@ -682,7 +658,6 @@ export function App() {
       />
 
       <BuildingDrawer
-        regions={state.regions}
         mapNodes={mapNodes}
         open={buildingDrawerOpen}
         onClose={() => setBuildingDrawerOpen(false)}
@@ -768,17 +743,9 @@ export function App() {
         >
           <EdictModal
             state={state}
-            editingDirectiveId={editingDirectiveId}
-            editingDirectiveText={editingDirectiveText}
-            decree={decree}
-            report={report}
             busy={busy}
             error={error}
             localDirectives={localDirectives}
-            onEditingTextChange={setEditingDirectiveText}
-            onStartEdit={startEditDirective}
-            onCancelEdit={cancelEditDirective}
-            onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onIssueDecree={issueDecree}
           />

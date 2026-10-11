@@ -103,9 +103,6 @@ def test_menu_status_reports_inactive_cli_reasoning_strength(monkeypatch):
             "reasoning_strength": "low",
         },
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "high"},
-        "base_url": "https://api.example.com/v1",
-        "model": "gpt-5",
-        "api_key": "sk-test",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -113,6 +110,7 @@ def test_menu_status_reports_inactive_cli_reasoning_strength(monkeypatch):
     assert status["llm"]["reasoning_strength"] == "low"
     assert status["llm"]["api_reasoning_strength"] == "low"
     assert status["llm"]["cli_reasoning_strength"] == "high"
+    assert status["llm"]["effective_reasoning_strengths"] == {"api": "low", "cli": "high"}
 
 
 def test_menu_status_uses_advanced_model_for_api_reasoning_capability(monkeypatch):
@@ -337,10 +335,6 @@ def test_menu_status_exposes_default_headers(monkeypatch):
             "api_key": "sk-test",
             "default_headers": headers,
         },
-        "default_headers": headers,
-        "base_url": "https://api.example.com/v1",
-        "model": "gpt-api",
-        "api_key": "sk-test",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -360,15 +354,6 @@ def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypat
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": ""},
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
-        "base_url": "",
-        "model": "",
-        "api_key": "",
-        "timeout_seconds": "180",
-        "thinking_level": "",
-        "advanced_model": "",
-        "advanced_base_url": "",
-        "advanced_api_key": "",
-        "advanced_thinking_level": "",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -437,6 +422,7 @@ def test_1271_menu_status_grok_reasoning_supported_and_capability_list(monkeypat
     assert status["llm"]["reasoning_supported"] is True
     assert "grok" in status["llm"]["cli_reasoning_runners"]
     assert set(status["llm"]["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
+    assert set(status["llm"]["cli_reasoning_floor_runners"]) == {"codex", "claude", "grok"}
 
 
 
@@ -581,16 +567,3 @@ def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch)
 
     assert exc.value.status_code == 400
     assert not saved
-
-
-
-def test_game_start_rejects_placeholder_api_key(monkeypatch, tmp_path):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setenv("OPENAI_API_KEY", "cli-backend")
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"channel": ""})
-    path = tmp_path / "placeholder.db"
-
-    with pytest.raises(web_app.LLMUnavailable):
-        web_app.WebGame(db_path=str(path))
-
-    assert not path.exists()

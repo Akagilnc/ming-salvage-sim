@@ -1,8 +1,8 @@
-"""GameSession：CLI 与 Web 共用的统一回合流转层。L8。
+"""GameSession：统一回合流转层。L8。
 
 不含 input()/print()——只持有状态、跑底层逻辑、返回 dataclass。
 召见对话的 tool 截获、拟旨 draft 流转、诏书结算都收在这里，
-CLI 和 Web 各自只做 I/O 包装。
+Web 只做 I/O 包装。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -30,7 +30,6 @@ from ming_sim.context import (
 )
 from ming_sim.db import (
     GameDB,
-    directive_payload_admits_structured_write,
     infer_office_type_from_office,
     normalize_office,
     resolve_office_type_preserving_title,
@@ -130,13 +129,77 @@ class DirectiveView:
 
 
 @dataclass
+class AudienceChatTurn:
+    """#1902：一轮召对的入口无关句柄（建轮/快照/问话 id），两端入口共用同一生命周期。"""
+
+    chat_turn_id: int
+    accepted_turn: int
+    night_id: int
+    before_snapshot: Dict[str, Any]
+    user_message_id: int
+
+
+class AudienceChatUndoError(Exception):
+    """撤回资格失败：结构化码供入口映射，不靠正文子串判别。"""
+
+    def __init__(self, detail: str, *, code: str = "conflict") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        # code: conflict | not_found（入口映射 409 / 404）
+        self.code = code
+
+
+class PostReplyRecoveryError(Exception):
+    """已落回话尾随恢复失败：结构化码供入口映射。"""
+
+    def __init__(self, detail: str, *, code: str = "conflict") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        # code: conflict（入口映射 409）
+        self.code = code
+
+
+class TranslationRetryError(Exception):
+    """指定源轮转译恢复失败：结构化码供入口映射 HTTP。"""
+
+    def __init__(self, detail: str, *, code: str = "not_found") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        # code: invalid | not_found | settling
+        self.code = code
+
+
+class AudienceChatAdmissionError(Exception):
+    """召对开轮/重试业务资格失败：结构化码供入口映射。"""
+
+    def __init__(self, detail: str, *, code: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        # code: settling | night_closing | in_flight（已有拒绝理由，不新立）
+        self.code = code
+
+
+@dataclass(frozen=True)
+class AudienceChatUndoResult:
+    """撤回业务结果；呈现字段（history/directives 投影）由入口补。"""
+
+    minister_name: str
+    night_id: int
+    undone_chat_turn_id: int
+    campaign_id: str = ""
+
+
+@dataclass
 class ChatTurnResult:
+    """场景召对一轮结果（#1902 T6：只保留现役产者字段）。
+
+    旧入口（按大臣 chat / 分类器 / 拟旨当场落）曾产 appointed/registered/displaced/
+    proposed_directive / secret_order_id / pending_action_* / 含糊准驳 / 密令 landing
+    等字段；场景入口只产 answer + court_action（+ 转译暂存）。无产者字段与死消费者
+    已清退，不复活旧产者。
+    """
     answer: str
-    court_action: str = ""   # "" | court_break
-    next_minister: str = ""
-    proposed_directive: Optional[DirectiveView] = None
-    secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
-    pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
+    court_action: str = ""   # "" | court_break（场景口令）；其余旧动作已随入口退役
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None
@@ -148,9 +211,6 @@ class TurnSnapshot:
     period: int
     turn: int
     phase: str
-    metrics: Dict[str, int]
-    deaths_this_turn: List[Dict[str, str]] = field(default_factory=list)
-    previous_summary: str = ""
 
 
 def _is_ming_court_minister_character(
@@ -552,7 +612,7 @@ def _bind_all_content(content: GameContent) -> None:
 
 
 class GameSession:
-    """一局游戏的核心状态机。CLI / Web 都通过它驱动回合。"""
+    """一局游戏的核心状态机。Web 与探针通过它驱动回合。"""
 
     def __init__(
         self,
@@ -694,9 +754,6 @@ class GameSession:
             period=self.state.period,
             turn=self.state.turn,
             phase=self.state.turn_phase,
-            metrics=dict(self.state.metrics),
-            deaths_this_turn=list(self.deaths_this_turn),
-            previous_summary=self.previous_summary,
         )
 
     def end_turn(self) -> None:
@@ -738,8 +795,8 @@ class GameSession:
         raise DeclarationDataError(f"人物未建档：{clean_name}")
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
-        # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster 同口径
-        # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
+        # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster 同口径（PR#121 隐藏宗藩）。
+        # can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
         if is_vassal_prince(character):
             return (False, f"{character.name}为就藩宗室，非朝廷命官，无法召见。")
@@ -919,10 +976,12 @@ class GameSession:
 
             # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
             # #1727：预领票复用 barrier，禁再领第二张 barrier。
-            q.barrier(_do_close, ticket=barrier_ticket)
-            barrier_ticket = None  # barrier 已 complete
+            # 交接后 barrier finally 唯一归还；本腿不再 complete 同一票。
+            handed = barrier_ticket
+            barrier_ticket = None
+            q.barrier(_do_close, ticket=handed)
         finally:
-            # 早退/异常：预领票仍须归还，避免 has_open_barrier 永真（complete 幂等）。
+            # 仅未交到 barrier 的早退路径归还预领票（未交接自还）。
             if barrier_ticket is not None:
                 q.complete(barrier_ticket)
 
@@ -946,6 +1005,8 @@ class GameSession:
         gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
 
         def _run() -> None:
+            # 票一次性交给 close_night_after_chat_if_needed（早退自还或 barrier 归还）；
+            # 调度侧不维护第二份归还。
             try:
                 self.close_night_after_chat_if_needed(
                     court_action,
@@ -957,11 +1018,6 @@ class GameSession:
                     "background close_night_after_chat failed court_action=%s",
                     court_action,
                 )
-            finally:
-                # 幂等：真路径已在 close_night_after_chat_if_needed 归还；
-                # stub/早退漏还时仍须清 has_open_barrier。
-                if barrier_ticket is not None:
-                    q.complete(barrier_ticket)
 
         thread = threading.Thread(
             target=_run,
@@ -976,6 +1032,645 @@ class GameSession:
         from ming_sim.audience_translation import mark_turn_translation_done
 
         mark_turn_translation_done(self.db, chat_turn_id, commit=True)
+
+    # ── 召对话轮生命周期（#1902：Web 与 CLI 入口共核，入口不再各编排一份）────────
+    # 入口只做输入／呈现适配；建轮、快照、问话与回话落库、回滚与失败终态全在
+    # 这里。两端曾各写一份同形编排（WebGame._start_chat_turn/_fail_chat_turn_and_reload
+    # 与 cli/terminal.py 内联的同一段），那份副本随本方法落地删除。
+
+    def reconcile_crashed_audience_turns(self) -> None:
+        """启动／换库共核：崩溃遗留在飞回话终态化 + post_reply 恢复对账（ADR 0036）。
+
+        #1902 T4：Web 建局／rebuild 与 CLI 起手／读档重建曾各抄同一两句；生命周期
+        归本会话核，入口只在适当时机调用。宿主资源（写闸／呈现缓存）仍由入口适配。
+        GameSession 恒持真实 GameDB；无 conn 壳旁路已清退。
+        """
+        self.db.reconcile_interrupted_chat_turns()
+        self.db.reconcile_post_reply_recovery()
+
+    def list_startup_translation_catch_up(self) -> List[Any]:
+        """启动恢复：是否仍有未承接转译的已持久回话（#1902 T4 共核取数）。
+
+        无待补 → 正常空列表；直接走持久库契约，不经可选方法／缺 conn 壳。
+        """
+        return list(self.db.list_unextracted_replies() or [])
+
+    def run_startup_translation_catch_up(
+        self, *,
+        write_gate: Any = None,
+        write_queue: Any = None,
+    ) -> None:
+        """启动恢复共核：补跑已持久回话的待承接转译（ADR 0036 / #1842）。
+
+        #1902 T4：生命周期归会话核；Web 票据／后台线程、CLI 同步调用只是宿主适配。
+        单轮模型失败由 catch_up 标待补、不锁档；查询／代码故障按 ADR 0005 上抛，
+        不另加启动层非致命宽吞。
+        """
+        from ming_sim.audience_translation import catch_up_pending_translations
+
+        if not self.list_startup_translation_catch_up():
+            return
+        catch_up_pending_translations(
+            db=self.db,
+            state=self.state,
+            llm_config=getattr(self, "llm_config", None),
+            write_gate=write_gate,
+            write_queue=write_queue,
+        )
+
+    def scene_model_session_anchor(self, night_id: int) -> tuple[str, int]:
+        """现役夜的模型会话身份与实际历史前像水位——生成／建轮／恢复唯一真源。
+
+        #1902 SCENE-ANCHOR：入口不得自行拼名、独立取水位或无事实默认；
+        真实夜确定后只由此核提供，与 ``_resolve_scene_agent`` 共用同一公式。
+        """
+        session_id = f"scene-night-{int(night_id)}"
+        return session_id, int(self.db.agno_runs_length(session_id))
+
+    def assert_audience_chat_admission(self, *, what: str = "召对") -> None:
+        """召对开轮/重试已有业务资格：月末相位、收夜冻结、本夜在飞未落。
+
+        #1902：资格真源在会话共核；Web/CLI 入口只映射呈现，不各持业务副本。
+        不添加新状态、新拒绝理由或资源机制——承接既有规则原文。
+        """
+        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+            raise AudienceChatAdmissionError(
+                "月末结算/亲裁进行中，暂不能召对。",
+                code="settling",
+            )
+        from ming_sim.audience_night import (
+            AudienceNightError,
+            assert_night_accepts_player_input,
+            get_open_night,
+        )
+        try:
+            assert_night_accepts_player_input(self.db, what=what)
+        except AudienceNightError as err:
+            code = str(getattr(err, "code", "") or "night_closing")
+            raise AudienceChatAdmissionError(
+                str(err) or f"本夜收夜中，暂不能{what}。",
+                code=code,
+            ) from err
+        night = get_open_night(self.db)
+        if night is None:
+            return
+        if self.db.list_in_flight_chat_turns(night_id=int(night["id"])):
+            raise AudienceChatAdmissionError(
+                "本夜上一轮回奏仍在进行，请稍候再问。",
+                code="in_flight",
+            )
+
+    def begin_audience_chat_turn(self, message: str) -> AudienceChatTurn:
+        """建一轮召对：业务资格 → 确保开夜 → 建 chat_turn → 落问话。返回句柄供收口/回滚。
+
+        建轮与问话归属均为 ``SCENE_CHAT_SPEAKER``「殿上」，与本夜历史读取一致。
+
+        模型会话身份与前像水位由 ``scene_model_session_anchor`` 在真实夜确定后
+        提供，入口不再传入。召见入殿由 ``scene_chat`` 认原口令落地，建轮不另
+        开 ensure_summon 旁路。
+
+        建轮、问话、问话关联在同一 ``atomic`` 里提交。关联写失败则整段回滚，
+        不留下无所属的问话，也不留下仍占着本夜的半成品轮。
+        """
+        from ming_sim.applier import atomic
+        from ming_sim.audience_night import (
+            SCENE_CHAT_SPEAKER,
+            get_open_night,
+            open_night,
+        )
+        from ming_sim.decree_forecast import schedule_held_decree_forecasts
+
+        # #1902：相位／收夜／在飞资格在共核；入口不得再持业务权威副本。
+        GameSession.assert_audience_chat_admission(self, what="召对")
+        owner = SCENE_CHAT_SPEAKER
+        accepted_turn = int(self.state.turn)
+        before_snapshot = self.db.capture_chat_rollback_snapshot()
+        night_was_open = get_open_night(self.db) is not None
+        night = get_open_night(self.db) or open_night(
+            self.db, self.state,
+        )
+        if not night_was_open:
+            schedule_held_decree_forecasts(self)
+        night_id = int(night["id"])
+        # 未绑定调用（与 begin 自身同形）：测试壳只持 db，不必自带锚点方法。
+        agno_session_id, runs_before = GameSession.scene_model_session_anchor(
+            self, night_id,
+        )
+        with atomic(self.db):
+            chat_turn_id = self.db.create_chat_turn(
+                self.state,
+                owner,
+                agno_session_id,
+                runs_before,
+                night_id=night_id,
+                status="generating",
+            )
+            user_message_id = self.db.append_chat_message(
+                owner, accepted_turn, "user", message,
+            )
+            if chat_turn_id:
+                self.db.update_chat_turn_messages(
+                    chat_turn_id, user_message_id=user_message_id,
+                )
+        return AudienceChatTurn(
+            chat_turn_id=int(chat_turn_id or 0),
+            accepted_turn=accepted_turn,
+            night_id=night_id,
+            before_snapshot=before_snapshot,
+            user_message_id=int(user_message_id or 0),
+        )
+
+    def complete_audience_chat_turn(
+        self, turn: AudienceChatTurn, message_speaker: str, reply: str,
+    ) -> int:
+        """回话落定：persist 回话与回滚差异同一事务。回传回话消息 id。
+
+        ``message_speaker`` 是 chat_messages 的归属；chat_turn 靠 turn 句柄定位，
+        不按名字反查，恢复时保留原回话归属。
+
+        落回话与记回滚差异在同一个 ``atomic`` 里提交。差异写失败则回话一并回滚，
+        轮仍停在 generating、没有 minister_message_id，既有 ``fail_audience_chat_turn``
+        才能标 interrupted。已提交的回话不在失败收口里删。
+        转译由 Web 在闸外、挂票后安排，落库与回滚差异只走这一条路。
+        Web 外层若已持有 ``atomic``，这里的内层是扁平嵌套，由外层提交。
+
+        生产消费者均持真实持久轮；未建轮取消的合法 no-op 属于
+        ``fail_audience_chat_turn``，本方法不设零轮早退旁路。
+        """
+        from ming_sim.applier import atomic
+
+        with atomic(self.db):
+            minister_message_id = int(self.db.persist_minister_reply(
+                message_speaker, turn.accepted_turn, reply, turn.chat_turn_id,
+            ) or 0)
+            self.db.record_chat_turn_rollback_diffs(
+                turn.chat_turn_id, turn.before_snapshot,
+                self.db.capture_chat_rollback_snapshot(),
+            )
+        return minister_message_id
+
+    def _hall_turn_ids_for_night(self, night_id: Optional[int] = None) -> "set[int]":
+        """殿上轮 id 集——中断回话与尾随失败共用的夜域筛选单源（#1902 M1）。
+
+        night_id 缺省＝当前开夜；显式 night_id 供 scroll 历史夜读面复用同一筛选，
+        不在 Web 另写一份资格查询。
+        """
+        from ming_sim.audience_night import get_open_night
+
+        nid = int(night_id) if night_id is not None and int(night_id) > 0 else 0
+        if nid <= 0:
+            night = get_open_night(self.db)
+            if night is None:
+                return set()
+            nid = int(night["id"])
+        return {
+            int(row["id"]) for row in self.db.list_hall_chat_turns(nid)
+        }
+
+    def pending_audience_reply_retries(
+        self, *, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """本夜召对轮里待重试的中断回话（问话已落、回话未落）——两端共核取数。
+
+        #1902 F2：建轮归属恒为「殿上」（见 begin_audience_chat_turn 的 T1 说明），
+        而问话/回话挂被召大臣名。此前 CLI 拿大臣名去查 ``get_interrupted_reply_retries``
+        ——按 ``chat_turns.minister_name`` 过滤永远查不到殿上建的轮，实际中断问话
+        不可重试（探针：hall 1 / selected_minister 0）。
+
+        取数与归属判定的落差只此一处：按建轮归属在本夜轮里取，并给回话带回原问话的
+        归属（``message_speaker``），供重试时把回话挂回同一位大臣。入口只读。
+        """
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
+        hall_ids = self._hall_turn_ids_for_night(night_id)
+        if not hall_ids:
+            return []
+        retries = [
+            row for row in self.db.get_interrupted_reply_retries(SCENE_CHAT_SPEAKER)
+            if int(row["chat_turn_id"]) in hall_ids
+        ]
+        out: List[Dict[str, Any]] = []
+        for row in retries:
+            item = dict(row)
+            item["message_speaker"] = self._chat_message_speaker(
+                int(row.get("user_message_id") or 0),
+            ) or SCENE_CHAT_SPEAKER
+            out.append(item)
+        return sorted(out, key=lambda item: int(item["chat_turn_id"]))
+
+    def pending_post_reply_retries(
+        self, *, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """本夜殿上已落回话的尾随失败——两端共核取数（#1902 L1）。
+
+        与 ``pending_audience_reply_retries`` 同形：共用 ``_hall_turn_ids_for_night``
+        夜域筛选；状态源仍是 ``get_post_reply_retries``，不与中断回话合并语义。
+        """
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
+        hall_ids = self._hall_turn_ids_for_night(night_id)
+        if not hall_ids:
+            return []
+        return sorted(
+            [
+                dict(row)
+                for row in self.db.get_post_reply_retries(SCENE_CHAT_SPEAKER)
+                if int(row["chat_turn_id"]) in hall_ids
+            ],
+            key=lambda item: int(item["chat_turn_id"]),
+        )
+
+    def pending_audience_recovery_retries(
+        self, *, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """中断回话 + 已落回话尾随失败，本夜共核合并取数（#1902 L1）。
+
+        Web 恢复面板／scroll 读此；CLI「重试回话」仍只读 ``pending_audience_reply_retries``
+        （不新增 CLI 尾随玩法）。night_id 显式传入时筛该夜，缺省＝开夜。
+        """
+        return sorted(
+            [
+                *self.pending_audience_reply_retries(night_id=night_id),
+                *self.pending_post_reply_retries(night_id=night_id),
+            ],
+            key=lambda item: int(item["chat_turn_id"]),
+        )
+
+    def list_pending_translation_retries(
+        self,
+        *,
+        night_id: Optional[int] = None,
+        chat_turn_id: Optional[int] = None,
+        write_queue: Any = None,
+    ) -> List[Dict[str, Any]]:
+        """转译待补投影；真源 audience_translation.list_pending_translations。
+
+        无待补 → 正常空列表；直接引用真实库，不经缺 conn 壳。
+        """
+        from ming_sim.audience_translation import list_pending_translations
+
+        return list_pending_translations(
+            self.db, night_id=night_id, chat_turn_id=chat_turn_id,
+            write_queue=write_queue,
+        )
+
+    def retry_pending_translation(
+        self,
+        chat_turn_id: int,
+        *,
+        write_gate: Any = None,
+        write_queue: Any = None,
+    ) -> Dict[str, Any]:
+        """指定源轮转译恢复共核（#1902 M1）：待补资格 → 相位准入 → catch_up → 水位。
+
+        入口只做 HTTP／票据／写闸／呈现映射；不在 Web 自办恢复编排。
+        """
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0:
+            raise TranslationRetryError("chat_turn_id 无效", code="invalid")
+        from ming_sim.audience_translation import catch_up_pending_translations
+
+        pending_before = self.list_pending_translation_retries(
+            chat_turn_id=ctid, write_queue=write_queue,
+        )
+        if not pending_before:
+            raise TranslationRetryError(
+                f"chat_turn_id={ctid} 没有待补转译。", code="not_found",
+            )
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
+            raise TranslationRetryError(
+                "月末结算/亲裁进行中，暂不能召对。", code="settling",
+            )
+        summary = catch_up_pending_translations(
+            self.db, self.state,
+            chat_turn_id=ctid,
+            llm_config=getattr(self, "llm_config", None),
+            write_gate=write_gate,
+            write_queue=write_queue,
+        )
+        still = self.list_pending_translation_retries(
+            chat_turn_id=ctid, write_queue=write_queue,
+        )
+        status = self.db.get_story_extract_status(ctid)
+        return {
+            "chat_turn_id": ctid,
+            "extract_status": status,
+            "retryable": bool(still),
+            "kind": "translation_pending" if still else "translation_done",
+            "summary": summary,
+        }
+
+    def resume_post_reply_recovery(
+        self,
+        target: Dict[str, Any],
+        *,
+        write_gate: Any = None,
+        after_reply: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """已落回话尾随恢复共核（#1902 L1）：claim → 相位编排 → clear；失败 release。
+
+        ``court_break`` → ``close_night_after_chat_if_needed``。
+        ``after_reply`` → 入口呈现钩（高亮等），共核不持呈现／票据。
+        ``write_gate`` 为宿主短写闸；未传则无闸上下文。
+        claim 未赢 → ``PostReplyRecoveryError(conflict)``，入口映射 409。
+        """
+        import contextlib
+
+        chat_turn_id = int(target["chat_turn_id"])
+        phase = str(target.get("recovery_phase") or "")
+        gate_cm = write_gate if write_gate is not None else contextlib.nullcontext()
+        with gate_cm:
+            if not self.db.claim_post_reply_recovery(chat_turn_id, phase):
+                raise PostReplyRecoveryError(
+                    "本轮后续处理已在恢复，请稍候。", code="conflict",
+                )
+        try:
+            if phase == "court_break":
+                self.close_night_after_chat_if_needed(
+                    "court_break", write_gate=write_gate,
+                )
+            elif after_reply is not None:
+                after_reply(target)
+            with gate_cm:
+                self.db.clear_post_reply_failure(chat_turn_id)
+        except BaseException:
+            with gate_cm:
+                self.db.release_post_reply_recovery(chat_turn_id, phase)
+            raise
+        return {
+            "answer": str(target.get("answer") or ""),
+            "chat_turn_id": chat_turn_id,
+        }
+
+    def _chat_message_speaker(self, message_id: int) -> str:
+        """chat_messages 某行的归属大臣名；无此行时返回空串。"""
+        if not message_id:
+            return ""
+        row = self.db.conn.execute(
+            "SELECT minister_name FROM chat_messages WHERE id = ?", (int(message_id),),
+        ).fetchone()
+        return str(row["minister_name"] or "") if row else ""
+
+    def fail_audience_chat_turn(
+        self, turn: AudienceChatTurn, *, replied: bool = False,
+        error: Optional[BaseException] = None,
+        translation_dispatched: bool = False,
+        court_action: str = "",
+    ) -> bool:
+        """召对失败收口。已提交的回话不删、不回滚。
+
+        账上 ``active`` 且已挂 ``minister_message_id`` = 回话已提交。此时：
+        转译尚未派出且抽取未完成 → 既有 ``extract_status=pending`` 与 translation
+        错误包；否则既有 ``post_reply_recovery``（``court_break`` / ``after_reply``）。
+        ``replied`` 表示调用方已有回话对象。对象在、账上无回话（落库事务回滚）
+        与对象尚未产生，都走未完成收口：记回滚差异，问话留下并标 interrupted。
+        账上已有回话而调用方还没拿到 payload（调度在返回前抛）同样不得回滚。
+
+        返回是否按已落回话记下了恢复相位。
+        """
+        from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+        from ming_sim.exceptions import LLMUnavailable
+
+        if not turn.chat_turn_id:
+            return False
+        row = self.db.conn.execute(
+            "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
+            (turn.chat_turn_id,),
+        ).fetchone()
+        reply_landed = bool(
+            row is not None
+            and row["status"] == "active"
+            and row["minister_message_id"]
+        )
+        # 账上已落优先于 ``replied``。调用方看见对象但事务未提交时 replied 为真、
+        # reply_landed 为假，落入下面的未完成收口，不假装已落。
+        if reply_landed:
+            return self._record_persisted_audience_reply_failure(
+                turn, row, error,
+                translation_dispatched=translation_dispatched,
+                court_action=court_action,
+            )
+        # 回滚真源：capture → record diffs → restore。快照／宿主故障须原错上抛，
+        # 不 catch 洗白、不伪造 before==after、不谎称已安全收口（#1902 T4）。
+        self.db.record_chat_turn_rollback_diffs(
+            turn.chat_turn_id, turn.before_snapshot,
+            self.db.capture_chat_rollback_snapshot(),
+        )
+        if not turn.user_message_id:
+            user_row = self.db.conn.execute(
+                "SELECT user_message_id FROM chat_turns WHERE id = ?",
+                (turn.chat_turn_id,),
+            ).fetchone()
+            turn.user_message_id = int(user_row["user_message_id"] or 0) if user_row else 0
+        if turn.user_message_id:
+            restored_ids = self.db.restore_interrupted_after_failed_retry(turn.chat_turn_id)
+            schedule_restored_decree_forecasts(self, restored_ids)
+            if error is not None and not isinstance(error, LLMUnavailable):
+                from ming_sim.audience_night import write_audience_error_pack
+                pack = write_audience_error_pack(
+                    kind="reply", message=str(error),
+                    detail={"chat_turn_id": turn.chat_turn_id}, db=self.db, exc=error,
+                )
+                self.db.set_chat_turn_error_pack(turn.chat_turn_id, pack)
+        else:
+            restored_ids = self.db.fail_chat_turn(turn.chat_turn_id)
+            schedule_restored_decree_forecasts(self, restored_ids)
+        return False
+
+    def _record_persisted_audience_reply_failure(
+        self, turn: AudienceChatTurn, row, error: Optional[BaseException], *,
+        translation_dispatched: bool, court_action: str,
+    ) -> bool:
+        """已落回话的失败相位。不新增恢复列，不删已提交的回话。"""
+        from ming_sim.audience_night import write_audience_error_pack
+
+        translation_pending = (
+            not translation_dispatched
+            and str(row["extract_status"] or "") != "done"
+        )
+        detail = {"chat_turn_id": turn.chat_turn_id, "phase": "post_reply"}
+        if translation_pending:
+            self.db.mark_story_extraction_pending(turn.chat_turn_id)
+            if error is not None:
+                pack = write_audience_error_pack(
+                    kind="translation", message=str(error), detail=detail,
+                    db=self.db, exc=error,
+                )
+                self.db.set_chat_turn_error_pack(turn.chat_turn_id, pack)
+            return True
+        pack = ""
+        if error is not None:
+            pack = write_audience_error_pack(
+                kind="reply", message=str(error), detail=detail,
+                db=self.db, exc=error,
+            )
+        phase = "court_break" if court_action == "court_break" else "after_reply"
+        self.db.mark_post_reply_failure(turn.chat_turn_id, phase, pack)
+        return True
+
+    def can_undo_last_audience_chat(self, minister_name: str) -> bool:
+        """撤回资格共核（#1902 J3）：相位 + 全局末轮完整回话。入口只读。
+
+        #1902 K1：建轮归属恒为「殿上」（或具名大臣个人轮）；不按旧跨身份 owner 转交。
+        """
+        if self.state.turn_phase not in (
+            TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value,
+        ):
+            return False
+        return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
+
+    def undo_last_audience_chat(
+        self,
+        minister_name: str,
+        *,
+        gate_held: bool = False,
+        write_queue: Any = None,
+    ) -> AudienceChatUndoResult:
+        """撤回最近一轮完整召对的业务编排共核（#1902 J3 / #1816）。
+
+        资格判定、取消在飞票据／转译、DB 逆转、作废旧草案、重排恢复预推、
+        刷新运行时均在此。入口只做 HTTP 异常映射与呈现投影。
+        不新增取消机制或领域规则；复用既有 write_queue / translation / DB 原语。
+
+        #1902 K1：殿上轮读写契约固定 minister_name=「殿上」；删除不可达的
+        旧 owner 跨身份转交／递归兼容分支。
+        """
+        from ming_sim.audience_night import get_open_night
+        from ming_sim.audience_translation import cancel_turn_translation
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        target = str(minister_name or "").strip()
+        if self.state.turn_phase not in (
+            TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value,
+        ):
+            raise AudienceChatUndoError(
+                "本回合已经进入颁诏结算，不能撤回召对。", code="conflict",
+            )
+        row = self.db.get_last_active_chat_turn(target, self.state.turn)
+        if row is None:
+            raise AudienceChatUndoError(
+                "本回合没有可撤回的召对。", code="not_found",
+            )
+        if not self.db.is_global_last_active_chat_turn(int(row["id"])):
+            raise AudienceChatUndoError(
+                "只能撤回全局最后一轮召对。", code="conflict",
+            )
+        if not row.get("user_message_id") or not row.get("minister_message_id"):
+            raise AudienceChatUndoError(
+                "该召对尚未完整完成，不能撤回。", code="conflict",
+            )
+
+        queue = write_queue if write_queue is not None else get_session_write_queue(self)
+        turn_id = int(row["id"])
+        # #1353 / ADR 0038：撤回轮取消其在飞票据（空放行、不复活写库）。
+        # #1842 / ADR 0155：同步终结该轮在飞转译 Future。
+        queue.cancel_key(("turn", turn_id))
+        cancel_turn_translation(
+            turn_id, write_queue=queue, gate_held=gate_held,
+        )
+        try:
+            undone = self.db.undo_chat_turn(turn_id)
+        except ValueError as exc:
+            raise AudienceChatUndoError(str(exc), code="conflict") from exc
+
+        self.note_chat_rollback(
+            deleted_committed_draft_ids=undone.get("deleted_committed_draft_ids"),
+        )
+        restored_ids = [
+            int(item) for item in (undone.get("restored_pending_action_ids") or [])
+        ]
+        if restored_ids:
+            from ming_sim.decree_forecast import (
+                bind_forecast_owner, schedule_pending_decree_forecast,
+            )
+            bind_forecast_owner(self)
+            open_night_row = get_open_night(self.db)
+            if open_night_row is not None:
+                for pending_id in restored_ids:
+                    schedule_pending_decree_forecast(
+                        self, pending_id, night_id=int(open_night_row["id"]),
+                    )
+        self.refresh_runtime_after_chat_rollback()
+        campaign_id = str(self.db.kv_get("campaign_id") or "")
+        return AudienceChatUndoResult(
+            minister_name=target,
+            night_id=int(row.get("night_id") or 0),
+            undone_chat_turn_id=int(undone["id"]),
+            campaign_id=campaign_id,
+        )
+
+    def execute_interrupted_reply_retry(
+        self,
+        *,
+        chat_turn_id: int,
+        question: str,
+        message_speaker: str,
+        accepted_turn: int,
+        user_message_id: int = 0,
+        stream_emit: Optional[Callable[..., None]] = None,
+        write_gate: Any = None,
+    ) -> Optional[Tuple[AudienceChatTurn, "ChatTurnResult", int]]:
+        """中断回话恢复共核：reopen CAS → 快照 → scene_chat → 落回话／失败收口。
+
+        #1902 T4：Web 入口只做输入、呈现与宿主资源适配，生命周期编排只此一处。
+        reopen CAS 未赢 → 返回 ``None``（沿用 ``reopen_interrupted_chat_turn_for_retry``
+        的 False 语义；入口译成 409／提示；未进 generating）。不借用 LookupError——
+        KeyError／IndexError 亦为其子类，scene／snapshot／落库可抛，不得当 CAS 未赢。
+        reopen 已赢后的任何失败（含快照）→ ``fail_audience_chat_turn`` 后原错上抛，
+        不遗留 generating。
+        成功返回 ``(turn, result, minister_message_id)``；转译由入口在闸外挂票后安排，
+        收夜须先放行 pending write，再调 ``schedule_close_night_after_chat_if_needed``。
+        ``write_gate`` 可选：宿主短写闸（reopen／落库／失败收口）；LLM 生成在闸外。
+        """
+        import contextlib
+
+        gate_cm = write_gate if write_gate is not None else contextlib.nullcontext()
+        turn: Optional[AudienceChatTurn] = None
+        result: Optional[ChatTurnResult] = None
+        with gate_cm:
+            # #1902：与建轮同核资格（相位／收夜／在飞）；CAS 前拒绝，不留 generating。
+            GameSession.assert_audience_chat_admission(self, what="召对")
+            if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+                return None
+            # reopen 已赢即建 turn 句柄，保证后续任意失败（含快照）能走 fail 收口。
+            turn = AudienceChatTurn(
+                chat_turn_id=int(chat_turn_id),
+                accepted_turn=int(accepted_turn),
+                night_id=0,
+                before_snapshot={},
+                user_message_id=int(user_message_id or 0),
+            )
+        try:
+            with gate_cm:
+                turn.before_snapshot = self.db.capture_chat_rollback_snapshot()
+            result = self.scene_chat(
+                question,
+                chat_turn_id=chat_turn_id,
+                stream_emit=stream_emit,
+            )
+            with gate_cm:
+                minister_message_id = self.complete_audience_chat_turn(
+                    turn,
+                    message_speaker,
+                    str(getattr(result, "answer", "") or ""),
+                )
+            return turn, result, int(minister_message_id or 0)
+        except Exception as exc:
+            if turn is not None:
+                try:
+                    with gate_cm:
+                        self.fail_audience_chat_turn(
+                            turn,
+                            replied=result is not None,
+                            error=exc,
+                            court_action=str(getattr(result, "court_action", "") or ""),
+                        )
+                except Exception:
+                    logger.exception(
+                        "interrupted reply retry fail_audience_chat_turn failed chat_turn_id=%s",
+                        chat_turn_id,
+                    )
+            raise
 
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,
@@ -996,15 +1691,14 @@ class GameSession:
         from ming_sim.audience_night import (
             CMD_NONE,
             SCENE_CHAT_SPEAKER,
-            close_night,
-            ensure_open_night_for_audience,
             ensure_summon_enter,
             get_open_night,
+            open_night,
             recognize_xuan_command,
         )
         from ming_sim.llm_model import extract_agent_text
 
-        # Free prose message: preserve raw; strip only emptiness (#1834 F16).
+        # Free emperor prose: empty-check without mutating carried body (P6).
         message_text = str(message or "")
         if not message_text.strip():
             raise ValueError("问话不能为空。")
@@ -1015,7 +1709,7 @@ class GameSession:
         night = get_open_night(self.db)
         opened_new_night = night is None
         if opened_new_night:
-            night = ensure_open_night_for_audience(self.db, self.state)
+            night = open_night(self.db, self.state)
             from ming_sim.decree_forecast import schedule_held_decree_forecasts
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
@@ -1023,21 +1717,13 @@ class GameSession:
         result = ChatTurnResult(answer="")
         if self._recognize_audience_command_verdict(message_text) == CMD_CLOSE_NIGHT:
             ctid = int(chat_turn_id or 0)
-            # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
-            # ctid==0 的当场收夜分支随同步转译一并删除。
+            # 生产：退朝只标 court_break，由 epilogue／schedule_close_night 收夜。
+            # 零轮当场 close_night 旁路已清退（注释曾称已删、代码残留）。
             if ctid > 0:
                 self._mark_control_turn_translation_done(ctid)
-                result.court_action = "court_break"
-                return result
-            close_night(
-                self.db, self.state,
-                content=getattr(self, "content", None),
-                llm_config=getattr(self, "llm_config", None),
-                write_gate=getattr(self, "_write_gate", None),
-                write_queue=self._write_queue,
-            )
             result.court_action = "court_break"
             return result
+
 
         # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
         xuan_fragment = recognize_xuan_command(message_text)
@@ -1137,14 +1823,20 @@ class GameSession:
         return result
 
     def _resolve_scene_agent(self, prepared: Any, *, night_id: int) -> Any:
-        """生产 create_scene_agent；测试经 monkeypatch 此工厂缝注入，禁实例双桩属性。"""
+        """生产 create_scene_agent；测试经 monkeypatch 此工厂缝注入，禁实例双桩属性。
+
+        session_id 与建轮／恢复同一 ``scene_model_session_anchor`` 事实。
+        """
         llm_config = getattr(self, "llm_config", None)
+        session_id, _runs_before = GameSession.scene_model_session_anchor(
+            self, night_id,
+        )
         return create_scene_agent(
             llm_config,
             prepared,
             agno_db=getattr(self, "agno_db", None),
             content=getattr(self, "content", None),
-            session_id=f"scene-night-{night_id}",
+            session_id=session_id,
         )
 
     def _run_scene_agent_transport(
@@ -1198,6 +1890,7 @@ class GameSession:
                 extracted = extract_agent_text(run_output)
                 if not answer:
                     answer = extracted
+            # #1902 T2：无 RunOutput 时仍以已拼正文为准；不从词面判认证故障。
             if not answer:
                 raise transport_failure_unavailable(
                     empty_output_failure(), attempts=1, exhausted=False,
@@ -1319,29 +2012,10 @@ class GameSession:
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
             raise DeclarationDataError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
 
-    def add_directive(
-        self, text: str, notes: str = "",
-        dossier_payload: Optional[Dict[str, object]] = None,
-    ) -> DirectiveView:
-        self._refuse_if_settling()
-        payload = dict(dossier_payload or {})
-        if not directive_payload_admits_structured_write(payload):
-            raise DeclarationDataError("新增旨意须由上游提供完整结构化动作与目标")
-        directive_id = self.db.add_directive(
-            self.state, None, text, "手动新增", notes=notes,
-            dossier_payload=payload,
-        )
-        return DirectiveView(id=directive_id, text=text, status="draft",
-                             source="手动新增", notes=notes)
-
-    def update_directive(
-        self, directive_id: int, text: str, *,
-        dossier_payload: Optional[Dict[str, object]] = None,
-    ) -> None:
-        self._refuse_if_settling()
-        self.db.update_directive_text(
-            directive_id, text, dossier_payload=dossier_payload,
-        )
+    # #1902：add_directive / update_directive 随拟诏台手写入口（CLI add/edit、
+    # Web POST|PATCH /api/directives）一并退役——旨意只从召对来（#1772）。
+    # 落库与改稿的引擎面仍是 db.add_directive / db.update_directive_text；
+    # 共享抽取核（成案准入补交）未动。
 
     def delete_directive(self, directive_id: int) -> None:
         self._refuse_if_settling()
@@ -1396,7 +2070,7 @@ class GameSession:
         拿旧拒因问第二遍。故把**本次**产物与**本次**写回失败事实带到下一次重写；
         返回值即下一轮的 carry_over（写回成功的旨不入内，改按 ensure 新拒因走）。
         """
-        from ming_sim.cli_backend import resubmit_draft_admission_payload
+        from ming_sim.draft_intent import resubmit_draft_admission_payload
         from ming_sim.error_pack import settlement_abort_message, write_error_pack
         from ming_sim.exceptions import SettlementAbort
 
@@ -1660,9 +2334,9 @@ class GameSession:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
-                # #1897：恢复原诏自由正文原样，禁 strip。
+                # Free decree body on settle recovery: carry stored 旨文 as-is (P6).
                 stored = str(ctx.get("decree_text") or "")
-                if stored:
+                if stored.strip():
                     self.last_decree = stored
                     decree = stored
         # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。
@@ -1744,9 +2418,7 @@ class GameSession:
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
                     and (self.last_decree or "").strip()):
                 directives = [{"text": self.last_decree}]
-            elif allow_empty_decree or recovered_source is not None or product_exhaust:
-                pass
-            else:
+            elif not (allow_empty_decree or recovered_source is not None or product_exhaust):
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
@@ -1882,6 +2554,19 @@ class GameSession:
             logger.exception("auto_save failed tag=%s", tag)
             return None
 
+    def save_to(self, name: str) -> Dict[str, object]:
+        """手动存档到 ``saves/<name>.db``（#1902：两端共用；入口只管取名与呈现）。
+
+        存档名清洗与路径拼装真源在 ``paths.save_slot_path``，Web 菜单、CLI 入口与
+        会话层同用一份（Web 对外仍把自己的非法名翻成 400）。
+        """
+        from ming_sim.paths import safe_save_name, save_slot_path
+
+        safe = safe_save_name(str(name or "").strip())
+        target = save_slot_path(safe)
+        self.db.backup_to(target)
+        return {"name": safe, "path": target}
+
     def close(self, *, write_gate_already_held: bool = False) -> None:
         """排空本会话已受理工作，再关闭全部数据库资源。"""
         if write_gate_already_held:
@@ -1897,10 +2582,11 @@ class GameSession:
         主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
         进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
 
-        次序：agno → db。仅由 ``drain_and_close_session`` 在 SessionWriteQueue 已
-        seal、barrier 已排空且持 write_gate 时调用。agno 失败则立即上抛、不碰 db
+        次序：agno → db。仅由
+        ``drain_and_close_session`` 在 SessionWriteQueue 已 seal、barrier 已排空且
+        持 write_gate 时调用。agno 失败则立即上抛、不碰 db
         （两侧仍完整可恢复）。agno 已成功后 ``_close_epoch`` 递增——此后即使
-        db.close 失败/conn 仍可探测，也不得恢复为活局（registry 已失 agno）。
+        db.close 失败/conn 仍可探测，也不得恢复为活局（agno 已失）。
         """
         agno = getattr(self, "agno_db", None)
         if agno is not None:

@@ -12,6 +12,7 @@ def _promulgated_commitment_origin(db, state) -> str:
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
+
 def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     db, state, _content = game
     building = db.conn.execute(
@@ -44,6 +45,7 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     assert result.closes[0]["building_ops"][0]["removed"] is True
 
 
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -52,6 +54,7 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
 )
 def test_effect_dict_has_work_ignores_malformed_person_loyalty(payload):
     assert effect_dict_has_work(payload) is False
+
 
 def test_insert_issue_persists_commitment_deadline_columns(game):
     db, state, _ = game
@@ -75,6 +78,7 @@ def test_insert_issue_persists_commitment_deadline_columns(game):
         "commitment_kind": "until_stop",
     }
 
+
 def test_insert_issue_serializes_structured_stop_condition_as_json(game):
     db, state, _ = game
 
@@ -91,6 +95,7 @@ def test_insert_issue_serializes_structured_stop_condition_as_json(game):
         "SELECT stop_condition FROM issues WHERE id=?", (issue_id,)
     ).fetchone()
     assert row["stop_condition"] == '{"army.guanning.arrears":"<=0"}'
+
 
 def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     db, state, _ = game
@@ -119,6 +124,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     assert row["stop_condition"] == '{"army.guanning.arrears":"<=0"}'
     assert row["resolve_condition"] == ""
     assert row["commitment_kind"] == "until_stop"
+
 
 def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read_game):
     db, state, _ = read_game

@@ -9,6 +9,7 @@ import pytest
 
 import ming_sim.decree as decree_mod
 
+
 # ---------------------------------------------------------------------------
 # B. 恢复入口消费：由玩家月链接续已保存的结算进度
 # ---------------------------------------------------------------------------
@@ -26,6 +27,7 @@ def _recovery_session(db, state, content, monkeypatch):
     )
     sess = make_light_session(db, state, content)
     return sess
+
 
 
 def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):
@@ -57,6 +59,7 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
     assert row["source"] == "simulation"               # 非 triggered 行 source 不被误标
     assert json.loads(row["choice_json"]) == {"label": "留"}  # choice 仍记录
 
+
 def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game):
     """HITL 选择只暂存 choice，不抢先把新事件写成 triggered 终态。"""
     import json
@@ -69,6 +72,7 @@ def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game)
     assert row["terminal_state"] == ""
     assert row["source"] == "hitl_decision"
     assert json.loads(row["choice_json"]) == {"label": "斩"}
+
 
 def test_mark_event_triggered_upgrades_pending_choice_row(game):
     """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。
@@ -96,6 +100,7 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
     assert row["source"] == "event_pool"
     assert row["terminal_reason"] == "留"
     assert json.loads(row["choice_json"]) == {"label": "留"}
+
 
 @pytest.mark.parametrize(
     ("marker", "terminal_state", "source", "reason"),
@@ -139,6 +144,7 @@ def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_stat
     assert row["terminal_reason"] == "留"
     assert json.loads(row["choice_json"]) == {"label": "留"}
 
+
 def test_recovery_blocked_by_pending_directives(game, monkeypatch):
     """恢复与正常路同守门：pending 拟旨未核定不得推进（cmr S7 r8 codex）。
 
@@ -157,6 +163,7 @@ def test_recovery_blocked_by_pending_directives(game, monkeypatch):
         sess.resolve_turn()
     assert state.turn == turn  # 未推进，拟旨不孤儿
 
+
 def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。
 
@@ -168,10 +175,7 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
 
     sess = _recovery_session(db, state, content, monkeypatch)
     for call in (
-        lambda: sess.add_directive("新草案"),
-        lambda: sess.update_directive(1, "改"),
         lambda: sess.delete_directive(1),
-        # #1341：set_decree / session.write_decree 已删；冻结面只覆盖逐道草案变更器
     ):
         with pytest.raises(ValueError):
             call()

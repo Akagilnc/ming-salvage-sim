@@ -19,7 +19,8 @@ from ming_sim.llm_config import (
     provider_extra_body,
     supports_openai_reasoning_effort,
 )
-from ming_sim.models import LLMConfig
+
+from ming_sim.models import CLI_DEFAULT_RUNNER, LLMConfig
 from ming_sim.token_stats import install_token_stats_patch
 
 _OPENAI_REASONING_BY_STRENGTH = {
@@ -189,20 +190,19 @@ def create_chat_model(
         )
         if effort:
             kwargs["reasoning_effort"] = effort
-    # 探针：新配置用 channel 显式选择执行通道；未声明 channel 的旧路径暂沿用 env fallback。
+    # 通道只由运行配置 channel 声明；未声明则走 API 路径。
     # CliChat 继承 OpenAIChat，吃同一套 kwargs；reasoning_effort 等 CLI 无关字段被忽略。
     from ming_sim.cli_backend import (
         CliChat,
-        cli_backend_from_env,
         is_supported_cli_runner,
         supported_cli_runners_text,
     )
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
-    backend = None
-    if channel == "cli":
-        backend = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
-    elif channel != "api":
-        backend = cli_backend_from_env()
+    # #1902：宿主只由运行配置选（channel=cli + cli_runner）；不再读 MING_SIM_LLM_BACKEND。
+    backend = (
+        (getattr(llm_config, "cli_runner", "") or CLI_DEFAULT_RUNNER).strip().lower()
+        if channel == "cli" else None
+    )
     if backend is not None and not is_supported_cli_runner(backend):
         # 显式不支持的 runner 在构造期优雅失败，而非首次 invoke 才抛 raw RuntimeError。
         # 支持名单文案单一真源 = supported_cli_runners_text()（#1256）。
@@ -214,13 +214,11 @@ def create_chat_model(
         cli_model = (getattr(llm_config, "cli_model", "") or "").strip()
         if cli_model:
             kwargs["id"] = cli_model
-        elif channel == "cli":
+        else:
             # 空 cli_model 不许把 API model 名（kwargs["id"]=llm_config.model）漏给
             # codex/claude 的 --model（RT2）：回落 runner 默认（agy 无 --model→空串）。
             from ming_sim.llm_config import cli_model_from_env
             kwargs["id"] = cli_model_from_env(backend)
-        else:
-            kwargs["id"] = ""
         # 静默判死阈值不下发成 model.timeout（SDK 阻塞轴）：CLI 通道的「等多久算死」
         # 只由 transport 策略读设置页那一格（#1465 切片③），此处不留第二条权威路。
         # 占位符只在这一刻注入：满足 OpenAIChat 父类构造（非空 api_key），
@@ -299,17 +297,24 @@ def extract_agent_text(run_output: object) -> str:
     else:
         text = str(content)
     # #1299/#1310：治本在缝——ERROR status 翻 typed，错误串永不得进 content 当叙事。
-    # 成功权威状态后的正文不再扫词猜认证/连接失败（ADR 0142 / #1835 J10）。
+    # #1902 T2：禁再从自由正文词面判认证故障（ADR 0142）；只认 typed status / transport。
     # #1465 ④ / P7 / ADR 0046：玩家可见走系统层人话，禁固定戏内话术；
     # 机器横幅只进 provider_message（与 map_run_error_event 同权威）。
     # 成功正文不得按散文词表推断认证故障（ADR 0142 / #1891 A）。
     if _run_output_status_is_error(run_output):
         from ming_sim.llm_transport import (
             ClassifiedFailure,
+            take_remembered_code_fault,
             take_remembered_typed_failure,
             transport_failure_unavailable,
         )
 
+        # 代码故障优先还原：SDK 把 TypeError 等吞成 status=ERROR 后不得摊成
+        # llm_run_error（#1902 CLI-UNKNOWN-CODE-FAULTS；错误包路径须保真）。
+        code_fault = take_remembered_code_fault()
+        if code_fault is not None:
+            take_remembered_typed_failure()
+            raise code_fault
         remembered = take_remembered_typed_failure()
         if remembered is not None:
             raise transport_failure_unavailable(
@@ -345,7 +350,7 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
     # 仅服务配置校验入口；启动/新开/继续/重置路径不再调用本函数。
     # #884：API 烟走统一 transport 钟（attempt timeout + 瞬断重试）；CLI 已在
     # _run_backend_for_config 入口包 run_with_transport。失败账面带阶段名。
-    from ming_sim.cli_backend import _run_backend_for_config, cli_backend_from_env
+    from ming_sim.cli_backend import _run_backend_for_config
     from ming_sim.llm_transport import (
         bind_transport_sdk_budget,
         resolve_transport_policy,
@@ -353,16 +358,14 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
     )
 
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
-    if channel == "cli" or (channel != "api" and cli_backend_from_env() is not None):
+    if channel == "cli":  # #1902：通道只由运行配置声明（env 选宿主已退役）
         try:
+            # #1902 T2：连通检查只认调用是否成功；不从返回正文抠认证词面。
             _run_backend_for_config("输出 ok", llm_config, tag="verify")
         except LLMUnavailable as error:
             _stamp_verify_stage(error, stage)
             raise
-        except Exception as error:
-            wrapped = llm_unavailable_from_error(error)
-            _stamp_verify_stage(wrapped, stage)
-            raise wrapped from error
+        # 未知代码异常原样上浮，不得套成 llm_error（#1902）。
         return
     agent = Agent(
         name="LLM连通性检查",
@@ -397,7 +400,4 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
     except LLMUnavailable as error:
         _stamp_verify_stage(error, stage)
         raise
-    except Exception as error:
-        wrapped = llm_unavailable_from_error(error)
-        _stamp_verify_stage(wrapped, stage)
-        raise wrapped from error
+    # 代码故障由 run_with_transport / extract 保真上浮，不套 llm_error（#1902）。

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from tests.conftest import wait_for_background_jobs
 
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
@@ -27,12 +28,14 @@ def _active_ministers(db, content):
     ]
 
 
+
 def _shared_source_body(db, source_id: str):
     row = db.conn.execute(
         "SELECT body FROM character_knowledge_sources WHERE source_id=?",
         (source_id,),
     ).fetchone()
     return None if row is None else (row["body"] or "")
+
 
 
 def test_883_two_turn_probe_secret_never_enters_shared_archives(game, monkeypatch):
@@ -79,6 +82,7 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game, monkeypatc
     )
 
 
+
 def test_883_shared_summary_write_seam_rejects_secret_order_source(game):
     """共享汇总写入接缝单点拒收：secret_order 不得进 character_knowledge_sources。"""
     db, state, content = game
@@ -106,6 +110,7 @@ def test_883_shared_summary_write_seam_rejects_secret_order_source(game):
     assert count == 0
 
 
+
 def test_883_shared_write_seam_keeps_public_assignee_audience(game):
     """接令者身份不改变公开 audience 行本身的 provenance。"""
     db, state, content = game
@@ -124,6 +129,7 @@ def test_883_shared_write_seam_keeps_public_assignee_audience(game):
         source_id="chat_message:replay-secret",
     )
     assert _shared_source_body(db, "chat_message:replay-secret") == f"臣复述密旨：{marker}"
+
 
 
 def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game):
@@ -157,6 +163,7 @@ def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game)
         if str(item.get("source_id") or "").startswith(prefix)
     ]
     assert len(disclosed) == 1
+
 
 
 def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(game):
@@ -198,6 +205,7 @@ def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(ga
     assert len(after_second) == 1
     assert after_second[0]["source_id"] == after_first[0]["source_id"]
     assert after_second[0].get("body") == "首度公开883"
+
 
 
 def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
@@ -245,6 +253,7 @@ def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
             state, minister_name=minister, action_ids={pid}, content=content,
         )
         assert applied and applied[0]["kind"] == "secret_order", action
+
 
 
 def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
@@ -321,6 +330,7 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     assert db.get_active_secret_orders_for_minister(a.name) == []
 
 
+
 @pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])
 def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollback_entry):
     db, state, content = game
@@ -371,6 +381,7 @@ def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollbac
     assert dict(restored_brief) == old_brief
 
 
+
 def test_976_save_restore_preserves_oral_provenance(game, tmp_path):
     """Save and restore preserve the secret order, brief, and exact oral source pin."""
     import os
@@ -410,6 +421,7 @@ def test_976_save_restore_preserves_oral_provenance(game, tmp_path):
         db2.close()
         if os.path.exists(backup_path):
             os.remove(backup_path)
+
 
 
 def test_976_message_level_origin_persisted_on_brief(game):

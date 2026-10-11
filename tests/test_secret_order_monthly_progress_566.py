@@ -14,6 +14,7 @@ def _actor(db):
     ).fetchone()["name"])
 
 
+
 def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     order_id = create_test_secret_order(db,
         state, _actor(db), title, "逐月办理", tags or ["护行"],
@@ -31,6 +32,7 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
 
 
+
 def _production_session(db, state, content):
     from ming_sim.session import GameSession
 
@@ -44,8 +46,10 @@ def _production_session(db, state, content):
     return session
 
 
+
 def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
+
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
@@ -75,6 +79,7 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
     assert sim_note in disclosure["body"]
 
 
+
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
     db, state, content = game
     _, title_only = _order(db, state, title="保护堤岸", tags=["河工"])
@@ -95,6 +100,7 @@ def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game
     assert db.list_dossier_progress(title_only)
     assert db.list_dossier_progress(unrelated)
     assert db.list_dossier_progress(short)
+
 
 
 def test_close_secret_order_keeps_model_reports_without_synthesizing_terminal(game):
@@ -122,6 +128,7 @@ def test_close_secret_order_keeps_model_reports_without_synthesizing_terminal(ga
     assert all(not row.get("is_terminal") for row in after_eligible)
     assert db.get_decree_dossier(eligible)["status"] == "closed"
     assert db.get_decree_dossier(ordinary)["status"] == "closed"
+
 
 
 def test_character_terminal_status_closes_orders_without_synthetic_memorial(game):
@@ -171,6 +178,7 @@ def test_character_terminal_status_closes_orders_without_synthetic_memorial(game
     assert unchained_progress
 
 
+
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     db, state, content = game
     order_id, dossier_id = _order(db, state, deadline=1)
@@ -186,6 +194,7 @@ def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     db.update_secret_order_by_id(state, order_id, "护行辽饷", "继续逐月办理", ["护行"], 3)
     assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
+
 
 
 def _stage_routed_secret_order(db, state, action, deadline):
@@ -211,6 +220,7 @@ def _stage_routed_secret_order(db, state, action, deadline):
     return pending_id, target_id
 
 
+
 def _rows(db, table, where="", params=()):
     import math
 
@@ -222,6 +232,7 @@ def _rows(db, table, where="", params=()):
         key: ("<NaN>" if isinstance(value, float) and math.isnan(value) else value)
         for key, value in dict(row).items()
     } for row in db.conn.execute(sql, params).fetchall()]
+
 
 
 def _rollback_snapshot(db, state, pending_ids):
@@ -245,6 +256,7 @@ def _rollback_snapshot(db, state, pending_ids):
         "metrics": dict(state.metrics),
         "clock": (state.turn, state.year, state.period, state.turn_phase),
     }
+
 
 
 @pytest.mark.parametrize("entry", ["cli", "web"])
@@ -322,6 +334,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     reloaded = db.load_state()
     assert (reloaded.turn, reloaded.year, reloaded.period, reloaded.turn_phase) == before["clock"]
     assert reloaded.metrics == before["metrics"]
+
 
 
 def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):

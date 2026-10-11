@@ -57,6 +57,21 @@ def is_non_person_participant_name(name: str) -> bool:
     return False
 
 
+from ming_sim.action_materialize import DecreeMaterializationValidationError
+class UnknownParticipantRefError(DecreeMaterializationValidationError):
+    """名册引用不存在的结构化故障（#1902 T2 / ADR 0142）。
+
+    控制面只认本类型与 ``names``／``label`` 字段，禁止从 ``str(exc)`` 词面正则回推。
+    ``label`` 为「参与人物」或「委派人」。
+    """
+
+    def __init__(self, label: str, name: str, message: str):
+        self.label = str(label or "").strip() or "参与人物"
+        self.name = str(name or "").strip()
+        self.names = [self.name] if self.name else []
+        super().__init__(message, failed_fields=("participant_roster",), category="invalid_state")
+
+
 def decode_durable_participant_roster(
     raw: object, *, require_tier: bool = True,
 ) -> list:

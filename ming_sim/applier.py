@@ -364,8 +364,6 @@ class RejectionCollector:
     mirror 只镜像已 flush 进 DB 的行：未落库的行可能随回滚消失，镜像它们
     会留孤立行。本类不做时序判断，由调用方保证。
 
-    attempt 由调用方在构造时灌注（PR2-S0 接错误目录推导，ADR 决定 5：不从 DB 取
-    ——DB 计数随回滚重置即失真；error_pack._next_attempt 是同一推导的唯一真源）。
     """
 
     attempt: int = 1

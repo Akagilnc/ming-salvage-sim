@@ -6,6 +6,7 @@ owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不�
 """
 
 from __future__ import annotations
+from tests.readback_helpers import class_population as _pop
 
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
@@ -28,17 +29,12 @@ from ming_sim.settlement.views import section
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
 
-def _pop(db: GameDB, name: str, region_id: str) -> int:
-    row = db.conn.execute(
-        "SELECT population FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    return int(row[0]) if row else 0
 
 def _strength(db: GameDB, power_id: str) -> int:
     return int(db.conn.execute(
         "SELECT military_strength FROM powers WHERE id=?", (power_id,),
     ).fetchone()[0])
+
 
 def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi", cadence="一次性"):
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount + 50)
@@ -55,6 +51,7 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
     return dossier_id
 
 
+
 def _reset_shaanxi_pool(db):
     db.conn.execute(
         "UPDATE classes SET population=? WHERE name='流民' AND region_id='shaanxi'",
@@ -66,10 +63,12 @@ def _reset_shaanxi_pool(db):
     )
     db.conn.commit()
 
+
 # ── 刀① 池清单 + 投贼吸收 ───────────────────────────────────────────────────
 
 def _database_path(db: GameDB) -> str:
     return str(db.conn.execute("PRAGMA database_list").fetchone()[2])
+
 
 def test_standalone_absorption_is_durable_to_second_connection(game):
     db, state, content = game
@@ -80,6 +79,7 @@ def test_standalone_absorption_is_durable_to_second_connection(game):
         assert reopened.execute(
             "SELECT population FROM classes WHERE name='流民' AND region_id='shaanxi'"
         ).fetchone()[0] == before - 10_000
+
 
 def test_standalone_surcharge_is_durable_to_second_connection(game):
     db, state, content = game
@@ -95,6 +95,7 @@ def test_standalone_surcharge_is_durable_to_second_connection(game):
             "SELECT fiscal FROM regions WHERE id='shaanxi'"
         ).fetchone()[0])
     assert fiscal["settle"]["_meta"]["加派基线"] == expected
+
 
 def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
     db, state, content = game
@@ -115,6 +116,7 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
     assert db.conn.execute(
         "SELECT fiscal FROM regions WHERE id='shaanxi'"
     ).fetchone()[0] == before_fiscal
+
 
 def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
     """超池 clamp；实力按 actual；触 100 上界；空池拒收无正增。"""
@@ -147,6 +149,7 @@ def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
     settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'henan', 'power_id': 'bandits', 'requested_count': need, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
     assert _strength(db, "bandits") == 100
 
+
 def test_bandit_absorption_rejects_unknown_fields_keeps_clean_sibling(game):
     """canonical 闭集：同批未知字段项拒收留痕；干净兄弟项照落。"""
     db, state, content = game
@@ -166,6 +169,7 @@ def test_bandit_absorption_rejects_unknown_fields_keeps_clean_sibling(game):
     assert _pop(db, "流民", "shaanxi") == before_pool - clean_req
     assert _strength(db, pid) == before_str + rec["strength_delta"]
 
+
 def test_free_positive_bandit_strength_rejected_negative_ok(game):
     db, state, content = game
     pid = "bandit_li_zicheng"
@@ -182,6 +186,7 @@ def test_free_positive_bandit_strength_rejected_negative_ok(game):
     settle_delta(state, db, {'power_updates': {pid: {'military_strength': -3, 'origin_ref': '盘面自发'}}}, SettlementContext(content=content))
     assert _strength(db, pid) == max(0, before2 - 3)
 
+
 # 回流的正例由下方真实月链 in_transit 用例验证；效果落账入口不再触发。
 
 def test_llm_free_回流_rejected(game):
@@ -190,6 +195,7 @@ def test_llm_free_回流_rejected(game):
     assert view(free, "population_transfers") == []
     assert section(free, "population_transfers").rejected
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+
 
 def _advance_canned_month(db, state, content, monkeypatch):
     """Only external LLM calls are canned; settlement and advancement remain real."""
@@ -204,6 +210,7 @@ def _advance_canned_month(db, state, content, monkeypatch):
     )
     db.conn.commit()
     assert session.advance_without_decree().advanced is True
+
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_non_recovery_grant_no_回流(game, monkeypatch):
@@ -224,6 +231,7 @@ def test_non_recovery_grant_no_回流(game, monkeypatch):
     _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
 
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_recovery_without_paid_evidence_produces_nothing(game, monkeypatch):
     db, state, content = game
@@ -239,6 +247,7 @@ def test_recovery_without_paid_evidence_produces_nothing(game, monkeypatch):
     before = _pop(db, "流民", "shaanxi")
     _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
+
 
 # ── 刀③ 唯一判官链 + 成色序（真实月结全链）────────────────────────────────
 
@@ -275,6 +284,7 @@ def _in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag
     assert moves and any(int(m.get("delta") or 0) < 0 for m in moves)
     return dossier_id
 
+
 def _insert_shaanxi_disaster(db, state):
     db.insert_issue(
         state,
@@ -291,6 +301,7 @@ def _insert_shaanxi_disaster(db, state):
         cancellable="never",
         commit=True,
     )
+
 
 def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls):
     """共享 canned_full_settlement + 本票 issues 抄录/噪声跳过。"""
@@ -310,6 +321,7 @@ def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls):
         narrative=narrative,
         simulator_calls=sim_calls,
     )
+
 
 def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag="赈"):
     """真实强颁：打回后强颁。在途赈灾付银后停在 executing，不留 promulgated。"""
@@ -338,6 +350,7 @@ def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi
     assert str(row["execution_outcome"] or "") == ""
     assert any(int(move.get("delta") or 0) < 0 for move in db.list_economy_moves_for_dossier(dossier_id))
     return dossier_id
+
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monkeypatch):
@@ -383,6 +396,7 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
     finally:
         loaded.close()
 
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
     db, state, content = game
@@ -410,6 +424,7 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
         after = _pop(db, "流民", "shaanxi")
         assert before - after == paid * RECOVERY_PERSONS_PER_WAN
         before = after
+
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
@@ -497,6 +512,7 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
         assert _pop(loaded, "农民", "shaanxi") == farmer_before + expected
     finally:
         loaded.close()
+
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):

@@ -773,7 +773,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         "SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings"
     ).fetchall()
     for row in building_rows:
-        bid = str(row["id"])
         name = str(row["name"])
         category = str(row["category"])
         condition = max(0, min(100, int(row["condition"])))

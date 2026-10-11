@@ -14,7 +14,7 @@
   gap: 12px;
 }
 
-/* #1849：独立手拟栏退出后御案只剩一栏（草稿/已发两区同栏）。 */
+/* #1849：独立手拟栏退出后御案只剩一栏（草稿/已发两区同栏）；#1902 不复活第二栏。 */
 .desk-columns {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -181,22 +181,6 @@
   padding: 3px 10px;
   font-size: 0.82rem;
   border-radius: 3px;
-}
-
-.directive-edit {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px;
-  align-items: start;
-}
-
-.directive-edit textarea {
-  min-height: 90px;
-}
-
-.directive-edit > div {
-  display: grid;
-  gap: 6px;
 }
 
 .edict-stage-desk > .error-line {

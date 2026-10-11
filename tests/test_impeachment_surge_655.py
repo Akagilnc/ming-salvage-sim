@@ -55,8 +55,6 @@ def _active_pair(db, owner_name):
     return str(others[0]["name"]), str(others[1]["name"])
 
 
-
-
 def test_transformed_without_beyond_intent_yields_no_surge_candidate(game):
     """transformed ∧ ¬beyond → gather 零候选（与 backlash AC1 同构，钉 surge 腿）。"""
     db, state = game[:2]
@@ -139,8 +137,6 @@ def test_knower_departure_does_not_veto_active_responsible_dossier(game):
     assert knower not in item["eligible_target_ids"]
     assert knower in item["participant_ids"]
     assert knower not in item["responsible_person_ids"]
-
-
 
 
 def test_apply_accepts_only_current_candidate_closed_target_and_free_text(game):

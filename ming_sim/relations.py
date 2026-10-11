@@ -12,7 +12,8 @@ from ming_sim.applier import RejectedItem, Provenance
 
 import re
 from collections.abc import Mapping
-from typing import Iterable, Any
+from typing import Any
+
 
 EMPEROR_NODE = "皇帝"
 

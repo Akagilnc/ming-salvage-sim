@@ -28,6 +28,7 @@ def _rejection_rows(db, turn):
     )
 
 
+
 def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
     """坏 delta 项(查无此人的人物状态变化)经结算后:rejection_reports 落行 +
     commit 后镜像 jsonl——「哪个 section 最常被喂脏」从此可聚合(决定 5)。"""
@@ -51,6 +52,7 @@ def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
     assert len(lines) == 1
     assert lines[0]["section"] == "applied_person_changes"
     assert lines[0]["turn"] == turn
+
 
 
 def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
@@ -83,6 +85,7 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
 
 
+
 def test_issue_section_rejections_are_collected(game, monkeypatch, tmp_path):
     """局势段的拒收必须进报告——它正是实测最常被喂脏的段（origin_kind 缺失被拒，
     agy 实录）。ADR 0150 决定 2 后拒收走 canonical RejectedItem、段名由登记表
@@ -99,6 +102,7 @@ def test_issue_section_rejections_are_collected(game, monkeypatch, tmp_path):
     assert len(rows) == 1
     assert rows[0][0] == "issue_summary"
     assert rows[0][1]  # reason 非空；不锁自由措辞
+
 
 
 def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp_path):
@@ -124,6 +128,7 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
 
 
 
+
 def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_path):
     """不可撤国策被诏书撤销→转强推(皇威-2)的拒收记录必须带人读 reason
     ——ADR 决定 5 拒收行含原因,空字符串行无法聚合分析(cmr S0 r2 codex P2)。"""
@@ -145,6 +150,7 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_summary"]
     assert len(rows) == 1
     assert rows[0][1]  # reason 非空
+
 
 
 
@@ -175,6 +181,7 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
     assert rows[0][1]  # reason 非空；不锁自由措辞
 
 
+
 def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeypatch, tmp_path):
     """rejection_reports.item_json = 原始 delta 项(ADR 决定 5「原 item 原样保留」)
     canonical RejectedItem.item 直接持有原件，不把运输包装存作 item。"""
@@ -194,6 +201,7 @@ def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeyp
     assert row is not None
     item = _json.loads(row[0])
     assert item == {"power_id": "查无此势力", "changes": {"leverage": 5}}  # 原件
+
 
 
 def test_person_change_rejection_item_json_keeps_original_delta_item(game, monkeypatch, tmp_path):
@@ -221,6 +229,7 @@ def test_person_change_rejection_item_json_keeps_original_delta_item(game, monke
     assert row is not None
     item = _json.loads(row[0])
     assert item == raw_item
+
 
 
 def test_power_move_rejection_item_json_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
@@ -258,6 +267,7 @@ def test_power_move_rejection_item_json_keeps_original_person_delta_item(game, m
     assert item == raw_item
 
 
+
 def test_office_change_rejection_item_json_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
     """任命/调任委托任官 helper 后的拒收,也要保留完整 ADR0009 原始条目。"""
     import json as _json
@@ -286,6 +296,7 @@ def test_office_change_rejection_item_json_keeps_original_person_delta_item(game
     assert row["category"] == "missing_field"
     item = _json.loads(row["item_json"])
     assert item == raw_item
+
 
 
 def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
@@ -327,6 +338,7 @@ def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, m
         ch.power_id = old_power
         db.conn.execute("UPDATE characters SET power_id=? WHERE name=?", (old_power, name))
         db.conn.commit()
+
 
 
 def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):
@@ -386,6 +398,7 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
         ch.power_id = old_power
         ch.office = old_office
         ch.office_type = old_office_type
+
 
 
 def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monkeypatch, tmp_path):
@@ -451,6 +464,7 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         ch.power_id = old_power
         ch.office = old_office
         ch.office_type = old_office_type
+
 
 
 

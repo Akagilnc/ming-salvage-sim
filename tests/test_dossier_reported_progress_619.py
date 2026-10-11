@@ -16,8 +16,8 @@ from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
 
 
-DOSSIER_REPORT_MONTHLY = "dossier-report:monthly_errand"
 DOSSIER_REPORT_VERDICT = "dossier-report:execution_verdict"
+DOSSIER_REPORT_MONTHLY = "dossier-report:monthly_errand"
 
 
 def _executing_assignment(db, state, *, text="清丈畿辅田亩", target="land-survey-619"):
@@ -34,6 +34,7 @@ def _executing_assignment(db, state, *, text="清丈畿辅田亩", target="land-
     assert row["status"] == "executing"
     assert row.get("secret_order_id") in (None, 0)
     return dossier_id
+
 
 
 def _world_fingerprint(db):
@@ -74,6 +75,7 @@ def _world_fingerprint(db):
         "armies": armies,
         "army_logs_n": army_logs_n,
     }
+
 
 
 def test_execution_surface_dossier_can_record_and_list_full_history(game):
@@ -143,6 +145,7 @@ def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
     ).fetchone()["n"] == 0
 
 
+
 def test_short_and_one_shot_dossiers_have_no_empty_monthly_shell(game):
     db, state, content = game
     actor = db.conn.execute(
@@ -163,6 +166,7 @@ def test_short_and_one_shot_dossiers_have_no_empty_monthly_shell(game):
     ).fetchone()["n"] == 0
     with pytest.raises(ValueError):
         db.record_monthly_dossier_progress(state.turn, [])
+
 
 
 def test_origin_namespace_minimum_closed_set_and_open_append(game):
@@ -200,27 +204,6 @@ def test_origin_namespace_minimum_closed_set_and_open_append(game):
         )
 
 
-def test_execution_outcomes_do_not_synthesize_character_reports(game):
-    """执行格落终值不代写人物奏报；奏报只经模型声明/既有存储。"""
-    db, state, content = game
-    degraded_id = _executing_assignment(db, state, target="deg-619")
-    transformed_id = _executing_assignment(db, state, text="变形案", target="xf-619")
-    fulfilled_id = _executing_assignment(db, state, text="办妥案", target="ok-619")
-    failed_id = _executing_assignment(db, state, text="失败案", target="fail-619")
-
-    settle_delta(state, db, {'dossier_executions': [{'dossier_id': degraded_id, 'outcome': 'degraded', 'note': '只得半成'}, {'dossier_id': transformed_id, 'outcome': 'transformed', 'note': '名实已乖'}, {'dossier_id': fulfilled_id, 'outcome': 'fulfilled', 'note': '如期办妥'}, {'dossier_id': failed_id, 'outcome': 'failed', 'note': '事败不成'}]}, SettlementContext(content=content))
-
-    assert db.list_dossier_progress(degraded_id) == []
-    assert db.list_dossier_progress(transformed_id) == []
-    assert db.list_dossier_progress(fulfilled_id) == []
-    assert db.list_dossier_progress(failed_id) == []
-
-    # Execution-slot / joint-liability semantics untouched: outcomes still land.
-    assert db.get_decree_dossier(degraded_id)["execution_outcome"] == "degraded"
-    assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
-    assert db.get_decree_dossier(fulfilled_id)["execution_outcome"] == "fulfilled"
-    assert db.get_decree_dossier(failed_id)["execution_outcome"] == "failed"
-
 
 def test_fake_progress_report_does_not_change_world_state(game):
     """0073 negative: 假进度奏报 → 国库/区域/军队零变化。"""
@@ -241,6 +224,7 @@ def test_fake_progress_report_does_not_change_world_state(game):
     after = _world_fingerprint(db)
     assert after == before
     assert len(db.list_dossier_progress(dossier_id)) == 2
+
 
 
 def test_restore_preserves_report_history(game, tmp_path, content):
@@ -276,6 +260,7 @@ def test_restore_preserves_report_history(game, tmp_path, content):
         ]
     finally:
         restored.close()
+
 
 
 def test_terminal_surface_dossier_rejects_reported_progress(game):

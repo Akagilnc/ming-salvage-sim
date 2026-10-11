@@ -321,7 +321,6 @@ def _dossier_terminal_snapshot(db: Any, dossier_id: int) -> Dict[str, object]:
     }
 
 
-
 def apply_due_review_for_todo(
     db: Any,
     state: Any,

@@ -37,6 +37,7 @@ def _sess(db, state, content, *, llm_config=None):
     sess._write_gate = sess._write_queue.write_gate
     return sess
 
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     """AC1：一轮戏文（可含多人）出自同一次场景调用。"""
@@ -72,6 +73,7 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     assert calls[0] == emperor
     assert result.court_action == ""
 
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_path):
     """AC2：「宣 X」后入殿账落下，下一次场景材料准备他在场。"""
@@ -105,6 +107,7 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")
     assert any(p.startswith(f"人物/{_safe_segment(target)}/") for p in list_materials(prepared.root))
     assert result.court_action == ""
+
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

@@ -32,4 +32,3 @@ def configure_guanning_army(db) -> None:
         ("guanning",),
     )
     db.conn.commit()
-

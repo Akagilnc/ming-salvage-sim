@@ -118,14 +118,22 @@ def _script(foundings=None, recent="近况重酿。"):
 
 # ---------------------------------------------------------------- TD-2 奠基段永存
 
-def test_founding_segment_survives_consecutive_brews_byte_identical(game):
+@pytest.mark.parametrize("first_text,next_text,expected", [
+    ("越次一召，擢杨嗣昌于五品郎中。", "", "越次一召，擢杨嗣昌于五品郎中。"),
+    ("  句前空格。  ", "  句前空格。  ", "  句前空格。  "),
+    ("甲句。", "  ", "甲句。\n  "),
+    ("甲句。", " 甲句。 ", "甲句。\n 甲句。 "),
+    ("甲句。\n\n乙句。\n", "丙句。", "甲句。\n\n乙句。\n\n丙句。"),
+    ("甲句。\n乙句。\n乙二句。", "乙句。\n乙二句。", "甲句。\n乙句。\n乙二句。\n乙句。\n乙二句。"),
+    ("甲\n中\n乙", "甲\n乙", "甲\n中\n乙\n甲\n乙"),
+])
+def test_founding_segment_survives_consecutive_brews_byte_identical(game, first_text, next_text, expected):
     db, state, _ = game
     _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
               context="越次一召，擢杨嗣昌于五品郎中。", origin="audience:turn-1")
     calls: list = []
     brew_fn = _brew_fn_factory(calls)
-    brew_fn.outputs = [_script(foundings=["越次一召，擢杨嗣昌于五品郎中。"],
-                               recent="杨嗣昌蒙知遇之恩。")]
+    brew_fn.outputs = [_script(foundings=[first_text], recent="杨嗣昌蒙知遇之恩。")]
 
     run_month_end_relation_brew(db, state, brew_fn)
     # 同批新事实：杨嗣昌党籍投影皇党（factions 表现存）→ 关系对＋皇党两个工作项。
@@ -135,7 +143,7 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game):
 
     first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     assert first["dimension"] == "君臣"
-    assert first["founding_segment"] == "越次一召，擢杨嗣昌于五品郎中。"
+    assert first["founding_segment"] == first_text
 
     # 次月：新边事件入账（先落事件、后在本月末酿——与生产同序），酿制手不再报
     # 奠基句——奠基段字节不丢不改。次月无新事件的关系不因历史旧事件被选中。
@@ -143,11 +151,11 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game):
     state.period += 1
     _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="兑现所托",
               context="杨嗣昌复命，所托之事办结。", origin="audience:turn-2")
-    brew_fn.outputs = [_script(foundings=[], recent="杨嗣昌所托办结，恩遇正浓。")]
+    brew_fn.outputs = [_script(foundings=[next_text], recent="杨嗣昌所托办结，恩遇正浓。")]
     run_month_end_relation_brew(db, state, brew_fn)
 
     second = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
-    assert second["founding_segment"] == first["founding_segment"]
+    assert second["founding_segment"] == expected
     assert second["recent_segment"] == "杨嗣昌所托办结，恩遇正浓。"
 
     # 第三月：酿制手重复报同一奠基句也不重复入段（补酿不重复记账）。
@@ -155,11 +163,10 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game):
     state.period += 1
     _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="辜负",
               context="杨嗣昌所请被驳。", origin="audience:turn-3")
-    brew_fn.outputs = [_script(foundings=["越次一召，擢杨嗣昌于五品郎中。"],
-                               recent="杨嗣昌所请被驳，渐生离心。")]
+    brew_fn.outputs = [_script(foundings=[expected, expected], recent="杨嗣昌所请被驳，渐生离心。")]
     run_month_end_relation_brew(db, state, brew_fn)
     third = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
-    assert third["founding_segment"] == first["founding_segment"]
+    assert third["founding_segment"] == second["founding_segment"]
 
 
 # ------------------------------------------------- TD-3／庭裁 r3③ 无事不变
@@ -477,4 +484,3 @@ def test_brew_fn_value_error_is_program_error_propagates_loudly(game):
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")
     ]
-

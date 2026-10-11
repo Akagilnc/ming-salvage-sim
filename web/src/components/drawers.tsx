@@ -501,12 +501,10 @@ export function RegionDrawer({
 }
 
 export function BuildingDrawer({
-  regions,
   mapNodes,
   open,
   onClose,
 }: {
-  regions: Region[];
   mapNodes: MapNode[];
   open: boolean;
   onClose: () => void;

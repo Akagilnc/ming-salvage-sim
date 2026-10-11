@@ -5,7 +5,6 @@ import pytest
 import ming_sim.content as content_module
 from ming_sim.assets import load_json_asset
 from ming_sim.content import load_character_content
-from ming_sim.decree import reload_state_from_db
 
 def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     """DB seed_guilt 与已加载 content 输入结构化全等（不硬编码 crime 散文）。"""
@@ -24,23 +23,6 @@ def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     assert 温["faction"] == content.characters["温体仁"].faction
     assert 温["identity"] == content.characters["温体仁"].identity
     assert json.loads(温["seed_guilt"]) == content.characters["温体仁"].seed_guilt
-
-def test_identity_and_seed_guilt_survive_restore(game):
-    db, state, content = game
-    before = db.conn.execute(
-        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
-    ).fetchone()
-    content.characters["魏忠贤"].identity = 0
-    content.characters["魏忠贤"].seed_guilt = {}
-    reload_state_from_db(db, state, content=content)
-    after = db.conn.execute(
-        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
-    ).fetchone()
-    assert dict(after) == dict(before)
-    guilt = json.loads(after["seed_guilt"])
-    assert guilt == json.loads(before["seed_guilt"])
-    assert content.characters["魏忠贤"].identity == before["identity"]
-    assert content.characters["魏忠贤"].seed_guilt == guilt
 
 
 _DIG_7_REQUIRED_SEED_NAMES = {
@@ -74,6 +56,7 @@ def test_required_dig_7_seed_roster_entries_are_persisted(game):
             assert guilt["severity"] in {"无", "轻", "中", "重"}
 
 
+
 def test_roster_has_no_cross_faction_aliases():
     _, characters = load_character_content()
     by_alias = {}
@@ -82,12 +65,14 @@ def test_roster_has_no_cross_faction_aliases():
             by_alias.setdefault(alias, set()).add(character.faction)
     assert all(len(factions) == 1 for factions in by_alias.values())
 
+
 def test_roster_rejects_alias_colliding_with_other_faction_name(monkeypatch):
     data = load_json_asset("characters.json")
     data["characters"][0]["aliases"].append("温体仁")
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
     with pytest.raises(SystemExit):
         load_character_content()
+
 
 def test_roster_rejects_duplicate_canonical_name(monkeypatch):
     data = load_json_asset("characters.json")
@@ -96,6 +81,7 @@ def test_roster_rejects_duplicate_canonical_name(monkeypatch):
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
     with pytest.raises(SystemExit):
         load_character_content()
+
 
 @pytest.mark.parametrize(
     "field,value",

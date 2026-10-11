@@ -8,12 +8,14 @@ r3：reason 非空逐字必填，缺失则任命与双边同事务 fail-loud 回
 
 import pytest
 
+from tests.recommendation_rows import recommendation_events
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
 def _pick_recommender(content):
     return next(c for c in content.characters.values()
                 if c.office_type not in ("后宫", "宗藩"))
+
 
 
 def _stage_recommendation(db, state, recommender_name, row, office, reason):
@@ -32,6 +34,7 @@ def _stage_recommendation(db, state, recommender_name, row, office, reason):
     )
 
 
+
 def _commit_and_promulgate(db, state, content, action_id):
     """真入口前半：暂存动作落成 proposed 任命案卷；返回后由调用方颁判。"""
     result = db.commit_pending_actions(
@@ -40,9 +43,11 @@ def _commit_and_promulgate(db, state, content, action_id):
     promulgate_proposed_appointments(db, state, content)
 
 
+
 def _recommendation_origins(db):
     return [e for e in db.get_relation_edge_events()
             if str(e["origin"]).startswith("recommendation:")]
+
 
 
 def test_unapproved_appointment_writes_zero_edges(game):
@@ -62,6 +67,7 @@ def test_unapproved_appointment_writes_zero_edges(game):
     assert _recommendation_origins(db) == []
 
 
+
 def test_empty_reason_fails_loud_and_rolls_back_everything(game):
     """r3：reason 缺失/空 → 任命与双边同事务 fail-loud 回滚，不落任命、不落边。"""
     db, state, content = game
@@ -77,6 +83,7 @@ def test_empty_reason_fails_loud_and_rolls_back_everything(game):
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
     assert char_row["office"] != "巡盐御史"
+
 
 
 def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
@@ -103,6 +110,7 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
     assert char_row["office"] != "巡盐御史"
+
 
 
 @pytest.mark.parametrize("candidate_kind", ["荐起复", "荐在职"])
@@ -136,6 +144,7 @@ def test_replay_same_event_with_changed_reason_stays_two_rows(game, candidate_ki
     assert tuple(db.conn.execute("SELECT * FROM recommendation_events WHERE id=?", (event["id"],)).fetchone()) == tuple(event)
     assert _recommendation_origins(db) == legs
     assert content.characters[row["name"]].office == "巡盐御史"
+
 
 
 def test_appointment_without_recommendation_writes_no_edges(game):

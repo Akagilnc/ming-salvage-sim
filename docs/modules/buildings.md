@@ -44,4 +44,4 @@
 
 - 世界段：材料目录「营建」盘面。大臣：材料目录中职务可见的建筑投影（见闻/公事档案），按需 `list_materials` / `read_material`。
 - gate key 寻址：`building.<id>.<field>`（issue 的 trigger_gate / eval_gate 可用）。
-- Web：`GET /api/buildings[?region_id=]`；地图省份节点弹窗显示该省建筑。
+- Web：随 `GET /api/game/state` 的 `state_payload.buildings`（按省）下发；地图省份节点弹窗显示该省建筑。`GET /api/buildings` 已于 #1902 退役（前端零调用）。

@@ -11,6 +11,7 @@ cannon cap 12、firearm 0-100)保持——clamp 不是拒收,clamp 后照落。
 """
 
 from __future__ import annotations
+import json
 
 from ming_sim.applier import Provenance
 
@@ -474,7 +475,6 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
     """issue 结案路的容忍拒收项不得蒸发——经 issue_summary 落
     rejection_reports(改前是 print,改后曾比 print 更静默=违「容忍+留痕」,
     cmr S2 r2,2/2)。"""
-    import json as _json
 
     db, state, content = game
     turn = state.turn
@@ -505,8 +505,8 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
     rows = _rejection_rows(db, turn, "issue_summary")
     assert {r[2] for r in rows} == {"invalid_enum", "missing_ref"}
     stored = db.conn.execute("SELECT item_json FROM rejection_reports WHERE turn=? AND section='issue_summary' AND category='missing_ref'", (turn,)).fetchone()
-    assert _json.loads(stored[0])["army_id"] == "查无此军xyz"
-    refused_items = [_json.loads(r[0]) for r in db.conn.execute("SELECT item_json FROM rejection_reports WHERE turn=? AND section='issue_summary'", (turn,))]
+    assert json.loads(stored[0])["army_id"] == "查无此军xyz"
+    refused_items = [json.loads(r[0]) for r in db.conn.execute("SELECT item_json FROM rejection_reports WHERE turn=? AND section='issue_summary'", (turn,))]
     assert {r.get("id") for r in refused_items if "id" in r} == {"req_a", "req_b", "req_c"}
     assert {r.get("field") for r in refused_items if r.get("army_id") == aid} == {"士气大振", "loyalty", "mobility", "equipment"}
     assert db.conn.execute("SELECT manpower FROM armies WHERE id='req_d'").fetchone()[0] == 5000

@@ -122,7 +122,9 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
     expect(memorialBtn?.querySelector(".hud2-cmd-badge")).toBeNull();
-    // situation 关闭 / closed_issues 只读：半程议题不渲染，上月已结仍在
+    // situation 关闭 / closed_issues 只读：半程 list 结构缺席，上月已结仍在
+    // 不用半程议题标题作全页身份哨兵（#1902 TEST-PROSE）。
+
     expect(host.querySelector(".situation-list")).toBeNull();
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
     expect(host.querySelector(".situation-closed-list .situation-closed-row")).not.toBeNull();

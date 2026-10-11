@@ -93,12 +93,14 @@ def _pin_transport_policy(
     max_attempts: int = 3,
     attempt_timeout_seconds: float = 30.0,
 ) -> None:
-    """把预算钉在临时 runtime 档，免受本机 runtime_llm.json 漂移影响。
+    """把预算钉死，免受本机 runtime_llm.json 漂移影响。
 
-    静默判死阈值走设置页那一格（cli.timeout_seconds）——与设置 API 同一落盘入口
-    （save_runtime_llm），不另写一份档格式。
+    #1902：transport 段退役后预算不再走档位——静默判死阈值仍写设置页那一格
+    （cli.timeout_seconds），次数/阻塞预算改为直接钉住 transport 层：
+    需要模拟「预算被抬到 N」时传 max_attempts（用来证明玩家动作仍被票面上限收紧）。
     """
     from ming_sim import llm_config as llm_config_mod
+    from ming_sim import llm_transport as transport_mod
 
     path = tmp_path / "runtime_llm.json"
     monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
@@ -108,9 +110,19 @@ def _pin_transport_policy(
         cli_runner="claude",
         cli_model="cli-model-test",
         cli_timeout_seconds=idle_timeout_seconds,
-        transport_max_attempts=max_attempts,
-        transport_attempt_timeout_seconds=attempt_timeout_seconds,
     )
+
+    base = transport_mod.default_transport_policy()
+    policy = transport_mod.TransportPolicy(
+        max_attempts=max_attempts,
+        attempt_timeout_seconds=attempt_timeout_seconds,
+        idle_timeout_seconds=base.idle_timeout_seconds,
+    )
+    monkeypatch.setattr(transport_mod, "resolve_transport_policy", lambda _s=None: policy)
+    # agents 在模块层 import 了 resolve_transport_policy，同步钉住该别名。
+    import ming_sim.agents as agents_mod
+
+    monkeypatch.setattr(agents_mod, "resolve_transport_policy", lambda _s=None: policy)
 
 
 def _cli_web_game(web_game, monkeypatch, *, backend: str = "claude"):
@@ -156,8 +168,8 @@ def test_cli_chat_stream_two_transient_then_success_three_attempts(monkeypatch, 
 def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_resend(monkeypatch, web_game, tmp_path):
     """②三次瞬断耗尽 → 系统层终失败呈现、夜不封、可重发。
 
-    注入 = rc=0 空输出（可重试 typed 空输出，结构化路径）；耗尽后换出文脚本重发即成。
-    #1834 F26：不再用成功正文词表冒充认证/连接故障。
+    注入 = 空输出（原生可重试 typed，不靠自由词面）；耗尽后换出文脚本重发即成。
+    #1902 T2：禁再以 Authentication required 词面钉连接错误。
     """
     from ming_sim import audience_night as an
 
@@ -227,25 +239,42 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, web_game, 
 
 
 @pytest.mark.parametrize(
-    "stdout",
-    [(), (_OK_REPLY,)],
-    ids=["empty_stdout", "nonempty_stdout"],
+    ("stdout", "stdin_fault"),
+    [
+        ((), BrokenPipeError("stdin 已关闭")),
+        ((_OK_REPLY,), BrokenPipeError("stdin 已关闭")),
+        # 输出管道保持打开：不得等 EOF／先判 idle 再洗成真因（#1902）。
+        ((SilentUntilKilled(),), BrokenPipeError("stdin 已关闭")),
+        ((SilentUntilKilled(),), TypeError("controlled stdin fault")),
+    ],
+    ids=["empty_stdout", "nonempty_stdout", "open_stdout_oserror", "open_stdout_typeerror"],
 )
 def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
-    monkeypatch,
-    web_game,
-    tmp_path,
-    stdout,
+    monkeypatch, tmp_path, web_game, stdout, stdin_fault,
 ):
-    """prompt 没写进 stdin = IO 错，须响亮确定性失败一次，不洗成空输出瞬断重试。
+    """prompt 没写进 stdin = 线程已记故障，须在 idle 前响亮确定性失败一次。
 
     ADR 0005：代码/IO 侧的错必须响亮；宽吞会让「子进程压根没被问」冒充
-    llm_empty_output，白烧三次子进程还给玩家一个假瞬断。有 stdout 字同样终止。
+    llm_empty_output／llm_idle_timeout，白烧三次子进程还给玩家假瞬断。
+    OSError → typed 宿主终失败；其余代码异常原件上浮。输出保持打开同样终止。
     """
-    _pin_transport_policy(monkeypatch, tmp_path)
+    idle = 30.0
+    _pin_transport_policy(monkeypatch, tmp_path, idle_timeout_seconds=idle)
+    # 若回归成 idle 覆盖，受控时钟推进使重试路径秒级暴露（calls==3），不靠真墙钟。
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(cb, "_cli_process_clock", lambda: clock["t"])
+
+    def _advance_while_silent() -> None:
+        clock["t"] += idle + 0.1
+
+    scripted_stdout = tuple(
+        SilentUntilKilled(on_tick=_advance_while_silent)
+        if isinstance(item, SilentUntilKilled) else item
+        for item in stdout
+    )
     script = install_fake_cli_runner(monkeypatch, [{
-        "stdout": stdout, "returncode": 0,
-        "stdin_error": BrokenPipeError("stdin 已关闭"),
+        "stdout": scripted_stdout, "returncode": 0,
+        "stdin_error": stdin_fault,
     }])
     _cli_web_game(web_game, monkeypatch)
 
@@ -255,9 +284,17 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
     assert events[-1][0] == "error", events
     detail = events[-1][1]
     attempts = detail.get("transport_attempts") or []
-    assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
-    assert script.calls == 1
-    assert "stdin" in str(detail.get("provider_message") or ""), detail
+    assert script.calls == 1, (script.calls, detail)
+    if isinstance(stdin_fault, OSError):
+        # 已确证宿主 I/O：typed 终失败，一次不重试。
+        assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
+        assert detail.get("code") == "llm_cli_claude", detail
+        assert "stdin" in str(detail.get("provider_message") or ""), detail
+    else:
+        # 未知代码异常原件上浮：不得包装成 typed 宿主失败或 idle 重试。
+        # 现役外部 SSE：code=null、transport_attempts=[]（与 typed terminal_fail 分流）。
+        assert detail.get("code") is None, detail
+        assert attempts == [], attempts
 
 
 def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, web_game, tmp_path):

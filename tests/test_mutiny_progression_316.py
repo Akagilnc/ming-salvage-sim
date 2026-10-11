@@ -18,6 +18,7 @@ def _configure(db) -> None:
     db.conn.commit()
 
 
+
 def _set(db, *, loyalty: int, arrears: float, latched: int) -> None:
     central = arrears  # active hub source-split seed
     db.conn.execute(
@@ -28,6 +29,7 @@ def _set(db, *, loyalty: int, arrears: float, latched: int) -> None:
     db.conn.commit()
 
 
+
 def _tick(db, state):
     state.metrics["国库"] = 10**9
     apply_fixed_period_flows(db, state)
@@ -36,6 +38,7 @@ def _tick(db, state):
            FROM armies WHERE id=?""",
         (ARMY,),
     ).fetchone()
+
 
 
 def test_repeated_mutiny_persists_count_cap_and_probation(game):
@@ -87,6 +90,7 @@ def test_repeated_mutiny_persists_count_cap_and_probation(game):
     _set(db, loyalty=19, arrears=5, latched=0)
     third = _tick(db, state)
     assert tuple(third[k] for k in ("is_mutinied", "mutiny_count", "mutiny_probation", "owner_power")) == (0, 3, 0, "bandits")
+
 
 
 def test_mutiny_count_is_capped_at_three(game):

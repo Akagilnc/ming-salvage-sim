@@ -46,7 +46,6 @@ export function useChatActions({
   loadHistoryProjection,
   runAudienceTurn,
   invalidateAudienceScroll,
-  currentNightId,
 }: {
   state: GameState | null;
   setState: React.Dispatch<React.SetStateAction<GameState | null>>;
@@ -68,7 +67,6 @@ export function useChatActions({
   loadHistoryProjection: (minister: string) => Promise<AudienceHistoryData | null>;
   runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks) => Promise<void>;
   invalidateAudienceScroll: () => void;
-  currentNightId: number;
 }) {
   const [chatNotice, setChatNotice] = React.useState("");
   const [retryReadFailure, setRetryReadFailure] = React.useState<RetryReadFailure | null>(null);
@@ -140,6 +138,8 @@ export function useChatActions({
 
   const sendChat = async (targetMinisterName: string, text = input) => {
     if (busy) return;
+    // Free prose: preserve raw bytes; emptiness on a local copy (#1834 F16).
+
     const message = text;
     if (!message.trim()) {
       setComposerHint("请先问话或点一个奏对题目");
@@ -177,7 +177,7 @@ export function useChatActions({
         void refreshDurableProjection({ secretOrders: true });
         // 面板态：仅当前大臣面板未切走才落。
         if (selectedMinisterRef.current !== initiatingPanelName) return;
-            setCanUndoLastChat(!!data.can_undo_last_chat);
+        setCanUndoLastChat(!!data.can_undo_last_chat);
       },
       // #1764：end = 抽取成案/收夜等尾随已 join 的提交完成缝；再读权威 durable（含 cased_directives）。
       // 不延迟 done；不新建轮询/总线。观察者离面无 end 时，重入拟诏经公共 openModal(edict)→loadState。
@@ -263,7 +263,7 @@ export function useChatActions({
     if (!switchingToScene) void sendChat(AUDIENCE_SCENE_SPEAKER, `宣${ministerName}`);
   };
 
-  const undoLastChat = async (targetMinisterName: string) => {
+  const undoLastChat = async () => {
     if (busy || !canUndoLastChat) return;
     // #1732 B：确认门控移到 ChatModal 就地条；此处直接执行。
     const initiatingPanelName = selectedMinisterRef.current;
@@ -312,7 +312,6 @@ export function useChatActions({
   };
 
   const retryInterruptedReply = async (
-    targetMinisterName: string,
     chatTurnId: number,
     recoveryPhase?: ReplyRetry["recovery_phase"],
   ) => {

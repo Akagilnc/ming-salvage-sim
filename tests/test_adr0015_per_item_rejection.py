@@ -1,6 +1,6 @@
+import pytest
 import json
 
-import pytest
 
 
 def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(game):
@@ -16,6 +16,7 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
     collector.flush_to_db(db)
     row = db.conn.execute("SELECT item_json FROM rejection_reports").fetchone()
     assert json.loads(row["item_json"]) == {"title": "中文\ud800"}
+
 
 
 

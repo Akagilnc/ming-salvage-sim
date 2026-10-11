@@ -3,8 +3,8 @@
 跳大臣对话，直接塞诏书草案 → 颁诏 → 推演；HITL 待裁时保留案头、不自动代选 →
 有报告则打印邸报头 + 国库变化，证明「脱 api key 结算入口能跑」。
 
-用法（脱 key）:
-    MING_SIM_LLM_BACKEND=agy .venv/bin/python -m scripts.agy_turn_probe \
+用法（脱 key；通道由运行配置声明）:
+    .venv/bin/python -m scripts.agy_turn_probe \
         --db /tmp/agy_test.db \
         --directive "着户部发太仓银三万两赈济陕西。"
 """
@@ -27,14 +27,16 @@ def main() -> int:
     p.add_argument("--decree", default="", help="传入则跳过 LLM 写诏")
     ns = p.parse_args()
 
-    # CLI 后端下这些值不会真用到（cli_backend 走 subprocess），给占位即可。
+    # 宿主只由运行配置选；API 占位字段在 CLI 通道下不参与分派。
     cfg = LLMConfig(
         model="agy-local", api_key="none", base_url="http://localhost/v1",
         timeout_seconds=300,
+        channel="cli",
+        cli_runner="agy",
     )
     session = GameSession(ns.db, cfg)
 
-    snap = session.begin_turn()
+    session.begin_turn()
     before = dict(session.state.metrics)
     print(f"[turn] {session.state.year}年{session.state.period}月 turn={session.state.turn} "
           f"国库={before.get('国库')} 民心={before.get('民心')} 皇威={before.get('皇威')}")

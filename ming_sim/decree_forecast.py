@@ -491,7 +491,7 @@ def _submit_snapshot_job(
                 if isinstance(exc, LLMUnavailable) and _rate_limited(exc):
                     return
 
-                def stop_if_current(exc=exc) -> None:
+                def stop_if_current(failure=exc) -> None:
                     from ming_sim.applier import Provenance
                     from ming_sim.month_chain import _abort_month_call, _load_chain
                     ref = _current_forecast_ref(session, forecast_key)
@@ -500,8 +500,8 @@ def _submit_snapshot_job(
                     _abort_month_call(
                         session.db, session.state, _load_chain(session.db, int(session.state.turn)),
                         decree_text="", source=Provenance.system_simulation,
-                        step="edict_forecast", exc=exc, decree_ref=ref,
-                        kind="model_exhausted" if isinstance(exc, LLMUnavailable) else "code_exception",
+                        step="edict_forecast", exc=failure, decree_ref=ref,
+                        kind="model_exhausted" if isinstance(failure, LLMUnavailable) else "code_exception",
                     )
 
                 with write_lock if write_lock is not None else nullcontext():

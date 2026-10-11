@@ -158,6 +158,7 @@ function SecretOrderDetailDialog({
             <SecretOrderDetailBlock
               key={report.id}
               title={secretReportTitle(report)}
+
               text={report.memorial_text}
               tone="green"
             />

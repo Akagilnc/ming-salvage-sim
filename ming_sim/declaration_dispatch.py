@@ -52,6 +52,7 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 """
 
 from __future__ import annotations
+from ming_sim.db import GameDB
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
 from ming_sim.applier import Provenance
@@ -62,7 +63,6 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.db import GameDB
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
     _assignment_absolute_end_turn,
@@ -1031,7 +1031,7 @@ def _attach_commission_staging_fields(
             # 委派链走共同 validator 准入（#1897 E1），不拖到收夜才抛。
 
             if db is not None:
-                from ming_sim.cli_backend import normalize_draft_person_roster
+                from ming_sim.draft_intent import normalize_draft_person_roster
                 # 引用/身份归一在当次名单上做；委派链相对合并后主协办集校验，
                 # 避免押解主办只在 existing 时被误拒（#1897 E1）。
                 roster = normalize_draft_person_roster(
@@ -1141,7 +1141,6 @@ def _dispatch_commissions(
     """
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
-    staged_night = int(night_id or 0) or None
     for item in items:
         # #1837 reopen：禁摊派交办——按场面事实绑定暴露案卷，不解析自由文本。
         if _is_prohibit_covert_levy_item(item):
@@ -1479,9 +1478,7 @@ def _dispatch_commissions(
             roster = assignment.get("participant_roster")
             if roster is not None:
                 try:
-                    from ming_sim.cli_backend import normalize_draft_person_roster
-                    # normalize 内模型形/名册契约抛 DecreeMaterializationValidationError；
-                    # DB 解码/引擎 TypeError·RuntimeError 原样上抛（F39）。
+                    from ming_sim.draft_intent import normalize_draft_person_roster
                     roster = normalize_draft_person_roster(
                         roster, db=db, content=db.content,
                     )
@@ -2284,7 +2281,6 @@ def _dispatch_rushes(
     ``chat_turn_id``：同义的源轮，放行收夜持闸窗口。
     """
     items, rejected = _section_items(raw, label="催办声明", source=source)
-    staged_night = int(night_id or 0) or None
     applied: List[Any] = []
     for item in items:
         target_kind = str(item.get("target_kind") or "").strip()
@@ -3241,7 +3237,7 @@ def _attach_commission_escort(
         raise DecreeMaterializationValidationError(
             "押解声明 escort.note 须为原文", failed_fields=("escort",),
         )
-    from ming_sim.cli_backend import normalize_draft_person_roster
+    from ming_sim.draft_intent import normalize_draft_person_roster
 
     # 形状闸（ADR 0053 条目结构）→ 存在性闸（既有 KeyError 缝 → hallucinated_id）
     # → canon/非人归一。strict 面已抛 DMVE；不扩 ValueError 洗内部故障（#1897 E1）。

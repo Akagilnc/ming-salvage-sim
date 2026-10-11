@@ -25,6 +25,7 @@ def _roster():
         {"character_id": "王承恩", "tier": "知情", "role": "备悉"},
     ]
 
+
 def _executing_dossier(db, state, *, roster=None):
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="清丈畿辅",
@@ -35,11 +36,13 @@ def _executing_dossier(db, state, *, roster=None):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id
 
+
 def _cost_events(db, dossier_id, *, identity="连坐"):
     return [dict(row) for row in db.conn.execute(
         "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
         (int(dossier_id), identity),
     ).fetchall()]
+
 
 def _sat_events(db, dossier_id):
     return [
@@ -47,15 +50,18 @@ def _sat_events(db, dossier_id):
         if row["cost_kind"] == "satisfaction"
     ]
 
+
 def _sat(db, faction):
     return db.conn.execute(
         "SELECT satisfaction FROM factions WHERE name=?", (faction,),
     ).fetchone()[0]
 
+
 def _close_via_adapter(db, state, content, dossier_id, outcome, note="办理走样", **extra):
     item = {"dossier_id": dossier_id, "outcome": outcome, "note": note}
     item.update(extra)
     return settle_delta(state, db, {'dossier_executions': [item]}, SettlementContext(content=content))
+
 
 def test_fulfilled_writes_zero_joint_liability_rows(game):
     db, state, content = game
@@ -73,6 +79,7 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
     assert _sat(db, "东林") == before_donglin
     assert _sat(db, "西学") == before_xixue
     assert db.get_relation_edge_events(event_kind="连坐") == []
+
 
 
 @pytest.mark.parametrize("outcome,lead_tier,lead_status,lead_delta,delegator_delta", [
@@ -127,6 +134,7 @@ def test_adapter_replay_is_idempotent_on_joint_liability_rows(
     ]
     assert second_edges == first_edges
 
+
 def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     """顺颁物化引擎自判 failed（拨帑不足额）→ 零连坐行。"""
     db, state, _content = game
@@ -150,6 +158,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     assert dossier["execution_outcome"] == "failed"
     assert _cost_events(db, dossier_id) == []
     assert db.get_relation_edge_events(event_kind="连坐") == []
+
 
 
 def test_explicit_affected_parties_must_pass_full_key_validation(game):
@@ -201,6 +210,7 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
     assert any(row["target_id"] == "东林" for row in _sat_events(db, dossier_id))
 
 
+
 def test_living_offstage_delegator_still_charged(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
@@ -215,6 +225,7 @@ def test_living_offstage_delegator_still_charged(game):
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert "徐光启" in targets
+
 
 def test_direct_record_dossier_execution_does_not_trigger_joint_liability(game):
     """挂载点=适配器；record_dossier_execution 本身不扫/不扣连坐。"""

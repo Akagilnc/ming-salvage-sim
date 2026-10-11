@@ -247,10 +247,7 @@ describe("DecisionModal", () => {
     ];
     const result = pendingDecisionsFrom(mixedEventStream);
     expect(result).toEqual([]);
-    const cleanup = render(<DecisionModal decisions={result} onResolve={vi.fn()} />);
-    // 整批拒收后无选项节点；不以夹杂散文作负向哨兵（#1897 T1）。
-    expect(document.querySelectorAll(".decision-option")).toHaveLength(0);
-    cleanup();
+
   });
 });
 

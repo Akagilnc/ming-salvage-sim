@@ -120,7 +120,7 @@ def engine_command_mingfa_publication_ids(
     """Directive ids from the one exact engine-command 明发 publication-fact seam."""
     return {directive_id for _night_id, directive_id in engine_command_mingfa_publication_facts(entries)}
 # 进出账（ADR 0035：TAG_ENTER/TAG_EXIT 是机器承重的在场效果标识「进/出」）
-TAG_EXIT = "告退"          # 出：离场；确定性「令 X 退下」口令落此账
+TAG_EXIT = "告退"          # 出：离场；口令/框架账可读标识（现役写口走 presence_effect）
 TAG_IN_TRANSIT = "传召在途"  # 账在人不在场：传召已发、人在途（不落在场效果）
 TAG_SUMMON_UNSETTLED = "传召未结"
 TAG_SUMMON_SETTLED = "传召结清"
@@ -176,6 +176,7 @@ NIGHT_STATUS_CLOSED = "closed"
 CLOSE_STEP_COMMIT_OFFICE = 1
 CLOSE_STEP_TRANSFER_CANDIDATES = 2
 CLOSE_STEP_FINALIZE = 3
+
 # 在飞回话：轮询间隔；wait 只消费既有 chat turn/worker 终态，不按 elapsed 伪造失败（#1353 K10a）。
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
@@ -1217,16 +1218,6 @@ def auto_close_open_night(
     )
 
 
-def ensure_open_night_for_audience(
-    db: Any,
-    state: GameState,
-    *,
-    time_of_day: str = "",
-    location: str = "",
-) -> Dict[str, Any]:
-    return open_night(db, state, time_of_day=time_of_day, location=location)
-
-
 def _summon_origin_tag(origin_id: object) -> str:
     origin = str(origin_id or "").strip()
     return f"{_SUMMON_ORIGIN_PREFIX}{origin}" if origin else ""
@@ -1674,47 +1665,6 @@ def record_summon_in_transit(
     )
 
 
-def dismiss_from_audience(
-    db: Any,
-    person_name: str,
-    *,
-    night_id: Optional[int] = None,
-    origin_chat_turn_id: int = 0,
-    allow_closing: bool = False,
-) -> Optional[int]:
-    """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
-
-    不在场者令退 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。
-    #1838 reopen：正文恒空（无旁白调用）；在场由 TAG_EXIT 驱动，戏文由场景 LLM 写。
-
-    `origin_chat_turn_id`（#506 L1）：tool 触发的令退发生在某一对话轮内时绑该轮 chat_turn_id，
-    使撤回本轮据 origin 删掉告退账、令退者在场复原。0=不属某轮的独立令退。
-    """
-    name = str(person_name or "").strip()
-    if not name:
-        raise AudienceNightError("令退人名不能为空", code="empty_person")
-    nid = night_id
-    if nid is None:
-        open_n = get_open_night(db)
-        if open_n is None:
-            return None
-        nid = int(open_n["id"])
-    if name not in present_names_at(db, int(nid)):
-        return None
-    return append_ledger_entry(
-        db, int(nid),
-        person_names=[name],
-        audibility=AUDIBILITY_PUBLIC,
-        body="",
-        tags=[TAG_EXIT],
-        check_dead=False,
-        origin_chat_turn_id=origin_chat_turn_id,
-        allow_closing=allow_closing,
-    )
-
-
-
-
 def normalize_audience_command_verdict(raw: Any) -> str:
     """判词缝归一：只放行封闭判词，其余 → none（毒化/坏 shape 零机械面）。"""
     if isinstance(raw, str) and raw in _CMD_VERDICTS:
@@ -1771,11 +1721,11 @@ def recognize_xuan_command(message: str) -> Optional[str]:
 def _presence_delta(entry: Dict[str, Any]) -> Optional[str]:
     """一条账对在场集的净效果：'enter' / 'exit' / None——**单一在场步进真源**（ADR 0035 R2）。
 
-    进=口令账 TAG_ENTER（宣入/常在员额，引擎确定性写）**或**抽取账 presence_effect='enter'；
-    出=口令账 TAG_EXIT（令退）**或**抽取账 presence_effect='exit'。抽取账开放 tags 不驱动
+    进=口令账 TAG_ENTER（宣入/常在员额，引擎确定性写）**或**抽取/声明账 presence_effect='enter'；
+    出=口令账 TAG_EXIT **或**抽取/声明账 presence_effect='exit'。抽取账开放 tags 不驱动
     在场（机器承重态不解析自由文本，与 settle `check_dead=(effect==enter)` 对称）；传召在途
-    无在场效果。`present_names_at` / `audible_entries_for` /
-    `dismiss` 同走此核，杜绝双真源（#507：抽取 presence_effect=exit 后 recap 仍含退后公开对话，
+    无在场效果。`present_names_at` / `audible_entries_for`
+    同走此核，杜绝双真源（#507：抽取 presence_effect=exit 后 recap 仍含退后公开对话，
     因旧 `_apply_presence` 只认 tags）。
     `_is_command_entry` 定义在下方，运行时解析。"""
     effect = str(entry.get("presence_effect") or "")
@@ -1888,6 +1838,8 @@ def set_night_protagonist(
     if owns:
         db.conn.commit()
     return name
+
+
 def reproject_night_protagonist(db: Any, night_id: int) -> str:
     """按存活源轮时序重投影夜当前主角；调用方负责事务提交。"""
     row = db.conn.execute(

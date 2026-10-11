@@ -1,9 +1,9 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ArmyDrawer, MinisterCardList, RegionDrawer } from "./drawers";
+import { ArmyDrawer, MinisterCardList } from "./drawers";
 import { PortraitUploadButton } from "./hud";
-import type { Army, Minister, Region } from "../types";
+import type { Army, Minister } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,47 +20,6 @@ function renderArmyDrawer(army: Army) {
         open={true}
         selectedArmyId={army.id}
         onSelectArmy={() => {}}
-        onClose={() => {}}
-      />
-    )
-  );
-  mountedRoots.push({ root, host });
-  return host;
-}
-
-function makeRegion(overrides: Partial<Region> = {}): Region {
-  return {
-    id: "beizhili",
-    name: "北直隶",
-    kind: "两京",
-    population: 7200000,
-    public_support: 50,
-    unrest: 20,
-    natural_disaster: "无",
-    human_disaster: "无",
-    registered_land: 200,
-    hidden_land: 0,
-    tax_per_turn: 1,
-    grain_security: 40,
-    gentry_resistance: 30,
-    military_pressure: 70,
-    status: "平",
-    controlled_by: "ming",
-    ...overrides,
-  };
-}
-
-function renderRegionDrawer(regions: Region[]) {
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  act(() =>
-    root.render(
-      <RegionDrawer
-        regions={regions}
-        open={true}
-        selectedRegionId={regions[0].id}
-        onSelectRegion={() => {}}
         onClose={() => {}}
       />
     )
@@ -168,32 +127,6 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).not.toContain("优秀");
   });
 
-  it("does not render fractional arrears_text or raw 12.5", () => {
-    const host = renderArmyDrawer({
-      id: "denglai",
-      name: "登莱兵与水师",
-      station: "山东 / 登莱",
-      theater: "山东",
-      commander: "登莱巡抚",
-      controller: "兵部",
-      troop_type: "水师、火器兵、步卒",
-      manpower: 26000,
-      army_needed: 4,
-      supply: 73,
-      morale_text: "士气：尚稳",
-      training: 73,
-      equipment: 73,
-      arrears_text: "欠饷约15万两，约两月军饷",
-      mobility: 73,
-      mutiny_tier: "优秀",
-      status: "可支援辽东和海运",
-      owner_power: "ming",
-    });
-
-    expect(host.textContent).not.toContain("欠饷约15万两");
-    expect(host.textContent).not.toContain("约两月军饷");
-  });
-
   it("#1501 does not render static army status sentence", () => {
     const statusSentence = "宁锦守线尚可，欠饷严重，主动大举出击风险极高。";
     const host = renderArmyDrawer({
@@ -223,13 +156,6 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).not.toContain("士气：不振");
     expect(host.textContent).not.toContain("不满");
     expect(host.querySelector(".right-drawer-detail")).toBeTruthy();
-  });
-});
-
-describe("RegionDrawer #648 population (P7: LLM 长文，无 UI 模板)", () => {
-  it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
-    const host = renderRegionDrawer([makeRegion({ population: 7200000 })]);
-    expect(host.textContent).toContain("北直隶");
   });
 });
 

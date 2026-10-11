@@ -27,6 +27,7 @@ def _ledger_count(db, turn: int) -> int:
     ).fetchone()[0]
 
 
+
 def test_crash_reload_at_settling_no_double_fiscal_tick(game):
     """pre_settle 完成（phase=settling 已落盘）→ 模拟崩溃重载（新开 GameDB 读盘）→
     重进 pre_settle 幂等守门直接 return，economy_ledger 不二次增行（ADR 0008 验收测试①）。"""
@@ -52,6 +53,7 @@ def test_crash_reload_at_settling_no_double_fiscal_tick(game):
         assert _ledger_count(db2, turn) == after_first  # 财政只落一次
     finally:
         db2.conn.close()
+
 
 
 def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
@@ -80,6 +82,7 @@ def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
     assert sess.state.turn_phase == TurnPhase.SETTLING.value
     # 落盘也仍是 settling（未被重置写回 summoning）
     assert db.load_state().turn_phase == TurnPhase.SETTLING.value
+
 
 
 def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, monkeypatch):
@@ -112,6 +115,7 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
     assert "[期限届满]" not in (row[1] or "")
 
 
+
 def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
     """pre_settle 内部崩溃时财政回滚，结算相位不推进。"""
     db, state, content = game
@@ -135,6 +139,7 @@ def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
     assert on_disk == before_ledger
     assert state.turn_phase == before_phase != "settling"
     assert not db.conn.in_transaction
+
 
 
 def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
@@ -169,6 +174,7 @@ def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
     assert not db.conn.in_transaction
 
 
+
 # ---------------------------------------------------------------------------
 # cmr S4 r1 修复回归（F1 settling 复位 / F2 sticky / F3 skip 路守门）
 # ---------------------------------------------------------------------------
@@ -194,6 +200,7 @@ def test_two_consecutive_player_months_both_get_fiscal_tick(game, monkeypatch):
     assert rows_t2 > 0  # 第二回合财政 tick 真跑了
 
 
+
 def test_enter_review_does_not_clobber_settling(game):
     """enter_review 不得抹掉崩溃保活的 settling（cmr S4 r1 F2）。
 
@@ -215,6 +222,7 @@ def test_enter_review_does_not_clobber_settling(game):
     assert state.turn_phase == "settling"
 
 
+
 def test_advance_without_edict_refused_after_settling(game):
     """#1274 r1：空壳已删；settling 恢复归 session.resolve_turn，不再经独立退朝壳拒绝。"""
 
@@ -232,6 +240,7 @@ def test_advance_without_edict_refused_after_settling(game):
     rows_final = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
     assert rows_final == rows_after_pre
+
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +267,7 @@ def test_pre_settle_guard_covers_awaiting_decision(game):
     assert rows_after == rows_before  # 前半段没有二跑
 
 
+
 # ---------------------------------------------------------------------------
 # cmr S4 r3 修复回归（FRONT_HALF_DONE_PHASES 集中化）
 # ---------------------------------------------------------------------------
@@ -280,6 +290,7 @@ def test_sticky_phases_cover_awaiting_decision(game):
     assert state.turn_phase == "awaiting_decision"
     sess.back_to_summoning()
     assert state.turn_phase == "awaiting_decision"
+
 
 
 def test_advance_without_edict_refused_at_awaiting(game):
@@ -314,6 +325,7 @@ def test_advance_without_edict_refused_at_awaiting(game):
     assert state.turn_phase == "awaiting_decision"
 
 
+
 def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     """resolve_turn 在 awaiting 态幂等返回已存决策，不二跑 simulator（cmr S4 r3 F3）。
 
@@ -342,6 +354,7 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     assert res.decisions
 
 
+
 def test_guarded_early_return_does_not_consume_pending(game):
     """守门早退不消费暂存动作（cmr S7 r5 改约）。
 
@@ -366,6 +379,7 @@ def test_guarded_early_return_does_not_consume_pending(game):
     statuses = [r["status"] for r in db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=?", (state.turn,)).fetchall()]
     assert statuses and all(s == "pending" for s in statuses)
+
 
 
 def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):

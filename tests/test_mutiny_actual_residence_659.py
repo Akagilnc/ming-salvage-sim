@@ -30,6 +30,7 @@ def _pop(db: GameDB, name: str, region_id: str) -> int:
     return int(row[0]) if row else 0
 
 
+
 def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
     db.conn.execute(
         "UPDATE armies SET province_pay_arrears=?, central_pay_arrears=?, arrears=? WHERE id=?",
@@ -38,11 +39,13 @@ def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: fl
     db.conn.commit()
 
 
+
 def _pseudo_event(title: str = "调防") -> Event:
     return Event(
         id="test_659", title=title, kind="圣旨", summary="",
         urgency=0, severity=0, credibility=100, interests=[], audiences=[],
     )
+
 
 
 def test_redeploy_moves_fact_region_keeps_pay_source(game):
@@ -74,6 +77,7 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     assert row["pay_source_region"] == pay_src == "liaodong"
 
 
+
 def test_station_region_rejects_unknown_region_id(game):
     """非空 station_region 必须是已入库 regions.id；不从 station 反推。"""
     db, state, _content = game
@@ -87,6 +91,7 @@ def test_station_region_rejects_unknown_region_id(game):
         "SELECT station_region FROM armies WHERE id='dongjiang'"
     ).fetchone()
     assert row["station_region"] == "dongjiang_area"
+
 
 
 def test_fresh_seed_station_region_and_class_slices(game):
@@ -105,4 +110,3 @@ def test_fresh_seed_station_region_and_class_slices(game):
     assert _pop(db, "流民", "liaodong") == LIUMIN_LIAODONG
     assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
     assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
-

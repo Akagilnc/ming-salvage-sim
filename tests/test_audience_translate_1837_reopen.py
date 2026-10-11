@@ -39,6 +39,7 @@ def _hong(db, content) -> str:
     return str(row["name"])
 
 
+
 def _active_minister(db, content, *, office_type: str | None = None):
     for c in content.characters.values():
         if c.status != "active":
@@ -53,6 +54,7 @@ def _active_minister(db, content, *, office_type: str | None = None):
     ).fetchone()
     assert row is not None
     return SimpleNamespace(name=str(row["name"]), office_type=str(row["office_type"] or ""))
+
 
 
 def _bound_exposure(db, state):
@@ -80,6 +82,7 @@ def _bound_exposure(db, state):
     )
     assert write_exposure_todos(db, state) == 1
     return int(did), str(executor)
+
 
 
 def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, minister_name="殿上", scene_reply=None, close_before_translation=False):
@@ -113,11 +116,13 @@ def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, m
     return future.result()
 
 
+
 def _close_offline(db, state, content, night_id):
     from ming_sim.audience_night import close_night
     return close_night(
         db, state, night_id=night_id, content=content,
     )
+
 
 
 def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
@@ -144,6 +149,7 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     db.save_turn_report(state, "月报", title="月报", public_body="月报")
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.advanced and int(state.turn) > before
+
 
 
 @pytest.mark.parametrize("late", [False, True], ids=["open-night", "closed-night"])
@@ -218,6 +224,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert any(s["decision"] == "禁摊派" and s["shortfall_reopened"] for s in scenes)
 
 
+
 def test_commission_failure_does_not_erase_prior_staged_item(game):
     db, state, content = game
     night = open_night(db, state)
@@ -235,6 +242,7 @@ def test_commission_failure_does_not_erase_prior_staged_item(game):
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (staged_id,)
     ).fetchone()["status"] == "pending"
+
 
 
 def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
@@ -309,6 +317,7 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
     assert any(e["candidate"] == same_faction.name for e in events)
 
 
+
 def test_repeated_same_appointment_moves_with_the_later_source_night(game, monkeypatch):
     """语义未变的再任命仍走既有候选补账，归属改到后一夜，应允不再 missing_ref。"""
     from ming_sim.audience_night import get_open_night
@@ -360,6 +369,7 @@ def test_repeated_same_appointment_moves_with_the_later_source_night(game, monke
     assert any(int(item.get("action_id") or 0) == staged_id for item in approval.promises.applied)
 
 
+
 def test_recommendation_outside_slice_is_rejected(game):
     db, state, content = game
     night = open_night(db, state)
@@ -390,6 +400,7 @@ def test_recommendation_outside_slice_is_rejected(game):
     assert result.commissions.applied == []
     assert result.commissions.rejected
     assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
+
 
 
 def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, monkeypatch):
@@ -433,6 +444,7 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
                        for line in prepared.index_lines)
     finally:
         release_material_tree(prepared.root)
+
 
 
 def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
@@ -518,6 +530,7 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
         release_material_tree(scene_tree.root)
 
 
+
 @pytest.mark.parametrize("with_source_turn", [False, True])
 def test_separate_inquiries_same_turn_survive_and_retry_is_idempotent(game, with_source_turn):
     db, state, content = game
@@ -543,6 +556,7 @@ def test_separate_inquiries_same_turn_survive_and_retry_is_idempotent(game, with
                    if event["kind"] == "inquiry_assignment"]
     assert len(assignments) == 2
     assert len({event["source_id"] for event in assignments}) == 2
+
 
 
 def test_rush_commitment_stages_pending_催办(game, monkeypatch):
@@ -599,6 +613,7 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     assert committed is not None
 
 
+
 def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeypatch):
     from tests.conftest import persist_and_schedule_scene, stub_audience_translate
     from tests.test_audience_translation_1838 import _scene_session
@@ -630,6 +645,7 @@ def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeyp
     db.fail_chat_turn(turns[0])
     rows = [row for row in list_unsettled_summons(db) if row["person_name"] == person]
     assert len(rows) == 1 and rows[0]["travel_tone"] == "加急"
+
 
 
 def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
@@ -704,6 +720,7 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
             if arrived["name"] in (person, ordinary):
                 arrival_turns[arrived["name"]] = turn
     assert arrival_turns[person] < arrival_turns[ordinary]
+
 
 
 @pytest.mark.parametrize("ineligible", ["enemy", "vassal"])

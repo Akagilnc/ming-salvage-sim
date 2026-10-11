@@ -5,6 +5,7 @@ import { cliRunnerOptions } from "../cliRunners";
 import { resolveReasoningSupported } from "../reasoningSupport";
 import type { LLMConfigInfo, SaveEntry } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
+import { slotNumber } from "../slotNumber";
 import { CliModelField } from "./cliModelField";
 import {
   DefaultHeadersField,
@@ -334,10 +335,6 @@ export function SavesList({
   );
 }
 
-// 静默判死阈值默认（秒）：距上次新内容这么久没动静就判该次调用已死并重试。
-// 与后端 llm_config.CLI_DEFAULT_TIMEOUT_SECONDS 对齐（#55 跨语言）。
-const CLI_DEFAULT_TIMEOUT = 60;
-
 type LLMConfigSavePayload = Omit<LLMConfigInfo, "persisted"> & Partial<Pick<LLMConfigInfo, "persisted">>;
 
 export function mergePersistedSaveSnapshot(
@@ -377,19 +374,14 @@ export function LLMConfigTab() {
   const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState("");
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
-  const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
-  const normalizeStrength = (value?: string) => {
-    // #1847: closed enum only — no synonym rewrite into off.
-    const v = (value || "").trim().toLowerCase();
-    return ["", "off", "low", "medium", "high"].includes(v) ? v : "";
-  };
+  const [timeoutSeconds, setTimeoutSeconds] = React.useState("");
   const [apiReasoningStrength, setApiReasoningStrength] = React.useState("");
   const [cliReasoningStrength, setCliReasoningStrength] = React.useState("");
   // 通道感知（#51）：局中也能切 API / CLI 通道,不再被强制降级到 api。
   const [channel, setChannel] = React.useState<"api" | "cli">("api");
-  const [cliRunner, setCliRunner] = React.useState("codex");
+  const [cliRunner, setCliRunner] = React.useState("");
   const [cliModel, setCliModel] = React.useState("");
-  const [cliTimeout, setCliTimeout] = React.useState(String(CLI_DEFAULT_TIMEOUT));
+  const [cliTimeout, setCliTimeout] = React.useState("");
   const [headerRows, setHeaderRows] = React.useState<HeaderRow[]>([]);
   const [show, setShow] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
@@ -402,7 +394,7 @@ export function LLMConfigTab() {
   const normalizedAdvancedModel = advancedModel.trim();
   const backendReasoningSupportCurrent = channel === backendChannel && (
     channel === "cli"
-      ? cliRunner === (info?.cli_runner || "codex")
+      ? cliRunner === info?.cli_runner
       : normalizedBaseUrl === (info?.base_url || "").trim() &&
         normalizedModel === (info?.model || "").trim() &&
         normalizedAdvancedBaseUrl === (info?.advanced_base_url || "").trim() &&
@@ -412,23 +404,15 @@ export function LLMConfigTab() {
     backendSupported: info?.reasoning_supported,
     backendCurrent: backendReasoningSupportCurrent,
     currentChannel: channel,
-    baseUrl,
-    model,
-    advancedBaseUrl,
-    advancedModel,
     cliRunner,
     cliReasoningRunners: info?.cli_reasoning_runners,
   });
-  const reasoningChoices = info?.reasoning_strengths || [
-    { value: "", label: "默认" },
-    { value: "off", label: "关" },
-    { value: "low", label: "低" },
-    { value: "medium", label: "中" },
-    { value: "high", label: "高" },
-  ];
+  const reasoningChoices = info?.reasoning_strengths ?? [];
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
-  const visibleReasoningChoices = visibleReasoningStrengthChoices(reasoningChoices, channel, cliRunner);
+  const visibleReasoningChoices = visibleReasoningStrengthChoices(
+    reasoningChoices, channel, cliRunner, info?.cli_reasoning_floor_runners,
+  );
 
   React.useEffect(() => {
     api<LLMConfigInfo>("/api/llm/config")
@@ -438,20 +422,26 @@ export function LLMConfigTab() {
         setModel(data.model);
         setAdvancedModel(data.advanced_model || "");
         setAdvancedBaseUrl(data.advanced_base_url || "");
-        setTimeoutSeconds(String(data.timeout_seconds || 180));
-        setApiReasoningStrength(normalizeStrength(
-          data.persisted?.api_reasoning_strength || (data.channel === "api" ? data.reasoning_strength : "") || data.thinking_level
-        ));
-        setCliReasoningStrength(normalizeStrength(
-          data.persisted?.cli_reasoning_strength || (data.channel === "cli" ? data.reasoning_strength : "")
-        ));
+        setTimeoutSeconds(String(data.timeout_seconds));
+        setApiReasoningStrength(
+          data.persisted?.api_reasoning_strength
+            ?? (data.channel === "api" ? data.reasoning_strength : undefined)
+            ?? data.effective_reasoning_strengths?.api
+            ?? ""
+        );
+        setCliReasoningStrength(
+          data.persisted?.cli_reasoning_strength
+            ?? (data.channel === "cli" ? data.reasoning_strength : undefined)
+            ?? data.effective_reasoning_strengths?.cli
+            ?? ""
+        );
         setChannel(data.channel === "cli" ? "cli" : "api");
         // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被
         // cli_model_from_env 兜底成 API model 名,直接回填会把它当用户选项 post 回去(CMR R3 codex)。
         // (存盘响应无 persisted 字段 → 回落 active,channel=cli 时即刚提交值,正确。)
-        setCliRunner(data.persisted?.cli_runner || (data.channel === "cli" ? data.cli_runner || "" : "") || "codex");
+        setCliRunner(data.persisted?.cli_runner || data.cli_runner || "");
         setCliModel(data.persisted?.cli_model ?? (data.channel === "cli" ? data.cli_model || "" : ""));
-        setCliTimeout(String(data.persisted?.cli_timeout_seconds || data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
+        setCliTimeout(String(data.persisted?.cli_timeout_seconds ?? data.cli_timeout_seconds));
         setHeaderRows(headersToRows(data.default_headers));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
@@ -468,9 +458,8 @@ export function LLMConfigTab() {
           base_url: baseUrl,
           model,
           api_key: apiKey,
-          timeout_seconds: parseFloat(timeoutSeconds) || 180,
-          // 统一「推理强度」选择器已在 load 时把旧 thinking_level 迁进 reasoningStrength；保存时清掉
-          // 旧字段，否则它会作隐藏第二旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
+          timeout_seconds: slotNumber(timeoutSeconds, info?.timeout_seconds ?? 0),
+          // The backend projects the unified selector; clear the replaced thinking fields.
           thinking_level: "",
           reasoning_strength: reasoningStrength,
           advanced_model: advancedModel,
@@ -480,7 +469,7 @@ export function LLMConfigTab() {
           channel,
           cli_runner: channel === "cli" ? cliRunner : "__keep__",
           cli_model: channel === "cli" ? cliModel : "__keep__",
-          cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || CLI_DEFAULT_TIMEOUT : 0,
+          cli_timeout_seconds: channel === "cli" ? slotNumber(cliTimeout, info?.cli_timeout_seconds ?? 0) : 0,
           ...(channel === "api" ? { default_headers: rowsToHeaders(headerRows) } : {}),
         }),
       });
@@ -498,16 +487,16 @@ export function LLMConfigTab() {
       // 用服务端归一后的响应同步本地通道/CLI 状态,避免与 info 漂移(Sourcery R1)。
       setChannel(data.channel === "cli" ? "cli" : "api");
       if (data.channel === "cli") {
-        setCliReasoningStrength(normalizeStrength(data.reasoning_strength || reasoningStrength));
+        setCliReasoningStrength(data.reasoning_strength ?? reasoningStrength);
       } else {
-        setApiReasoningStrength(normalizeStrength(data.reasoning_strength || reasoningStrength));
+        setApiReasoningStrength(data.reasoning_strength ?? reasoningStrength);
       }
-      setCliRunner(data.cli_runner || "codex");
+      setCliRunner(data.cli_runner || "");
       // cliModel 不从 data.cli_model 回灌：那是 resolved 值（空/__keep__ 会被兜底成
       // 默认名或 cur 的已解析值），灌回会让策展下拉把默认/留空误判成「其他(手填)」。
       // 本地 cliModel 即用户刚提交且通过连通性校验的原值（raw），保留它即可——与加载端
       // 读 persisted.cli_model、menuPage 读 cli_model_saved 一致同走 raw（CMR R3 codex+gemini）。
-      setCliTimeout(String(data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
+      setCliTimeout(String(data.cli_timeout_seconds));
       if (data.channel !== "cli") {
         setHeaderRows(headersToRows(data.default_headers));
       }
@@ -536,7 +525,7 @@ export function LLMConfigTab() {
           onChange={(e) => setChannel(e.target.value === "cli" ? "cli" : "api")}
         >
           <option value="api">API（OpenAI 兼容，需 key）</option>
-          <option value="cli">CLI（本地 codex/agy/claude，脱 key）</option>
+          <option value="cli">CLI（本机 agent，无需 API key）</option>
         </select>
       </label>
       {channel === "cli" ? (
@@ -596,11 +585,10 @@ export function LLMConfigTab() {
             <input
               className="menu-input"
               type="number"
-              min={30}
-              max={1800}
+              step="any"
               value={cliTimeout}
               onChange={(e) => setCliTimeout(e.target.value)}
-              placeholder="60"
+              placeholder={String(info?.cli_timeout_seconds ?? "")}
             />
           </label>
         </>
@@ -682,11 +670,10 @@ export function LLMConfigTab() {
             <input
               className="menu-input"
               type="number"
-              min={10}
-              max={900}
+              step="any"
               value={timeoutSeconds}
               onChange={(e) => setTimeoutSeconds(e.target.value)}
-              placeholder="180"
+              placeholder={String(info?.timeout_seconds ?? "")}
             />
           </label>
           {/* div 包裹：input+button 两个可表单关联控件，HTML5 规定一个 label 至多含一个。

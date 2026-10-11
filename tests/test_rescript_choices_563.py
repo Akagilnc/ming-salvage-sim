@@ -1,9 +1,11 @@
+import ming_sim.draft_intent as draft_intent
+import ming_sim.cli_backend as cli_backend
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
 
 import pytest
 
-import ming_sim.cli_backend as cli_backend
+import ming_sim.draft_intent as draft_intent
 from tests.dossier_test_helpers import rejected_verdict
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
@@ -16,43 +18,14 @@ def _make_midzhi_dossier(db, state, *, target_id="river-works"):
         payload={"mode": "midzhi"},
     )
 
+
 def _rejected_verdict(dossier_id):
     # Preserve suite-specific gatekeeper/band/reason differences via builder knobs.
     return rejected_verdict(
         dossier_id, "强盛", gatekeeper_id="韩爌", reason="科臣封驳",
     )
 
-@pytest.mark.parametrize(
-    ("emperor_text", "extracted_mode", "expected"),
-    [("中旨直发，清核仓场", "普通", "ordinary"),
-     ("清核仓场", "midzhi", "midzhi")],
-)
-def test_manual_mode_uses_typed_extractor_judgment(
-    monkeypatch, emperor_text, extracted_mode, expected,
-):
-    extracted = json.dumps({
-        "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-        "目标ID": "granary", "颁布方式": extracted_mode,
-    }, ensure_ascii=False)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
-    )
-    assert cli_backend.capture_manual_directive_payload(emperor_text)["mode"] == expected
 
-def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(monkeypatch):
-    extracted = json.dumps({
-        "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-        "目标ID": "granary",
-    }, ensure_ascii=False)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
-    )
-
-    payload = cli_backend.capture_manual_directive_payload(
-        "增列核验期限", existing_mode="midzhi",
-    )
-
-    assert payload["mode"] == "midzhi"
 
 def test_predeclared_midzhi_promulgation_persists_stigma(game):
     db, state, _content = game
@@ -63,6 +36,7 @@ def test_predeclared_midzhi_promulgation_persists_stigma(game):
         "source_action": "promulgated",
     }]
 
+
 def test_missing_dossier_mode_defaults_to_ordinary(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
@@ -71,6 +45,7 @@ def test_missing_dossier_mode_defaults_to_ordinary(game):
     )
 
     assert db.get_decree_dossier(dossier_id)["mode"] == "ordinary"
+
 
 @pytest.mark.parametrize(
     ("caller_mode", "minister_text", "expected"),
@@ -84,7 +59,7 @@ def test_declared_staging_uses_typed_mode_not_minister_text(
     db, state, _content = game
     candidate_id = db.stage_directive_candidate(
         state.turn, "温体仁", {"text": minister_text, "actor": "温体仁",
-                             "mode": cli_backend.resolve_directive_mode(extracted=caller_mode),
+                             "mode": draft_intent.resolve_directive_mode(extracted=caller_mode),
                              "dossier_action_type": "special_decree", "target_kind": "policy",
                              "target_id": "river-works"},
     )
@@ -94,6 +69,7 @@ def test_declared_staging_uses_typed_mode_not_minister_text(
     dossiers = db.list_decree_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == expected
+
 
 def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     db, state, _content = game
@@ -121,6 +97,7 @@ def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     dossiers = db.list_decree_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == "ordinary"
+
 
 def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
     db, state, _content = game
@@ -150,6 +127,7 @@ def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
         "source_action": "rejected",
     }]
 
+
 def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
@@ -166,6 +144,7 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
          "source_action": "rejected"},
     ]
 
+
 def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
@@ -179,6 +158,7 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
         "kind": "midzhi", "reason": "rescript", "turn": state.turn,
         "source_action": "force_promulgated",
     }]
+
 
 @pytest.mark.parametrize("labels", [["", "乙"], ["甲", "甲"]])
 def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):

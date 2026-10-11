@@ -6,10 +6,54 @@
 
 from __future__ import annotations
 
-from types import MethodType, SimpleNamespace
+import sqlite3
+from types import SimpleNamespace
 from typing import Any, Optional
 
-from ming_sim.session import AudienceAdmission, AudienceAdmissionDecision, GameSession
+from ming_sim.applier import _SuspendableConnection
+from ming_sim.session import AudienceAdmission, AudienceAdmissionDecision
+
+
+def open_audience_night_conn() -> _SuspendableConnection:
+    """方法替身库上的一条已开夜，建轮与 ``atomic`` 走生产唯一路径。"""
+    conn = sqlite3.connect(
+        ":memory:", factory=_SuspendableConnection, check_same_thread=False,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE audience_nights (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn INTEGER NOT NULL,
+            year INTEGER NOT NULL,
+            period INTEGER NOT NULL,
+            time_of_day TEXT NOT NULL DEFAULT '',
+            location TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            close_commit_cursor INTEGER NOT NULL DEFAULT 0,
+            next_event_seq INTEGER NOT NULL DEFAULT 0,
+            protagonist_name TEXT NOT NULL DEFAULT '',
+            opened_at TEXT NOT NULL DEFAULT '',
+            closed_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE chat_turns (
+            id INTEGER PRIMARY KEY,
+            status TEXT,
+            minister_message_id INTEGER,
+            extract_status TEXT,
+            user_message_id INTEGER
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO audience_nights (turn, year, period, status) VALUES (1, 1628, 1, 'open')"
+    )
+    conn.commit()
+    return conn
 
 
 def allow_hall_admission(
@@ -38,18 +82,6 @@ def allow_hall_admit_audience(character: Any) -> AudienceAdmissionDecision:
     )
 
 
-def _bind_core_close_seams(session: Any) -> None:
-    """#1853：现役入口直调核心收夜接缝；测试轻壳缺绑不得再靠 getattr 回退。"""
-    if getattr(session, "close_night_after_chat_if_needed", None) is None:
-        session.close_night_after_chat_if_needed = MethodType(
-            GameSession.close_night_after_chat_if_needed, session,
-        )
-    if getattr(session, "schedule_close_night_after_chat_if_needed", None) is None:
-        session.schedule_close_night_after_chat_if_needed = MethodType(
-            GameSession.schedule_close_night_after_chat_if_needed, session,
-        )
-
-
 class HallAdmissionSessionMixin:
     """给 class 体可改的假 Session 混入统一放行入口（实现只此一处）。"""
 
@@ -57,22 +89,11 @@ class HallAdmissionSessionMixin:
     # #1716：收夜入口走 admit_audience（不 consume）；壳须同混入。
     admit_audience = staticmethod(allow_hall_admit_audience)
 
-    def close_night_after_chat_if_needed(self, court_action, *, write_gate=None, barrier_ticket=None):
-        return GameSession.close_night_after_chat_if_needed(
-            self, court_action, write_gate=write_gate, barrier_ticket=barrier_ticket,
-        )
-
-    def schedule_close_night_after_chat_if_needed(self, court_action, *, write_gate=None):
-        return GameSession.schedule_close_night_after_chat_if_needed(
-            self, court_action, write_gate=write_gate,
-        )
-
 
 def install_hall_admission(session: Any) -> Any:
     """给无法改 class 体的轻壳一次赋值共享函数。"""
     session.consume_audience_admission = allow_hall_admission
     session.admit_audience = allow_hall_admit_audience
-    _bind_core_close_seams(session)
     return session
 
 

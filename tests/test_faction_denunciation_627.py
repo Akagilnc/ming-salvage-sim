@@ -11,7 +11,6 @@ Seams:
 """
 
 from __future__ import annotations
-
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 
 from ming_sim.db import GameDB
@@ -38,6 +37,7 @@ def _chars_by_faction(db) -> dict[str, list]:
         by_f.setdefault(str(row["faction"]), []).append(row)
     return by_f
 
+
 def _pair_enemy(db):
     by_f = _chars_by_faction(db)
     facs = [f for f, rs in by_f.items() if rs]
@@ -49,12 +49,14 @@ def _pair_enemy(db):
                 return by_f[fa][0], by_f[fb][0]
     return by_f[facs[0]][0], by_f[facs[1]][0]
 
+
 def _enemy_accuser(db, subject_faction: str) -> str:
     by_f = _chars_by_faction(db)
     for fac, rows in by_f.items():
         if faction_relation(fac, subject_faction) == "enemy" and rows:
             return str(rows[0]["name"])
     raise AssertionError("无敌对派系在朝人物")
+
 
 def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
     did = db.create_decree_dossier(
@@ -74,6 +76,7 @@ def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
     db.conn.commit()
     return did
 
+
 def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     """奏报 + 旨外实况 → fork 单源读端为真。"""
     db.record_dossier_progress(
@@ -89,6 +92,7 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
         (dossier_id,),
     )
     db.conn.commit()
+
 
 def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path, monkeypatch):
     """公开材料只列入有奏报且与旨外或执行格分叉的案；密令案与未分叉案不入。"""
@@ -160,6 +164,7 @@ def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path, monkey
         report_transformed,
     }
 
+
 def _make_transformed_no_fork(db, state, dossier_id: int):
     """变形但无奏报分叉（无私货/无旨外）——fork 读端为假。"""
     db.conn.execute(
@@ -168,12 +173,14 @@ def _make_transformed_no_fork(db, state, dossier_id: int):
     )
     db.conn.commit()
 
+
 def _escalate_fork(db, state, dossier_id: int, *, token: str = "esc"):
     """案情升级：再落一笔旨外恶果（actual_effect_count↑）。"""
     db.record_issue_economy_move(
         state, "国库", 3, "再浮收", f"升级{token}",
         origin_ref=f"dossier:{dossier_id}", beyond_intent=True, commit=True,
     )
+
 
 def _scripted_entry(
     *,
@@ -188,6 +195,7 @@ def _scripted_entry(
         "target_dossier_id": dossier_id,
         "memorial_text": body,
     }
+
 
 # ── AC2 承接与 clamp ──────────────────────────────────────────────
 
@@ -240,6 +248,7 @@ def test_ac2_scripted_accept_and_clamp(game):
     )
     assert ghost == []
 
+
 # ── AC3 真伪底派生 ────────────────────────────────────────────────
 
 def test_ac3_veracity_true_and_false_from_fork(game):
@@ -278,6 +287,7 @@ def test_ac3_veracity_true_and_false_from_fork(game):
     assert origin_has_mark(by_did[did_false]["origin"], ORIGIN_MARK_DENUNCIATION_FALSE)
     assert by_did[did_false]["is_true"] is False
     assert "fork_exposure" not in by_did[did_false]["payload"]
+
 
 # ── AC4 重复语义三断言 + restore ──────────────────────────────────
 
@@ -371,6 +381,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         assert restored.list_faction_denunciations() == expected
     finally:
         restored.close()
+
 
 # ── AC5 零模板 + 暴露载体 ────────────────────────────────────────
 

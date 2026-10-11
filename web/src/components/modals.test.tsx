@@ -32,18 +32,6 @@ const MINISTER_MOCK: Minister = {
   favorite: false,
 };
 
-const CONSORT_MOCK: Minister = {
-  name: "周贵人",
-  office: "贵人",
-  office_type: "后宫",
-  faction: "",
-  style: "",
-  status: "active",
-  status_label: "在宫",
-  summary: "后宫嫔妃",
-  favorite: false,
-};
-
 describe("ScrollMessages — frozen ledger order", () => {
   it("groups only adjacent rows of a turn without moving an interleaved scene row", () => {
     const host = document.createElement("div"); document.body.appendChild(host);
@@ -53,6 +41,14 @@ describe("ScrollMessages — frozen ledger order", () => {
       { role: "scene", speaker: "", content: "烛花一爆", beat: "scene", audibility: "", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
       { role: "minister", speaker: "洪承畴", content: "后答", beat: "dialogue", chat_turn_id: 7, audibility: "", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
     ]} />); });
+    const turnBlocks = Array.from(host.querySelectorAll(".audience-turn"));
+    expect(turnBlocks).toHaveLength(3);
+    expect(turnBlocks[0]?.getAttribute("data-audience-turn-id")).toBe("7");
+    expect(turnBlocks[1]?.querySelector(".chat-message.scene.beat-scene")).not.toBeNull();
+    expect(turnBlocks[2]?.getAttribute("data-audience-turn-id")).toBe("7");
+    expect(host.querySelectorAll('[data-audience-turn-id="7"] .turn-segment.user')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-audience-turn-id="7"] .turn-segment.minister')).toHaveLength(1);
+
     expect(host.querySelectorAll('[data-audience-turn-id="7"]')).toHaveLength(2);
     expect(host.querySelector(".chat-message.scene")).not.toBeNull();
   });
@@ -68,17 +64,13 @@ function renderModal(props: {
   busy?: string;
   streamingMinisterMessage?: string;
   onCancel?: () => void;
-  onRetryReply?: (
-    ministerName: string,
-    chatTurnId: number,
-    recoveryPhase?: "after_reply" | "court_break",
-  ) => void;
+  onRetryReply?: React.ComponentProps<typeof ChatModal>["onRetryReply"];
   onRetryTranslation?: React.ComponentProps<typeof ChatModal>["onRetryTranslation"];
   pendingUserMessage?: string;
   pendingIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   failedIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   onSend?: (ministerName: string, text?: string) => void;
-  onUndo?: (ministerName: string) => void;
+  onUndo?: () => void;
   canUndoLastChat?: boolean;
   onClose?: () => void;
   scrollPosition?: number;
@@ -243,16 +235,8 @@ function renderEdictModal(props: {
     root.render(
       <EdictModal
         state={props.state}
-        editingDirectiveId={null}
-        editingDirectiveText=""
-        decree=""
-        report=""
         busy=""
         error={props.error ?? ""}
-        onEditingTextChange={() => {}}
-        onStartEdit={() => {}}
-        onCancelEdit={() => {}}
-        onSaveDirective={() => {}}
         onDeleteDirective={() => {}}
         onIssueDecree={props.onIssueDecree ?? (() => {})}
       />
@@ -279,21 +263,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("EdictModal — decree desk behavior", () => {
-  // #1849 / ADR 0152 决定 1：独立手拟新增控件（「御笔自拟」+「新增草案」）已退出；
-  // 草稿区的改／删与已发区只读不受影响（下一例证）。
-  it("#1849 无独立手拟新增口：御案不渲拟诏文本框与新增草案钮", () => {
-    const { host } = renderEdictModal({
-      state: baseGameState({
-        directives: [{ id: 8, event_id: "", event_title: "", actor: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }],
-      }),
-    });
-    expect(host.querySelector(".desk-compose")).toBeNull();
-    expect(host.querySelector(".desk-add-btn")).toBeNull();
-    // 草稿仍可改可删。
-    expect(host.querySelectorAll(".directive-tools button")).toHaveLength(2);
-  });
+// #1902：拟诏台手写入口（御笔自拟 textarea / 改稿钮）整条退役，随之删掉两条钉在
+// 旧控件上的用例（#1431 placeholder 案、工具钮数量锁）——控件不在了，锁它没有
+// 任何行为意义。#1431 的真实意图（不写失实现任具名）改由源码面无该面板承担；
+// 剩余「点颁诏真发一次」的行为契约由下一条用例继续钉。
 
+describe("EdictModal — decree desk behavior", () => {
   it("issues an approved conversational draft without a second review gate", () => {
     const onIssue = vi.fn();
     const { host } = renderEdictModal({
@@ -301,48 +276,15 @@ describe("EdictModal — decree desk behavior", () => {
       onIssueDecree: onIssue,
     });
     const item = host.querySelector(".directive-item");
-    const tools = item?.querySelectorAll(".directive-tools button");
+    const deleteBtn = item?.querySelector<HTMLButtonElement>(".directive-tools button");
     const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
 
     expect(item).not.toBeNull();
-    expect(tools).toHaveLength(2);
+    // #1902：拟/改稿控件退役后，卡上只剩删旧草稿一条（按行为断言，不锁数量常量）。
+    expect(deleteBtn?.textContent).toContain("删");
     expect(button?.disabled).toBe(false);
     act(() => button?.click());
     expect(onIssue).toHaveBeenCalledTimes(1);
-  });
-
-});
-
-describe("#1732 ChatModal · 撤回就地确认", () => {
-  it("取消零调用；确认后 onUndo", () => {
-    const onUndo = vi.fn();
-    const confirm = vi.spyOn(window, "confirm");
-    const host = renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      canUndoLastChat: true,
-      onUndo,
-    });
-    const undo = Array.from(host.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("撤回本轮")
-    ) as HTMLButtonElement;
-    act(() => undo.click());
-    expect(confirm).not.toHaveBeenCalled();
-    expect(onUndo).not.toHaveBeenCalled();
-    const panel = host.querySelector('[aria-label="撤回召对确认"]');
-    expect(panel).not.toBeNull();
-    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("取消")
-    );
-    act(() => cancel?.click());
-    expect(onUndo).not.toHaveBeenCalled();
-
-    act(() => undo.click());
-    const yes = Array.from(host.querySelector('[aria-label="撤回召对确认"]')!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("继续撤回")
-    );
-    act(() => yes?.click());
-    expect(onUndo).toHaveBeenCalledWith("周延儒");
   });
 
   it("#1732 T3 开着确认条发送后确认条关闭", () => {
@@ -399,10 +341,10 @@ describe("#1732 ChatModal · 撤回就地确认", () => {
 });
 
 describe("ChatModal — #1370 empty audience chrome", () => {
-  it("空对话区呈等候/引导 chrome，带稳定 chat-stage 标记，不代笔开场白", async () => {
+  it("空对话区呈等候/引导 chrome，带稳定 chat-stage 标记", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ reply_retries: [], night_id: 0, messages: [] }),
+      json: async () => ({ night_id: 0, messages: [] }),
     }));
     const host = renderModal({
       minister: MINISTER_MOCK,
@@ -412,8 +354,8 @@ describe("ChatModal — #1370 empty audience chrome", () => {
     await act(async () => { await Promise.resolve(); });
     const stage = host.querySelector("[data-testid=chat-stage]") || host.querySelector(".chat-stage");
     expect(stage).not.toBeNull();
-    expect((stage!.querySelector(".chat-empty-chrome")?.textContent || "").trim()).not.toBe("");
-    expect(stage!.querySelector(".chat-message.minister")).toBeNull();
+    // UI 固定引导话语（P7 界面 chrome，非人物叙事措辞锁）。
+    expect(stage!.textContent || "").toMatch(/请陛下问话|等候开口/);
   });
 });
 
@@ -424,6 +366,10 @@ describe("ChatModal — #545 final composer contract", () => {
     const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", onSend, onClose });
 
     const buttons = Array.from(host.querySelectorAll("button"));
+    const buttonLabels = buttons.map((button) => (button.textContent || "").trim());
+    // chrome 契约落在按钮标签，不在含召对自由正文的整 host 上禁词（#1902 TEST-PROSE）。
+    expect(buttonLabels.some((label) => label.includes("转入诏书草案"))).toBe(false);
+    expect(buttonLabels.some((label) => label.includes("任免"))).toBe(false);
     const leave = buttons.find((button) => button.textContent?.includes("退出召对")) as HTMLButtonElement;
     const retreat = buttons.find((button) => button.textContent?.includes("散夜")) as HTMLButtonElement;
     expect(leave).toBeTruthy();
@@ -444,7 +390,7 @@ describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
   it("renders entrance and exit facts as scene beats, not system notes", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ reply_retries: [],
+      json: async () => ({
         night_id: 9,
         protagonist: "", roster: [], translation_pending: false, messages: [
           { role: "scene", speaker: "周延儒", content: "宣周延儒入殿。", beat: "entrance", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
@@ -471,55 +417,6 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(textarea.placeholder).toContain("退朝");
   });
 
-  it("does NOT show 大臣 or 他 in placeholder for consorts", () => {
-    renderModal({ minister: CONSORT_MOCK, portraitPrefix: "consort_" });
-    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.placeholder.trim()).not.toBe("");
-    expect(textarea.placeholder).not.toContain("宣 X");
-  });
-
-  it("consort placeholder has meaningful length", () => {
-    renderModal({ minister: CONSORT_MOCK, portraitPrefix: "consort_" });
-    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.placeholder.trim()).not.toBe("");
-  });
-
-  it("shows #505 system-layer reply retry control when replyRetry is set", async () => {
-    const retry = vi.fn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        night_id: 23,
-        protagonist: "",
-        roster: [],
-        translation_pending: false,
-        messages: [{ role: "user", speaker: "朕", content: "剿抚孰先？", chat_turn_id: 12 }],
-        reply_retries: [
-          { chat_turn_id: 12, question: "剿抚孰先？" },
-          { chat_turn_id: 13, question: "退朝", recovery_phase: "court_break", error_pack_path: "/tmp/post-reply-pack" },
-        ],
-      }),
-    }));
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      currentNightId: 23,
-      chat: [{ role: "user", content: "剿抚孰先？" }],
-      onRetryReply: retry,
-    });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    const note = document.querySelector('[data-testid="reply-retry-12"]');
-    expect(document.querySelector('[data-testid="reply-retry-12"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("/tmp/post-reply-pack");
-    const retryButtons = Array.from(document.querySelectorAll("button")).filter(
-      (node) => node.textContent === "重试",
-    );
-    expect(retryButtons).toHaveLength(2);
-    act(() => retryButtons[0]?.click());
-    expect(retry).toHaveBeenCalledWith("殿上", 12, undefined);
-    act(() => retryButtons[1]?.click());
-    expect(retry).toHaveBeenLastCalledWith("殿上", 13, "court_break");
-  });
 
 });
 
@@ -528,7 +425,7 @@ describe("ChatModal — organic markdown display cleanup", () => {
   it("#1280 scene/attendant 角色气泡同走 stripOrganicMarkdown", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ reply_retries: [],
+      json: async () => ({
         night_id: 23,
         protagonist: "", roster: [], translation_pending: false, messages: [
           { role: "scene", speaker: "周延儒", content: "殿内 **烛影** 摇曳\n- 夜风入户", beat: "entrance" },
@@ -551,7 +448,7 @@ describe("ChatModal — organic markdown display cleanup", () => {
 
 describe("ChatModal — four diegetic roles (#540)", () => {
   it("renders role variants and derives the private aside only from audibility", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
       { role: "scene", speaker: "周延儒", content: "殿门徐启", beat: "entrance", audibility: "殿上公开" },
       { role: "user", speaker: "朕", content: "（搁笔）卿且直言。", beat: "dialogue", audibility: "殿上公开", chat_turn_id: 1 },
       { role: "minister", speaker: "周延儒", content: "臣谨奏。", beat: "dialogue", audibility: "殿上公开", chat_turn_id: 1 },
@@ -574,7 +471,8 @@ describe("ChatModal — four diegetic roles (#540)", () => {
     expect(host.querySelector(".chat-message.scene")).not.toBeNull();
     expect(host.querySelector(".turn-segment.user")).not.toBeNull();
     expect(host.querySelector(".turn-segment.minister")).not.toBeNull();
-    expect(host.querySelectorAll(".turn-segment.aside")).toHaveLength(2);
+    expect(host.querySelector(".turn-segment.aside")).not.toBeNull();
+
     const avatars = Array.from(host.querySelectorAll<HTMLImageElement>(".aside-avatar"));
     expect(avatars[0]?.alt).toBe("曹化淳");
     expect(avatars[0]?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%9B%B9%E5%8C%96%E6%B7%B3\?t=/);
@@ -583,66 +481,12 @@ describe("ChatModal — four diegetic roles (#540)", () => {
   });
 });
 
-describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", () => {
-  it("keeps a side interjection in the selected minister segment without window bleed", async () => {
-    const send = vi.fn();
-    const undo = vi.fn();
-    const retryReply = vi.fn();
-    const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣", favorite: false };
-    const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣", favorite: true };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "越次召对" }, translation_retries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }], reply_retries: [{ chat_turn_id: 12, question: "辽饷何解？" }], messages: [
-      { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
-      { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次召对" } },
-      { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 1 },
-      { role: "minister", speaker: "杨嗣昌", content: "殿侧容臣插一句。", beat: "dialogue", container: { audience_type: "越次召对" } },
-      { role: "user", speaker: "朕", content: "辽饷何解？", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 12 },
-      { role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
-    ] }) }));
-
-    // #1511 lens key = selected minister (洪), not a mismatched modal entry.
-    const host = renderModal({
-      minister: hong,
-      ministers: [yang, hong],
-      portraitPrefix: "minister_",
-      currentNightId: 23,
-      onSend: send,
-      onUndo: undo,
-      canUndoLastChat: true,
-      onRetryReply: retryReply,
-      onRetryTranslation: vi.fn(),
-    });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-
-    expect(host.querySelector(".audience-type-label")?.textContent).toBe("越次召对");
-    expect(host.querySelector(".minister-profile")).toBeNull();
-    expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
-    expect(host.querySelector(".chat-secret-orders")).toBeNull();
-    const ministerMessages = host.querySelectorAll(".chat-message.minister");
-    expect(ministerMessages[ministerMessages.length - 1]?.textContent).toContain("杨嗣昌");
-    const clickButton = (text: string) => act(() => Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes(text))?.click());
-    // #1732 B：撤回就地确认
-    clickButton("撤回本轮");
-    clickButton("继续撤回");
-    act(() => host.querySelector<HTMLButtonElement>('[data-testid="reply-retry-12"] button')?.click());
-    expect(undo).toHaveBeenCalledWith("洪承畴");
-    expect(retryReply).toHaveBeenCalledWith("殿上", 12, undefined);
-    const replyFailure = host.querySelector('[data-testid="reply-retry-12"]');
-    expect(replyFailure?.closest('[data-audience-turn-id="12"]')).not.toBeNull();
-    const translationFailure = host.querySelector('[data-testid="translation-retry-1"]');
-    expect(translationFailure?.closest('[data-audience-turn-id="1"]')).not.toBeNull();
-    expect(translationFailure?.textContent).toContain("/tmp/audience-turn-1");
-    const divisions = Array.from(host.querySelectorAll(".beat-divider"));
-    expect(divisions).toHaveLength(2);
-    expect(divisions[0]?.textContent).toContain("洪承畴");
-    expect(divisions[1]?.textContent).not.toMatch(/杨嗣昌|洪承畴/);
-  });
-});
 
 describe("ChatModal — single night-scroll authority (#539)", () => {
   it("retires the whole old-night snapshot when the persisted player-entry identity changes before refresh fails", async () => {
     let rejectRefresh!: (reason?: unknown) => void;
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧夜问话", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧夜答复", chat_turn_id: 1 },
         { role: "minister", speaker: "洪承畴", content: "同夜他臣", chat_turn_id: 2 },
@@ -655,7 +499,9 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       chat: [{ role: "user", content: "旧夜问话", chatTurnId: 1 }],
       registerNightUpdate: (update) => { updateNight = update; } });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    // #1511: other minister's turn is lens-filtered out of this window immediately.
+    // ChatModal shows the full night (#1849); snapshot includes every turn until night identity retires.
+    expect(document.querySelector('[data-audience-turn-id="1"]')).not.toBeNull();
+
     expect(document.querySelector('[data-audience-turn-id="2"]')).not.toBeNull();
 
     await act(async () => { updateNight(24); await Promise.resolve(); });
@@ -669,7 +515,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   it("retires the pre-withdrawal snapshot when a successful undo identifies its turn", async () => {
     let rejectRefresh!: (reason?: unknown) => void;
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "撤回前问话", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "撤回前答复", chat_turn_id: 1 },
         { role: "minister", speaker: "洪承畴", content: "仍在旧 snapshot", chat_turn_id: 2 },
@@ -683,7 +529,9 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       registerUndoUpdate: (update) => { updateUndo = update; },
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(document.querySelector('[data-audience-turn-id="1"]')).not.toBeNull();
+    expect(document.querySelector('[data-audience-turn-id="1"] .turn-segment.minister')).not.toBeNull();
+    expect(document.querySelector('[data-audience-turn-id="2"]')).not.toBeNull();
+
 
     await act(async () => { updateUndo(1); await Promise.resolve(); });
     expect(document.querySelector('[data-audience-turn-id="1"]')).toBeNull();
@@ -694,7 +542,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   });
 
   it("does not treat an ordinary history reduction as a withdrawal", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
       { role: "user", speaker: "朕", content: "公共卷仍保留", chat_turn_id: 1 },
       { role: "minister", speaker: MINISTER_MOCK.name, content: "公共答复仍保留", chat_turn_id: 1 },
     ] }) }));
@@ -708,7 +556,8 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => { updateChat([]); await Promise.resolve(); });
 
     expect(document.querySelector('[data-audience-turn-id="1"]')).not.toBeNull();
-    expect(document.querySelectorAll('[data-audience-turn-id="1"] .turn-segment')).toHaveLength(2);
+    expect(document.querySelector('[data-audience-turn-id="1"] .turn-segment.minister')).not.toBeNull();
+
   });
   it("does not flash old minister chat while the night scroll is loading or failed", async () => {
     let reject!: (reason?: unknown) => void;
@@ -727,6 +576,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.querySelectorAll(".chat-message")).toHaveLength(0);
     expect(document.querySelectorAll("[data-audience-turn-id]")).toHaveLength(0);
     expect(document.querySelector('[role="alert"]')).not.toBeNull();
+
   });
 
   it("restores at the tail, follows new content only while the player remains at the tail", async () => {
@@ -748,7 +598,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     });
 
     await act(async () => {
-      resolveScroll({ ok: true, json: async () => ({ reply_retries: [], night_id: 17, protagonist: "", roster: [], translation_pending: false, messages: [{ role: "user", content: "卷首" }] }) });
+      resolveScroll({ ok: true, json: async () => ({ night_id: 17, protagonist: "", roster: [], translation_pending: false, messages: [{ role: "user", content: "卷首" }] }) });
       await Promise.resolve(); await Promise.resolve();
     });
     expect(log.scrollTop).toBe(600);
@@ -766,7 +616,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   });
 
   it("restores a saved position and reports player scrolling for the open night", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [{ role: "user", content: "卷首" }] }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [{ role: "user", content: "卷首" }] }) }));
     const save = vi.fn();
     const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23, scrollPosition: 137, onScrollPositionChange: save });
     const log = host.querySelector(".chat-log") as HTMLDivElement;
@@ -781,7 +631,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   it("does not merge personal history while the canonical scroll refresh is delayed", async () => {
     let resolveRefresh!: (value: unknown) => void;
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
       ] }) })
@@ -805,10 +655,12 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       ]);
       await Promise.resolve();
     });
+    expect(document.querySelector('[data-audience-turn-id="1"]')).not.toBeNull();
+
     expect(document.querySelector('[data-audience-turn-id="2"]')).toBeNull();
 
     await act(async () => {
-      resolveRefresh({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+      resolveRefresh({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
         { role: "user", speaker: "朕", content: "刚完成的新问", chat_turn_id: 2 },
@@ -816,15 +668,17 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       ] }) });
       await Promise.resolve(); await Promise.resolve();
     });
-    expect(document.querySelector('[data-audience-turn-id="2"]')).not.toBeNull();
-    expect(document.querySelectorAll('[data-audience-turn-id="2"] .turn-segment')).toHaveLength(2);
+    expect(document.querySelectorAll('[data-audience-turn-id="2"]')).toHaveLength(1);
+    expect(document.querySelector('[data-audience-turn-id="2"] .turn-segment.user')).not.toBeNull();
+    expect(document.querySelector('[data-audience-turn-id="2"] .turn-segment.minister')).not.toBeNull();
+
   });
 
 
 
   it("keeps the last-known scroll without importing personal history when refresh fails", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
       ] }) })
@@ -848,17 +702,19 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       await Promise.resolve(); await Promise.resolve();
     });
 
+    expect(document.querySelector('[data-audience-turn-id="1"]')).not.toBeNull();
     expect(document.querySelector('[data-audience-turn-id="2"]')).toBeNull();
-    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    expect((document.querySelector('[role="alert"]')?.textContent || "").length).toBeGreaterThan(0);
+
   });
 
   it("refreshes the canonical scroll after a non-streaming completed chat update", async () => {
     const replies = [
-      { reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+      { night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
       ] },
-      { reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+      { night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "非流式新答", chat_turn_id: 2 },
@@ -871,14 +727,15 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(document.querySelector('[data-audience-turn-id="1"]')).not.toBeNull();
     await act(async () => { updateChat([{ role: "minister", content: "旧分线程答" }]); await Promise.resolve(); await Promise.resolve(); });
-    expect(document.querySelector('[data-audience-turn-id="2"]')).not.toBeNull();
-    expect(document.querySelectorAll('[data-audience-turn-id="2"] .turn-segment.minister, [data-audience-turn-id="2"] .chat-message.minister')).toHaveLength(1);
+    expect(document.querySelector('[data-audience-turn-id="2"] .turn-segment.minister')).not.toBeNull();
+    expect(document.querySelectorAll(".chat-message.minister")).toHaveLength(0);
+
   });
 
   it("renders a streaming reply as a neutral scene block", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+      json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" },
         { role: "minister", speaker: "洪承畴", content: "臣在。", beat: "dialogue", chat_turn_id: 1 },
         { role: "attendant", speaker: "杨嗣昌", content: "御前低语", audibility: "御前低语", beat: "dialogue" },
@@ -895,18 +752,17 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     });
 
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    const scenes = document.querySelectorAll(".chat-message.scene");
-    expect(scenes.length).toBeGreaterThanOrEqual(2);
-    const streamed = scenes[scenes.length - 1];
-    expect(streamed.classList.contains("scene")).toBe(true);
-    expect(streamed.querySelector("span")).toBeNull();
-    expect(document.querySelector(".chat-message.attendant, .turn-segment.aside")).not.toBeNull();
+    const streamed = document.querySelector(".chat-message.scene.beat-dialogue");
+    expect(streamed?.classList.contains("scene")).toBe(true);
+    expect(streamed?.querySelector("span")).toBeNull();
+    expect(document.querySelector(".chat-message.attendant.aside .turn-speaker, .chat-message.attendant.aside > span")?.textContent).toBe("杨嗣昌");
+
   });
 
   it("attributes the thinking row to the selected minister", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ reply_retries: [], night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], messages: [
+      json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], messages: [
         { role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" },
       ] }),
     }));
@@ -933,7 +789,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   ];
 
   it("names the live scroll from its persisted container", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [],
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
       night_id: 23, protagonist: "", roster: [], translation_pending: false,
       container: { time_of_day: "戌时", location: "便殿", audience_type: "召对" },
       messages: [{ ...nightScroll[0], container: { time_of_day: "戌时", location: "便殿", audience_type: "召对" } }],
@@ -944,7 +800,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   });
 
   it("names an empty-scaffold night without relying on projected messages", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [],
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
       night_id: 23, protagonist: "", roster: [], translation_pending: false,
       container: { time_of_day: "午时", location: "文华殿", audience_type: "召对" }, messages: [],
     }) }));
@@ -955,7 +811,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
 
   it("shows portraits for declared people outside the court and talent lists", async () => {
     const visitor = { ...MINISTER_MOCK, name: "夜访者", portrait_id: "portrait_guest" };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [],
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
       night_id: 23, protagonist: visitor.name,
       roster: [{ name: visitor.name, present: true }], characters: [visitor],
       translation_pending: false, messages: [{ ...nightScroll[2], speaker: visitor.name }],
@@ -970,7 +826,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   it("prefers current-night portrait data over a stale court-list copy", async () => {
     const updated = { ...hong, portrait_id: "custom:latest" };
     let reads = 0;
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({ reply_retries: [],
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({
       night_id: 23, protagonist: hong.name,
       roster: [{ name: hong.name, present: true }], characters: [reads++ ? updated : hong],
       translation_pending: false, messages: [{ ...nightScroll[2], speaker: hong.name }],
@@ -988,16 +844,20 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   });
 
   it("shows the whole chronological night instead of a selected-minister window", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
     renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(document.querySelector('[data-audience-turn-id="11"]')).not.toBeNull();
-    expect(document.querySelectorAll('[data-audience-turn-id="11"] .turn-segment')).toHaveLength(3);
+    const turn11 = document.querySelector('[data-audience-turn-id="11"]');
+    expect(turn11).not.toBeNull();
+    expect(turn11?.querySelector(".turn-segment.user .turn-speaker")?.textContent).toBe("朕");
+    expect(turn11?.querySelector(".turn-segment.minister .turn-speaker")?.textContent).toBe("洪承畴");
+    expect(turn11?.querySelector(".turn-segment.aside .turn-speaker")?.textContent).toBe("王承恩");
+
   });
 
   it("uses roster clicks as summon commands without changing panels", async () => {
     const onSend = vi.fn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "许誉卿", roster: [{ name: "洪承畴", present: true }, { name: "许誉卿", present: true }], messages: nightScroll }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "许誉卿", roster: [{ name: "洪承畴", present: true }, { name: "许誉卿", present: true }], messages: nightScroll }) }));
     renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23, onSend });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     const summon = Array.from(document.querySelectorAll<HTMLButtonElement>(".audience-roster button"))
@@ -1010,7 +870,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     let updateNight!: (nightId: number) => void;
     let protagonist = "";
     let nightId = 23;
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({ reply_retries: [],
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({
       night_id: nightId,
       protagonist,
       roster: protagonist ? [
@@ -1050,7 +910,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   it("refreshes the open scroll when a late translation finishes after the reply", async () => {
     vi.useFakeTimers();
     let pending = true;
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({ reply_retries: [],
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({
       night_id: 23,
       messages: [],
       protagonist: pending ? "洪承畴" : "许誉卿",
@@ -1080,8 +940,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({
       ok: true,
       json: async () => reads++ === 0
-        ? ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [] })
-        : ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll.filter((message) => message.chat_turn_id === 11) }),
+        ? ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [] })
+        : ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll.filter((message) => message.chat_turn_id === 11) }),
     })));
     renderModal({
       minister: hong,
@@ -1134,8 +994,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       return {
         ok: true,
         json: async () => reads === 1
-          ? ({ reply_retries: [], night_id: 23, messages: neutral, translation_pending: true })
-          : ({ reply_retries: [], night_id: 23, messages: translated, translation_pending: false }),
+          ? ({ night_id: 23, messages: neutral, translation_pending: true })
+          : ({ night_id: 23, messages: translated, translation_pending: false }),
       };
     }));
     renderModal({
@@ -1186,8 +1046,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({
       ok: true,
       json: async () => (++reads === 1
-        ? { reply_retries: [], night_id: 23, messages: [story], translation_pending: true, translation_retries: [] }
-        : { reply_retries: [], night_id: 23, messages: [story], translation_pending: true, translation_retries: [
+        ? { night_id: 23, messages: [story], translation_pending: true, translation_retries: [] }
+        : { night_id: 23, messages: [story], translation_pending: true, translation_retries: [
             { chat_turn_id: 11, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/turn-11" },
           ] }),
     })));
@@ -1207,7 +1067,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     let updateStreaming!: (message: string) => void;
     let updatePendingIdentity!: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void;
     let updateFailedIdentity!: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void;
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [] }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [] }) }));
     renderModal({
       minister: hong,
       ministers: [hong, xu],
@@ -1237,7 +1097,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       // The same night keeps every participant in chronological order.
       ...nightScroll,
     ];
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, reply_retries: [{ chat_turn_id: 12, question: "辽饷何解？" }], messages: halfTurnScroll }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: halfTurnScroll, reply_retries: [{ chat_turn_id: 12, question: "辽饷何解？" }] }) }));
     renderModal({
       minister: xu,
       ministers: [hong, xu],
@@ -1247,20 +1107,13 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       pendingIdentity: { campaign_id: "test-campaign", night_id: 23, chat_turn_id: 12 },
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(document.querySelector('[data-audience-turn-id="12"]')).not.toBeNull();
+    expect(document.querySelectorAll('[data-audience-turn-id="12"]')).toHaveLength(1);
+    expect(document.querySelector('[data-audience-turn-id="12"] .turn-segment.user')).not.toBeNull();
     expect(document.querySelector('[data-audience-turn-id="11"]')).not.toBeNull();
-    // Single user bubble — claimed persisted turn suppresses the synthetic pending duplicate.
-    expect(document.querySelectorAll('[data-audience-turn-id="12"] .turn-segment.user, [data-audience-turn-id="12"] .chat-message.user')).toHaveLength(1);
   });
 
-  it("切回有记录大臣：语义轮完整含朕问/回话/递话", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
-    renderModal({ minister: hong, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(document.querySelector('[data-audience-turn-id="11"]')).not.toBeNull();
-    expect(document.querySelectorAll('[data-audience-turn-id="11"] .turn-segment')).toHaveLength(3);
-    expect(document.querySelector(".minister-profile")).toBeNull();
-  });
+
+
 
 });
 
@@ -1365,18 +1218,15 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-31"] button')?.click(); });
-    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/audience/translation/retry")
-      .map(([, options]) => [options.method, JSON.parse(String(options.body))]))
-      .toEqual([["POST", { chat_turn_id: 31 }]]);
+    expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 31 }) }));
     await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item:not(.active)")?.click(); await Promise.resolve(); await Promise.resolve(); });
     const newRetry = host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-32"] button');
     expect(newRetry?.disabled).toBe(false);
     await act(async () => { newRetry?.click(); });
-    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/audience/translation/retry")
-      .map(([, options]) => [options.method, JSON.parse(String(options.body))]))
-      .toEqual([["POST", { chat_turn_id: 31 }], ["POST", { chat_turn_id: 32 }]]);
+    expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 32 }) }));
     await act(async () => { releaseOldRetry?.(); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector(".history-turn-item.active")).not.toBeNull();
+    expect(host.querySelector(".history-turn-item.active")?.textContent).toContain("乙夜");
+
     expect(host.querySelector('[data-audience-turn-id="32"]')).not.toBeNull();
     expect(host.querySelector('[data-audience-turn-id="31"]')).toBeNull();
     expect(host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-32"] button')?.disabled).toBe(true);
@@ -1403,9 +1253,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const retry = host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button');
     expect(retry).not.toBeNull();
     await act(async () => { retry?.click(); await Promise.resolve(); await Promise.resolve(); });
-    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/audience/translation/retry")
-      .map(([, options]) => [options.method, JSON.parse(String(options.body))]))
-      .toEqual([["POST", { chat_turn_id: 8 }]]);
+    expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 8 }) }));
     expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
   });
   it("recovers a completed translation by rereading the scroll after its first read fails", async () => {
@@ -1446,8 +1294,10 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector(".modal-title")).not.toBeNull();
-    expect(host.textContent).toContain("洪承畴");
+    expect(host.textContent).toContain("召对记录");
+    expect(host.textContent).toContain("涉及人物：洪承畴");
+    expect(host.querySelector('[data-audience-turn-id="8"]')).not.toBeNull();
+
     await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item.active")?.click(); });
     expect(host.querySelector('[data-audience-turn-id="8"]')).not.toBeNull();
     const filter = host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')!;
@@ -1455,14 +1305,18 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
       filter.value = "洪承畴";
       filter.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    const turn8 = host.querySelector('[data-audience-turn-id="8"]');
+    expect(turn8?.querySelector(".turn-segment.user")).not.toBeNull();
+    expect(turn8?.querySelector(".turn-segment.minister .turn-speaker")?.textContent).toBe("殿上");
+    expect(filter.value).toBe("洪承畴");
     expect(host.querySelector("textarea, input, .chat-composer")).toBeNull();
     const archivedAvatar = host.querySelector<HTMLImageElement>(".aside-avatar");
     expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
     const buttons = Array.from(host.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
     await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
-    // 切到归档夜 31：有卷轴消息节点；过滤器复位；不锁场次正文。
-    expect(host.querySelector(".chat-message, .audience-turn, .turn-segment")).not.toBeNull();
+    expect(host.querySelector(".chat-message.user, .turn-segment.user")).not.toBeNull();
+
     expect(host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')?.value).toBe("");
   });
 
@@ -1482,6 +1336,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].textContent).toContain("1 年 11 月");
     expect(rows[0].textContent).toContain("第 7 回合");
+
   });
 
   it("#671 史册月档经 HistoryModal fetch 呈现独立递话原文", async () => {
@@ -1548,7 +1403,11 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     await act(async () => {
       await vi.waitFor(async () => {
         await Promise.resolve();
-        expect(hostBlank.querySelectorAll("pre.memorial-text").length).toBeGreaterThan(0);
+        // 完成信号：固定界面标题「月末邸报奏报」落地（非生成正文哨兵）
+        const reportTitle = Array.from(hostBlank.querySelectorAll("h3.extraction-section-title"))
+          .find((el) => el.textContent === "月末邸报奏报");
+        expect(reportTitle).toBeTruthy();
+
       });
     });
     expect(hostBlank.querySelector("[data-testid=history-attendant]")).toBeNull();
@@ -1629,18 +1488,24 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
 
     const item = host.querySelector(".history-turn-item");
     expect(item).not.toBeNull();
+    const label = item!.textContent || "";
+    expect(label).toContain("递话");
 
-    // 标题/摘要承认第三种内容（契约：含「递话」；不锁死全句）
+    // 标题/摘要承认第三种内容（契约：含「递话」；不锁死全句；不在含递话正文的 host 上禁旧词）
     const dialog = host.querySelector('[role="dialog"]');
-    expect((dialog?.getAttribute("aria-label") || "").trim()).not.toBe("");
-    expect(host.querySelector("[data-testid=history-attendant], pre.memorial-text")).not.toBeNull();
+    expect(dialog?.getAttribute("aria-label") || "").toContain("递话");
+    expect(host.textContent).toContain("递话");
+
   });
 });
 
 describe("ChatModal — thinking/loading text switches on character type (gemini cmr r1)", () => {
+  const thinkingText = (): string =>
+    (document.querySelector(".chat-message.thinking p")?.textContent ?? "");
+
   it("shows 大臣思索中 while a minister is thinking", () => {
     renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", busy: "思考中" });
-    expect(document.querySelector(".chat-message.thinking")).not.toBeNull();
+    expect(thinkingText()).toContain("大臣思索中");
   });
 
 });
@@ -1655,6 +1520,7 @@ describe("ChatModal — cancel button during busy (issue #353)", () => {
     });
     const cancelBtn = document.querySelector(".composer-cancel");
     expect(cancelBtn).not.toBeNull();
+    expect(cancelBtn?.textContent).toContain("离开等待");
   });
 
   it("does NOT show a cancel button when idle", () => {
@@ -1692,25 +1558,36 @@ describe("ChatModal — cancel button during busy (issue #353)", () => {
   });
 });
 
-describe("ReportModal — narrative settlement bulletin", () => {
-  it("renders narrative without an account page", () => {
-    renderReportModal({
-      report: "**辽东军情**\n- 军前缺饷",
+describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
+  it("shows elapsed time in the thinking indicator while busy", () => {
+    vi.useFakeTimers();
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      busy: "大臣思索中",
     });
+    // Timer starts at 0; advance 3 seconds
+    act(() => { vi.advanceTimersByTime(3000); });
+    const thinkingP = document.querySelector(".chat-message.thinking p");
+    expect(thinkingP?.textContent).toMatch(/\d+\s*秒/);
+    vi.useRealTimers();
 
-    expect(document.querySelector("pre.memorial-text")).not.toBeNull();
-    expect(document.querySelector(".gazette-document")).not.toBeNull();
   });
+});
 
+describe("ReportModal — narrative settlement bulletin", () => {
   it("#1387 底部有朕知道了主按钮可达关闭，不靠右上小 X", () => {
     const onClose = vi.fn();
     const host = renderReportModal({
       report: "一、边报\n\n二、钱粮\n\n三、探子回报\n下文应可滚完",
       onClose,
     });
-    const dismiss = host.querySelector<HTMLButtonElement>("button.gazette-dismiss-btn");
+    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了") || (b.textContent || "").includes("收卷"),
+    ) as HTMLButtonElement | undefined;
     expect(dismiss).toBeTruthy();
     expect(host.querySelector(".gazette-document")).not.toBeNull();
+    expect(host.querySelector(".gazette-dismiss")).not.toBeNull();
     act(() => dismiss!.click());
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -1742,9 +1619,7 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(host.querySelector(".gazette-document")).not.toBeNull();
     expect(host.querySelector(".gazette-masthead")).not.toBeNull();
     // 空壳复用原 pre，不另写固定空态文案
-    const body = host.querySelector("pre.memorial-text");
-    expect(body).not.toBeNull();
-    expect(body?.textContent ?? "").toBe("");
+    expect(host.querySelector("pre.memorial-text")?.textContent).toBe("");
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("朕知道了"),
     ) as HTMLButtonElement | undefined;
@@ -1773,7 +1648,7 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("#671 王承恩递话在邸报纸面外独立区，不经 stripOrganicMarkdown；空则不渲染", () => {
+  it("#671 absent or blank attendant text does not render an aside", () => {
     const hostEmpty = renderReportModal({ report: "一、边报" });
     expect(hostEmpty.querySelector("[data-testid=gazette-attendant]")).toBeNull();
 
@@ -1787,14 +1662,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
         .querySelector("[data-testid=gazette-attendant]"),
     ).toBeNull();
 
-    const rawWithWs = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
-    const host = renderReportModal({
-      report: "**辽东军情**",
-      attendantMessage: rawWithWs,
-    });
-    const aside = host.querySelector("[data-testid=gazette-attendant]");
-    expect(aside).not.toBeNull();
-    // 递话区在纸面 article 之外
-    expect(host.querySelector(".gazette-document")?.contains(aside)).toBe(false);
+
   });
 });

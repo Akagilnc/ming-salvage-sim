@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 from typing import Dict, List, Tuple
 
@@ -83,12 +82,10 @@ def apply_levy_driven_transfers(
         if base <= 0:
             continue
         pool_members = surcharge_population_pool_members(db, region_id)
-        if pool_members == {"农民", "流民"}:
-            pass  # 完整加派人口池
-        elif "农民" not in pool_members:
+        if "农民" not in pool_members:
             # 无农民源：空池或 #659 边镇仅军户/流民切片——无加派人口效应，不 soft-lock。
             continue
-        else:
+        if pool_members != {"农民", "流民"}:
             # 有农民无流民＝农业省池残缺，fail-loud（#650 missing_pool）
             raise ValueError(f"{region_id} 有正加派账但仅有部分农民/流民省级人口行")
         support = max(0, min(100, int(row["public_support"] or 0)))

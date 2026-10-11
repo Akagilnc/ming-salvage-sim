@@ -139,7 +139,6 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
-    from ming_sim.db import GameDB
 
     names: List[str] = []
     roster = json.loads(row["participant_roster"] or "[]")

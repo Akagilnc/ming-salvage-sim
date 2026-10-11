@@ -18,6 +18,9 @@ from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tupl
 EFFECT_NOOP = "noop"
 EFFECT_MATERIALIZE = "materialize"
 
+# 身份键字段：入库前首尾归一以便匹配；其余 LLM 文本字段原值运输。
+_IDENTITY_KEY_FIELDS = frozenset({"name", "target_id", "target_candidate", "station_region"})
+
 @dataclass(frozen=True)
 class FieldSpec:
     name: str
@@ -32,20 +35,6 @@ class FieldSpec:
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
     # Field is populated only when another canonical field has one of these values.
     populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
-
-
-# Free-prose string fields feed issues → materials; do not strip/rewrite (#1834 F16).
-# Machine keys / ids keep .strip() below.
-_FREE_PROSE_FIELD_NAMES = frozenset({
-    "new_content",
-    "title",
-    "stop_condition",
-    "ongoing_effects",
-    "stages",
-    "responsible_bodies",
-    "station",
-    "new_title",
-})
 
 
 @dataclass(frozen=True)

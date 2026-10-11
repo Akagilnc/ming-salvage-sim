@@ -12,6 +12,7 @@ D2/D3 是病因钉，修好后不要求常绿——本文件不收录。
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -33,6 +34,7 @@ class _StreamFarewellAgent:
 
 
 
+
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=web_app.app),
@@ -40,22 +42,27 @@ def _client() -> httpx.AsyncClient:
     )
 
 
-from tests.test_chat_stream_failpaths_393 import _parse_sse as _parse_sse_chunk
+
+from tests.sse_helpers import parse_sse_event_pairs as _parse_sse_chunk
 
 
 def _named_scene_beats(scroll) -> list[str]:
     return [m["beat"] for m in scroll if m["beat"] not in {"coda", ""}]
 
 
+
 def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch):
     """#1727：真实退朝在 done 暴露前预领屏障，随后收夜。"""
     game = web_game
+    _active_minister(game)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     agent = _StreamFarewellAgent()
     stub_scene_agent(monkeypatch, agent)
 
     statuses: dict[str, int] = {}
+    chat_accepted: list[int] = []
+    chat_terminal: list[dict] = []
     barrier_at_done: list[bool] = []
 
     class _DoneProbeQueue(web_app.queue.Queue):
@@ -67,18 +74,19 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
                 if not barrier_at_done[-1]:
                     return super().put(item, *args, **kwargs)
                 async def _probe() -> dict[str, int]:
+                    # #1902：非流式召对入口退役，说话只有流式一条。屏障守的是玩家写
+                    # 入口本身：流式请求在屏障窗内照发 200，拒收落在 SSE 终态——故此处
+                    # 必须把流消费到终态并断言那条结构化拒收（#1727 承诺的
+                    # 「HTTP/SSE 外部可见拒」）；只看 200 等于什么都不证明。
                     async with _client() as client:
-                        requests = {
-                            "chat": client.post(
-                                "/api/audience/chat",
-                                json={"message": "再问边饷？"},
-                            ),
-                            "undo": client.post("/api/audience/chat/undo"),
-                        }
-                        return {
-                            name: (await request).status_code
-                            for name, request in requests.items()
-                        }
+                        chat = await client.post(
+                            "/api/audience/chat/stream",
+                            json={"message": "再问边饷？"},
+                        )
+                        undo = await client.post("/api/audience/chat/undo")
+                        chat_accepted.append(chat.status_code)
+                        chat_terminal.append(next({"event": kind, "data": data} for kind, data in reversed(_parse_sse_chunk(chat.text)) if kind in ("done", "error")))
+                        return {"undo": undo.status_code}
 
                 statuses.update(asyncio.run(_probe()))
             return super().put(item, *args, **kwargs)
@@ -104,10 +112,13 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     assert isinstance(done_payload, dict), done_payload
     assert done_payload.get("court_action") == "court_break", done_payload
     assert barrier_at_done == [True]
-    assert statuses == {
-        "chat": 409,
-        "undo": 409,
-    }
+    # #1902：召对只有流式一条，屏障窗内受理（200）但拒收在终态；undo 同步 409。
+    assert statuses == {"undo": 409}, statuses
+    assert chat_accepted == [200], chat_accepted
+    # 负向契约在终态里：屏障窗内的召对必须是那条结构化拒收，不得出现成功 done/end。
+    assert len(chat_terminal) == 1, chat_terminal
+    assert chat_terminal[0]["event"] == "error", chat_terminal
+    assert chat_terminal[0]["data"].get("code") == "night_closing", chat_terminal
     # end 后终态：夜 closed；#1838 reopen 无 closing/exit/divider 收尾旁白三拍。
     row = game.db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),
@@ -129,6 +140,7 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
         and m.get("beat") == "dialogue"
         for m in scroll
     ), scroll
+
 
 
 def _active_minister(game) -> str:

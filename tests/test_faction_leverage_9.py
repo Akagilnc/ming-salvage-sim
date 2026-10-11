@@ -21,7 +21,6 @@ import pytest
 
 
 
-
 def _yandang_core(db):
     """取阉党一个握高权官(内阁/司礼监/吏部/兵部)的在朝核心。"""
     return db.conn.execute(
@@ -245,6 +244,7 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     assert db.get_character_status(name)[0] == "dismissed", "失败任命应回滚人物状态"
 
 
+
 def test_displaced_minister_faction_leverage_recomputed(game):
     """#9 cmr R1：顶替路也要重算【被顶替者】所属派系 leverage。
     新任者属 A 派系(东林)，经 apply_office_appointment 任命到独占实职(兵部尚书)，
@@ -276,6 +276,7 @@ def test_displaced_minister_faction_leverage_recomputed(game):
     assert after < before, (
         f"被顶替者(崔呈秀)所属阉党 leverage 应在顶替后全重算下跌(before={before} after={after})"
     )
+
 
 
 def test_offset_not_re_anchored_on_reload_after_clamp(game):
@@ -368,6 +369,7 @@ def test_add_character_appointment_lifts_faction_leverage(game):
     )
 
 
+
 def test_active_member_empty_office_contributes_zero_weight(game):
     """#9 cmr R2 finding#3：active + power_id='ming' + office='' + office_type 非空(理论可达边界)
     对 faction 权重和贡献为 0（无实职=不贡献 leverage）。修前 _member_office_weight 会把
@@ -403,6 +405,7 @@ def test_active_member_empty_office_contributes_zero_weight(game):
     assert weight_sum == 0.0, (
         f"仅剩 active 空 office 成员时 faction 权重和应为 0(weight_sum={weight_sum})"
     )
+
 
 
 def test_recompute_all_reconciles_drift_from_unhooked_path(game):
@@ -506,6 +509,7 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
     )
 
 
+
 def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
     """#9（用户挑战）：魏忠贤(九千岁)退场对阉党的冲击应按司礼监批红(20)算，不是东厂(8)。
     他真权在司礼监秉笔=批红，office_type=东厂只是兼差。退场掉 20 而非 8。"""
@@ -606,6 +610,7 @@ def test_non_whitelist_faction_delta_direct_leverage_survives_reconcile(game):
     )
 
 
+
 # ----------------------------------------------------------------------------
 # #9 线上 R1 评审 6 项 fix 的回归测试
 # ----------------------------------------------------------------------------
@@ -648,7 +653,6 @@ def test_chat_rollback_restores_faction_leverage(game):
 # ----------------------------------------------------------------------------
 # #177 两个 bug 的回归测试
 # ----------------------------------------------------------------------------
-
 
 def test_power_id_defection_drops_faction_leverage_immediately(game):
     """#177 R2（P2）：明臣投敌（power_id ming→外藩）经 apply_character_power_changes 后，

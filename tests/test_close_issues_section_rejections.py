@@ -25,6 +25,7 @@ def test_close_already_inactive_rejected_missing_ref(game):
     assert rej[0].category == "missing_ref"
 
 
+
 def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
     db, state, _ = game
     # 不可崩坏局势：active 但无 effect_on_fail。reason=failed → close_issue 回 None（保持 active）。
@@ -39,6 +40,7 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "active"
 
 
+
 def test_close_issue_code_exception_propagates(read_game, monkeypatch):
     db, state, _ = read_game
     def _boom(*a, **k):
@@ -49,6 +51,7 @@ def test_close_issue_code_exception_propagates(read_game, monkeypatch):
         apply_issue_tracker_output(
             db, state, {"close_issues": [{"issue_id": 1, "reason": "resolved"}]}
         , source=Provenance.system_simulation)
+
 
 
 def test_close_valid_issue_still_succeeds(game):

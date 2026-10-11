@@ -20,6 +20,7 @@ def clean_rejections(game):
     return game
 
 
+
 # ---------------------------------------------------------------------------
 # RejectionCollector — 缓冲与 flush
 # ---------------------------------------------------------------------------
@@ -31,6 +32,7 @@ def test_rejection_collector_flush_before_record_leaves_db_empty(clean_rejection
     rc.flush_to_db(db)
     count = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
     assert count == 0
+
 
 
 def test_rejection_collector_flush_writes_rows(clean_rejections):
@@ -66,6 +68,7 @@ def test_rejection_collector_flush_writes_rows(clean_rejections):
     assert rows[1][2] == "invalid_enum"
 
 
+
 def test_rejection_collector_flush_clears_buffer(clean_rejections):
     """flush 后缓冲清空，再次 flush 不写新行。"""
     db, state, content = clean_rejections
@@ -76,6 +79,7 @@ def test_rejection_collector_flush_clears_buffer(clean_rejections):
     rc.flush_to_db(db)  # 第二次 flush 缓冲已空
     count = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
     assert count == 1  # 只有第一次 flush 的 1 行
+
 
 
 def test_rejection_collector_flush_stores_item_as_json(clean_rejections):
@@ -91,6 +95,7 @@ def test_rejection_collector_flush_stores_item_as_json(clean_rejections):
         "SELECT item_json FROM rejection_reports"
     ).fetchone()[0]
     assert json.loads(item_json) == raw
+
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +118,7 @@ def test_mirror_to_jsonl_appends_on_multiple_calls(game, tmp_path):
     assert len(lines) == 2
 
 
+
 def test_mirror_to_jsonl_empty_buffer_writes_nothing(tmp_path):
     """缓冲为空时 mirror_to_jsonl 不创建文件（或文件存在则不追加行）。"""
     rc = RejectionCollector()
@@ -120,6 +126,7 @@ def test_mirror_to_jsonl_empty_buffer_writes_nothing(tmp_path):
     rc.mirror_to_jsonl(out)
     import os
     assert not os.path.exists(out)
+
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +161,7 @@ def test_flush_then_mirror_writes_jsonl(clean_rejections, tmp_path):
     assert json.loads(row["item_json"]) == {"id": "ghost"}
 
 
+
 def test_mirror_idempotent_after_flush(clean_rejections, tmp_path):
     """commit 后同一批行 mirror 两次只写一次（已镜像的行不重复 append）。"""
     db, state, content = clean_rejections
@@ -171,6 +179,7 @@ def test_mirror_idempotent_after_flush(clean_rejections, tmp_path):
     assert len(lines) == 1
 
 
+
 def test_unflushed_rows_never_mirrored(tmp_path):
     """未 flush（未进 DB）的行不进 jsonl——回滚时这些行会消失，镜像它们=孤立行。"""
     rc = RejectionCollector()
@@ -182,6 +191,7 @@ def test_unflushed_rows_never_mirrored(tmp_path):
 
     import os
     assert not os.path.exists(out)
+
 
 
 def test_reset_discards_pending_and_flushed(clean_rejections, tmp_path):
@@ -205,6 +215,7 @@ def test_reset_discards_pending_and_flushed(clean_rejections, tmp_path):
     assert not os.path.exists(out)
 
 
+
 def test_record_accepts_plain_string_source(clean_rejections):
     """source 传普通字符串不崩（运行时不查注解），落库归一为枚举值字符串。
 
@@ -219,12 +230,14 @@ def test_record_accepts_plain_string_source(clean_rejections):
     assert src == "player_decree"
 
 
+
 def test_record_rejects_unknown_source_string():
     """source 传非法字符串响亮报错（fail-loud，不静默落非法值）。"""
     rc = RejectionCollector()
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source="not_a_provenance")
     with pytest.raises(ValueError):
         rc.record("metric_delta", ri, turn=1)
+
 
 
 # ---------------------------------------------------------------------------

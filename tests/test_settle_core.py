@@ -23,6 +23,7 @@ def test_pre_settle_runs_fixed_fiscal_tick(game):
     assert after > before
     assert isinstance(auto, list)
 
+
 def test_pre_settle_persists_event_terminal_states_in_write_path(game):
     """过期终态由逐旨后的唯一判门落库；候选查询与 pre_settle 本身不写这条终态。"""
     from types import SimpleNamespace

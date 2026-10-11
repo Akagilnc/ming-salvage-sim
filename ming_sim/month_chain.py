@@ -646,8 +646,9 @@ def run_player_month_chain(
         )
 
     try:
-        if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
-            chain["cheat_directive"] = str(cheat_directive)
+        cheat = str(cheat_directive or "")
+        if cheat.strip() and not chain.get("cheat_directive"):
+            chain["cheat_directive"] = cheat
             _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     except Exception as exc:
@@ -1420,10 +1421,8 @@ def run_secret_orders_supply(
         )
     finally:
         release_material_tree(prepared.root)
-    data = parse_agent_json(raw, "secret_orders_supply")
-    if not isinstance(data, dict):
-        raise LLMUnavailable("整月供料产物非有效 JSON 对象", stage="secret_orders_supply")
-    return data
+    # 顶层 object 唯一权威在 parse_agent_json；此处不再重复判定。
+    return parse_agent_json(raw, "secret_orders_supply")
 
 
 def _step_4a_secret_order_supply(
@@ -1465,8 +1464,7 @@ def _step_4a_secret_order_supply(
             step="secret_orders_supply",
             operation=_call_supply,
         )
-        if not isinstance(product, dict):
-            product = {}
+        # parse_agent_json 已保证 dict；_guard_month_call 失败即中止，无第三层顶层 object 收口。
         chain["secret_orders_supply_product"] = product
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 

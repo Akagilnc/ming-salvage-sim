@@ -163,12 +163,3 @@ CLI 自动跑局（崇祯 agent=qwen）实测，攻略**三线全部跑通并落
   「挪垫/预估」推满，开源收益始终没真盖过支出。纸面繁荣 > 实账。
 - **内库须显式守**：goal 不写「内库别透支」时，agent 把内库当钱包填窟窿，10 回合烧穿（440→0）；
   goal 加「守住实账」后稳守 460-518。**复现时 goal 务必带这句**。
-
-### CLI 自动跑局已修的脚本 bug（`scripts/play_as_emperor.py`，与攻略无关）
-qwen 弱模型驱动 CLI 暴露一串历史坑，已修：① 退朝判断要覆盖「朕问：」界面（agent 用「传X」换人不回主菜单）
-② 草案界面强制颁布兜底 ③ payload 喂本月进度（num_history_runs=8 太短会盲凑）④ issue 颁布须先 confirm pending
-⑤ confirm N 的 N 是 directive **id** 不是序号 ⑥ TIMEOUT 试探重试 ⑦ step 上限 500→turns×60+300
-⑧ 草案空发 back 逼拟旨 + 超长输入截断（防 CLI 卡死）。
-
-> 残留：草案审议界面 qwen 仍偶发 confirm/issue/yes 循环（弱模型与复杂状态机不匹配）。
-> 跑满 100 月建议**游戏侧换 deepseek**（更守 prompt），或用 `decree-probe` 跳过对话直接喂诏书序列验结算。

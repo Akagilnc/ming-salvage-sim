@@ -1,6 +1,6 @@
 import React from "react";
-import { Check, Edit3, Loader2, Trash2, X } from "lucide-react";
-import type { CasedDirective, Directive, GameState, LocalDirectiveItem } from "../types";
+import { Loader2, Trash2, X } from "lucide-react";
+import type { CasedDirective, GameState, LocalDirectiveItem } from "../types";
 
 /** #1764：source/actor 结构化字段直接并列（P7/0142；非角色台词模板）。 */
 function sourceLabel(source: string, actor: string): string {
@@ -61,33 +61,17 @@ function cardStateA11y(
 
 export function EdictModal({
   state,
-  editingDirectiveId,
-  editingDirectiveText,
-  decree,
-  report,
   busy,
   error,
   localDirectives = [],
-  onEditingTextChange,
-  onStartEdit,
-  onCancelEdit,
-  onSaveDirective,
   onDeleteDirective,
   onIssueDecree,
 }: {
   state: GameState;
-  editingDirectiveId: number | null;
-  editingDirectiveText: string;
-  decree: string;
-  report: string;
   busy: string;
   error: string;
   /** #1764：本地在飞/失败项（会话态）。 */
   localDirectives?: LocalDirectiveItem[];
-  onEditingTextChange: (value: string) => void;
-  onStartEdit: (directive: Directive) => void;
-  onCancelEdit: () => void;
-  onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
   /** #1277/#1560：有可结算工作（草案或 resolve_turn 可消费 pending）时主钮走盖玺颁诏；真空禁用。 */
   onIssueDecree: () => void;
@@ -96,7 +80,7 @@ export function EdictModal({
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
   const draftDirectives = state.directives;
   const casedDirectives: CasedDirective[] = state.cased_directives ?? [];
-  // save/delete 绑在既有草案卡，不另占席。
+  // save/delete 绑在既有草案卡，不另占席（#1902 J4：无 directiveId 的会话卡已删）。
   const requestByDirectiveId = new Map(
     localDirectives.map((item) => [item.directiveId, item]),
   );
@@ -129,7 +113,7 @@ export function EdictModal({
       <small id={errorId} className="local-fail-note" data-role="local-error" role="alert">{message}</small>
     ) : null;
 
-  // 御案两区：草稿（可改删）/ 已发的旨意（成案只读，0048 无准驳）。
+  // 御案两区：草稿（可删）/ 已发的旨意（成案只读，0048 无准驳）。
   const showDraftZone = draftDirectives.length > 0;
   const showIssuedZone = casedDirectives.length > 0;
   const draftHeadingId = "edict-zone-draft-title";
@@ -148,7 +132,6 @@ export function EdictModal({
                   const req = requestByDirectiveId.get(directive.id);
                   const phase = req?.phase ?? "draft";
                   const minister = isMinisterSourced(directive.source);
-                  const editing = editingDirectiveId === directive.id;
                   const inflight = req?.phase === "inflight";
                   const bodyId = `edict-body-${directive.id}`;
                   const errorId = `edict-err-${directive.id}`;
@@ -170,53 +153,15 @@ export function EdictModal({
                         <span data-role="source-label">{sourceLabel(directive.source, directive.actor)}</span>
                         {req ? <PhaseChip phase={req.phase} /> : null}
                       </div>
-                      {editing && !inflight ? (
-                        <div className="directive-edit">
-                          <textarea
-                            id={bodyId}
-                            value={editingDirectiveText}
-                            onChange={(event) => onEditingTextChange(event.target.value)}
-                          />
-                          <div>
-                            <button
-                              className="icon-button"
-                              onClick={() => onSaveDirective(directive)}
-                              aria-label="保存草案"
-                              disabled={requestLocked}
-                            >
-                              <Check size={15} />
-                            </button>
-                            {/* 纯本地取消：只清编辑态，不发请求，不吃 requestLocked。 */}
-                            <button
-                              className="icon-button"
-                              onClick={onCancelEdit}
-                              aria-label="取消修改"
-                            >
-                              <X size={15} />
-                            </button>
-                          </div>
+                      {renderBody(directive.text, bodyId, directive.notes)}
+                      {renderFailNote(failMsg, errorId)}
+                      {!inflight ? (
+                        <div className="directive-tools">
+                          <button onClick={() => onDeleteDirective(directive.id)} disabled={requestLocked}>
+                            <Trash2 size={14} />删
+                          </button>
                         </div>
-                      ) : (
-                        <>
-                          {renderBody(
-                            req?.op === "save" && req.text ? req.text : directive.text,
-                            bodyId,
-                            directive.notes,
-                          )}
-                          {renderFailNote(failMsg, errorId)}
-                          {!inflight ? (
-                            <div className="directive-tools">
-                              <button onClick={() => onStartEdit(directive)} disabled={requestLocked}>
-                                <Edit3 size={14} />改
-                              </button>
-                              <button onClick={() => onDeleteDirective(directive.id)} disabled={requestLocked}>
-                                <Trash2 size={14} />删
-                              </button>
-                            </div>
-                          ) : null}
-                        </>
-                      )}
-                      {editing && !inflight ? renderFailNote(failMsg, errorId) : null}
+                      ) : null}
                     </div>
                   );
                 })}
@@ -255,6 +200,7 @@ export function EdictModal({
           </div>
         </section>
 
+        {/* #1902：御笔自拟面板（拟新旨/改稿）随拟诏台手写入口退役；旨意只从召对来。 */}
       </div>
 
       {error && <div className="error-line" role="alert">{error}</div>}

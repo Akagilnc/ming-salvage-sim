@@ -15,7 +15,6 @@
 **为什么能成**(关键事实,挖过别重来):
 - `create_chat_model()` 是**唯一咽喉点**——8 个 Agent 创建点(大臣/写诏/推演/打分/sanitizer/章节记忆/结局/烟测)全过它。改它的返回值 = 整个真游戏换后端。
 - 除大臣外全是「文本进文本出」,映射 CLI 干净。
-- 大臣的 agno 工具**非必需**:查名册/地区是 DB 纯函数,而盘面快照游戏本就注入进大臣 system prompt(实测大臣能报对国库真值 1781);下旨/退下/换人在 terminal.py 里本就有纯文字退路。所以大臣退化成「纯文本进谏」,不接 agno function-calling 也能玩。
 
 ---
 
@@ -68,8 +67,6 @@ agno Agent.run()
 | 章节记忆 | ✅ 产 `{body,tags}` 并入库 |
 | end_turn | ✅ 推进回 SUMMONING |
 
-**交互式真游戏**(`python main.py`)脱 key 启动:大臣毕自严入殿,用文言作答且**盘面数字正确**(「国库千七百八十余万两」= DB 真值 1781)——证明路 B 的事实注入是游戏内建的,大臣不靠工具也有据。
-
 ---
 
 ## 4. 日志 / 可观测性
@@ -84,22 +81,8 @@ agno Agent.run()
 
 ---
 
-## 5. 怎么玩
-
-```bash
-MING_SIM_LLM_BACKEND=agy MING_SIM_DB=data/probe.db \
-.venv/bin/python main.py 2>&1 | tee scripts/runs/play_$(date +%m%d_%H%M).log
-```
-
-- `MING_SIM_LLM_BACKEND=agy`:走本地 agy(必需,否则回原 api key 路径)。
-- `MING_SIM_DB=data/probe.db`:用现有存档(turn 12,含金手指);开新档去掉这行用默认 `data/ming_sim.db`。
-- 机器前提:本机已装并登录 `agy`(`~/.local/bin/agy`)。换 codex 后端:`MING_SIM_LLM_BACKEND=codex`。
-
----
-
 ## 6. 已知缺口 / 待办
 
-- **token 统计抓不到**:`[TOKEN-SUMMARY] no LLM calls captured` —— token hook 挂在 OpenAI HTTP client 上,CLI 后端绕过了(agy 本也不报 token)。cosmetic,trace 里有字符数可估。
 - **速度**:agy ~15–25s/次,一回合 7 次结算调用 + N 次大臣对话 ≈ 分钟级。探针可接受。
 - **大臣工具未接**:当前大臣纯文本进谏。若要恢复「大臣按需查名册/地区」,需让 codex/agy 自己 call CLI 工具脚本(`scripts/cli_tools_probe.py` 是地基),或预解析注入——探针阶段先不做。
 - **🔴 试玩暴露两个待修(2026-06-07,详见 [TODO.md](TODO.md) B2/B3,已拍板一起改)**:

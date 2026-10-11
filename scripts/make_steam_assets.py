@@ -87,7 +87,6 @@ def overlay_logo(img, lang="cn"):
     ty1 = H - block_h - int(H * 0.08)
     ty2 = ty1 + t1h + gap
     mid = W // 2
-    lw  = max(t1w, t2w) // 2 + int(W * 0.03)
 
     stamp(draw, mid - t1w // 2, ty1, t1, f1, sw=8)
     stamp(draw, mid - t2w // 2, ty2, t2, f2, sw=6)
@@ -125,7 +124,6 @@ def make_small_capsule(lang):
     ty2 = ty1 + t1h + gap
 
     mid = split + logo_w // 2 + 4
-    lw  = logo_w // 2 - 4
 
     stamp(draw, mid - t1w // 2, ty1, t1, f1, sw=5)
     stamp(draw, mid - t2w // 2, ty2, t2, f2, sw=3)

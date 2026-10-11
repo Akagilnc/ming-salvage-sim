@@ -16,10 +16,12 @@ def _dossier(db, state, text="清丈天下田亩", **payload):
         target_kind="issue", target_id=f"policy-{state.turn}", payload=payload,
     )
 
+
 def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
     db, _state, _content = game
     with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts({"verdicts": []}, [], db)
+
 
 @pytest.mark.parametrize("decision", ["promulgated", "rejected"])
 def test_promulgation_verdict_rejects_unknown_fields(game, decision):
@@ -38,6 +40,7 @@ def test_promulgation_verdict_rejects_unknown_fields(game, decision):
         decree_mod.validate_promulgation_verdicts(
             [verdict], dossiers, db, prepared_context=context,
         )
+
 
 def test_rejected_verdict_still_requires_full_rejection_contract(game):
     """#1397 负向边界：打回契约不因顺颁容错而放松。"""
@@ -60,12 +63,14 @@ def test_rejected_verdict_still_requires_full_rejection_contract(game):
 
 
 
+
 def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
     # Preserve suite-specific reason/intensity differences via builder knobs.
     return rejected_verdict(
         dossier_id, authority_band, midzhi=midzhi,
         reason="触犯钱粮命门，科臣封驳。", intensity="strong",
     )
+
 
 def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
     db, state, _content = game
@@ -85,6 +90,7 @@ def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
             decree_mod.validate_promulgation_verdicts(
                 [verdict], dossiers, db, prepared_context=context,
             )
+
 
 def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, monkeypatch):
     """一批判官一次调用，再走既有校验。入口是 llm_promulgation_verdicts。"""
@@ -124,6 +130,7 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
     assert calls[0][1] == "promulgation-judge"
     assert [row["id"] for row in calls[0][0]["dossiers"]] == [first, second]
 
+
 @pytest.mark.parametrize(
     ("snapshot_key", "forged"),
     [
@@ -148,6 +155,7 @@ def test_rejected_snapshot_must_equal_the_prepared_judge_input(
             [verdict], dossiers, db, prepared_context=context,
         )
 
+
 def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
@@ -166,6 +174,7 @@ def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
             [verdict], dossiers, db, prepared_context=context,
         )
 
+
 def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
@@ -179,6 +188,7 @@ def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
         decree_mod.validate_promulgation_verdicts(
             [verdict], dossiers, db, prepared_context=context,
         )
+
 
 @pytest.mark.parametrize(
     ("action_type", "mode"),

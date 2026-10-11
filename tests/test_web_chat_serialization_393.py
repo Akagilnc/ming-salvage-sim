@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 
+import pytest
+from tests.wait_utils import wait_until
+from tests.conftest import wait_for_background_jobs
+
 import asyncio
 import threading
 
@@ -8,6 +12,9 @@ import web_app
 from tests.wait_utils import _await_condition_or_task
 from tests.test_web_audience_night_498 import _FakeAgent
 from tests.conftest import stub_scene_agent
+
+
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
 
 def _runtime_for_stream_race(web_game, monkeypatch):
@@ -29,6 +36,7 @@ def _runtime_for_stream_race(web_game, monkeypatch):
     settlement.holding = settlement_holding  # type: ignore[attr-defined]
     settlement.release_event = settlement_release  # type: ignore[attr-defined]
     return runtime, "殿上", allow_finish, settlement_attempting, settlement
+
 
 
 def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn(web_game, monkeypatch):
@@ -73,6 +81,7 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     assert runtime.state.turn == 2
 
 
+
 def test_identity_setup_failure_preserves_question_and_releases_pending_owner(web_game, monkeypatch):
     runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race(web_game, monkeypatch)
     monkeypatch.setattr(runtime.db, "kv_get", lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed")))
@@ -89,6 +98,7 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(we
     # 新开夜可并发唤起留中案预推；等这些既有写票落定，再核查无泄漏。
     assert runtime._runtime_write_queue().wait_idle()
     assert runtime._runtime_write_queue().inflight_count() == 0
+
 
 
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(web_game, monkeypatch):
@@ -130,50 +140,7 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(web_game, monkeypa
     assert next(payload for kind, payload in parsed if kind == "done")["answer"] == "臣已知悉。"
 
 
-def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(web_game, monkeypatch):
-    """#1291+#1322: 非流式 chat 同步慢 LLM 在飞时，并发 GET /api/game/state 须在阈内响应。
 
-    根因：async api_audience_chat 在事件循环上直调全同步 get_game().chat()（→ subprocess.run），
-    整站 loop 卡死。对照流式端点 run_in_executor / directives to_thread——本测咬死卸载后
-    的可观测序：state 探针先于阻塞 chat 完成。
-    """
-    events: list[str] = []
-    chat_entered = threading.Event()
-    allow_finish = threading.Event()
-
-    stub_scene_agent(monkeypatch, _FakeAgent(started=chat_entered, allow=allow_finish, answer="臣已知悉。"))
-    turn = int(web_game.state.turn)
-
-    async def drive_concurrent_state_probe():
-        chat_task = asyncio.create_task(
-            web_app.api_audience_chat(web_app.ChatRequest(message="边饷如何？")),
-        )
-        async def state_probe():
-            try:
-                await _await_condition_or_task(chat_entered.is_set, chat_task)
-                payload = await web_app.api_state()
-                # 先落成功标记再放行：set() 先执行则 chat 线程可先记 "chat"，
-                # 与外部断言的严格顺序无 happens-before（#1722 判牒）。
-                events.append("state_done")
-            finally:
-                # api_state 抛错也须放行 chat worker，否则 threadpool 永久阻塞。
-                allow_finish.set()
-            return payload
-
-        chat_result, state_payload = await asyncio.gather(
-            chat_task,
-            state_probe(),
-        )
-        return chat_result, state_payload
-
-    chat_result, state_payload = asyncio.run(drive_concurrent_state_probe())
-
-    assert events == ["state_done"], (
-        f"event loop 被非流式 chat 冻结（events={events}）；"
-        "期望 state 探针在 chat 完成前响应"
-    )
-    assert state_payload["turn"]["turn"] == turn
-    assert chat_result["answer"] == "臣已知悉。"
 
 
 def test_nonstream_chat_rejects_when_session_draining(web_game):

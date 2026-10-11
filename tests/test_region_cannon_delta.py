@@ -24,6 +24,7 @@ def test_city_cannon_delta_lands_clamped(game):
     ).fetchone()[0]
     assert cannon == 40
 
+
 def test_city_cannon_capped_at_zero_for_low_city_level(game):
     """city_level=0 的边地上限为 0：投城防炮被 clamp 到 0、不落变化、不报错——
     但请求非 0 被上限拦截时**须留 region_log 痕迹**（delta=0），不静默吞（#18，违 P1 落库铁律）。"""
@@ -47,6 +48,7 @@ def test_city_cannon_capped_at_zero_for_low_city_level(game):
     assert int(rows[0]["delta"]) == 0
     assert rows[0]["old_value"] == "0" and rows[0]["new_value"] == "0"
 
+
 def test_city_cannon_lower_bound_clamp_audited_not_as_cap(game):
     """请求减炮但已无炮可减（下限 0 钳制）也留一条 delta=0 的 region_log。"""
     db, state, content = game
@@ -59,6 +61,7 @@ def test_city_cannon_lower_bound_clamp_audited_not_as_cap(game):
     assert len(rows) == 1, "请求减炮被下限 clamp 成 no-op 也须留痕"
     assert int(rows[0]["delta"]) == 0
 
+
 def test_zero_cannon_request_leaves_no_log(game):
     """真 no-op 请求（城防炮 delta=0，本就没要加炮）不留痕——留痕只针对「请求非 0 却被 clamp」（#18）。"""
     db, state, content = game
@@ -69,6 +72,7 @@ def test_zero_cannon_request_leaves_no_log(game):
         (before_turn,),
     ).fetchall()
     assert len(rows) == 0, "delta=0 的无请求不应留痕（避免噪声）"
+
 
 def test_illegal_region_field_rejected_not_raised(read_game):
     """非法 region 字段：ADR 0008 决定 1（PR2-S2）后不再 raise LLMContractError 崩整月，

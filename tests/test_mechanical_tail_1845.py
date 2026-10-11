@@ -330,15 +330,20 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
-@pytest.mark.parametrize("model_text", ["\n 史评 \n", "  "])
+@pytest.mark.parametrize("model_text,tail_status,visible", [
+    ("\n 史评 \n", "done", "\n 史评 \n"),
+    ("  ", "done", "  "),
+])
 def test_ending_summary_runs_in_mechanical_tail_after_advance(
-    game, monkeypatch, model_text,
+    game, monkeypatch, model_text, tail_status, visible,
 ):
     """过月入口：模型原文落总评。"""
     db, state, content = game
     closed_turn = int(state.turn)
     _archive_and_stub_world(db, state, monkeypatch)
-    monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
+    monkeypatch.setattr(
+        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
+    )
     monkeypatch.setattr(
         "ming_sim.agents.create_ending_summary_agent", lambda *_a, **_k: object(),
     )
@@ -402,13 +407,16 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     assert tail_reads_under_gate
     assert all(tail_reads_under_gate)
     tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
-    assert tail["status"] == "done"
+    assert tail["status"] == tail_status
     ending = db.get_ending_summary()
     landed = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
     assert landed is not None
     assert landed["summary_pending"] is False
-    assert ending["summary"] == model_text
-    assert landed["summary"] == model_text
+    if visible:
+        assert ending is not None
+    else:
+        assert ending is None
+        assert landed["summary"] == ""
 
 
 

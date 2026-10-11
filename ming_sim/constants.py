@@ -247,10 +247,11 @@ ARMY_FIELD_ALIASES = {
     "原因": "reason",
     "reason": "reason",
 }
-EXIT_COMMANDS = {"exit", "退出游戏", "退出", "exit game"}
 # #526 / #471 S10：收夜高置信封闭集（口令档确定性层；含「今日且到此」）
-# 单一真源：前端/CLI 不得另复制词表或语义旁路。
+# 单一真源：前端不得另复制词表或语义旁路。
 COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝", "今日且到此"}
+# #1902：入口自持「退下/done」词表与独立令退写口已清退；退人原句交共同 scene_chat／转译，
+# 在场 exit 经 declaration_dispatch 落 presence_effect。
 
 # 经济流水（economy_ledger）支出条目的结构化标签。
 # 仅对支出（delta<0）有效；收入条目（税收/抄家入帑/纳贡）三项一律 NULL。

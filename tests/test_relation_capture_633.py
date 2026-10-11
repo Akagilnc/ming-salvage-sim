@@ -11,6 +11,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import section, view
 
 from ming_sim.applier import Provenance
 
@@ -21,14 +23,15 @@ from ming_sim.relations import (
     settlement_edge_origin,
 )
 import pytest
-from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import section, view
+
 
 def _edge_rows(db, **kw):
     return db.get_relation_edge_events(**kw)
 
+
 def _triplets(rows):
     return {(r["source"], r["target"], r["event_kind"]) for r in rows}
+
 
 # ── 路由归属：受控 section 归 relations 独占槽 ────────────────────────
 
@@ -54,6 +57,7 @@ def test_settlement_interaction_lands_directed_edge_with_origin_round(game):
     # 反向无边（写端不做对称翻倍）
     assert _edge_rows(db, source="王绍徽", target="毕自严") == []
 
+
 # ── r2 F2 基数：三人联名=牵头→各联署恰两行；负向禁例 ─────────────────
 
 def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
@@ -70,6 +74,7 @@ def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
     assert len(rows) == 2
     assert len({r["origin"] for r in rows}) == 1
 
+
 def test_replayed_delta_does_not_double_write(game):
     """结算重放（恢复/重试）幂等：UNIQUE(source,target,kind,context,origin) 吸收重复。"""
     db, state, content = game
@@ -85,6 +90,7 @@ def test_replayed_delta_does_not_double_write(game):
     rows = [r for r in _edge_rows(db) if r["event_kind"] == "协作"]
     assert len(rows) == 1
 
+
 # ── 空捕获：零事件零副作用 ───────────────────────────────────────────
 
 def test_empty_capture_writes_nothing(game):
@@ -98,6 +104,7 @@ def test_empty_capture_writes_nothing(game):
         "SELECT COUNT(*) AS c FROM relation_edge_events"
     ).fetchone()["c"]
     assert after == before == 0
+
 
 # ── shape 垃圾按既有契约拒收 ─────────────────────────────────────────
 
@@ -118,6 +125,7 @@ def test_shape_garbage_rejected_per_existing_extractor_contract(game):
     # 全部拒收：库里零写入
     assert _edge_rows(db) == []
 
+
 def test_non_string_actor_target_context_shapes_rejected(game):
     """施动者/受动者/语境非字符串形状逐项拒收留痕，零写入（不 str() 搭救）。"""
     db, state, content = game
@@ -128,6 +136,7 @@ def test_non_string_actor_target_context_shapes_rejected(game):
     assert len(rejected) == 6
     assert all(r.category == "invalid_relation_event" for r in rejected)
     assert _edge_rows(db) == []
+
 
 def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
     """缺 provenance/伪前缀/未知未授权案卷/自带 round 的伪造值：逐项拒收留痕不落边。"""
@@ -140,6 +149,7 @@ def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
     assert all(r.category == "invalid_relation_event" for r in rejected)
     # 全部拒收：库里零边、无任何 origin 被默认成「盘面自发」落库
     assert _edge_rows(db) == []
+
 
 def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
     """r2 残余：来源只收精确 canonical 值——空白/变体一律拒收留痕，不 strip 后放行。
@@ -157,6 +167,7 @@ def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
     # 零写入：无任何归一后的「盘面自发」origin 溜进库
     assert _edge_rows(db) == []
 
+
 def test_settlement_edge_origin_rejects_missing_and_non_string():
     """拼装器本体不再静默默认哨兵；缺失/非字符串诚实报错。"""
     import pytest
@@ -172,6 +183,7 @@ def test_settlement_edge_origin_rejects_missing_and_non_string():
     # 合法条目照常拼装；拼装器不独立 strip——值原样进入 origin（空白只作非空谓词）
     assert settlement_edge_origin("盘面自发", "联名") == "盘面自发:relation:联名"
 
+
 def _promulgated_dossier(db, state, holder, token):
     """建并颁布一个案卷，返回 id（effect_origin_rejection 授权路径）。"""
     did = db.create_decree_dossier(
@@ -186,6 +198,7 @@ def _promulgated_dossier(db, state, holder, token):
     )
     db.record_dossier_decision(did, "promulgated")
     return did
+
 
 def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
     """冻结闭集内且已颁授权的 dossier 引用照常落边，origin_round 由当前回合绑定。"""
@@ -211,6 +224,7 @@ def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
     assert row["origin"] == f"dossier:{did}:relation:把柄|round:{state.turn}"
     assert row["origin_round"] == state.turn
 
+
 # ── V2：dossier 来源锁本批冻结输入闭集（fail-closed 双重合取） ────────
 
 def test_authorized_dossier_outside_frozen_batch_rejected_zero_edges(game):
@@ -232,6 +246,7 @@ def test_authorized_dossier_outside_frozen_batch_rejected_zero_edges(game):
     rows = _edge_rows(db)
     assert len(rows) == 1
     assert rows[0]["origin"] == f"dossier:{in_batch}:relation:协作|round:{state.turn}"
+
 
 def test_unauthorized_dossier_inside_frozen_set_still_rejected(game):
     """闭集合取另一支：在本批集合但未颁/未授权（effect_origin_rejection 不过）仍拒收。"""
@@ -257,6 +272,7 @@ def test_unauthorized_dossier_inside_frozen_set_still_rejected(game):
     assert rejected[0].category == "invalid_relation_event"
     assert _edge_rows(db) == []
 
+
 def test_missing_frozen_dossier_set_is_empty_closed_set(game):
     """None/缺集按空闭集：live DB 里已颁授权也不搭救（不从 DB 重建）。"""
     db, state, content = game
@@ -276,6 +292,7 @@ def test_missing_frozen_dossier_set_is_empty_closed_set(game):
     assert not section(out2, "relation_edge_event_resolutions").rejected
     assert len(_edge_rows(db, source="温体仁", target="周延儒")) == 1
 
+
 # ── F1：context 存储零删改，全链字节相等 ────────────────────────────
 
 def test_context_stored_byte_identical_through_full_chain(game):
@@ -292,6 +309,7 @@ def test_context_stored_byte_identical_through_full_chain(game):
     settle_delta(state, db, extracted, SettlementContext(content=content))
     row = _edge_rows(db, source="毕自严", target="王绍徽")[0]
     assert row["context"] == raw_context  # 字节相等，无 strip/裁剪/归一
+
 
 def test_writer_stores_whitespace_context_byte_identical(game):
     """S1 写缝直接验收：record_relation_edge_event 对空白语境存储原样。"""
@@ -311,6 +329,7 @@ def test_writer_stores_whitespace_context_byte_identical(game):
             context="   \n\t ", origin="settle:f1-blank", turn=state.turn,
         )
 
+
 def test_writer_rejects_non_string_context(game):
     """S1 写缝直接验收：context 非 str（dict/bytes）立即 ValueError 且零行落库。"""
     import pytest
@@ -322,6 +341,7 @@ def test_writer_rejects_non_string_context(game):
                 context=bad, origin="settle:f1-nonstr", turn=state.turn,
             )
     assert _edge_rows(db, source="甲", target="乙") == []
+
 
 # ── P5 并行装配：新模块并入同一 executor，不串行 ────────────────────
 
@@ -338,6 +358,7 @@ def test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges(game):
     assert all(r.category == "invalid_relation_event" for r in rejected)
     assert _edge_rows(db) == []
 
+
 def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     """同互动含任一非法端点：先整项校验后零边写入，不做部分落库；好项隔离照落。"""
     db, state, content = game
@@ -349,6 +370,7 @@ def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     # 坏项零写入（含好端点也不部分落库）；好项不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
+
 
 @pytest.mark.parametrize(
     ("targets", "bad_member"),
@@ -372,6 +394,7 @@ def test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges(
     # 坏项整项零写入（合法成员周延儒也不部分落库）；好项隔离不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
+
 
 @pytest.mark.parametrize(
     ("targets", "label"),
@@ -397,6 +420,7 @@ def test_empty_or_all_invalid_targets_reject_whole_item_zero_edges(
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
 
+
 def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
     """两个合格在朝大臣的合法边照常落库（端点守门不误伤）。"""
     db, state, content = game
@@ -404,6 +428,7 @@ def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
     res = view(out, "relation_edge_event_resolutions")
     assert section(out, "relation_edge_event_resolutions").rejected == []
     assert _triplets(_edge_rows(db)) == {("孙传庭", "洪承畴", "恩义")}
+
 
 # ── T1 r5 B 案：批内 pre∪post 名册并集时间语义 ────────────────────────
 
@@ -423,6 +448,7 @@ def test_interaction_then_same_batch_dismissal_still_lands(game):
     assert (row["source"], row["target"], row["event_kind"]) == ("王绍徽", "毕自严", "结怨")
     assert row["origin"] == f"盘面自发:relation:结怨|round:{state.turn}"
 
+
 def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
     """先入场后互动（同批起复/任命）：端点 ∈ 人物变更后 post-roster，边照落。
 
@@ -438,6 +464,7 @@ def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
     row = _edge_rows(db, source="孙承宗", target="毕自严")[0]
     assert (row["source"], row["target"], row["event_kind"]) == ("孙承宗", "毕自严", "协作")
 
+
 def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     """前后均不合格（幻觉名）在同批人物变更下仍拒收留痕、零边写入；
     同批双向合格项隔离照落——并集只放宽「任一投影合格」，不放宽到全放行。"""
@@ -450,6 +477,7 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     assert _triplets(_edge_rows(db)) == {
         ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
     }
+
 
 # ── r6 确认庭：资格集必传单一契约——无 live/post fallback ─────────────
 
@@ -471,6 +499,7 @@ def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     assert len(res_rejections) == 1
     assert res_rejections[0].category == "invalid_relation_event"
     assert _edge_rows(db) == []  # 零边写入
+
 
 def test_missing_endpoint_qualification_set_fails_loud(game):
     """负向：资格集必传——缺参即 TypeError 显式失败，绝不静默退化到

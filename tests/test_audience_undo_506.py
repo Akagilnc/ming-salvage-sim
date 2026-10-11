@@ -36,6 +36,7 @@ def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
     raise AssertionError("no active ming minister")
 
 
+
 def _run_round(
     db: GameDB,
     state,
@@ -80,6 +81,7 @@ def _run_round(
     return int(night_id), int(chat_id)
 
 
+
 def _minister_declaration(minister: str, presence_body: str) -> dict[str, object]:
     return {
         "presence": [{"person_name": minister, "effect": "enter", "body": presence_body}],
@@ -90,11 +92,13 @@ def _minister_declaration(minister: str, presence_body: str) -> dict[str, object
     }
 
 
+
 def _reopen(db: GameDB, content) -> GameDB:
     """kill+重开：关旧句柄、按同 path 重开（撤销日志持久化真源，AC6/AC7）。"""
     path = db.path
     db.close()
     return GameDB(path, content)
+
 
 
 # ── AC1 / AC2：撤回后按夜取数与「该轮未发生」等价；该轮抽取账/入殿账消失 ──────────
@@ -128,6 +132,7 @@ def test_undo_erases_round_from_night_ledger_and_presence(game):
     assert chat_id not in {int(t["id"]) for t in an.list_chat_turns_for_night(db, night_id)}
 
 
+
 # ── AC5：撤回只够到最近一轮；收夜/颁诏封窗后撤回被拒 ────────────────────────────
 
 
@@ -144,6 +149,7 @@ def test_undo_rejected_after_night_closed(game):
         db.undo_chat_turn(chat_id)
     # 封窗后账仍在（未被误撤）
     assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
+
 
 
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────
@@ -183,6 +189,7 @@ def test_undo_removes_unlisted_person_registration(game):
     assert newcomer not in an.present_names_at(db, night_id)
 
 
+
 # ── AC6：kill+重开后撤回最近一轮仍完整逆转（撤销日志持久化）────────────────────
 
 
@@ -209,6 +216,7 @@ def test_undo_full_reversal_survives_kill_and_reopen(game):
         assert m not in an.present_names_at(db2, night_id)
     finally:
         db2.close()
+
 
 
 # ── AC7：撤回×待补——不重新生成该轮账、无孤儿重试入口 ─────────────────────────
@@ -245,6 +253,7 @@ def test_undo_pending_translation_leaves_no_orphan_retry(game):
         db2.close()
 
 
+
 # ── AC9：撤回整套逆转事务原子——中途崩溃则原样未撤（无半撤回脏档）──────────────
 
 
@@ -273,6 +282,7 @@ def test_undo_reversal_is_atomic_on_midway_crash(game, monkeypatch):
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id = ?", (chat_id,)
     ).fetchone()["status"] == "active"
+
 
 
 # ── AC10：确认轮撤回——被该轮确认的暂存回到待确认（不再随颁诏提交）──────────────
@@ -311,6 +321,7 @@ def test_undo_confirm_round_reverts_pending_to_unapproved(game):
     assert row is not None and row["status"] == "pending" and row["night_approved"] == 0
 
 
+
 # ── AC11：被该轮口头拒绝而删除的暂存行复原（回滚该轮对先前对象的变更）──────────────
 
 
@@ -343,6 +354,7 @@ def test_undo_restores_staging_row_deleted_by_verbal_reject(game):
     ).fetchone()
     assert row is not None and row["status"] == "pending"
     assert "蓟辽总督" in row["payload_json"]
+
 
 
 # ── AC12：已落地密令撤回后其全部结构化字段记录一并消失（无幽灵排除）──────────────
@@ -384,6 +396,7 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
     ).fetchone()[0] == 0
 
 
+
 # ── L1（judge R1 S-exit-origin-unbound）：令退轮撤回 → 告退账消失 + 在场复原 ──────
 # 病根：dismiss_from_audience 落告退账时不绑本轮，undo 删不掉 → 按夜取数 ≠ 未发生，
 # 且被令退者永久差出（双轮场景在场不复原）。
@@ -399,23 +412,22 @@ def test_undo_dismiss_round_removes_exit_ledger_and_restores_presence(game):
     # round2：令退，告退账绑本轮 chat_id
     n2, c2 = _run_round(
         db, state, m,
-        writes=lambda night_id, chat_id: an.dismiss_from_audience(
-            db, m, origin_chat_turn_id=chat_id
-        ),
+        declaration={"presence": [{"person_name": m, "effect": "exit", "body": "臣告退。"}]},
     )
     assert n2 == n1
     # 令退落地：不在场（present_names_at 消费口令 TAG_EXIT）+ 告退账在册
     assert m not in an.present_names_at(db, n1)
-    assert any(an.TAG_EXIT in (e["tags"] or []) and m in e["person_names"]
+    assert any(e["presence_effect"] == an.PRESENCE_EXIT and m in e["person_names"]
                for e in an.list_ledger(db, n1))
 
     db.undo_chat_turn(c2)
 
     # 告退账消失（origin 绑本轮，随撤回删）
-    assert not any(an.TAG_EXIT in (e["tags"] or []) and m in e["person_names"]
+    assert not any(e["presence_effect"] == an.PRESENCE_EXIT and m in e["person_names"]
                    for e in an.list_ledger(db, n1))
     # 在场复原（round1 入殿仍在）——被令退者不再永久差出
     assert m in an.present_names_at(db, n1)
+
 
 
 def test_undo_single_round_enter_and_dismiss_equals_not_happened(game):
@@ -424,21 +436,20 @@ def test_undo_single_round_enter_and_dismiss_equals_not_happened(game):
     m = _active_minister(db, content)
     n1, c1 = _run_round(
         db, state, m,
-        writes=lambda night_id, chat_id: an.dismiss_from_audience(
-            db, m, origin_chat_turn_id=chat_id
-        ),
+        declaration={"presence": [{"person_name": m, "effect": "exit", "body": "臣告退。"}]},
     )
     # 本轮产了入殿账（attach）+ 告退账（dismiss），二者皆绑本轮
     round_entries = [e for e in an.list_ledger(db, n1)
                      if e["origin_chat_turn_id"] == c1 and m in e["person_names"]]
     assert any(an.TAG_ENTER in (e["tags"] or []) for e in round_entries)
-    assert any(an.TAG_EXIT in (e["tags"] or []) for e in round_entries)
+    assert any(e["presence_effect"] == an.PRESENCE_EXIT for e in round_entries)
 
     db.undo_chat_turn(c1)
 
     # 该轮所产入殿/告退账全消失；在场无该人——像本轮从未发生
     assert not any(m in e["person_names"] for e in an.list_ledger(db, n1))
     assert m not in an.present_names_at(db, n1)
+
 
 
 # ── L2（judge R1 S-origin-bind-non-atomic）：入殿账 origin 绑定须原子 ──────────────
@@ -470,6 +481,7 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
     # atomic 回滚：账本零净增，无孤儿入殿账，在场未变
     assert {e["id"] for e in an.list_ledger(db, night_id)} == ledger_ids_before
     assert m not in an.present_names_at(db, night_id)
+
 
 
 def test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes(game):

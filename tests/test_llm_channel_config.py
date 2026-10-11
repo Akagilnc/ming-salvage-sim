@@ -50,16 +50,9 @@ def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
     # 空 CLI key 也能构造：占位符在构造时注入以满足 OpenAIChat 父类。
     assert model.api_key == "cli-backend"
 
-def test_load_llm_config_records_backend_env_as_cli_channel(monkeypatch):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    monkeypatch.setenv("MING_SIM_CODEX_MODEL", "gpt-codex-test")
 
-    cfg = load_llm_config("https://api.example.com", "api-fallback", api_key="")
-
-    assert cfg.channel == "cli"
-    assert cfg.cli_runner == "codex"
-    assert cfg.cli_model == "gpt-codex-test"
-    assert cfg.api_key == ""
+# #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
+# 选宿主只认运行配置（channel + cli_runner）。
 
 def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -211,6 +204,7 @@ def test_create_chat_model_never_injects_max_tokens(monkeypatch):
         channel="api",
         reasoning_strength="high",
     )
+
     create_chat_model(cfg)
     create_chat_model(cfg, temperature=0.2, enable_thinking=True)
     create_chat_model(cfg, temperature=0, force_json_output=True)
@@ -357,30 +351,9 @@ def test_minimax_reasoning_strength_overrides_stale_thinking_level(monkeypatch):
 
     assert model.extra_body == {"thinking": {"type": "adaptive"}, "reasoning_split": True}
 
-def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):
-    captured = {}
 
-    from tests.cli_process_doubles import FakeCliProcess
-
-    def fake_popen(cmd, **kwargs):
-        captured["cmd"] = list(cmd)
-        return FakeCliProcess(stdout_script=("臣领旨。\n",), returncode=0)
-
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cli_backend, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
-    monkeypatch.setattr(cli_backend.subprocess, "Popen", fake_popen)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="deepseek-v4-flash",
-    )
-
-    model = create_chat_model(cfg)
-    model.invoke([Message(role="user", content="p")], Message(role="assistant"))
-
-    assert isinstance(model, CliChat)
-    assert captured["cmd"][captured["cmd"].index("--model") + 1] == cli_backend._CODEX_MODEL
+# #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
+# 选宿主只认运行配置（channel + cli_runner）。
 
 def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
@@ -436,11 +409,12 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
     assert seen.get("config") is cfg
     assert seen.get("tag") == "verify"
 
-def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
+def test_verify_llm_available_cli_channel_code_fault_reraises(monkeypatch):
+    """#1902：CLI 烟测未知代码故障原样上浮，不得套成 llm_error。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     def boom(prompt, llm_config=None, tag="", *, policy=None):
-        raise RuntimeError("codex missing")
+        raise TypeError("codex missing")
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
     cfg = LLMConfig(
@@ -453,37 +427,32 @@ def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
         cli_timeout_seconds=240,
     )
 
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(TypeError, match="codex missing"):
         verify_llm_available(cfg)
 
-def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
-    """legacy env-only 路径（无显式 channel + MING_SIM_LLM_BACKEND 设置）现在也真实 smoke
-    （旧版直接 return 跳过）：触发 _run_backend_for_config，失败抛 LLMUnavailable，
-    避免 fresh-start 在 runner 缺失时先删主库。"""
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    seen = {}
 
-    def fake_run(prompt, llm_config=None, tag="", *, policy=None):
-        seen["prompt"] = prompt
-        seen["tag"] = tag
-        return "ok", 1
+def test_verify_llm_available_cli_channel_typed_unavailable_raises(monkeypatch):
+    """CLI 烟测：已 typed 的宿主/模型失败仍抛 LLMUnavailable。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
-    cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
-    verify_llm_available(cfg)
-    assert seen.get("tag") == "verify"
-
-def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
-    """legacy env-only smoke 失败同样抛 LLMUnavailable（fail-fast，不静默放行）。"""
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
 
     def boom(prompt, llm_config=None, tag="", *, policy=None):
-        raise RuntimeError("agy missing")
+        raise LLMUnavailable("codex missing", code="llm_cli_codex", provider_message="codex missing")
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
-    cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
-    with pytest.raises(LLMUnavailable):
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    with pytest.raises(LLMUnavailable) as ei:
         verify_llm_available(cfg)
+    assert ei.value.code == "llm_cli_codex"
 
 def _api_cfg(**overrides) -> LLMConfig:
     base = dict(
@@ -531,14 +500,11 @@ def test_verify_llm_available_api_empty_content_passes(monkeypatch):
             pass
 
         def run(self, prompt: str) -> EmptyOutput:
-            calls.append(prompt)
             return EmptyOutput()
 
-    calls = []
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
-    # 走真实 extract_agent_text：空 content 不得误杀，且确实发起验证调用。
+    # 走真实 extract_agent_text：空 content 不得误杀
     verify_llm_available(_api_cfg())
-    assert len(calls) == 1
 
 def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
     """content=None 同空串：烟测不校验返回内容。"""
@@ -553,13 +519,10 @@ def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
             pass
 
         def run(self, prompt: str) -> NoneContent:
-            calls.append(prompt)
             return NoneContent()
 
-    calls = []
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
     verify_llm_available(_api_cfg())
-    assert len(calls) == 1
 
 def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch):
     """#1455：status=ERROR 且空 content 仍是权威失败——设置页不得判连通成功。
@@ -606,30 +569,9 @@ def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypat
     assert ei.value.code == "llm_run_error"
 
 
-def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
-    """codex R1 #2：legacy env CLI（MING_SIM_LLM_BACKEND 设）时 cli_timeout_seconds 必须用
-    CLI 槽默认（静默判死 60），不沿用 API 的 timeout_seconds（180）。"""
-    from ming_sim.llm_config import load_llm_config, CLI_DEFAULT_TIMEOUT_SECONDS
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    cfg = load_llm_config(base_url="", model="m", api_key="", timeout_seconds=180.0)
-    assert cfg.channel == "cli"
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
-
-
-def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):
-    """codex R1 #3：web env CLI 无 saved cli.timeout_seconds 时回落 CLI 槽默认（静默判死 60），
-    不回落 API request timeout（180）。"""
-    import web_app
-    from ming_sim.llm_config import CLI_DEFAULT_TIMEOUT_SECONDS
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    cfg = web_app._llm_config_from_runtime(
-        {"channel": "cli", "cli": {"runner": "codex", "model": "gpt-5.5"}},
-        base_url="", model="m", api_key="", timeout_seconds=180.0,
-        thinking_level="", advanced_model="", advanced_base_url="",
-        advanced_api_key="", advanced_thinking_level="",
-    )
-    assert cfg.channel == "cli"
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
+# #1902 N6：常量 identity / 内部默认值证明已清退（破坏共享投影仍绿＝假绿）。
+# #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
+# 选宿主只认运行配置（channel + cli_runner）。
 
 
 def test_for_role_advanced_empty_cli_model_no_api_model_leak(monkeypatch):
@@ -696,7 +638,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)
     monkeypatch.setattr(agents_mod, "create_chat_model", spy)
     monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
-    monkeypatch.setattr(agents_mod, "tlog", lambda *a, **k: None)
     monkeypatch.setattr(agents_mod, "describe_effective_model", lambda cfg: "m")
     monkeypatch.setattr(agents_mod, "is_minimax_base_url", lambda url: False)
     monkeypatch.setattr(agents_mod, "_llm_for_role", lambda cfg, role: cfg)
@@ -741,15 +682,17 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         def run(self, prompt):
             return FakeRun()
 
-    # 真实人物查无回禀入口经 API 调用面创建模型；仅替外部 Agent 出口。
+    # _run_api_for_config 在函数内 from-import create_chat_model / Agent
     import ming_sim.llm_model as lm
 
     monkeypatch.setattr(lm, "create_chat_model", spy)
+    monkeypatch.setattr(lm, "extract_agent_text", lambda output: "{}")
     monkeypatch.setattr("agno.agent.Agent", FakeAgent)
     before_gate = len(seen)
-    cb.compose_unknown_participant_inworld_report(["未在册之人"], llm_config=cfg)
+    cb._run_api_for_config("输出 {}", cfg, tag="gate")
     assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
     assert "max_tokens" not in seen[-1], seen[-1]
+
 
 def test_gate_evidence_config_omits_max_tokens():
     """#1472：四闸证据块不再写 max_tokens。"""

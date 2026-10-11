@@ -11,23 +11,8 @@ import asyncio
 
 import ming_sim.cli_backend as cb
 
-def test_default_labels_reuse_single_source_constants(monkeypatch):
-    """无 env 覆盖时，默认档 label 复用 cli_backend 的默认常量，不重写字面量（单一真源）。"""
-    monkeypatch.delenv("MING_SIM_CODEX_MODEL", raising=False)
-    monkeypatch.delenv("MING_SIM_CLAUDE_MODEL", raising=False)
-    choices = cb.cli_model_choices()
-    assert cb.CODEX_DEFAULT_MODEL in choices["codex"][0]["label"]
-    assert cb.CLAUDE_DEFAULT_MODEL in choices["claude"][0]["label"]
 
-def test_default_label_reflects_env_override(monkeypatch):
-    """设了 MING_SIM_CODEX_MODEL → 默认档 label 跟随真实 resolved 默认（cli_model_from_env），
-    与 api_menu_status 的 resolved cli_model 同源，不停留在内置常量（CMR R2 codex spec-impl）。"""
-    monkeypatch.setenv("MING_SIM_CODEX_MODEL", "env-override-model")
-    label = cb.cli_model_choices()["codex"][0]["label"]
-    assert "env-override-model" in label
-    assert cb.CODEX_DEFAULT_MODEL not in label
-
-# ── 端点暴露：menu/status 把清单带给前端 ──
+# ── 端点暴露：两个 config 端点都把清单带给前端 ──
 
 def _patch_status_io(monkeypatch, runtime):
     """把 api_menu_status 的全部磁盘 I/O monkeypatch 掉（含 load_runtime_llm），
@@ -66,4 +51,3 @@ def test_menu_status_cli_model_saved_passes_explicit(monkeypatch):
     })
     llm = asyncio.run(web_app.api_menu_status())["llm"]
     assert llm["cli_model_saved"] == "gpt-5.3-codex-spark"
-

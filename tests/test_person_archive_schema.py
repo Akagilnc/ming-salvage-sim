@@ -58,25 +58,6 @@ def test_add_character_persists_transit_to(game):
     ).fetchone()
     assert dict(row) == {"location": "beizhili", "transit_to": "liaodong"}
 
-def test_reload_restores_complete_transit_ledger_from_db(game):
-    """回滚统一重载（现役 reload_state_from_db）须把 DB 的完整行程账刷回 content。"""
-    from ming_sim.decree import reload_state_from_db
-    db, state, content = game
-    name = db.conn.execute("SELECT name FROM characters LIMIT 1").fetchone()["name"]
-    db.conn.execute(
-        "UPDATE characters SET transit_to='liaodong', transit_distance_remaining=1.25, "
-        "transit_speed_factor=1.5, transit_start_turn=7 WHERE name=?",
-        (name,),
-    )
-    db.conn.commit()
-    reload_state_from_db(db, state, content=content)
-    character = content.characters[name]
-    assert (
-        character.transit_to,
-        character.transit_distance_remaining,
-        character.transit_speed_factor,
-        character.transit_start_turn,
-    ) == ("liaodong", 1.25, 1.5, 7)
 
 
 def test_north_star_named_figures_are_seeded_with_identity_metadata():

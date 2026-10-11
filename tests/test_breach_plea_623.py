@@ -60,6 +60,7 @@ def _cost_events(db, dossier_id, *, identity="breach"):
     ]
 
 
+
 def _executing_policy_dossier(db, state, *, token: str = "breach-623", holder: str = ""):
     if not holder:
         holder = str(db.conn.execute(
@@ -82,6 +83,7 @@ def _executing_policy_dossier(db, state, *, token: str = "breach-623", holder: s
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id, holder
+
 
 
 def _insert_commitment(
@@ -121,11 +123,13 @@ def _insert_commitment(
     return int(issue_id), origin_ref
 
 
+
 def _pending_pleas(db):
     return [
         t for t in db.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if str(t.get("entry_kind") or "") == ENTRY_KIND_BREACH_PLEA
     ]
+
 
 
 # ── 四类松手：当回合无损 + 次回合哭谏 ────────────────────────────────
@@ -173,6 +177,7 @@ def test_funding_cutoff_writes_plea_no_damage_same_turn(game):
     assert plea_scenes[0]["channel"] == "audience_pending"
 
 
+
 def test_misappropriation_writes_plea(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -203,6 +208,7 @@ def test_misappropriation_writes_plea(game):
     ).fetchone()["status"] == "active"
 
 
+
 def test_remove_sponsor_writes_plea(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -228,6 +234,7 @@ def test_remove_sponsor_writes_plea(game):
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
     assert _cost_events(db, did) == []
+
 
 
 
@@ -265,6 +272,7 @@ def test_two_successive_loosenings_get_independent_pleas(game):
     assert stage_idxs[0] != stage_idxs[1]
 
 
+
 # ── 反悔 / 坚持 ────────────────────────────────────────────────────────
 
 
@@ -295,6 +303,7 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
     ).fetchone()["status"] == "active"
     assert int(state.metrics.get("皇威", 0) or 0) == auth_before
     assert len(_pending_pleas(db)) == 1
+
 
 
 def test_persist_does_not_auto_write_execution_or_setback(game):
@@ -372,6 +381,7 @@ def test_persist_remove_sponsor_no_0056(game):
     ).fetchone()["status"] == "dropped"
 
 
+
 def test_persist_via_extraction_cancels_true_entry(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -396,6 +406,7 @@ def test_persist_via_extraction_cancels_true_entry(game):
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "dropped"
+
 
 
 # ── 沉默滚存 / 到期失效 ──────────────────────────────────────────────
@@ -435,6 +446,7 @@ def test_silence_keeps_pending_across_settle(game, monkeypatch):
     assert any(s.get("kind") == "breach_plea" for s in scenes)
 
 
+
 def test_commitment_due_expires_plea_without_persist_damage(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -462,6 +474,7 @@ def test_commitment_due_expires_plea_without_persist_damage(game):
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
+
 
 
 # ── kind 对称闸 / 接管窗 / restore ────────────────────────────────────
@@ -517,6 +530,7 @@ def test_kind_gate_apply_only_finalizes_staged(game):
     assert _cost_events(db, did2, identity="连坐") == []
 
 
+
 def test_breach_plea_survives_restore(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -547,6 +561,7 @@ def test_breach_plea_survives_restore(game):
     db2.close()
 
 
+
 def test_no_decision_pause_on_breach_plea_settle(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -562,6 +577,7 @@ def test_no_decision_pause_on_breach_plea_settle(game, monkeypatch):
     result = _settle_empty_month(db, state, content, monkeypatch)
     assert result.awaiting is False
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
+
 
 
 def test_same_turn_dual_breach_kinds_merge_not_swallowed(game):
@@ -607,6 +623,7 @@ def test_same_turn_dual_breach_kinds_merge_not_swallowed(game):
     assert any(c.get("breach_plea_decision") == "persist" for c in out.cancels)
 
 
+
 def test_persist_reclaims_bundled_authority(game):
     """坚持落地=立即 revoke 路径：捆带授权收回 fail-loud。"""
     db, state, content = game
@@ -646,6 +663,7 @@ def test_persist_reclaims_bundled_authority(game):
     assert result.get("authority_reclaims")
 
 
+
 def test_remove_sponsor_persist_writes_credit_edge(game):
     """0079：撤人坚持撤有案卷时仍写辜负边（0056 不触发，不重复）。"""
     db, state, content = game
@@ -673,6 +691,7 @@ def test_remove_sponsor_persist_writes_credit_edge(game):
     ).fetchall())
     assert edges, "撤人坚持须写 0079 辜负边"
     assert any(f"issue:{cid}" in str(e["origin"] or "") for e in edges)
+
 
 
 def test_same_sponsor_two_commitments_both_remove_edges(game):
@@ -728,6 +747,7 @@ def test_same_sponsor_two_commitments_both_remove_edges(game):
     ), f"乙承诺撤人边须落，got={origins!r}"
 
 
+
 def test_misappropriation_via_tags_producer_pipeline(game):
     """挪用真实管线：tags 专款写口（模拟 new_issues.tags producer）可达。"""
     db, state, content = game
@@ -760,6 +780,7 @@ def test_misappropriation_via_tags_producer_pipeline(game):
     assert any(p["criterion_text"] == "挪用" for p in _pending_pleas(db))
 
 
+
 # ── #623 r2：merged 条 persist 链只认 primary 的三面 ──────────────────
 
 
@@ -788,6 +809,7 @@ def _merge_funding_then_reversal(db, state, *, token: str):
     assert meta.get("breach_kind") == BREACH_KIND_FUNDING
     assert BREACH_KIND_POLICY_REVERSAL in (meta.get("absorbed_breach_kinds") or [])
     return cid, did, holder, int(pleas[0]["id"])
+
 
 
 def test_merged_persist_via_tracker_cancel_settles(game):
@@ -826,6 +848,7 @@ def test_merged_persist_via_tracker_cancel_settles(game):
     assert _cost_events(db, did, identity="breach")
 
 
+
 def test_merged_persist_via_domain_cancel_settles(game):
     """㈠ 领域 cancel 实入后：merged 改弦 absorbed → tracker finalize_persist 结账。"""
     db, state, content = game
@@ -847,6 +870,7 @@ def test_merged_persist_via_domain_cancel_settles(game):
     ).fetchone()
     assert iss is not None and str(iss["status"]) != "active"
     assert _cost_events(db, did, identity="breach")
+
 
 
 def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
@@ -888,6 +912,7 @@ def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
     assert len(edges) == 1
 
 
+
 def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
     """㈢ primary=remove_sponsor + absorbed=[funding]：0056 落、撤人边不丢且不重复。"""
     db, state, content = game
@@ -924,6 +949,7 @@ def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
     ).fetchall())
     assert edges, "撤人边/0056 辜负不得丢"
     assert len(edges) == 1, "同人辜负不重复"
+
 
 def test_policy_reversal_revoke_takes_effect_same_month(game):
     """#1894：撤旨照常过外廷——外庭准行当月落实，不写挽留 todo、不等下一场召对。"""
@@ -970,6 +996,7 @@ def test_policy_reversal_revoke_takes_effect_same_month(game):
     assert not any(
         s.get("kind") == "breach_plea" for s in list_due_review_scenes(db)
     )
+
 
 def test_policy_reversal_revoke_model_verdict_lands_same_month(game):
     """#1894：撤令准行当月，模型对原案卷的办理结果照常落账结案。"""

@@ -1705,7 +1705,6 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
             "turn": int(row.get("turn") or 0),
             "progress_band": str(row.get("progress_band") or ""),
             "narrative": str(row.get("narrative") or ""),
-            "is_terminal": bool(row.get("is_terminal")),
         }
         for row in db.list_dossier_progress(int(target_dossier_id))
     ]

@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 
-class ExitGame(Exception):
-    pass
-
-
 class DependencyMismatch(Exception):
     """Installed Python package does not satisfy requirements.txt."""
 

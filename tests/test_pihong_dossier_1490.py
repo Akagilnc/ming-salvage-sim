@@ -8,6 +8,7 @@ import json
 
 
 import pytest
+from tests.conftest import wait_for_background_jobs
 
 
 import ming_sim.decree as decree_mod
@@ -71,7 +72,7 @@ def test_658_endorsement_provenance_xor(game):
     minister = _summonable_name(db)
     did = db.create_decree_dossier(state, action_type='policy', decree_text='试', target_kind='policy', target_id='t')
     chat = db.create_chat_turn(state, minister, '658-xor', 0)
-    eid = db.add_dossier_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat)
+    db.add_dossier_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat)
     row = db.list_dossier_endorsements(did)[0]
     assert row['source_chat_turn_id'] == chat and row['decision_key'] == ''
     eid2 = db.add_dossier_endorsement(did, form='当面站台', endorser_id=minister, decision_key='rescript_draft:1:0')
@@ -253,8 +254,6 @@ def test_1589_keyless_batch_rejected_without_writes(game, monkeypatch, desk_kind
         assert all(r["status"] == "decided" and not r["choice"].get("note") for r in persisted)
         assert int(state.turn) == turn
 
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     game, monkeypatch, tmp_path,
 ):
@@ -273,12 +272,14 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     bad = int(db.add_directive(state, None, '缺账拨帑', 'player-decree-test', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账', 'amount': 100}))
     good = int(db.add_directive(state, None, '清丈', 'player-decree-test', dossier_payload={'dossier_action_type': 'assignment', 'target_kind': 'issue', 'target_id': 'route-清丈', 'transaction_category': '清丈', 'participant_roster': copy.deepcopy(_ROSTER)}))
     first = session.resolve_turn()
+    wait_for_background_jobs(db)
     assert first.awaiting is False
     assert int(state.turn) == original_turn
     db.conn.execute('INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)', (original_turn, original_year, original_period, '邸报已成'))
     db.conn.commit()
     from ming_sim.month_chain import run_player_month_chain
     advanced = run_player_month_chain(state, db, session.agno_db, session.llm_config)
+    wait_for_background_jobs(db)
     assert advanced.advanced is True
     assert int(state.turn) == original_turn + 1
     statuses = dict(db.conn.execute('SELECT id,status FROM turn_directives WHERE id IN (?,?)', (bad, good)).fetchall())
@@ -300,12 +301,15 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     assert mirror_row['source'] == 'player_decree'
     assert json.loads(mirror_row['item_json'])['directive_id'] == bad
     assert [d.id for d in session.list_directives()] == [bad]
-    session.update_directive(bad, '补账重拟', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账-retry', 'amount': 100, 'account': '国库'})
+    # #1902：会话层 update_directive 随拟诏台手写改稿入口退役而删，落库改走引擎面。
+    session.db.update_directive_text(bad, '补账重拟', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账-retry', 'amount': 100, 'account': '国库'})
     second = session.resolve_turn()
+    wait_for_background_jobs(db)
     assert second.awaiting is False
     assert int(state.turn) == original_turn + 1
     db.save_turn_report(state, '邸报已成')
     advanced = run_player_month_chain(state, db, session.agno_db, session.llm_config)
+    wait_for_background_jobs(db)
     assert advanced.advanced is True
     assert int(state.turn) == original_turn + 2
     statuses = dict(db.conn.execute('SELECT id,status FROM turn_directives WHERE id IN (?,?)', (bad, good)).fetchall())
@@ -316,7 +320,7 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     assert (provenance['turn'], provenance['year'], provenance['period']) == (original_turn, original_year, original_period)
     assert provenance['source'] == 'player-decree-test'
 
-def test_658_ordinary_edit_does_not_inherit_push_target(game):
+def test_658_ordinary_edit_does_not_inherit_push_target(game, monkeypatch):
     """#658：普通 triad 改草不得继承旧强推 target。"""
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, title='旧强推')
@@ -347,21 +351,3 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     assert 'dossier_action_type' not in staged
     assert 'target_kind' not in staged
     assert 'target_id' not in staged
-
-
-def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
-    """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""
-    import ming_sim.cli_backend as cli_backend
-    db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, title='混载')
-    did = int(stalled['id'])
-    before_dossiers = len(db.list_decree_dossiers())
-    before_dirs = db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c']
-
-    def backend_mixed(prompt, *_a, **_k):
-        return (json.dumps({'拟旨意图': '拟旨', '动作类型': 'policy', '目标类型': 'issue', '目标ID': 'river', '目标案卷ID': did}, ensure_ascii=False), 1)
-    monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_mixed)
-    with pytest.raises(ValueError):
-        cli_backend.capture_manual_directive_payload('混载旨文', None, db=db, content=content)
-    assert len(db.list_decree_dossiers()) == before_dossiers
-    assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs

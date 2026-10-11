@@ -64,6 +64,7 @@ def _executing_policy_dossier(db, state, *, token: str = "urge-624", host: str =
     return dossier_id
 
 
+
 _insert_staged_commitment = partial(_due_review_commitment, title="催办分段之诺")
 
 
@@ -79,6 +80,7 @@ def _set_integrity(db, name: str, integrity: int, *, courage: int | None = None)
             (int(integrity), int(courage), name),
         )
     db.conn.commit()
+
 
 
 def _seed_stages(state, *, due0: int | None = None, due1: int | None = None):
@@ -98,6 +100,7 @@ def _seed_stages(state, *, due0: int | None = None, due1: int | None = None):
             "origin_context": "五年新历成",
         },
     ]
+
 
 
 # ── AC1 催拉杆：真加速 + urge_history + 判词可观察影响 ───────────────
@@ -165,6 +168,7 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
     assert inp["urge_history"]
 
 
+
 def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     """#1895 / #1835 J18：催办压力不代判终值；终值只经模型声明写格。
 
@@ -222,6 +226,7 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     assert (applied.get("execution") or {}).get("waiting_model") is True
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] in ("", None, "executing")
+
 
 # ── AC6 求宽限真伪底落 payload、玩家面零裸露 ─────────────────────────
 
@@ -301,6 +306,7 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     assert all("payload_json" not in item for item in scenes)
 
 
+
 # ── AC7 降级与 restore ───────────────────────────────────────────────
 
 
@@ -331,6 +337,7 @@ def test_missing_urge_and_supervision_fail_closed_ac7(game):
     assert inp["supervision_history"] == []
 
 
+
 def test_urge_history_restore_from_committed_pending_ac7(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -351,6 +358,7 @@ def test_urge_history_restore_from_committed_pending_ac7(game):
     assert hist[0]["reason"] == "restore-probe"
 
 
+
 def test_rush_without_issue_fail_closed_no_remonstrance(game):
     """无 issue 承载的催办 fail-closed 不产谏条，禁伪造 issue。"""
     db, state, content = game
@@ -364,6 +372,7 @@ def test_rush_without_issue_fail_closed_no_remonstrance(game):
     after_issues = db.conn.execute("SELECT COUNT(*) AS c FROM issues").fetchone()["c"]
     assert after_issues == before_issues
     assert exc.value.category == "missing_commitment"
+
 
 
 # ── 四缝白名单 + 接管窗对称 ──────────────────────────────────────────
@@ -432,6 +441,7 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
     assert costs == []
 
 
+
 def test_payload_json_roundtrip_insert_list_restore(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -465,6 +475,7 @@ def test_payload_json_roundtrip_insert_list_restore(game):
     assert row2["payload_json"]["grace_fake"] is False
 
 
+
 def test_rush_does_not_side_write_end_turn(game):
     """宪法级：催后 issues.end_turn 逐位不变（唯一写口=stages_json）。"""
     db, state, content = game
@@ -493,6 +504,7 @@ def test_rush_does_not_side_write_end_turn(game):
             ).fetchone()["end_turn"] or 0
         )
         assert after == before == end_seed
+
 
 
 def test_urge_audience_project_and_consume_path(game):
@@ -538,6 +550,7 @@ def test_urge_audience_project_and_consume_path(game):
         if t["entry_kind"] in {ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_GRACE_PLEA}
     ]
     assert still == []
+
 
 
 def test_commitment_rush_via_pending_actions_gate(game):
@@ -609,6 +622,7 @@ def test_commitment_rush_via_pending_actions_gate(game):
         (issue_id,),
     ).fetchone()["c"]
     assert int(n_committed) == 1
+
 
 
 def test_payload_json_corrupt_read_is_loud(game):

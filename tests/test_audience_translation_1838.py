@@ -31,11 +31,21 @@ from ming_sim.session import GameSession
 from tests.conftest import note_queue_until_game_teardown
 
 
+def _night_protagonist(db, night_id: int) -> str:
+    """读 audience_nights.protagonist_name 账本列（生产仍写此列；#1902 删无消费包装）。"""
+    row = db.conn.execute(
+        "SELECT protagonist_name FROM audience_nights WHERE id=?",
+        (int(night_id),),
+    ).fetchone()
+    if row is None:
+        return ""
+    return str(row["protagonist_name"] or "")
+
+
 def _activate(db, state, *names: str) -> None:
     for name in names:
         if db.get_character_status(name)[0] != "active":
             db.set_character_status(state, name, "active", reason="1838 测试置在场")
-
 
 def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
     """AC1：三段说话人可闻性；低语只进王承恩经历。"""

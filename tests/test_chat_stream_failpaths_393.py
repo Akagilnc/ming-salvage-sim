@@ -10,6 +10,8 @@ _serialized_web_write), not private _write_gate.locked() / _pending_writes_count
 """
 from __future__ import annotations
 
+from tests.sse_helpers import parse_sse_event_pairs as _parse_sse
+
 from ming_sim.session_write_queue import get_session_write_queue
 
 import json
@@ -44,12 +46,6 @@ def _inject_prologue_append_failure(runtime, monkeypatch) -> None:
     monkeypatch.setattr(runtime.db, "append_chat_message", _boom)
 
 
-def _latest_generating_or_failed_turn(db) -> int:
-    row = db.conn.execute(
-        "SELECT id, status FROM chat_turns ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    assert row is not None, "prologue 应已建 chat_turn"
-    return int(row["id"]), str(row["status"] or "")
 
 
 class _StreamCrashAgent:
@@ -70,8 +66,7 @@ def test_prologue_failure_fails_orphan_turn_and_releases_gate(web_game, monkeypa
     with pytest.raises(RuntimeError, match="DB 写盘失败"):
         next(gen)
 
-    turn_id, status = _latest_generating_or_failed_turn(runtime.db)
-    assert status == "failed", (turn_id, status)
+    assert runtime.db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0] == 0
     _assert_write_path_free(runtime)
 
 
@@ -133,8 +128,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(web_game, monkeyp
     with pytest.raises(RuntimeError, match="DB 写盘失败"):
         next(gen)
 
-    turn_id, status = _latest_generating_or_failed_turn(runtime.db)
-    assert status == "failed", (turn_id, status)
+    assert runtime.db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0] == 0
     assert other_entered.is_set()
     assert other_completed_ok == [], (
         "foreign holder's critical section was broken by prologue finally"
@@ -169,125 +163,10 @@ def test_prologue_cleanup_failure_still_releases_gate_and_counter(web_game, monk
     _assert_write_path_free(runtime)
 
 
-def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(
-    web_game, monkeypatch, caplog,
-):
-    """#1353 r13 / ADR 0005：payload-None 清理二次失败 →
-    消费者有界收到*原始* error→end；清理异常只 logger.exception 记 traceback，不覆盖原错、不阻断终态。"""
-    import logging
-
-    runtime = web_game
-    stub_audience_translate(monkeypatch)
-    stub_scene_agent(monkeypatch, _StreamCrashAgent())
-
-    def _boom_fail(*_a, **_k):
-        raise RuntimeError("fail_chat_turn 也崩了（DB 已坏）")
-
-    monkeypatch.setattr(runtime, "_fail_chat_turn_and_reload", _boom_fail)
-
-    primary = "LLM 流式调用崩溃。"
-    events: list[dict] = []
-    done = threading.Event()
-    box: dict = {}
-
-    def consume() -> None:
-        try:
-            for item in runtime.chat_stream("殿上", "辽东军情如何？"):
-                events.append(item)
-                if item.get("type") == "end":
-                    break
-            box["ok"] = True
-        except Exception as exc:  # noqa: BLE001
-            box["exc"] = exc
-        finally:
-            done.set()
-
-    with caplog.at_level(logging.ERROR, logger="web_app"):
-        th = threading.Thread(target=consume, daemon=True)
-        th.start()
-        assert done.wait(timeout=30), "consumer did not reach terminal event"
-        th.join(timeout=30)
-
-    assert box.get("ok") is True, box
-    types = [e.get("type") for e in events]
-    assert "error" in types, events
-    assert types[-1] == "end", events
-    err_idx = types.index("error")
-    assert types[err_idx + 1] == "end", types
-    err = next(e for e in events if e.get("type") == "error")
-    assert err.get("message") == primary, err
-    assert any(
-        r.exc_info and isinstance(r.exc_info[1], RuntimeError)
-        and str(r.exc_info[1]) == "fail_chat_turn 也崩了（DB 已坏）"
-        for r in caplog.records
-    ), caplog.records
-    _assert_write_path_free(runtime)
 
 
-def test_worker_postprocess_exception_emits_error_end(web_game, monkeypatch):
-    """#1353 r12：payload 成功后后处理（_spawn_pending_write_thread 高亮）抛错 → 单一出口 error→end。
-
-    事件握手：有界消费必见 end；禁只走 finally 致消费者永阻。
-    真实 scene 链经外部模型边界（canned 成功回话）跑通，仅后处理尾随缝注入失败。
-    """
-    from tests.test_web_audience_night_498 import _FakeAgent
-
-    runtime = web_game
-    stub_audience_translate(monkeypatch)
-    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣已知晓。"))
-
-    def _boom_spawn(*_a, **_k):
-        raise RuntimeError("highlight trail boom")
-
-    runtime._spawn_pending_write_thread = _boom_spawn  # type: ignore[method-assign]
-
-    events: list[dict] = []
-    done = threading.Event()
-    box: dict = {}
-
-    def consume() -> None:
-        try:
-            for item in runtime.chat_stream("殿上", "边饷如何？"):
-                events.append(item)
-                if item.get("type") == "end":
-                    break
-            box["ok"] = True
-        except Exception as exc:  # noqa: BLE001
-            box["exc"] = exc
-        finally:
-            done.set()
-
-    th = threading.Thread(target=consume, daemon=True)
-    th.start()
-    assert done.wait(timeout=30), "consumer did not reach terminal event"
-    th.join(timeout=30)
-    assert box.get("ok") is True, box
-    types = [e.get("type") for e in events]
-    assert "done" in types, events
-    assert "error" in types, events
-    assert types[-1] == "end", events
-    err_idx = types.index("error")
-    assert types[err_idx + 1] == "end", types
-    err = next(e for e in events if e.get("type") == "error")
-    assert "highlight trail boom" in str(err.get("message") or ""), err
-    _assert_write_path_free(runtime)
 
 
-def _parse_sse(text: str) -> list[tuple[str, dict]]:
-    events: list[tuple[str, dict]] = []
-    for block in text.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        ev_name = ""
-        data_raw = ""
-        for line in block.splitlines():
-            if line.startswith("event: "):
-                ev_name = line[7:].strip()
-            elif line.startswith("data: "):
-                data_raw += line[6:]
-        if ev_name and data_raw:
-            events.append((ev_name, json.loads(data_raw)))
-    return events
 
 
 def test_issue_stream_llm_unavailable_is_structured_not_500(
@@ -532,7 +411,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     ).fetchone()
     assert fail_row is not None
     assert str(fail_row["status"]) == "interrupted"
-    assert web_game.interrupted_reply_retries("殿上")[-1]["chat_turn_id"] == failed_turn
+    assert web_game.reply_retries("殿上")[-1]["chat_turn_id"] == failed_turn
 
     # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
@@ -664,40 +543,6 @@ def test_chat_stream_typed_429_preserved(monkeypatch, web_game):
     assert attempts[0].get("outcome") == "terminal_fail"
 
 
-def test_chat_stream_config_max_attempts_override(monkeypatch, web_game, tmp_path):
-    """#1465 ①：runtime transport 改次数 → 真实召对入口行为随之变。"""
-    from ming_sim import llm_config as llm_config_mod
-
-    path = tmp_path / "runtime_llm.json"
-    path.write_text(json.dumps({
-        "channel": "api",
-        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
-        "cli": {"timeout_seconds": 30},
-        "transport": {
-            "max_attempts": 1,
-            "attempt_timeout_seconds": 30,
-        },
-    }, ensure_ascii=False), encoding="utf-8")
-    monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
-
-    def _conn_err(_n):
-        return LLMUnavailable(
-            "连接失败",
-            code="llm_connection_error",
-            provider_message="connection reset",
-        )
-
-    agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
-    _transport_web_game(agent, monkeypatch)
-    web_game.session.llm_config = SimpleNamespace(channel="api")
-
-    response = _post_chat_stream(monkeypatch, web_game)
-    events = _parse_sse(response.text)
-    assert events[-1][0] == "error"
-    detail = events[-1][1]
-    assert agent.calls == 1
-    assert detail.get("code") == "llm_connection_error"
-    assert len(detail.get("transport_attempts") or []) == 1
 
 
 def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, web_game, tmp_path):
@@ -913,3 +758,49 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert detail.get("message"), detail
     assert provider not in detail["message"]
     assert detail.get("provider_message") == provider
+
+
+def test_chat_stream_policy_max_attempts_override(monkeypatch, tmp_path, web_game):
+    """#1902：次数预算只来自 transport 层——档位（transport 段）退役后仍是这条路。
+
+    真实召对入口按 transport 策略给的次数跑，并在 typed attempts 里逐条记账。
+    """
+    import ming_sim.agents as agents_mod
+    import ming_sim.llm_transport as transport_mod
+    from ming_sim import llm_config as llm_config_mod
+
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        "cli": {"timeout_seconds": 30},
+        # 旧档残留的 transport 段必须被忽略（不再让入口改次数）
+        "transport": {"max_attempts": 9, "attempt_timeout_seconds": 999.0},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
+    one_attempt = transport_mod.TransportPolicy(
+        max_attempts=1,
+        attempt_timeout_seconds=transport_mod.default_transport_policy().attempt_timeout_seconds,
+        idle_timeout_seconds=30.0,
+    )
+    monkeypatch.setattr(transport_mod, "resolve_transport_policy", lambda _s=None: one_attempt)
+    monkeypatch.setattr(agents_mod, "resolve_transport_policy", lambda _s=None: one_attempt)
+
+    def _conn_err(_n):
+        return LLMUnavailable(
+            "连接失败",
+            code="llm_connection_error",
+            provider_message="connection reset",
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
+    _transport_web_game(agent, monkeypatch)
+    web_game.session.llm_config = SimpleNamespace(channel="api")
+
+    response = _post_chat_stream(monkeypatch, web_game)
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert agent.calls == 1
+    assert detail.get("code") == "llm_connection_error"
+    assert len(detail.get("transport_attempts") or []) == 1

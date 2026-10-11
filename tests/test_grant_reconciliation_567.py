@@ -35,6 +35,7 @@ def _record_recon(db, turn):
     return reports
 
 
+
 def _recon_rejections(db):
     """全体拒收查询（#1745：不得以 section 过滤掩盖第二 producer）。"""
     if db.conn.execute(
@@ -45,6 +46,7 @@ def _recon_rejections(db):
         "SELECT section, category, source, reason, item_json "
         "FROM rejection_reports ORDER BY id"
     ).fetchall())
+
 
 
 def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_id="shaanxi",
@@ -69,6 +71,7 @@ def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_
     return dossier_id
 
 
+
 def _escort_order(db, state, grant_ids, *, tags=None):
     """密令案卷（新）→ 护卫/稽核 指向既有拨饷案卷（旧）。"""
     order_id = create_test_secret_order(db,
@@ -91,11 +94,13 @@ def _escort_order(db, state, grant_ids, *, tags=None):
     return order_id, escort_id
 
 
+
 def _record_monthly(db, state, *, progress=None):
     _record_recon(db, state.turn)
     if progress is not None:
         db.record_monthly_dossier_progress(state.turn, progress)
     db.conn.commit()
+
 
 
 def test_escort_progress_stays_on_the_secret_order_and_survives_restore(game):
@@ -125,6 +130,7 @@ def test_escort_progress_stays_on_the_secret_order_and_survives_restore(game):
     ).fetchone()
     assert json.loads(stored["dossier_progress_json"]) == progress
     reopened.close()
+
 
 
 def test_close_keeps_recon_structured_without_second_treasury_debit(game):
@@ -158,6 +164,7 @@ def test_close_keeps_recon_structured_without_second_treasury_debit(game):
     assert row["loss_amount"] == ORDERED - row["arrived_amount"]    # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before
+
 
 
 def test_failed_close_reconciles_only_when_the_silver_already_left(game):
@@ -247,6 +254,7 @@ def test_failed_close_reconciles_only_when_the_silver_already_left(game):
     assert db.list_dossier_reconciliations(dossier_id) == []
 
 
+
 def test_settle_entry_lands_engine_arrival_per_route(game, monkeypatch):
     """settle 真入口：引擎逐路给实抵落账、月份推进、无假 awaiting、无拒收噪声。
 
@@ -273,6 +281,7 @@ def test_settle_entry_lands_engine_arrival_per_route(game, monkeypatch):
     assert _recon_rejections(db) == []
 
 
+
 def test_empty_targets_no_recon_rows(game):
     """无在途目标 → 零对账行（不落假账）。"""
     db, state, _content = game
@@ -282,6 +291,7 @@ def test_empty_targets_no_recon_rows(game):
         "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
     ).fetchone()["n"] == 0
     assert _recon_rejections(db) == []
+
 
 
 def test_normal_close_same_turn_still_reconciles(game):
@@ -300,6 +310,7 @@ def test_normal_close_same_turn_still_reconciles(game):
     assert rows[0]["loss_amount"] == ORDERED - rows[0]["arrived_amount"]
 
 
+
 def test_prior_turn_close_is_not_re_reconciled(game):
     """只补本回合那笔核账，不翻历史结案（不重开全部历史案卷）。"""
     db, state, _content = game
@@ -313,6 +324,7 @@ def test_prior_turn_close_is_not_re_reconciled(game):
     assert len(db.list_dossier_reconciliations(transit)) == 1
     # 供料读侧（不带 turn）只看在途，不翻历史结案
     assert db.list_monthly_grant_reconciliation_targets() == []
+
 
 
 def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
@@ -333,6 +345,7 @@ def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     ).fetchone()["n"] == 0
     # 五模块 extractor 已退役： canned recon 不再从过月入口落拒收。
     assert _recon_rejections(db) == []
+
 
 
 def test_web_state_payload_after_settle(web_game, content, monkeypatch):

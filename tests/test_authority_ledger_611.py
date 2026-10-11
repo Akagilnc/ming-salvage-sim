@@ -16,6 +16,7 @@ def _minister(db):
         "ORDER BY name LIMIT 1"
     ).fetchone()["name"])
 
+
 def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
     """Real effect-eligible dossier used as authority_changes source."""
     dossier_id = db.create_decree_dossier(
@@ -35,16 +36,19 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
     assert db.dossier_authorizes_effects(dossier_id)
     return db.get_decree_dossier(dossier_id)
 
+
 def _grant(db, state, content, holder, privilege, scope, dossier, **turns):
     out = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': privilege, 'scope': scope, 'dossier_id': dossier['id'], **turns}]}, SettlementContext(content=content))
     assert section(out, "authority_changes").rejected == []
     result = view(out, "authority_changes")[0]
     return int(result["authority_id"])
 
+
 def _revoke(db, state, content, authority_id, dossier):
     out = settle_delta(state, db, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': dossier['id']}]}, SettlementContext(content=content))
     assert section(out, "authority_changes").rejected == []
     return view(out, "authority_changes")[0]
+
 
 def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     """Grant → restore → revoke keeps authority facts; no auto holder→emperor 结怨 (#1895)."""
@@ -135,6 +139,7 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     ) == []
 
+
 def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
     db, state, content = game
     holder = _minister(db)
@@ -159,6 +164,7 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
+
 
 def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     db, state, content = game
@@ -213,6 +219,7 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
         str(typed),
     ]
 
+
 def test_same_dossier_grant_replay_is_idempotent(game):
     """同源案卷重放按 dossier origin 幂等，不插第二行。"""
     db, state, content = game
@@ -235,6 +242,7 @@ def test_same_dossier_grant_replay_is_idempotent(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
+
 
 @pytest.mark.parametrize("terminal_state", ["revoked", "expired"])
 def test_same_dossier_grant_replay_returns_terminal_origin_without_regrant(
@@ -272,6 +280,7 @@ def test_same_dossier_grant_replay_returns_terminal_origin_without_regrant(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
 
+
 def test_duplicate_active_authority_is_rejected_across_dossiers(game):
     """不同案卷对同一在持三元组重复授予 → duplicate_active_authority。"""
     db, state, content = game
@@ -286,6 +295,7 @@ def test_duplicate_active_authority_is_rejected_across_dossiers(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
+
 
 def test_duplicate_check_uses_current_turn_not_future_effective_turn(game):
     db, state, content = game
@@ -304,6 +314,7 @@ def test_duplicate_check_uses_current_turn_not_future_effective_turn(game):
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
 
+
 def test_duplicate_check_ignores_authority_only_active_in_future(game):
     db, state, content = game
     holder = _minister(db)
@@ -321,6 +332,7 @@ def test_duplicate_check_ignores_authority_only_active_in_future(game):
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 2
 
+
 def test_production_rejects_bare_domain_scope(game):
     db, state, content = game
     holder = _minister(db)
@@ -330,6 +342,7 @@ def test_production_rejects_bare_domain_scope(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 0
+
 
 def test_promulgation_payload_does_not_write_authority_records(game):
     """授权案卷不得平行直写 authority_records；#528 仅经 authority_changes 授予。

@@ -18,11 +18,13 @@ def env(game):
     db, state, content = game
     return db, state, content
 
+
 # ── 词表 / scope 归一 ──────────────────────────────────────────────
 
 def test_normalize_locality_scope_rejects_unknown():
     with pytest.raises(ValueError):
         normalize_locality_scope("全省")
+
 
 def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
     """#1624：禁止按 target_kind 覆盖 locality 掩盖错误目标；显式矛盾 fail-loud。
@@ -96,6 +98,7 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
     assert region_shape["locality_scope"] == "single"
     assert region_shape["region_id"] == "shaanxi"
 
+
 # ── locality oracle 组合矩阵 ───────────────────────────────────────
 
 @pytest.mark.parametrize("payload", [
@@ -112,6 +115,7 @@ def test_oracle_contradictions_fail_loud(env, payload):
             db.conn, payload=payload, regions_content=content.regions,
         )
 
+
 def test_region_zero_hit_fail_loud(env):
     db, _, content = env
     with pytest.raises(ValueError):
@@ -124,6 +128,7 @@ def test_region_zero_hit_fail_loud(env):
             },
             regions_content=content.regions,
         )
+
 
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
@@ -141,6 +146,7 @@ def test_create_decree_dossier_int_abi_single_row(env):
     assert isinstance(did, int) and did > 0
     row = db.get_decree_dossier(did)
     assert row["region_id"] == ""
+
 
 
 def test_normalize_payload_locality_and_target_kind(env):
@@ -162,6 +168,7 @@ def test_normalize_payload_locality_and_target_kind(env):
             "mode": "ordinary",
         })
 
+
 # ── #654 断根 tracer（外部行为）────────────────────────────────────
 
 def _insert_directive(db, state, *, text: str, payload: dict, status: str = "draft") -> int:
@@ -180,6 +187,7 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     )
     db.conn.commit()
     return int(cur.lastrowid)
+
 
 def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
     """Validate-all：名单上的人不在名册 → 首个 INSERT 前整旨零行（#1778 决定 3）。"""
@@ -207,6 +215,7 @@ def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
     assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
+
 
 def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
     """路 2（#1769）：pending→confirm 只翻 draft；ensure 批缝产物错 → 零行 + 保持 draft。
@@ -239,6 +248,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
     ).fetchone()
     assert row["status"] == "draft"
     assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
+
 
 def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
     """路 3：locality 失败保持 draft；rejection 仅 directive_id（P6 不裁剪旨文）。"""
@@ -290,6 +300,7 @@ def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
     assert "敕令陕西" not in raw
     assert "甲甲" not in raw
 
+
 def test_path1_conversational_draft_bad_roster_marks_failed(env):
     """路 1 _commit_conversational_draft：成案零行 → pending failed、无案卷。"""
     db, state, _ = env
@@ -340,6 +351,7 @@ def test_path1_conversational_draft_bad_roster_marks_failed(env):
         (pa_id,),
     ).fetchone()["n"] == 0
 
+
 # ── 8×3 locality 矩阵（参数化）──────────────────────────────────
 
 @pytest.mark.parametrize(
@@ -371,6 +383,7 @@ def test_locality_matrix_8x3_and_unknown(env, target_kind, scope):
             db.conn, payload=payload, regions_content=content.regions,
         )
 
+
 def test_locality_fail_create_decree_dossiers_zero_rows(env):
     """fail 格走真实 bulk 入口：异常 + 零行。"""
     db, state, _ = env
@@ -390,6 +403,7 @@ def test_locality_fail_create_decree_dossiers_zero_rows(env):
         )
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
+
 
 def test_revoke_decree_523_producer_durable_oracle_chain(env):
     """#523 producer→durable→oracle：dossier 目标恰落一条 region_id='' 案卷。
@@ -501,6 +515,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
             "mode": "ordinary",
         })
 
+
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 
 def test_location_canonical_seed_and_write_seam(env):
@@ -549,5 +564,6 @@ def test_location_canonical_seed_and_write_seam(env):
     ).fetchone()["location"] == "beizhili"
     with pytest.raises(ValueError):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
+
     # 写缝已钉未知非空 fail-loud。开档别名 migrate / 开档扫 location 已随
     # _migrate_character_location_aliases 退役，不再造旧档副本期待写回。

@@ -7,6 +7,8 @@ turn 恰好推进 1；批外真实陈旧快照仍拒。
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import pytest
 
 from tests.test_month_chain_1843 import _prepare_player_month
@@ -19,6 +21,7 @@ def _pick_recommender(content):
         c for c in content.characters.values()
         if c.office_type not in ("后宫", "宗藩")
     )
+
 
 
 def _stage_recommendation(db, state, recommender_name, row, office, reason, region_id=""):
@@ -48,12 +51,14 @@ def _stage_recommendation(db, state, recommender_name, row, office, reason, regi
     )
 
 
+
 def _proposed_appointment_dossier_id(db, pending_id):
     return next(
         row["id"] for row in db.list_decree_dossiers(status="proposed")
         if row["action_type"] == "appointment"
         and int(row.get("pending_action_id") or 0) == int(pending_id)
     )
+
 
 
 @pytest.mark.parametrize("stale", [False, True])

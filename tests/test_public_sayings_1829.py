@@ -66,12 +66,16 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     public = view["public_events"]
     saying = next(
         item for item in public
-        if str(item.get("source_id") or "") == source_id
+        if str(item.get("source_id") or "").startswith("public_saying:")
     )
+    assert saying["title"] == "有此说法"
     assert saying["body"] == "袁崇焕已死于宁远"
 
     status, _ = db.get_character_status("袁崇焕")
     assert status != "dead"
+    # 公开层是说法，不是把实况改成死讯。
+    known_items = list(view.get("events") or []) + list(public)
+    assert not any(item.get("kind") == "character_status" for item in known_items)
 
 
 def test_public_saying_may_annotate_person_affair_or_neither(game):

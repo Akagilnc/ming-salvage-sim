@@ -6,18 +6,18 @@ import getpass
 import json
 import logging
 import os
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 from ming_sim.models import (
     LLMConfig,
     CODEX_DEFAULT_MODEL,
     CLAUDE_DEFAULT_MODEL,
+    CLI_DEFAULT_RUNNER,
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
     API_DEFAULT_TIMEOUT_SECONDS,
-    TRANSPORT_DEFAULT_MAX_ATTEMPTS,
-    TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
-    TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
 )
 from ming_sim.paths import user_data_path
 
@@ -39,9 +39,6 @@ _API_RUNTIME_FIELDS = (
 )
 # cli.timeout_seconds = 设置页那一格 = 静默判死阈值（#1465 切片③ owner 2026-09-07）。
 _CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds", "reasoning_strength")
-# #1465：transport 统一策略与 API/CLI 槽平级（ADR 0001 槽位契约不动）。空转阈值不在本段：
-# 它的真源是 CLI 槽的 timeout_seconds（设置页那一格），CLI 与 API 同吃，见
-# cli_idle_timeout_seconds。
 
 # CLI 通道在内存里用这个占位符填 LLMConfig.api_key（脱 key 运行），它绝不是真实 key。
 CLI_BACKEND_PLACEHOLDER = "cli-backend"
@@ -84,16 +81,6 @@ def _slot_header_table(value: object) -> Dict[str, str]:
 _API_NUMERIC_FIELDS = {
     "timeout_seconds": (float, API_DEFAULT_TIMEOUT_SECONDS),
 }
-_TRANSPORT_RUNTIME_FIELDS = (
-    "max_attempts",
-    "attempt_timeout_seconds",
-    "retry_interval_seconds",
-)
-_TRANSPORT_NUMERIC_FIELDS = {
-    "max_attempts": (int, TRANSPORT_DEFAULT_MAX_ATTEMPTS),
-    "attempt_timeout_seconds": (float, TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS),
-    "retry_interval_seconds": (float, TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS),
-}
 
 
 def _slot_number(value: object, caster, default):
@@ -111,6 +98,8 @@ def _slot_number(value: object, caster, default):
 def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
     out: Dict[str, object] = {}
     for k in _API_RUNTIME_FIELDS:
+        if k in {"reasoning_strength", "thinking_level", "advanced_thinking_level"} and k not in data:
+            continue
         if k in _API_NUMERIC_FIELDS:
             caster, default = _API_NUMERIC_FIELDS[k]
             out[k] = _slot_number(data.get(k), caster, default)
@@ -129,28 +118,8 @@ def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
     return {
         k: (normalize_reasoning_strength(data.get(k)) if k == "reasoning_strength" else _slot_text(data, k))
         for k in _CLI_RUNTIME_FIELDS
+        if k != "reasoning_strength" or k in data
     }
-
-
-def _transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
-    """#1465 transport 段：与 api/cli 平级；缺省填默认，旧档无段不炸。
-
-    数值有效域：须 > 0（次数/超时）；非正数回落 typed 默认。
-    此为 transport 数值唯一解析权威（llm_transport 禁第二 clamp）。
-    """
-    out: Dict[str, object] = {}
-    for k in _TRANSPORT_RUNTIME_FIELDS:
-        caster, default = _TRANSPORT_NUMERIC_FIELDS[k]
-        value = _slot_number(data.get(k), caster, default)
-        if not (isinstance(value, (int, float)) and value > 0):
-            value = default
-        out[k] = value
-    return out
-
-
-def transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
-    """#1465 transport 数值解析唯一公开入口（llm_transport 委派，禁平行 _positive_*）。"""
-    return _transport_runtime_slot(data)
 
 
 def cli_idle_timeout_seconds(data: Dict[str, object]) -> float:
@@ -169,24 +138,15 @@ def cli_idle_timeout_seconds(data: Dict[str, object]) -> float:
 
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
-    """只认显式 channel + api/cli/transport 槽；不迁扁平旧档、不重造顶层 alias。"""
+    """只认显式 channel + api/cli 槽；不迁扁平旧档、不重造顶层 alias。"""
     channel = str(data.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
         channel = ""
     api_raw = data.get("api")
     cli_raw = data.get("cli")
-    transport_raw = data.get("transport")
     api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else {})
     cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
-    transport = _transport_runtime_slot(
-        transport_raw if isinstance(transport_raw, dict) else {}
-    )
-    return {
-        "channel": channel,
-        "api": api,
-        "cli": cli,
-        "transport": transport,
-    }
+    return {"channel": channel, "api": api, "cli": cli}
 
 
 def normalize_openai_base_url(base_url: str) -> str:
@@ -313,6 +273,166 @@ def cli_model_from_env(runner: str, fallback: str = "") -> str:
     return fallback
 
 
+def _api_runtime_value(runtime: Dict[str, object], key: str, fallback: str) -> str:
+    """从 runtime['api'] 槽取字段；档里没有才回落入口入参/env。
+
+    数值槽（timeout_seconds）由调用方另走数值解析，不受这里的字符串化影响。
+    """
+    api = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
+    value = api.get(key)
+    if value is None:
+        return fallback
+    text = str(value)
+    if not text and key not in {"thinking_level", "advanced_thinking_level"}:
+        return fallback
+    # 占位符 / 保留 sentinel 不当真实 key：stale cli-backend 或 __keep__ 不得
+    # 覆盖入口带来的真实 env key（否则 api 通道启动被清空报「未配 API key」）。
+    if key.endswith("api_key") and not is_real_api_key(text):
+        return fallback
+    return text
+
+
+def effective_reasoning_strengths(
+    runtime: Dict[str, object],
+    *,
+    thinking_level: str = "",
+    advanced_model: Optional[str] = None,
+    advanced_thinking_level: str = "",
+) -> Dict[str, str]:
+    """Resolve both slots without turning derived values into saved choices."""
+    api = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
+    cli = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    legacy = legacy_reasoning_strength({
+        "thinking_level": _api_runtime_value(
+            runtime, "thinking_level", thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", ""),
+        ),
+        "advanced_model": _api_runtime_value(
+            runtime, "advanced_model",
+            advanced_model if advanced_model is not None else os.environ.get("OPENAI_ADVANCED_MODEL", ""),
+        ),
+        "advanced_thinking_level": _api_runtime_value(
+            runtime, "advanced_thinking_level",
+            advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
+        ),
+    })
+    return {
+        "api": normalize_reasoning_strength(api.get("reasoning_strength", legacy)),
+        "cli": normalize_reasoning_strength(cli.get("reasoning_strength", "")),
+    }
+
+
+def llm_config_from_runtime(
+    runtime: Dict[str, Any],
+    *,
+    base_url: str,
+    model: str,
+    api_key: str,
+    timeout_seconds: float,
+    thinking_level: str,
+    advanced_model: str,
+    advanced_base_url: str,
+    advanced_api_key: str,
+    advanced_thinking_level: str,
+) -> LLMConfig:
+    """runtime json + 命令行/API 入参 → LLMConfig（#1902 单一投影真源）。
+
+    WebGame 建局与 CLI 建局共用；web 侧不再留第二份同名实现。
+    宿主只由运行档声明：channel + cli.runner；环境变量旧路（#1902 已退役）不参与。
+
+    **入参只是回落值，运行档优先**（#1902 F1）：地址、模型、key、超时、思考档与
+    advanced 槽一律先取运行档，档里没有才用入口传入/env 的值。此前这段「档覆盖入参」
+    的落差只写在 WebGame 里、游戏 CLI 直接把入参当最终值——同一份运行档经两端建局
+    得到不同执行事实（CLI 跑默认地址/默认模型/API 超时，Web 跑保存值）。落差归本
+    函数一处，两端入口不再各自拼档。
+    """
+    channel = str(runtime.get("channel") or "").strip().lower()
+    if channel not in VALID_CHANNELS:
+        # #1902：档里没写通道时按 cli 槽是否已声明 runner 判；旧 env 选宿主的路已退役。
+        channel = "cli" if isinstance(runtime.get("cli"), dict) and str(
+            (runtime.get("cli") or {}).get("runner") or ""
+        ).strip() else "api"
+    api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
+    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    cli_runner = str(cli_slot.get("runner") or CLI_DEFAULT_RUNNER).strip().lower()
+    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
+    base_url = _api_runtime_value(runtime, "base_url", base_url)
+    model = _api_runtime_value(runtime, "model", model)
+    api_key = _api_runtime_value(runtime, "api_key", api_key)
+    # 超时是数值槽：api 槽有值就用槽值（两端同一口径），否则回落入口/env 入参。
+    # #1902 S3：与 load 路径共用 _slot_number，不另维平行浮点取值。
+    timeout_seconds = _slot_number(
+        api_slot.get("timeout_seconds"),
+        float,
+        _slot_number(timeout_seconds, float, API_DEFAULT_TIMEOUT_SECONDS),
+    )
+    # A present empty slot is an explicit default, not an environment fallback.
+    thinking_level = _api_runtime_value(
+        runtime, "thinking_level", thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", ""),
+    )
+    advanced_thinking_level = _api_runtime_value(
+        runtime, "advanced_thinking_level",
+        advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
+    )
+    advanced_model = _api_runtime_value(runtime, "advanced_model", advanced_model)
+    advanced_base_url = _api_runtime_value(runtime, "advanced_base_url", advanced_base_url)
+    advanced_api_key = _api_runtime_value(runtime, "advanced_api_key", advanced_api_key)
+    reasoning_strength = effective_reasoning_strengths(
+        runtime,
+        thinking_level=thinking_level,
+        advanced_model=advanced_model,
+        advanced_thinking_level=advanced_thinking_level,
+    )[channel]
+    strength_slot = cli_slot if channel == "cli" else api_slot
+    if "reasoning_strength" in strength_slot:
+        # The unified selector owns both tiers, including the explicit default.
+        thinking_level = advanced_thinking_level = ""
+    # 无 saved CLI timeout 时回落 CLI 默认，不回落 API request timeout。
+    cli_timeout = _slot_number(cli_slot.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS)
+    if channel == "cli":
+        api_key = ""  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
+    elif not is_real_api_key(api_key):
+        # 占位符不当真 key：清空让下游空检查报「未配 API key」，
+        # 而不是拿假 key 去探 OpenAI（误导性 412）。
+        api_key = ""
+    # #1794：附加头只属 API 槽。
+    default_headers = dict(api_slot.get("default_headers") or {})
+    return LLMConfig(
+        api_key=api_key,
+        base_url=normalize_openai_base_url(base_url),
+        model=model,
+        timeout_seconds=timeout_seconds,
+        thinking_level=normalize_thinking_level(thinking_level),
+        advanced_model=(advanced_model or "").strip(),
+        advanced_base_url=normalize_openai_base_url(advanced_base_url) if advanced_base_url else "",
+        advanced_api_key=real_api_key_or_empty(advanced_api_key),
+        advanced_thinking_level="",
+        reasoning_strength=reasoning_strength,
+        channel=channel,
+        cli_runner=cli_runner,
+        cli_model=cli_model,
+        cli_timeout_seconds=cli_timeout,
+        default_headers=default_headers,
+    )
+
+
+def resolve_api_key(api_key: str = "") -> str:
+    """入参/env 都没有真实 key 时当面索要一次；仍无则 SystemExit。
+
+    唯一「向人要 key」的地方（#1902）：API-only 直调路（闸脚本）共用此缝。
+    """
+    key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
+    if not is_real_api_key(key):
+        key = ""
+    if not key:
+        key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
+    if not is_real_api_key(key):
+        # 手敲的也复验：占位符当真 key 同样拒掉。
+        key = ""
+    if not key:
+        raise SystemExit("未提供 API key，无法使用 LLM。")
+    return key
+
+
 def load_llm_config(
     base_url: str,
     model: str,
@@ -324,25 +444,13 @@ def load_llm_config(
     advanced_api_key: str = "",
     advanced_thinking_level: str = "",
 ) -> LLMConfig:
-    api_key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
-    # 探针：MING_SIM_LLM_BACKEND=codex|claude 时走本地 CLI，无需 api key。
-    # CLI 通道下 api_key 留空——占位符只在 create_chat_model 构造 CliChat 时注入，
-    # 不让 magic-string 进 LLMConfig.api_key、不流经任何 key 路径。
-    from ming_sim.cli_backend import cli_backend_from_env
-    cli_runner = cli_backend_from_env()
-    if cli_runner is not None:
-        api_key = ""  # CLI 模式不要 API key
-    else:
-        # API 模式才要真实 key：占位符不算，空则索要/报错，别拿假 key 探 OpenAI。
-        if not is_real_api_key(api_key):
-            api_key = ""
-        if not api_key:
-            api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
-        if not is_real_api_key(api_key):
-            # 手敲的也复验：占位符当真 key 同样拒掉。
-            api_key = ""
-        if not api_key:
-            raise SystemExit("未提供 API key，无法使用 LLM。")
+    """按 OpenAI 兼容参数构一份 API 通道配置（闸脚本等 API-only 直调用）。
+
+    #1902：本函数不再按 MING_SIM_LLM_BACKEND 选宿主，也不读运行档——CLI 通道的
+    配置一律走运行档投影（load_runtime_llm + llm_config_from_runtime），Web 建局
+    使用那条路；这里只服务「明确只跑 API」的直调。
+    """
+    api_key = resolve_api_key(api_key)
     adv_base = (advanced_base_url or "").strip()
     normalized_thinking = normalize_thinking_level(thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", ""))
     legacy_reasoning = legacy_reasoning_strength({
@@ -350,10 +458,11 @@ def load_llm_config(
         "advanced_thinking_level": advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
         "thinking_level": normalized_thinking,
     })
-    reasoning_strength = (
-        normalize_reasoning_strength(os.environ.get("MING_SIM_REASONING_STRENGTH", ""))
-        or legacy_reasoning
+    reasoning_strength = normalize_reasoning_strength(
+        os.environ.get("MING_SIM_REASONING_STRENGTH", legacy_reasoning)
     )
+    if "MING_SIM_REASONING_STRENGTH" in os.environ:
+        normalized_thinking = ""
     return LLMConfig(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
@@ -365,9 +474,9 @@ def load_llm_config(
         advanced_api_key=real_api_key_or_empty(advanced_api_key),
         advanced_thinking_level="",
         reasoning_strength=reasoning_strength,
-        channel="cli" if cli_runner else "api",
-        cli_runner=cli_runner or "",
-        cli_model=cli_model_from_env(cli_runner or "", model),
+        channel="api",
+        cli_runner="",
+        cli_model=cli_model_from_env("", model),
         # 静默判死阈值用 CLI 槽默认，不沿用 API 的 timeout_seconds（codex R1 #2）。
         cli_timeout_seconds=CLI_DEFAULT_TIMEOUT_SECONDS,
     )
@@ -408,24 +517,33 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
 
 
 def load_runtime_llm() -> Dict[str, object]:
-    """读 data/runtime_llm.json。缺/坏返回空 dict。"""
-    if not os.path.isfile(RUNTIME_LLM_PATH):
-        return {}
+    """读 data/runtime_llm.json。
+
+    缺档／合法空 → {}（入口可按既有契约回落）。
+    读／解析失败与缺档分判：保留真实原因并明示后，仍回落 {}——不另立 fail-fast，
+    也不新增整档校验／修档／迁移或第二配置。
+    不做 isfile 等元数据预判：预判失败会把权限等真读故障洗成缺档。
+    """
     try:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except json.JSONDecodeError:
-        # Documented safe empty-config fallback; leave cause via existing logger.
-        logger.exception("load_runtime_llm JSON corrupt path=%s", RUNTIME_LLM_PATH)
+    except FileNotFoundError:
+        # 真缺档：合法空，不挂故障。
         return {}
-    except OSError:
-        logger.exception("load_runtime_llm failed path=%s", RUNTIME_LLM_PATH)
+    except (OSError, json.JSONDecodeError) as exc:
+        # 坏档／读失败 ≠ 缺档：保留真实异常对象明示后再回落，禁无痕洗成空配置。
+        logger.warning(
+            "runtime_llm load failed path=%s", RUNTIME_LLM_PATH,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
         return {}
     if not isinstance(data, dict):
-        # Documented safe empty-config fallback; preserve root-type cause.
-        logger.error(
-            "load_runtime_llm non-object root path=%s type=%s",
-            RUNTIME_LLM_PATH, type(data).__name__,
+        err = TypeError(
+            f"runtime_llm top-level {type(data).__name__}, expected dict"
+        )
+        logger.warning(
+            "runtime_llm load failed path=%s", RUNTIME_LLM_PATH,
+            exc_info=(type(err), err, None),
         )
         return {}
     return _normalize_runtime_llm(data)
@@ -447,9 +565,6 @@ def save_runtime_llm(
     cli_timeout_seconds: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
     api_reasoning_strength: Optional[str] = None,
-    transport_max_attempts: Optional[int] = None,
-    transport_attempt_timeout_seconds: Optional[float] = None,
-    transport_retry_interval_seconds: Optional[float] = None,
     default_headers: Optional[Dict[str, str]] = None,
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
@@ -460,9 +575,6 @@ def save_runtime_llm(
     existing = load_runtime_llm()
     existing_api = existing.get("api") if isinstance(existing.get("api"), dict) else {}
     existing_cli = existing.get("cli") if isinstance(existing.get("cli"), dict) else {}
-    existing_transport = (
-        existing.get("transport") if isinstance(existing.get("transport"), dict) else {}
-    )
     api_inputs = (
         base_url,
         model,
@@ -521,7 +633,11 @@ def save_runtime_llm(
         if api_reasoning_strength is not None
         else normalize_reasoning_strength(existing_api.get("reasoning_strength"))
     )
-    if isinstance(api_payload, dict):
+    if (
+        "reasoning_strength" in existing_api
+        or (active_channel == "api" and reasoning_strength is not None)
+        or api_reasoning_strength is not None
+    ):
         api_payload["reasoning_strength"] = api_strength
     # CLI 槽的 reasoning_strength 像 runner/model/timeout 一样按槽保留：保存 API 通道时不得用
     # API 的空强度覆盖/清掉 CLI 槽已存值（cmr #358 r4：跨通道保存丢失 inactive 槽设置——切回
@@ -530,22 +646,12 @@ def save_runtime_llm(
         cli_strength = strength
     else:
         cli_strength = normalize_reasoning_strength(existing_cli.get("reasoning_strength", ""))
-    if cli_strength:
+    if "reasoning_strength" in existing_cli or (active_channel == "cli" and reasoning_strength is not None):
         cli_payload["reasoning_strength"] = cli_strength
-    # #1465：transport 段与通道保存正交——显式传入覆盖，否则保留既存/默认（ADR 0001 平级）。
-    transport_src = dict(existing_transport)
-    if transport_max_attempts is not None:
-        transport_src["max_attempts"] = transport_max_attempts
-    if transport_attempt_timeout_seconds is not None:
-        transport_src["attempt_timeout_seconds"] = transport_attempt_timeout_seconds
-    if transport_retry_interval_seconds is not None:
-        transport_src["retry_interval_seconds"] = transport_retry_interval_seconds
-    transport_payload = _transport_runtime_slot(transport_src)
     payload = {
         "channel": active_channel,
         "api": api_payload,
         "cli": cli_payload,
-        "transport": transport_payload,
     }
     with open(RUNTIME_LLM_PATH, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)

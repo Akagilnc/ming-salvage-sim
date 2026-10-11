@@ -102,7 +102,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     # 承办人先挂过程奏报（假象：报已成）
     db.record_dossier_progress(
         xf_id, state.turn, "在办", "田亩清丈已十之八九，即可全竣",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     # 月末 extractor 落旨外恶果（浮收翻倍样例）——同 origin 载体
     applied = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': 12, 'category': '地方浮收', 'reason': '借清丈之名额外加派入私', 'origin_ref': f'dossier:{xf_id}', 'beyond_intent': True}]}, SettlementContext(content=content))
@@ -118,7 +118,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     mid_fp = _world_fingerprint(db)
     db.record_dossier_progress(
         xf_id, state.turn, "已全完", "田亩尽数清丈、国库应增百万",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     assert _world_fingerprint(db) == mid_fp  # AC2/AC3：假进度零入 apply
 
@@ -142,6 +142,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     bands = {r["progress_band"] for r in xf_progress}
     assert "transformed" not in bands
 
+
     # AC4：restore 后旨外效果可溯源
     backup = tmp_path / "restore-622.db"
     db.backup_to(str(backup))
@@ -158,7 +159,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     deg_id = _executing_policy(db, state, token="deg-622")
     db.record_dossier_progress(
         deg_id, state.turn, "在办", "田亩清丈已十之八九，即可全竣",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     # 无 durable beyond_intent 效果——仅表报
     assert db.list_economy_moves_for_dossier(deg_id) == []
@@ -179,7 +180,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     fp_before_fake = _world_fingerprint(db)
     db.record_dossier_progress(
         deg_id, state.turn + 1, "已竣", "奏称完结而库银未动",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     assert _world_fingerprint(db) == fp_before_fake
 
@@ -196,7 +197,7 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     target_id = _executing_policy(db, state, token="audit-target-622")
     db.record_dossier_progress(
         target_id, state.turn, "已竣", "清丈全完、加派如额",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     db.record_dossier_execution(
         target_id, "transformed", "奏报与旨外实况相左", state.turn,

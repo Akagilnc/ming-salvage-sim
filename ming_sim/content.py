@@ -120,7 +120,6 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         status = str(item.get("status") or "active")
         office_type = str_field(item, "office_type", f"characters.json.characters[{idx}]")
-        status_reason = str(item.get("status_reason") or "")
         # ADR 0009：在事者 office 必非空。离事者现职以 characters.json 为名分真源
         # （允许空 office 合法读取）；不在装载时二次洗职，也不解析 status_reason。
         if status in PERSON_OUSTED_STATUSES:
@@ -150,7 +149,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             debut_month=int(item.get("debut_month") or 0),
             status=status,
             # Free prose status_reason: preserve raw (#1834 F16).
-            status_reason=status_reason,
+            status_reason=str(item.get("status_reason") or ""),
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
@@ -611,8 +610,6 @@ def load_opening_legacies() -> List[OpeningLegacy]:
     if not out:
         raise SystemExit("opening_legacies.json 必须至少定义一条开局负面修正。")
     return out
-
-
 
 
 def load_office_definitions() -> Dict[str, Dict[str, object]]:

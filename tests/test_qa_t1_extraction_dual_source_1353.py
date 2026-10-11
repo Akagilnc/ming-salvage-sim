@@ -24,7 +24,6 @@ import pytest
 
 import ming_sim.audience_translation as audience_translation
 from ming_sim.audience_translation import list_pending_translations
-import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
@@ -35,6 +34,9 @@ from tests.test_audience_extraction_501 import (
 from ming_sim.session_write_queue import SessionWriteQueue
 from tests.conftest import stub_audience_translate
 
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+
+
 def _close_with_gate(db, state, *, night_id, translate_fn=None, llm_config=object(), **extra):
     q = SessionWriteQueue()
     return an.close_night(
@@ -42,10 +44,12 @@ def _close_with_gate(db, state, *, night_id, translate_fn=None, llm_config=objec
         write_gate=q.write_gate, write_queue=q, translate_fn=translate_fn, **extra,
     )
 
+
 def _pending_api(db) -> dict:
 
     rows = list_pending_translations(db)
     return {"pending": rows, "count": len(rows)}
+
 
 @pytest.fixture
 def web_game(tmp_path, monkeypatch):
@@ -55,6 +59,7 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     return web_app.WebGame(fresh=False)
+
 
 def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypatch):
     """#1353 负向 + #1898：收夜不得 fail 掉挡夜的回话 turn，且**同次只调一次模型**。
@@ -86,6 +91,7 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
     # 耗尽的那轮正是唯一待补轮（#1898）：不多不少，免得同次收夜悄悄多补一轮。
     assert {int(p["chat_turn_id"]) for p in list_pending_translations(db)} == {ctid}
 
+
 def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
     game, tmp_path, monkeypatch,
 ):
@@ -106,6 +112,7 @@ def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
         int(p["chat_turn_id"]) == ctid for p in (_pending_api(db).get("pending") or [])
     )
 
+
 def test_debt_exhausted_single_source_no_player_cta(game, tmp_path, monkeypatch):
     """#1842：欠账耗尽不挡收夜；诊断 pending 可查；无玩家补写 CTA 面。"""
     db, state, content = game
@@ -121,6 +128,7 @@ def test_debt_exhausted_single_source_no_player_cta(game, tmp_path, monkeypatch)
     assert int(payload["count"]) >= 1
     assert any(int(p["chat_turn_id"]) == ctid for p in payload["pending"])
     assert not payload.get("player_hint")
+
 
 def test_closing_restore_path_still_catches_up(game, tmp_path, monkeypatch):
     """#1898 恢复口：进来时已是 CLOSING（收夜中断后重开）仍补跑待补轮。"""
@@ -144,6 +152,7 @@ def test_closing_restore_path_still_catches_up(game, tmp_path, monkeypatch):
 
     assert len(calls) == 1, calls
     assert db.get_story_extract_status(ctid) == "done"
+
 
 def test_partial_heal_single_source_pending_only_fresh(
     game, tmp_path, monkeypatch,
@@ -169,6 +178,7 @@ def test_partial_heal_single_source_pending_only_fresh(
     api_ids = {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
     assert api_ids == {ctid_fresh}, api_ids
 
+
 def test_close_retry_on_healed_cleanup_no_stale_ids(game, tmp_path, monkeypatch):
     """#1842：已愈待补收夜可成；不再发 close_retry / pending_extraction 双源。"""
     db, state, content = game
@@ -187,6 +197,7 @@ def test_close_retry_on_healed_cleanup_no_stale_ids(game, tmp_path, monkeypatch)
     assert int(_pending_api(db)["count"]) == 0
     del ctid_stale
 
+
 def test_empty_startup_catchup_claims_zero_tickets(web_game):
     """#1353 r7：无待补时 startup catch-up 不领票——禁 residual pending 竞态。"""
     game = web_game
@@ -196,6 +207,7 @@ def test_empty_startup_catchup_claims_zero_tickets(web_game):
     # 显式再调仍不领票。
     game._spawn_startup_extraction_catch_up()
     assert q.inflight_count() == 0
+
 
 def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch):
     """K10a：wait_in_flight 只依工人终态放行，不按 elapsed 伪造 409。"""
@@ -246,6 +258,7 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
         waiter_polling.set()
         wt.join()
 
+
 def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypatch):
     """生产钉：seal 后现役高亮尾随拒绝 → 零 LLM、零写。"""
     game = web_game
@@ -265,10 +278,18 @@ def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypat
     assert q.inflight_count() == 0
     q.unseal()
 
+
 def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
-    """startup catch-up 须经票据写缝：非阻塞 acquire 拒收（裸 Lock 会放行）。"""
+    """startup catch-up 须经票据写缝：非阻塞 acquire 拒收（裸 Lock 会放行）。
+
+    #1902 T4：生产经 spawner → session.run_startup_translation_catch_up →
+    audience_translation；本案从现役 startup spawner 入口进，在共核接缝观察
+    write_gate，不直调 callee、不 patch 已退役的 web_app 顶层符号。
+    """
+
     game = web_game
     seen = {}
+    spawned: list = []
 
     def fake_catch_up(*, write_gate=None, **_k):
         # 外部契约：票据缝拒非阻塞 acquire；threading.Lock 会返回 True。
@@ -279,19 +300,39 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
         except RuntimeError:
             seen["ticketed_contract"] = True
 
-    monkeypatch.setattr(web_app, "catch_up_pending_translations", fake_catch_up)
-    ticket = game._mark_pending_write(key=("startup",))
-    assert ticket is not None
-    game._run_startup_extraction_catch_up(pending_ticket=ticket)
+    real_spawn = game._spawn_pending_write_thread
+
+    def _spawn_and_track(*a, **k):
+        t = real_spawn(*a, **k)
+        spawned.append(t)
+        return t
+
+    from ming_sim import audience_translation
+    monkeypatch.setattr(
+        audience_translation, "catch_up_pending_translations", fake_catch_up,
+    )
+    # 共核预检：有待补才进入 catch_up（空列表会在 session 层直接返回）。
+    monkeypatch.setattr(
+        game.session, "list_startup_translation_catch_up", lambda: [{"id": 1}],
+    )
+    monkeypatch.setattr(game, "_spawn_pending_write_thread", _spawn_and_track)
+    game._spawn_startup_extraction_catch_up()
+    assert spawned and spawned[0] is not None, "spawner must start a worker"
+    spawned[0].join(timeout=5.0)
+    assert not spawned[0].is_alive(), "startup catch-up worker did not finish"
     assert seen.get("ticketed_contract") is True
     assert seen.get("bare_lock") is not True
-    assert ticket._done is True
+    # spawner finally 归还后队列应空（lifecycle 单真源在 spawner）
+    assert game._runtime_write_queue().inflight_count() == 0
+
+
 
 def test_ticketed_write_gate_rejects_none(web_game):
     """无票不得回落裸 runtime write_gate。"""
     game = web_game
     with pytest.raises(RuntimeError):
         game._ticketed_write_gate(None)  # type: ignore[arg-type]
+
 
 def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(web_game, monkeypatch):
     from ming_sim.session import ChatTurnResult
@@ -325,6 +366,7 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
         "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", ("殿上",)
     )] == ["臣遵旨。"]
 
+
 def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monkeypatch):
     """#1849 reopen：唯一入口 stream——旧「stream/nonstream」入口轴随非流式路退役
     折叠为同路，函数本就不读该轴，故不再参数化。"""
@@ -351,6 +393,7 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     assert game.pending_translation_retries(chat_turn_id=chat_turn_id) == []
     assert [(m["role"], m["content"]) for m in game.chat_projection()] == [
         ("user", "边饷如何？"), ("minister", "臣遵旨。")]
+
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 

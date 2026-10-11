@@ -267,7 +267,7 @@ def list_due_grant_report_dossiers_for_scan(
             "due_turn": due_turn,
             "criterion_text": criterion,
             "origin_context": origin,
-            "title": title or criterion,
+            "title": title if title.strip() else criterion,
             "origin_ref": f"dossier:{did}",
             "payload_json": {
                 "dossier_id": did,

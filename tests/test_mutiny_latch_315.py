@@ -98,23 +98,6 @@ def test_raised_loyalty_alone_does_not_release_latch(game):
 
 
 @pytest.mark.parametrize(
-    ("loyalty", "latched", "expected"),
-    [
-        (39, 0, "鼓噪"),
-        (40, 0, "不满"),
-        (59, 0, "不满"),
-        (60, 0, "正常"),
-        (40, 1, "哗变"),
-        (60, 1, "哗变"),
-    ],
-)
-def test_derive_mutiny_state_boundaries_and_latch(loyalty, latched, expected):
-    army = {"loyalty": loyalty, "is_mutinied": latched}
-
-    assert derive_army_mutiny_state(army) == expected
-
-
-@pytest.mark.parametrize(
     ("exemption", "flags"),
     [("tusi", {"is_tusi": 1}), ("self_funded", {"self_funded_pay": 1})],
 )

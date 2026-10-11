@@ -13,7 +13,6 @@ from ming_sim import issues as issues_mod
 
 from ming_sim.settlement import SettlementContext, settle_delta
 
-
 NINGYUAN = "宁远护送"
 ORIGIN = "拨银、调将、派兵去宁远"
 
@@ -24,6 +23,7 @@ def _minister(db):
     ).fetchone()
     assert row is not None
     return str(row["name"])
+
 
 
 def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
@@ -38,6 +38,7 @@ def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
     else:
         body["affair_id"] = int(affair_id)
     return body
+
 
 
 def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
@@ -91,6 +92,7 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
 
 
+
 def test_same_name_affairs_are_not_merged(game):
     """同名事务不合并；顶层 affair_declarations 已随退休协议退出，不另立专用段。"""
     db, state, _ = game
@@ -105,6 +107,7 @@ def test_same_name_affairs_are_not_merged(game):
     assert first.id != second.id
     assert db.affairs.get(first.id).status == "open"
     assert db.affairs.get(second.id).status == "open"
+
 
 
 def test_typed_affair_new_issues_share_provenance(game):
@@ -140,6 +143,7 @@ def test_typed_affair_new_issues_share_provenance(game):
     assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
     assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id
     assert db.affairs.get(existing.id).status == "open"
+
 
 
 def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):
@@ -197,6 +201,7 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         "SELECT COUNT(*) FROM rejection_reports WHERE section='applied_person_changes' "
         "AND category='unauthorized_affair_origin'"
     ).fetchone()[0] == 1
+
 
 
 def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeypatch):

@@ -107,7 +107,6 @@ hiddenimports = (
     + collect_submodules("starlette")
     + [
         "ming_sim",
-        "ming_sim.cli.terminal",
         "uvicorn.logging",
         "uvicorn.loops",
         "uvicorn.loops.auto",

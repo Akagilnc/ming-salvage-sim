@@ -65,21 +65,21 @@ describe("#1465 streamChat halfstream replace resets temp body", () => {
   });
 });
 
-describe("#670 streamChat 成功记召退出错误通道", () => {
+describe("#670 streamChat 成功 done/end 退出错误通道", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("done+end 携带 admission 机面码时不抛错、不走 error 事件", async () => {
+  it("done+end 携带现役轮身份时不抛错、不走 error 事件", async () => {
+    // 无产者的 admission 响应字段已清退；本案只钉 done/end 时序与现役轮身份。
     const payload = {
       answer: "",
       campaign_id: "c1",
       night_id: 7,
-      chat_turn_id: 0,
+      chat_turn_id: 42,
       history: [],
       suggestions: [],
       directives: [],
-      admission: "SUMMON_FRESH",
     };
     const body =
       `event: done\ndata: ${JSON.stringify(payload)}\n\n` +
@@ -93,8 +93,9 @@ describe("#670 streamChat 成功记召退出错误通道", () => {
     let sawError = false;
     const done = await streamChat("洪承畴", "传来。", (d) => deltas.push(d), {
       onDone: (p) => {
-        // 机面 admission 可达 onDone（刷盘），但不得被当作错误文案。
-        expect(p.admission).toBe("SUMMON_FRESH");
+        expect(p.chat_turn_id).toBe(42);
+        expect(p.answer).toBe("");
+
       },
     }).catch((err) => {
       sawError = true;
@@ -103,6 +104,8 @@ describe("#670 streamChat 成功记召退出错误通道", () => {
 
     expect(sawError).toBe(false);
     expect(deltas).toEqual([]);
-    expect(done.admission).toBe("SUMMON_FRESH");
+    expect(done.chat_turn_id).toBe(42);
+    expect(done.answer).toBe("");
+
   });
 });

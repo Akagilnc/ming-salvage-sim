@@ -9,9 +9,22 @@ from ming_sim.audience_translation import list_pending_translations
 from tests.conftest import append_night_chat, open_audience_night
 
 def _scroll_game(db):
+    """轻壳：scroll 读面只替 DB／投影；恢复资格走 session 共核同形空实现。"""
+    session = SimpleNamespace(
+        pending_audience_recovery_retries=lambda **kw: [],
+        list_pending_translation_retries=lambda **kw: list_pending_translations(db, **kw),
+    )
     return SimpleNamespace(
         db=db,
+        session=session,
         pending_translation_retries=lambda **kw: list_pending_translations(db, **kw),
+        public_character=lambda character: {
+            "name": getattr(character, "name", ""),
+            "office": getattr(character, "office", ""),
+            "office_type": getattr(character, "office_type", ""),
+            "faction": getattr(character, "faction", ""),
+            "status": getattr(character, "status", "active"),
+        },
     )
 
 def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(web_game, monkeypatch):
@@ -131,7 +144,14 @@ def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch
     an.summon_enter(db, night_id, "王绍徽")
     an.summon_enter(db, night_id, "毕自严")
     an.set_night_protagonist(db, night_id, "王绍徽")
-    an.dismiss_from_audience(db, "王绍徽", night_id=night_id)
+    an.append_ledger_entry(
+        db, night_id,
+        person_names=["王绍徽"],
+        audibility=an.AUDIBILITY_PUBLIC,
+        body="",
+        presence_effect=an.PRESENCE_EXIT,
+        check_dead=False,
+    )
     monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
 
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
@@ -210,10 +230,9 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     after = client.get("/api/audience/scroll").json()["messages"]
     assert client.get("/api/audience/scroll").json()["translation_pending"] is False
     segments = [m for m in after if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
-    assert [(m["role"], m["speaker"], m["content"]) for m in segments] == [
-        ("minister", "杨嗣昌", "臣领旨。"),
-        ("attendant", "王承恩", "王承恩低语。"),
-        ("scene", "", "殿内烛影摇曳。"),
+    assert [(m["role"], m["speaker"]) for m in segments] == [
+        ("minister", "杨嗣昌"), ("attendant", "王承恩"),
+        ("scene", ""),
     ]
     assert "".join(m["content"] for m in segments) == story
     again = [
@@ -272,7 +291,7 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     messages = payload["messages"]
     dialogue = [message for message in messages
                 if message.get("chat_turn_id") in {first_turn, second_turn}]
-    assert [(m["role"], m["speaker"], m["chat_turn_id"]) for m in dialogue] == [
+    assert [(message["role"], message["speaker"], message.get("chat_turn_id")) for message in dialogue] == [
         ("user", "朕", first_turn),
         ("scene", "", first_turn),
         ("user", "朕", second_turn),
@@ -280,8 +299,8 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     ]
     # Derived ledger entries do not become live dialogue records.
     assert not any(message.get("record_id") for message in messages)
-    scene_turns = [m["chat_turn_id"] for m in messages if m["role"] == "scene" and m.get("chat_turn_id")]
-    assert scene_turns == [first_turn, second_turn]
+    assert [message.get("chat_turn_id") for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == [first_turn, second_turn]
+
 
     allowed_message_fields = {
         "role", "speaker", "audibility", "time", "content",
@@ -315,19 +334,33 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     assert not any(m.get("beat") == "coda" for m in scroll)  # #1838 reopen：无 coda
 
 def test_presence_commands_only_record_facts(game):
-    """入殿/告退只记事实账，戏文由场景 LLM 写。"""
+    """入殿/离场只记事实账，戏文由场景 LLM 写。"""
     db, state, _ = game
     night_id = open_audience_night(db, state)
     an.summon_enter(db, night_id, "杨嗣昌")
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+    an.append_ledger_entry(
+        db, night_id,
+        person_names=["杨嗣昌"],
+        audibility=an.AUDIBILITY_PUBLIC,
+        body="",
+        presence_effect=an.PRESENCE_EXIT,
+        check_dead=False,
+    )
 
     scroll = an.read_night_scroll(db, night_id)
     assert not any(m.get("beat") == "entrance" for m in scroll)
     assert not any(m.get("beat") == "exit" for m in scroll)
     # 事实账仍在
-    tags_sets = [set(e.get("tags") or []) for e in an.list_ledger(db, night_id)]
-    assert any(an.TAG_ENTER in ts and "杨嗣昌" in str(e.get("person_names"))
-               for e, ts in zip(an.list_ledger(db, night_id), tags_sets))
+    ledger = an.list_ledger(db, night_id)
+    assert any(
+        an.TAG_ENTER in (e.get("tags") or []) and "杨嗣昌" in (e.get("person_names") or [])
+        for e in ledger
+    )
+    assert any(
+        e.get("presence_effect") == an.PRESENCE_EXIT
+        and "杨嗣昌" in (e.get("person_names") or [])
+        for e in ledger
+    )
 
 def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
     db, state, _ = game

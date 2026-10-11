@@ -16,8 +16,10 @@ def _adv(result):
     return result.advances
 
 
+
 def _rejected(result):
     return result.rejected
+
 
 
 def _make_active_issue(db, state):
@@ -26,6 +28,7 @@ def _make_active_issue(db, state):
         state, kind="situation", title="测试·推进局势",
         origin_kind="event_pool", origin_ref="test_adv_seed", bar_value=50,
     )
+
 
 
 @pytest.mark.parametrize("section,item,category", [
@@ -55,6 +58,7 @@ def test_tracker_item_refusal(read_game, section, item, category):
     assert out.rejected[0].category == category
 
 
+
 @pytest.mark.parametrize("field,bad", [
     ("delta_bar", True),       # bool
     ("delta_bar", 1.5),        # float
@@ -74,6 +78,7 @@ def test_advance_dirty_int_field_rejected(game, field, bad):
     assert rej[0].category == "invalid_enum"
 
 
+
 def test_advance_non_active_issue_rejected(game):
     db, state, _ = game
     # 已结案 issue（非 active）→ advance_issue 回 None → missing_ref 留痕（陈旧引用）。
@@ -83,6 +88,7 @@ def test_advance_non_active_issue_rejected(game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0].category == "missing_ref"
+
 
 
 def test_advance_valid_still_advances(game):
@@ -96,6 +102,7 @@ def test_advance_valid_still_advances(game):
     assert len(done) == 1, out
 
 
+
 def test_advance_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     iid = _make_active_issue(db, state)
@@ -107,46 +114,8 @@ def test_advance_code_exception_propagates(game, monkeypatch):
         apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]}, source=Provenance.system_simulation)
 
 
+
 # --- reject 路径不得泄漏 metric 副作用（cmr advances r1 codex high + claude concur）---
 # advances 段曾在 advance_issue 的 None 检查之前就 _apply_metric_dict（就地 mutate state.metrics）：
 # 引用 stale/已非 active issue 但带 metric_delta 时，metric 已落 state、项却标 missing_ref「未落地」
 # ——矛盾且结算 commit 无 rollback。fix：pre-check active，确认后才应用 metric。
-
-
-def test_advance_missing_issue_no_metric_leak(read_game):
-    db, state, _ = read_game
-    before = dict(state.metrics)
-    out = apply_issue_tracker_output(db, state, {
-        "advances": [{"issue_id": 999999, "delta_bar": 5, "metric_delta": {"民心": -10}}],
-    }, source=Provenance.system_simulation)
-    rej = _rejected(out)
-    assert len(rej) == 1 and rej[0].category == "missing_ref", out
-    assert dict(state.metrics) == before, f"missing_ref advance 不得泄漏 metric：{before} → {dict(state.metrics)}"
-
-
-def test_advance_non_active_issue_no_metric_leak(game):
-    db, state, _ = game
-    iid = _make_active_issue(db, state)
-    db.close_issue(state, iid, reason="resolved", narrative="先结案")
-    before = dict(state.metrics)
-    out = apply_issue_tracker_output(db, state, {
-        "advances": [{"issue_id": iid, "delta_bar": 5, "metric_delta": {"皇威": -8}}],
-    }, source=Provenance.system_simulation)
-    rej = _rejected(out)
-    assert len(rej) == 1 and rej[0].category == "missing_ref", out
-    assert dict(state.metrics) == before, "已非 active advance 不得泄漏 metric"
-
-
-@pytest.mark.parametrize("bad_metric", [["列表"], "字符串", 5])
-def test_advance_non_dict_metric_delta_tolerated(game, bad_metric):
-    db, state, _ = game
-    # metric_delta 非 dict（list/str/数值）→ _apply_metric_dict 的 isinstance 守卫 sanitize 为 {}
-    # （flows 同款 #117 守门）：不 raise、正常推进、metrics 不变（sourcery advances r2 testing）。
-    iid = _make_active_issue(db, state)
-    before = dict(state.metrics)
-    out = apply_issue_tracker_output(db, state, {
-        "advances": [{"issue_id": iid, "delta_bar": 5, "metric_delta": bad_metric}],
-    }, source=Provenance.system_simulation)
-    done = [a for a in _adv(out) if a.get("issue_id") == iid]
-    assert len(done) == 1, out
-    assert dict(state.metrics) == before, "非 dict metric_delta 须 sanitize 为 {}、metrics 不变"

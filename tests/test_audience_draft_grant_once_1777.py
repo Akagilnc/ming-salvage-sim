@@ -47,6 +47,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         _stub_outer_llm_seams,
         _turn_of,
     )
+    from tests.audience_chat_helpers import post_audience_chat
     from tests.test_session_write_queue_1353 import wait_pending_writes
 
     class _HubuAgent:
@@ -136,11 +137,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
     stub_audience_translate(monkeypatch, _translate)
 
     client = TestClient(web_app.app)
-    petition = client.post(
-        "/api/audience/chat",
-        json={"message": _UTTERANCE},
-    )
-    assert petition.status_code == 200, petition.text
+    post_audience_chat(client, _UTTERANCE)
     game._runtime_write_queue().barrier(lambda: None)
     wait_pending_writes(game)
     assert int(game.state.metrics["国库"]) == treasury_before
@@ -163,8 +160,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         for p in pending
     )
 
-    confirm = client.post("/api/audience/chat", json={"message": "准"})
-    assert confirm.status_code == 200, confirm.text
+    post_audience_chat(client, "准")
     game._runtime_write_queue().barrier(lambda: None)
     wait_pending_writes(game)
 

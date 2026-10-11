@@ -10,9 +10,13 @@ Seams:
 """
 
 from __future__ import annotations
+import ming_sim.issues as issue_engine
+from tests.dossier_test_helpers import promulgated_policy_origin
+from tests.readback_helpers import decree_cost_event_rows
 
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 import pytest
+from tests.conftest import wait_for_background_jobs
 
 from ming_sim.audience_night import open_night
 from tests.test_month_chain_1843 import _prepare_player_month
@@ -44,6 +48,8 @@ def _model_write_execution(db, state, content, dossier_id, outcome, note):
     assert not section(out, "dossier_executions").rejected, out
     return out
 
+
+
 # ── fixtures ──────────────────────────────────────────────────────────
 
 def _promulgated_origin(db, state, token: str) -> str:
@@ -61,6 +67,8 @@ def _promulgated_origin(db, state, token: str) -> str:
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
+
+
 def _executing_policy_dossier(db, state, *, token: str = "due-review-621"):
     dossier_id = db.create_decree_dossier(
         state,
@@ -77,6 +85,8 @@ def _executing_policy_dossier(db, state, *, token: str = "due-review-621"):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id
 
+
+
 def _insert_staged_commitment(
     db, state, content, *, stages, title="徐光启分段之诺", origin_ref: str = "",
 ):
@@ -84,6 +94,9 @@ def _insert_staged_commitment(
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '三年火器见眉目，五年新历成。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': stages}]}, SettlementContext(content=content))
     created = out.issue.new_issues[0]
     return int(created["issue_id"]), origin
+
+
+
 
 def _settle_empty_month(db, state, content, monkeypatch):
     before = state.turn
@@ -94,6 +107,8 @@ def _settle_empty_month(db, state, content, monkeypatch):
     assert state.turn == before + 1
     return result
 
+
+
 def _cost_events(db, dossier_id, *, identity="连坐"):
     return [
         dict(row)
@@ -102,6 +117,8 @@ def _cost_events(db, dossier_id, *, identity="连坐"):
             (int(dossier_id), identity),
         ).fetchall()
     ]
+
+
 
 # ── P3 待办消费 ───────────────────────────────────────────────────────
 
@@ -127,6 +144,8 @@ def test_mark_todo_pending_to_consumed_is_idempotent(game):
     assert row["status"] == TODO_STATUS_CONSUMED
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
+
+
 def test_consumed_todo_does_not_resurrect_on_rescan(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -146,6 +165,8 @@ def test_consumed_todo_does_not_resurrect_on_rescan(game):
     assert n == 0
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
     assert len(db.list_next_audience_todos(status=TODO_STATUS_CONSUMED)) == 1
+
+
 
 def test_unconsumed_todo_rolls_across_settles_and_restore(game):
     db, state, content = game
@@ -183,6 +204,8 @@ def test_unconsumed_todo_rolls_across_settles_and_restore(game):
     assert todos2[0]["origin_context"] == origin_context
     assert int(state2.turn) == int(state.turn)
 
+
+
 # ── P4 场面顶出 + 原诺语境 ────────────────────────────────────────────
 
 def test_due_review_scene_tops_next_audience_with_origin_context(game):
@@ -203,6 +226,10 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     scene = scenes[0]
     assert scene["origin_context"] == "三年火器见眉目"
     assert "payload_json" not in scene
+
+
+
+
 
 def test_due_review_scene_tops_live_open_night_even_with_body(game):
     """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
@@ -246,6 +273,9 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     finally:
         release_material_tree(prepared.root)
 
+
+
+
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
 
 def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
@@ -286,6 +316,8 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     assert _cost_events(db, dossier_id) == []
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
+
+
 def test_dossier_branch_negative_does_not_open_parallel_slot(game):
     """负向：有案卷桥不得另建第二执行格/平行案卷。"""
     db, state, content = game
@@ -313,6 +345,8 @@ def test_dossier_branch_negative_does_not_open_parallel_slot(game):
     after_count = db.conn.execute("SELECT COUNT(*) AS c FROM decree_dossiers").fetchone()["c"]
     assert after_count == before_count
     assert db.get_decree_dossier(dossier_id)["id"] == dossier_id
+
+
 
 def test_no_dossier_branch_only_scene_no_forged_dossier(game):
     db, state, content = game
@@ -362,6 +396,8 @@ def test_no_dossier_branch_only_scene_no_forged_dossier(game):
     assert db.get_decree_dossier(did)["execution_outcome"] == "fulfilled"
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
+
+
 def test_no_dossier_branch_negative_does_not_create_dossier(game):
     """负向：无案卷分支禁止 create_decree_dossier。"""
     db, state, content = game
@@ -399,6 +435,8 @@ def test_no_dossier_branch_negative_does_not_create_dossier(game):
         for r in db.conn.execute("SELECT id FROM decree_dossiers").fetchall()
     }
     assert after_ids == before_ids
+
+
 
 # ── P2 中段 vs 末段 ───────────────────────────────────────────────────
 
@@ -440,6 +478,8 @@ def test_mid_stage_no_close_no_joint_liability(game):
     assert dossier["execution_outcome"] in ("", None, "executing")
     assert _cost_events(db, dossier_id) == []
     assert db.list_dossier_progress(dossier_id) == []
+
+
 
 def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     db, state, content = game
@@ -497,6 +537,8 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     liability_after = [c for c in costs_after if c.get("cost_kind") == "liability"]
     assert len(liability_after) == 1
 
+
+
 def test_executing_outcome_rejects_close_true(game):
     """负向：executing 不得 close=True（适配器契约）。"""
     db, state, _content = game
@@ -505,6 +547,8 @@ def test_executing_outcome_rejects_close_true(game):
         db.record_dossier_execution(
             dossier_id, "executing", "中段过程", state.turn, close=True, commit=True,
         )
+
+
 
 # ── P4/P5 时序与机械哨兵 ──────────────────────────────────────────────
 
@@ -546,6 +590,8 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "failed"
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
+
+
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -569,6 +615,8 @@ def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
     assert db.list_pending_decisions(state.turn) == []
     assert db.list_pending_decisions(state.turn - 1) == []
 
+
+
 def test_input_closed_set_degrades_when_sources_missing(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -589,6 +637,8 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     assert inp["progress_reports"] == []
     assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
     scene = project_due_review_scene(db, todo, review_input=inp)
+
+
 
 def test_formal_review_blocks_extractor_second_terminal(game):
     """接管：到期目标同月仅正式复核写终值；extractor 重复终值拒收。"""
@@ -626,6 +676,9 @@ def test_formal_review_blocks_extractor_second_terminal(game):
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["execution_outcome"] == "failed"
 
+
+
+
 def test_due_month_model_execution_lands_before_todo_write(game):
     """到期当月模型声明终值可落格；todo 尚未写时 dossiers 集合仍可观察。"""
     db, state, content = game
@@ -655,6 +708,8 @@ def test_due_month_model_execution_lands_before_todo_write(game):
     after = db.get_decree_dossier(dossier_id)
     assert after["status"] == "closed"
     assert after["execution_outcome"] == "fulfilled"
+
+
 
 def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
     """生根：履行期已逐月落完 → 模型写 fulfilled 不重复落经济账。"""
@@ -693,6 +748,8 @@ def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
     assert dossier["execution_outcome"] == "fulfilled"
     after_moves = db.list_economy_moves_for_dossier(dossier_id)
     assert after_moves == before_moves
+
+
 
 def test_p6_gap_visible_cause_not_auto(game):
     """0118 最小玩家面：果可见、因不自动。"""

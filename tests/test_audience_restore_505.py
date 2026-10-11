@@ -13,6 +13,7 @@ reconcile 保留问话消息行（区别于 fail_chat_turn 的删问话善后）
 """
 
 from __future__ import annotations
+from ming_sim.entities.issue.legacy import sync_opening_legacies
 
 import json
 from pathlib import Path
@@ -44,15 +45,17 @@ def _active_minister(db, content) -> str:
     raise AssertionError("no active ming minister")
 
 
+
 def _open_db(path, content, *, first: bool):
     db = GameDB(path, content)
     if first:
         db.seed_static_data()
         state = db.load_state()
-        issue_legacy.sync_opening_legacies(db, state)
+        sync_opening_legacies(db, state)
     else:
         state = db.load_state()
     return db, state
+
 
 
 @pytest.fixture
@@ -64,32 +67,61 @@ def restore_env(content, tmp_path):
     yield SimpleNamespace(path=path, db=db, state=state, content=content)
 
 
+
 def _start_generating_turn(db, state, minister, question):
-    """生产 seam 造在飞 generating 轮：问话已落库并链接，回话未落（= 生成半途被 kill）。"""
+    """生产 seam 造在飞 generating 轮：问话已落库并链接，回话未落（= 生成半途被 kill）。
+
+    #1902 L1：建轮归属恒为殿上（与 begin_audience_chat_turn 同）；问话可挂具名大臣。
+    """
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
     _night_id, ct = open_hall_turn(
-        db, state, minister, agno_session_id="sess", agno_runs_before=0,
+        db, state, SCENE_CHAT_SPEAKER, agno_session_id="sess", agno_runs_before=0,
     )
-    mid = db.append_chat_message(minister, state.turn, "user", question)
+    name = str(minister or "").strip()
+    if name and name != SCENE_CHAT_SPEAKER:
+        an.ensure_summon_enter(
+            db, _night_id, name,
+            method=an.METHOD_XUANRU, origin_chat_turn_id=ct,
+        )
+    mid = db.append_chat_message(
+        name or SCENE_CHAT_SPEAKER, state.turn, "user", question,
+    )
     db.update_chat_turn_messages(ct, user_message_id=mid)
     return ct
 
 
+
 def _land_full_turn(db, state, minister, question, answer):
-    """生产 seam 造完成轮：问话 + 回话都落库、链接（generating→active）。"""
+    """生产 seam 造完成轮：问话 + 回话都落库、链接（generating→active）。
+
+    #1902 L1：建轮归属恒为殿上。
+    """
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
     _night_id, ct = open_hall_turn(
-        db, state, minister, agno_session_id="sess", agno_runs_before=0,
+        db, state, SCENE_CHAT_SPEAKER, agno_session_id="sess", agno_runs_before=0,
     )
-    uid = db.append_chat_message(minister, state.turn, "user", question)
+    name = str(minister or "").strip()
+    if name and name != SCENE_CHAT_SPEAKER:
+        an.ensure_summon_enter(
+            db, _night_id, name,
+            method=an.METHOD_XUANRU, origin_chat_turn_id=ct,
+        )
+    speaker = name or SCENE_CHAT_SPEAKER
+    uid = db.append_chat_message(speaker, state.turn, "user", question)
     db.update_chat_turn_messages(ct, user_message_id=uid)
-    mid = db.append_chat_message(minister, state.turn, "minister", answer)
+    mid = db.append_chat_message(speaker, state.turn, "minister", answer)
     db.update_chat_turn_messages(ct, minister_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ct,))
     db.conn.commit()
     return ct
 
 
+
 def _reopen(path, content):
     return _open_db(path, content, first=False)
+
 
 
 def test_reopen_reconcile_preserves_ledger_exactly(restore_env):
@@ -113,6 +145,7 @@ def test_reopen_reconcile_preserves_ledger_exactly(restore_env):
         db2.close()
 
 
+
 def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -130,13 +163,14 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
         assert an.list_in_flight_chat_turns(db2, night["id"]) == []
         assert any(int(r["chat_turn_id"]) == ct for r in interrupted)
         # 问话原句保留（不删）——恢复路径永不删记录。
-        proj = db2.build_chat_projection(minister)
+        proj = db2.build_chat_projection(an.SCENE_CHAT_SPEAKER)
         assert [m["content"] for m in proj if m["role"] == "user"] == ["杨卿何以教朕？"]
         # 待重试面板取数：带问话原文。
-        retries = db2.get_interrupted_reply_retries(minister)
+        retries = db2.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)
         assert [r["question"] for r in retries] == ["杨卿何以教朕？"]
     finally:
         db2.close()
+
 
 
 def test_reconcile_leaves_completed_turn_untouched(restore_env):
@@ -158,6 +192,7 @@ def test_reconcile_leaves_completed_turn_untouched(restore_env):
         assert status == "active"
     finally:
         db2.close()
+
 
 
 def test_reconcile_does_not_delete_question_row(restore_env):
@@ -183,6 +218,7 @@ def test_reconcile_does_not_delete_question_row(restore_env):
         db2.close()
 
 
+
 def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
     """完成轮不产任何账目（纯奏对），重开后逐字稿仍在——锚点=最后持久化对话轮，非最后账。"""
     env = restore_env
@@ -202,11 +238,12 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
     db2, _state2 = _reopen(env.path, content)
     try:
         db2.reconcile_interrupted_chat_turns()
-        proj = db2.build_chat_projection(minister)
+        proj = db2.build_chat_projection(an.SCENE_CHAT_SPEAKER)
         assert "四轮问对之一" in [m["content"] for m in proj if m["role"] == "user"]
         assert "臣愚见如此。" in [m["content"] for m in proj if m["role"] == "minister"]
     finally:
         db2.close()
+
 
 
 # ── AC3 重试重新生成回话、记录无重复句 ───────────────────────────────
@@ -242,7 +279,8 @@ def test_retry_regenerates_reply_without_duplicate_question(web_game, monkeypatc
     assert row["status"] == "active"
     assert row["minister_message_id"]
     # 重试后该轮不再挂在待重试面板。
-    assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
+    assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == [later]
+
 
 
 def test_post_reply_failure_resumes_close_without_regenerating_reply(web_game, monkeypatch):
@@ -272,6 +310,7 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(web_game, m
     )] == ["臣遵旨。"]
 
 
+
 def test_retry_without_interrupted_turn_is_rejected(web_game):
     """负向：无待重试轮时重试响亮拒绝，不静默造轮。"""
     env = web_game
@@ -280,6 +319,7 @@ def test_retry_without_interrupted_turn_is_rejected(web_game):
     rt = web_game
     with pytest.raises(HTTPException):
         rt.retry_interrupted_reply(minister)
+
 
 
 # ── finding1：重试失败尾声——副作用回滚、问话保留、可再重试（与 chat 失败尾声同缝）────
@@ -295,6 +335,7 @@ class _FailingRetryAgent:
         )
         self.db.conn.commit()
         raise RuntimeError("重试 LLM 失败")
+
 
 
 @pytest.mark.parametrize("rollback_method", ["fail_chat_turn", "restore_interrupted_after_failed_retry"])
@@ -332,6 +373,7 @@ def test_failed_chat_rollback_returns_restored_directive_ids(restore_env, rollba
     assert row["status"] == "pending" and row["night_approved"] == 1
 
 
+
 def test_failed_retry_rolls_back_side_effects_and_keeps_question(web_game, monkeypatch):
     env = web_game
     db, state, content = env.db, env.state, env.content
@@ -366,7 +408,7 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(web_game, monke
     ).fetchone()["error_pack_path"])
     assert (pack / "traceback.txt").is_file()
     assert (pack / "save_backup.db").is_file()
-    assert [r["question"] for r in db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    assert [r["question"] for r in db.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == ["剿抚孰先？"]
     assert [
         r["content"] for r in db.conn.execute(
             "SELECT content FROM chat_messages WHERE role='user'"
@@ -386,6 +428,7 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(web_game, monke
             "SELECT content FROM chat_messages WHERE role='user'"
         ).fetchall()
     ] == ["剿抚孰先？"]
+
 
 
 # ── finding3：reopen CAS——未赢的并发/双击重试不落第二条大臣回话 ─────────────
@@ -408,6 +451,7 @@ def test_lost_reopen_cas_rejects_without_second_reply(web_game, monkeypatch):
     ).fetchone()["c"] == 0
 
 
+
 # ── finding4：结算/亲裁相位不得重试召对（夜不跨月）─────────────────────────
 
 
@@ -428,6 +472,7 @@ def test_retry_rejected_in_settlement_phase(web_game):
     ).fetchone()["c"] == 0
 
 
+
 def _ensure_agno_runs_table(db) -> None:
     # Columns match Agno 3 SqliteDb so public get_session can read mixed-state.
     db.conn.execute(
@@ -437,6 +482,7 @@ def _ensure_agno_runs_table(db) -> None:
         "user_id TEXT, parent_run_id TEXT, status TEXT, run_index INTEGER, "
         "run_data TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER)"
     )
+
 
 
 def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
@@ -461,6 +507,8 @@ def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
             (rid, session_id, i, json.dumps({"run_id": rid}), i + 1),
         )
     db.conn.commit()
+
+
 
 def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     env = restore_env
@@ -493,6 +541,7 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     ).fetchone()["status"] == "interrupted"
 
 
+
 def test_reconcile_marks_questionless_orphan_failed(restore_env):
     """负向：连问话都没落的极窄崩溃孤儿 → 'failed'（无可保留/重试），只解阻塞、不入待重试。"""
     env = restore_env
@@ -502,8 +551,7 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
     _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
-    # 调用方持久化已接纳的轮；写口不再内部提交。
-    db.conn.commit()
+    db.conn.commit()  # 写口不提交；已受理的孤儿轮由调用方持久化。
     # 不 append 问话、不 link user_message_id：generating 且无 user_message。
     db.close()
 
@@ -515,38 +563,47 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
         assert db2.conn.execute(
             "SELECT status FROM chat_turns WHERE id=?", (ct,)
         ).fetchone()["status"] == "failed"
-        assert db2.get_interrupted_reply_retries(minister) == []
+        assert db2.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER) == []
     finally:
         db2.close()
+
 
 
 # ── finding2：load_save / 换档重建走 __init__ 同序重开对账 ───────────────────
 
 
 def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
-    """#1716：fresh Agno 3 首轮已落 run 后，生产 _start_chat_turn 第二轮须受理。
+    """#1716：fresh Agno 3 首轮已落 run 后，公开 chat_stream 第二轮须受理。
 
-    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送在 _start_chat_turn 读 runs 长度；
+    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送读 runs 长度；
     旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
     断言第二轮 create 成功且 agno_runs_before=既有 run 数。
     """
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night, open_night
+    from ming_sim.session import ChatTurnResult
+
     game = web_game
-    minister = _active_minister(game.db, game.content)
-    an.open_night(game.db, game.state)
-    sid = game._minister_agno_session_id()
+    night = get_open_night(game.db) or open_night(game.db, game.state)
+    sid, _ = game.session.scene_model_session_anchor(int(night["id"]))
     # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
     _seed_agno_v3_runs(game.db, sid, run_count=1)
     assert game.db.agno_runs_length(sid) == 1
 
-    chat_turn_id, _snapshot = game._start_chat_turn(minister)
+    # 离线 scene_chat：只让 stream 跑完 LLM 窗；建轮/accepted 仍走生产 chat_stream。
+    game.session.scene_chat = (
+        lambda message, *, chat_turn_id=0, stream_emit=None, minister_name="", **_k:
+        ChatTurnResult(answer="臣奏：当先抚后剿。")
+    )
+
+    events = list(game.chat_stream(SCENE_CHAT_SPEAKER, "剿抚孰先？"))
+    assert any(ev.get("type") == "accepted" for ev in events)
     row = game.db.conn.execute(
-        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
-        (chat_turn_id,),
+        "SELECT agno_session_id, agno_runs_before FROM chat_turns ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert row is not None
     assert row["agno_session_id"] == sid
     assert int(row["agno_runs_before"]) == 1
-    assert row["status"] == "generating"
+
 
 
 def test_load_save_reconciles_interrupted_orphan(web_game):
@@ -565,7 +622,8 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
     assert game.db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
-    assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    assert [r["question"] for r in game.db.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == ["剿抚孰先？"]
+
 
 
 # ---------------------------------------------------------------------------

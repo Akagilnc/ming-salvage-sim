@@ -57,8 +57,6 @@ def close_night_dossier(db, state, content, pending_id):
     )
 
 
-
-
 def close_office_to_dossier(db, state, content, pending_id):
     """Mark night-approved and close; office pending becomes appointment dossier."""
     night = audience_night.get_open_night(db)

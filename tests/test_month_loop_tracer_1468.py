@@ -1,19 +1,11 @@
-"""#1468 过月主链 e2e tracer——真实 HTTP 入口两月循环 + #1353 fold-in 钉。
+"""#1468 / #1353：转译 LLM 死透 → 耗尽失败单源（真实 HTTP 入口）。
 
-回应 owner「测试全绿流程走不通」：全仓接缝钉照不到跨接缝状态机脱节；
-本文件从真实 HTTP 入口走玩家基本循环，仅在最外层 LLM 接缝 deterministic stub
-（不 mock 内部函数 / 结算核 / 收夜编排）。
-
-主 tracer：new_game → 召对开夜/回话/收夜 → 拟旨 → POST /api/decree/issue/stream
-（消费 SSE 到终态）→ 月+1 → 再一月。起点置十一月以真跨 year rollover
-（year+1 且 period 回 1）。断言 turn+2 与 year/period 跨年安全月序 +2、无 409 死锁、
-无裸 500、闸/账双向等量（成功过月 count==len(pending)==0）。
-#1353 fold-in 钉：
-- 植入欠账后一次过月动作成功（流内处理、无 409、无 CTA、账清、月+1）
-- 真死 LLM stub → 失败单源（通传未达），非待补 CTA/409；夜保持可重按
+主两月 tracer 与场外 COURT_BREAK 夹具已随退役入口清除；本文件只保留仍有
+真实入口契约价值的死透负向案。#1902 F3：删专用死夹具。
 """
 
 from __future__ import annotations
+from tests.conftest import stub_webgame_boundary
 
 import json
 
@@ -42,23 +34,14 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     from tests.test_faction_brew_637 import _dual_brew_fn_factory
     _fake_settlement_llm(monkeypatch, narrative="本月邸报：边饷已清，流寇未息。")
     stub_webgame_boundary(monkeypatch)
-    # 拟旨 capture 默认 30s 总罩——外层接缝 canned，禁真 LLM/真等。
-    monkeypatch.setattr(
-        cli_backend,
-        "capture_manual_directive_payload",
-        lambda text, llm_config=None, **_k: {
-            "dossier_action_type": "policy",
-            "target_kind": "issue",
-            "target_id": "month-loop-tracer-1468",
-            "mode": "ordinary",
-        },
-    )
     # 月尾关系／派系酿制：隔离外部 brew 模型出口，保留 mechanical_tail 真路径。
     offline_brew = _dual_brew_fn_factory([])
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._brew_fn_for_session",
         lambda _session: offline_brew,
     )
+
+
 
 
 @pytest.fixture
@@ -84,6 +67,7 @@ def tracer_client(tmp_path, monkeypatch, _offline_scene_beat_generator):
             web_app.web_game = None
 
 
+
 def _assert_not_bare_500(resp, *, step: str) -> None:
     """裸 500 = 无 detail 的服务器崩；结构化 4xx/可读 500 detail 另论。"""
     if resp.status_code < 500:
@@ -103,6 +87,7 @@ def _assert_not_bare_500(resp, *, step: str) -> None:
     )
 
 
+
 def _pick_active_minister(state: dict) -> str:
     for m in state.get("ministers") or []:
         if not isinstance(m, dict):
@@ -119,9 +104,11 @@ def _pick_active_minister(state: dict) -> str:
     raise AssertionError(f"no active ming minister in state ministers={state.get('ministers')!r}")
 
 
+
 def _turn_of(state: dict) -> int:
     turn = state.get("turn") or {}
     return int(turn.get("turn") or 0)
+
 
 
 def _get_state(client: TestClient) -> dict:
@@ -129,6 +116,7 @@ def _get_state(client: TestClient) -> dict:
     _assert_not_bare_500(resp, step="GET /api/game/state")
     assert resp.status_code == 200, resp.text
     return resp.json()
+
 
 
 def _pending_payload(client: TestClient) -> dict:
@@ -140,6 +128,7 @@ def _pending_payload(client: TestClient) -> dict:
     body = resp.json()
     retries = list(body.get("translation_retries") or [])
     return {"pending": retries, "count": len(retries)}
+
 
 
 def _parse_sse(text: str) -> list[dict]:
@@ -155,6 +144,7 @@ def _parse_sse(text: str) -> list[dict]:
         if cur:
             events.append(cur)
     return events
+
 
 
 def _post_issue_stream(
@@ -201,74 +191,3 @@ def _post_issue_stream(
     raise AssertionError(
         f"{step}: unexpected terminal SSE event {ev!r}; body={resp.text!r}"
     )
-
-
-def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
-    """生产同核欠账：开夜 + 回话落库未抽。返回 chat_turn_id。"""
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    nid = int(night["id"])
-    an.ensure_summon_enter(game.db, nid, minister)
-    ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
-    game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
-
-    assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
-
-    return int(ctid)
-
-
-def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
-    """#1353 fold-in / #1842：转译 LLM 死透 → 耗尽失败单源；夜可重按。
-
-    现役流式入口：error 事件携原失败 stage 与错误包，夜可重试。
-    """
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-
-    client = tracer_client
-
-    new = client.post("/api/menu/new_game")
-    _assert_not_bare_500(new, step="new_game (dead-llm)")
-    assert new.status_code == 200, new.text
-    state0 = (new.json() or {}).get("state") or {}
-    turn0 = _turn_of(state0)
-    minister = _pick_active_minister(state0)
-    game = web_app.web_game
-    assert game is not None
-
-    ctid = _plant_extraction_debt(game, minister, sess_tag="sess-1468-dead")
-
-    # #1842：收夜 catch-up 认转译水位；真失败注入转译缝。
-    def _boom_translate(prompt, llm_config):
-        del prompt, llm_config
-        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
-
-    stub_audience_translate(monkeypatch, _boom_translate)
-
-    issue = client.post("/api/decree/issue/stream", json={"expected_turn": turn0})
-    _assert_not_bare_500(issue, step="dead-llm issue")
-    assert issue.status_code == 200, issue.text
-    errors = [json.loads(event["data"]) for event in _parse_sse(issue.text) if event.get("event") == "error"]
-    assert len(errors) == 1
-    assert errors[0]["stage"] == "audience_translation_exhausted"
-    assert errors[0]["error_pack_path"]
-
-    # 诊断面仍可见欠账；夜保持开，玩家重按过月=重试整段
-    pending = _pending_payload(client)
-    pending_list = pending.get("pending") or []
-    count = int(pending.get("count") or 0)
-    assert count == len(pending_list) >= 1, (
-        f"diagnostic pending should remain: count={count} body={pending!r}"
-    )
-    api_ids = {int(p.get("chat_turn_id") or 0) for p in pending_list}
-    assert ctid in api_ids, f"pending API missing debt turn {ctid}: {pending!r}"
-
-    still = an.get_open_night(game.db)
-    assert still is not None
-    assert str(still.get("status")) == an.NIGHT_STATUS_OPEN
-    after = _get_state(client)
-    assert _turn_of(after) == turn0, "dead-llm must not advance month"
-
-
-# ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
-
-from tests.conftest import stub_webgame_boundary

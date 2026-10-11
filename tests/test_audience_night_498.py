@@ -47,9 +47,11 @@ def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
     raise AssertionError("no active ming minister")
 
 
+
 def _find_entries(entries, *required_tags):
     need = set(required_tags)
     return [e for e in entries if need.issubset(set(e["tags"]))]
+
 
 
 def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨。") -> None:
@@ -69,6 +71,7 @@ def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨�
     db.conn.commit()
 
 
+
 def test_legacy_reply_without_segments_stays_neutral_in_night_scroll(game):
     db, state, content = game
     minister = _active_minister(db, content)
@@ -81,6 +84,7 @@ def test_legacy_reply_without_segments_stays_neutral_in_night_scroll(game):
     assert reply["role"] == "scene"
     assert reply["speaker"] == ""
     assert reply["highlights"] == []
+
 
 
 # ── AC1/2/5 开夜→宣人→收夜 ──────────────────────────────────────────
@@ -117,6 +121,7 @@ def test_open_summon_close_chain_readable_by_night(game):
     assert an.get_night(db, night["id"])["status"] == "closed"
 
 
+
 def test_summon_method_and_bad_method(game):
     db, state, content = game
     minister = _active_minister(db, content)
@@ -127,6 +132,7 @@ def test_summon_method_and_bad_method(game):
     with pytest.raises(AudienceNightError) as ei:
         an.summon_enter(db, night["id"], minister, method="密召")
     assert ei.value.code == "bad_summon_method"
+
 
 
 # ── AC3 多夜隔离 + AC4 timeline ──────────────────────────────────────
@@ -147,6 +153,7 @@ def test_chat_completion_via_attach(game):
     assert done["status"] == "active"
 
 
+
 def test_attach_without_scene_anchors_persists_readable_defaults(game):
     """真实入口（web/CLI attach）不带玩家选值时，夜容器时辰/地点仍持久非空、可读（#498 AC）。"""
     db, state, content = game
@@ -159,6 +166,7 @@ def test_attach_without_scene_anchors_persists_readable_defaults(game):
     ).fetchone()
     assert str(row["time_of_day"]).strip()  # 非空可读，非裸空串
     assert str(row["location"]).strip()
+
 
 
 # ── AC6/7 死账与员额 ────────────────────────────────────────────────
@@ -174,6 +182,7 @@ def test_dead_person_enter_rejected_with_error_pack(game):
     assert ei.value.code == "dead_present"
     assert ei.value.error_pack_path
     assert Path(ei.value.error_pack_path).is_dir()
+
 
 
 def test_standing_roster_skips_dead(game):
@@ -201,6 +210,7 @@ def test_standing_roster_skips_dead(game):
         assert entry["body"] == ""
     names = {p for e in roster_rows for p in e["person_names"]}
     assert victim not in names
+
 
 
 # ── AC8：公开入口顺势收夜（GameSession.resolve_turn / advance）────────
@@ -234,6 +244,7 @@ def test_close_night_only_commits_this_night_approved(game):
         "SELECT status FROM pending_actions WHERE id=?", (approved,)).fetchone()["status"] == "committed"
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (unapproved,)).fetchone()["status"] == "pending"
+
 
 
 def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content, tmp_path):
@@ -284,6 +295,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
     db2.close()
 
 
+
 # ── AC10 在飞回话 × 真实 web 入口 → tests/test_web_audience_night_498.py ──
 # 完成回话入档→收夜、挂起 fail-closed 409/夜保持开、同步端点 offload 不冻结 loop、
 # 拟诏 preview 不收夜，均走真实 WebGame.chat_stream + 真实 ASGI 路由验证（只 fake LLM）。
@@ -316,6 +328,7 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
     assert int(n_nights) == 0
 
 
+
 # 结算相位不得召对 + 等 gate 期间相位翻转（TOCTOU）被拒 → 真实 WebGame.chat_stream 验证，
 # 见 tests/test_web_audience_night_498.py::test_phase_flip_while_waiting_gate_is_rejected。
 
@@ -336,51 +349,6 @@ def test_bad_audibility_and_append_after_close(game):
         an.append_ledger_entry(db, night["id"], tags=["试"])
     assert ei2.value.code == "night_closed"
 
-
-def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
-    """CLI 真实输入入口 terminal.minister_chat 起聊 → 对话轮挂夜（非 night_id=0 旁路）。"""
-    import ming_sim.cli.terminal as term
-    from types import SimpleNamespace
-
-    db, state, content = game
-    character = next(c for c in content.characters.values()
-                     if db.get_character_status(c.name)[0] == "active"
-                     and getattr(c, "power_id", "ming") == "ming"
-                     and getattr(c, "office_type", "") != "后宫")
-
-    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
-        assert chat_turn_id > 0  # 挂夜轮以 generating 起笔，回话须带 chat_turn_id
-        return SimpleNamespace(
-            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
-            registered_minister="", displaced_minister="", court_action="",
-            next_minister="", secret_order_id=0, pending_action_id=0,
-        )
-
-    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        # #1842：CLI 殿上口令外问话走 scene_chat；替身委托既有 chat 同形。
-        del stream_emit
-        return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
-
-    session = SimpleNamespace(
-        db=db, state=state, content=content,
-        chat=chat, scene_chat=scene_chat,
-        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
-        schedule_pending_scene_translation=lambda result: None,
-        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
-        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
-        close_night_after_chat_if_needed=lambda *_a, **_k: None,
-    )
-    answers = iter(["朕问卿边事如何？", "done"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-
-    assert term.minister_chat(session, character) == "dismiss"
-
-    open_n = an.get_open_night(db)
-    assert open_n is not None
-    turns = an.list_chat_turns_for_night(db, int(open_n["id"]))
-    # #1838 reopen：CLI 殿上建轮以「殿上」为 speaker
-    assert turns and turns[-1]["minister_name"] in {character.name, "殿上"}
-    assert int(turns[-1]["night_id"]) == int(open_n["id"]) > 0
 
 
 def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):

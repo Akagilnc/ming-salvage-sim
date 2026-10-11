@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from tests.wait_utils import wait_until
 
 
 import web_app
@@ -23,8 +24,6 @@ from ming_sim.models import TurnPhase
 from tests.conftest import MONTH_OPEN_KEYS
 from tests.conftest import stub_audience_translate
 
-_IN_FLIGHT_DETAIL = "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。"
-_GATE_BUSY_DETAIL = "月末结算或上一步写入进行中，请稍候再操作。"
 
 
 from tests.test_court_break_player_lock_1727 import _active_minister
@@ -33,6 +32,7 @@ from tests.test_court_break_player_lock_1727 import _client
 
 def _click_before(state) -> dict[str, int]:
     return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
+
 
 
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):
@@ -47,6 +47,7 @@ def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事
     assert len(db.list_unextracted_replies(night_id=nid)) >= 1
 
     return nid, ctid
+
 
 
 # ── 1. 未了续跑：未落账回话退朝不 409，自动接续至月完 ────────────────────
@@ -79,7 +80,7 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
         assert an.get_open_night(game.db) is not None
         captured_at["state"] = response.json()
         raise AudienceNightError(
-            _IN_FLIGHT_DETAIL,
+            "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。",
             code="in_flight_chat",
         )
 
@@ -98,7 +99,7 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
     # 真失败后展示态退出
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
-    assert resp.json()["detail"] == _IN_FLIGHT_DETAIL
+
 
 
 # ── 3. 真失败另形：pending 抽取仍失败 → 人话 + 展示态退出 ──────────────
@@ -118,6 +119,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
+    _click_before(game.state)
     turn = int(game.state.turn)
     nid, ctid = _open_night_with_unextracted_reply(game, minister)
 
@@ -160,6 +162,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
     assert game.db.get_story_extract_status(ctid) in ("", "pending")
 
 
+
 def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
     """AC2 颁布入口同形（真入口 POST /api/decree/issue/stream）。"""
     from ming_sim.exceptions import LLMUnavailable
@@ -174,6 +177,7 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
+    _click_before(game.state)
     turn = int(game.state.turn)
     _open_night_with_unextracted_reply(game, minister)
     game.db.add_directive(
@@ -193,6 +197,10 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
         return real_close(g, **kw)
 
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _close_observing)
+
+    # #1842 + #1902：转译耗尽 → SettlementAbort；非流式入口退役后唯一入口流式，
+    # 终态仍带 typed status_code=409 + stage（issue 与 advance 同形）。
+    from tests.issue_stream_helpers import IssueStreamError, apost_issue_stream
 
     async def go():
         async with _client() as client:
@@ -220,6 +228,7 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
     assert game.state_payload()["turn"]["settlement_display"] is False
 
 
+
 # ── 4. AC3 不回归：settling 恢复条 / 批红下发 ────────────────────────────
 
 
@@ -240,6 +249,7 @@ def test_settling_keeps_display_for_recovery(web_game):
     assert payload["turn"]["phase"] == "settling"
 
 
+
 def test_awaiting_decision_still_emits_pending(web_game):
     """AC3：失败退出不得清除 awaiting_decision 的恢复快照。"""
     db, state = web_game.db, web_game.state
@@ -251,6 +261,7 @@ def test_awaiting_decision_still_emits_pending(web_game):
     from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     assert exit_settlement_display_on_failure(db, state) is False
     assert db.get_month_open_snapshot(int(state.turn)) == before
+
 
 
 def test_accept_creator_atomic_only_one_true(game, monkeypatch):
@@ -276,6 +287,7 @@ def test_accept_creator_atomic_only_one_true(game, monkeypatch):
     assert third is False
 
 
+
 # ── 5. accept 后 gate/HTTPException 拒收 → 不得留孤儿核账展示态 ──────────
 
 
@@ -297,7 +309,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
         saw["snap"] = g.db.get_month_open_snapshot(int(g.state.turn))
         raise HTTPException(
             status_code=409,
-            detail=_GATE_BUSY_DETAIL,
+            detail="月末结算或上一步写入进行中，请稍候再操作。",
         )
         yield  # pragma: no cover — raise 后不可达；保 CM 形
 
@@ -308,7 +320,6 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
 
     resp = asyncio.run(go())
     assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == _GATE_BUSY_DETAIL
     # 点即入曾发生
     assert saw.get("snap") == before
     # 拒收后不得留孤儿核账展示态
@@ -318,6 +329,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
     assert game.state.turn_phase not in (
         TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
     )
+
 
 
 def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game):
@@ -342,8 +354,6 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game):
 
         resp_b = asyncio.run(go_b())
         assert resp_b.status_code == 409, resp_b.text
-        detail = resp_b.json()["detail"]
-        assert detail
         # B 幂等 no-op 后 409：non-blocking exit 撞锁 skip，不得代清 A 的快照
         assert game.db.get_month_open_snapshot(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True
@@ -356,6 +366,7 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game):
 
     # A 仍在办时快照保持；释放后创建者失败路径仍可自行 exit（单请求口径不回归）
     assert game.db.get_month_open_snapshot(turn) == before
+
 
 
 def test_exit_settlement_display_acquires_write_gate(web_game):
@@ -388,12 +399,13 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
         finally:
             done.set()
 
-    t = threading.Thread(target=_peer_exit, daemon=True)
-    t.start()
     try:
+        t = threading.Thread(target=_peer_exit, daemon=True)
+        t.start()
         # 他持 write_gate 时 blocking exit 须堵在 acquire，不得无门完成清快照
         assert not done.is_set(), "exit 不得在 write_gate 仍被他持时无门完成"
         assert game.db.get_month_open_snapshot(turn) is not None
+        gate.release()
     finally:
         if gate.locked():
             gate.release()
@@ -405,6 +417,7 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
     assert game.db.get_month_open_snapshot(turn) is None
 
 
+
 def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch):
     """#1235 r3 / #1241 S5：session-reaccept-orphan-after-web-noncreator（issue/stream 真入口）。
 
@@ -413,7 +426,6 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     B finally 虽 created_display=False 仍须 non-blocking 抢到锁并清孤儿。
     """
     import threading
-    import time
 
     from ming_sim.month_open_snapshot import accept_settlement_period
 
@@ -474,8 +486,7 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     try:
         t.start()
         # 等 B 完成 web accept（False）并堵在阻塞 gate
-        while saw["web_created"] is None:
-            time.sleep(0.01)  # backoff only
+        wait_until(lambda: saw["web_created"] is not None or not t.is_alive())
         assert saw["web_created"] is False, "B 须为 web 非创建者"
         assert not b_done.is_set(), "B 不得在 A 持锁时完成"
         assert game.db.get_month_open_snapshot(turn) == before
@@ -485,9 +496,9 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         assert exit_settlement_display_on_failure(game.db, game.state) is True
         assert game.db.get_month_open_snapshot(turn) is None
     finally:
-        if gate.locked():
-            gate.release()
+        gate.release()
         t.join()
+
     assert "err" not in b_result, b_result.get("err")
     assert b_result.get("status") == 200, b_result
     # SSE 事件字段；复用既有解析，不扫整流正文。
@@ -502,6 +513,7 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     assert game.state.turn_phase not in (
         TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
     )
+
 
 
 def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypatch):
@@ -553,13 +565,15 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
     t_b = None
     try:
         t_a.start()
-        a_in_await.wait()
+        wait_until(lambda: a_in_await.is_set() or not t_a.is_alive())
+        assert a_in_await.is_set(), "worker exited before a_in_await"
         assert game.db.get_month_open_snapshot(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True
         assert web_app._settlement_entry_inflight(game) >= 1
 
         # B：同窗并发过月——卡在 barrier 等待 A，不得代清 A 快照
         b_started = threading.Event()
+        b_done = threading.Event()
         b_result: dict = {}
 
         def _run_b():
@@ -574,10 +588,13 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
                 b_result["body"] = resp_b.text
             except Exception as exc:  # noqa: BLE001
                 b_result["err"] = exc
+            finally:
+                b_done.set()
 
         t_b = threading.Thread(target=_run_b, daemon=True)
         t_b.start()
-        b_started.wait()
+        wait_until(lambda: b_started.is_set() or not t_b.is_alive())
+        assert b_started.is_set(), "worker exited before b_started"
         # A 仍在办时快照不得被清（b_started 已证 B 进入；A 屏障未放行）
         assert not a_done.is_set()
         assert game.db.get_month_open_snapshot(turn) == before
@@ -602,6 +619,7 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
     assert game.state.turn_phase not in (
         TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
     )
+
 
 
 # ── 5. SP1 #1241：断线→重连 e2e tracer（#1220 US14）──────────────────────

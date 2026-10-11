@@ -23,6 +23,7 @@ def _extract(db, *, chat_turn_id, night_id, fact, **_ignored):
     return {"status": "done"}
 
 
+
 def _night_reply(db, state, minister, reply="臣愿会签此旨。"):
     night_id = int(an.open_night(db, state, location="乾清宫", time_of_day="夜")["id"])
     an.ensure_summon_enter(db, night_id, minister)
@@ -32,6 +33,7 @@ def _night_reply(db, state, minister, reply="臣愿会签此旨。"):
     db.persist_minister_reply(minister, state.turn, reply, chat_turn_id)
     row = db.conn.execute("SELECT night_seq FROM chat_turns WHERE id=?", (chat_turn_id,)).fetchone()
     return night_id, chat_turn_id, int(row["night_seq"] or 0)
+
 
 
 def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
@@ -102,6 +104,7 @@ def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
     assert an.get_night(db, night_id) is not None
 
 
+
 def test_endorsement_write_boundary_rejects_unknown_or_illegal_forms(game):
     db, state, _content = game
     minister = _minister(db)
@@ -150,6 +153,7 @@ def test_endorsement_write_boundary_rejects_unknown_or_illegal_forms(game):
                 source_chat_turn_id=chat_turn_id,
             )
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossier_endorsements").fetchone()[0] == 0
+
 
 
 def test_undo_chat_turn_removes_source_bound_endorsements_from_judge(game):

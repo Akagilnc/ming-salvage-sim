@@ -160,7 +160,6 @@ def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
     return severity in _DEBT_SEVERITIES
 
 
-
 def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
     """#1376 候选 payload → typed contract 字段；不读 tags / title / content。"""
     if not isinstance(payload, Mapping):
@@ -1320,7 +1319,6 @@ def _consume_monthly_clues(
     return credited
 
 
-
 def apply_investigation_monthly_effort(
     db: Any,
     dossier_id: int,
@@ -2114,7 +2112,6 @@ def settle_due_secret_orders(
         verdict = decide_secret_order_settlement({
             "actual_units": actual,
             "target_units": target,
-            "criterion_text": str(order.get("title") or order.get("content") or "密令"),
             "has_reports": bool(reports),
             "origin_context": secret_order_origin(oid),
         })

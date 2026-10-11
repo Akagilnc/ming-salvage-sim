@@ -1,9 +1,9 @@
+from pathlib import Path
 """发行包资产：portrait 扫 dist 回退。
 
 #1721：bundled root 下 portraits 路径须可被 next_pool_portrait_id 读到。
 """
 
-from pathlib import Path
 import sqlite3
 
 

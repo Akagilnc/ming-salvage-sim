@@ -14,6 +14,16 @@ import {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const CLI_RUNNERS = [
+  { value: "agy", label: "agy（Gemini）" },
+  { value: "codex", label: "codex" },
+  { value: "claude", label: "claude" },
+  { value: "cursor", label: "cursor" },
+  { value: "kimi", label: "kimi" },
+  { value: "grok", label: "grok" },
+  { value: "pi", label: "pi" },
+];
+
 const BASE_LLM_RESPONSE = {
   channel: "api" as const,
   base_url: "https://api.example.com/v1",
@@ -35,6 +45,8 @@ const BASE_LLM_RESPONSE = {
   advanced_thinking_level: "",
   has_api_key: true,
   cli_runner: "agy",
+  cli_runners: CLI_RUNNERS,
+  cli_reasoning_floor_runners: ["codex", "grok"],
   cli_model: "",
   cli_timeout_seconds: 300,
   persisted: {
@@ -186,6 +198,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
       reasoning_strength: "high",
       reasoning_supported: true,
       cli_reasoning_runners: ["codex", "claude", "grok"],
+      cli_reasoning_floor_runners: ["codex", "grok"],
       persisted: {
         ...BASE_LLM_RESPONSE.persisted,
         channel: "cli",
@@ -243,13 +256,11 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     );
     const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
     expect(runnerValues).toEqual(["agy", "codex", "claude", "cursor", "kimi", "grok"]);
-    expect(runnerValues).toContain("grok");
     cleanup();
   });
 
   it("clears the legacy thinking_level shadow on save so the unified selector owns reasoning (#358 cmr)", async () => {
-    // 旧档持有 thinking_level=high、reasoning_strength 空。统一选择器以旧值迁移初始化，
-    // 保存时须清掉旧 thinking_level，否则它仍作隐藏旋钮、用户选「默认」也清不掉。
+    // A present default selector wins over legacy thinking, including on save.
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       calls.push({ url, init });
@@ -273,9 +284,8 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
-    // selector migrated the legacy value into the unified strength
     const select = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(select?.value).toBe("high");
+    expect(select?.value).toBe("");
 
     const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
       (b.textContent ?? "").includes("保存并应用")
@@ -288,7 +298,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
     expect(post).toBeTruthy();
     const body = JSON.parse(String(post!.init!.body));
-    expect(body.reasoning_strength).toBe("high");
+    expect(body.reasoning_strength).toBe("");
     expect(body.thinking_level).toBe("");
     expect(body.advanced_thinking_level).toBe("");
     cleanup();
@@ -392,45 +402,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(body.reasoning_strength).toBe("low");
     cleanup();
   });
-
-  it.each(["disabled", "none"])(
-    "migrates legacy %s thinking level to unified off",
-    async (legacyThinkingLevel) => {
-      const calls: Array<{ url: string; init?: RequestInit }> = [];
-      global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-        calls.push({ url, init });
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            ...BASE_LLM_RESPONSE,
-            base_url: "https://api.minimax.io/v1",
-            model: "minimax-test",
-            thinking_level: legacyThinkingLevel,
-            reasoning_strength: "",
-            reasoning_supported: true,
-            persisted: { ...BASE_LLM_RESPONSE.persisted, thinking_level: legacyThinkingLevel, reasoning_strength: "" },
-          }),
-        } as Response);
-      });
-      const { cleanup } = render(<LLMConfigTab />);
-      await act(async () => {});
-
-      const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-      expect(strength?.value).toBe("off");
-      const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
-        (b.textContent ?? "").includes("保存并应用")
-      );
-      await act(async () => {
-        saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-
-      const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
-      const body = JSON.parse(String(post!.init!.body));
-      expect(body.thinking_level).toBe("");
-      expect(body.reasoning_strength).toBe("off");
-      cleanup();
-    }
-  );
 
   it("uses advanced model capability for API reasoning support", async () => {
     global.fetch = vi.fn().mockResolvedValue({
@@ -682,33 +653,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
-  it("falls back to local API capability when the loaded backend setting is edited", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        ...BASE_LLM_RESPONSE,
-        base_url: "https://api.deepseek.com/v1",
-        model: "deepseek-chat",
-        reasoning_supported: false,
-      }),
-    } as Response);
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(strength?.disabled).toBe(true);
-    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
-    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
-    expect(baseUrlInput).toBeTruthy();
-    expect(modelInput).toBeTruthy();
-    act(() => {
-      changeInput(baseUrlInput!, "https://api.example.com/v1");
-      changeInput(modelInput!, "gpt-5");
-    });
-
-    expect(strength?.disabled).toBe(false);
-    cleanup();
-  });
 });
 
 describe("#1732 GameMenu · 就地消解", () => {

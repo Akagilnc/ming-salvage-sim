@@ -3,7 +3,6 @@ import { Loader2, RotateCcw, Send, X } from "lucide-react";
 import { MinisterPortrait } from "./hud";
 import { api } from "../api";
 import { ScrollMessages, portraitSources } from "./scrollMessages";
-import { AUDIENCE_SCENE_SPEAKER } from "../audienceScene";
 import type {
   AudienceScrollMessage,
   ChatDisplayMessage,
@@ -73,12 +72,11 @@ export function ChatModal({
   onInput: (value: string) => void;
   onSend: (ministerName: string, text?: string) => void;
   onRetryReply?: (
-    ministerName: string,
     chatTurnId: number,
     recoveryPhase?: ReplyRetry["recovery_phase"],
   ) => void;
   onRetryTranslation?: (chatTurnId: number) => void;
-  onUndo: (ministerName: string) => void;
+  onUndo: () => void;
   onHint: (value: string) => void;
   /** Last player-owned position for this campaign/night, if they temporarily left. */
   scrollPosition?: number;
@@ -330,7 +328,7 @@ export function ChatModal({
   };
 
   const liveReplyRetries = effectiveScrollState.kind === "night"
-    ? effectiveScrollState.replyRetries
+    ? (effectiveScrollState.replyRetries ?? [])
     : [];
   const turnNotices = new Map<number, React.ReactNode>();
   for (const retry of liveReplyRetries) {
@@ -340,7 +338,7 @@ export function ChatModal({
         <span>{retryReadFailure?.kind === "reply" && retryReadFailure.chatTurnId === retry.chat_turn_id
           ? `${retryReadFailure.postSucceeded || retryReadFailure.readFailure ? "召对记录读取失败；" : ""}${!retryReadFailure.postSucceeded ? "回话重试失败：" : ""}${retryReadFailure.message}`
           : <>{retry.recovery_phase ? "回话已保存，后续处理失败" : `问话未得回话（「${retry.question}」）`}。</>}{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
-        <button type="button" onClick={() => onRetryReply(AUDIENCE_SCENE_SPEAKER, retry.chat_turn_id, retry.recovery_phase)} disabled={!!busy}>
+        <button type="button" onClick={() => onRetryReply(retry.chat_turn_id, retry.recovery_phase)} disabled={!!busy}>
           重试
         </button>
       </div>
@@ -466,7 +464,7 @@ export function ChatModal({
                   disabled={!!busy || !canUndoLastChat}
                   onClick={() => {
                     setConfirmUndo(false);
-                    onUndo(minister.name);
+                    onUndo();
                   }}
                 >
                   继续撤回

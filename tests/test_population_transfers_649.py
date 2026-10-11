@@ -27,13 +27,16 @@ def _pop(db: GameDB, name: str, region_id: str) -> int:
     ).fetchone()
     return int(row[0]) if row else 0
 
+
 def _global_population(db: GameDB) -> int:
     return int(db.conn.execute("SELECT COALESCE(SUM(population),0) FROM classes").fetchone()[0])
+
 
 def _transfer(**kw):
     base = {"origin_ref": "盘面自发"}
     base.update(kw)
     return base
+
 
 def test_transfer_two_legs_same_transaction_conservation(game):
     """单条记录 → 源减目标增两侧守恒；sub-万（新档人口径）精确 ±3000。"""
@@ -50,6 +53,7 @@ def test_transfer_two_legs_same_transaction_conservation(game):
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 3000
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 3000
     assert _global_population(db) == total_before  # 全局守恒
+
 
 def test_all_inflow_reasons_positive_cases_land(game):
     """入池五因（加派/摊派/灾害/兵灾/逃亡）各 ≥1 正例经 settle_delta 落账。
@@ -80,6 +84,7 @@ def test_all_inflow_reasons_positive_cases_land(game):
         got = _pop(db, key[0], key[1])
         assert got == want, f"{key}: 期望 {want}，实得 {got}"
 
+
 # ── 方向矩阵与逐项拒收面 ─────────────────────────────────────────────────────
 
 def test_direction_matrix_violations_rejected_per_item(game):
@@ -104,6 +109,7 @@ def test_direction_matrix_violations_rejected_per_item(game):
     assert _pop(db, "农民", "shaanxi") == farmer_before - 50
     assert _pop(db, "流民", "shaanxi") == displaced_before + 50
 
+
 def test_amount_and_balance_validation_per_item(game):
     """amount 非严格正整数逐项拒收；实有封顶由真实过月入口覆盖。"""
     db, state, content = game
@@ -120,6 +126,7 @@ def test_amount_and_balance_validation_per_item(game):
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
+
 def test_reference_validation_national_row_cross_region_unknown(game):
     """全国行触线/跨省对/未知 region/查无阶级行逐项拒收。"""
     db, state, content = game
@@ -133,6 +140,7 @@ def test_reference_validation_national_row_cross_region_unknown(game):
     applied = settle_delta(state, db, {'population_transfers': bad_items}, SettlementContext(content=content))
     assert len(section(applied, "population_transfers").rejected) == len(bad_items)
     assert view(applied, "population_transfers") == []
+
 
 def test_origin_ref_required_and_validated(game):
     """origin_ref 必填：缺失/伪前缀/未颁案卷逐项拒收；盘面自发与已颁 dossier 合法。"""
@@ -150,6 +158,7 @@ def test_origin_ref_required_and_validated(game):
     assert "invalid_origin_ref" in cats
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
+
 def test_whitelist_extra_field_and_non_dict_item_rejected(game):
     """白名单外字段逐项拒收；list 内非 dict 坏项由 sanitize 层按 ADR0015 F1
     {'raw_value':…} 包装留痕（r3 分层终态）。"""
@@ -162,6 +171,7 @@ def test_whitelist_extra_field_and_non_dict_item_rejected(game):
              if r.item == {"raw_value": 42}]
     assert shape
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+
 
 def test_section_non_list_rejects_section_rest_lands(game):
     """r4 分层终态：转移段非 list → 只拒该 section 留痕，其余 section 好项照落。"""
@@ -177,6 +187,7 @@ def test_section_non_list_rejects_section_rest_lands(game):
         "SELECT satisfaction FROM classes WHERE name='农民' AND region_id='' "
     ).fetchone()[0]
     assert sat_after == sat_before - 2
+
 
 def test_class_delta_population_key_upgraded_to_per_item_rejection(game):
     """§1.4 升格：class_delta value 内出现 population 键 → 该 item invalid_enum 拒收，
@@ -196,6 +207,7 @@ def test_class_delta_population_key_upgraded_to_per_item_rejection(game):
     ).fetchone()
     assert farmer["satisfaction"] == 32 - 3        # 其余合法项照常落库
 
+
 def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game):
     """#649 C3/C4：中文形 {"满意":1,"人口":3000} 经 canonicalize 后 population guard
     统一整项拒收（invalid_enum），满意度与人口均不变；同批合法项照落。"""
@@ -214,6 +226,7 @@ def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game)
     ).fetchone()
     assert farmer["satisfaction"] == 32 - 2        # 同批合法项不受累
 
+
 def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
     """r4 分层终态：未知顶层 key=可拆 section → 按段拒收留痕不整份退（ADR0015 待施工纠正面）。"""
     db, state, content = game
@@ -223,10 +236,12 @@ def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
     assert shape_rej[0].category == "invalid_shape"
     assert dict(applied.metric.applied).get("民心") == 1  # 其余 section 照落，不整份退
 
+
 def test_new_save_unit_is_persons(game):
     db, state, content = game
     applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=1, reason='灾害')]}, SettlementContext(content=content))
     assert view(applied, "population_transfers")[0]["population_unit"] == POPULATION_UNIT_PERSONS
+
 
 # ── mutation 自验 oracle：四类变异必被咬（漏一种即 FAIL）──────────────────────
 
@@ -250,6 +265,7 @@ def _conservation_oracle(before, after, records):
         if key not in mutated:
             assert after[key] == before[key], f"未声明行被改动：{key}"
 
+
 def _snap(db):
     return {
         (r["name"], r["region_id"]): int(r["population"])
@@ -257,5 +273,6 @@ def _snap(db):
             "SELECT name, region_id, population FROM classes WHERE region_id <> ''"
         ).fetchall()
     }
+
 
 # ── F1 闭环：真实 extractor 契约（prompt 中文 shape → canonicalize → apply）───

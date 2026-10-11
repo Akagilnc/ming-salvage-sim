@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """FastAPI web entry for Ming Salvage Sim.
 
-薄壳：路由调 ming_sim.session.GameSession（与 CLI 共用同一流转层）。
+薄壳：路由调 ming_sim.session.GameSession（现役 Web 会话流转层）。
 拟旨候选：召对转译交办 → pending_actions → 收夜成案 → 过月颁布关。
 """
 
 from __future__ import annotations
+from ming_sim.session import AudienceChatTurn
 
 import asyncio
 import contextlib
@@ -18,7 +19,6 @@ import re
 import shutil
 import sqlite3
 import sys
-import tempfile
 import time
 import threading
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -34,8 +34,8 @@ try:
         sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
     if sys.stderr is not None:
         sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
-    pass
+except Exception as exc:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动；旁路留真因
+    logging.getLogger(__name__).warning("web stdout/stderr line-buffering setup failed: %s", exc)
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,15 +43,23 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from ming_sim.applier import atomic
-from ming_sim.constants import ROOT_DIR, GATE_METRIC_KEYS
 from ming_sim.db import _load_durable_json_list
-from ming_sim.paths import user_data_path, user_data_dir
-from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
+from ming_sim.applier import atomic
+from ming_sim.paths import (
+    UnsafeSaveNameError,
+    user_data_path,
+    user_data_dir,
+)
+from ming_sim.save_slots import (
+    SaveSlotCleanupError,
+    copy_sqlite_file,
+    delete_sqlite_db_files_or_raise,
+)
+from ming_sim.exceptions import DependencyMismatch, LLMUnavailable, SettlementAbort
+from ming_sim.constants import GATE_METRIC_KEYS
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
-    cli_model_from_env,
     is_real_api_key,
     api_supports_reasoning_strength,
     cli_supports_reasoning_strength,
@@ -61,7 +69,7 @@ from ming_sim.llm_config import (
     normalize_openai_base_url,
     normalize_thinking_level,
     normalize_reasoning_strength,
-    legacy_reasoning_strength,
+    effective_reasoning_strengths,
     save_runtime_llm,
     _slot_header_table,
 )
@@ -81,7 +89,6 @@ from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
     run_highlight_judge,
 )
-from ming_sim.audience_translation import catch_up_pending_translations
 from ming_sim.session_write_queue import (
     SessionWriteQueue,
     TicketCancelled,
@@ -92,6 +99,8 @@ from ming_sim.session_write_queue import (
 from ming_sim.token_stats import tlog
 from ming_sim.flows import compute_budget_lines
 from ming_sim.models import (
+    API_DEFAULT_BASE_URL,
+    API_DEFAULT_MODEL,
     API_DEFAULT_TIMEOUT_SECONDS,
     Character,
     FRONT_HALF_DONE_PHASES,
@@ -338,56 +347,34 @@ def _humanize_legacy_effect(modifiers: Dict[str, Any], content: Any) -> str:
     return "、".join(parts)
 
 
-def _delete_sqlite_db_files_or_raise(db_path: str) -> None:
-    """删除 SQLite 主库及 WAL/SHM；失败时阻断重开，避免误读旧档。"""
-    for suffix in ("", "-wal", "-shm"):
-        target = db_path + suffix
-        if not os.path.exists(target):
-            continue
-        if not os.path.isfile(target):
-            raise HTTPException(
-                status_code=500,
-                detail=f"重开失败：无法清理主库文件 {target}，它不是普通文件。请检查该路径后再重试。",
-            )
-        try:
-            os.remove(target)
-        except PermissionError as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"重开失败：权限不足，无法删除主库文件 {target}。"
-                    "请关闭占用该文件的程序，或用管理员权限运行游戏后重试。"
-                ),
-            ) from exc
-        except OSError as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"重开失败：无法删除主库文件 {target}。系统返回：{exc}。"
-                    "请确认没有其他游戏进程占用该文件；若是权限问题，请用管理员权限运行游戏后重试。"
-                ),
-            ) from exc
+def _cleanup_failure_detail(err: SaveSlotCleanupError) -> str:
+    """删主库失败的玩家指引文案（#1902：判定与归类在共享核，文案归 Web 入口）。
+
+    文案与迁移前那份 web 私有实现逐句一致，只是失败原因改读核的 ``reason`` 归类，
+    不再各自判一遍 ``isfile`` / ``PermissionError``。
+    """
+    target = err.target
+    if err.reason == "not_a_file":
+        return f"重开失败：无法清理主库文件 {target}，它不是普通文件。请检查该路径后再重试。"
+    if err.reason == "permission":
+        return (
+            f"重开失败：权限不足，无法删除主库文件 {target}。"
+            "请关闭占用该文件的程序，或用管理员权限运行游戏后重试。"
+        )
+    return (
+        f"重开失败：无法删除主库文件 {target}。系统返回：{err.cause}。"
+        "请确认没有其他游戏进程占用该文件；若是权限问题，请用管理员权限运行游戏后重试。"
+    )
 
 
 def _advanced_llm_config_for_verify(config: LLMConfig) -> LLMConfig:
-    """主配置上的高级模型槽 → 单独烟测用的 LLMConfig。"""
-    return LLMConfig(
-        api_key=real_api_key_or_empty(config.advanced_api_key) or real_api_key_or_empty(config.api_key),
-        base_url=(config.advanced_base_url or "").strip() or config.base_url,
-        model=(config.advanced_model or "").strip(),
-        timeout_seconds=config.timeout_seconds,
-        thinking_level="",
-        advanced_model=config.advanced_model,
-        advanced_base_url=config.advanced_base_url,
-        advanced_api_key=config.advanced_api_key,
-        advanced_thinking_level="",
-        reasoning_strength=config.reasoning_strength,
-        channel=config.channel,
-        cli_runner=config.cli_runner,
-        cli_model=config.cli_model,
-        cli_timeout_seconds=config.cli_timeout_seconds,
-        default_headers=dict(config.default_headers or {}),
-    )
+    """主配置上的高级模型槽 → 单独烟测用的 LLMConfig。
+
+    #1902 N2：不另造生效字段映射；复用共核 ``for_role(..., "simulator")`` 的 advanced 切片。
+    """
+    from ming_sim.llm_config import for_role
+
+    return for_role(config, "simulator")
 
 
 def _verify_smoke_leg(config: LLMConfig, *, stage: str, prefix: str) -> Optional[HTTPException]:
@@ -537,93 +524,15 @@ def _settlement_sse_error_data(exc: BaseException) -> Any:
         return _settlement_abort_http_detail(exc)
     return str(exc)
 
+# #1902：数值槽宽容取值与「是否真 key」判定都只在 llm_config 一处实现，
+# web 侧这两个名字保留为薄转发（多处读档投影沿用），不再各写一份规则。
 
-def _runtime_float(value: object, default: float) -> float:
-    try:
-        return float(value) if value not in (None, "") else default
-    except (TypeError, ValueError):
-        return default
+_has_real_api_key = is_real_api_key
 
 
-def _has_real_api_key(value: object) -> bool:
-    # 单一真源在 llm_config.is_real_api_key；此处只做 web 层薄包装。
-    return is_real_api_key(value)
-
-
-def _runtime_api_slot(runtime: Dict[str, Any]) -> Dict[str, Any]:
-    slot = runtime.get("api") if isinstance(runtime, dict) else None
-    return slot if isinstance(slot, dict) else {}
-
-
-def _runtime_cli_slot(runtime: Dict[str, Any]) -> Dict[str, Any]:
-    slot = runtime.get("cli") if isinstance(runtime, dict) else None
-    return slot if isinstance(slot, dict) else {}
-
-
-def _llm_config_from_runtime(
-    runtime: Dict[str, Any],
-    *,
-    base_url: str,
-    model: str,
-    api_key: str,
-    timeout_seconds: float,
-    thinking_level: str,
-    advanced_model: str,
-    advanced_base_url: str,
-    advanced_api_key: str,
-    advanced_thinking_level: str,
-) -> LLMConfig:
-    from ming_sim.cli_backend import cli_backend_from_env
-
-    channel = str(runtime.get("channel") or "").strip().lower()
-    env_runner = cli_backend_from_env()
-    if channel not in VALID_CHANNELS:
-        channel = "cli" if env_runner else "api"
-    cli_slot = _runtime_cli_slot(runtime)
-    api_slot = _runtime_api_slot(runtime)
-    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
-    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
-    # 槽位优先；无槽值时复用 load_llm_config 同源的环境 thinking→strength 权威（非持久扁平迁移）。
-    slot_strength = normalize_reasoning_strength(
-        cli_slot.get("reasoning_strength") if channel == "cli" else api_slot.get("reasoning_strength")
-    )
-    env_strength = (
-        ""
-        if channel == "cli"
-        else legacy_reasoning_strength({
-            "advanced_model": advanced_model,
-            "advanced_thinking_level": advanced_thinking_level,
-            "thinking_level": thinking_level,
-        })
-    )
-    reasoning_strength = slot_strength or env_strength
-    # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
-    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
-    if channel == "cli":
-        api_key = ""  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
-    elif not is_real_api_key(api_key):
-        # 占位符不当真 key：清空让下游空检查报「未配 API key」，
-        # 而不是拿假 key 去探 OpenAI（误导性 412）。
-        api_key = ""
-    # #1794：附加头只属 API 槽。
-    default_headers = dict(api_slot.get("default_headers") or {})
-    return LLMConfig(
-        api_key=api_key,
-        base_url=normalize_openai_base_url(base_url),
-        model=model,
-        timeout_seconds=timeout_seconds,
-        thinking_level=normalize_thinking_level(thinking_level),
-        advanced_model=(advanced_model or "").strip(),
-        advanced_base_url=normalize_openai_base_url(advanced_base_url) if advanced_base_url else "",
-        advanced_api_key=real_api_key_or_empty(advanced_api_key),
-        advanced_thinking_level="",
-        reasoning_strength=reasoning_strength,
-        channel=channel,
-        cli_runner=cli_runner,
-        cli_model=cli_model,
-        cli_timeout_seconds=cli_timeout,
-        default_headers=default_headers,
-    )
+# #1902：runtime json → LLMConfig 的投影下沉到 llm_config.llm_config_from_runtime
+# （唯一真源）；此处只调用，不再在 web 侧留一份同名实现。
+from ming_sim.llm_config import llm_config_from_runtime as _llm_config_from_runtime
 
 
 def _api_reasoning_supported_for_effective_model(
@@ -640,11 +549,6 @@ def _api_reasoning_supported_for_effective_model(
 
 class ChatRequest(BaseModel):
     message: str
-
-
-class DirectivePatch(BaseModel):
-    text: Optional[str] = None
-    notes: Optional[str] = None
 
 
 class AdvanceWithoutEdictRequest(BaseModel):
@@ -712,6 +616,52 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
     return _character_power_id(character, db) == "ming"
 
 
+def _safe_save_name(name: str) -> str:
+    """存档名清洗真源在 ``paths.safe_save_name``（#1902：菜单页 / WebGame / CLI 共用）。
+
+    对外仍抛 HTTPException 400（Web 入口的形态）；非法名本身由共享核判定。
+    """
+    from ming_sim.paths import UnsafeSaveNameError, safe_save_name
+
+    try:
+        return safe_save_name(name)
+    except UnsafeSaveNameError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+class _WebSaveSlotHost:
+    """#1902 F2：把 WebGame 的换库宿主能力适配给共享核 ``save_slots``。
+
+    编排（备份/热替换/失败恢复）在共享核；此处只答「Web 侧怎么拿写队列、结算准入
+    锁、在飞计数、怎么重建候选、怎么处置失败候选」，并把独占区里的结算在飞拒收
+    翻成 Web 的 409（共享核抛 RuntimeError 带同一文案）。
+    """
+
+    def __init__(self, game: "WebGame") -> None:
+        self.game = game
+
+    def write_queue(self, runtime: Any):
+        return get_session_write_queue(runtime)
+
+    def entry_lock(self, runtime: Any):
+        return runtime._settlement_entry_lock
+
+    def settlement_inflight(self, runtime: Any) -> int:
+        return int(runtime._settlement_entry_inflight or 0)
+
+    def rebuild(self, runtime: Any, llm_config: LLMConfig) -> None:
+        runtime._rebuild_session(llm_config)
+
+    def dispose_residual(self, runtime: Any, residual: Any) -> bool:
+        if residual is None:
+            return True
+        runtime._rebuild_residual_runtime = residual
+        return runtime._dispose_rebuild_residual()
+
+    def busy_detail(self) -> str:
+        return "月末结算或上一步写入进行中，请稍候再操作。"
+
+
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
@@ -734,30 +684,21 @@ class WebGame:
             db_path = _normalize_db_path(db_path)
         else:
             db_path = _get_main_db_path()
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        base_url = os.environ.get("OPENAI_BASE_URL", API_DEFAULT_BASE_URL)
+        model = os.environ.get("OPENAI_MODEL", API_DEFAULT_MODEL)
         api_key = os.environ.get("OPENAI_API_KEY", "")
         advanced_model = os.environ.get("OPENAI_ADVANCED_MODEL", "")
         advanced_base_url = os.environ.get("OPENAI_ADVANCED_BASE_URL", "")
         advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
-        thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
-        advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
+        # #1902 J3：思考档的 env 回落不再由本入口自读（落差已在
+        # llm_config.llm_config_from_runtime 一处决定，CLI 入口同样传空串）。
+        thinking_level = ""
+        advanced_thinking_level = ""
         timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS)
-        # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
+        # #1902 F1：「运行档优先、env/入参回落」的落差只在 llm_config_from_runtime
+        # 一处决定——两端入口不再各自把运行档拼一遍（此前只有 Web 做，CLI 直接把
+        # 入参当最终值，同一份档经两端建局得到不同执行事实）。
         runtime = load_runtime_llm()
-        api_slot = _runtime_api_slot(runtime)
-        base_url = api_slot.get("base_url") or base_url
-        model = api_slot.get("model") or model
-        # 占位符不当真 key：stale cli-backend 不该覆盖真实 env key（否则 api 通道
-        # 启动被清空报「未配 API key」，而 menu 用 env key 判 ready，二者矛盾）。
-        _rt_api_key = api_slot.get("api_key")
-        api_key = _rt_api_key if is_real_api_key(_rt_api_key) else api_key
-        thinking_level = api_slot.get("thinking_level") or thinking_level
-        advanced_model = api_slot.get("advanced_model") or advanced_model
-        advanced_base_url = api_slot.get("advanced_base_url") or advanced_base_url
-        advanced_api_key = real_api_key_or_empty(api_slot.get("advanced_api_key")) or advanced_api_key
-        advanced_thinking_level = api_slot.get("advanced_thinking_level") or advanced_thinking_level
-        timeout_seconds = float(api_slot.get("timeout_seconds") or timeout_seconds)
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
@@ -778,7 +719,16 @@ class WebGame:
         # #1195：阶段标签紧贴既有分段（GameSession / begin_turn / 召对恢复）；
         # #1228：载入路径零 verify 调用——连通性 smoke 已拆除，报错落到玩家真实 LLM 动作。
         if fresh:
-            _delete_sqlite_db_files_or_raise(db_path)
+            # #1902：删库实现唯一在共享核 save_slots（此前 web_app 另有一份同构的
+            # _delete_sqlite_db_files_or_raise，两份只差异常形态——那份已删）。
+            # 此处只把核的归类翻成 Web 的 500 与玩家指引文案。
+            try:
+                delete_sqlite_db_files_or_raise(db_path)
+            except SaveSlotCleanupError as err:
+                raise HTTPException(
+                    status_code=500,
+                    detail=_cleanup_failure_detail(err),
+                ) from err
         _stage("载入上次进度...")
         # #1749：GameSession 建立后任一后续步骤失败须 close，禁泄漏 db/agno 连接。
         self.session = None  # type: ignore[assignment]
@@ -814,10 +764,8 @@ class WebGame:
             )
             if not _fav_raw:
                 self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
-            # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
-            # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
-            self.db.reconcile_interrupted_chat_turns()
-            self.db.reconcile_post_reply_recovery()
+            # #505／#1902 T4：启动恢复生命周期归会话共核；入口只调共核再启宿主后台补跑。
+            self.session.reconcile_crashed_audience_turns()
             # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
             self._spawn_startup_extraction_catch_up()
         except Exception as init_exc:
@@ -864,21 +812,16 @@ class WebGame:
         return out
 
     def _safe_save_name(self, name: str) -> str:
-        # #1847: validate allowlist; do not strip/rewrite illegal characters.
-        cleaned = name.strip()
-        if (
-            not cleaned
-            or cleaned.startswith(".")
-            or any(c for c in cleaned if not (c.isalnum() or c in "._-"))
-        ):
-            raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
-        return cleaned
+        # #1902：存档名校验唯一真源在模块级 _safe_save_name（菜单页无 WebGame 实例时同用）。
+        return _safe_save_name(name)
 
     def save_to(self, name: str) -> Dict[str, Any]:
-        safe = self._safe_save_name(name)
-        target = os.path.join(self.saves_dir(), f"{safe}.db")
-        self.db.backup_to(target)
-        return {"name": safe, "path": target}
+        # #1902 F2：存档真源在会话层（CLI 与 Web 同一条），此处只把 Web 的
+        # 400 形态接上；名非法由共享核判。
+        try:
+            return dict(self.session.save_to(name))
+        except UnsafeSaveNameError as err:
+            raise HTTPException(status_code=400, detail=str(err))
 
 
     def _dispose_rebuild_residual(self) -> bool:
@@ -924,68 +867,19 @@ class WebGame:
         return ok
 
     def _replace_database(self, destructive_replace: Callable[[], None]) -> None:
-        """Drain admitted work, then replace the main DB under one exclusive barrier."""
-        backup_fd, backup_path = tempfile.mkstemp(prefix="ming-hot-replace-", suffix=".db")
-        os.close(backup_fd)
-        old_session = self.session
-        old_config = old_session.llm_config
-        backup_complete = False
-        q = get_session_write_queue(self)
-        entry_lock = self._settlement_entry_lock
-        q.seal()
+        """Drain admitted work, then replace the main DB under one exclusive barrier.
 
-        def _replace() -> None:
-            nonlocal backup_complete
-            gate = q.write_gate
-            gate.acquire()
-            entry_lock.acquire()
-            try:
-                # 全局锁序固定为 gate → entry_lock（失败清理亦同序）。HTTP
-                # 预检不是安全边界；必须在此最终独占区拒绝预检后新进入的结算。
-                if int(self._settlement_entry_inflight or 0) > 0:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="月末结算或上一步写入进行中，请稍候再操作。",
-                    )
-                # Backup and close share the same exclusive span: an admitted writer
-                # cannot change the snapshot between prepare and destructive replace.
-                self.db.backup_to(backup_path)
-                backup_complete = True
-                old_session.close(write_gate_already_held=True)
-                destructive_replace()
-                self._rebuild_session(old_config)
-            except Exception as replace_exc:
-                if not backup_complete:
-                    raise
-                try:
-                    # 恢复重建前必须处置失败候选；仍活则禁止改文件/二次 rebuild。
-                    if not self._dispose_rebuild_residual():
-                        logger.error(
-                            "hot replace recovery blocked: rebuild residual still live path=%s",
-                            self.db_path,
-                        )
-                        raise replace_exc
-                    _delete_sqlite_db_files_or_raise(self.db_path)
-                    shutil.copy2(backup_path, self.db_path)
-                    self._rebuild_session(old_config)
-                except Exception as recovery_exc:
-                    if recovery_exc is replace_exc:
-                        raise
-                    logger.exception("hot replace recovery failed")
-                    raise replace_exc from recovery_exc
-                raise
-            finally:
-                entry_lock.release()
-                gate.release()
+        #1902 F2：编排本身在共享核 ``ming_sim.save_slots.replace_database``（CLI 读档
+        与新档走同一条），此处只提供 Web 侧宿主能力：写队列、结算准入锁与在飞计数、
+        候选重建与失败候选处置。
+        """
+        from ming_sim.save_slots import SaveSlotBusyError, replace_database
 
         try:
-            q.barrier(_replace)
-        finally:
-            q.unseal()
-            try:
-                os.remove(backup_path)
-            except OSError:
-                logger.exception("failed to remove hot replace backup %s", backup_path)
+            replace_database(self, _WebSaveSlotHost(self), destructive_replace)
+        except SaveSlotBusyError as busy:
+            # 独占区里的结算在飞拒收：对外仍是 Web 的 409（前端与 tracer 据此分流）。
+            raise HTTPException(status_code=409, detail=busy.detail)
 
     def load_save(self, name: str) -> None:
         """从存档热替换主 DB；失败时恢复替换前的数据库与 runtime。"""
@@ -994,34 +888,24 @@ class WebGame:
         if not os.path.isfile(source):
             raise HTTPException(status_code=404, detail="存档不存在。")
 
-        def replace_from_save() -> None:
-            src_conn = sqlite3.connect(source)
-            dst_conn = sqlite3.connect(self.db_path)
-            try:
-                src_conn.backup(dst_conn)
-            finally:
-                src_conn.close()
-                dst_conn.close()
-
-        self._replace_database(replace_from_save)
+        # #1902：覆盖拷贝走共享核唯一实现（此前此处与 cli._cli_load 各带一份
+        # 逐行相同的 sqlite backup 闭包——两份已删）。
+        self._replace_database(
+            lambda: copy_sqlite_file(source, self.db_path),
+        )
 
     def _rebuild_session(self, llm_config: LLMConfig) -> None:
-        """Fully initialize a candidate before publishing it as the active session."""
+        """发布换库候选：共同生命周期在 save_slots；此处只映射呈现准备与发布。"""
+        from ming_sim.save_slots import open_candidate_session
+
         # #1749：先处置上一失败候选；仍活则拒绝新候选，禁覆盖仍活资源。
         if not self._dispose_rebuild_residual():
             raise RuntimeError(
                 f"previous rebuild residual still live path={self.db_path}"
             )
-        candidate = None
-        try:
-            candidate = GameSession(self.db_path, llm_config)
-            q = getattr(self, "_write_queue", None)
-            if not isinstance(q, SessionWriteQueue):
-                q = get_session_write_queue(candidate)
-            else:
-                candidate._write_queue = q  # type: ignore[attr-defined]
-                candidate._write_gate = q.write_gate  # type: ignore[attr-defined]
-            candidate.begin_turn()
+
+        def _prepare_web_presentation(candidate: GameSession):
+            # 发布前准备：仍在共核失败关闭保护区内（读历史/收藏失败须关候选）。
             chat_history = {name: [] for name in candidate.content.characters}
             for name, msgs in candidate.db.load_all_chat_history().items():
                 chat_history.setdefault(name, []).extend(msgs)
@@ -1032,25 +916,28 @@ class WebGame:
             )
             if not fav_raw:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
-            candidate.db.reconcile_interrupted_chat_turns()
-            candidate.db.reconcile_post_reply_recovery()
+            return chat_history, favorites
+
+        try:
+            candidate, (chat_history, favorites) = open_candidate_session(
+                self.db_path, llm_config, prepare=_prepare_web_presentation,
+            )
         except Exception as rebuild_exc:
-            residual = candidate or getattr(rebuild_exc, "residual_session", None)
+            # residual 挂在实际传出的异常上（含 close 失败那只）。
+            residual = getattr(rebuild_exc, "residual_session", None)
             if residual is not None:
-                try:
-                    residual.close()
-                except Exception:
-                    logger.exception("failed to close rejected replacement session")
-                    wrapper = SimpleNamespace(
-                        db_path=self.db_path,
-                        session=residual,
-                        _write_queue=getattr(residual, "_write_queue", None),
-                        _write_gate=getattr(residual, "_write_gate", None),
-                    )
-                    _handback_failed_runtime(wrapper, self.db_path)
-                    self._rebuild_residual_runtime = wrapper
+                wrapper = SimpleNamespace(
+                    db_path=self.db_path,
+                    session=residual,
+                    _write_queue=getattr(residual, "_write_queue", None),
+                    _write_gate=getattr(residual, "_write_gate", None),
+                )
+                _handback_failed_runtime(wrapper, self.db_path)
+                self._rebuild_residual_runtime = wrapper
             raise
 
+        # 发布：挂候选自有队列，不沿用已 seal 的旧队列。
+        q = get_session_write_queue(candidate)
         self.session = candidate
         self._write_queue = q
         self._write_gate = q.write_gate
@@ -1388,7 +1275,6 @@ class WebGame:
             if leg.clear_narrative
         }
         for row in self.db.list_active_legacies(self.state):
-            # Durable legacies JSON: reuse authoritative loud read (F39); no parallel wash-to-{}.
             eff = self.db.parse_engine_payload_json(
                 row["modifiers"], surface="legacies.modifiers",
             )
@@ -1698,230 +1584,91 @@ class WebGame:
             SCENE_CHAT_SPEAKER, int(night["id"]) if night else 0,
         )
 
-    def _minister_agno_session_id(self) -> str:
-        # 所有 Web 召对都由场景 agent 生成；chat_turn 与 agent 必须绑同一 Agno session。
-        from ming_sim.audience_night import get_open_night
-        night = get_open_night(self.db)
-        if night is not None:
-            return f"scene-night-{int(night['id'])}"
-        return f"scene-night-pending-turn-{int(self.state.turn)}"
-
     def can_undo_last_chat(self, minister_name: str) -> bool:
-        if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
-            return False
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER:
-            night = get_open_night(self.db)
-            if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                active = next((row for row in reversed(turns) if row["status"] == "active"), None)
-                return bool(active and active["user_message_id"] and active["minister_message_id"]
-                            and self.db.is_global_last_active_chat_turn(int(active["id"])))
-        return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
-
-    def _audience_turn_in_flight(self, minister_name: str) -> bool:
-        """同夜场景共用一个 agent session：前轮回话未落定时不准开下一轮。
-
-        后台转译不在此等待。无夜时按大臣查；在飞的定义由 DB 写口维护。
-        """
-        from ming_sim.audience_night import get_open_night
-        night = get_open_night(self.db)
-        if night is not None:
-            return bool(self.db.list_in_flight_chat_turns(night_id=int(night["id"])))
-        return bool(self.db.list_in_flight_chat_turns(
-            minister_name=minister_name, turn=int(self.state.turn),
-        ))
+        """#1902 J3：资格在会话共核；Web 只转发。"""
+        return bool(self.session.can_undo_last_audience_chat(minister_name))
 
     def _start_chat_turn(
-        self, minister_name: str,
+        self, minister_name: str, *, message: str = "",
     ) -> tuple[int, Dict[str, Any]]:
-        agno_session_id = self._minister_agno_session_id()
-        runs_before = self.db.agno_runs_length(agno_session_id)
-        snapshot = self.db.capture_chat_rollback_snapshot()
-        # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
-        # #1566：场外密疏只挂当前夜，不入殿、不启殿上 scene；route 落 chat_turns。
-        # #1838 reopen：建轮 = 确保开夜 + create_chat_turn；入殿账只由「宣 X」/批红召见写。
-        from ming_sim.audience_night import (
-            ensure_open_night_for_audience,
-            get_open_night,
-        )
-        night_was_open = get_open_night(self.db) is not None
-        night = get_open_night(self.db) or ensure_open_night_for_audience(
-            self.db, self.state,
-        )
-        if not night_was_open:
-            from ming_sim.decree_forecast import schedule_held_decree_forecasts
-            schedule_held_decree_forecasts(self.session)
-        chat_turn_id = self.db.create_chat_turn(
-            self.state,
-            minister_name,
-            agno_session_id,
-            runs_before,
-            night_id=int(night["id"]),
-            status="generating",
-        )
-        return chat_turn_id, snapshot
+        """#1902：建轮与落问话已下沉会话层（与 CLI 共核），此处只回兼容二元组。
 
-    def _record_chat_rollback_items(
-        self,
-        chat_turn_id: int,
-        before_snapshot: Dict[str, Any],
-    ) -> None:
-        if not chat_turn_id:
-            return
-        after_snapshot = self.db.capture_chat_rollback_snapshot()
-        self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
-
-    def _record_persisted_reply_failure(
-        self, chat_turn_id: int, error: BaseException, *,
-        translation_unstarted: bool, court_action: str = "",
-    ) -> bool:
-        """持闸调用；以落库相位分流转译补偿与回话后尾随恢复。"""
-        # #1853 J8：前置 SELECT 定 restore/fail 分流 = 查询接缝；禁缺 conn 洗成 False。
-        # 其后 mark_* / set_error_pack / mark_post_reply_failure 是写口，不借其合理性护栏前置查询。
-        if not chat_turn_id:
-            return False
-        row = self.db.conn.execute(
-            "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
-            (chat_turn_id,),
-        ).fetchone()
-        if not row or row["status"] != "active" or not row["minister_message_id"]:
-            return False
-        from ming_sim.audience_night import write_audience_error_pack
-        translation_pending = translation_unstarted and row["extract_status"] != "done"
-        if translation_pending:
-            self.db.mark_story_extraction_pending(chat_turn_id)
-        pack = write_audience_error_pack(
-            kind="translation" if translation_pending else "reply",
-            message=str(error), detail={"chat_turn_id": chat_turn_id, "phase": "post_reply"},
-            db=self.db, exc=error,
+        走 ``GameSession.begin_audience_chat_turn`` 的未绑定真方法（而非
+        ``self.session.begin_...``）：召对话轮生命周期是共核，测试壳只替 LLM 缝，
+        不必各自再抄一份建轮（#13 禁测试自建被测行为）。
+        模型会话身份／前像水位由会话核在真实夜确定后提供，入口不再拼名取水位。
+        """
+        del minister_name
+        turn = GameSession.begin_audience_chat_turn(
+            self.session, message,
         )
-        if translation_pending:
-            self.db.set_chat_turn_error_pack(chat_turn_id, pack)
-        else:
-            self.db.mark_post_reply_failure(
-                chat_turn_id,
-                "court_break" if court_action == "court_break" else "after_reply", pack,
-            )
-        return True
+        return turn.chat_turn_id, turn.before_snapshot
 
     def _fail_chat_turn_and_reload(
         self, chat_turn_id: int, before_snapshot: Dict[str, Any],
         error: Optional[BaseException] = None,
     ) -> None:
-        """召对中断/失败的统一善后：回滚副作用；有问话则保留并标 interrupted。
+        """召对中断/失败的统一善后：终态化本轮 + 重载召对历史缓存。
+
         所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
-        minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把本夜永久判为「上一轮
+        minister_message_id 为空的孤儿轮，共核在飞资格会把本夜永久判为「上一轮
         仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。
 
-        Scene abandon/drain 由调用方在 write_gate 外先完成（C9/T1/T10）；本方法只做短事务写。
+        #1902：回滚与失败终态已下沉会话层（``GameSession.fail_audience_chat_turn``，
+        与 CLI 共核）；此处只做 Web 呈现面的历史缓存重载。
+        Scene abandon/drain 由调用方在 write_gate 外先完成（C9/T1/T10）。
         """
         if not chat_turn_id:
             return
-        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        # #1853 J8：SELECT user_message_id 定 restore vs fail；禁缺 conn 伪推 None 错走 fail。
-        # 其后 set_chat_turn_error_pack 是写口，不借其合理性护栏前置查询。
-        row = self.db.conn.execute(
-            "SELECT user_message_id FROM chat_turns WHERE id = ?", (chat_turn_id,),
-        ).fetchone()
-        if row is not None and row["user_message_id"]:
-            restored_ids = self.db.restore_interrupted_after_failed_retry(chat_turn_id)
-            from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-            schedule_restored_decree_forecasts(self.session, restored_ids)
-            if error is not None and not isinstance(error, LLMUnavailable):
-                from ming_sim.audience_night import write_audience_error_pack
-                pack = write_audience_error_pack(
-                    kind="reply", message=str(error),
-                    detail={"chat_turn_id": chat_turn_id}, db=self.db, exc=error,
-                )
-                self.db.set_chat_turn_error_pack(chat_turn_id, pack)
-        else:
-            restored_ids = self.db.fail_chat_turn(chat_turn_id)
-            from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-            schedule_restored_decree_forecasts(self.session, restored_ids)
+        GameSession.fail_audience_chat_turn(
+            self.session,
+            AudienceChatTurn(
+                chat_turn_id=int(chat_turn_id),
+                accepted_turn=int(self.state.turn),
+                night_id=0,
+                before_snapshot=before_snapshot,
+                user_message_id=0,
+            ),
+            error=error,
+        )
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
 
     def undo_last_chat(self, minister_name: str, *, gate_held: bool = False) -> Dict[str, Any]:
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        # #1853 J8：殿上 SCENE 路由靠 get_open_night / list_hall_chat_turns 查询；
-        # 禁缺 conn 跳过夜序解析后落入大臣撤回主链。无 night / 无 active 仍走下方业务分支。
-        if minister_name == SCENE_CHAT_SPEAKER:
-            night = get_open_night(self.db)
-            if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                active = next((row for row in reversed(turns) if row["status"] == "active"), None)
-                if active:
-                    owner = str(active["minister_name"])
-                    if owner != minister_name:
-                        owner_last = self.db.get_last_active_chat_turn(owner, self.state.turn)
-                        if not owner_last or int(owner_last["id"]) != int(active["id"]):
-                            raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
-                        result = self.undo_last_chat(owner, gate_held=gate_held)
-                        result["history"] = self.chat_projection()
-                        result["can_undo_last_chat"] = self.can_undo_last_chat(minister_name)
-                        return result
-        if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
-            raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
-        row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
-        if row is None:
-            raise HTTPException(status_code=404, detail="本回合没有可撤回的召对。")
-        if not self.db.is_global_last_active_chat_turn(int(row["id"])):
-            raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
-        if not row.get("user_message_id") or not row.get("minister_message_id"):
-            raise HTTPException(status_code=409, detail="该召对尚未完整完成，不能撤回。")
-        # #1353 / ADR 0038：撤回轮取消其在飞票据（空放行、不复活写库）。
-        # #1842 / ADR 0155：同步终结该轮在飞转译 Future；落账临界区另复查源轮存活。
-        # ADR 0005：取消路径意外异常响亮上抛，禁 except Exception: pass。
-        turn_id = int(row["id"])
-        self._runtime_write_queue().cancel_key(("turn", turn_id))
-        from ming_sim.audience_translation import cancel_turn_translation
-        cancel_turn_translation(
-            turn_id,
-            write_queue=self._runtime_write_queue(),
-            gate_held=gate_held,
-        )
+        """#1902 J3：撤回业务在会话共核；此处只映射 HTTP 与呈现。
+
+        #1902 K1：不保留殿上→具名大臣转交的呈现分流；轮归属即请求名。
+        """
+        from ming_sim.session import AudienceChatUndoError
+
         try:
-            undone = self.db.undo_chat_turn(turn_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
-        # P1-2：撤回若删了已 commit 的对话草案，作废已生成的诏书正文（last_decree），
-        # 不让玩家原样颁出含被撤回指令的陈旧诏书。
-        self.session.note_chat_rollback(
-            deleted_committed_draft_ids=undone.get("deleted_committed_draft_ids"))
-        restored_ids = [
-            int(item) for item in (undone.get("restored_pending_action_ids") or [])
-        ]
-        if restored_ids:
-            from ming_sim.audience_night import get_open_night
-            from ming_sim.decree_forecast import (
-                bind_forecast_owner, schedule_pending_decree_forecast,
+            core = self.session.undo_last_audience_chat(
+                minister_name,
+                gate_held=gate_held,
+                write_queue=self._runtime_write_queue(),
             )
-            bind_forecast_owner(self.session)
-            open_night_row = get_open_night(self.db)
-            if open_night_row is not None:
-                for pending_id in restored_ids:
-                    schedule_pending_decree_forecast(
-                        self.session, pending_id, night_id=int(open_night_row["id"]),
-                    )
-        self.session.refresh_runtime_after_chat_rollback()
+        except AudienceChatUndoError as exc:
+            status = 404 if exc.code == "not_found" else 409
+            raise HTTPException(status_code=status, detail=exc.detail) from None
+
+        # Web 呈现缓存：历史投影依赖 chat_history。
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
-        character = None if minister_name == "殿上" else self.session._character(minister_name)
+        present = core.minister_name
         return {
-            "minister": minister_name,
-            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
-            "night_id": int(row.get("night_id") or 0),
-            "undone_chat_turn_id": int(undone["id"]),
+            "minister": present,
+            "campaign_id": core.campaign_id,
+            "night_id": int(core.night_id),
+            "undone_chat_turn_id": int(core.undone_chat_turn_id),
             # #499 同一 turn-identified 投影：撤回后剩余轮的读心仍按轮归位
             "history": self.chat_projection(),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
             "secret_orders": project_secret_orders_for_player(self.db.list_secret_orders()),
-            "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            "can_undo_last_chat": self.can_undo_last_chat(present),
         }
 
     def _chat_payload(
@@ -1929,36 +1676,35 @@ class WebGame:
         minister_name: str,
         answer: str,
         court_action: str = "",
-        next_minister: str = "",
-        proposed_directive: Optional[Dict[str, Any]] = None,
-        secret_order_id: int = 0,
-        pending_action_id: int = 0,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
+        before_snapshot: Optional[Dict[str, Any]] = None,
+        persisted_message_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        character = None if minister_name == "殿上" else self.session._character(minister_name)
+        if minister_name != "殿上":
+            self.session._character(minister_name)  # 未建档即响亮失败（LLMContractError）
         # Durable chat_turn message ids first, then memory history.  Publishing
         # history before append/update opens a race: observers see the minister
         # reply while can_undo_last_chat_turn is still false (#976 hold path
         # lengthens append_chat_message; background stream + early assert flaked
         # and tore down the shared DB under the worker → SIGSEGV).
-        minister_message_id = 0
+        # #1902 F2／T4：落回话经会话层共核；retry 共核已落库时传 persisted_message_id，
+        # 本入口只做呈现投影。转译由调用方在闸外安排。
         turn = int(self.state.turn if accepted_turn is None else accepted_turn)
-        if chat_turn_id:
-            # 单一事务插入回话、链接 turn 并升为 active，避免提交后出现未链接回话。
-            # 失败须上抛，禁 catch 后仍返回成功。
-            minister_message_id = int(
-                self.db.persist_minister_reply(
-                    minister_name,
-                    turn,
-                    answer,
-                    chat_turn_id,
-                )
-            )
+        if persisted_message_id is not None:
+            minister_message_id = int(persisted_message_id or 0)
         else:
-            # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
-            minister_message_id = int(
-                self.db.append_chat_message(minister_name, turn, "minister", answer)
+            minister_message_id = GameSession.complete_audience_chat_turn(
+                self.session,
+                AudienceChatTurn(
+                    chat_turn_id=int(chat_turn_id or 0),
+                    accepted_turn=turn,
+                    night_id=0,
+                    before_snapshot=before_snapshot or {},
+                    user_message_id=0,
+                ),
+                minister_name,
+                answer,
             )
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         from ming_sim.audience_night import get_open_night
@@ -1977,10 +1723,7 @@ class WebGame:
             # #544：供高亮判官落库锚定（非流式折窗 / 流式补挂）
             "minister_message_id": int(minister_message_id or 0),
             "court_action": court_action,
-            "next_minister": next_minister,
-            "proposed_directive": proposed_directive,
-            "secret_order_id": secret_order_id or 0,
-            "pending_action_id": pending_action_id or 0,
+            # #1902 T6：旧 result 投影字段无场景产者，已随死契约清退。
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
@@ -1988,58 +1731,34 @@ class WebGame:
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
-    def _reject_if_settlement_phase(self) -> None:
-        """#498/#505：结算/亲裁相位不得召对（含续问与重试召对）——否则开/续的夜会随
-        submit_decisions 跨月推进而不收（夜不跨月）。raise 版召对入口共用此单缝，
-        新入口（如 #505 重试）不再另抄一份 if（stream 入口走 yield-error 控制流，自持一份）。"""
-        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-            raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
-
-
-    def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
-        """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。"""
-        return self.db.get_interrupted_reply_retries(minister_name)
-
-    def reply_retries_for_night(self, night_id: int) -> List[Dict[str, Any]]:
-        """指定夜的殿上失败投影。不限当前开夜，供活卷与撤回共用。"""
-        return _reply_retries_for_night(self.db, int(night_id))
 
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        # #1853 J8：夜查询走必备 GameDB.conn；禁 hasattr(conn) 降级成非夜投影空集。
-        if minister_name == SCENE_CHAT_SPEAKER:
-            night = get_open_night(self.db)
-            if night:
-                return self.reply_retries_for_night(int(night["id"]))
-        interrupted = self.interrupted_reply_retries(minister_name)
-        post_reply = self.db.get_post_reply_retries(minister_name)
-        return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
+        """#1902 L1：中断 + 尾随失败取数在会话共核；入口只转发。
+
+        请求名仅供 HTTP 面；殿上夜筛与相位选择不在 Web 自办。
+        """
+        del minister_name
+        return self.session.pending_audience_recovery_retries()
 
     def _resume_post_reply(self, minister_name: str, target: Dict[str, Any]) -> Dict[str, Any]:
-        """只续已落回话的尾随阶段；绝不再次运行召对模型或插入回话。"""
-        chat_turn_id = int(target["chat_turn_id"])
-        phase = str(target["recovery_phase"])
-        with self._runtime_write_gate():
-            if not self.db.claim_post_reply_recovery(chat_turn_id, phase):
-                raise HTTPException(status_code=409, detail="本轮后续处理已在恢复，请稍候。")
+        """#1902 L1：尾随恢复编排在会话共核；此处只映射 HTTP／呈现／高亮钩。"""
+        from ming_sim.session import PostReplyRecoveryError
+
         try:
-            if phase == "court_break":
-                self.session.close_night_after_chat_if_needed(
-                    "court_break", write_gate=self._runtime_write_gate(),
-                )
-            else:
-                self._trail_highlight_judge_after_reply(
-                    str(target["answer"]), message_id=int(target["minister_message_id"]),
-                    chat_turn_id=chat_turn_id,
-                )
-            with self._runtime_write_gate():
-                self.db.clear_post_reply_failure(chat_turn_id)
-        except BaseException:
-            with self._runtime_write_gate():
-                self.db.release_post_reply_recovery(chat_turn_id, phase)
-            raise
+            core = self.session.resume_post_reply_recovery(
+                target,
+                write_gate=self._runtime_write_gate(),
+                after_reply=lambda item: self._trail_highlight_judge_after_reply(
+                    str(item.get("answer") or ""),
+                    message_id=int(item.get("minister_message_id") or 0),
+                    chat_turn_id=int(item.get("chat_turn_id") or 0),
+                ),
+            )
+        except PostReplyRecoveryError as exc:
+            status = 404 if exc.code == "not_found" else 409
+            raise HTTPException(status_code=status, detail=exc.detail) from None
         return {
-            "answer": str(target["answer"]), "chat_turn_id": chat_turn_id,
+            "answer": str(core["answer"]), "chat_turn_id": int(core["chat_turn_id"]),
             "history": self.chat_projection(),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
@@ -2069,8 +1788,6 @@ class WebGame:
         chat_turn_id = int(target["chat_turn_id"])
         question = str(target["question"])
         accepted_turn = int(target["turn"])
-        # #505 finding4：结算/亲裁相位不得重试召对（与 chat 同相位门，夜不跨月）。锁前快速失败。
-        self._reject_if_settlement_phase()
         # 与非流式 chat 同形：整轮票据覆盖 LLM 无锁窗 + epilogue，防 barrier/drain 当空闲关连接。
         pending_ticket = self._mark_pending_write()
         if pending_ticket is None:
@@ -2079,7 +1796,7 @@ class WebGame:
                 detail="当前会话正在关闭，请回菜单重新进入。",
             )
         # #1353 r10：屏障已受理则拒重试召对；否则整轮 DB 缝经 ticketed gate。
-        # 失败清理在票可能已 complete 后走裸 runtime gate。
+        # 失败清理在票可能已 complete 后走裸 runtime gate。宿主屏障资源留入口。
         if self._runtime_write_queue().has_open_barrier():
             self._complete_pending_write(pending_ticket)
             raise HTTPException(
@@ -2087,49 +1804,42 @@ class WebGame:
                 detail="本夜收夜中，暂不能召对。",
             )
         gate = self._ticketed_write_gate(pending_ticket)
+        # 票可能已 complete 后的失败收口必须走裸 runtime gate（与旧 cleanup_gate 同缝）。
         cleanup_gate = self._runtime_write_gate()
-        before_snapshot: Dict[str, Any] = {}
+        # #1902 T4：reopen→快照→生成→落回话／失败收口走会话共核；此处只做票据、写闸、投影。
+        # 收夜须在放行 pending write 之后，成功后再调共核调度。
+        # #1902：相位／收夜／在飞业务资格在 execute_interrupted_reply_retry 共核，入口不持副本。
+        from ming_sim.session import AudienceChatAdmissionError
+        turn = None
         result = None
         translation_scheduled = False
-        # #542 r6e：reopen 纳入既有 try/except；
-        # 失败复用 abandon + restore interrupted；drain 在 write_gate 外。
         try:
             try:
-                with gate:
-                    self._reject_if_settlement_phase()
-                    # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
-                    from ming_sim.audience_night import assert_night_accepts_player_input
-                    assert_night_accepts_player_input(self.db, what="召对")
-                    if self._audience_turn_in_flight(minister_name):
-                        raise HTTPException(
-                            status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
-                    # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
-                    # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
-                    if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
-                        raise HTTPException(
-                            status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-                    # #505 finding1：与 chat 同 snapshot→record rollback 缝。
-                    before_snapshot = self.db.capture_chat_rollback_snapshot()
-                result = self.session.scene_chat(
-                    question, chat_turn_id=chat_turn_id,
+                retry_outcome = self.session.execute_interrupted_reply_retry(
+                    chat_turn_id=chat_turn_id,
+                    question=question,
+                    message_speaker=minister_name,
+                    accepted_turn=accepted_turn,
+                    user_message_id=int(target.get("user_message_id") or 0),
                     stream_emit=lambda _delta, **_kwargs: None,
+                    write_gate=gate,
                 )
-                proposed = None
-                if result.proposed_directive is not None:
-                    d = result.proposed_directive
-                    proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-                with gate:
-                    payload = self._chat_payload(
-                        minister_name, result.answer,
-                        court_action=result.court_action, next_minister=result.next_minister,
-                        proposed_directive=proposed,
-                        secret_order_id=result.secret_order_id,
-                        pending_action_id=getattr(result, "pending_action_id", 0),
-                        chat_turn_id=chat_turn_id,
-                        accepted_turn=accepted_turn,
-                    )
-                    # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
-                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            except AudienceChatAdmissionError as exc:
+                raise HTTPException(status_code=409, detail=exc.detail) from None
+            if retry_outcome is None:
+                raise HTTPException(
+                    status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。",
+                )
+            turn, result, minister_message_id = retry_outcome
+            try:
+                payload = self._chat_payload(
+                    minister_name, result.answer,
+                    court_action=result.court_action,
+                    chat_turn_id=chat_turn_id,
+                    accepted_turn=accepted_turn,
+                    before_snapshot=turn.before_snapshot,
+                    persisted_message_id=minister_message_id,
+                )
                 # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
                 result._admitted_write_ticket = pending_ticket
                 self.session.schedule_pending_scene_translation(result)
@@ -2148,49 +1858,41 @@ class WebGame:
                         chat_turn_id=chat_turn_id,
                     )
                     payload["history"] = self.chat_projection()
+                # #1353：若无尾随仍须放行整轮票后再收夜。
+                if pending_ticket is not None:
+                    self._complete_pending_write(pending_ticket)
+                    pending_ticket = None
+                court_action = getattr(result, "court_action", "") or ""
+                # 宿主票已放行：收夜走共核调度 + runtime gate（非 ticketed）。
+                self.session.schedule_close_night_after_chat_if_needed(
+                    court_action, write_gate=cleanup_gate,
+                )
+                return payload
             except Exception as error:
-                # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
-                # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
-                # 但**绝不删问话/回话**（AC3/AC4 恢复路径永不删账），不静默 fail 掉最后一句。
-                # #542：running Future 的 cancel/join 必须在 write gate 外；锁内仅 rollback 短写。
-                # 内层守护对齐流式/非流 chat：二次失败记日志不吞原错；abandon / 终态写分 try，
-                # 终态写尽力而为——abandon 崩不得跳过 restore，否则 turn 卡 generating。
+                # 投影／转译调度失败：共核已落回话时仍须 fail 收口；票可能已 complete，
+                # 故用 runtime gate，不得再持 ticketed gate。
                 try:
                     with cleanup_gate:
-                        reply_persisted = self._record_persisted_reply_failure(
-                            chat_turn_id, error,
-                            translation_unstarted=not translation_scheduled,
-                            court_action=getattr(result, "court_action", ""),
+                        GameSession.fail_audience_chat_turn(
+                            self.session,
+                            turn if turn is not None else AudienceChatTurn(
+                                chat_turn_id=chat_turn_id,
+                                accepted_turn=accepted_turn,
+                                night_id=0,
+                                before_snapshot={},
+                                user_message_id=int(target.get("user_message_id") or 0),
+                            ),
+                            replied=result is not None,
+                            error=error,
+                            translation_dispatched=translation_scheduled,
+                            court_action=str(getattr(result, "court_action", "") or ""),
                         )
-                        if not reply_persisted:
-                            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                            restored_ids = self.db.restore_interrupted_after_failed_retry(chat_turn_id)
-                            from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                            schedule_restored_decree_forecasts(self.session, restored_ids)
-                        if not reply_persisted and not isinstance(error, LLMUnavailable):
-                            from ming_sim.audience_night import write_audience_error_pack
-                            pack = write_audience_error_pack(
-                                kind="reply", message=str(error),
-                                detail={"chat_turn_id": chat_turn_id},
-                                db=self.db, exc=error,
-                            )
-                            self.db.set_chat_turn_error_pack(chat_turn_id, pack)
                 except Exception:
                     logger.exception(
-                        "retry cleanup: restore_interrupted failed chat_turn_id=%s",
+                        "retry adapter cleanup: fail_audience_chat_turn failed chat_turn_id=%s",
                         chat_turn_id,
                     )
                 raise
-            # #1353：若无尾随仍须放行整轮票后再收夜。
-            if pending_ticket is not None:
-                self._complete_pending_write(pending_ticket)
-                pending_ticket = None
-            # #526/#1842：回话已落库后收夜。非流式前台先返回；队列随后 FIFO 转译 join→封夜。
-            court_action = getattr(result, "court_action", "") or ""
-            self.session.schedule_close_night_after_chat_if_needed(
-                court_action, write_gate=self._runtime_write_gate(),
-            )
-            return payload
         finally:
             self._complete_pending_write(pending_ticket)
 
@@ -2228,10 +1930,6 @@ class WebGame:
         # 非流式 agent 回整段时 transport 可能未分片 emit——补一次 delta 保 SSE 契约。
         if answer and emitted["n"] == 0:
             _emit(answer)
-        proposed = None
-        if result.proposed_directive is not None:
-            d = result.proposed_directive
-            proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
             with atomic(self.db):
@@ -2239,14 +1937,11 @@ class WebGame:
                     minister_name,
                     answer,
                     court_action=getattr(result, "court_action", "") or "",
-                    next_minister=getattr(result, "next_minister", "") or "",
-                    proposed_directive=proposed,
-                    secret_order_id=int(getattr(result, "secret_order_id", 0) or 0),
-                    pending_action_id=int(getattr(result, "pending_action_id", 0) or 0),
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
+                    # #1902 F2：回滚差异由共核方法随落回话一起记，调用方不再另记一份。
+                    before_snapshot=before_snapshot,
                 )
-                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
         result._admitted_write_ticket = admitted_ticket
         self.session.schedule_pending_scene_translation(result)
@@ -2267,8 +1962,7 @@ class WebGame:
     ) -> List[str]:
         """#544 / ADR 0045：回话完成后同通道高亮判官。超时/坏输出 → []，落库短语。
 
-        判官失败边界在 run_highlight_judge（带日志）；此处只收窄写库 sqlite 异常并 warning。
-        写库经票据执行 seam。
+        判官实际调用故障原样上抛（不在此转空成功）；写库经票据 seam。
         匹配/剥离在前端，此处只存短语。无票且 seal → 零 LLM 零写。
         #1353：spawn 路票据由 spawner finally 归还；本腿只消费交接票。直接调用无票时自领自还。
         """
@@ -2300,12 +1994,6 @@ class WebGame:
                 with self._ticketed_write_gate(pending_ticket):
                     self.db.set_message_highlights(mid, phrases)
             except TicketCancelled:
-                return []
-            except sqlite3.Error as exc:
-                logger.warning(
-                    "highlight judge persist failed message_id=%s: %s",
-                    mid, exc, exc_info=True,
-                )
                 return []
             return phrases
         finally:
@@ -2352,47 +2040,33 @@ class WebGame:
         *,
         pending_ticket: Optional[WriteTicket] = None,
     ) -> None:
-        """重开补跑（ADR 0036 / #1842）：已持久化回话但转译未承接 → 补跑转译，不回滚对话。
+        """Web 宿主适配：持票据闸调用会话共核启动补跑（#1902 T4）。
 
-        `catch_up_pending_translations` 单轮失败标待补、不锁档；本入口再捕意外故障，
-        **永不进启动致命路径**。在后台线程跑，不阻塞存档加载。写经已领票据 seam（禁裸 gate）。
-        #1353：spawn 路票据由 spawner finally 归还；本函数不归还交接票（complete 幂等保直接调用钉）。
+        生命周期真源 ``GameSession.run_startup_translation_catch_up``；本方法只办
+        票据写闸。spawn 路票据由 ``_spawn_pending_write_thread`` finally 归还，
+        callee 不重复收口。
         """
+        if pending_ticket is None:
+            return
+        if pending_ticket.cancelled or pending_ticket._done:
+            return
         try:
-            if pending_ticket is None:
-                return
-            if pending_ticket.cancelled or pending_ticket._done:
-                return
-            catch_up_pending_translations(
-                db=self.db,
-                state=self.state,
-                llm_config=getattr(self.session, "llm_config", None),
+            self.session.run_startup_translation_catch_up(
                 write_gate=self._ticketed_write_gate(pending_ticket),
                 write_queue=self._runtime_write_queue(),
             )
         except TicketCancelled:
             return
-        except Exception as exc:
-            # catch_up 契约单轮不抛；到此=意外故障。铁律：不锁档、不进启动致命路径——
-            # 但**留痕不静默**（窄捕 + log，账仍待补候下轮 drain/重试）。
-            tlog(f"[audience-translation] 启动补跑意外故障（不锁档、已忽略）：{exc}")
-        finally:
-            # 直接调用钉（test_startup_catchup_uses_ticketed_gate_not_bare）仍依赖此处收口；
-            # spawn 路 spawner 也会 complete——complete 幂等，双路径皆安全。
-            if pending_ticket is not None:
-                self._complete_pending_write(pending_ticket)
 
     def _spawn_startup_extraction_catch_up(self) -> None:
-        """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。
+        """Web 宿主适配：后台线程发起启动补跑（不阻塞存档加载）。
 
-        #1353 r7：无待补时不领票——空 catch-up 占票会与同 session 的 barrier/
-        `inflight_count()` 钉竞态（全量 xdist 下 residual ticket）。有待补才
-        claim+spawn；key=("startup",) 与 turn/pending 区分。
-        #1353 r10：预检 list_unextracted 短持 runtime gate（共享 conn 禁裸读）。
-        # #1853 J8：启动预检与转译重试查询同属必备接口直调；禁缺接口当「无待补」。
+        待补判定走会话共核 ``list_startup_translation_catch_up``；有待补才领票 spawn。
+        #1353：空 catch-up 不占票；预检短持 runtime gate（共享 conn 禁裸读）。
+
         """
         with self._runtime_write_gate():
-            pending = self.db.list_unextracted_replies() or []
+            pending = self.session.list_startup_translation_catch_up()
         if not pending:
             return
         self._spawn_pending_write_thread(
@@ -2406,57 +2080,27 @@ class WebGame:
     def pending_translation_retries(
         self, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """#1842：转译待补的结构化系统提示态（源轮可查 + 可重试），不做页面。"""
-        # #1853 J8：必备 GameDB 查询直调；禁缺 conn 洗成空重试投影。
-        from ming_sim.audience_translation import list_pending_translations
-
-        return list_pending_translations(
-            self.db, night_id=night_id, chat_turn_id=chat_turn_id,
+        """#1842：转译待补投影；会话共核持真源，入口只注入写队列。"""
+        return self.session.list_pending_translation_retries(
+            night_id=night_id, chat_turn_id=chat_turn_id,
             write_queue=self._runtime_write_queue(),
         )
 
     def retry_pending_translation(self, chat_turn_id: int) -> Dict[str, Any]:
-        """#1842：只补对应源轮的转译重试入口；复用 catch_up_pending_translations 按轮收窄。
+        """#1842/#1902 M1：指定源轮转译恢复；业务在会话共核，此处只映射 HTTP。"""
+        from ming_sim.session import TranslationRetryError
 
-        不复用已退役故事抽取。成功 → extract_status=done；仍失败 → 保持 pending 可再试。
-        """
-        ctid = int(chat_turn_id or 0)
-        if ctid <= 0:
-            raise HTTPException(status_code=400, detail="chat_turn_id 无效")
-        from ming_sim.audience_translation import (
-            catch_up_pending_translations,
-            list_pending_translations,
-        )
-
-        pending_before = list_pending_translations(
-            self.db, chat_turn_id=ctid, write_queue=self._runtime_write_queue(),
-        )
-        if not pending_before:
-            raise HTTPException(
-                status_code=404,
-                detail=f"chat_turn_id={ctid} 没有待补转译。",
+        try:
+            return self.session.retry_pending_translation(
+                int(chat_turn_id),
+                write_gate=self._runtime_write_gate(),
+                write_queue=self._runtime_write_queue(),
             )
-        self._reject_if_settlement_phase()
-        write_gate = self._runtime_write_gate()
-        summary = catch_up_pending_translations(
-            self.db, self.state,
-            chat_turn_id=ctid,
-            llm_config=getattr(self.session, "llm_config", None),
-            write_gate=write_gate,
-            write_queue=self._runtime_write_queue(),
-        )
-        still = list_pending_translations(
-            self.db, chat_turn_id=ctid, write_queue=self._runtime_write_queue(),
-        )
-        # #1853 J8：必备 get_story_extract_status 直调；禁缺接口伪推 pending/done。
-        status = self.db.get_story_extract_status(ctid)
-        return {
-            "chat_turn_id": ctid,
-            "extract_status": status,
-            "retryable": bool(still),
-            "kind": "translation_pending" if still else "translation_done",
-            "summary": summary,
-        }
+        except TranslationRetryError as exc:
+            status = {"invalid": 400, "not_found": 404, "settling": 409}.get(
+                exc.code, 409,
+            )
+            raise HTTPException(status_code=status, detail=exc.detail) from None
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         # #1849 reopen：召对只剩殿上一个入口；按大臣/密令/场外路由整条删除。
@@ -2464,15 +2108,10 @@ class WebGame:
         if minister_name != SCENE_CHAT_SPEAKER:
             yield {"type": "error", "message": "召对只从殿上入口进行。"}
             return
-        # Free prose emperor message: preserve raw; emptiness on local copy (#1834 F16).
-        text = message if isinstance(message, str) else str(message or "")
+        # Free emperor prose: empty-check without mutating carried body (P6).
+        text = str(message or "")
         if not text.strip():
             yield {"type": "error", "message": "问话不能为空。"}
-            return
-        # #498：结算/亲裁相位不得召对（夜不跨月）。锁前查仅快速失败；权威判定在持 gate 后复查
-        # （见下），防 TOCTOU——SUMMONING 通过后等 gate 时被结算改相位仍会开夜。
-        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-            yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
             return
         # 整轮（含转译与高亮尾随）共用一次队列票据——关闭/fixture 必须等其完成。
         pending_ticket = self._mark_pending_write()
@@ -2480,7 +2119,7 @@ class WebGame:
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
             return
         # #1353 r10：屏障已受理则拒后序流式聊天（与 seal 合流）；否则 prologue/epilogue
-        # 经 ticketed gate（写段序）。LLM 仍在无锁窗（AC10）。
+        # 经 ticketed gate（写段序）。LLM 仍在无锁窗（AC10）。宿主屏障资源留入口。
         if self._runtime_write_queue().has_open_barrier():
             self._complete_pending_write(pending_ticket)
             yield {
@@ -2504,41 +2143,28 @@ class WebGame:
             self._complete_pending_write(pending_ticket)
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
             return
+        from ming_sim.session import AudienceChatAdmissionError
         try:
-            # 权威相位复查（持 gate 内，建 chat turn/开夜/写库之前）：等锁期间若被结算改相位则拒。
-            if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-                self._complete_pending_write(pending_ticket)
-                yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
-                return
-            # #612：CLOSING 冻结新对话——唯一玩家输入准入真源，无平行 status 判断。
-            from ming_sim.audience_night import (
-                AudienceNightError,
-                assert_night_accepts_player_input,
-            )
-            try:
-                assert_night_accepts_player_input(self.db, what="召对")
-            except AudienceNightError as err:
-                if getattr(err, "code", "") == "night_closing":
-                    self._complete_pending_write(pending_ticket)
-                    yield {
-                        "type": "error",
-                        "message": str(err) or "本夜收夜中，暂不能召对。",
-                        "code": "night_closing",
-                    }
-                    return
-                raise
-            if self._audience_turn_in_flight(minister_name):
-                self._complete_pending_write(pending_ticket)
-                yield {"type": "error", "message": "本夜上一轮回奏仍在进行，请稍候再问。"}
-                return
             accepted_turn = int(self.state.turn)
+            # #1902：建轮（含相位／收夜／在飞业务资格）与问话落库同走会话层共核；
+            # 入口只更呈现缓存，不持业务权威副本。
             chat_turn_id, before_snapshot = self._start_chat_turn(
-                minister_name,
+                minister_name, message=text,
             )
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-            if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        except AudienceChatAdmissionError as err:
+            if gate_held:
+                try:
+                    write_gate.release()
+                except RuntimeError:
+                    pass
+                gate_held = False
+            self._complete_pending_write(pending_ticket)
+            out: Dict[str, Any] = {"type": "error", "message": err.detail}
+            if err.code == "night_closing":
+                out["code"] = "night_closing"
+            yield out
+            return
         except Exception as error:
             # Release gate before scene drain — prologue may have already started futures.
             if gate_held:
@@ -2628,6 +2254,8 @@ class WebGame:
                     turn_key = ("turn", int(chat_turn_id)) if chat_turn_id else None
                     highlight_thread: Optional[threading.Thread] = None
                     highlight_box: List[str] = []
+                    # 仅高亮 join 路收故障；共享 spawner 不吞，startup 等无 join 仍走线程未捕获出口。
+                    highlight_errors: List[BaseException] = []
                     # #1727：court_break 预领屏障票——须在尾随领票之后、done 之前。
 
                     if chat_turn_id and answer:
@@ -2639,14 +2267,17 @@ class WebGame:
                                 *,
                                 pending_ticket: Optional[WriteTicket] = None,
                             ) -> None:
-                                highlight_box.extend(
-                                    self._trail_highlight_judge_after_reply(
-                                        reply,
-                                        message_id=mid,
-                                        chat_turn_id=ctid,
-                                        pending_ticket=pending_ticket,
-                                    ) or []
-                                )
+                                try:
+                                    highlight_box.extend(
+                                        self._trail_highlight_judge_after_reply(
+                                            reply,
+                                            message_id=mid,
+                                            chat_turn_id=ctid,
+                                            pending_ticket=pending_ticket,
+                                        ) or []
+                                    )
+                                except BaseException as exc:
+                                    highlight_errors.append(exc)
 
                             highlight_thread = self._spawn_pending_write_thread(
                                 _highlight_worker,
@@ -2671,8 +2302,11 @@ class WebGame:
                     reply_done_emitted = True
 
                     # #544：流式不挡流——done 后补挂高亮（超时封顶）；有清单才发事件。
+                    # 高亮实际异常交还本 worker 统一失败出口（error→end），不洗成成功。
                     if highlight_thread is not None:
                         highlight_thread.join()
+                        if highlight_errors:
+                            raise highlight_errors[0]
                     if highlight_box:
                         ev_queue.put({
                             "type": "highlights",
@@ -2684,13 +2318,14 @@ class WebGame:
                     # #526/#1353：尾随票已清后收夜。整轮票已 complete 时 ticketed gate 会
                     # TicketCancelled——收夜短写改走裸 runtime write_gate（腿已终态，无越屏障窗）。
                     # #1727：预领屏障票交给 close 复用（barrier），禁再领第二张。
-                    # barrier_ticket 由 close.barrier / 早退 complete；
-                    # worker finally 再幂等 complete 一次兜底。
-                    # 流式 worker 同步 close（与前台 schedule 后台职责不同）。
+                    # 交接后归还真源在 close／barrier；本 worker 仅未交接早退才 complete。
+                    # #1902 N4：GameSession 恒有 close_night_after_chat_if_needed；删 getattr 降级。
+                    handed_barrier = close_barrier_ticket
+                    close_barrier_ticket = None
                     self.session.close_night_after_chat_if_needed(
                         court_action,
                         write_gate=bare_write_gate,
-                        barrier_ticket=close_barrier_ticket,
+                        barrier_ticket=handed_barrier,
                     )
 
                     ev_queue.put({"type": "end"})
@@ -2709,22 +2344,37 @@ class WebGame:
                     try:
                         if chat_turn_id:
                             with bare_write_gate:
-                                reply_persisted = self._record_persisted_reply_failure(
-                                    chat_turn_id, error,
-                                    translation_unstarted=payload is None,
+                                reply_persisted = GameSession.fail_audience_chat_turn(
+                                    self.session,
+                                    AudienceChatTurn(
+                                        chat_turn_id=int(chat_turn_id),
+                                        accepted_turn=int(accepted_turn or self.state.turn),
+                                        night_id=0,
+                                        before_snapshot=before_snapshot,
+                                        user_message_id=0,
+                                    ),
+                                    replied=payload is not None or reply_done_emitted,
+                                    error=error,
+                                    translation_dispatched=payload is not None,
                                     court_action=court_action,
                                 )
                     except Exception:
                         logger.exception(
-                            "stream worker cleanup: record persisted reply failure failed chat_turn_id=%s",
+                            "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
                             chat_turn_id,
                         )
-                        # 相位取证失败绝不可推定回话未落，进而删问话/回话。
+                        # 收口自身失败：不删问话/回话（无法证明未落），但本轮没有可交付的 payload。
                         reply_persisted = True
+                        if payload is None:
+                            emit_delta("", replace=True)
                     if payload is None and not reply_persisted:
                         try:
                             with write_gate:
-                                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
+                                self.chat_history = {
+                                    name: [] for name in self.session.content.characters
+                                }
+                                for name, msgs in self.db.load_all_chat_history().items():
+                                    self.chat_history.setdefault(name, []).extend(msgs)
                         except Exception:
                             logger.exception(
                                 "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
@@ -2931,15 +2581,13 @@ def _auto_close_open_night_gate_free(
     无真实 game.db.conn 的 legacy 替身跳过。
     #1353 fold-in r5：欠账补跑内部静默，不并入过月 SSE。
     #1353 r12：write_gate 可由调用方注入（advance 注入非阻塞短持适配；默认 runtime 闸）。
+    # #1902：无 conn legacy 替身跳过已清退；WebGame 恒持真实 GameDB。
     """
-    db = getattr(game, "db", None)
-    if db is None:
-        return
     from ming_sim.audience_night import auto_close_open_night
 
     session = getattr(game, "session", None)
     auto_close_open_night(
-        db,
+        game.db,
         game.state,
         content=getattr(game, "content", None),
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
@@ -3042,12 +2690,6 @@ class _NonBlockingWebWriteGate:
         return False
 
 
-def _spawn_startup_catch_up_nonfatal(game) -> None:
-    """Start post-replacement catch-up without turning a successful replacement into failure."""
-    try:
-        game._spawn_startup_extraction_catch_up()
-    except Exception:
-        logger.exception("startup extraction catch-up scheduling failed")
 
 
 
@@ -3724,34 +3366,12 @@ def _drop_live_pointer_if_unrecoverable(
 def _runtime_restorable(game: Any) -> bool:
     """#1749：失败 close 后可否恢复为活局——db 与 agno 都必须仍可用，且未进入 close 半态。
 
-    探测异常必 logger.exception（ADR 0005）；不得宽 catch 静默 False。
+    判定真源在共享核 ``save_slots.runtime_restorable``（#1902 F2：CLI 读档失败恢复
+    走同一条判据）；此处只做 Web 侧转发，探测异常的真因日志也归共享核（ADR 0005）。
     """
-    session = getattr(game, "session", None)
-    if session is None:
-        return False
-    if int(getattr(session, "_close_epoch", 0) or 0) > 0:
-        return False
-    db = getattr(session, "db", None)
-    if db is None:
-        return False
-    try:
-        db.conn.execute("SELECT 1")
-    except Exception:
-        logger.exception("runtime restorable probe: db.conn failed")
-        return False
-    agno = getattr(session, "agno_db", None)
-    if agno is None:
-        return False
-    engine = getattr(agno, "db_engine", None)
-    if engine is None:
-        return False
-    try:
-        with engine.connect() as c:
-            c.exec_driver_sql("SELECT 1")
-    except Exception:
-        logger.exception("runtime restorable probe: agno engine failed")
-        return False
-    return True
+    from ming_sim.save_slots import runtime_restorable
+
+    return runtime_restorable(game)
 
 
 def _archive_move_db_files(old_db_path: str) -> bool:
@@ -4054,46 +3674,46 @@ async def api_menu_status() -> Dict[str, Any]:
     """菜单页状态：API key 是否配好、上次主 DB 是否存在、存档列表。"""
     runtime = load_runtime_llm()
     from ming_sim.cli_backend import (
+        CLI_REASONING_FLOOR_RUNNERS,
         CLI_REASONING_STRENGTH_RUNNERS,
-        cli_backend_from_env,
         cli_model_choices,
         cli_runner_choices,
         is_supported_cli_runner,
     )
-    env_runner = cli_backend_from_env()
-    channel = str(runtime.get("channel") or "").strip().lower()
-    if channel not in VALID_CHANNELS:
-        channel = "cli" if env_runner else "api"
-    cli_slot = _runtime_cli_slot(runtime)
-    api_slot = _runtime_api_slot(runtime)
-    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
-    # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 兜底成默认名的 resolved 值。
-    # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
-    # 并把字面量钉死（CMR R1 Claude+Gemini concur）。resolved 仅供「当前后端」展示行。
-    cli_model_saved = str(cli_slot.get("model") or "").strip()
-    cli_model = cli_model_saved or str(cli_model_from_env(cli_runner, "")).strip()
-    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
-    has_api_key = _has_real_api_key(api_slot.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
-    base_url = api_slot.get("base_url") or os.environ.get("OPENAI_BASE_URL", "")
-    model = api_slot.get("model") or os.environ.get("OPENAI_MODEL", "")
-    reasoning_strength = normalize_reasoning_strength(
-        cli_slot.get("reasoning_strength") if channel == "cli" else api_slot.get("reasoning_strength")
+    from ming_sim.llm_config import llm_config_from_runtime
+    # #1902 F2：有效配置只认共核 llm_config_from_runtime；入口只保留原样存盘值供表单。
+    cfg = llm_config_from_runtime(
+        runtime,
+        base_url=os.environ.get("OPENAI_BASE_URL", ""),
+        model=os.environ.get("OPENAI_MODEL", ""),
+        api_key=os.environ.get("OPENAI_API_KEY", ""),
+        timeout_seconds=float(os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
+        thinking_level="",
+        advanced_model=os.environ.get("OPENAI_ADVANCED_MODEL", ""),
+        advanced_base_url=os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
+        advanced_api_key=os.environ.get("OPENAI_ADVANCED_API_KEY", ""),
+        advanced_thinking_level="",
     )
-    cli_reasoning_strength = normalize_reasoning_strength(cli_slot.get("reasoning_strength"))
-    api_reasoning_strength = normalize_reasoning_strength(api_slot.get("reasoning_strength"))
+    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
+    # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 共核 resolved。
+    # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
+    # 并把字面量钉死（CMR R1 Claude+Gemini concur）。
+    cli_model_saved = str(cli_slot.get("model") or "").strip()
+    has_api_key = _has_real_api_key(cfg.api_key) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
     reasoning_supported = (
-        cli_supports_reasoning_strength(cli_runner)
-        if channel == "cli"
+        cli_supports_reasoning_strength(cfg.cli_runner)
+        if cfg.channel == "cli"
         else _api_reasoning_supported_for_effective_model(
-            str(base_url),
-            str(model),
-            str(api_slot.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", "")),
-            str(api_slot.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", "")),
+            str(cfg.base_url),
+            str(cfg.model),
+            str(cfg.advanced_base_url),
+            str(cfg.advanced_model),
         )
     )
     # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
     # 不能因 inactive API 槽（ADR 0001 保留）里有 key 就把不可用的 CLI runner 误报成 ready。
-    llm_ready = has_api_key if channel == "api" else is_supported_cli_runner(cli_runner)
+    llm_ready = has_api_key if cfg.channel == "api" else is_supported_cli_runner(cfg.cli_runner)
     return {
         "has_api_key": has_api_key,
         "llm_ready": llm_ready,
@@ -4103,32 +3723,34 @@ async def api_menu_status() -> Dict[str, Any]:
         "campaigns": _scan_campaigns(),
         "current_campaign": _main_db_campaign_id(),
         "llm": {
-            "channel": channel,
-            "base_url": base_url,
-            "model": model,
+            "channel": cfg.channel,
+            "base_url": cfg.base_url,
+            "model": cfg.model,
             "has_api_key": has_api_key,
-            "cli_runner": cli_runner,
-            "cli_model": cli_model,
+            "cli_runner": cfg.cli_runner,
+            "cli_model": cfg.cli_model,
             "cli_model_saved": cli_model_saved,
             "cli_model_choices": cli_model_choices(),
             # #1274 W1：CLI Runner 下拉单源（= _CLI_BACKENDS 有序），menuPage/gameMenu 共吃。
             "cli_runners": cli_runner_choices(),
-            "cli_timeout_seconds": cli_timeout,
-            "reasoning_strength": reasoning_strength,
-            "api_reasoning_strength": api_reasoning_strength,
-            "cli_reasoning_strength": cli_reasoning_strength,
+            "cli_timeout_seconds": cfg.cli_timeout_seconds,
+            "reasoning_strength": cfg.reasoning_strength,
+            "api_reasoning_strength": api_slot.get("reasoning_strength"),
+            "cli_reasoning_strength": cli_slot.get("reasoning_strength"),
+            "effective_reasoning_strengths": effective_reasoning_strengths(runtime),
             "reasoning_supported": reasoning_supported,
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
             # #1271：能力名单自 cli_backend 单源导出，供前端 fallback 消费（禁前端硬编码）。
             "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
-            "timeout_seconds": float(api_slot.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
-            "thinking_level": api_slot.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
-            "advanced_model": api_slot.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
-            "advanced_base_url": api_slot.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
-            "has_advanced_api_key": _has_real_api_key(api_slot.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
+            "cli_reasoning_floor_runners": sorted(CLI_REASONING_FLOOR_RUNNERS),
+            "timeout_seconds": cfg.timeout_seconds,
+            "thinking_level": cfg.thinking_level,
+            "advanced_model": cfg.advanced_model,
+            "advanced_base_url": cfg.advanced_base_url,
+            "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
             "advanced_thinking_level": "",
             # #1794：设置页读回附加请求头表（API 槽）。
-            "default_headers": dict(api_slot.get("default_headers") or {}),
+            "default_headers": dict(cfg.default_headers or {}),
         },
     }
 
@@ -4474,17 +4096,16 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
             _release_opening(opening_path)
 
     published_game, state_snapshot = await loop.run_in_executor(None, _load_work)
-    _spawn_startup_catch_up_nonfatal(published_game)
+    # 与建局／换库同形：启动补跑预检故障上抛，不另包非致命策略。
+    published_game._spawn_startup_extraction_catch_up()
     return {"state": state_snapshot}
 
 
 @app.delete("/api/menu/saves/{name}")
 async def api_menu_delete_save(name: str) -> Dict[str, Any]:
     """菜单页删存档：不依赖 WebGame 实例，直接删文件系统里的 <name>.db。
-    返回刷新后的 campaigns。"""
-    cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
-    if not cleaned or cleaned.startswith("."):
-        raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
+    与 WebGame.delete_save 共用模块级 _safe_save_name（#1902 单一真源），返回刷新后的 campaigns。"""
+    cleaned = _safe_save_name(name)
     target = os.path.join(user_data_path("saves"), f"{cleaned}.db")
     if not os.path.isfile(target):
         raise HTTPException(status_code=404, detail="存档不存在。")
@@ -4597,16 +4218,26 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     if not cli_runner:
         raise HTTPException(status_code=400, detail="cli_runner 不能为空。")
-    config = LLMConfig(
-        api_key="",  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
+    # #1902 N2：入口把表单映射成 channel/cli 槽，生效配置只走共核投影。
+    config = _llm_config_from_runtime(
+        {
+            "channel": "cli",
+            "cli": {
+                "runner": cli_runner,
+                "model": cli_model,
+                "timeout_seconds": cli_timeout,
+                "reasoning_strength": reasoning_strength,
+            },
+        },
         base_url="",
         model=cli_model,
+        api_key="",
         timeout_seconds=timeout_seconds,
-        reasoning_strength=reasoning_strength,
-        channel="cli",
-        cli_runner=cli_runner,
-        cli_model=cli_model,
-        cli_timeout_seconds=cli_timeout,
+        thinking_level="",
+        advanced_model="",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="",
     )
     try:
         # CLI/API smoke 是阻塞子进程/网络调用(只要还在出字就一直跑,静默超 cli_timeout_seconds
@@ -4673,7 +4304,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     if not (base_url and model):
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
     existing = load_runtime_llm()
-    existing_api = _runtime_api_slot(existing)
+    existing_api = existing.get("api") if isinstance(existing.get("api"), dict) else {}
     if not api_key:
         for candidate in (existing_api.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
             if _has_real_api_key(candidate):
@@ -4684,25 +4315,39 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     # advanced_api_key 留空：复用已存的（避免覆盖成空）。
     if advanced_model and not advanced_api_key:
         advanced_api_key = real_api_key_or_empty(existing_api.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
-    # #1794：请求体显式带头表则用之（含空表清空）；省略则装入档内头表（旧客户端兼容）。
+    # #1794：请求体显式带头表则用之（含空表清空）；省略则装入档内头表。
     if request.default_headers is not None:
         default_headers = _slot_header_table(request.default_headers)
     else:
         default_headers = _slot_header_table(existing_api.get("default_headers"))
     normalized_base_url = normalize_openai_base_url(base_url)
-    config = LLMConfig(
-        api_key=api_key,
-        base_url=normalized_base_url,
-        model=model,
+    # #1902 N2：入口把表单/已存回落映射成 api 槽，生效配置只走共核投影。
+    config = _llm_config_from_runtime(
+        {
+            "channel": "api",
+            "api": {
+                "base_url": normalized_base_url,
+                "model": model,
+                "api_key": api_key,
+                "timeout_seconds": timeout_seconds,
+                "thinking_level": thinking_level,
+                "advanced_model": advanced_model,
+                "advanced_base_url": advanced_base_url,
+                "advanced_api_key": advanced_api_key,
+                "advanced_thinking_level": advanced_thinking_level,
+                "reasoning_strength": reasoning_strength,
+                "default_headers": default_headers,
+            },
+        },
+        base_url="",
+        model="",
+        api_key="",
         timeout_seconds=timeout_seconds,
         thinking_level=thinking_level,
-        advanced_model=advanced_model,
-        advanced_base_url=advanced_base_url,
-        advanced_api_key=advanced_api_key,
-        advanced_thinking_level=advanced_thinking_level,
-        reasoning_strength=reasoning_strength,
-        channel="api",
-        default_headers=default_headers,
+        advanced_model="",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="",
     )
     try:
         # CLI/API smoke 是阻塞子进程/网络调用(只要还在出字就一直跑,静默超 cli_timeout_seconds
@@ -4873,6 +4518,10 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     }
 
 
+# #1902：GET /api/map 与 GET /api/buildings 退役——前端零调用；地图节点随
+# state_payload.map_nodes 下发（1851），省份建筑随 state_payload.buildings（1489）。
+
+
 @app.post("/api/favorites/{minister_name}")
 async def api_add_favorite(minister_name: str) -> Dict[str, Any]:
     game = get_game()
@@ -4898,21 +4547,6 @@ _STATUS_LABEL_WEB = {
     "active": "在事", "offstage": "尚未登场", "dead": "已殁", "dismissed": "已罢黜",
     "imprisoned": "下狱", "exiled": "流放", "retired": "致仕",
 }
-
-
-def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    turns = db.list_hall_chat_turns(int(night_id))
-    speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
-    ids = {int(row["id"]) for row in turns}
-    rows: List[Dict[str, Any]] = []
-    for speaker in speakers:
-        interrupted = db.get_interrupted_reply_retries(speaker)
-        post = db.get_post_reply_retries(speaker)
-        rows.extend(
-            retry for retry in (*interrupted, *post)
-            if int(retry["chat_turn_id"]) in ids
-        )
-    return sorted(rows, key=lambda item: int(item["chat_turn_id"]))
 
 
 @app.get("/api/audience/scroll")
@@ -4950,7 +4584,7 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         "translation_pending": bool(pending_replies),
         "pending_translation_turn_ids": [int(row["chat_turn_id"]) for row in pending_replies],
         "translation_retries": game.pending_translation_retries(night_id=int(night["id"])),
-        "reply_retries": _reply_retries_for_night(game.db, int(night["id"])),
+        "reply_retries": game.session.pending_audience_recovery_retries(night_id=int(night["id"])),
     }
 
 
@@ -4970,50 +4604,18 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "night_id": int(open_night["id"]) if open_night else 0,
         "history": game.chat_projection(),
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
+        "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),
         "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
             night_id=int(open_night["id"]) if open_night else None,
             minister_name=SCENE_CHAT_SPEAKER,
         )],
+        "translation_retries": game.pending_translation_retries(
+            night_id=int(open_night["id"]) if open_night else None,
+        ),
     }
 
 
-@app.post("/api/audience/chat")
-async def api_audience_chat(request: ChatRequest) -> Dict[str, Any]:
-    """#1849 reopen：殿上唯一入口的非流式形态——drain stream，回 done 载荷。"""
-    from ming_sim.audience_night import SCENE_CHAT_SPEAKER, AudienceNightError
-
-    def _run() -> Dict[str, Any]:
-        done: Optional[Dict[str, Any]] = None
-        error_detail: Optional[Dict[str, Any]] = None
-        for item in get_game().chat_stream(SCENE_CHAT_SPEAKER, request.message):
-            kind = str(item.get("type") or "")
-            if kind == "done":
-                done = dict(item.get("payload") or {})
-            elif kind == "error":
-                if isinstance(item.get("detail"), dict):
-                    error_detail = dict(item["detail"])
-                else:
-                    error_detail = {
-                        "message": item.get("message") or "召对失败。",
-                    }
-                    if item.get("code"):
-                        error_detail["code"] = item.get("code")
-        if error_detail is not None:
-            message = str(error_detail.get("message") or "召对失败。")
-            code = str(error_detail.get("code") or "")
-            status = 409 if code == "night_closing" else 400
-            raise HTTPException(status_code=status, detail=error_detail if code else message)
-        if done is None:
-            raise HTTPException(status_code=500, detail="召对流未完成。")
-        return done
-
-    try:
-        return await run_in_threadpool(_run)
-    except AudienceNightError as exc:
-        raise _retryable_audience_close_http(exc) from None
-    except LLMUnavailable as exc:
-        raise HTTPException(status_code=400, detail=_llm_error_detail(exc)) from None
-
+# #1902：非流式 POST /api/audience/chat 退役——说话只有流式一条入口（/api/audience/chat/stream）；前端自 #1842 起零调用此路，两条同源入口会把同一编排复制两份。GET /api/audience/chat（召对历史读面）不受影响。
 
 @app.post("/api/audience/reply/retry")
 async def api_retry_audience_reply(chat_turn_id: int = Body(0, embed=True)) -> Dict[str, Any]:
@@ -5085,6 +4687,10 @@ def _chat_stream_response(minister_name: str, request: ChatRequest) -> Streaming
             elif item_type == "error":
                 detail = item.get("detail") or {"message": item.get("message", "流式回复失败。")}
                 payload = dict(detail) if isinstance(detail, dict) else {"message": str(detail)}
+                # #1902：结构化拒收的 code 必须过 SSE 终态（前端 normalizeApiError 与
+                # 测试都按它分流；旧非流式路由把它放在 HTTP detail 里，迁流式不得丢）。
+                if item.get("code") and not payload.get("code"):
+                    payload["code"] = str(item.get("code"))
                 payload.update({
                     "campaign_id": item.get("campaign_id", ""),
                     "night_id": item.get("night_id", 0),
@@ -5103,54 +4709,10 @@ async def api_audience_chat_stream(request: ChatRequest) -> StreamingResponse:
     return _chat_stream_response(SCENE_CHAT_SPEAKER, request)
 
 
-# 草稿的改／删接口在此（ADR 0152：新增发起口归召对，草稿层能力保留）。
-
-
-@app.patch("/api/directives/{directive_id}")
-async def api_update_directive(directive_id: int, request: DirectivePatch) -> Dict[str, Any]:
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            row = next(
-                (item for item in game.directive_rows() if int(item["id"]) == directive_id),
-                None,
-            )
-            if row is None:
-                raise HTTPException(status_code=404, detail="未找到草案。")
-            # P6 / ADR 0142：旨文是自由正文；判空观察副本，抽取/落库传原串。
-            text = request.text if request.text is not None else str(row["text"])
-            # #1847 N6：判空可读 strip；旨意正文运输用原文。
-            if not text.strip():
-                raise HTTPException(status_code=400, detail="指令内容不能为空。")
-            capture_turn = int(game.state.turn)
-            existing_mode = game.db.read_directive_dossier_payload(row).get("mode")
-        from ming_sim.cli_backend import capture_manual_directive_payload
-        dossier_payload = await asyncio.to_thread(
-            capture_manual_directive_payload,
-            text,
-            game.session.llm_config,
-            existing_mode=existing_mode,
-            **({"db": game.db, "content": game.content}
-               if getattr(game, "content", None) is not None else {}),
-        )
-        # #1749：同 create——响应列表在 gate 内快照，禁门后读退休连接。
-        with _serialized_web_write(game):
-            if int(game.state.turn) != capture_turn:
-                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
-            # Free prose directive text: pass raw (emptiness checked above).
-            game.session.update_directive(
-                directive_id, text, dossier_payload=dossier_payload,
-            )
-            return {
-                "directives": [
-                    game.directive_payload(item) for item in game.directive_rows()
-                ],
-            }
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    except LLMUnavailable as e:
-        # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
+# #1902 / #1812 待拍第 6 项：拟诏台手写入口全退——POST|PATCH /api/directives 不再注册。
+# 旨意只从召对来（#1772）；草稿可见、已发追溯与删旧草稿（DELETE）保留，旧草稿去向
+# 由 #1826 的草稿与已发记录承接。共享抽取核未删：成案准入补交
+# （session._resubmit_draft_admission_failures）仍是它的现役消费者。
 
 
 @app.delete("/api/directives/{directive_id}")
@@ -5252,6 +4814,11 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
             },
         )
 
+
+# #1902：非流式 POST /api/decree/issue 退役——颁布只有流式一条入口
+# （/api/decree/issue/stream），两条同源入口把同一编排复制一份。此路由曾独有
+# 的 typed 失败面已补进 SSE 终态：SettlementAbort 带 status_code=409 + stage +
+# error_pack_path（_settlement_sse_error_data），LLM 死走既有 _llm_error_detail。
 
 @app.post("/api/decree/issue/stream")
 async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
