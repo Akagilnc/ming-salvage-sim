@@ -9,15 +9,10 @@ import json
 import math
 import os
 import re
-import textwrap
 from typing import Dict, List
 
-from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT, WRAP
+from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT
 from ming_sim.person_archive_contract import format_person_actions
-
-
-def wrap(text: str) -> str:
-    return "\n".join(textwrap.wrap(text, width=WRAP, replace_whitespace=False))
 
 
 def load_text_asset(relative_path: str) -> str:

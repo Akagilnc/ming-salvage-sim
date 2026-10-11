@@ -211,9 +211,6 @@ def test_enter_review_does_not_clobber_settling(game):
     sess.enter_review()
     assert state.turn_phase == "settling"
 
-    sess.back_to_summoning()
-    assert state.turn_phase == "settling"
-
 
 def test_advance_without_edict_refused_after_settling(game):
     """#1274 r1：空壳已删；settling 恢复归 session.resolve_turn，不再经独立退朝壳拒绝。"""
@@ -275,8 +272,6 @@ def test_sticky_phases_cover_awaiting_decision(game):
     sess.state = state
 
     sess.enter_review()
-    assert state.turn_phase == "awaiting_decision"
-    sess.back_to_summoning()
     assert state.turn_phase == "awaiting_decision"
 
 

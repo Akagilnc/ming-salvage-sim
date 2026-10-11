@@ -2141,11 +2141,6 @@ class GameSession:
             return
         self._set_phase(TurnPhase.REVIEWING)
 
-    def back_to_summoning(self) -> None:
-        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
-            return
-        self._set_phase(TurnPhase.SUMMONING)
-
     def write_decree(self) -> str:
         """生成诏书。要求无 pending 残留、≥1 条 draft。"""
         if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:

@@ -11,7 +11,6 @@ from ming_sim.paths import bundled_path, bundled_root
 # 只读资源根：源码=仓库根，frozen=_MEIPASS。
 ROOT_DIR = str(bundled_root())
 CONTENT_DIR = bundled_path("content")
-WRAP = 88
 MONEY_UNIT = "万两"
 ECONOMY_ACCOUNTS = ("国库", "内库")
 SCORE_METRICS = ("民心", "皇威")
