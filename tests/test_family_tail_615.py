@@ -11,7 +11,6 @@ from ming_sim.models import Character
 from tests.dossier_test_helpers import _cost_events, _sat
 
 
-BLOCKED_LAYERS = {"cabinet_drafting", "palace_rescript", "six_offices"}
 SNAPSHOT_KEYS = {
     "imperial_authority_band",
     "appointment_tenure",
@@ -171,7 +170,6 @@ def test_break_rank_appointment_rescript_td4_tracer(
     assert rejected["status"] == "proposed"
     assert rejected["promulgation_decision"] == "rejected"
     assert rejected["rescript_pending"] is True
-    assert rejected["promulgation_blocked_layer"] in BLOCKED_LAYERS
     assert rejected["promulgation_blocked_layer"] == "six_offices"
     opponents = rejected.get("primary_opponents") or json.loads(
         restored.conn.execute(

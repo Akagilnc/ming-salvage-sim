@@ -954,7 +954,6 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     key_hn = db.project_office_identity("巡抚", "地方", character_name=other.name)
     assert key_sx["archive_key"] == "slot:巡抚@shaanxi"
     assert key_hn["archive_key"] == "slot:巡抚@henan"
-    assert key_sx["archive_key"] != key_hn["archive_key"]
 
     # Succession: same seat title@region shares archive identity with predecessor.
     pred = official.name

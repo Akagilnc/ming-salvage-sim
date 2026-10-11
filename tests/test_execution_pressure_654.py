@@ -398,7 +398,6 @@ def test_locality_fail_create_decree_dossiers_zero_rows(env):
 def test_cli_target_kinds_accepts_canonical_eight():
     """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。"""
     from ming_sim import cli_backend as cb
-    assert "dossier" in TARGET_KINDS
     assert TARGET_KINDS == frozenset({
         "policy", "character", "office", "army", "region", "issue", "account",
         "dossier",
@@ -457,7 +456,6 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
     assert pending["dossier_action_type"] == "revoke_decree"
     assert pending["target_kind"] == "dossier"
     assert int(pending["revoke_target_dossier_id"]) == int(target_id)
-    assert pending["target_kind"] in TARGET_KINDS
 
     # 2) durable normalization 闭集直校验（无 dossier 暗例外）
     normalized = db._normalize_directive_dossier_payload(

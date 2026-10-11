@@ -111,7 +111,6 @@ def test_updated_at_period_is_era_label_not_bare_turn(r3_guard):
         if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
     )
     assert wei_yang["updated_at_period"] == "天启七年十月"
-    assert wei_yang["updated_at_period"] != str(state.turn)
 
 @pytest.fixture
 def r3_guard(game):

@@ -629,7 +629,6 @@ def test_1376_candidate_confirm_freezes_explicit_typed_contract(game):
     assert contract["axes"] == ["既得利益"]
     assert contract["delivery"]["unit"] == "万两"
     assert contract["delivery"]["target_units"] == 5.0
-    assert contract["kind"] != "稽核"
 
 def test_non_finite_effort_is_invalid_not_full_investment(game):
     """#1896 R2：非有限数值不是"下了死力"，是坏产物——拒收，不洗成满额投入。
@@ -1628,7 +1627,6 @@ def test_deep_dig_lands_through_month_chain_entry(game):
     assert chain.get("secret_orders_supply_invalid") is not True
     lane = _lanes(db, oid)[key]
     assert lane["effort"] == pytest.approx(1.0)
-    assert lane["effort"] != 100
     assert investigation_lane_actual_units(db, did) == float(lane["mastered"])
 
     # 敷衍（显式 0）下月零投入：不增投入、不重复计数

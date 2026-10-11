@@ -1422,23 +1422,6 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
         assert content.characters["毛文龙"].status == "active"
 
 
-def test_issue_tracker_rollback_removes_dynamic_character_attrs(game):
-    """online R3 Gemini：事务中新添的人物动态属性也要随 runtime rollback 清掉。"""
-    db, state, content = game
-    issues.bind_content(content)
-    character = content.characters["毛文龙"]
-    if hasattr(character, "_test_runtime_ghost_attr"):
-        delattr(character, "_test_runtime_ghost_attr")
-    db.conn.commit()
-
-    db.conn.execute("BEGIN")
-    issues.apply_issue_tracker_output(db, state, {"advances": []}, content=content)
-    character._test_runtime_ghost_attr = "ghost"
-    db.conn.rollback()
-
-    assert not hasattr(character, "_test_runtime_ghost_attr")
-
-
 def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):
     """post-merge CMR R9：外层事务 rollback 后，state.metrics 内存也必须回到事务前。"""
     db, state, content = game

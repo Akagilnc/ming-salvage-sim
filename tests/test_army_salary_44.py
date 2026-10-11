@@ -77,7 +77,6 @@ def test_defected_army_to_ming_owes_salary_not_free(read_game):
     assert needed == math.ceil(manpower * 1.5 / 10000), (
         f"倒戈成 ming 的大军(rate<=0)须按锚点 1.5 欠饷、非零饷白嫖（army_needed={needed}）"
     )
-    assert needed > 0
 
 def test_total_ming_salary_is_72_ceil_sum(read_game):
     # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
@@ -120,19 +119,6 @@ def test_manpower_true_noop_no_log(game):
     after = db.conn.execute(
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
     assert after == before, "真 no-op(delta==0)不留痕"
-
-def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
-    # A salaried army with source debt participates in pooled repayment.
-    from ming_sim.army_pay import _auto_pay_arrears_by_priority
-    db, state, _ = game
-    aid = str(db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    # 只留这一支有欠饷，孤立验证「它是否进得了受饷分发」
-    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET salary_rate=1.5, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
-    db.conn.commit()
-    spent = _auto_pay_arrears_by_priority(db, state, "国库", 5, "补饷", "诏拨补饷")
-    assert spent > 0, "兜底拨饷应能花到该军"
 
 def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
     # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。

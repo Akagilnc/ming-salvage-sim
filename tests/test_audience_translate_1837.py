@@ -943,8 +943,6 @@ def test_pure_office_dossier_uses_payload_text_not_template(game):
     ).fetchone()
     assert dossier is not None, "纯任免应收夜成 appointment 案卷"
     assert dossier["decree_text"] == edict
-    template = f"任命{person}为陕西巡抚"
-    assert dossier["decree_text"] != template
     dossier_payload = json.loads(dossier["payload_json"] or "{}")
     assert dossier_payload.get("text") == edict
 

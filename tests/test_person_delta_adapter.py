@@ -2424,7 +2424,6 @@ def test_yizhu_clears_status_reason_in_db(game):
         "SELECT status, status_reason, status_changed_turn, reason_code FROM characters WHERE name=?", (name,)
     ).fetchone()
     assert row["status"] == "active"
-    assert row["status_reason"] != "松山兵败被执", "易主后 DB 仍滞留旧下狱缘由"
     assert row["status_reason"] == "剃发降清", "易主须把 status_reason 换成本次易主缘由（非任意非空残值即过）"
     assert row["status_changed_turn"] == state.turn, "易主即状态变更，status_changed_turn 须记本回合（docstring 称验却漏断言=F2 半漏）"
     assert row["reason_code"] == ""

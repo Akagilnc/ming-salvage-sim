@@ -153,7 +153,6 @@ def test_golden1_pay_order_reversal_breakdown_tsv():
     res = settle_tick(st, p2, [])
     tsv = "\n".join(f"{k}\t{res.breakdown['实付分账'][k]}" for k in p2["due_order"])
     assert tsv.splitlines()[0] == "官俸\t3.0"       # 官俸足付
-    assert tsv.splitlines()[0].startswith("官俸\t3.0")
     last_cell = float(tsv.splitlines()[-1].split("\t")[1])
     assert last_cell == pytest.approx(1.93)          # 边饷居末只捡残池
     assert res.breakdown["NewDebt"]["军饷欠"] == pytest.approx(16.07)
@@ -175,8 +174,6 @@ def test_golden2_haircut_half_is_exemption_not_debt():
     # 池 60：军饷18+官俸3+宗禄应得50+赈济1=72>60 → 军饷18/官俸3/宗禄39/赈济0
     assert res.breakdown["实付分账"]["宗禄"] == pytest.approx(39.0)
     assert res.new_st["宗禄欠"] == pytest.approx(11.0)  # 只含折后未付（50−39）
-    # 免除的 51 绝不进 CLAIM（若无折，宗禄欠将是 101-39=62）
-    assert res.new_st["宗禄欠"] < 62.0
 
 def test_golden3_arrears_waterfall_reversal():
     """③「旧欠先偿宗禄」：surplus waterfall 先还宗禄欠、再军饷欠。"""

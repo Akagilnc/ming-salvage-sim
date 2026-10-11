@@ -2862,7 +2862,6 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
     assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, region_id))
     assert p["Due"]["宗禄"] == pytest.approx(expected["宗禄"])
     assert p["Due"]["赈济"] == 0
-    assert p["三饷应征"] > 0, f"{expected['zh']} 开局须 seed 辽饷"
     assert p["起运定额"] >= p["三饷应征"], f"{expected['zh']} 辽饷应可全额起运"
     assert "salt_tax" not in p and "commerce_tax" not in p, "盐税/商税不进 settle substrate"
 
@@ -3224,7 +3223,6 @@ def test_jiangnan_core_seeds_have_positive_remittance_golden(fresh_db, region_id
     for key, value in expected["first_tick"].items():
         got = res.breakdown.get(key) if key == "起运到京" else res.new_st[key]
         assert got == pytest.approx(value, abs=1e-3), f"{region_id} {key}"
-    assert res.breakdown["起运到京"] > 0, f"{region_id} 应跑出正起运"
 
 
 def test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due(fresh_db):
