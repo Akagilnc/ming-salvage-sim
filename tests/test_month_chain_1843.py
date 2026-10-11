@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 
 import pytest
 
@@ -12,7 +11,6 @@ import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
-from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
 
@@ -43,13 +41,6 @@ def _stage_edict(db, state, minister, text, category, delta, affair_id):
         visible_refs={"affairs": [affair_id], "issues": [], "secret_orders": []},
     )
     return pending_id, ref
-
-def _categories(db):
-    return [
-        str(row["category"]) for row in db.conn.execute(
-            "SELECT category, delta FROM economy_ledger ORDER BY id",
-        ) if str(row["category"]) in {"宁远补饷", "陕西赈灾", "大凌河"}
-    ]
 
 def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None, secret_orders_supply=None):
     """换掉世界段与转译的模型缝，返回尚未过月的 session。不含在飞屏障。"""
@@ -634,13 +625,6 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     )
     db.transition_decree_dossier(grant_id, "promulgated")
     db.transition_decree_dossier(grant_id, "executing")
-    db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-        "VALUES (?, ?, 'user', '公开奏对', 'held')",
-        (minister, int(state.turn)),
-    )
-    message_id = int(db.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
-    db.conn.commit()
     reports = [
         {
             "dossier_id": int(item["dossier_id"]),
@@ -698,9 +682,6 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         turn=int(state.turn), target_dossier_id=dossier_id,
     )
     assert len(denunciations) == 1
-    assert db.conn.execute(
-        "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
-    ).fetchone()["knowledge_status"] == "released"
 def _stage_region_unrest_edict(db, state, minister, delta):
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister,

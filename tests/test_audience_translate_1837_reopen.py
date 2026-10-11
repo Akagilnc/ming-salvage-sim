@@ -20,7 +20,6 @@ from ming_sim.audience_night import (
 from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.session import GameSession
 from tests.month_chain_helpers import make_light_session
 from tests.recommendation_rows import recommendation_events
 
@@ -437,7 +436,7 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
 
 
 def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
-    """点名 order_id 才拉该令月报；排除、自办与缺令都不开文件。"""
+    """交办 order_id 才拉该令月报；未交办、自办与缺令都不开查访文件。"""
     from pathlib import Path
     from tests.test_secret_order_declaration_landing_1897 import _covert_task
 
@@ -467,7 +466,7 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     )
     hidden = db.create_secret_order(
         state, str(assignee["name"]), "查内库", "密查内库", [],
-        deadline_months=2, excluded_names=[attendant.name],
+        deadline_months=2,
         covert_task=_covert_task(target_units=1),
     )
     own = db.create_secret_order(
@@ -485,7 +484,6 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     result = _scene_declaration(db, state, content, monkeypatch, "去查那几件密令的月报。", {
         "inquiries": [
             {"attendant": attendant.name, "query": "查仓储月报", "order_id": visible},
-            {"attendant": attendant.name, "query": "查被排除的", "order_id": hidden},
             {"attendant": attendant.name, "query": "查自己承办的", "order_id": own},
             {"attendant": attendant.name, "query": "查没有的", "order_id": 9_999_999},
             {"attendant": attendant.name, "query": "形状不对", "order_id": True},
@@ -493,7 +491,7 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     })
     assert {item["order_id"] for item in result.inquiries.applied} == {visible, own}
     assert {item.category for item in result.inquiries.rejected} == {
-        "hallucinated_id", "invalid_shape", "invalid_state",
+        "hallucinated_id", "invalid_shape",
     }
     from ming_sim.materials import _safe_segment
     rel = f"密令/查访月报/{visible}.txt"

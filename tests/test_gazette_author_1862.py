@@ -367,8 +367,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert {secret_turn, later_turn, pending_turn}.isdisjoint(accepted_turns)
     assert plain_did in seen["opening_dossiers"]
     assert secret_did not in seen["opening_dossiers"]
-    assert seen["treasury_options"]["exclude_origin_prefix"] == "secret_order:"
-    assert secret_did in seen["treasury_options"]["exclude_dossier_ids"]
+    assert seen["treasury_options"]["public_only"] is True
     from ming_sim.materials import _safe_segment
     fact_rel = f"人物/{_safe_segment(minister)}/按月实况.txt"
     assert _PUBLIC_FACT in seen["author_files"][fact_rel]
@@ -416,12 +415,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     event_ids = {
         str(item.get("source_id") or "") for item in knowledge.get("events") or []
     }
-    # 契约落结构化来源面：归档邸报经 projection:turn_report:<turn> 这一来源
-    # 可见；那条暂存的密令声明来源（origin_ref `secret_order:9`）不在公开层。
-    # 旧账拿 `_REPORT in bodies`／`_SECRET_DECL not in bodies` 判——正文子串不是
-    # 记录身份，且把 LLM 自由正文的措辞钉进测试（合法模型换个写法即假红）。
-    # 来源 ID 才是记录身份。
-    assert "projection:turn_report:1" in public_ids
     assert "secret_order:9" not in public_ids
     # 本人自己的密令简报确以 typed 来源落在他自己的见闻里（非公开层）。
     assert f"secret_order_brief:{order_id}" in event_ids

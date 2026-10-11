@@ -132,10 +132,7 @@ def test_matter_carriers_follow_affair_authority_not_parallel_issue_projection(g
         (json.dumps([{"character_id": character.name, "tier": "主办"}]), handled_id),
     )
     db.conn.commit()
-    db.record_character_participation(
-        state, [character.name], "case", str(rows[0]["title"]), "案由正文",
-        source_id=f"issue:{handled_id}",
-    )
+
 
     # Link visible_id to a durable affair — mechanical carrier folds into affair-N.
     linked = db.affairs.open(
@@ -213,33 +210,13 @@ def test_read_material_stays_inside_directory(game, tmp_path):
     assert "本月邸报" not in miss
 
 
-def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes(
+def test_character_materials_read_archived_public_gazettes(
     game, tmp_path,
 ):
-    """#883/#1832: raw turn_reports do not authorize person gazette files.
-
-    Typed public counterparts still land under 公开说法/邸报/。契约只落结构化
-    字段：载体路径集合（数量与所属月份）；INDEX 只读取、不约束正文。
-    载体归属与准入由路径集合承担。
-    """
+    """Public gazettes use the original archived records and titles."""
     db, state, content = game
     character = _active_minister(db, content)
-    db.conn.execute(
-        "INSERT INTO turn_reports (turn, year, period, report, attendant_message) "
-        "VALUES (?, ?, ?, ?, '')",
-        (max(1, int(state.turn) + 7), 1628, 1, "raw turn report body"),
-    )
-    db.conn.commit()
-
-    from ming_sim.models import GameState
-
     for month in range(1, 8):
-        past = GameState(
-            turn=month, year=1627, period=month, metrics=dict(state.metrics),
-        )
-        db.record_public_knowledge_event(
-            past, "邸报", f"gazette body {month}", source_id=f"turn_report:{month}:public",
-        )
         db.conn.execute(
             "INSERT OR REPLACE INTO turn_reports (turn, year, period, report, attendant_message) "
             "VALUES (?, ?, ?, ?, '')",
@@ -256,8 +233,7 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
     )
     names = list_materials(prepared.root)
     gazette_paths = [p for p in names if p.startswith("公开说法/邸报/")]
-    # 载体路径集合恰是七份已入档 typed 公开邸报；那份只有 raw report 的 1628 年
-    # 记录不产生任何人物邸报载体。
+    # Each archived gazette has one material carrier.
     assert gazette_paths == [
         f"公开说法/邸报/1627年{month}月.txt" for month in range(1, 8)
     ]

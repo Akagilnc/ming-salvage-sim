@@ -9,30 +9,24 @@ Seams:
 from __future__ import annotations
 
 import json
-import threading
 from types import SimpleNamespace
 
 import pytest
 
-import ming_sim.agents as agents_mod
 import ming_sim.audience_translate as audience_translate
 from ming_sim.audience_night import (
-    AudienceNightError,
     close_night,
     engine_command_mingfa_publication_ids,
-    list_chat_turns_for_night,
     list_ledger,
     open_night,
 )
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
-from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
     note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
-    stub_scene_agent,
 )
 
 
@@ -102,14 +96,14 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
     """把一轮皇帝/回话落到 chat_messages + chat_turns（真表形）。"""
     speaker = "殿上"
     cur = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-        "VALUES (?, ?, 'user', ?, 'held')",
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'user', ?)",
         (speaker, int(state.turn), user_text),
     )
     uid = int(cur.lastrowid)
     cur = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-        "VALUES (?, ?, 'minister', ?, 'held')",
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'minister', ?)",
         (speaker, int(state.turn), reply),
     )
     mid = int(cur.lastrowid)

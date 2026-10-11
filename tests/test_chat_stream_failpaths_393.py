@@ -203,7 +203,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         try:
             with web_app._serialized_web_write(runtime):
                 other_entered.set()
-                allow_other_exit.wait()
+                assert allow_other_exit.wait(timeout=5)
             other_completed_ok.append(True)
         except Exception:
             other_completed_ok.append(False)
@@ -216,7 +216,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
-        other_entered.wait()
+        assert other_entered.wait(timeout=5)
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 

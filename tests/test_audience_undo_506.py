@@ -17,7 +17,6 @@ from typing import Callable, Dict, Mapping, Optional
 import pytest
 
 from ming_sim import audience_night as an
-from ming_sim.audience_night import AudienceNightError
 from ming_sim.audience_translation import apply_audience_round_translation, mark_turn_translation_done
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
@@ -359,20 +358,18 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
         create_test_secret_order(db,
             state, m, "密核盐课", "密核长芦盐课隐没", ["盐政", "稽核"],
             importance=5, deadline_months=6,
-            excluded_names=[_active_minister(db, content, exclude={m})],
-            excluded_offices=["户部"],
         )
     night_id, chat_id = _run_round(
         db, state, m, writes=_land,
         declaration=_minister_declaration(m, "领旨。"),
     )
     order_id = int(db.conn.execute("SELECT id FROM secret_orders").fetchone()["id"])
-    # 落地时结构化字段（标题/期限/标签/排除名单/机构级映射）+ 简报（承办人/知情圈）齐备
+    # 落地时结构化字段（标题/期限/标签）+ 简报（承办人/知情圈）齐备
     row = db.conn.execute(
-        "SELECT title, due_turn, tags, excluded_names, excluded_targets "
+        "SELECT title, due_turn, tags "
         "FROM secret_orders WHERE id = ?", (order_id,)
     ).fetchone()
-    assert row["title"] and json.loads(row["excluded_names"]) and json.loads(row["excluded_targets"])
+    assert row["title"] and json.loads(row["tags"])
     assert db.conn.execute(
         "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id = ?", (order_id,)
     ).fetchone()[0] == 1

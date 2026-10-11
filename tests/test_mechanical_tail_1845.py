@@ -4,7 +4,6 @@ Seams:
 - month_chain / resolve_turn 推进后启动机械尾（关系酿制 + 结局总评）
 - SessionWriteQueue 票键 (\"mechanical-tail\", closed_turn)：不挡新月前台；下次过月 barrier join
 - 未完尾按 month_chain 持久状态重开续接；失败由玩家重试，不静默降级
-- 章节记忆残留删除（event_memories 表／三读者）；结局总评只读一遍邸报
 - 召对高亮不在本票机械尾（沿 ADR 0045）
 """
 
@@ -447,70 +446,6 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
         assert printed in (None, "")
 
 
-def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
-    """大臣知识面 / 结局总评邸报 / 材料目录均不再吃章节记忆；event_memories 表已删。"""
-    from types import SimpleNamespace
-
-    from ming_sim.knowledge import build_character_knowledge
-    from ming_sim.materials import prepare_world_materials, list_materials, release_material_tree
-    from ming_sim.mechanical_tail import generate_ending_summary_for_tail
-
-    db, state, content = game
-    tables = {
-        r[0]
-        for r in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    }
-    assert "event_memories" not in tables
-    assert "event_memory_sources" not in tables
-    db.save_turn_report(state, "历月邸报正文")
-
-    name = next(iter(content.characters))
-    knowledge = build_character_knowledge(db, state, name)
-    public = knowledge.get("public_events") or []
-    assert all(row.get("kind") != "chapter_summary" for row in public)
-    assert any(
-        str(row.get("source_id") or "").startswith("projection:turn_report:")
-        for row in public
-    )
-
-    seen = {}
-
-    def _agent(_agent_obj, message, **_k):
-        import json
-        seen["payload"] = json.loads(message)
-        return "史评"
-
-    monkeypatch.setattr(
-        "ming_sim.agents.create_ending_summary_agent", lambda *a, **k: object(),
-    )
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", _agent)
-    closed = SimpleNamespace(
-        turn=state.turn, year=state.year, period=state.period,
-        metrics=dict(state.metrics), ended=True,
-    )
-    generate_ending_summary_for_tail(
-        db, closed, {"status": "emperor_abdicate", "summary": "退位"},
-        llm_config=object(),
-    )
-    assert "timeline" not in seen["payload"]
-    gazettes = seen["payload"]["gazettes"]
-    assert gazettes
-    for row in gazettes:
-        # 模型输入每期正文只一份，不另带 gazette 重复键
-        assert "gazette" not in row
-    ending = db.get_ending_summary()
-    assert ending["ending_status"] == "emperor_abdicate"
-    for row in ending["timeline"]:
-        assert "gazette" in row
-        assert "decree_brief" not in row
-        assert "effect_brief" not in row
-
-    prepared = prepare_world_materials(db, state)
-    try:
-        names = list_materials(prepared.root)
-        assert any(n.startswith("邸报/") for n in names)
-    finally:
-        release_material_tree(prepared.root)
 
 
 def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):

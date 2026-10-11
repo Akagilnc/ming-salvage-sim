@@ -315,7 +315,6 @@ def build_c0_declaration_shape() -> str:
         '"target_candidate": "续办所指候选 id（撤令一般留空）"},\n'
         '      "secret_order": {"title": "密令标题", "content": "密令正文（原样，不删改）", '
         '"assignee": "承办人名（名册人名，不得填场景）", "tags": [], "deadline_months": 0, '
-        '"excluded_names": [], "excluded_offices": [], '
         '"dossier_links": [{"target_dossier_id": 旧案卷id, '
         f'"relation_type": "{dossier_link_types}", "note": "关联说明（必填）"}}],\n'
         '        "covert_task": '
@@ -360,14 +359,12 @@ def build_c0_declaration_shape() -> str:
         "    }\n"
         "  ],\n"
         '  "textual_facts": [\n'
-        '    {"subject_kind": "character|army|region", "subject_id": "id", "body": "文字事实"}\n'
+        '    {"subject_kind": "character|army|region", "subject_id": "id", "body": "文字事实", "origin_ref": "本条事实真实来源引用（如 dossier:id / secret_order:id），与 affair_declaration 分开"}\n'
         "  ],\n"
         '  "public_sayings": [\n'
         "    {\n"
         '      "body": "公开说法",\n'
-        '      "involved_characters": ["人名"],\n'
-        '      "excluded_names": ["明示排除、不得知情的人名"],\n'
-        '      "excluded_offices": ["明示排除、不得知情的官职"]\n'
+        '      "involved_characters": ["人名"]\n'
         "    }\n"
         "  ],\n"
         '  "presence": [\n'
@@ -445,8 +442,6 @@ def build_audience_translate_prompt(
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
         "presence / public_sayings / edge_events，不要写成交办。\n"
         "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"
-        "- public_sayings 的 excluded_names / excluded_offices：皇帝明示排除的读者"
-        "保持不知情；无排除则给空数组。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"

@@ -7,7 +7,6 @@ GameDB 持有 self.content（GameContent），seed 类方法从中读人物/地�
 from __future__ import annotations
 
 import contextlib
-from dataclasses import replace
 import json
 import logging
 import math
@@ -197,94 +196,6 @@ def _public_support_description(value: object) -> str:
 
 def _unrest_description(value: object) -> str:
     return "动乱" + qualitative_band(value, ("平静", "有患", "不安", "升高", "已炽"))
-
-def _secret_order_exclusion_targets(
-    people: Iterable[str], offices: Iterable[str],
-) -> Dict[str, List[str]]:
-    """Keep caller targets separate from the resolved institution snapshot."""
-    return {
-        "people": list(dict.fromkeys(str(value) for value in people)),
-        "offices": list(dict.fromkeys(str(value) for value in offices)),
-    }
-
-def _snapshot_secret_order_people(
-    content: Any, explicit_people: Iterable[str], offices: Iterable[str],
-) -> List[str]:
-    """Freeze institution membership without changing target provenance.
-
-    ``excluded_names`` is the durable blacklist snapshot used for transfer and
-    later-publication semantics.  ``excluded_targets`` remains the caller's
-    original people/offices request, so a reader can distinguish "this person"
-    from "everyone holding this office" instead of reconstructing that intent
-    from the expanded names.
-    """
-    names = []
-    for raw_name in explicit_people:
-        name = str(raw_name).strip()
-        if not name:
-            continue
-        canonical = next((character.name for character in getattr(content, "characters", {}).values()
-                          if name == character.name or name in (character.aliases or [])), name)
-        names.append(canonical)
-    names = list(dict.fromkeys(names))
-    if not offices or content is None:
-        return names
-    for character in content.characters.values():
-        if character.office_type in offices or character.office in offices or any(
-            office and (office in str(character.office or "") or str(character.office or "") in office)
-            for office in offices
-        ):
-            names.append(character.name)
-    return list(dict.fromkeys(names))
-
-_SECRET_OFFICE_TYPES = (
-    "吏部", "户部", "礼部", "兵部", "刑部", "工部", "都察院", "大理寺", "通政司",
-    "司礼监", "内阁", "东厂", "锦衣卫", "翰林院", "詹事府",
-)
-_SECRET_OFFICE_TITLE_SUFFIX_RE = re.compile(
-    r"[\u4e00-\u9fff]{0,12}(?:首辅|次辅|大学士|阁臣|辅臣|尚书|侍郎|郎中|员外郎|主事|"
-    r"巡抚|总督|总兵|督师|经略|提督|都御史|御史|侍读学士|侍讲学士|侍读|侍讲|"
-    r"编修|检讨|修撰|庶吉士|庶常|少詹事|詹事|中允|赞善)$"
-)
-
-def _canonical_secret_exclusion_target(
-    target: str, office_types: set[str], office_titles: set[str],
-) -> tuple[str, str]:
-    """Classify a secrecy target using the shipped registry before fallback vocabulary."""
-    target = re.sub(r"(?:诸官|官员|诸司|诸人|上下|众人)$", "", target).strip()
-    if target in office_titles:
-        return "office", target
-    if target in office_types:
-        return "office", target
-    if _SECRET_OFFICE_TITLE_SUFFIX_RE.fullmatch(target):
-        return "office", target
-    for office_type in sorted(office_types | set(_SECRET_OFFICE_TYPES), key=len, reverse=True):
-        if target.startswith(office_type):
-            return "office", office_type if target != office_type else target
-    return "", target
-
-def canonical_secret_order_exclusions(
-    content: Any, explicit_people: Iterable[str], explicit_offices: Iterable[str], text: object,
-) -> tuple[List[str], List[str]]:
-    """Canonicalize structured extractor targets before staging or DB.
-
-    Player prose is not a machine contract.  Only typed people/offices reach
-    this boundary; roster aliases and office titles are canonicalized here.
-    ``text`` remains accepted for callers that also pass the order body, but is
-    deliberately not consumed.
-    """
-    del text
-    people = _snapshot_secret_order_people(content, explicit_people, [])
-    office_types = {str(character.office_type).strip() for character in getattr(content, "characters", {}).values()
-                    if character.office_type}
-    office_titles = {str(character.office).strip() for character in getattr(content, "characters", {}).values()
-                     if character.office}
-    offices = []
-    for value in explicit_offices:
-        kind, target = _canonical_secret_exclusion_target(str(value), office_types, office_titles)
-        if kind == "office":
-            offices.append(target)
-    return list(dict.fromkeys(people)), list(dict.fromkeys(offices))
 
 class ProvinceFiscalTickOutcome(NamedTuple):
     region_id: str
@@ -984,39 +895,6 @@ def _require_str_list_members(values: list, *, surface: str) -> list:
     return out
 
 
-def _load_exclusion_targets(raw: object, *, surface: str) -> dict:
-    """Durable exclusion targets: object + people/offices string lists (#1897 E1/C2)."""
-    payload = _load_durable_json_object(raw, surface=surface)
-    people_raw = payload.get("people", [])
-    offices_raw = payload.get("offices", [])
-    if not isinstance(people_raw, list):
-        raise ValueError(f"{surface} people 须为列表")
-    if not isinstance(offices_raw, list):
-        raise ValueError(f"{surface} offices 须为列表")
-    return {
-        "people": _require_str_list_members(
-            people_raw, surface=f"{surface} people",
-        ),
-        "offices": _require_str_list_members(
-            offices_raw, surface=f"{surface} offices",
-        ),
-        **{k: v for k, v in payload.items() if k not in {"people", "offices"}},
-    }
-
-
-def _load_secret_order_exclusions(
-    row: Mapping[str, object] | sqlite3.Row, *, surface: str,
-) -> tuple[list, dict]:
-    """Durable exclusion columns: corrupt JSON / nested schema fail loud (#1897 E1)."""
-    keys = row.keys() if hasattr(row, "keys") else row
-    raw_names = row["excluded_names"] if "excluded_names" in keys else "[]"
-    raw_targets = row["excluded_targets"] if "excluded_targets" in keys else "{}"
-    return (
-        _load_durable_str_list(raw_names, surface=f"{surface} excluded_names"),
-        _load_exclusion_targets(raw_targets, surface=f"{surface} excluded_targets"),
-    )
-
-
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -1534,8 +1412,6 @@ class GameDB:
                 turn INTEGER NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                -- #976: held|released|withheld|private (audience knowledge dual-track)
-                knowledge_status TEXT NOT NULL DEFAULT 'held',
                 -- #544 / ADR 0045：高亮判官短语清单（JSON 数组）；空=无高亮/降级
                 highlights_json TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1654,9 +1530,9 @@ class GameDB:
                 importance INTEGER NOT NULL DEFAULT 4,
                 status TEXT NOT NULL DEFAULT 'active',
                 result TEXT NOT NULL DEFAULT '',
-                excluded_names TEXT NOT NULL DEFAULT '[]',
+
                 dossier_progress_json TEXT NOT NULL DEFAULT '[]',
-                excluded_targets TEXT NOT NULL DEFAULT '{}',
+
                 turn_closed INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -2190,7 +2066,7 @@ class GameDB:
                 title TEXT NOT NULL,
                 body TEXT NOT NULL DEFAULT '',
                 source_id TEXT NOT NULL,
-                excluded_names TEXT NOT NULL DEFAULT '[]',
+
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(character_name, kind, source_id)
             );
@@ -2198,7 +2074,6 @@ class GameDB:
                 ON character_knowledge_events(character_name, turn, id);
 
             -- #1829 公开说法：独立记录，投影进公开层；不改人物实况。
-            -- 排除名单与正文同表（#1829 reopen），不另抄见闻来源。
             CREATE TABLE IF NOT EXISTS public_sayings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn INTEGER NOT NULL,
@@ -2208,8 +2083,8 @@ class GameDB:
                 involved_characters TEXT NOT NULL DEFAULT '[]',
                 affair_ref TEXT NOT NULL DEFAULT '',
                 source_id TEXT NOT NULL UNIQUE,
-                excluded_names TEXT NOT NULL DEFAULT '[]',
-                excluded_targets TEXT NOT NULL DEFAULT '{}',
+
+
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_public_sayings_affair
@@ -2225,8 +2100,8 @@ class GameDB:
                 body TEXT NOT NULL DEFAULT '',
                 source_id TEXT NOT NULL UNIQUE,
                 participant_roster TEXT NOT NULL DEFAULT '[]',
-                excluded_names TEXT NOT NULL DEFAULT '[]',
-                excluded_targets TEXT NOT NULL DEFAULT '{}',
+
+
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
@@ -5435,8 +5310,7 @@ class GameDB:
 
     def treasury_report(
         self, state: GameState, limit: int | None = 6, *,
-        exclude_origin_prefix: str = "",
-        exclude_dossier_ids: Optional[Iterable[int]] = None,
+        public_only: bool = False,
     ) -> str:
         account_rows = self.conn.execute(
             "SELECT account, balance FROM economy_accounts ORDER BY account DESC"
@@ -5446,33 +5320,30 @@ class GameDB:
         else:
             account_text = "，".join(f"{row['account']}{format_money(int(row['balance']))}" for row in account_rows)
 
-        origin_clause = ""
-        origin_params: Tuple[object, ...] = ()
-        prefix = str(exclude_origin_prefix or "")
-        dossier_ids = tuple(
-            int(item) for item in (exclude_dossier_ids or ()) if int(item) > 0
-        )
-        dossier_clause = ""
-        if dossier_ids:
-            marks = ",".join("?" * len(dossier_ids))
-            dossier_clause = (
-                " AND NOT (origin_ref LIKE 'dossier:%' AND "
-                f"CAST(substr(origin_ref, 9) AS INTEGER) IN ({marks}))"
+        from ming_sim.knowledge import origin_visible_to
+
+        excluded_ids = tuple(
+            int(row["id"]) for row in self.conn.execute(
+                "SELECT id, origin_ref, dossier_id FROM economy_ledger ORDER BY id",
+            ) if public_only and not origin_visible_to(
+                self, row["origin_ref"], linked_dossier_id=int(row["dossier_id"] or 0),
             )
-        if prefix:
-            origin_clause = " AND origin_ref NOT LIKE ?"
-            origin_params = (prefix + "%",)
+        ) if public_only else ()
+        origin_clause = (
+            " AND id NOT IN (" + ",".join("?" for _ in excluded_ids) + ")"
+            if excluded_ids else ""
+        )
         period_rows = self.conn.execute(
             f"""
             SELECT account,
                    SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END) AS income,
                    SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS expense
             FROM economy_ledger
-            WHERE turn = ?{origin_clause}{dossier_clause}
+            WHERE turn = ?{origin_clause}
             GROUP BY account
             ORDER BY account DESC
             """,
-            (state.turn, *origin_params, *dossier_ids),
+            (state.turn, *excluded_ids),
         ).fetchall()
         period_text = "；".join(
             f"{row['account']}入{format_money(int(row['income'] or 0))}出{format_money(int(row['expense'] or 0))}"
@@ -5486,15 +5357,9 @@ class GameDB:
         ledger_sql = (
             "SELECT year, period, account, delta, category, reason, actor FROM economy_ledger"
         )
-        ledger_params_list: list[object] = []
-        if prefix or dossier_ids:
-            ledger_sql += " WHERE 1=1"
-        if prefix:
-            ledger_sql += " AND origin_ref NOT LIKE ?"
-            ledger_params_list.append(prefix + "%")
-        if dossier_ids:
-            ledger_sql += dossier_clause
-            ledger_params_list.extend(dossier_ids)
+        ledger_params_list: list[object] = list(excluded_ids)
+        if excluded_ids:
+            ledger_sql += " WHERE 1=1" + origin_clause
         ledger_sql += " ORDER BY id DESC"
         if limit is not None:
             ledger_sql += " LIMIT ?"
@@ -7605,17 +7470,11 @@ class GameDB:
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
         """召对聊天单条消息落库（chat_messages）。
 
-        #976 不变式：分类落定前，**任何**召对行（不分 role）不得进入共享
-        ``character_knowledge_sources``。此处只 insert + hold；投轨唯一出口是
-        ``release_held_audience_knowledge``（分类后 / 月末）。续聊读
-        ``chat_messages`` 本表，不依赖共享投影即时可见。
-
-        Empty ``minister_name`` is allowed for non-audience bookkeeping rows but
-        cannot be projected (release parks them as withheld — see N2).
+        正文只存本表；密令来源按消息身份读取，不复制知识正文。
         """
         cur = self.conn.execute(
-            "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-            "VALUES (?, ?, ?, ?, 'held')",
+            "INSERT INTO chat_messages (minister_name, turn, role, content) "
+            "VALUES (?, ?, ?, ?)",
             (minister_name, turn, role, content),
         )
         self.conn.commit()
@@ -7655,14 +7514,6 @@ class GameDB:
             self.conn.executemany(
                 "DELETE FROM chat_messages WHERE id = ?",
                 [(mid,) for mid in ids],
-            )
-            self.conn.executemany(
-                "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                [(f"chat_message:{mid}",) for mid in ids],
-            )
-            self.conn.executemany(
-                "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                [(f"chat_message:{mid}",) for mid in ids],
             )
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
@@ -8193,15 +8044,6 @@ class GameDB:
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
                 )
-                knowledge_source_ids = [f"chat_message:{message_id}" for message_id in message_ids]
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
-                )
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
-                )
             self.conn.execute(
                 "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
                 (int(chat_turn_id),),
@@ -8360,14 +8202,13 @@ class GameDB:
         """**一个事务**内插入大臣回话、链接到 turn 并升为 active，返回 message_id。
 
         消息插入、turn 链接和状态升级同成同败，避免留下未关联的持久回话。
-        知识轨纪律同 append_chat_message：insert 即 'held'，投轨唯一出口是 release（#976）。
         status 升级同 update_chat_turn_messages（#498 挂夜轮以 generating 起笔，回话落库后升 active）——
         本函数是 update_chat_turn_messages(minister_message_id=...) 的原子替代，须同做该升级。
         """
         with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）；外层 atomic 内 commit 暂停
             cur = self.conn.execute(
-                "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-                "VALUES (?, ?, 'minister', ?, 'held')",
+                "INSERT INTO chat_messages (minister_name, turn, role, content) "
+                "VALUES (?, ?, 'minister', ?)",
                 (minister_name, int(turn), content),
             )
             message_id = int(cur.lastrowid)
@@ -8775,15 +8616,6 @@ class GameDB:
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
                 )
-                knowledge_source_ids = [f"chat_message:{message_id}" for message_id in message_ids]
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
-                )
-                self.conn.executemany(
-                    "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                    [(source_id,) for source_id in knowledge_source_ids],
-                )
             self.conn.execute(
                 """
                 UPDATE chat_turns
@@ -8814,7 +8646,6 @@ class GameDB:
 
     def save_turn_report(
         self, state: GameState, report: str,
-        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
         public_body: Optional[str] = None,
         *,
         attendant_message: str = "",
@@ -8823,34 +8654,11 @@ class GameDB:
     ) -> None:
         """每回合月末奏报单独存档（turn_reports）。
 
-        ``report`` is a presentation aggregate and is not used for access
-        control.  Producers that mix public and restricted material may pass
-        the source-scoped ``knowledge_items`` projection; each item is then
-        durable independently for character reads.
-
+        ``report`` 是呈现正文；``public_body`` 可独立提供公开版本。
+        来源记录由原账本持有，本档案不复制来源、不生成权限快照。
         ``attendant_message``（#671）是王承恩独立递话，与官方 report 分栏同原子写。
         """
-        self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
-        items = [item for item in self.knowledge_items_for_turn(state.turn)
-                 if not str(item.get("source_id") or "").startswith("turn_report:")]
-        # #883/#976: private secret briefs never enter shared sources.  Shared
-        # exclusions force source-scoped aggregation; active briefs alone do
-        # not blank pure public prose (F3). Secret text is kept out by structure
-        # (never in knowledge_items / public LLM inputs), not by needle strip.
-        has_restricted_source = self._has_restricted_source_gate(
-            any(item.get("excluded_names") for item in items)
-        )
-        source_snapshot_supplied = knowledge_items is not None
-        if public_body is None:
-            public_report = (
-                "\n".join(str(item.get("body") or item.get("title") or "")
-                          for item in items if not item.get("excluded_names"))
-                if source_snapshot_supplied or has_restricted_source else str(report or "")
-            )
-        else:
-            public_report = str(public_body or "")
-        # #976: no text-filter strip. Public archives trust the producer path
-        # (public LLMs never preload secrets; private briefs are not knowledge_items).
+        public_report = str((report if public_body is None else public_body) or "")
         self.conn.execute(
             """
             INSERT INTO turn_reports (turn, year, period, report, attendant_message, title)
@@ -8872,15 +8680,6 @@ class GameDB:
                 sanitize_sqlite_text(str(title or "")),
             ),
         )
-        # Aggregate prose cannot authorize an audience read: removing known
-        # secret substrings is not safe against a paraphrase.  Persist a
-        # separate public counterpart made from source-scoped public items.
-        # Legacy callers with no restricted source retain their whole report.
-        if public_report:
-            self.record_public_knowledge_event(
-                state, "邸报", sanitize_sqlite_text(public_report),
-                source_id=f"turn_report:{state.turn}:public", commit=commit,
-            )
         if commit:
             self.conn.commit()
 
@@ -8929,138 +8728,6 @@ class GameDB:
              "title": str(row["title"] or "")}
             for row in rows
         ]
-
-    def persist_knowledge_items_for_turn(
-        self,
-        state: GameState,
-        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
-        *,
-        default_title: str = "邸报事项",
-        commit: bool = True,
-    ) -> None:
-        """Materialize every turn source before any aggregate archive is read.
-
-        The gazette is derived prose, not an authorization boundary.
-        Persisting the public projection of both unscoped and participant-scoped
-        source rows first gives the read model an independent item boundary.  The
-        operation is idempotent by ``(character_name, kind, source_id)`` and is
-        deliberately callable from the real settlement transaction before the
-        aggregate writers run.
-        """
-        items = knowledge_items
-        if items is None:
-            items = self.knowledge_items_for_turn(state.turn)
-        for item in items:
-            source_id = str(item.get("source_id") or "")
-            existing_public = self.conn.execute(
-                "SELECT 1 FROM character_knowledge_events "
-                "WHERE character_name='' AND source_id=? AND kind='public' LIMIT 1",
-                (source_id,),
-            ).fetchone()
-            # An explicit disclosure is the authoritative event for this
-            # provenance.  Archive materialization may fill a missing ledger
-            # row, but must never downgrade public back to roster-scoped.
-            # The lookup names kind='public': another row of this source may
-            # be returned first when the query does not.
-            if existing_public is not None:
-                continue
-            self.record_public_knowledge_event(
-                state,
-                str(item.get("title") or default_title),
-                str(item.get("body") or ""),
-                source_id=source_id,
-                excluded_names=item.get("excluded_names") or (),
-                kind="source_projection",
-                commit=commit,
-            )
-
-    def knowledge_items_for_turn(self, turn: int) -> List[Dict[str, object]]:
-        """Return source-scoped public material for archive projection.
-
-        Aggregate archives are presentation artifacts.  Replaying the durable
-        public rows here keeps source_id and explicit exclusions attached to
-        each item when a turn report is saved.  Source rows are included as
-        well: settlement producers may register a participating item before
-        the report is rendered, and the archive write must
-        not lose that item's access boundary.
-        """
-        rows = self.conn.execute(
-            "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
-            "FROM character_knowledge_events WHERE character_name='' AND turn=? "
-            "ORDER BY id",
-            (int(turn),),
-        ).fetchall()
-        by_source: Dict[str, Dict[str, object]] = {}
-        # An explicit public row is the payload for that source. A later
-        # source_projection of the same source_id must not replace it.
-        public_kept: set[str] = set()
-        for row in rows:
-            excluded_names = _load_durable_str_list(
-                row["excluded_names"],
-                surface="character_knowledge_events excluded_names",
-            )
-            key = str(row["source_id"] or "")
-            is_public = str(row["kind"] or "") == "public"
-            if key and key in public_kept and not is_public:
-                continue
-            by_source[key] = {
-                "title": row["title"], "body": row["body"],
-                "source_id": row["source_id"], "excluded_names": excluded_names,
-            }
-            if key and is_public:
-                public_kept.add(key)
-
-        source_rows = self.conn.execute(
-            "SELECT title, body, source_id, participant_roster, excluded_names, "
-            "excluded_targets FROM character_knowledge_sources WHERE turn=? "
-            "ORDER BY id",
-            (int(turn),),
-        ).fetchall()
-        characters = self.conn.execute(
-            "SELECT name, office, office_type FROM characters"
-        ).fetchall()
-        character_names = {str(row["name"]) for row in characters}
-        for row in source_rows:
-            participants = participant_roster_names(row["participant_roster"])
-            excluded_names = _load_durable_str_list(
-                row["excluded_names"],
-                surface="character_knowledge_sources excluded_names",
-            )
-            excluded_targets = _load_exclusion_targets(
-                row["excluded_targets"],
-                surface="character_knowledge_sources excluded_targets",
-            )
-            target_people = {
-                str(name) for name in excluded_targets.get("people", [])
-            }
-            target_offices = {
-                str(office) for office in excluded_targets.get("offices", [])
-            }
-            excluded_names = list(dict.fromkeys(
-                [*(str(name) for name in excluded_names),
-                 *(str(item["name"]) for item in characters
-                   if item["name"] in target_people
-                   or item["office"] in target_offices
-                   or item["office_type"] in target_offices)]
-            ))
-            # A participant-scoped source is materialized as a public ledger
-            # row whose exclusion snapshot is stable across later transfers.
-            # Empty rosters are genuinely public and therefore add no names.
-            if participants:
-                excluded_names = list(dict.fromkeys(
-                    [*(str(name) for name in excluded_names),
-                     *(sorted(character_names - participants))]
-                ))
-            # An explicit public event can describe a source after it becomes
-            # public (for example, a disclosed secret order).  It is more
-            # specific than the source's original private payload, so never
-            # let archive materialization overwrite it merely because both
-            # share provenance.
-            by_source.setdefault(str(row["source_id"] or ""), {
-                "title": row["title"], "body": row["body"],
-                "source_id": row["source_id"], "excluded_names": excluded_names,
-            })
-        return list(by_source.values())
 
     # ── 结局总结 ──
 
@@ -9574,7 +9241,7 @@ class GameDB:
 
         Explicit stage/API pins and already-durable brief pins only.
         Explicit empty ``origin_chat_message_ids=[]`` means pin-mode with no new
-        oral.  No last-held auto-capture (#1897 J820-E2).
+        oral.  No implicit source capture (#1897 J820-E2).
         """
         explicit: List[object] = []
         if origin_chat_message_ids is not None:
@@ -9607,19 +9274,17 @@ class GameDB:
         title: str,
         body: str,
         *,
-        origin_minister_name: Optional[str] = None,
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         commit: bool = True,
     ) -> None:
-        """Brief upsert + pin-mode oral withhold/release (create and non-create isomorphic)."""
+        """Brief upsert with exact oral provenance for create and non-create actions."""
         pins = self._resolve_secret_oral_pins(
             origin_chat_message_id=origin_chat_message_id,
             origin_chat_message_ids=origin_chat_message_ids,
         )
         self.upsert_secret_order_brief(
             state, int(order_id), minister_name, title, body,
-            origin_minister_name=origin_minister_name,
             origin_chat_message_ids=pins,
             commit=commit,
         )
@@ -11716,7 +11381,6 @@ class GameDB:
         return triggered
 
 
-
     @staticmethod
     def _grant_allocation_is_monthly(payload: Optional[Dict[str, object]]) -> bool:
         return str((payload or {}).get("cadence") or "").strip() == "每月"
@@ -12540,11 +12204,6 @@ class GameDB:
                     target_kind=canonical_target_kind, target_id=canonical_target_id,
                     origin_ref=f"dossier:{dossier_id}", commit=False,
                 )
-        if roster and action != "secret_order":
-            self.register_character_knowledge_source(
-                state, roster, "assignment", "旨意案卷", text,
-                source_id=f"decree_dossier:{dossier_id}", commit=False,
-            )
         self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         # 拒收镜像归外层 RejectionCollector owner（0150-D2；本核不自建不自镜像）。
         return dossier_id
@@ -12876,17 +12535,6 @@ class GameDB:
                     int(dossier_id),
                 ),
             )
-            if state is not None and str(dossier.get("action_type") or "") != "secret_order":
-                for item in added:
-                    identity = ":".join(str(item.get(key) or "-") for key in (
-                        "character_id", "tier", "role", "delegator_id",
-                    ))
-                    self.register_character_knowledge_source(
-                        state, [item], "assignment", "旨意案卷追加参与",
-                        str(dossier.get("decree_text") or ""),
-                        source_id=f"dossier:{int(dossier_id)}:participant:{identity}",
-                        commit=False,
-                    )
         self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         return added
 
@@ -13086,24 +12734,21 @@ class GameDB:
         self, character_name: str, current_turn: int,
     ) -> List[Dict[str, object]]:
         """Project candidates from the same durable character-knowledge truth."""
-        from ming_sim.knowledge import knowledge_row_visible_to
+        from ming_sim.knowledge import knowledge_row_visible_to, origin_visible_to
+        from ming_sim.materials import dossier_id_in_origin
 
         name = str(character_name or "")
-        known_secret_ids: set[int] = set()
         known_dossier_ids: set[int] = set()
-        knowledge_events = self._character_knowledge_events(name, include_exclusions=True)
+        knowledge_events = self._character_knowledge_events(name)
         if name:
-            knowledge_events += self._character_knowledge_events("", include_exclusions=True)
+            knowledge_events += self._character_knowledge_events("")
         for event in knowledge_events:
             if not knowledge_row_visible_to(self, event, name):
                 continue
             source_id = str(event.get("source_id") or "")
-            match = re.match(r"secret_order_(?:brief|disclosure):(\d+)(?::|$)", source_id)
-            if match:
-                known_secret_ids.add(int(match.group(1)))
-            dossier_match = re.match(r"(?:decree_)?dossier:(\d+)(?::|$)", source_id)
-            if dossier_match:
-                known_dossier_ids.add(int(dossier_match.group(1)))
+            dossier_id = dossier_id_in_origin(source_id)
+            if dossier_id is not None:
+                known_dossier_ids.add(dossier_id)
         office_row = self.conn.execute(
             "SELECT office,office_type,location FROM characters WHERE name=?", (name,),
         ).fetchone()
@@ -13146,7 +12791,7 @@ class GameDB:
                 )
             ) or (
                 row["secret_order_id"] is not None
-                and int(row["secret_order_id"]) in known_secret_ids
+                and origin_visible_to(self, f"dossier:{row['id']}", name)
             )
             if not admitted:
                 continue
@@ -16145,19 +15790,6 @@ class GameDB:
         # 镜像归外层 collector owner（0150-D2；本方法不自建不自镜像）。
         return applied
 
-    @staticmethod
-    def _state_for_turn(state: GameState, turn: int) -> GameState:
-        """按 turn 回推当时的 year/period；metrics 共享只读。"""
-        delta = int(state.turn) - int(turn)
-        year = int(state.year)
-        period = int(state.period)
-        for _ in range(max(0, delta)):
-            period -= 1
-            if period < 1:
-                period = 12
-                year -= 1
-        return replace(state, year=year, period=period, turn=int(turn))
-
     def _commit_conversational_draft(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, directive_status: str = "draft",
@@ -16281,15 +15913,8 @@ class GameDB:
                 deadline = _coerce_deadline_months(
                     payload.get("deadline_months"), default=0, durable=True,
                 )
-                excluded = _optional_payload_str_list(
-                    payload, "excluded_names", surface="密令 excluded_names",
-                )
-                excluded_offices = _optional_payload_str_list(
-                    payload, "excluded_offices", surface="密令 excluded_offices",
-                )
                 # pa["minister_name"] = audience speaker who captured the oral
                 # decree; may differ from final assignee (跨人承办).
-                # Stage-time pin: do not re-guess max(held) after confirm utterance.
                 # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
                 origin_mid = self._parse_origin_chat_message_id(
                     payload, durable=True,
@@ -16311,8 +15936,6 @@ class GameDB:
                     ) from exc
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
-                    excluded_names=excluded, excluded_offices=excluded_offices,
-                    origin_minister_name=str(pa.get("minister_name") or "") or None,
                     origin_chat_message_id=origin_mid,
                     origin_chat_message_ids=[] if origin_mid is None else None,
                     pending_action_id=int(pa["id"]),
@@ -16331,15 +15954,11 @@ class GameDB:
                 return order_id is not None
             if oid is None:
                 return False
-            # Non-create: consume explicit stage/API pin only.  No auto-pin of
-            # latest held (pure public must not become secret-origin withheld).
-            # No pin → skip classify (do not invent bloodline; pure public stays
-            # held until settle release, never withheld).
+            # Non-create actions consume only explicit source pins.
             # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
             origin_mid = self._parse_origin_chat_message_id(
                 payload, durable=True,
             )
-            origin_speaker = str(pa.get("minister_name") or "") or None
             if action == "更新":
                 deadline = _coerce_deadline_months(
                     payload.get("deadline_months"), default=0, durable=True,
@@ -16357,7 +15976,6 @@ class GameDB:
                     new_title,
                     new_content,
                     tags=None, deadline_months=deadline,
-                    origin_minister_name=origin_speaker,
                     origin_chat_message_id=origin_mid,
                 )
             if action == "催办":
@@ -16376,7 +15994,6 @@ class GameDB:
                         self._classify_secret_order_audience(
                             state, int(oid), str(order["minister_name"]),
                             str(order.get("title") or ""), str(order.get("content") or ""),
-                            origin_minister_name=origin_speaker,
                             origin_chat_message_id=origin_mid,
                         )
                 return True
@@ -16393,7 +16010,6 @@ class GameDB:
                         self._classify_secret_order_audience(
                             state, int(oid), str(order["minister_name"]),
                             str(order.get("title") or ""), str(order.get("content") or ""),
-                            origin_minister_name=origin_speaker,
                             origin_chat_message_id=origin_mid,
                         )
                 return ok
@@ -16410,7 +16026,6 @@ class GameDB:
                         self._classify_secret_order_audience(
                             state, int(oid), str(order["minister_name"]),
                             str(order.get("title") or ""), str(order.get("content") or ""),
-                            origin_minister_name=origin_speaker,
                             origin_chat_message_id=origin_mid,
                         )
                 return ok
@@ -18331,15 +17946,6 @@ class GameDB:
         self.affairs.bind_from_origin_ref("issues", issue_id, origin_ref)
         if commit:
             self.conn.commit()
-        self.register_character_knowledge_source(
-            state,
-            participant_roster,
-            "assignment",
-            title,
-            stage_text,
-            f"issue:{int(cur.lastrowid)}",
-            commit=commit,
-        )
         return int(cur.lastrowid)
 
     def insert_issue_with_affair_declaration(
@@ -19128,24 +18734,16 @@ class GameDB:
             if delegator_id and delegator_id not in known:
                 raise _roster_ref_error("委派人", delegator_id)
 
-    def _character_knowledge_events(self, character_name: str, *, include_exclusions: bool = False) -> List[Dict[str, object]]:
+    def _character_knowledge_events(self, character_name: str) -> List[Dict[str, object]]:
         rows = self.conn.execute(
-            "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
-            "FROM character_knowledge_events WHERE character_name=? ORDER BY turn, id",
-            (str(character_name or ""),),
-        ).fetchall()
+            "SELECT turn, year, period, kind, title, body, source_id "
+            "FROM character_knowledge_events WHERE character_name='' ORDER BY turn, id",
+        ).fetchall() if not character_name else []
         result = []
         for row in rows:
-            source_id = str(row["source_id"] or "")
-            if (not character_name and
-                    source_id.startswith("turn_report:") and not source_id.endswith(":public")):
-                continue
             item = {"turn": int(row["turn"]), "year": int(row["year"]), "period": int(row["period"]),
                     "kind": row["kind"], "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
-            if include_exclusions:
-                item["excluded_names"] = row["excluded_names"] or "[]"
             result.append(item)
-        known_sources = {str(item["source_id"]) for item in result}
         # #883 contract: this is the sole private read seam for secret orders.
         # Briefs deliberately do not carry a shared source id and therefore
         # cannot be materialized into gazettes or public events.
@@ -19156,31 +18754,25 @@ class GameDB:
                 (str(character_name),),
             ).fetchall():
                 source_id = f"secret_order_brief:{int(row['order_id'])}"
-                if source_id in known_sources:
-                    continue
                 result.append({
                     "turn": int(row["turn"]), "year": int(row["year"]),
                     "period": int(row["period"]), "kind": "secret_order_brief",
                     "title": row["title"], "body": row["body"], "source_id": source_id,
-                    **({"excluded_names": json.dumps(
-                        self.knowledge_exclusions_for_source(source_id), ensure_ascii=False,
-                    )} if include_exclusions else {}),
                 })
-                known_sources.add(source_id)
         for row in self.conn.execute(
-            "SELECT turn, year, period, kind, title, body, source_id, participant_roster, excluded_names "
+            "SELECT turn, year, period, kind, title, body, source_id, participant_roster "
             "FROM character_knowledge_sources ORDER BY turn, id"
         ).fetchall():
             names = participant_roster_names(row["participant_roster"])
-            if str(row["source_id"]) in known_sources or str(character_name) not in names:
+            if row["kind"] == "public" or not names:
+                if character_name:
+                    continue
+            elif str(character_name) not in names:
                 continue
             item = {"turn": int(row["turn"]), "year": int(row["year"]),
                     "period": int(row["period"]), "kind": row["kind"],
                     "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
-            if include_exclusions:
-                item["excluded_names"] = row["excluded_names"] or "[]"
             result.append(item)
-            known_sources.add(str(row["source_id"]))
         # Durable records are discovered by their participant_roster column,
         # not by record kind.  This keeps a new producer from needing a reader
         # branch (or a second adapter call) merely to become knowable.
@@ -19189,9 +18781,7 @@ class GameDB:
             selected = {name: name for name in columns}
             id_expr = selected.get("id", "rowid")
             source_expr = selected.get("source_id")
-            # Legacy tables without source_id retain the conventional singular
-            # table prefix (issues -> issue); newer records should persist the
-            # explicit source_id in their own table.
+            # Tables without source_id use their own record identity.
             fallback_prefix = table[:-1] if table.endswith("s") else table
             source_sql = source_expr if source_expr else f"'{fallback_prefix}:' || {id_expr}"
             turn_expr = selected.get("turn") or selected.get("origin_turn") or selected.get("created_turn") or "0"
@@ -19209,8 +18799,6 @@ class GameDB:
             )
             for row in self.conn.execute(query).fetchall():
                 source_id = str(row["source_id"])
-                if source_id in known_sources:
-                    continue
                 names = participant_roster_names(row["participant_roster"])
                 if str(character_name) not in names:
                     continue
@@ -19219,9 +18807,7 @@ class GameDB:
                     "period": int(row["period"] or 0),
                     "kind": row["kind"] or "assignment", "title": row["title"],
                     "body": row["body"] or "", "source_id": source_id,
-                    **({"excluded_names": "[]"} if include_exclusions else {}),
                 })
-                known_sources.add(source_id)
         return result
 
     def _participant_roster_tables(self) -> List[tuple[str, set[str]]]:
@@ -19233,7 +18819,7 @@ class GameDB:
         result: List[tuple[str, set[str]]] = []
         for row in tables:
             table = str(row["name"])
-            if table in {"character_knowledge_sources", "decree_dossiers"}:
+            if table in {"character_knowledge_sources", "issues"}:
                 continue
             columns = {
                 str(column["name"])
@@ -19245,174 +18831,6 @@ class GameDB:
                 result.append((table, columns))
         return result
 
-    def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
-        """Return explicit exclusions attached to a source.
-
-        A registered source's ``source_projection`` includes an archive
-        participant deny-list snapshot; read explicit exclusions from its
-        source instead. A projection supplied without a registered source
-        has no synthesized roster boundary and retains its explicit list.
-        """
-        source = str(source_id or "")
-        row = self.conn.execute(
-            "SELECT excluded_names FROM character_knowledge_events WHERE source_id=? "
-            "AND (kind <> 'source_projection' OR NOT EXISTS "
-            "(SELECT 1 FROM character_knowledge_sources WHERE source_id=?)) "
-            "ORDER BY id LIMIT 1",
-            (source, source),
-        ).fetchone()
-        if row is not None:
-            names = _load_durable_str_list(
-                row["excluded_names"],
-                surface="character_knowledge_events excluded_names",
-            )
-            return list(names)
-        # Private briefs and public disclosure events inherit exclusions from
-        # secret_orders. Bare ``secret_order:N`` shared sources are not produced
-        # and are not a lookup key here (register gate rejects that prefix).
-        match = re.fullmatch(r"secret_order_brief:(\d+)", source)
-        if match is None:
-            match = re.fullmatch(r"secret_order_disclosure:(\d+)(?::.*)?", source)
-        if match:
-            order_id = int(match.group(1))
-            order = self.conn.execute(
-                "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
-            ).fetchone()
-            if order is not None:
-                names, _ = _load_secret_order_exclusions(
-                    order, surface=f"secret_orders#{order_id}",
-                )
-                return [str(name) for name in names]
-        # #1829 reopen：公开说法排除名单与正文同表，按 public_saying:<id> 回查。
-        match = re.fullmatch(r"public_saying:(\d+)", source)
-        if match:
-            saying = self.conn.execute(
-                "SELECT excluded_names FROM public_sayings WHERE id=?",
-                (int(match.group(1)),),
-            ).fetchone()
-            if saying is not None:
-                names = _load_durable_str_list(
-                    saying["excluded_names"],
-                    surface="public_sayings excluded_names",
-                )
-                return list(names)
-            return []
-        row = self.conn.execute(
-            "SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?", (source,)
-        ).fetchone()
-        if row is not None:
-            names = _load_durable_str_list(
-                row["excluded_names"],
-                surface="character_knowledge_sources excluded_names",
-            )
-            return list(names)
-        return []
-
-    def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
-        source = str(source_id or "")
-
-        def _people_offices(raw: object, *, surface: str) -> Dict[str, List[str]]:
-            payload = _load_exclusion_targets(raw, surface=surface)
-            return {
-                "people": [str(x) for x in payload.get("people", [])],
-                "offices": [str(x) for x in payload.get("offices", [])],
-            }
-
-        # Private briefs and public disclosure events share canonical
-        # exclusions persisted on secret_orders.
-        match = re.fullmatch(r"secret_order_brief:(\d+)", source)
-        if match is None:
-            match = re.fullmatch(r"secret_order_disclosure:(\d+)(?::.*)?", source)
-        if match:
-            order_id = int(match.group(1))
-            row = self.conn.execute(
-                "SELECT excluded_targets FROM secret_orders WHERE id=?",
-                (order_id,),
-            ).fetchone()
-            raw = row["excluded_targets"] if row is not None else "{}"
-            return _people_offices(
-                raw, surface=f"secret_orders#{order_id} excluded_targets",
-            )
-        # #1829 reopen：公开说法排除目标与正文同表。
-        match = re.fullmatch(r"public_saying:(\d+)", source)
-        if match:
-            row = self.conn.execute(
-                "SELECT excluded_targets FROM public_sayings WHERE id=?",
-                (int(match.group(1)),),
-            ).fetchone()
-            raw = row["excluded_targets"] if row is not None else "{}"
-            return _people_offices(
-                raw, surface="public_sayings excluded_targets",
-            )
-        row = self.conn.execute(
-            "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
-        ).fetchone()
-        if row is None:
-            return {"people": [], "offices": []}
-        return _people_offices(
-            row["excluded_targets"],
-            surface="character_knowledge_sources excluded_targets",
-        )
-
-    def record_participation_record(
-        self, state: GameState, record: Mapping[str, object], *, kind: str,
-        source_id: str = "", excluded_names: Optional[Iterable[str]] = None,
-        commit: bool = True,
-    ) -> None:
-        """Adapt any durable record carrying participants into the knowledge ledger."""
-        participants: List[str] = []
-        roster = record.get("participant_roster")
-        if isinstance(roster, (list, tuple)):
-            for item in roster:
-                if isinstance(item, Mapping):
-                    name = item.get("character_id") or item.get("name")
-                    if name:
-                        participants.append(str(name))
-        for key in ("participants", "participant_names", "actors"):
-            value = record.get(key)
-            if isinstance(value, str):
-                participants.append(value)
-            elif isinstance(value, Iterable):
-                for item in value:
-                    if isinstance(item, Mapping):
-                        name = item.get("character_id") or item.get("name")
-                        if name:
-                            participants.append(str(name))
-                    else:
-                        participants.append(str(item))
-        for key in ("assignee", "minister_name", "character_name", "actor"):
-            value = record.get(key)
-            if value:
-                participants.append(str(value))
-        roster = [{"character_id": name} for name in dict.fromkeys(participants) if name]
-        self.register_character_knowledge_source(
-            state, roster, kind, str(record.get("title") or kind),
-            str(record.get("body") or record.get("content") or ""),
-            source_id or str(record.get("source_id") or ""), excluded_names=excluded_names,
-            commit=commit,
-        )
-        self.record_character_participation(
-            state, participants, kind, str(record.get("title") or kind),
-            str(record.get("body") or record.get("content") or ""),
-            source_id or str(record.get("source_id") or ""), excluded_names, commit=commit,
-        )
-
-    def _delete_shared_knowledge_source_ids(
-        self, source_ids: Iterable[str], *, commit: bool = True,
-    ) -> None:
-        """Delete shared ledger rows by source_id (events + sources)."""
-        ids = list(dict.fromkeys(str(sid) for sid in source_ids if str(sid or "").strip()))
-        if not ids:
-            return
-        for sid in ids:
-            self.conn.execute(
-                "DELETE FROM character_knowledge_events WHERE source_id = ?", (sid,),
-            )
-            self.conn.execute(
-                "DELETE FROM character_knowledge_sources WHERE source_id = ?", (sid,),
-            )
-        if commit:
-            self.conn.commit()
 
     def _coerce_positive_message_ids(
         self, message_ids: Optional[Iterable[Any]] = None,
@@ -19454,224 +18872,58 @@ class GameDB:
                 out.append(item)
         return out
 
-    def _secret_origin_message_protection(self) -> Dict[int, bool]:
-        """Canonical release-ban map for oral-decree chat-turn messages.
+    def _secret_origin_message_ids(self, character_name: str = "") -> set[int]:
+        """Secret oral pins inaccessible to this reader, including paired replies.
 
-        Pending and failed secret actions retain the stage-time pin
-        until they are committed or explicitly dropped.  The brief takes over
-        that pin once classification succeeds.  A
-        completed ``chat_turns`` row is the structural provenance for the full
-        exchange, so its paired minister reply belongs to the same secret
-        bloodline.  Release must never project either side into shared tracks.
-
-        ``True`` means a durable brief owns the bloodline; ``False`` means a
-        pending/failed stage pin still owns it.  This distinction is load-bearing for
-        replies bound to a chat turn after classification: release is the first
-        seam that can see and park those durable descendants as ``withheld``.
+        Briefs and pending/failed declarations own the same message provenance.
+        Empty reader selects all secret pins for the public author.
         """
-        out: Dict[int, bool] = {}
+        from ming_sim.knowledge import origin_visible_to
+
+        out: set[int] = set()
         brief_rows = self.conn.execute(
-            "SELECT origin_chat_message_ids FROM secret_order_briefs"
+            "SELECT order_id, origin_chat_message_ids FROM secret_order_briefs"
         ).fetchall()
         pending_rows = self.conn.execute(
-            "SELECT payload_json FROM pending_actions "
+            "SELECT minister_name, payload_json FROM pending_actions "
             "WHERE kind='secret_order' AND status IN ('pending','failed')"
         ).fetchall()
         for row in brief_rows:
-            # 源身份损坏不得静默跳过致 release 泄密（#1897 E1 P1）。
+            # Durable source identities keep their existing fail-loud decoding.
             pins = self._load_durable_origin_message_ids(
                 row["origin_chat_message_ids"] if row is not None else None,
                 surface="secret_order_briefs.origin_chat_message_ids",
             )
-            for mid in pins:
-                out[mid] = True
+            if not origin_visible_to(self, f"secret_order:{int(row['order_id'])}", character_name):
+                out.update(pins)
         for row in pending_rows:
             payload = self.parse_engine_payload_json(
                 row["payload_json"], surface="pending_actions.payload_json",
             )
-            # 已持久 pending 源钉与 brief 同严；坏身份不得视作无源致 release 泄密。
             mid = self._parse_origin_chat_message_id(payload, durable=True)
-            if mid is not None:
-                out.setdefault(mid, False)
+            if mid is not None and (not character_name or character_name != row["minister_name"]):
+                out.add(mid)
         if out:
             placeholders = ",".join("?" for _ in out)
             turns = self.conn.execute(
                 f"SELECT user_message_id, minister_message_id FROM chat_turns "
-                f"WHERE user_message_id IN ({placeholders})",
-                tuple(sorted(out)),
+                f"WHERE user_message_id IN ({placeholders}) "
+                f"OR minister_message_id IN ({placeholders})",
+                [*sorted(out), *sorted(out)],
             ).fetchall()
             for turn in turns:
-                durable = any(
-                    out.get(int(raw), False)
-                    for raw in (turn["user_message_id"], turn["minister_message_id"])
-                    if raw is not None
-                )
                 for raw in (turn["user_message_id"], turn["minister_message_id"]):
                     try:
                         mid = int(raw)
                     except (TypeError, ValueError):
                         continue
                     if mid > 0:
-                        out[mid] = bool(out.get(mid, False) or durable)
+                        out.add(mid)
         return out
-
-    def _withhold_origin_chat_messages(
-        self,
-        origin_chat_message_ids: Optional[Iterable[int]] = None,
-        *,
-        commit: bool = True,
-    ) -> List[int]:
-        """Withhold exact oral-decree message ids (#976 message-level provenance).
-
-        Structural rule (id bloodline, never content matching): only the pinned
-        chat_message rows are secret-origin.  Follows the message wherever it
-        lives (speaker vs assignee, 跨人承办).  Confirmation user lines and
-        pure-public same-window users are not guessed via (assignee, role=user).
-
-        Also re-withholds already-projected (released/private) pinned rows and
-        deletes any shared knowledge keyed by those source ids (id-based
-        cleanup if anything leaked before classification).
-        """
-        pins = self._coerce_positive_message_ids(origin_chat_message_ids)
-        if not pins:
-            if commit:
-                self.conn.commit()
-            return []
-        placeholders = ",".join("?" for _ in pins)
-        rows = self.conn.execute(
-            f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
-            pins,
-        ).fetchall()
-        live_ids = [int(row["id"]) for row in rows]
-        source_ids: List[str] = []
-        for mid in live_ids:
-            self.conn.execute(
-                "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                (mid,),
-            )
-            source_ids.append(f"chat_message:{mid}")
-        self._delete_shared_knowledge_source_ids(source_ids, commit=False)
-        if commit:
-            self.conn.commit()
-        return live_ids
-
-    def _project_audience_chat_message(
-        self,
-        state: GameState,
-        *,
-        message_id: int,
-        minister_name: str,
-        content: str,
-        origin_turn: Optional[int] = None,
-        commit: bool = False,
-    ) -> str:
-        """Single projection seam for one held audience row (#976 DRY).
-
-        Stamps knowledge with the message's original ``origin_turn`` (not the
-        release-time state.turn).  Only message provenance decides the rail:
-        a non-secret audience line is public even when its speaker separately
-        holds an active secret order.
-        """
-        source_id = f"chat_message:{int(message_id)}"
-        minister = str(minister_name or "").strip()
-        body = str(content or "")
-        proj_turn = int(origin_turn if origin_turn is not None else state.turn)
-        proj_state = state if proj_turn == int(state.turn) else self._state_for_turn(state, proj_turn)
-        self.record_participation_record(
-            proj_state,
-            {"participants": [minister], "title": "召对", "body": body},
-            kind="audience", source_id=source_id, commit=False,
-        )
-        status = "released"
-        self.conn.execute(
-            "UPDATE chat_messages SET knowledge_status=? WHERE id=?",
-            (status, int(message_id)),
-        )
-        if commit:
-            self.conn.commit()
-        return status
-
-    def release_held_audience_knowledge(
-        self,
-        *,
-        minister_name: Optional[str] = None,
-        minister_names: Optional[Iterable[str]] = None,
-        exclude_message_ids: Optional[Iterable[int]] = None,
-        commit: bool = True,
-    ) -> int:
-        """唯一投轨出口：held → shared 或 private（#976）。
-
-        分类后（scoped，仅接令者/口谕 speaker）与月末 settle（全局）调用。
-        withheld 永不放行。接令者 active brief 时只进私有事件轨，不进共享源。
-
-        Message-level provenance: rows whose id is a registered secret-origin
-        pin (or explicitly excluded) are **not** projected — they are parked as
-        withheld so create(A) cannot smuggle B's yet-unclassified oral line into
-        the shared ledger via unfiltered global release.
-        """
-        name_filter = str(minister_name or "").strip()
-        name_set = {
-            str(n).strip() for n in (minister_names or ()) if str(n or "").strip()
-        }
-        if name_filter:
-            name_set.add(name_filter)
-        explicit_exclude = set(self._coerce_positive_message_ids(exclude_message_ids))
-        protection = self._secret_origin_message_protection()
-        exclude = explicit_exclude | set(protection)
-        if name_set:
-            placeholders = ",".join("?" for _ in name_set)
-            rows = self.conn.execute(
-                f"SELECT id, minister_name, turn, content FROM chat_messages "
-                f"WHERE knowledge_status='held' AND minister_name IN ({placeholders}) "
-                f"ORDER BY id",
-                tuple(sorted(name_set)),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT id, minister_name, turn, content FROM chat_messages "
-                "WHERE knowledge_status='held' ORDER BY id",
-            ).fetchall()
-        if not rows:
-            return 0
-        state = self.load_state()
-        released = 0
-        for row in rows:
-            mid = int(row["id"])
-            if mid in exclude:
-                # Live pending/failed pins stay held so drop can make a later
-                # release eligible. Durable descendants and caller-explicit
-                # exclusions park permanently.
-                if mid in explicit_exclude or protection.get(mid, False):
-                    self.conn.execute(
-                        "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                        (mid,),
-                    )
-                continue
-            minister = str(row["minister_name"] or "").strip()
-            content = str(row["content"] or "")
-            origin_turn = int(row["turn"] or state.turn)
-            if not minister:
-                # N2: empty minister_name cannot be projected; park as withheld
-                # so the row does not remain stuck in held forever.
-                self.conn.execute(
-                    "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                    (mid,),
-                )
-                continue
-            self._project_audience_chat_message(
-                state, message_id=mid, minister_name=minister, content=content,
-                origin_turn=origin_turn, commit=False,
-            )
-            released += 1
-        if commit:
-            self.conn.commit()
-        return released
 
     def register_character_knowledge_source(
         self, state: GameState, participant_roster: Iterable[Mapping[str, object]],
         kind: str, title: str, body: str = "", source_id: str = "",
-        excluded_names: Optional[Iterable[str]] = None,
-        excluded_targets: Optional[Mapping[str, Iterable[str]]] = None,
         *, commit: bool = True,
     ) -> None:
         # #883 single rejection seam: secret orders and derivatives must not
@@ -19694,44 +18946,24 @@ class GameDB:
             source_id = f"{kind}:{state.turn}:{title}"
         self.conn.execute(
             "INSERT OR REPLACE INTO character_knowledge_sources "
-            "(turn,year,period,kind,title,body,source_id,participant_roster,excluded_names,excluded_targets) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "(turn,year,period,kind,title,body,source_id,participant_roster) "
+            "VALUES (?,?,?,?,?,?,?,?)",
             (state.turn, state.year, state.period, sanitize_sqlite_text(kind),
              sanitize_sqlite_text(title), sanitize_sqlite_text(body),
              sanitize_sqlite_text(source_id),
-             safe_json_dumps(roster, ensure_ascii=False),
-             safe_json_dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
-             safe_json_dumps({k: list(dict.fromkeys(str(x).strip() for x in values if str(x).strip())) for k, values in (excluded_targets or {}).items()}, ensure_ascii=False)),
+             safe_json_dumps(roster, ensure_ascii=False)),
         )
         if commit:
             self.conn.commit()
 
-    def _has_restricted_source_gate(self, has_shared_exclusions: bool) -> bool:
-        """Whether public-archive writers must use source-scoped aggregation only.
-
-        Callers pass their local shared-exclusion predicate (item exclusions or
-        non-audience restricted kinds).  Active secret-order briefs are private
-        structure (#883) and do **not** by themselves poison pure public
-        aggregates (F3).
-        """
-        return bool(has_shared_exclusions)
 
     def upsert_secret_order_brief(
         self, state: GameState, order_id: int, minister_name: str, title: str, body: str,
-        *, origin_minister_name: Optional[str] = None,
+        *,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         commit: bool = True,
     ) -> None:
-        """Write the assignee-only secret-order brief (#883 isolation seam).
-
-        #976 classification (message-level provenance):
-        1. Persist exact oral-decree ``origin_chat_message_ids`` on the brief.
-        2. Withhold those message ids only (not (assignee, role=user) bulk).
-        3. Scoped release: only pure-public held rows of the assignee and the
-           origin audience speaker — **never** global unfiltered release that
-           would project another minister's still-unclassified secret oral line
-           into the shared ledger (disease root 1).
-        """
+        """Persist the assignee's brief and exact oral source identities."""
         pins = self._coerce_positive_message_ids(origin_chat_message_ids)
         # Keep earlier oral provenance when a later approval/update names another pin.
         pins = list(dict.fromkeys([*self._brief_origin_chat_message_ids(int(order_id)), *pins]))
@@ -19749,21 +18981,10 @@ class GameDB:
                 minister_name, title, body, pins_json,
             ),
         )
-        # Message-level withhold: exact ids only (speaker or assignee owned).
-        self._withhold_origin_chat_messages(pins, commit=False)
-        assignee = str(minister_name or "").strip()
-        origin = str(origin_minister_name or "").strip()
-        # Scoped release — only ministers touched by this classification.
-        # Other ministers' held rows stay held until their own classify/settle.
-        self.release_held_audience_knowledge(
-            minister_names=[n for n in (assignee, origin) if n],
-            exclude_message_ids=pins,
-            commit=False,
-        )
         if commit:
             self.conn.commit()
 
-    def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None, *, commit: bool = True) -> None:
+    def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", *, commit: bool = True) -> None:
         from ming_sim.materials import is_secret_order_origin
 
         kind_text = str(kind or "")
@@ -19771,18 +18992,10 @@ class GameDB:
         # #883: secret_order shape never becomes a participation event.
         if kind_text == "secret_order" or is_secret_order_origin(source_text):
             return
-        source_id = source_id or f"{kind}:{state.turn}:{title}"
-        excluded_json = json.dumps(
-            list(dict.fromkeys(str(p).strip() for p in (excluded_names or []) if str(p).strip())),
-            ensure_ascii=False,
+        self.register_character_knowledge_source(
+            state, [{"character_id": name} for name in dict.fromkeys(participants)],
+            kind, title, body, source_id, commit=commit,
         )
-        for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
-            self.conn.execute(
-                "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-                (state.turn, state.year, state.period, name, kind, title, body, source_id, excluded_json),
-            )
-        if commit:
-            self.conn.commit()
 
     def record_public_knowledge_event(
         self,
@@ -19790,19 +19003,14 @@ class GameDB:
         title: str,
         body: str = "",
         source_id: str = "",
-        excluded_names: Optional[Iterable[str]] = None,
         kind: str = "public",
         *,
         commit: bool = True,
     ) -> None:
         source_id = source_id or f"public:{state.turn}:{title}"
-        inherited = self.knowledge_exclusions_for_source(source_id)
-        merged_exclusions = list(dict.fromkeys(
-            [*inherited, *(str(name).strip() for name in (excluded_names or []) if str(name).strip())]
-        ))
         self.conn.execute(
-            "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-            (state.turn, state.year, state.period, "", sanitize_sqlite_text(kind), title, body, source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
+            "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id) VALUES (?,?,?,?,?,?,?,?)",
+            (state.turn, state.year, state.period, "", sanitize_sqlite_text(kind), title, body, source_id),
         )
         if commit:
             self.conn.commit()
@@ -19835,9 +19043,6 @@ class GameDB:
         tags: List[str],
         importance: int = 4,
         deadline_months: int = 0,
-        excluded_names: Optional[Iterable[str]] = None,
-        excluded_offices: Optional[Iterable[str]] = None,
-        origin_minister_name: Optional[str] = None,
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         pending_action_id: int = 0,
@@ -19911,22 +19116,6 @@ class GameDB:
                 category="active_cap",
                 item={"active_count": int(active_count)},
             )
-        raw_excluded_names, excluded_offices = canonical_secret_order_exclusions(
-            self.content, excluded_names or [], excluded_offices or [], f"{title}\n{content}",
-        )
-        # Institution-level secrecy is resolved at issuance.  The current
-        # office/type is only a lookup key; retaining the matched people makes
-        # the blacklist stable when someone is transferred or the order later
-        # becomes public.  Keep the original institution targets as provenance.
-        snapshot_excluded_names = _snapshot_secret_order_people(
-            self.content, raw_excluded_names, excluded_offices,
-        )
-        # ``excluded_targets.people`` is the caller's explicit person target;
-        # the expanded institution snapshot lives in ``excluded_names`` so it
-        # remains effective after transfers without changing target provenance.
-        exclusion_targets_payload = _secret_order_exclusion_targets(
-            raw_excluded_names, excluded_offices,
-        )
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
@@ -19948,18 +19137,15 @@ class GameDB:
             cur = self.conn.execute(
                 """
                 INSERT INTO secret_orders
-                    (turn_issued, due_turn, deadline_span, year_issued, period_issued, minister_name, title, content, tags, importance, status, excluded_names, excluded_targets)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    (turn_issued, due_turn, deadline_span, year_issued, period_issued, minister_name, title, content, tags, importance, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
                 """,
-                (state.turn, due_turn, deadline, state.year, state.period, minister_name, title, content, tags_json, importance,
-                 json.dumps(snapshot_excluded_names, ensure_ascii=False),
-                 json.dumps(exclusion_targets_payload, ensure_ascii=False)),
+                (state.turn, due_turn, deadline, state.year, state.period, minister_name, title, content, tags_json, importance),
             )
             order_id = int(cur.lastrowid)
             # Classification event and dossier identity share the issuance transaction.
             self._classify_secret_order_audience(
                 state, order_id, minister_name, title, content,
-                origin_minister_name=origin_minister_name,
                 origin_chat_message_id=origin_chat_message_id,
                 origin_chat_message_ids=origin_chat_message_ids,
                 commit=False,
@@ -19971,8 +19157,6 @@ class GameDB:
                 "content": content,
                 "tags": list(tags),
                 "importance": int(importance),
-                "excluded_names": list(raw_excluded_names),
-                "excluded_offices": list(excluded_offices),
             }
             payload[CONTRACT_KEY] = covert_contract
             dossier_id = self.create_decree_dossier(
@@ -20044,7 +19228,6 @@ class GameDB:
         tags: Optional[List[str]] = None,
         deadline_months: int = 0,
         *,
-        origin_minister_name: Optional[str] = None,
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
     ) -> bool:
@@ -20054,12 +19237,12 @@ class GameDB:
         tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。
 
         Oral-decree pins (stage ``origin_chat_message_id`` / speaker) feed the same
-        classification seam as create so non-create audience updates withhold口谕.
+        provenance seam as create for non-create audience updates.
         When no pin intent is provided, preserve brief pins (do not auto-capture
-        pure-public held as new secret-origin bloodline).
+        pure-public messages as new secret-origin bloodline).
         """
         row = self.conn.execute(
-            "SELECT status, tags, minister_name, excluded_names, excluded_targets FROM secret_orders WHERE id=?", (int(order_id),)
+            "SELECT status, tags, minister_name FROM secret_orders WHERE id=?", (int(order_id),)
         ).fetchone()
         if row is None or row["status"] != "active":
             return False
@@ -20085,16 +19268,6 @@ class GameDB:
                 ensure_ascii=False,
             )
         deadline = max(0, min(int(deadline_months or 0), 36))
-        legacy_people, prior_targets = _load_secret_order_exclusions(
-            row, surface=f"secret_orders#{int(order_id)}",
-        )
-        people, offices = canonical_secret_order_exclusions(
-            self.content, [*legacy_people, *prior_targets.get("people", [])],
-            prior_targets.get("offices", []),
-            f"{title}\n{content}",
-        )
-        excluded_names = _snapshot_secret_order_people(self.content, people, offices)
-        excluded_targets = _secret_order_exclusion_targets(people, offices)
         # Preserve create-time oral pins when caller did not name a new pin.
         classify_ids = origin_chat_message_ids
         if origin_chat_message_id is None and classify_ids is None:
@@ -20102,21 +19275,18 @@ class GameDB:
         with atomic(self):
             if deadline:
                 self.conn.execute(
-                    "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, deadline_span=?, excluded_names=?, excluded_targets=?, "
+                    "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, deadline_span=?, "
                     "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (persisted_title, content, tags_json, int(state.turn) + deadline, deadline,
-                     json.dumps(excluded_names, ensure_ascii=False), json.dumps(excluded_targets, ensure_ascii=False), int(order_id)),
+                    (persisted_title, content, tags_json, int(state.turn) + deadline, deadline, int(order_id)),
                 )
             else:
                 self.conn.execute(
-                    "UPDATE secret_orders SET title=?, content=?, tags=?, excluded_names=?, excluded_targets=?, "
+                    "UPDATE secret_orders SET title=?, content=?, tags=?, "
                     "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (persisted_title, content, tags_json, json.dumps(excluded_names, ensure_ascii=False),
-                     json.dumps(excluded_targets, ensure_ascii=False), int(order_id)),
+                    (persisted_title, content, tags_json, int(order_id)),
                 )
             self._classify_secret_order_audience(
                 state, int(order_id), str(row["minister_name"]), persisted_title, content,
-                origin_minister_name=origin_minister_name,
                 origin_chat_message_id=origin_chat_message_id,
                 origin_chat_message_ids=classify_ids,
                 commit=False,
@@ -20145,9 +19315,6 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            excluded_names, excluded_targets = _load_secret_order_exclusions(
-                r, surface=f"secret_orders#{int(r['id'])}",
-            )
             out.append({
                 "id": int(r["id"]),
                 "turn_issued": int(r["turn_issued"]),
@@ -20172,8 +19339,6 @@ class GameDB:
                     if (dossier := self.get_dossier_for_secret_order(int(r["id"])))
                     else []
                 ),
-                "excluded_names": excluded_names,
-                "excluded_targets": excluded_targets,
                 "turn_closed": r["turn_closed"],
             })
         return out
@@ -20511,9 +19676,6 @@ class GameDB:
         ).fetchone()
         if not r:
             return None
-        excluded_names, excluded_targets = _load_secret_order_exclusions(
-            r, surface=f"secret_orders#{int(order_id)}",
-        )
         return {
             "id": int(r["id"]), "minister_name": r["minister_name"],
             "title": r["title"], "content": r["content"],
@@ -20521,8 +19683,6 @@ class GameDB:
             "turn_issued": int(r["turn_issued"]),
             "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
             "turn_closed": r["turn_closed"],
-            "excluded_names": excluded_names,
-            "excluded_targets": excluded_targets,
         }
 
     def auto_submit_due_secret_orders(self, state: GameState) -> List[Dict[str, object]]:
@@ -21011,4 +20171,3 @@ class GameDB:
             self.conn.backup(dest)
         finally:
             dest.close()
-
