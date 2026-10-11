@@ -39,6 +39,20 @@ class FieldSpec:
     allowed_when: Optional[Tuple[str, str, FrozenSet[str]]] = None
 
 
+# Free-prose string fields feed issues → materials; do not strip/rewrite (#1834 F16).
+# Machine keys / ids keep .strip() below.
+_FREE_PROSE_FIELD_NAMES = frozenset({
+    "new_content",
+    "title",
+    "stop_condition",
+    "ongoing_effects",
+    "stages",
+    "responsible_bodies",
+    "station",
+    "new_title",
+})
+
+
 @dataclass(frozen=True)
 class ActionCluster:
     label_zh: str
@@ -214,11 +228,6 @@ def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def cluster_effect(kind: str) -> str:
-    c = cluster_by_kind(kind)
-    return c.effect if c else EFFECT_NOOP
-
-
 class ActionCandidateShapeError(ValueError):
     pass
 
@@ -360,4 +369,3 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if key in obj and obj.get(key) not in (None, ""):
                 out[key if key != "承办人" else "assignee"] = obj.get(key)
     return out
-

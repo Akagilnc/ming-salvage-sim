@@ -23,12 +23,11 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.faction_brew import (
     STANCE_KEY,
     VIEW_FACTION_STANCE,
-    project_character_factions,
-    select_faction_brew_targets,
 )
 from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY
 from ming_sim.relations import EMPEROR_NODE
 from tests.test_relation_brew_636 import run_month_end_relation_brew
+from tests.readback_helpers import ming_character_name as _minister
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -80,16 +79,24 @@ def _faction_rows(db):
     }
 
 
+def _faction_stance_summary(db, faction):
+    """Read one faction stance via the live plural seam (#1834 F22 dropped the
+    test-only singular GameDB helper; do not revive it)."""
+    for row in db.get_faction_stance_summaries():
+        if row["faction"] == faction:
+            return row
+    return None
+
+
+# ------------------------------------------------- F1 canonical 党籍投影
+
+
 def test_any_endpoint_hit_selects_and_same_faction_dedups(game):
     """任一端命中则入选；两端同派去重为一份派系工作项。"""
     db, state, _ = game
     # 温体仁×周延儒均皇党 → 恰一个派系目标＋一条关系目标。
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert [row["faction"] for row in targets] == ["皇党"]
 
     calls: list = []
     report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
@@ -103,10 +110,6 @@ def test_both_endpoints_different_factions_both_selected(game):
     db, state, _ = game
     _add_edge(db, state, source="毕自严", target="王绍徽", kind="站台",
               context="毕自严当面替王绍徽担名。", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert [row["faction"] for row in targets] == ["皇党", "阉党"]
 
     calls: list = []
     report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
@@ -116,8 +119,9 @@ def test_both_endpoints_different_factions_both_selected(game):
         entry["faction"] for entry in report["brewed"] if "faction" in entry
     )
     assert brewed_factions == ["皇党", "阉党"]
-    assert db.get_faction_stance_summary("皇党")["stance_segment"] == "朝局如常。"
-    assert db.get_faction_stance_summary("阉党")["stance_segment"] == "朝局如常。"
+    # 摘要行在；不锁 stance_segment 正文（#1897 T1）。
+    assert _faction_stance_summary(db, "皇党") is not None
+    assert _faction_stance_summary(db, "阉党") is not None
 
 
 def test_out_of_table_faction_and_unknown_person_never_projected(game):
@@ -127,10 +131,6 @@ def test_out_of_table_faction_and_unknown_person_never_projected(game):
               context="皇太极请市被拒。", origin="audience:turn-1")
     _add_edge(db, state, source="甲", target="乙", kind="协作",
               context="甲乙当场协作。", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert targets == []
 
     calls: list = []
     report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
@@ -150,14 +150,14 @@ def test_event_month_updates_stance_and_no_event_month_byte_identical(game):
     brew_fn = _dual_brew_fn_factory(calls, stance="东林因钱谦益蒙召对而势涨。")
     report = run_month_end_relation_brew(db, state, brew_fn)
 
-    summary = db.get_faction_stance_summary("东林")
-    assert summary["stance_segment"] == "东林因钱谦益蒙召对而势涨。"
+    summary = _faction_stance_summary(db, "东林")
+    assert summary is not None
     assert summary["last_event_id"] >= event_id
     assert (summary["last_brewed_year"], summary["last_brewed_period"]) == (
         int(state.year), int(state.period),
     )
 
-    # 无涉派事件月：零调用、摘要字节不变（F2 双条件之前件）。
+    # 无涉派事件月：零调用、水位不变（不锁 stance 正文，#1897 T1）。
     before = dict(summary)
     state.turn += 1
     state.period += 1
@@ -165,12 +165,9 @@ def test_event_month_updates_stance_and_no_event_month_byte_identical(game):
     report = run_month_end_relation_brew(db, state, brew_fn)
     assert report["selected"] == 0
     assert calls == []
-    after = db.get_faction_stance_summary("东林")
-    assert after["stance_segment"] == before["stance_segment"]
+    after = _faction_stance_summary(db, "东林")
     assert after["last_event_id"] == before["last_event_id"]
-    assert (after["last_brewed_year"], after["last_brewed_period"]) == (
-        before["last_brewed_year"], before["last_brewed_period"],
-    )
+    assert after == before
 
 
 # ------------------------- F2 pending 补酿复用 #636 接缝：恰一次
@@ -187,7 +184,7 @@ def test_failed_faction_brew_rebrews_once_via_existing_pending_seam(game):
     # 关系与派系工作项同批同命：双双降级留痕。
     assert report["selected"] == 2
     assert len(report["degraded"]) == 2
-    assert db.get_faction_stance_summary("皇党") is None
+    assert _faction_stance_summary(db, "皇党") is None
     # durable pending 在册（同一 claim 机制，item_kind='派系' 身份）。
     pending = db.get_faction_brew_pending()
     assert [row["faction"] for row in pending] == ["皇党"]
@@ -209,9 +206,7 @@ def test_failed_faction_brew_rebrews_once_via_existing_pending_seam(game):
     assert faction_payloads[0]["has_pending_failure"] is True
     assert faction_payloads[0]["faction"] == "皇党"
     assert len(report["brewed"]) == 2
-    assert db.get_faction_stance_summary("皇党")["stance_segment"] == (
-        "皇党内因温周之隙而生嫌隙。"
-    )
+    assert _faction_stance_summary(db, "皇党") is not None
     assert db.get_faction_brew_pending() == []
     assert db.get_relation_brew_pending() == []
 
@@ -233,7 +228,7 @@ def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
     calls: list = []
     brew_fn = _dual_brew_fn_factory(calls, stance="皇党旧文。")
     run_month_end_relation_brew(db, state, brew_fn)
-    before = db.get_faction_stance_summary("皇党")
+    before = _faction_stance_summary(db, "皇党")
 
     # 次月新涉派事件；派系腿产出缺 stance_segment（shape 违约）→ 单条降级。
     state.turn += 1
@@ -244,8 +239,10 @@ def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
     brew_fn.stances = ['{"irrelevant": 1}']
     report = run_month_end_relation_brew(db, state, brew_fn)
     assert report["degraded"], "派系腿 shape 违约必须降级留痕"
-    after = db.get_faction_stance_summary("皇党")
-    assert after["stance_segment"] == before["stance_segment"]  # 保旧摘要字节
+    after = _faction_stance_summary(db, "皇党")
+    # A rejected output must leave the entire previous durable summary unchanged.
+    assert before is not None
+    assert after == before
     assert [row["faction"] for row in db.get_faction_brew_pending()] == ["皇党"]
 
     # 再下月：pending 补酿恰一次、成功落定清除。
@@ -254,7 +251,7 @@ def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
     calls.clear()
     brew_fn.stances = [{STANCE_KEY: "皇党因杨嗣昌被驳而渐离。"}]
     report = run_month_end_relation_brew(db, state, brew_fn)
-    assert db.get_faction_stance_summary("皇党")["stance_segment"] == "皇党因杨嗣昌被驳而渐离。"
+    assert _faction_stance_summary(db, "皇党") is not None
     assert db.get_faction_brew_pending() == []
 
 
@@ -301,13 +298,14 @@ def test_relation_and_faction_items_share_single_batch_in_parallel(game):
     _add_edge(db, state, source="毕自严", target="王绍徽", kind="站台",
               context="毕自严当面替王绍徽担名。", origin="audience:turn-1")
     # 同批 3 条工作项（1 关系＋2 派系）必须并行进入调用缝。
-    barrier = threading.Barrier(3)
+    # 标准库 Barrier 默认 timeout：串行时 wait 超时 → BrokenBarrierError 报红退出。
+    barrier = threading.Barrier(3, timeout=5)
     threads: list = []
 
     def parallel_brew(payload_json: str) -> str:
         payload = json.loads(payload_json)
         threads.append(threading.current_thread().name)
-        barrier.wait()  # 串行实现会在第 2/3 条处超时破裂
+        barrier.wait(timeout=5)  # 串行实现会在第 2/3 条处超时破裂
         if payload.get("view") == VIEW_FACTION_STANCE:
             return json.dumps({STANCE_KEY: "朝局如常。"}, ensure_ascii=False)
         return json.dumps(_relation_script(recent="毕王有站台之谊。"), ensure_ascii=False)
@@ -359,76 +357,22 @@ def test_zero_writes_to_factions_numeric_columns_across_all_seams(game):
     assert _faction_rows(db) == before
 
 
-# ------------- #637 codex P2：new_events 必须保留 source/target 结构字段
-
-def _minister(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
+# ------------- #637 codex P2 / ADR 0142：new_events 结构字段与派系投影
 
 
-def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
-    """真实 effect-eligible 案卷（同 #611 测试口径）作授权变更来源。"""
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="authorization",
-        decree_text="授以便宜行事之权",
-        target_kind=target_kind,
-        target_id=target_id,
-        executor_kind="character",
-        executor_id=holder,
-        participants=[
-            {"character_id": holder, "tier": "主办", "role": "承办"},
-        ],
-        payload={"mode": "ordinary"},
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    assert db.dossier_authorizes_effects(dossier_id)
-    return db.get_decree_dossier(dossier_id)
-
-
-def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
-    """(b) 本 finding 原始缺陷用例：复刻收权·罢差路径（经 issues.py 落一条
-    holder→EMPEROR 结怨边，context 不含参与方名字），断言该事件进入该 holder
-    党籍派的酿制输入且 target==EMPEROR_NODE——方向事实只能靠 source/target。"""
-    from ming_sim import issues as issue_engine
-
-    db, state, content = game
+@pytest.mark.parametrize("target", [EMPEROR_NODE, "皇太极", "周皇后"])
+def test_declared_holder_to_emperor_grudge_reaches_holder_faction_brew(game, target):
+    """持有人向皇帝或表外党籍人物结怨：真实 prepare 供给己派，另一端投影为 null。"""
+    db, state, _content = game
     holder = _minister(db)
-    projection = project_character_factions(db)
-    holder_faction = projection[holder]
-    domain = "issue:清丈田亩"
-    grant_dossier = _eligible_dossier(db, state, holder)
-    grant_result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
-            "scope": domain, "dossier_id": grant_dossier["id"],
-        }],
-    }, content=content)["authority_changes"][0]
-    assert grant_result.get("rejected") is not True
-    authority_id = int(grant_result["authority_id"])
-
-    revoke_dossier = _eligible_dossier(db, state, holder, target_id="收权清丈")
-    revoke_result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "收回", "authority_id": authority_id,
-            "dossier_id": revoke_dossier["id"],
-        }],
-    }, content=content)["authority_changes"][0]
-    assert revoke_result.get("rejected") is not True
-
-    # DB 里确实落了 holder→EMPEROR 的结怨边（context 只有权限名＋辖域）。
-    edges = db.get_relation_edge_events(
-        source=holder, target=EMPEROR_NODE, event_kind="结怨",
+    holder_faction = db.conn.execute(
+        "SELECT faction FROM characters WHERE name=?", (holder,),
+    ).fetchone()["faction"]
+    origin = f"declaration:结怨|{holder}"
+    _add_edge(
+        db, state, source=holder, target=target, kind="结怨",
+        context="密令被收后心生不满", origin=origin,
     )
-    assert len(edges) == 1
-    assert edges[0]["context"] == f"收权·罢差·便宜行事·{domain}"
-
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert [row["faction"] for row in targets] == [holder_faction]
 
     calls: list = []
     run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
@@ -438,8 +382,11 @@ def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
     assert len(payloads) == 1
     matching = [
         item for item in payloads[0]["new_events"]
-        if item["origin"].startswith(f"authority_revoke:{authority_id}")
+        if str(item["origin"]).startswith(origin)
     ]
     assert len(matching) == 1
     assert matching[0]["source"] == holder
-    assert matching[0]["target"] == EMPEROR_NODE
+    assert matching[0]["target"] == target
+    # 持有人端由 prepare 投影，皇帝或表外党籍端显式 None。
+    assert matching[0]["source_faction"] == holder_faction
+    assert matching[0]["target_faction"] is None

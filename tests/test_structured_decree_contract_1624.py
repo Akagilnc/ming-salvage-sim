@@ -74,8 +74,6 @@ def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
         ).fetchone() is not None, f"参与人未建档：{name!r}"
 
 
-
-
 def test_shared_validate_rejects_region_id_and_category_holes():
     """共同 assemble/validate 最低可证层：钉原洞 typed 拒绝。
 
@@ -271,7 +269,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
             origin_ref=f"cap-fill:{idx}",
             effect_on_resolve={"metrics": {"民心": 1}},
         )
-    assert db.count_active_initiatives() >= 15
+    assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE kind='initiative' AND status='active'").fetchone()[0] >= 15
     owner_before, province_before = _executing_counts(
         db, owner_name=owner_name, region_id=region_id,
     )
@@ -297,7 +295,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     assert not body.get("awaiting_decision"), body
     assert int(game.state.turn) == turn_before + 1
 
-    assert db.count_active_initiatives() >= 16
+    assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE kind='initiative' AND status='active'").fetchone()[0] >= 16
     matched = [
         dict(d) for d in db.list_decree_dossiers()
         if str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
@@ -319,6 +317,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     )
     assert owner_after == owner_before + 1, (owner_before, owner_after)
     assert province_after == province_before + 1, (province_before, province_after)
+
 
 def test_normalize_rescript_layer_a_option_contract():
     """normalize_rescript_layer_a_option：外部可观察成败与归一结果。
@@ -462,8 +461,7 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     assert result.get("target_id") == "shaanxi"
     assert result.get("region_id") == "shaanxi"
     assert result.get("transaction_category") == "督赈"
-    # 单条路径 draft_text=大臣回话；纠错轮正文漂移不得改写会话正文真源
-    assert result.get("draft_text") == "臣遵拟。"
+    # 纠错轮不得改写结构化身份束（上列字段）；不锁 draft_text 回话正文。
     assert n["c"] == 2
     # DB-backed 共同闸：身份束归正后可解析（禁 region+户部 漏网）
     assemble_structured_decree(
@@ -478,4 +476,3 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
         conn=db.conn,
         regions_content=content.regions,
     )
-

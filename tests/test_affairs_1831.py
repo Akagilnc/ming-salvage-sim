@@ -10,7 +10,6 @@ from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
 from tests.test_declaration_dispatch_1835 import _minister
 
 
-
 NINGYUAN = "宁远护送"
 ORIGIN = "拨银、调将、派兵去宁远"
 PROGRESS = "护送银两已出京，尚未抵宁远"
@@ -28,10 +27,6 @@ def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
     else:
         body["affair_id"] = int(affair_id)
     return body
-
-
-
-
 
 
 def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
@@ -81,9 +76,11 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
 
 
+def test_same_name_affairs_are_not_merged_and_illegal_attach_is_rejected(game):
+    """Same display name does not merge; illegal attach enum/ref fails loud and does not write.
 
-
-def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
+    Keeps generic create_decree_dossiers negative only — no exclusive retired-close proof (F44).
+    """
     db, state, _ = game
     minister = _minister(db)
     first = db.affairs.open(
@@ -96,12 +93,7 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
     )
     assert first.id != second.id
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    apply_score_extraction(
-        db, state, {"affair_declarations": [_declaration()]},
-        open_affair_ids_at_input=set(),
-    )
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
-    try:
+    with pytest.raises(ValueError):
         db.create_decree_dossiers(
             state,
             action_type="assignment",
@@ -115,29 +107,11 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
                 "affair_declaration": _declaration(attach="close", affair_id=first.id),
             },
         )
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("expected birth close to fail")
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
     assert db.affairs.get(first.id).status == "open"
-    for bad_id in (True, 1.5):
-        closed = apply_score_extraction(
-            db, state,
-            {"affair_declarations": [{"attach": "close", "affair_id": bad_id}]},
-            open_affair_ids_at_input={first.id},
-        )
-        assert db.affairs.get(first.id).status == "open"
-        assert any(
-            row.get("report_section") == "affair_declarations"
-            for row in closed["validate_shape_rejections"]
-        )
 
 
-
-
-
-
-def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
+def test_typed_affair_new_issues_share_provenance(game):
     db, state, content = game
     existing = db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
@@ -146,9 +120,6 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
     result = apply_score_extraction(
         db, state,
         {
-            "affair_declarations": [
-                _declaration(attach="close", affair_id=existing.id),
-            ],
             "new_issues": [
                 {
                     "origin_kind": "decree", "kind": "situation",
@@ -171,13 +142,6 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
     assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
     assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id
     assert db.affairs.get(existing.id).status == "open"
-    assert any(
-        row["report_section"] == "affair_declarations"
-        and row["category"] == "invalid_shape"
-        for row in result["validate_shape_rejections"]
-    )
-
-
 
 
 def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):

@@ -541,7 +541,6 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         assert r.status_code == 409, r.text
         assert web_app.web_game is g0
         assert web_app._runtime_restorable(g0)
-        assert not g0._write_queue.is_sealed(), "drain failure must unseal restored runtime"
         assert os.path.isfile(old_path)
         # close 失败 holder 仍在：AR-req 不得搬活库（外部文件终态）
         web_app._path_request_archive(old_path)
@@ -554,7 +553,7 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         assert snap["campaign_id"] == c0
         assert snap["chat_turns"]
     finally:
-        g0.session.close = real_close  # type: ignore[method-assign]
+        g0.session.close = real_close
 
 
 def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypatch):

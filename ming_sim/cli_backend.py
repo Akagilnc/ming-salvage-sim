@@ -47,6 +47,7 @@ from ming_sim.models import CLI_DEFAULT_RUNNER, CODEX_DEFAULT_MODEL, CLAUDE_DEFA
 # #1902 T4：领域动作集合与 structured_decree 导入已归 draft_intent / decree_vocabulary；
 # 传输层不再定义 DRAFT_ACTION_TYPES 或挂领域规则。
 
+
 # agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
 # 行动计划（英文）泄进角色对话 + 元游戏泄漏。给它一个空目录当 cwd，无可探。
 _AGY_CWD = os.path.join(tempfile.gettempdir(), "ming_agy_sandbox")
@@ -365,12 +366,14 @@ def _cli_process_clock() -> float:
 
 @dataclass
 class _CliProcessOutcome:
-    """子进程收尾事实（退出码 / stderr 诊断 / stdin·管道读错），由增量读循环回填。"""
+    """子进程收尾事实（退出码 / stderr 诊断 / stdin·管道·终止错），由增量读循环回填。"""
+
 
     returncode: Optional[int] = None
     stderr: str = ""
     stdin_error: Optional[BaseException] = None
     stream_error: Optional[BaseException] = None
+    terminate_error: Optional[BaseException] = None
 
 
 def _cli_idle_seconds() -> float:
@@ -385,22 +388,25 @@ def _cli_idle_seconds() -> float:
     return float(resolve_transport_policy().idle_timeout_seconds)
 
 
-def _terminate_cli_process(proc: Any) -> None:
-    """收尾子进程：已退时 terminate 是 no-op；否则只 SIGTERM，不 SIGKILL（硬规9）。
+def _terminate_cli_process(proc: Any, *, outcome: Optional[_CliProcessOutcome] = None) -> None:
+    """收尾子进程：已退时 no-op；否则只 terminate + 有界 wait。
 
-    wait 短暂未退 → 如实记终止缺口，不另造监督层、不以 kill 兜底。
+    禁 SIGKILL 升级（共享硬规 #9 / #1834 F47）。终止真异常记入 outcome，
+    交调用方响亮失败（#1834 F48），不在此处吞掉。
     """
-    try:
-        proc.terminate()
-    except Exception as exc:
-        logger.warning("CLI 子进程 terminate 失败：%s", exc)
+    if getattr(proc, "poll", lambda: None)() is not None:
         return
     try:
+        proc.terminate()
         proc.wait(timeout=5)
     except Exception as exc:
-        logger.warning(
-            "CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）：%s", exc,
-        )
+        # 终止真异常必须留痕；调用方是否另有 stream/stdin 错，不得吞掉本因（F48）。
+        logger.warning("CLI 子进程终止失败：%s", exc)
+        if outcome is not None:
+            if outcome.terminate_error is None:
+                outcome.terminate_error = exc
+            return
+        raise
 
 
 def _iter_cli_process_lines(
@@ -419,10 +425,10 @@ def _iter_cli_process_lines(
       并 terminate 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现；
       不 SIGKILL，硬规9）。
     - idle 只认 transport 策略（`_cli_idle_seconds`）= 设置页那一格的静默判死阈值。
-    - **不设 attempt 总墙钟，收尾不做 SIGKILL 升级（宪法 #9）**：只要还有新字节就不判死；
-      收尾只 terminate + wait，失败原样上抛。
+    - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀；收尾禁 SIGKILL。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
     - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
+    - 活动期 stdout/stderr 真异常与终止真异常记入 outcome，调用方响亮失败（#1834 F48）。
     所有 runner 共用本读法；禁各自复制一套 idle 循环。clock 可注入（受控推进）。
     """
     from ming_sim.llm_transport import TransportPolicy, check_idle_budget
@@ -445,6 +451,8 @@ def _iter_cli_process_lines(
     chunks: "queue.Queue[Tuple[str, Optional[bytes]]]" = queue.Queue()
     stderr_parts: List[str] = []
     workers: List[threading.Thread] = []
+    # 收尾开始后管道关闭属正常；活动期读错必须落 outcome（#1834 F48）。
+    shutting_down = threading.Event()
 
     def _read_chunk(stream: Any) -> bytes:
         # read1：已到达的字节立刻交付，不要求凑成一行。无 read1 时退到 read。
@@ -467,9 +475,10 @@ def _iter_cli_process_lines(
             # 读取失败（含线程内 SystemExit/KeyboardInterrupt/TypeError）记真因交父循环；
             # 不得在工作线程内 re-raise 冒充已传给父调用（threading 只走 excepthook）。
             # finally 仍发哨兵，避免父侧空等。主动 cancel 若已在父侧抛出，以其终态为准。
-            if result.stream_error is None:
-                result.stream_error = exc
-            logger.warning("CLI %s 管道读取失败：%s", kind, exc)
+            if not (shutting_down.is_set() and isinstance(exc, (OSError, ValueError))):
+                if result.stream_error is None:
+                    result.stream_error = exc
+                logger.warning("CLI %s 管道读取失败：%s", kind, exc)
         finally:
             # 哨兵必发：否则读循环等不到 EOF，会把收尾误当静默。
             chunks.put((kind, None))
@@ -533,6 +542,8 @@ def _iter_cli_process_lines(
                 )
                 raise cli_runner_unavailable(host_exc, backend=host) from err
             raise err
+        if result.terminate_error is not None:
+            raise result.terminate_error
 
     def _has_recorded_thread_fault() -> bool:
         return result.stream_error is not None or result.stdin_error is not None
@@ -587,13 +598,16 @@ def _iter_cli_process_lines(
             )
             time.sleep(_CLI_POLL_SECONDS)
     finally:
-        _terminate_cli_process(proc)
+        # 收尾接缝在「任何离开路径」执行：stdin/stream/terminate 一并消费。
+        # 并存故障全部留痕；主因上抛，其余不得只停在无人读的字段（#1834 F48）。
+        shutting_down.set()
+        _terminate_cli_process(proc, outcome=result)
         for worker in workers:
             worker.join(timeout=5)
         result.stderr = "".join(stderr_parts)
         result.returncode = proc.poll()
-    # join 后若 feeder 才落盘 stdin_error，仍不得当成功收尾。
-    _raise_recorded_thread_fault()
+        _raise_recorded_thread_fault()
+
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     if reasoning_strength is None:
@@ -805,6 +819,7 @@ def _iter_cli_runner_text(
     再按退出码／结构化契约分类；禁从自由输出词面判故障（ADR 0142）。codex
     `--json` 是结构化事件流（`_codex_event_text` 认字段、不读散文），可照旧边到边出。
 
+
     次数只在 llm_transport（run_with_transport / run_transport_stream）；此处禁
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
     - 静默超阈值 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
@@ -813,6 +828,7 @@ def _iter_cli_runner_text(
       cli_runner_unavailable（typed 确定性失败，一次不重试；禁从 stderr 散文抠状态；
       仅此已确证宿主 I/O／退出接缝翻 typed）
     - 宿主未暴露结构化鉴权状态时如实按正文／退出码处理，不另造词表（宿主缺口）
+
 
     静默预算只认 transport 策略 idle（= 设置页那一格的静默判死阈值，CLI 与 API 同权威）。
     """
@@ -914,6 +930,7 @@ def _run_cli_runner(
         )
     )
     # #1902 T2：原正文交付，不 strip 改写。
+
     return text, 1
 
 
@@ -979,6 +996,7 @@ def _run_backend_for_config(
     每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
     （agno 游戏路径走 CliChat.invoke 自有 trace，与此咽喉不重叠。）
     tag 只记调用方显式传入的值；空则空，不从 prompt 正文推断。
+
 
     #1465 切片③：本入口是结算/拟旨等非 Agent CLI extractor 的**次数入口**——
     在此包一次 run_with_transport，operation 调单次子进程；runner 内禁私有重试。"""
@@ -1178,9 +1196,9 @@ def _messages_to_prompt(
 # 旧「拟旨/密令」前缀分派与 _extract_secret_order 独占链已清退。
 
 
-
 # #1902 T4：拟旨抽取 / 名册自愈 / 国策补全等现役领域编排已迁至 ming_sim.draft_intent。
 # 本文件只保留 CLI 传输与 runner 适配；禁止在此再挂领域编排副本或兼容转发。
+
 
 def _scan_outside_strings(text: str, handle) -> str:
     """逐字扫描 text，字符串内部（含转义）原样输出；字符串外的字符交给
@@ -1268,7 +1286,6 @@ def _loads_lenient(
     return obj if isinstance(obj, accepted_types) else None
 
 
-
 def _fake_completion(text: str, model_id: str) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
     msg = ChatCompletionMessage(role="assistant", content=text)
@@ -1289,7 +1306,7 @@ class CliChat(OpenAIChat):
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
         """一次子进程。等多久算死归 transport 策略（设置页那一格的静默判死阈值）：
-        不设 attempt 总墙钟；只有静默超阈值才判死重试，收尾只 SIGTERM。"""
+        出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。"""
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
         return _dispatch_cli_runner(
             self.backend,

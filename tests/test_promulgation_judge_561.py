@@ -268,6 +268,7 @@ def test_rejected_verdict_still_requires_full_rejection_contract(game):
             dossiers, db, prepared_context=context,
         )
 
+
 def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
     """Non-awaiting arms must read applied history at the pre-resolve turn."""
     from ming_sim.content import GameContent
@@ -318,6 +319,7 @@ def test_promulgation_judge_omits_max_tokens(monkeypatch):
     )
 
     assert "max_tokens" not in seen
+
 
 def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
     # Preserve suite-specific reason/intensity differences via builder knobs.

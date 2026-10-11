@@ -138,6 +138,8 @@ export function useChatActions({
 
   const sendChat = async (targetMinisterName: string, text = input) => {
     if (busy) return;
+    // Free prose: preserve raw bytes; emptiness on a local copy (#1834 F16).
+
     const message = text;
     if (!message.trim()) {
       setComposerHint("请先问话或点一个奏对题目");

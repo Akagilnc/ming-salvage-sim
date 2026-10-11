@@ -179,8 +179,6 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
     assert retry.status_code == 404
 
 
-
-
 @pytest.mark.parametrize("night_status", [an.NIGHT_STATUS_CLOSING, an.NIGHT_STATUS_CLOSED])
 def test_pending_translation_retries_original_round_after_night_seal(web_game, monkeypatch, night_status):
     """A sealed night keeps its failed source round repairable before month advance."""
@@ -467,10 +465,6 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
 # ── ② 对话内应允候选：收夜提交即准旨，月末玩家流零二次准驳 ─────────────
 
 
-
-
-
-
 # ── ③ #1353 K10a：挂起在飞不按 elapsed 造 409；工人终态后过月续跑 ──
 
 
@@ -494,7 +488,7 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
                 chat_task = asyncio.create_task(
                     client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
-                await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
+                await _wait_for(lambda: game._runtime_write_queue().inflight_count() > 0)
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
             finally:
                 game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
@@ -584,10 +578,10 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
                 # 持久化行确认在飞
                 assert game.db.conn.execute(
                     "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
-                assert int(game._pending_writes_count) >= 1
+                assert int(game._runtime_write_queue().inflight_count()) >= 1
                 # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
                 # 不触发确认抽取 LLM。
-                game.db.upsert_pending_directive(
+                game.db.stage_directive_candidate(
                     game.state.turn, minister, payload={
                         "text": "着户部核边饷", "actor": minister,
                         "dossier_action_type": "policy",
@@ -658,7 +652,6 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
         (turn_before,),
     ).fetchall()
     assert any(str(row["text"] or "") == text for row in rows), rows
-
 
 
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):
@@ -746,7 +739,7 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
                 ).fetchone()["status"] == "generating"
                 # 预置 draft（与 AC10 成功案同缝）：工人终态后须能真实续跑到 done，
                 # 不得靠「任意 error」冒充非伪造 in-flight。
-                game.db.upsert_pending_directive(
+                game.db.stage_directive_candidate(
                     game.state.turn, minister, payload={
                         "text": "着户部核边饷", "actor": minister,
                         "dossier_action_type": "policy",

@@ -119,31 +119,25 @@ def public_layer_events(db: Any, *, for_public_feed: bool = False) -> list[dict[
 
 
 def _json_name_list(raw: object) -> list[str]:
-    try:
-        values = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        values = []
-    if not isinstance(values, list):
-        values = []
-    return [str(name) for name in values if str(name).strip()]
+    # 与 db 持久 list 权威同缝；腐坏响亮，不 catch-to-[]（#1897 E1）。
+    from ming_sim.db import _load_durable_str_list
+    return list(
+        _load_durable_str_list(raw, surface="public_sayings.excluded_names")
+    )
 
 
 def _json_target_map(raw: object) -> dict[str, list[str]]:
-    try:
-        payload = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        payload = {}
-    if not isinstance(payload, dict):
-        return {}
+    # 与 db._load_exclusion_targets 同一权威；空串/腐坏响亮（#1897 E1）。
+    from ming_sim.db import _load_exclusion_targets
+    targets = _load_exclusion_targets(
+        raw, surface="public_sayings.excluded_targets",
+    )
     result: dict[str, list[str]] = {}
-    for key, values in payload.items():
-        names = (
-            [str(name) for name in values if str(name).strip()]
-            if isinstance(values, list)
-            else []
-        )
-        if names:
-            result[str(key)] = names
+    for key, values in targets.items():
+        if key in {"people", "offices"} and isinstance(values, list) and values:
+            result[str(key)] = [str(name) for name in values]
+        elif key not in {"people", "offices"} and isinstance(values, list) and values:
+            result[str(key)] = [str(name) for name in values if str(name).strip()]
     return result
 
 

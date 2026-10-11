@@ -416,7 +416,6 @@ def _appointment_intent_is_current_office_noop(
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
     归一到在册原始名，再查当前 office。"""
-    # #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
     if not clean_name or not desired:
@@ -533,7 +532,6 @@ def apply_appointment(
     return (name, displaced)
 
 
-
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。
     DB 是持久化真相；不要在这里修写 DB。"""
@@ -565,18 +563,15 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         )
         import json as _json
 
-        try:
-            aliases = _json.loads(row["aliases"] or "[]")
-        except (TypeError, ValueError):
-            aliases = []
-        if not isinstance(aliases, list):
-            aliases = []
-        try:
-            personal_skills = _json.loads(row["personal_skills"] or "[]")
-        except (TypeError, ValueError):
-            personal_skills = []
-        if not isinstance(personal_skills, list):
-            personal_skills = []
+        # aliases/personal_skills 持久字符串数组：腐坏响亮（#1897 E1）。
+        # seed_guilt 写口允许文字值，不在此按 JSON 对象硬解（判词 J966 明示排除）。
+        from ming_sim.db import _load_durable_str_list
+        aliases = _load_durable_str_list(
+            row["aliases"], surface=f"characters#{name}.aliases",
+        )
+        personal_skills = _load_durable_str_list(
+            row["personal_skills"], surface=f"characters#{name}.personal_skills",
+        )
         try:
             seed_guilt = _json.loads(row["seed_guilt"] or "{}")
         except (TypeError, ValueError):
@@ -588,8 +583,8 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             office=row["office"],
             office_type=office_type,
             faction=row["faction"],
-            aliases=[str(item) for item in aliases if str(item).strip()],
-            personal_skills=[str(item) for item in personal_skills if str(item).strip()],
+            aliases=list(aliases),
+            personal_skills=list(personal_skills),
             loyalty=int(row["loyalty"]),
             ability=int(row["ability"]),
             integrity=int(row["integrity"]),
@@ -978,7 +973,7 @@ class GameSession:
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
-        """同步识别显式退朝口令。纯封闭集匹配，无 Future/宽降级。"""
+        """#526：同步识别收夜口令。纯封闭集匹配，无 Future/宽降级。"""
         from ming_sim.audience_night import (
             normalize_audience_command_verdict,
             recognize_audience_command,
@@ -1750,7 +1745,7 @@ class GameSession:
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
         from ming_sim.audience_night import (
-            CMD_CLOSE_NIGHT,
+            CMD_NONE,
             SCENE_CHAT_SPEAKER,
             ensure_summon_enter,
             get_open_night,
@@ -1775,11 +1770,13 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
-        # 显式退朝口令：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收。
-        # 留侍／含糊收夜词表已退役——走普通场景演绎与转译。
+        # 收夜口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
+        # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
+        # - #1812 §5 / #1834 F18：旧「留下听着」「今日就到这里吧」不再代码裁断；
+        #   走下方场景调用＋统一转译。
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
-        if audience_command_verdict == CMD_CLOSE_NIGHT:
+        if audience_command_verdict and audience_command_verdict != CMD_NONE:
             ctid = int(chat_turn_id or 0)
             # 生产：退朝只标 court_break，由 epilogue／schedule_close_night 收夜。
             # 零轮当场 close_night 旁路已清退（注释曾称已删、代码残留）。
@@ -1787,6 +1784,7 @@ class GameSession:
                 self._mark_control_turn_translation_done(ctid)
             result.court_action = "court_break"
             return result
+
 
         # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
         xuan_fragment = recognize_xuan_command(message_text)
@@ -1997,12 +1995,20 @@ class GameSession:
         ctid = int(chat_turn_id or 0)
         if ctid <= 0:
             return
+        # 说话人是源轮上已落的结构化身份。空串会把查访/进展闸当成殿上整场放行。
+        minister_name = ""
+        if hasattr(self.db, "conn"):
+            row = self.db.conn.execute(
+                "SELECT minister_name FROM chat_turns WHERE id=?", (ctid,),
+            ).fetchone()
+            if row is not None:
+                minister_name = str(row["minister_name"] or "")
         result.pending_audience_translation = {
             "emperor_message": emperor_message,
             "reply": reply,
             "night_id": int(night_id or 0),
             "chat_turn_id": ctid,
-            "minister_name": "",
+            "minister_name": minister_name,
         }
 
     def schedule_pending_scene_translation(
@@ -2159,10 +2165,22 @@ class GameSession:
             row = self.db.get_directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
+            # 持久读失败是代码/账本故障，不得 continue 进补交耗尽空返回（F39）。
+            # 与同方法写回 Exception 分支同出口：错误包 + SettlementAbort。
             try:
                 bad_payload = self.db.read_directive_dossier_payload(row)
-            except ValueError:
-                continue
+            except ValueError as durable_exc:
+                # 已持久载荷损坏：系统故障，不得跳过进补交空 carry（#1897 E1）。
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=durable_exc,
+                    extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="directive_admission_resubmit",
+                    error_pack_path=pack_path,
+                ) from durable_exc
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:
@@ -2211,15 +2229,14 @@ class GameSession:
         else:
             outcomes = [_llm_one(jobs[0])]
 
-        # DB 相串行：产物 ValueError 耗尽该旨；其它异常错误包中止整月。
+        # DB 相串行：仅既有领域契约异常耗尽；未识别异常错误包中止（#1897 E1）。
+        from ming_sim.action_materialize import is_declaration_domain_error
+
         next_carry: Dict[int, Dict[str, object]] = {}
         for job, new_payload, exc in outcomes:
             did = int(job["directive_id"])
             if exc is not None:
-                if isinstance(exc, ValueError):
-                    # 本轮重写自身的产物错（含名册 escalate 归一）：DB 载荷未动，
-                    # 光靠下一轮 ensure 重探只会拿回旧拒因——把本轮失败事实带过去，
-                    # 否则同一句话问三遍（0150-D5-b：告诉 LLM 事实）。
+                if is_declaration_domain_error(exc):
                     logger.warning(
                         "[1769] draft#%s admission resubmit product exhaust: %s",
                         did, exc,
@@ -2246,18 +2263,17 @@ class GameSession:
                     dossier_payload=new_payload,
                     replace_payload=True,
                 )
-            except ValueError as write_exc:
-                # 写回被拒也是产物错：本次产物 + 本次写回拒因带进下一次重写，
-                # 否则下一轮只能拿 DB 里的旧载荷/旧拒因重问同一遍。
-                logger.warning(
-                    "[1769] draft#%s admission resubmit write-back rejected: %s",
-                    did, write_exc,
-                )
-                next_carry[did] = {
-                    "bad_payload": dict(new_payload),
-                    "reason": str(write_exc),
-                }
             except Exception as write_exc:
+                if is_declaration_domain_error(write_exc):
+                    logger.warning(
+                        "[1769] draft#%s admission resubmit write-back rejected: %s",
+                        did, write_exc,
+                    )
+                    next_carry[did] = {
+                        "bad_payload": dict(new_payload),
+                        "reason": str(write_exc),
+                    }
+                    continue
                 pack_path = write_error_pack(
                     self.db, self.state, exc=write_exc,
                     extracted=None, resolve_ctx=None,
@@ -2590,9 +2606,8 @@ class GameSession:
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
         ctx = self.db.get_resolve_context(self.state.turn)
-        # #389 / #1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
-        # 标题不补绑。迁自旧 submit_decisions 的绑定步；scope 同旧
-        # list_pending_decisions 只收 kind='decision'，rescript_draft 行不动。
+        # #389/#1897/#1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
+        # 标题不补绑。scope 只收 kind='decision'，rescript_draft 行不动。
         if ctx is not None:
             from ming_sim.settlement_payload import bind_decisions_to_candidate_events
             decision_rows = [r for r in desk if str(r.get("kind") or "") == "decision"]

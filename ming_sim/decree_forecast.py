@@ -69,14 +69,8 @@ def _call_exhausted(exc: BaseException) -> bool:
 
 
 def _payload_dict(candidate: Dict[str, Any]) -> Dict[str, Any]:
-    payload = candidate.get("payload")
-    if isinstance(payload, dict):
-        return payload
-    raw = candidate.get("payload_json")
-    if raw in (None, ""):
-        return {}
-    loaded = json.loads(str(raw))
-    return loaded if isinstance(loaded, dict) else {}
+    """只读规范 payload。候选来源（_pending_snapshot / _held_snapshot / snapshot_for_existing_dossier）均已给 dict，无 raw 回退生产者。"""
+    return candidate["payload"]
 
 
 def _this_decree_fact(
@@ -293,7 +287,7 @@ def _append_this_decree_escort_grounding(
     """
     kind = str(candidate.get("target_kind") or "")
     target_id = str(candidate.get("target_id") or "")
-    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    payload = candidate["payload"]
     declared = payload_declares_escort(payload)
     extra = (
         f"dossier\t{token}\t{kind}:{target_id}\t本旨"

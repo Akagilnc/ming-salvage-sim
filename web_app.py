@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """FastAPI web entry for Ming Salvage Sim.
 
-薄壳：路由调 ming_sim.session.GameSession（与 CLI 共用同一流转层）。
+薄壳：路由调 ming_sim.session.GameSession（现役 Web 会话流转层）。
 拟旨候选：召对转译交办 → pending_actions → 收夜成案 → 过月颁布关。
 """
 
@@ -37,11 +37,12 @@ except Exception as exc:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 
 
 from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
+from ming_sim.db import _load_durable_json_list
 from ming_sim.applier import atomic
 from ming_sim.paths import (
     UnsafeSaveNameError,
@@ -759,8 +760,12 @@ class WebGame:
             for name, msgs in self.db.load_all_chat_history().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
             _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
+            from ming_sim.db import _load_durable_json_list
             _fav_raw = self.db.kv_get("favorites")
-            self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
+            self.favorites: set = (
+                set(_load_durable_json_list(_fav_raw, surface="kv.favorites"))
+                if _fav_raw else set(_DEFAULT_FAVORITES)
+            )
             if not _fav_raw:
                 self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
             # #505／#1902 T4：启动恢复生命周期归会话共核；入口只调共核再启宿主后台补跑。
@@ -916,7 +921,11 @@ class WebGame:
                 chat_history.setdefault(name, []).extend(msgs)
             default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
             fav_raw = candidate.db.kv_get("favorites")
-            favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
+            from ming_sim.db import _load_durable_json_list
+            favorites = (
+                set(_load_durable_json_list(fav_raw, surface="kv.favorites"))
+                if fav_raw else set(default_favorites)
+            )
             if not fav_raw:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
             return chat_history, favorites
@@ -1183,11 +1192,6 @@ class WebGame:
         """释放领票（成功/失败/空放行同形）。"""
         self._runtime_write_queue().complete(ticket)
 
-    @property
-    def _pending_writes_count(self) -> int:
-        """兼容只读：队列在途票据数（旧 counter 名，事实来源=队列）。"""
-        return int(self._runtime_write_queue().inflight_count())
-
     def refresh_turn(self) -> None:
         self.session.begin_turn()
         # #1343 孤儿快照清一处：受理样板成功支（_settlement_period_entry 持 write_cm）。
@@ -1434,7 +1438,9 @@ class WebGame:
                 "phase": row["phase"],
                 "stage_text": row["stage_text"],
                 "severity": int(row["severity"]),
-                "tags": list(json.loads(str(row["tags"] or "[]"))),
+                "tags": list(_load_durable_json_list(
+                    row["tags"], surface="issues.tags",
+                )),
                 "inertia": int(row["inertia"] or 0),
                 "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
                 "fail_condition": _humanize_condition(row["fail_condition"] or ""),
@@ -1944,6 +1950,7 @@ class WebGame:
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
+
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#1902 L1：中断 + 尾随失败取数在会话共核；入口只转发。
 
@@ -2276,6 +2283,7 @@ class WebGame:
 
         待补判定走会话共核 ``list_startup_translation_catch_up``；有待补才领票 spawn。
         #1353：空 catch-up 不占票；预检短持 runtime gate（共享 conn 禁裸读）。
+
         """
         with self._runtime_write_gate():
             pending = self.session.list_startup_translation_catch_up()
@@ -3036,7 +3044,12 @@ def _settlement_period_entry(
             if entered and not settled_ok:
                 # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
                 # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
-                _exit_settlement_display_on_failure(game, blocking=created_display)
+                # advance 走 _serialized_web_write（非阻塞 409 契约）：失败清快照也不得
+                # 阻塞等闸——否则「他方持闸 → 本路 409 → exit blocking 等同一闸」自锁死。
+                exit_blocking = bool(
+                    created_display and write_cm is not _serialized_web_write
+                )
+                _exit_settlement_display_on_failure(game, blocking=exit_blocking)
         finally:
             if entered:
                 _end_settlement_entry(game)
@@ -4696,7 +4709,6 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     return {"orders": orders}
 
 
-
 @app.get("/api/history/turns")
 def api_history_turns() -> Dict[str, Any]:
     """场级归档列表；同步 handler 由 FastAPI 在线程池中执行 SQLite 投影。"""
@@ -4775,8 +4787,6 @@ _STATUS_LABEL_WEB = {
     "active": "在事", "offstage": "尚未登场", "dead": "已殁", "dismissed": "已罢黜",
     "imprisoned": "下狱", "exiled": "流放", "retired": "致仕",
 }
-
-
 
 
 @app.get("/api/audience/scroll")
@@ -4943,6 +4953,7 @@ async def api_audience_chat_stream(request: ChatRequest) -> StreamingResponse:
 # 旨意只从召对来（#1772）；草稿可见、已发追溯与删旧草稿（DELETE）保留，旧草稿去向
 # 由 #1826 的草稿与已发记录承接。共享抽取核未删：成案准入补交
 # （session._resubmit_draft_admission_failures）仍是它的现役消费者。
+
 
 @app.delete("/api/directives/{directive_id}")
 async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
@@ -5510,164 +5521,5 @@ async def api_get_portrait(name: str):
     return FileResponse(path)
 
 
-# ── 调试台：直接读写核心表 ─────────────────────────────────────
-@app.get("/api/admin/tables")
-async def api_admin_tables() -> Dict[str, Any]:
-    return {"tables": list(get_game().db.ADMIN_TABLES.keys())}
-
-
-@app.get("/api/admin/table/{table}")
-async def api_admin_table(table: str) -> Dict[str, Any]:
-    db = get_game().db
-    try:
-        return {
-            "table": table,
-            "pk": db.admin_check_table(table),
-            "columns": db.admin_columns(table),
-            "rows": db.admin_rows(table),
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.post("/api/admin/table/{table}/upsert")
-async def api_admin_upsert(table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            row = game.db.admin_upsert(table, payload)
-            # 内存 state 同步留在门内：否则提前释放锁后留下 DB 已改、内存未改的撕裂窗口被
-            # 结算/召对（读 game.state）观察到（cmr Gate2 Finding2）。
-            st = game.state
-            if table == "metrics" and row.get("key") in st.metrics:
-                st.metrics[row["key"]] = int(row["value"])
-            elif table == "game_state":
-                st.year, st.period, st.turn = int(row["year"]), int(row["period"]), int(row["turn"])
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"row": row}
-
-
-@app.post("/api/admin/table/{table}/delete")
-async def api_admin_delete(table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    game = get_game()
-    pk_value = payload.get("pk_value")
-    if pk_value in (None, ""):
-        raise HTTPException(status_code=400, detail="缺 pk_value")
-    try:
-        with _serialized_web_write(game):
-            return {"deleted": game.db.admin_delete(table, pk_value)}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.get("/admin")
-async def admin_page():
-    return HTMLResponse(_ADMIN_HTML)
-
-
 if os.path.isdir(WEB_DIST):
     app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
-
-
-_ADMIN_HTML = """<!doctype html>
-<html lang="zh"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>调试台 · 核心表增删改查</title>
-<style>
-  :root{--bg:#1b1712;--panel:#26211a;--line:#3a3228;--txt:#e8dcc6;--accent:#c8a35a;--danger:#b5503f;}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,"PingFang SC",monospace}
-  header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  header h1{font-size:16px;margin:0 12px 0 0;color:var(--accent)}
-  .tab{padding:5px 12px;border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:4px;cursor:pointer}
-  .tab.active{background:var(--accent);color:#1b1712;font-weight:600}
-  #bar{padding:8px 16px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
-  button.act{padding:5px 12px;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:4px;cursor:pointer}
-  button.act:hover{background:var(--accent);color:#1b1712}
-  #wrap{overflow:auto;height:calc(100vh - 110px)}
-  table{border-collapse:collapse;width:100%;font-size:13px}
-  th,td{border:1px solid var(--line);padding:4px 6px;text-align:left;white-space:nowrap}
-  th{position:sticky;top:0;background:var(--panel);color:var(--accent);z-index:1}
-  th.pk{color:#e8c87a}
-  td input{width:100%;min-width:90px;background:#15110c;border:1px solid var(--line);color:var(--txt);padding:3px 5px;border-radius:3px;font:13px monospace}
-  td input:focus{border-color:var(--accent);outline:none}
-  tr.dirty td{background:#2e2718}
-  td.ops{white-space:nowrap}
-  .sm{padding:3px 8px;font-size:12px;border-radius:3px;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--txt)}
-  .sm.save{border-color:var(--accent);color:var(--accent)}
-  .sm.del{border-color:var(--danger);color:var(--danger)}
-  #msg{margin-left:auto;color:#9c8c6a;font-size:12px}
-  .hint{color:#6f6552;font-size:12px}
-</style></head><body>
-<header><h1>调试台 · 直改核心表</h1><span id="tabs"></span></header>
-<div id="bar">
-  <button class="act" id="addBtn">+ 新增行</button>
-  <button class="act" id="reload">↻ 重载</button>
-  <span class="hint">改格变黄→点行尾「存」。新增行须填主键才能存。删除不可撤销。</span>
-  <span id="msg"></span>
-</div>
-<div id="wrap"><table id="grid"></table></div>
-<script>
-let cur=null, cols=[], pk=null, rows=[];
-const $=s=>document.querySelector(s), msg=t=>{$("#msg").textContent=t;};
-async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error((await r.json()).detail||r.status);return r.json();}
-async function jpost(u,b){const r=await fetch(u,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});if(!r.ok)throw new Error((await r.json()).detail||r.status);return r.json();}
-async function init(){
-  const tabs=(await jget("/api/admin/tables")).tables;
-  $("#tabs").innerHTML=tabs.map(t=>`<span class="tab" data-t="${t}">${t}</span>`).join("");
-  document.querySelectorAll(".tab").forEach(e=>e.onclick=()=>load(e.dataset.t));
-  load(tabs[0]);
-}
-async function load(t){
-  cur=t; msg("加载…");
-  document.querySelectorAll(".tab").forEach(e=>e.classList.toggle("active",e.dataset.t===t));
-  const d=await jget("/api/admin/table/"+t);
-  cols=d.columns; pk=d.pk; rows=d.rows; render(); msg(rows.length+" 行");
-}
-function render(){
-  const g=$("#grid");
-  const head="<tr>"+cols.map(c=>`<th class="${c.pk?'pk':''}">${c.name}${c.pk?' 🔑':''}<br><span class="hint">${c.type}</span></th>`).join("")+"<th>操作</th></tr>";
-  g.innerHTML=head+rows.map((r,i)=>rowHtml(r,i)).join("");
-  g.querySelectorAll("input").forEach(inp=>inp.oninput=()=>inp.closest("tr").classList.add("dirty"));
-  g.querySelectorAll(".save").forEach(b=>b.onclick=()=>saveRow(+b.dataset.i));
-  g.querySelectorAll(".del").forEach(b=>b.onclick=()=>delRow(+b.dataset.i));
-}
-function rowHtml(r,i){
-  const tds=cols.map(c=>{
-    const v=r[c.name]==null?"":r[c.name];
-    return `<td><input data-c="${c.name}" value="${String(v).replace(/"/g,'&quot;')}"></td>`;
-  }).join("");
-  return `<tr data-i="${i}">${tds}<td class="ops"><button class="sm save" data-i="${i}">存</button> <button class="sm del" data-i="${i}">删</button></td></tr>`;
-}
-function readRow(i){
-  const tr=document.querySelector(`tr[data-i="${i}"]`), o={};
-  tr.querySelectorAll("input").forEach(inp=>{
-    const c=cols.find(x=>x.name===inp.dataset.c); let v=inp.value;
-    if(v===""){o[inp.dataset.c]=null;return;}
-    if(c && /INT/i.test(c.type)) v=parseInt(v,10);
-    o[inp.dataset.c]=v;
-  });
-  return o;
-}
-async function saveRow(i){
-  try{
-    const body=readRow(i);
-    if(body[pk]==null||body[pk]===""){msg("⚠ 主键 "+pk+" 不能空");return;}
-    const d=await jpost(`/api/admin/table/${cur}/upsert`,body);
-    rows[i]=d.row; render(); msg("✓ 已存 "+body[pk]);
-  }catch(e){msg("✗ "+e.message);}
-}
-async function delRow(i){
-  const key=rows[i][pk];
-  if(key!=null&&key!==""&&!confirm(`删除 ${cur} 行：${pk}=${key} ？不可撤销`))return;
-  try{
-    if(key==null||key===""){rows.splice(i,1);render();msg("已移除未存行");return;}
-    const d=await jpost(`/api/admin/table/${cur}/delete`,{pk_value:key});
-    rows.splice(i,1); render(); msg("✓ 删 "+d.deleted+" 行");
-  }catch(e){msg("✗ "+e.message);}
-}
-$("#addBtn").onclick=()=>{const o={};cols.forEach(c=>o[c.name]=null);rows.unshift(o);render();msg("新增空行，填主键后点存");};
-$("#reload").onclick=()=>load(cur);
-init().catch(e=>msg("初始化失败:"+e.message));
-</script></body></html>"""

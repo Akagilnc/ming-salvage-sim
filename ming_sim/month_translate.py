@@ -18,7 +18,6 @@ from ming_sim.audience_translate import (
 from ming_sim.declaration_dispatch import (
     DeclarationDispatchResult,
     dispatch_declaration,
-    stage_declaration,
 )
 
 
@@ -109,6 +108,7 @@ MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
 
 def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
     """一段一份 C0 声明；不套召对轮次语义，也不按 section 拆多次调用。"""
+    # 目录原文零删改；判空只用局部归一，不把 strip 写回供料。
     grounding = str(request.target_grounding or "")
     grounding_block = f"{grounding}\n" if grounding.strip() else ""
     candidates = request.candidates
@@ -235,33 +235,6 @@ def _translate_month_segment_front(
         candidates=candidates,
     )
     return declaration, refs
-
-
-def stage_month_segment(
-    db: Any,
-    *,
-    decree_ref: str,
-    segment: str,
-    turn: int,
-    state: Any = None,
-    decree_payload: Mapping[str, object],
-    llm_config: Any = None,
-    translate_fn: Optional[MonthTranslateFn] = None,
-) -> int:
-    """预推段转译一次，只暂存声明；持久化、作废、按旨序结算沿 C0 原入口。"""
-    from ming_sim.materials import continuing_dossier_facts
-
-    # 与 dispatch_month_segment 同一读口：在途案卷清单须进转译输入，
-    # 否则本段的 dossier_executions 无从落执行格。
-    declaration, refs = _translate_month_segment_front(
-        db, segment=segment, turn=turn, state=state, decree_payload=decree_payload,
-        llm_config=llm_config, translate_fn=translate_fn,
-        continuing_dossiers=continuing_dossier_facts(db, turn),
-    )
-    return stage_declaration(
-        db, decree_ref=decree_ref, declaration=declaration, turn=turn,
-        visible_refs=refs,
-    )
 
 
 def dispatch_month_segment(

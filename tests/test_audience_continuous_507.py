@@ -59,6 +59,7 @@ def test_scene_recap_quotes_public_dialogue_within_presence_interval(game):
     # 正向：侍立区间内殿上公开对话可被引用（区间取数）
     assert "徐光启奏：宜用洪承畴督师陕西。" in recap
 
+
     # 负向（AC3）：从未入殿者的组装输入不含殿内对话，取空
     assert an.audience_scene_recap(db, "洪承畴", night_id=nid) == ""
 
@@ -71,15 +72,13 @@ def test_scene_recap_excludes_dialogue_before_person_entered(game):
     nid = int(night["id"])
 
     an.summon_enter(db, nid, "毕自严")
-    _public(db, nid, "毕自严", "毕自严先奏钱粮九边。")   # 徐光启入殿前
+    before = _public(db, nid, "毕自严", "毕自严先奏钱粮九边。")   # 徐光启入殿前
     an.summon_enter(db, nid, "徐光启")                # 徐光启侍立区间起点
-    _public(db, nid, "徐光启", "徐光启方入奏水利。")
+    inside = _public(db, nid, "徐光启", "徐光启方入奏水利。")
 
-    recap = an.audience_scene_recap(db, "徐光启", night_id=nid)
-    assert "徐光启方入奏水利" in recap            # 正向：区间内
-    assert "毕自严先奏钱粮九边" not in recap       # 负向：入殿前不闻
-
-
+    audible_ids = {int(e["id"]) for e in an.audible_entries_for(db, nid, "徐光启")}
+    assert int(inside) in audible_ids
+    assert int(before) not in audible_ids
 
 
 # ── AC1：乾清宫一夜连场骨架可跑（宣→留侍→宣→插话站台→同殿）──────────────
@@ -100,10 +99,10 @@ def test_qianqing_continuous_night_skeleton_runs(game):
     present = an.present_names_at(db, nid)
     assert {"毕自严", "徐光启", STANDING} <= present
 
-    # 毕自严插话站台：其补话组装可引用侍立时段所闻徐光启奏对
-    _public(db, nid, "徐光启", "徐光启奏：陕西糜烂，非洪承畴不可。")
-    recap = an.audience_scene_recap(db, "毕自严", night_id=nid)
-    assert "非洪承畴不可" in recap
+    # 毕自严插话站台：侍立时段所闻徐光启公开账进入可闻集合（不锁奏对正文）。
+    heard = _public(db, nid, "徐光启", "徐光启奏：陕西糜烂，非洪承畴不可。")
+    audible_ids = {int(e["id"]) for e in an.audible_entries_for(db, nid, "毕自严")}
+    assert int(heard) in audible_ids
     _public(db, nid, "毕自严", "毕自严出班为洪承畴站台作保。")
 
     # 宣洪承畴 + 王绍徽同殿——前面诸位皆未退，同殿侍立
@@ -118,8 +117,6 @@ def test_qianqing_continuous_night_skeleton_runs(game):
 
 
 # ── AC4：回奏输入按角色见闻分流（同问不同答/臣不知，千人千答非旧询问机制）──
-
-
 
 
 # ── 出殿边界：告退后殿上公开对话不入其组装（区间终点，两条出场路径各一）──────

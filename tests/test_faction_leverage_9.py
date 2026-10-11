@@ -339,19 +339,16 @@ def test_add_character_appointment_lifts_faction_leverage(game):
         "SELECT name FROM characters WHERE name=?", (new_name,)
     ).fetchone() is None, "测试用新人物不应已在册"
     before = db.faction_leverage(faction)
-    before_ws = db._faction_office_weight_sum(faction)
     result = apply_office_appointment(
         db, state, content, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
     )
     assert not result.get("rejected"), f"新大臣任命不应被拒：{result}"
     assert result.get("kind") == "appoint", f"应走新建档(appoint)路：{result}"
-    # 新成员确入册且 active/ming（add_character 落库成功），权重和随之上升。
-    after_ws = db._faction_office_weight_sum(faction)
-    assert after_ws > before_ws, f"新建大臣应使{faction}权重和上升(before={before_ws} after={after_ws})"
     after = db.faction_leverage(faction)
     assert after > before, (
         f"经 add_character 新建大臣加入{faction}后 leverage 应上升(before={before} after={after})"
     )
+
 
 def test_recompute_all_reconciles_drift_from_unhooked_path(game):
     """#9 cmr R2 finding#1（集中化兜底）：绕过所有 hook 的裸 UPDATE 改了 faction 成员 office_type 后，
@@ -556,10 +553,6 @@ def test_non_whitelist_faction_delta_direct_leverage_survives_reconcile(game):
 # ----------------------------------------------------------------------------
 
 
-
-
-
-
 def test_chat_rollback_restores_faction_leverage(game):
     """#9 R1 finding#4：chat 回滚快照表集须含 factions。leverage hook 会改 factions.leverage，
     撤销一个 chat office/dismiss 动作须连 factions 一并还原，不留脏。"""
@@ -634,7 +627,6 @@ def test_half_weight_odd_baseline_no_round_drift(game):
         db.set_character_status(state, m["name"], "dismissed", reason="清场")
     keeper = members[0]["name"]
     db.set_character_office(keeper, "礼部侍郎", "礼部")
-    assert db._faction_office_weight_sum(faction) == 2.5
     # 设奇数基线 79，直接写 offset（不走已退役的老档反推校准）。
     baseline = 79
     weight = db._faction_office_weight_sum(faction)

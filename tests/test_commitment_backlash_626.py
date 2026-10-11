@@ -50,16 +50,10 @@ from ming_sim.situation_drift import (
 )
 from ming_sim.models import TurnPhase, loads_effect_dict
 from ming_sim.staged_commitment import TODO_STATUS_PENDING
+from tests.readback_helpers import ming_character_name as _holder
 
 
 # ── fixtures ──────────────────────────────────────────────────────
-
-
-def _holder(db) -> str:
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
 
 
 def _executing_policy_dossier(db, state, *, token: str = "bl-626", holder: str = ""):

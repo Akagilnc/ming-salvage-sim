@@ -47,9 +47,8 @@ def _record_exit(db, night_id: int, name: str, **kwargs):
         presence_effect=PRESENCE_EXIT,
         check_dead=False,
         **kwargs,
+
     )
-
-
 
 
 # ── L2：告退后再宣入须重新落入殿账（present_names_at 单一在场真源）──────────

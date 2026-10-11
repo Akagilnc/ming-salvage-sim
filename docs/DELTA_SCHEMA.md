@@ -291,7 +291,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 "stages": [
   {
     "stage_idx": 0,
-    "due_turn": 37,                 // 绝对回合；期限只由模型按本字段交代，引擎不从散文换算
+    "due_turn": 37,                 // 绝对回合；须由显式结构化 stages 给出；期限只由模型按本字段交代，引擎不从散文换算
     "criterion_text": "火器见眉目",
     "origin_context": "三年火器见眉目"  // 原诺语境，持久可查（Story 5 回声底）
   }
@@ -301,7 +301,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - **段到期扫描独立**（与 form③ 共享「active 承诺 + 到期」谓词语义，不共用其 SQL 结果集）；**待裁载体改道** `next_audience_todos`——段派生的展示 `end_turn` **不**进 form③ `due_commitments` 待核议通道；**独立** `end_turn`（≠ max 段 due）仍可走 form③。结算**不**置 `TurnPhase.AWAITING_DECISION` / `<<DECISION>>` 停轮（0074/0076）
 - 去重键：`(commitment_ref, stage_idx, entry_kind)`，不得只按 issue_id 抹段
 - 段间自动续，无需玩家 ACK；消费/复命场面归 #621，本片只 own 写端
-- 捕获：**全仓无散文捕获**——`stages` 只承接显式结构化（JSON 数组串或已结构化列表），非 JSON 字符串按坏形响亮拒绝（ADR 0142：引擎不得用正则从 LLM 自由散文反推结构化事实；owner 2026-09-30「肯定不能让代码去扣」）。召对交办、邸报／`new_issues`（`issues.py`、`db.py` 世界段落账）三条接缝同走库层 `stages_to_json` 严格串行面；期限只由模型按结构化字段交代
+- 捕获（#1897 重定／#1890 同向）：只认已有显式结构化 `stages`（JSON 数组串或已结构化列表）；代码不从散文／「三年X五年Y」正文换算期限；缺省、空段不回落正文猜段；非 JSON 字符串按坏形响亮拒绝（ADR 0142；owner 2026-09-30「肯定不能让代码去扣」；旧 #620 P4／捕获 AC 已撤销）。召对交办、邸报／`new_issues`（`issues.py`、`db.py` 世界段落账）三条接缝同走库层 `stages_to_json` 严格串行面；期限只由模型按结构化字段交代
 
 **`next_audience_todos` 最小字段（P2）**：
 | 字段 | 约束 |
@@ -352,7 +352,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 **授予**：必填 `holder_id`（在册人物）、`privilege`（`尚方剑密授`／`便宜行事`／`专差督办`／`新机构专办`）、非空 `scope`（须写典范键 `target_kind:target_id`；裸域／缺冒号 → `invalid_authority_scope`）、`dossier_id`；可选 `effective_turn`（缺省＝当次 turn）、`expires_turn`。应用插入 `authority_records` 行（稳定 id＝行主键）；重复判断以**当次结算的当前 `state.turn`** 查询同 `(holder_id, privilege, scope)` 在持行，不以请求的未来 `effective_turn` 查询：不同案卷命中 → `duplicate_active_authority`。同源 `dossier_id` 重放则不受当前适用性影响，始终幂等回传原 `authority_id`。不得从授权案卷 payload 平行写 `authority_records`。
 
-**收回**：必填 `authority_id`（＝`authority_records.id`）与 `dossier_id`。生产槽不接受 holder/privilege/scope 模糊收回。未知 id → `unknown_authority_id`；首次 `revoked 0→1` 成功并写观感边；已收回 → 幂等 `applied`（`already_revoked`），不改 `revoked_turn`、不写第二笔边。收回＝正当治术：零 0056/皇威代价；观感经既有 `relation_edge_events`（`source=holder_id`, `target=皇帝`, `event_kind=结怨`, `context=收权·罢差·{privilege}·{scope}`, `origin=authority_revoke:{id}`）。
+**收回**：必填 `authority_id`（＝`authority_records.id`）与 `dossier_id`。生产槽不接受 holder/privilege/scope 模糊收回。未知 id → `unknown_authority_id`；首次 `revoked 0→1` 成功只记收回事实（`revoked`／`revoked_turn`）；已收回 → 幂等 `applied`（`already_revoked`），不改 `revoked_turn`。收回＝正当治术：零 0056/皇威代价。人物是否结怨、作何关系反应由既有人物 run 经现有 `relation_edge_events` 声明口承接（#1895 协调 #611 §6 改约）；收权槽不自动写 `holder→皇帝` `结怨` 边。
 
 **唯一适用性投影**（颁布判官与 #613 共用）：承办对象＝案卷 `executor_id`（character）∪ `participant_roster` 中 `主办`/`协办`（不含 `知情`，不读 payload assignee）；事域**仅**典范键 `target_kind:target_id`（无裸 `target_id` 平行匹配）；再过滤在持谓词。投影结果为 `held_authorities`；`criteria_snapshot.authorization_ids` **只**含投影 id 的十进制字符串——禁止从 payload `authorization_id(s)` 拼第二真源。自然语言授予/收权捕获分别由 #528/#523 回接，本契约不作关键词推断。
 

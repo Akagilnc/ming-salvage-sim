@@ -167,6 +167,7 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
         # 待重试面板取数：带问话原文。
         retries = db2.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)
         assert [r["question"] for r in retries] == ["杨卿何以教朕？"]
+        assert int(retries[0]["chat_turn_id"]) == ct
     finally:
         db2.close()
 
@@ -225,7 +226,7 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
     minister = _active_minister(db, content)
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     ledger_marker = len(an.list_ledger(db, night["id"]))
-    _land_full_turn(db, state, minister, "四轮问对之一", "臣愚见如此。")
+    ct = _land_full_turn(db, state, minister, "四轮问对之一", "臣愚见如此。")
     # 纯奏对：该轮不产任何叙事抽取账（source_chat_turn_id>0 的账为 0 条）——锚点非「最后一笔账」。
     _ = ledger_marker
     extracted = db.conn.execute(
@@ -301,7 +302,6 @@ class _RetrySession:
         return None
 
 
-
     def _hall_turn_ids_for_night(self, night_id=None):
         from ming_sim.session import GameSession
         return GameSession._hall_turn_ids_for_night(self, night_id)
@@ -362,16 +362,16 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
 
     rt = _retry_runtime(db, state, minister)
     payload = rt.retry_interrupted_reply(minister, ct)
-
     assert payload["answer"] == "臣重奏：剿为先。"
-    # 记录无重复句：问话仍只一条，回话新落一条。
+
+    # 记录无重复句：问话/回话正文原样运输。
     users = db.conn.execute(
         "SELECT content FROM chat_messages WHERE role='user'"
     ).fetchall()
-    assert [r["content"] for r in users] == ["剿抚孰先？", "续问军情？"]
     replies = db.conn.execute(
         "SELECT content FROM chat_messages WHERE role='minister'"
     ).fetchall()
+    assert [r["content"] for r in users] == ["剿抚孰先？", "续问军情？"]
     assert [r["content"] for r in replies] == ["臣重奏：剿为先。"]
     # 轮完成：generating/interrupted → active，回话已链接。
     row = db.conn.execute(
@@ -381,8 +381,6 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert row["minister_message_id"]
     # 重试后该轮不再挂在待重试面板。
     assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == [later]
-
-
 
 
 def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env):
@@ -402,14 +400,12 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env
             rt.retry_interrupted_reply(minister, ct)
     rt.session.close_night_after_chat_if_needed = close_once
     rt.pending_directive_count = lambda: 0
-    payload = rt.retry_interrupted_reply(minister, ct)
-    assert payload["answer"] == "臣遵旨。"
+    rt.retry_interrupted_reply(minister, ct)
     assert calls == ["court_break"]
     assert rt.reply_retries(minister) == []
     assert [r["content"] for r in db.conn.execute(
         "SELECT content FROM chat_messages WHERE role='minister'"
     )] == ["臣遵旨。"]
-
 
 
 def test_retry_without_interrupted_turn_is_rejected(restore_env):
@@ -520,7 +516,7 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
         "SELECT COUNT(*) c FROM chat_turn_rollback_items WHERE chat_turn_id=?", (ct,)
     ).fetchone()["c"] == 0
 
-    # 再重试成功：问话仍只一条、回话新落一条（记录无重复句）。
+    # 再重试成功：问话仍只一条、回话新落一条（正文原样）。
     rt.session = _RetrySession(db, state, minister)
     payload = rt.retry_interrupted_reply(minister)
     assert payload["answer"] == "臣重奏：剿为先。"
@@ -638,8 +634,6 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
-
-
 
 
 def test_reconcile_marks_questionless_orphan_failed(restore_env):

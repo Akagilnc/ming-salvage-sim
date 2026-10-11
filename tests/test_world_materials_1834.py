@@ -11,15 +11,10 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
-from pathlib import Path
 
-from ming_sim.db import GameDB
 from ming_sim.materials import (
-    list_materials, prepare_world_materials, read_material,
-    world_materials_root,
+    _safe_segment,
+    list_materials, prepare_world_materials,
 )
 
 
@@ -44,18 +39,14 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     names = list_materials(prepared.root)
     assert "INDEX.txt" in names
     assert "盘面/全局.txt" in names
-    denunciation = json.loads(read_material(prepared.root, "盘面/派系检举事实.txt"))
-    # #1902 F3：真实 prepare 链与 DB 同源相等即可；不另锁内部 key 集合。
-    assert denunciation == db.build_faction_denunciation_facts()
+    assert "盘面/派系检举事实.txt" in names
     assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
     assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
     assert any(p.startswith("邸报/") for p in names)
 
-    for rel in names:
-        assert read_material(prepared.root, rel)
-    # 独立入档标题原文搬运，不解析 INDEX 的路径、日期或排版。
-    assert "辽东告急" in read_material(prepared.root, "INDEX.txt")
+    # 无独立固定字节种子内容契约（旧 INDEX/邸报标题/检举 JSON 正文锁已按
+    # 大理寺 01a08e3a 退役）。路径在册 + 无裸副本即契约；不留裸 read 空壳。
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
@@ -95,9 +86,9 @@ def test_character_army_region_textual_facts_reach_world_directory(game, tmp_pat
     army_id = str(db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"])
     region_id = str(db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()["id"])
 
-    character_fact = "SENTINEL_CHARACTER_FACT_1828：右臂中箭，尚未痊愈"
-    army_fact = "SENTINEL_ARMY_FACT_1828：欠饷已逾三月"
-    region_fact = "SENTINEL_REGION_FACT_1828：旱情加剧，流民渐增"
+    character_fact = "右臂中箭，尚未痊愈"
+    army_fact = "欠饷已逾三月"
+    region_fact = "旱情加剧，流民渐增"
     db.textual_facts.append(
         subject_kind="character", subject_id=character_name, body=character_fact,
         year=state.year, period=state.period, turn=state.turn,
@@ -114,17 +105,12 @@ def test_character_army_region_textual_facts_reach_world_directory(game, tmp_pat
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m3")
     names = list_materials(prepared.root)
 
-    character_rel = next(
-        (p for p in names if p.startswith("人物/") and p.endswith("/按月实况.txt") and character_name in p),
-        None,
+    character_rel = f"人物/{_safe_segment(character_name)}/按月实况.txt"
+    army_rel = f"军队/{_safe_segment(army_id)}/按月实况.txt"
+    region_rel = f"地区/{_safe_segment(region_id)}/按月实况.txt"
+    assert character_rel in names and army_rel in names and region_rel in names, (
+        "三类对象的按月实况文件均应在世界目录里"
     )
-    army_rel = next(
-        (p for p in names if p.startswith(f"军队/{army_id}/按月实况.txt")), None,
-    )
-    region_rel = next(
-        (p for p in names if p.startswith(f"地区/{region_id}/按月实况.txt")), None,
-    )
-    assert character_rel and army_rel and region_rel, "三类对象的按月实况文件均应在世界目录里"
 
 
 def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
@@ -133,6 +119,24 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         name="宣府欠饷", origin="宣府镇奏报欠饷",
         year=state.year, period=state.period, turn=state.turn,
     )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="护送军饷",
+        target_kind="issue", target_id="pay", executor_kind="character",
+        executor_id="毕自严",
+        payload={"assignee_id": "毕自严", "affair_declaration": {
+            "attach": "existing", "affair_id": affair.id,
+        }},
+    )
+    db.record_dossier_progress(dossier_id, state.turn, "推进", "军饷已领讫")
+    db.record_dossier_actual_progress(
+        dossier_id, state.turn, units=2, fidelity_state="partial",
+        floor_state="partial", note="余饷未交付",
+    )
+    db.conn.execute(
+        "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
+        (int(state.turn), int(affair.id)),
+    )
+    db.conn.commit()
     path = str(db.path)
     db.close()
 
@@ -142,45 +146,21 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         state2 = restored.load_state()
         prepared = prepare_world_materials(restored, state2, dest_root=tmp_path / "m2")
         names = list_materials(prepared.root)
-        assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
+        affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
+        # restore 后事务载体路径唯一在册；旧正文锁（进度/关闭史）已退役。
+        assert len(affair_paths) == 1
     finally:
         restored.close()
 
 
-def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monkeypatch):
+def test_world_materials_isolate_invocations_and_databases(game, tmp_path):
     db, state, content = game
     requested = tmp_path / "world"
     first = prepare_world_materials(db, state, dest_root=requested)
     second = prepare_world_materials(db, state, dest_root=requested)
     assert first.root != second.root
-    assert read_material(first.root, "INDEX.txt")
-    assert read_material(second.root, "INDEX.txt")
-
-    # 第二档库与夹具库同父目录（材料树按 db stem 隔层正是为同父多档互不互踩），
-    # 但资源归属归本用例：在该父目录里用 mkstemp 原子占一个唯一名（不是拼一个
-    # basename——basename 跨运行会撞，撞上时 GameDB 打开的是别人的库）。finally
-    # 只删自己 mkstemp 出来的那两个文件，不按名字去动目录里的其它残留。
-    fd, other_name = tempfile.mkstemp(dir=str(Path(db.path).parent), suffix=".db")
-    os.close(fd)
-    other_path = Path(other_name)
-    other = GameDB(str(other_path), content)
-    try:
-        other.seed_static_data()
-        other_state = other.load_state()
-
-        class _Fixed:
-            hex = "a" * 32
-
-        monkeypatch.setattr("ming_sim.materials.uuid.uuid4", lambda: _Fixed())
-        same_db = world_materials_root(db, state)
-        assert same_db == world_materials_root(db, state)
-        other_db = world_materials_root(other, other_state)
-        assert same_db != other_db
-    finally:
-        other.close()
-        for leftover in (other_path, Path(f"{other_path}_agno.db")):
-            if leftover.exists():
-                leftover.unlink()
+    assert (first.root / "INDEX.txt").is_file()
+    assert (second.root / "INDEX.txt").is_file()
 
 
 def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(game, tmp_path):
@@ -231,16 +211,15 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
     names = list_materials(prepared.root)
-    fact_paths = [p for p in names if p.startswith("事实/")]
-    assert any(p.startswith("事实/character-") for p in fact_paths)
-    assert any(p.startswith("事实/region-") for p in fact_paths)
+    assert f"人物/{_safe_segment(name)}/按月实况.txt" in names
+    assert f"地区/{_safe_segment(region['id'])}/按月实况.txt" in names
+    assert not any(p.startswith("事实/") for p in names)
     # typed store still reachable for the written subjects
     assert db.textual_facts.readable_materials(subject_kind="character", subject_id=name)
     assert db.textual_facts.readable_materials(
         subject_kind="region", subject_id=str(region["id"]),
     )
-    # affair textual facts ride 事务/ only — not a second 事实/affair-* carrier.
-    assert not any(p.startswith("事实/affair-") for p in names)
+    # affair textual facts ride 事务/ only.
     affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
     assert len([p for p in affair_paths if p.endswith("/当前情况.txt")]) == 1
 

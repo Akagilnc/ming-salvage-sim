@@ -3,6 +3,9 @@
 from ming_sim.appointment_tenure import APPOINTMENT_TENURES
 from ming_sim.qualitative import POWER_BANDS
 
+# SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
+SQLITE_INT_MIN, SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
+
 
 def strict_int(raw: object, *, accept_numeric_strings: bool = True) -> int:
     """Reject bools/floats; optionally retain legacy acceptance of integer strings."""
@@ -14,6 +17,18 @@ def strict_int(raw: object, *, accept_numeric_strings: bool = True) -> int:
         return int(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("value must be an integer") from exc
+
+
+def strict_sqlite_id(raw: object, *, accept_numeric_strings: bool = True) -> int:
+    """Identity that will bind as SQLite INTEGER: strict_int + 64-bit range.
+
+    超界在查询前即 ValueError，避免 'Python int too large to convert to SQLite
+    INTEGER' 逃逸整批（#1897 C1）。全仓身份权威只此一处范围守门。
+    """
+    val = strict_int(raw, accept_numeric_strings=accept_numeric_strings)
+    if not (SQLITE_INT_MIN <= val <= SQLITE_INT_MAX):
+        raise ValueError("id 超出 SQLite 64-bit 范围")
+    return val
 
 
 REJECTION_VERDICT_KEYS = frozenset({

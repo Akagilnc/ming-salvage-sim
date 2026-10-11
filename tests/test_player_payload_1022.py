@@ -34,7 +34,6 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
     monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=_HistoryDB()))
 
     payload = asyncio.run(web_app.api_history_turn(9))
-
     assert payload == {
         "turn": 9,
         "exists": True,
@@ -81,11 +80,13 @@ class _SettlementSession:
 
 
 class _SettlementGame:
-    def __init__(self):
+    def __init__(self, db, state):
         # resolve 路径锁前预检读 awaiting_decision（#1322）；issue 路径不依赖相位。
-        self.state = SimpleNamespace(turn=9, ended=False, turn_phase="awaiting_decision")
+        self.state = state
+        self.state.turn = 9
+        self.state.turn_phase = "awaiting_decision"
         self.session = _SettlementSession(self.state)
-        self.db = SimpleNamespace(list_pending_actions=lambda *_args, **_kwargs: [])
+        self.db = db
         self._write_gate = ClassifiedWriteGate()
 
     def refresh_turn(self):
@@ -121,14 +122,15 @@ async def _serialized_terminal_event(route_name: str) -> tuple[str, dict]:
     [("issue", "decisions"), ("resolve", "done")],
 )
 def test_settlement_sse_routes_serialize_only_player_narrative(
-    monkeypatch, route_name, expected_event,
+    monkeypatch, game, route_name, expected_event,
 ):
-    game = _SettlementGame()
+    game = _SettlementGame(game[0], game[1])
     monkeypatch.setattr(web_app, "get_game", lambda: game)
 
     event, payload = asyncio.run(_serialized_terminal_event(route_name))
 
     assert event == expected_event
+    # _SettlementSession 夹具 decree/decisions/report → SSE 原样序列化
     assert payload["decree"] == "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
     if expected_event == "decisions":
         assert payload["decisions"] == [{"title": "辽饷", "context": "家赀约十万两，是否发帑"}]
@@ -150,8 +152,8 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
     )
 
 
-def test_issue_terminals_keep_unadvanced_month_visible(monkeypatch):
-    game = _SettlementGame()
+def test_issue_terminals_keep_unadvanced_month_visible(monkeypatch, game):
+    game = _SettlementGame(game[0], game[1])
     game.session.resolve_turn = lambda **_kwargs: SimpleNamespace(
         awaiting=False, advanced=False, report="", stage="gazette",
     )

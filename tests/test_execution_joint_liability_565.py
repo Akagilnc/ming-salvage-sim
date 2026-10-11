@@ -6,6 +6,8 @@ import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.strict_types import validate_affected_parties
+from tests.readback_helpers import faction_satisfaction as _sat
+from tests.readback_helpers import decree_cost_event_rows
 
 
 def _roster():
@@ -37,10 +39,7 @@ def _executing_dossier(db, state, *, roster=None):
 
 
 def _cost_events(db, dossier_id, *, identity="连坐"):
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-        (int(dossier_id), identity),
-    ).fetchall()]
+    return decree_cost_event_rows(db, dossier_id, identity)
 
 
 def _sat_events(db, dossier_id):
@@ -48,12 +47,6 @@ def _sat_events(db, dossier_id):
         row for row in _cost_events(db, dossier_id)
         if row["cost_kind"] == "satisfaction"
     ]
-
-
-def _sat(db, faction):
-    return db.conn.execute(
-        "SELECT satisfaction FROM factions WHERE name=?", (faction,),
-    ).fetchone()[0]
 
 
 def _close_via_adapter(db, state, content, dossier_id, outcome, note="办理走样", **extra):
@@ -282,8 +275,6 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     parties = db.list_execution_liability_parties(dossier_id)
     by_id = {p["character_id"]: p["responsibility"] for p in parties}
     assert by_id == {"倪元璐": "primary", "徐光启": "secondary"}
-    assert "黄道周" not in by_id
-    assert "王承恩" not in by_id
 
     before_donglin = _sat(db, "东林")
     before_xixue = _sat(db, "西学")
@@ -305,8 +296,6 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert edges == {"倪元璐", "徐光启"}
-    assert "黄道周" not in edges
-
 
 
 def test_dual_role_lead_and_delegator_primary_wins(game):
@@ -345,7 +334,6 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert edges == {"倪元璐", "徐光启"}
-
 
 
 def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):
@@ -396,8 +384,6 @@ def test_living_offstage_delegator_still_charged(game):
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert "徐光启" in targets
-
-
 
 
 def test_direct_record_dossier_execution_does_not_trigger_joint_liability(game):

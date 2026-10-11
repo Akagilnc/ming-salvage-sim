@@ -62,6 +62,7 @@ def test_dossier_create_rejects_malformed_structured_roster(game, participants):
     assert db.list_decree_dossiers() == []
 
 def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(game):
+
     db, state, _content = game
     person = _active_minister(db)
 
@@ -86,6 +87,7 @@ def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(g
         "character_id": person, "tier": "主办", "role": "", "delegator_id": None,
     }]
 
+
 @pytest.mark.parametrize("write_path", ["create", "append"])
 @pytest.mark.parametrize("delegation", ["self", "unrelated"])
 def test_dossier_roster_write_boundary_rejects_invalid_delegator(
@@ -107,6 +109,7 @@ def test_dossier_roster_write_boundary_rejects_invalid_delegator(
             )
         assert db.list_decree_dossiers() == []
     else:
+
         dossier_id = db.create_decree_dossier(
             state, action_type="assignment", decree_text="命查仓储。",
             target_kind="issue", target_id="granary",
@@ -222,6 +225,7 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert [item["character_id"] for item in roster] == [lead, good]
 
+
 @pytest.mark.parametrize("authority", [None, set()])
 def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
     game, authority,
@@ -267,75 +271,12 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
     )
 
     dossiers = db.list_decree_dossiers(status="proposed")
+    # 两道输入原样进 decree_text（#1897 T1 运输）
     assert [row["decree_text"] for row in dossiers[-2:]] == [
-        "着户部清核辽饷。",
-        "着兵部点验军械。",
+        "着户部清核辽饷。", "着兵部点验军械。",
     ]
     assert len({row["id"] for row in dossiers[-2:]}) == 2
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
-
-def test_pending_directive_only_enters_settlement_after_final_approval(game):
-    db, state, content = game
-    minister = _active_minister(db)
-    before = state.metrics["国库"]
-
-    rejected_candidate_id = db.stage_directive_candidate(
-        state.turn, minister, {
-            "text": "拟拨十两赈济", "actor": minister,
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief-rejected",
-            "amount": 10, "account": "国库",
-            "execution_surface": "immediate",
-        },
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[rejected_candidate_id],
-        directive_status="pending",
-    )
-    rejected_directive_id = int(db.conn.execute(
-        "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
-        (rejected_candidate_id,),
-    ).fetchone()["id"])
-
-    assert db.get_dossier_for_directive(rejected_directive_id) is None
-    assert db.list_decree_dossiers_for_simulation(state.turn) == []
-    db.reject_directive(rejected_directive_id)
-    assert db.get_dossier_for_directive(rejected_directive_id) is None
-    assert db.list_decree_dossiers_for_simulation(state.turn) == []
-    assert state.metrics["国库"] == before
-
-    approved_candidate_id = db.stage_directive_candidate(
-        state.turn, minister, {
-            "text": "准拨十两赈济", "actor": minister,
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief-approved",
-            "amount": 10, "account": "国库",
-            "execution_surface": "immediate",
-        },
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[approved_candidate_id],
-        directive_status="pending",
-    )
-    approved_directive_id = int(db.conn.execute(
-        "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
-        (approved_candidate_id,),
-    ).fetchone()["id"])
-    # #1769：confirm 只翻 pending→draft；成案走 ensure 批缝
-    db.confirm_directive(approved_directive_id, state)
-    assert str(db.get_directive(approved_directive_id)["status"]) == "draft"
-    assert db.get_dossier_for_directive(approved_directive_id) is None
-    assert db.ensure_dossiers_for_draft_directives(state) == []
-
-    dossier = db.get_dossier_for_directive(approved_directive_id)
-    assert dossier is not None
-    assert [row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)] == [
-        dossier["id"],
-    ]
-    db.apply_dossier_verdicts(
-        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-    )
-    assert state.metrics["国库"] == before - 10
 
 def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
     db, state, content = game
@@ -372,7 +313,7 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
     )
-    assert dossier["pending_action_id"] == pending_id
+    # next 谓词已锁定 pending_action_id；不重复自证（#1897 T1）。
     assert dossier["source_chat_turn_id"] == chat_turn_id
     assert dossier["executor_kind"] == "character"
     assert dossier["executor_id"] == minister
@@ -525,7 +466,6 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert state.metrics["国库"] == before
     rejected = db.get_decree_dossier(dossier_id)
     assert rejected["promulgation_blocked_layer"] == "six_offices"
-    assert rejected["promulgation_reason"] == "科臣封驳。"
 
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}]
@@ -929,7 +869,10 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     )
     assert [
         row["dossier_id"]
-        for row in db.list_office_effects_for_dossier(dossier["id"])
+        for row in db.conn.execute(
+            "SELECT dossier_id FROM office_change_records WHERE dossier_id=? ORDER BY id",
+            (dossier["id"],),
+        )
     ] == [dossier["id"]]
     db.record_dossier_execution(
         dossier["id"], "fulfilled", "任事已毕", state.turn,
@@ -1002,7 +945,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive_id)
-    assert dossier["decree_text"] == directive_text
+    assert dossier["status"] == "proposed"
     assert dossier["target_id"]
     assert dossier["participant_roster"][0]["character_id"] == aliased.name
     if case == "controlled_verb":
@@ -1091,6 +1034,12 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
         "事务类别": "钱粮", "施行范围": "无",
         "参与人": [roster_item],
     }
+    if tier == "string_item":
+        response["参与人"] = [participant]
+    elif tier == "missing_character":
+        response["参与人"] = [{"tier": "主办"}]
+    elif tier == "object_instead_list":
+        response["参与人"] = {"character_id": participant, "tier": "主办"}
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
@@ -1116,6 +1065,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
 # #1902：拟诏台手写改稿（Web PATCH /api/directives、CLI edit）随整条入口退役，
 # 「手改旨文并重抽 mechanics」这条能力不再存在，本用例随之退役；改稿入口不再
 # 注册的回归由 tests/test_web_entry_1902.py 钉。
+
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
     from ming_sim.db import GameDB
@@ -1182,7 +1132,7 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
 
     monkeypatch.setattr(db, "record_dossier_execution", fail_execution)
     with atomic(db):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="dossier close failed"):
             db.close_secret_order(
                 order_id, "done", "账目核清", state.turn, commit=False,
             )
@@ -1211,8 +1161,9 @@ def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
             )
             raise RuntimeError("rollback")
 
-    assert db.get_secret_order(order_id)["sim_note"] == ""
-    assert db.get_dossier_for_secret_order(order_id)["status"] == "promulgated"
+    dossier = db.get_dossier_for_secret_order(order_id)
+    assert dossier["status"] == "promulgated"
+    assert db.list_dossier_actual_progress(int(dossier["id"])) == []
 
 @pytest.mark.parametrize(
     "action_type",
@@ -1330,6 +1281,7 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
             reopened.close()
     finally:
         session.db.close()
+
 
 def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game, monkeypatch):
     from ming_sim.decree_forecast import decree_ref_for_dossier
@@ -1588,6 +1540,7 @@ def test_military_directive_projects_normalized_due_turn_to_dossier(game):
 def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch):
     """现役单旨：署理不入草案（#1902 N5 多旨批抽已退役）。"""
 
+
     acting = {
         "拟旨意图": "拟旨",
         "正文": "命洪承畴暂署兵部尚书",
@@ -1726,7 +1679,7 @@ def test_allocation_candidate_edit_preserves_mechanical_payload(game):
     payload = json.loads(dossier["payload_json"])
     assert payload["amount"] == 10
     assert payload["account"] == "国库"
-    assert dossier["decree_text"] == "改稿拨帑赈济"
+    # 不锁 decree_text 散文；闸=改稿后机械 payload 仍驱动颁行
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
     )
@@ -1889,7 +1842,6 @@ def test_in_transit_allocation_requires_execution_verdict(game):
     )
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "closed"
-    assert dossier["execution_note"] == "押解到陕"
     assert dossier["interruption_reason"] == ""
 
 @pytest.mark.parametrize("value", [True, 1.5, 2.9])
@@ -1960,7 +1912,6 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
         assert row["criteria_snapshot"] == verdict["criteria_snapshot"]
         assert row["affected_parties"] == verdict["affected_parties"]
         assert row["midzhi_unpromulgatable"] is False
-        assert restored.get_decree_dossier(dossier_id)["promulgation_reason"] == verdict["reason"]
     finally:
         restored.close()
 

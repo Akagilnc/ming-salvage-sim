@@ -67,8 +67,8 @@ from ming_sim.relations import (
     validate_edge_kind,
 )
 from ming_sim.strict_types import (
-    strict_int, validate_affected_parties, validate_rejection_verdict,
-    validate_verdict_affected_parties,
+    strict_int, strict_sqlite_id, validate_affected_parties,
+    validate_rejection_verdict, validate_verdict_affected_parties,
 )
 from ming_sim.token_stats import tlog
 
@@ -189,7 +189,7 @@ def _seed_guilt_storage_value(value: object) -> str:
     if isinstance(value, Mapping):
         if not value:
             return ""
-        crime = str(value.get("crime") or "").strip()
+        crime = str(value.get("crime") or "")
         severity = str(value.get("severity") or "无").strip()
         return safe_json_dumps({"crime": crime, "severity": severity}, ensure_ascii=False)
     return str(value or "")
@@ -449,11 +449,12 @@ def _has_stop_condition(stop_condition: object) -> bool:
 def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
     """#658：typed dossier id 单权威——真正缺省→None；一旦出现只接正整数。
 
-    拒 0/负/bool/float/数字字符串。target 与 backing 共吃，禁第二份 optional-positive。
+    拒 0/负/bool/float/数字字符串/超 SQLite 64-bit。target 与 backing 共吃，
+    禁第二份 optional-positive（#1897 C1）。
     """
     if raw in (None, ""):
         return None
-    value = strict_int(raw, accept_numeric_strings=False)
+    value = strict_sqlite_id(raw, accept_numeric_strings=False)
     if value <= 0:
         raise ValueError(f"{field} 非法 shape：{raw!r}")
     return value
@@ -483,12 +484,33 @@ def parse_backing_dossier_id(raw: object) -> Optional[int]:
     return _optional_positive_dossier_id(raw, field="backing_dossier_id")
 
 def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
-    """解析 + 存在性：有值则案卷必须在册；供 stage 首写与 apply 复用。"""
-    backing = parse_backing_dossier_id(raw)
+    """解析 + 存在性：有值则案卷必须在册；供 stage 首写与 apply 复用。
+
+    形状／不存在 → 结构化领域拒收（#1897 E1）；getter 真读故障原样上抛，
+    不按 ValueError 文案猜类别。
+    """
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
+
+    try:
+        backing = parse_backing_dossier_id(raw)
+    except ValueError as exc:
+        raise DecreeMaterializationValidationError(
+            str(exc),
+            failed_fields=("backing_dossier_id",),
+            category="invalid_shape",
+        ) from exc
     if backing is None:
         return None
-    if db.get_decree_dossier(backing) is None:
-        raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing}")
+    getter = getattr(db, "get_decree_dossier", None)
+    if getter is None:
+        raise RuntimeError("db missing get_decree_dossier")
+    dossier = getter(backing)  # 读故障不包装
+    if dossier is None:
+        raise DecreeMaterializationValidationError(
+            f"backing_dossier_id 所指案卷不存在：{backing}",
+            failed_fields=("backing_dossier_id",),
+            category="hallucinated_id",
+        )
     return backing
 
 def directive_payload_has_ordinary_triad(payload: Mapping[str, object]) -> bool:
@@ -506,8 +528,10 @@ def classify_directive_structured_kind(payload: Mapping[str, object]) -> str:
     has_push = imperial_push_target_dossier_id(payload) is not None
     has_triad = directive_payload_has_ordinary_triad(payload)
     if has_push and has_triad:
-        raise ValueError(
-            "旨意不得同时带普通结构化 triad 与御笔强推 target_dossier_id"
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        raise DecreeMaterializationValidationError(
+            "旨意不得同时带普通结构化 triad 与御笔强推 target_dossier_id",
+            failed_fields=("target_dossier_id", "target_kind"),
         )
     if has_push:
         return "push"
@@ -519,20 +543,47 @@ def directive_payload_admits_structured_write(payload: Mapping[str, object]) -> 
     """旨意可落库：普通 triad，或 #658 御笔强推 typed target（互斥）。"""
     return classify_directive_structured_kind(payload) != "empty"
 
-def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
-    """解析密令期限；显式 0 是合法值，不能被缺省兜底吞掉。"""
+def _coerce_deadline_months(
+    raw: object, *, default: int = 0, durable: bool = False,
+) -> int:
+    """解析密令/催办期限；显式 0 是合法值，不能被缺省兜底吞掉。
+
+    durable=False（声明/准入）：可辨识脏类型走 DecreeMaterializationValidationError
+    领域拒收（#1897 C1 / ADR 0015 per-item），不带走同批合法同行。
+    durable=True（已持久载荷）：类型/解码腐坏裸 ValueError，事务回滚、pending 保待重试
+    （#1897 E1 错误来源分流），不得伪装业务 failed。
+    """
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
+
+    def _reject(message: str) -> None:
+        if durable:
+            raise ValueError(f"持久字段 deadline_months：{message}")
+        raise DecreeMaterializationValidationError(
+            message,
+            failed_fields=("deadline_months",),
+            category="invalid_shape",
+        )
+
     if raw is None:
         return int(default)
     if isinstance(raw, bool):
-        raise TypeError("deadline_months cannot be a boolean")
+        _reject("deadline_months cannot be a boolean")
     if isinstance(raw, str):
-        raise TypeError("deadline_months cannot be a string")
+        _reject("deadline_months cannot be a string")
     if not isinstance(raw, (int, float)):
-        raise TypeError("deadline_months must be a numeric type")
+        _reject("deadline_months must be a numeric type")
     try:
         deadline = int(raw)
     except (ValueError, OverflowError) as exc:
-        raise TypeError("deadline_months must be a finite numeric type") from exc
+        if durable:
+            raise ValueError(
+                "持久字段 deadline_months：deadline_months must be a finite numeric type",
+            ) from exc
+        raise DecreeMaterializationValidationError(
+            "deadline_months must be a finite numeric type",
+            failed_fields=("deadline_months",),
+            category="invalid_shape",
+        ) from exc
     return max(0, min(deadline, 36))
 
 def _new_army_historically_applied(it: dict) -> bool:
@@ -810,68 +861,167 @@ def payload_declares_escort(payload: object) -> bool:
         str(name or "").strip() for name in escortees
     )
 
-_SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
+def _load_durable_json_list(raw: object, *, surface: str) -> list:
+    """Durable JSON array column: corrupt / wrong top-level fail loud (#1897 E1).
 
-def _secret_order_kept_body(text: object) -> str:
-    """空白正文记空串；已有字句原样保留，含内部空行。"""
-    raw = str(text or "")
-    return raw if raw.strip() else ""
-
-def _secret_order_record_body(record: Mapping[str, object]) -> str:
-    """Stored prose must already be a string. A missing or non-string body is not rewritten as empty text."""
-    body = record.get("body")
-    if not isinstance(body, str):
-        raise TypeError("密令正文记录缺少正文")
-    return body
-
-def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
-    """Read structured body records.
-
-    ``json.loads`` failures and a non-dict top level propagate. A column that
-    is not a list, or a record whose body is not a string, raises ``TypeError``.
-    A missing column means no records. Stored entries are not filtered and a
-    missing body is not replaced with an empty string.
+    SQL NULL may default to empty list; empty string / non-str / non-list must not
+    be falsy-washed into a legal empty array.
     """
-    parsed = json.loads(row["text_log_json"])
-    log: Dict[str, List[Dict[str, object]]] = {}
-    for column in _SECRET_ORDER_BODY_COLUMNS:
-        entries = parsed.get(column, [])
-        if not isinstance(entries, list):
-            raise TypeError(f"密令正文记录 {column} 不是列表")
-        for item in entries:
-            if not isinstance(item, dict):
-                raise TypeError("密令正文记录条目不是对象")
-            _secret_order_record_body(item)
-        log[column] = entries
-    return log
+    if isinstance(raw, list):
+        value = raw
+    else:
+        if raw is None:
+            text = "[]"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON") from exc
+    if not isinstance(value, list):
+        raise ValueError(f"{surface} 须为列表")
+    return value
 
-def _secret_order_period_recorded(
-    records: Sequence[Mapping[str, object]], year: int, period: int,
-) -> bool:
-    return any(
-        int(record.get("year") or 0) == int(year)
-        and int(record.get("period") or 0) == int(period)
-        for record in records
+
+def _load_durable_str_list(raw: object, *, surface: str) -> list:
+    """Durable string-array column: list + each member str (#1897 E1)."""
+    return _require_str_list_members(
+        _load_durable_json_list(raw, surface=surface), surface=surface,
     )
 
-def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
-    """Project records by year, month, then write order. Body text is copied whole."""
-    ordered = sorted(
-        enumerate(records),
-        key=lambda pair: (
-            int(pair[1].get("year") or 0),
-            int(pair[1].get("period") or 0),
-            pair[0],
-        ),
-    )
-    parts: List[str] = []
-    for _, record in ordered:
-        marker = str(record.get("marker") or "")
-        parts.append(
-            f"〔{period_label(int(record.get('year') or 0), int(record.get('period') or 0))}〕"
-            f"{marker}{_secret_order_record_body(record)}"
+
+def _load_durable_json_object(raw: object, *, surface: str) -> dict:
+    """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1).
+
+    SQL NULL may default to empty object; empty string / non-str / non-object
+    must not be falsy-washed into a legal empty object.
+    """
+    if isinstance(raw, dict):
+        value = raw
+    else:
+        if raw is None:
+            text = "{}"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{surface} 须为对象")
+    return value
+
+
+def _optional_payload_str_list(
+    payload: Mapping[str, object], key: str, *, surface: str,
+) -> list:
+    """Staged payload optional str-list: absent/None → []; present non-list/non-str loud.
+
+    Do not use ``payload.get(key) or []`` — False/{} wash into legal empty.
+    """
+    if key not in payload or payload.get(key) is None:
+        return []
+    raw = payload.get(key)
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"{surface} 须为列表，得 {type(raw).__name__}"
         )
-    return "\n".join(parts)
+    return _require_str_list_members(raw, surface=surface)
+
+
+def _durable_payload_endorsements(
+    payload: Mapping[str, object], *, surface: str,
+) -> list:
+    """Durable payload endorsements 容器：absent/None → []; present 非列表/非对象响亮.
+
+    成员字段契约不在此复制——统一走 GameDB._normalize_endorsement_fields
+    （#1897 单一权威 / 禁平行验证器）。
+    """
+    if "endorsements" not in payload or payload.get("endorsements") is None:
+        return []
+    raw = payload.get("endorsements")
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"{surface} 须为列表，得 {type(raw).__name__}"
+        )
+    out: list = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"{surface}[{idx}] 须为对象，得 {type(item).__name__}"
+            )
+        out.append(dict(item))
+    return out
+
+
+def _require_durable_prose(raw: object, *, field: str, required: bool = True) -> str:
+    """Durable free-text field: already str, no str() coercion (#1897 E1).
+
+    Matches declaration-side ``_declared_prose`` contract for transport fields.
+    Required empty / non-str on already-staged payload is schema fault, not
+    domain invalid_shape rejection.
+    """
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"持久字段 {field} 须为字符串，得 {type(raw).__name__}"
+        )
+    if required and not raw.strip():
+        raise ValueError(f"持久字段 {field} 不得为空")
+    return raw
+
+
+def _require_str_list_members(values: list, *, surface: str) -> list:
+    """Each durable list member must already be str — no str() wash (#1897 E1)."""
+    out: list = []
+    for index, item in enumerate(values):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"{surface}[{index}] 须为字符串，得 {type(item).__name__}"
+            )
+        out.append(item)
+    return out
+
+
+def _load_exclusion_targets(raw: object, *, surface: str) -> dict:
+    """Durable exclusion targets: object + people/offices string lists (#1897 E1/C2)."""
+    payload = _load_durable_json_object(raw, surface=surface)
+    people_raw = payload.get("people", [])
+    offices_raw = payload.get("offices", [])
+    if not isinstance(people_raw, list):
+        raise ValueError(f"{surface} people 须为列表")
+    if not isinstance(offices_raw, list):
+        raise ValueError(f"{surface} offices 须为列表")
+    return {
+        "people": _require_str_list_members(
+            people_raw, surface=f"{surface} people",
+        ),
+        "offices": _require_str_list_members(
+            offices_raw, surface=f"{surface} offices",
+        ),
+        **{k: v for k, v in payload.items() if k not in {"people", "offices"}},
+    }
+
+
+def _load_secret_order_exclusions(
+    row: Mapping[str, object] | sqlite3.Row, *, surface: str,
+) -> tuple[list, dict]:
+    """Durable exclusion columns: corrupt JSON / nested schema fail loud (#1897 E1)."""
+    keys = row.keys() if hasattr(row, "keys") else row
+    raw_names = row["excluded_names"] if "excluded_names" in keys else "[]"
+    raw_targets = row["excluded_targets"] if "excluded_targets" in keys else "{}"
+    return (
+        _load_durable_str_list(raw_names, surface=f"{surface} excluded_names"),
+        _load_exclusion_targets(raw_targets, surface=f"{surface} excluded_targets"),
+    )
+
 
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
@@ -1510,8 +1660,6 @@ class GameDB:
                 importance INTEGER NOT NULL DEFAULT 4,
                 status TEXT NOT NULL DEFAULT 'active',
                 result TEXT NOT NULL DEFAULT '',
-                sim_note TEXT NOT NULL DEFAULT '',
-                text_log_json TEXT NOT NULL DEFAULT '{}',
                 excluded_names TEXT NOT NULL DEFAULT '[]',
                 dossier_progress_json TEXT NOT NULL DEFAULT '[]',
                 excluded_targets TEXT NOT NULL DEFAULT '{}',
@@ -1677,6 +1825,7 @@ class GameDB:
                 turn INTEGER NOT NULL,
                 progress_band TEXT NOT NULL,
                 memorial_text TEXT NOT NULL,
+                is_terminal INTEGER NOT NULL DEFAULT 0 CHECK(is_terminal IN (0,1)),
                 origin TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
@@ -1785,7 +1934,7 @@ class GameDB:
                 ON decree_cost_events(dossier_id, id);
 
             -- ADR 0071：持有型/持续型特权的 durable 授权档。
-CREATE TABLE IF NOT EXISTS authority_records (
+            CREATE TABLE IF NOT EXISTS authority_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 holder_id TEXT NOT NULL,
                 privilege TEXT NOT NULL CHECK(privilege IN (
@@ -2526,7 +2675,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             return 0
         touched = 0
         for row in self.conn.execute("SELECT id, fiscal FROM regions").fetchall():
-            fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
+            fiscal: dict = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
             old = int(fiscal.get(field, 0) or 0)
             if old <= 0:
                 continue
@@ -2542,28 +2691,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if touched and commit:
             self.conn.commit()
         return touched
-
-    def settle_province_tick(
-        self, region_id: str, actions: Optional[List[Dict[str, Any]]] = None
-    ):
-        """省级月度财政 settle_tick 的 DB 桥（#66 slice2）：读 regions.fiscal['settle'] 的
-        开账 st + 月参 p → 跑 settle_tick → 写回 new_st。返回 FiscalTickResult。
-
-        **港口锁**（fiscal_tick.py §港口锁 / ADR 0008）：settle_tick 对坏输入(ValueError)/
-        守恒破(FiscalConservationError) 一律 raise，异常在下方 UPDATE **之前**抛出 → FAIL
-        tick 绝不持久化（毒态不钉进存档）。本方法只写 conn、不自带 commit——提交交调用方
-        事务边界（slice3 的 applier.atomic 全有或全无）控制；异常上抛由其回滚。
-
-        settle_tick 纯读 st（不就地改），故无需深拷贝；new_st 是全新 dict，覆盖回 settle.st。
-        官民田/隐田（清丈重分类）只写进 settle.st，不同步顶层 registered_land/hidden_land。
-        """
-        row = self.conn.execute(
-            "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
-        ).fetchone()
-        if row is None:
-            raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
-        return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
     def _current_settle_turn(self) -> int:
         """#653 override 期限判定用的当前绝对 turn（game_state 单行真源；无行=0＝永不到期）。"""
@@ -2595,7 +2722,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         for row in rows:
             region_id = str(row["id"])
             try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
+                fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
                 if isinstance(fiscal, dict) and "settle" not in fiscal:
                     continue
                 result = self._settle_province_tick_from_fiscal(
@@ -2729,7 +2856,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         for row in self.conn.execute(
             "SELECT id, tax_per_turn, fiscal FROM regions"
         ).fetchall():
-            fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
+            fiscal: dict = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
             others = (int(fiscal.get("liao_xiang", 0) or 0)
                       + int(fiscal.get("salt_tax", 0) or 0)
                       + int(fiscal.get("commerce_tax", 0) or 0))
@@ -3239,18 +3366,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
         self._calibrate_faction_offsets(is_fresh_factions_seed)
         self.conn.commit()
 
-    def list_office_vacancies(self) -> List[Dict[str, object]]:
-        """Return the static督抚职位 view with current holders from characters."""
-        rows = self.conn.execute(
-            """
-            SELECT office_title, office_type, region_id, jurisdiction,
-                   holder_name, holder_office, holder_status
-            FROM office_vacancies
-            ORDER BY sort_order, office_title
-            """
-        ).fetchall()
-        return [dict(row) for row in rows]
-
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
         """Fresh-save army pay-source spine for #287 S1."""
         if not is_fresh_armies_seed:
@@ -3371,7 +3486,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchall()
         for row in rows:
             try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
+                fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"region {row['id']} fiscal JSON 非法，无法校验军饷容器守恒") from exc
             settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
@@ -3384,8 +3499,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
     def _is_seeded_military_pay_funnel(self, settle: Dict[str, Any]) -> bool:
         meta = settle.get("_meta")
-        if not isinstance(meta, dict):
+        if meta is None:
             return False
+        if not isinstance(meta, dict):
+            raise ValueError("settle._meta 持久坏态（非对象）")
         postures = meta.get("postures")
         return isinstance(postures, list) and "纯军饷漏斗" in postures
 
@@ -3500,7 +3617,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         for row in rows:
             region_id = str(row["id"])
             try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
+                fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"region {region_id} fiscal JSON 非法，无法校验军饷容器守恒") from exc
             if not isinstance(fiscal, dict):
@@ -3540,13 +3657,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ).fetchone()
             if region is None or str(region["controlled_by"] or "") != "ming":
                 return False
-            try:
-                fiscal = json.loads(str(region["fiscal"] or "{}"))
-            except (TypeError, ValueError):
+            # 持久财政 JSON / settle 坏态响亮上抛，不洗成「不完整」而跳过守恒（ADR 0005）。
+            fiscal = _load_durable_json_object(region["fiscal"], surface="regions.fiscal")
+            settle = fiscal.get("settle")
+            if settle is None:
                 return False
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
-                return False
+                raise ValueError(f"region {region_id} settle.st 持久坏态")
         return True
 
     def assert_army_pay_source_container_conservation(self) -> None:
@@ -3691,15 +3808,20 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if str(row["controlled_by"] or "") != "ming":
             raise ValueError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"army {army_id} pay_source_region 财政基座 JSON 非法：{pay_source_region}"
+            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+        except ValueError as exc:
+            # 持久财政基座损坏是账本故障，非模型饷源拒收：RuntimeError 不被调用方的
+            # 模型产物 (TypeError, ValueError) 边界吞成 invalid_enum（ADR 0005 / J6-4）。
+            raise RuntimeError(
+                f"army {army_id} pay_source_region 财政基座 JSON 损坏：{pay_source_region}"
             ) from exc
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        settle = fiscal.get("settle")
+        if settle is None:
+            raise ValueError(f"army {army_id} pay_source_region 无 settle 基座：{pay_source_region}")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
-            raise ValueError(f"army {army_id} pay_source_region 无 settle st/p 基座：{pay_source_region}")
+            # 显式坏态（settle 存在但形状错）＝账本故障，非模型饷源拒收（ADR 0005 / J6-4）。
+            raise RuntimeError(f"army {army_id} pay_source_region settle st/p 坏态：{pay_source_region}")
 
     def transition_army_owner_power(
         self,
@@ -4150,8 +4272,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
     def _primary_source_army_pay_due(self, settle: Dict[str, Any]) -> Optional[float]:
         meta = settle.get("_meta")
-        if not isinstance(meta, dict):
+        if meta is None:
             return None
+        if not isinstance(meta, dict):
+            raise ValueError("settle._meta 持久坏态（非对象）")
         primary_source = meta.get("primary_source")
         if not isinstance(primary_source, dict):
             return None
@@ -4211,11 +4335,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
         ).fetchall()
         for row in rows:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
             settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            if settle is None:
+                continue
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                     or not isinstance(settle.get("p"), dict):
-                continue
+                raise ValueError(f"region {row['id']} settle st/p 持久坏态")
             pay_rows = self._derive_region_army_pay_due(str(row["id"]), settle)
             if pay_rows:
                 self._reconcile_region_army_pay_container(str(row["id"]), settle)
@@ -4232,14 +4358,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         if row is None:
             return
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
+        fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
+        settle = fiscal.get("settle")
+        if settle is None:
             return
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
-            return
+            raise ValueError(f"region {region_id} settle st/p 持久坏态")
         self._derive_region_army_pay_due(region_id, settle)
         self.conn.execute(
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -4672,22 +4797,24 @@ CREATE TABLE IF NOT EXISTS authority_records (
         # 原职仍留在 character_offices 备档可追溯。复职（active）不动 office。
         ousted = status in PERSON_OUSTED_STATUSES
         reason_code_value = str(reason_code or "")[:40]
+        # Free prose status_reason: preserve raw (#1834 F16/F21).
+        status_reason = str(reason or "")
         if ousted:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, "
                 "status_changed_turn=?, office='', reason_code=? WHERE name=?",
-                (status, reason, state.turn, reason_code_value, name),
+                (status, status_reason, state.turn, reason_code_value, name),
             )
             self.set_character_transit(name, content=content, commit=False)
         else:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
-                (status, reason, state.turn, reason_code_value, name),
+                (status, status_reason, state.turn, reason_code_value, name),
             )
         if content is not None and name in content.characters:
             character = content.characters[name]
             character.status = status
-            character.status_reason = reason
+            character.status_reason = status_reason
             character.reason_code = reason_code_value
             if ousted:
                 character.office = ""
@@ -4695,9 +4822,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
         if ousted:
+            # Free prose status reason: preserve raw separators (#1834 F21).
+            note = f"人物终态：{status}；{reason}" if str(reason or "") else f"人物终态：{status}"
             self.interrupt_dossiers_for_character(
-                state, name,
-                f"人物终态：{status}" + (f"；{reason}" if str(reason or "").strip() else ""),
+                state, name, note,
                 commit=False,
             )
         if commit:
@@ -4826,7 +4954,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 str(payload_summary or ""),
                 str(derived_from or ""),
                 normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
-                str(source or "")[:80],
+                str(source or ""),
                 str(origin_ref or ""),
             ),
         )
@@ -5586,36 +5714,54 @@ CREATE TABLE IF NOT EXISTS authority_records (
         When apply_score_extraction arms ``_batch_authorized_open_affair_ids``,
         ``affair:<id>`` must also sit in that frozen batch set — one authority
         for every durable-effect carrier (fiscal included).
+
+        Only identity-shape faults are absorbed as invalid_origin_ref. Durable
+        getter / store decode errors propagate loud (#1897 E1).
         """
         value = str(origin_ref or "").strip()
         valid = value == "盘面自发"
         unauthorized_batch = False
         if value.startswith("dossier:"):
+            raw_id = value.split(":", 1)[1]
             try:
-                dossier_id = int(value.split(":", 1)[1])
-                valid = dossier_id > 0 and self.get_decree_dossier(dossier_id) is not None \
-                    and self.dossier_authorizes_effects(dossier_id)
+                dossier_id = strict_sqlite_id(raw_id)
+            except (TypeError, ValueError):
+                valid = False
+            else:
+                if dossier_id <= 0:
+                    valid = False
+                else:
+                    dossier = self.get_decree_dossier(dossier_id)
+                    valid = (
+                        dossier is not None
+                        and self.dossier_authorizes_effects(dossier_id)
+                    )
+        elif value.startswith("affair:"):
+            from ming_sim.entities.affair.store import (
+                UnauthorizedAffairOriginRef,
+                parse_origin_ref,
+            )
+            try:
+                kind, affair_id = parse_origin_ref(value)
             except (OverflowError, TypeError, ValueError):
                 valid = False
-        elif value.startswith("affair:"):
-            try:
-                from ming_sim.entities.affair.store import (
-                    UnauthorizedAffairOriginRef,
-                    parse_origin_ref,
-                )
-                kind, affair_id = parse_origin_ref(value)
+            else:
                 if kind == "affair" and affair_id is not None:
-                    self.affairs.get(int(affair_id))
-                    authorized = getattr(self, "_batch_authorized_open_affair_ids", None)
-                    if authorized is not None and affair_id not in authorized:
+                    try:
+                        self.affairs.get(int(affair_id))
+                    except KeyError:
                         valid = False
-                        unauthorized_batch = True
                     else:
-                        valid = True
+                        authorized = getattr(
+                            self, "_batch_authorized_open_affair_ids", None,
+                        )
+                        if authorized is not None and affair_id not in authorized:
+                            valid = False
+                            unauthorized_batch = True
+                        else:
+                            valid = True
                 else:
                     valid = False
-            except (KeyError, OverflowError, TypeError, ValueError):
-                valid = False
         if valid:
             return None
         if unauthorized_batch:
@@ -5666,6 +5812,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 continue
             # reason 载体按别名表扫描（近况/最近行动 等与 近动/last_action 同义，
             # 硬编码键名会漏——cmr S1 r3）：先取 reason 义，再取 last_action 义。
+            # Free prose reason/last_action: preserve raw; emptiness on local copy.
             reason = ""
             for _canon in ("reason", "last_action"):
                 for k, v in raw_changes.items():
@@ -5673,9 +5820,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     if mapped == _canon and str(v or "").strip():
                         reason = str(v)
                         break
-                if reason:
+                if reason.strip():
                     break
-            reason = reason or "势力推演"
+            if not reason.strip():
+                reason = "势力推演"
             for raw_field, value in raw_changes.items():
                 field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "last_action", "origin_ref"):
@@ -5693,7 +5841,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 old_value = row[field]
                 try:
                     # LLM 叶子值脏（null/"三成"/小数串）= 脏数据逐项拒，不崩整批
-                    # （validate_delta_shape 只验容器、容忍 null 叶——cmr S1 r1，
+                    # （sanitize_delta_shape 只验容器、容忍 null 叶——cmr S1 r1，
                     # 同 secret_order order_id 非整数先例）。float/bool 显式拒：
                     # int(3.7)→3 静默截断、True→1 拟真，都不是 prompt 要的整数
                     # delta（cmr S1 r2；bool 是 int 子类须先判）。
@@ -5807,7 +5955,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             (turn, year, period, power_id, old_name, new_name, old_aliases, new_aliases, reason)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason),
+            (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, str(reason or "")),
         )
         if commit:
             self.conn.commit()
@@ -5953,7 +6101,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     "issue_strict": False,
                 })
                 continue
-            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title)
+            # Free prose delta reason → logs / turn summaries: raw bytes (#1834 F16).
+            raw_reason = str(raw_changes.get("reason") or raw_changes.get("原因") or "")
+            reason = raw_reason if raw_reason.strip() else str(getattr(event, "title", "") or "")
             for raw_field, value in raw_changes.items():
                 field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
@@ -6077,7 +6227,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
                 # ── fiscal JSON 子字段（corruption 等）────────────────────────
                 if field in FISCAL_SCORE_FIELDS:
-                    fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
+                    fiscal: dict = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
                     old_value = fiscal.get(field, 50)
                     delta = int(value)
                     # 帝国修正：该地区该字段若有 active 修正符，先放大/缩小 delta
@@ -6246,7 +6396,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             if raw_field == "fiscal":
                 if not isinstance(value, dict):
                     continue
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
+                fiscal = _load_durable_json_object(row["fiscal"], surface="regions.fiscal")
                 for sub_field, sub_val in value.items():
                     if sub_field not in FISCAL_SCORE_FIELDS:
                         continue
@@ -6839,7 +6989,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         created: List[Dict[str, object]] = []
         for raw in new_armies:
             if not isinstance(raw, dict):
-                # 不再静默丢：留拒收记录（season 路本就被 validate_delta_shape 挡在
+                # 不再静默丢：留拒收记录（season 路本就被 sanitize_delta_shape 挡在
                 # S6;issue 路历史即静默,容忍不升级——issue_strict=False,cmr S2 r1）。
                 created.append({
                     "rejected": True, "category": "invalid_enum",
@@ -6937,7 +7087,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             # 军费，经 ARMY_FIELD_ALIASES 已无该别名 → 当未知键忽略，不入库、不影响建军。
             # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
             # = 伪造军备（morale "高"→50、cannon "几门"→0）。None 视为缺省（LLM 习惯
-            # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。
+            # 用 null 表「无」,sanitize_delta_shape 亦容忍 null 叶）；其余非整拒该项。
             # 守门集从字段表派生（cmr S2 r2,2/2:硬列漏 equipment/mobility/loyalty）
             # ——ARMY_SCORE_FIELDS 全量已含 arrears;字段表变守门自动跟。
             _dirty_field = None
@@ -7177,7 +7327,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
             VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
             """,
-            (state.turn, state.year, state.period, building_id, name, "诏书新立建筑", origin_ref),
+            (state.turn, state.year, state.period, building_id, str(name or ""), "诏书新立建筑", origin_ref),
         )
         if commit:
             self.conn.commit()
@@ -7202,7 +7352,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             VALUES (?, ?, ?, ?, 'remove', ?, '', NULL, ?, '档房', ?)
             """,
             (state.turn, state.year, state.period, building_id,
-             str(row["name"]), reason or "建筑废止", origin_ref),
+             str(row["name"]), (str(reason or "") if str(reason or "").strip() else "建筑废止"), origin_ref),
         )
         self.conn.execute("DELETE FROM buildings WHERE id = ?", (building_id,))
         if commit:
@@ -7227,7 +7377,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
             if row is None:
                 print(f"[WARN] building_delta 引用未入库建筑 '{building_id}' → 跳过")
                 continue
-            reason = str(raw_changes.get("reason") or event.title)
+            # Free prose building delta reason: raw bytes (#1834 F16).
+            raw_reason = str(raw_changes.get("reason") or "")
+            reason = raw_reason if raw_reason.strip() else str(getattr(event, "title", "") or "")
             for field, value in raw_changes.items():
                 if field == "reason":
                     continue
@@ -7497,28 +7649,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
         )
         self.conn.commit()
 
-    def get_message_highlights(self, message_id: int) -> List[str]:
-        row = self.conn.execute(
-            "SELECT highlights_json FROM chat_messages WHERE id = ?",
-            (int(message_id),),
-        ).fetchone()
-        if row is None:
-            return []
-        return self._parse_highlights_json(row["highlights_json"])
-
     @staticmethod
     def _parse_highlights_json(raw: Any) -> List[str]:
-        try:
-            data = json.loads(raw or "[]")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
-        out: List[str] = []
-        for item in data:
-            if isinstance(item, str) and item.strip():
-                out.append(item)
-        return out
+        # 持久 highlights 字符串数组：腐坏响亮，不 catch-to-[]（#1897 E1）。
+        return _load_durable_str_list(
+            raw, surface="chat_messages.highlights_json",
+        )
+
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
         """读出全部召对记录，按大臣分组，供进程启动时恢复内存缓存。"""
@@ -8006,14 +8143,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
         )
         self.conn.commit()
 
-    def mark_chat_turn_failed(self, chat_turn_id: int) -> None:
-        self.conn.execute(
-            "UPDATE chat_turns SET status = 'failed' "
-            "WHERE id = ? AND status IN ('active', 'generating')",
-            (int(chat_turn_id),),
-        )
-        self.conn.commit()
-
     def fail_chat_turn(self, chat_turn_id: int) -> List[int]:
         """Mark an incomplete audience turn failed and remove its partial user-visible writes."""
         row = self.conn.execute(
@@ -8471,10 +8600,17 @@ CREATE TABLE IF NOT EXISTS authority_records (
                             "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
                             (int(target_id),),
                         ).fetchone()
-                        current = json.loads(brief[0] or "[]") if brief is not None else []
+                        # 已持久 brief 源身份：响亮解码（#1897 E1）。
+                        current = self._load_durable_origin_message_ids(
+                            None if brief is None else brief[0],
+                            surface=f"secret_order_briefs#{int(target_id)}.origin_chat_message_ids",
+                        )
                         pins = [pin for pin in current if int(pin) not in undone]
                     else:
-                        pins = json.loads(str(raw_pins) or "[]")
+                        pins = self._load_durable_origin_message_ids(
+                            raw_pins,
+                            surface=f"rollback.secret_orders#{int(target_id)}.brief_pins",
+                        )
                     self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)
             else:
                 raise ValueError(f"不支持的回滚策略：{strategy}")
@@ -8855,12 +8991,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
         # source_projection of the same source_id must not replace it.
         public_kept: set[str] = set()
         for row in rows:
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
-            if not isinstance(excluded_names, list):
-                excluded_names = []
+            excluded_names = _load_durable_str_list(
+                row["excluded_names"],
+                surface="character_knowledge_events excluded_names",
+            )
             key = str(row["source_id"] or "")
             is_public = str(row["kind"] or "") == "public"
             if key and key in public_kept and not is_public:
@@ -8884,18 +9018,14 @@ CREATE TABLE IF NOT EXISTS authority_records (
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
-            if not isinstance(excluded_names, list):
-                excluded_names = []
-            try:
-                excluded_targets = json.loads(row["excluded_targets"] or "{}")
-            except (TypeError, ValueError):
-                excluded_targets = {}
-            if not isinstance(excluded_targets, dict):
-                excluded_targets = {}
+            excluded_names = _load_durable_str_list(
+                row["excluded_names"],
+                surface="character_knowledge_sources excluded_names",
+            )
+            excluded_targets = _load_exclusion_targets(
+                row["excluded_targets"],
+                surface="character_knowledge_sources excluded_targets",
+            )
             target_people = {
                 str(name) for name in excluded_targets.get("people", [])
             }
@@ -8957,11 +9087,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         if row is None:
             return None
-        try:
-            timeline = json.loads(row["timeline"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
-            timeline = []
+        # 结局 timeline 持久列表：腐坏响亮，不回空（#1897 E1）。
+        timeline = _load_durable_json_list(
+            row["timeline"], surface="ending_summary.timeline",
+        )
         return {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
@@ -9036,8 +9165,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
         turns_by_night: Dict[int, List[Dict[str, Any]]] = {night_id: [] for night_id in night_ids}
         for row in ledger_rows:
             ledgers_by_night[int(row["night_id"])].append({
-                "person_names": [str(name) for name in _json_list(row["person_names"])],
-                "tags": [str(tag) for tag in _json_list(row["tags"])],
+                "person_names": list(_json_list(row["person_names"])),
+                "tags": list(_json_list(row["tags"])),
                 "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
             })
         for row in turn_rows:
@@ -9213,22 +9342,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
+            options, choice, prior = self._load_pending_decision_json_fields(r)
             source_turn = int(r["turn"])
             idx = int(r["idx"])
             kind = str(r["kind"] or "decision")
@@ -9242,7 +9356,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 "context": r["context"],
                 "rejection_reason": r["rejection_reason"],
                 "opposition": r["opposition"],
-                "options": options if isinstance(options, list) else [],
+                "options": options,
                 "choice": choice,
                 "status": r["status"],
                 "kind": kind,
@@ -9250,7 +9364,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
                 "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
+                "prior_options_json": prior,
             })
         return out
 
@@ -9266,36 +9380,21 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（draft turn={r['turn']} idx={r['idx']}）：{exc}")
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
+            options, choice, prior = self._load_pending_decision_json_fields(r)
             out.append({
                 "turn": int(r["turn"]),
                 "idx": int(r["idx"]),
                 "event_id": r["event_id"],
                 "title": r["title"],
                 "context": r["context"],
-                "options": options if isinstance(options, list) else [],
+                "options": options,
                 "choice": choice,
                 "status": r["status"],
                 "actor_name": r["actor_name"],
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
                 "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
+                "prior_options_json": prior,
             })
         return out
 
@@ -9328,29 +9427,50 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchall()
         return [self._project_rescript_desk_row(r) for r in rows]
 
+    @staticmethod
+    def _load_pending_decision_json_fields(
+        r: Any,
+    ) -> tuple[list, object | None, list]:
+        """pending_decisions options/choice/prior 持久解码单一权威（#1897 E1）。
+
+        列表缺省合法空；腐坏/非列表响亮。choice 空串＝未选（None）。
+        调用方 SELECT 可能省略 kind（如 list_rescript_drafts 已按 kind 过滤）。
+        """
+        try:
+            keys = set(r.keys())
+        except Exception:
+            keys = set(r) if isinstance(r, Mapping) else set()
+        kind = str(r["kind"] or "decision") if "kind" in keys else "decision"
+        surface = f"pending_decisions.{kind}:{int(r['turn'])}:{int(r['idx'])}"
+        options = _load_durable_json_list(
+            r["options_json"], surface=f"{surface}.options_json",
+        )
+        prior_raw = r["prior_options_json"] if "prior_options_json" in keys else None
+        prior = _load_durable_json_list(
+            prior_raw, surface=f"{surface}.prior_options_json",
+        )
+        choice_raw = r["choice_json"] if "choice_json" in keys else None
+        if choice_raw is None or (
+            isinstance(choice_raw, str) and not choice_raw.strip()
+        ):
+            choice: object | None = None
+        else:
+            # choice 可为 object 或其它 JSON 值；非空串走对象权威，列表/标量也保留。
+            if isinstance(choice_raw, (dict, list)):
+                choice = choice_raw
+            else:
+                try:
+                    choice = json.loads(choice_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"{surface}.choice_json 腐坏 JSON") from exc
+        return options, choice, prior
+
     def _project_rescript_desk_row(self, r: Any) -> Dict[str, object]:
         """pending_decisions 行 → desk 投影（pending/decided 共用）。"""
         kind = str(r["kind"] or "decision")
         source_turn = int(r["turn"])
         idx = int(r["idx"])
-        try:
-            options = json.loads(r["options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-            options = []
-        if not isinstance(options, list):
-            options = []
-        choice_raw = (r["choice_json"] or "").strip()
-        try:
-            choice = json.loads(choice_raw) if choice_raw else None
-        except Exception as exc:
-            tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
-            choice = None
-        try:
-            prior = json.loads(r["prior_options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-            prior = []
+        options, choice, prior = self._load_pending_decision_json_fields(r)
         return {
             "decision_key": f"{kind}:{source_turn}:{idx}",
             "kind": kind,
@@ -9369,7 +9489,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "actor_office": r["actor_office"],
             "actor_faction": r["actor_faction"],
             "revision_round": int(r["revision_round"] or 0),
-            "prior_options_json": prior if isinstance(prior, list) else [],
+            "prior_options_json": prior,
         }
 
     def get_rescript_desk_rows_by_keys(
@@ -9410,45 +9530,30 @@ CREATE TABLE IF NOT EXISTS authority_records (
         return out
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
-    def _latest_held_user_chat_message_id(
-        self, minister_name: str, turn: Optional[int] = None,
-    ) -> Optional[int]:
-        """Latest still-held user chat row for oral-decree pin (#976).
-
-        * ``turn`` set (stage path): only that turn — stage-time pin of the
-          utterance just spoken, so later confirmation user lines cannot steal.
-        * ``turn`` omitted (classification auto-capture): any still-held user
-          for this minister (covers F4 / zero-overlap cross-turn: hold at T,
-          create at T+N without settle).
-        """
-        name = str(minister_name or "").strip()
-        if not name:
-            return None
-        if turn is not None:
-            row = self.conn.execute(
-                "SELECT id FROM chat_messages "
-                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                "AND turn=? ORDER BY id DESC LIMIT 1",
-                (name, int(turn)),
-            ).fetchone()
-        else:
-            row = self.conn.execute(
-                "SELECT id FROM chat_messages "
-                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                "ORDER BY id DESC LIMIT 1",
-                (name,),
-            ).fetchone()
-        return int(row["id"]) if row is not None else None
-
     def _parse_origin_chat_message_id(
         self, payload: Optional[Mapping[str, object]],
+        *, durable: bool = False,
     ) -> Optional[int]:
-        """Coerce pending/API ``origin_chat_message_id`` to a positive int pin."""
+        """Parse pending/API ``origin_chat_message_id`` pin.
+
+        durable=False：API/声明侧宽松——坏值视作未钉（兼容旧调用）。
+        durable=True：已持久载荷 present 坏类型/非正整响亮，不得洗成无源（#1897 E1）。
+        """
         if not payload:
+            return None
+        if "origin_chat_message_id" not in payload:
             return None
         raw = payload.get("origin_chat_message_id")
         if raw is None:
             return None
+        if durable:
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                raise ValueError(
+                    f"origin_chat_message_id 须为正整，得 {type(raw).__name__}"
+                )
+            if raw <= 0:
+                raise ValueError("origin_chat_message_id 须为正整")
+            return raw
         try:
             mid = int(raw)
         except (TypeError, ValueError):
@@ -9457,62 +9562,38 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
     def _resolve_secret_oral_pins(
         self,
-        state: GameState,
         *,
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
-        origin_minister_name: Optional[str] = None,
-        assignee_name: Optional[str] = None,
     ) -> List[int]:
         """Resolve oral-decree chat pins for secret-order classification (#976).
 
-        Prefer explicit stage/API pins.  Auto-capture latest held user only when
-        the caller provided **no** pin intent (both args None) — direct create
-        without pending still withholds the oral line.  Explicit empty
-        ``origin_chat_message_ids=[]`` means pin-mode with no new oral (do not
-        invent pure-public bloodline).
+        Explicit stage/API pins and already-durable brief pins only.
+        Explicit empty ``origin_chat_message_ids=[]`` means pin-mode with no new
+        oral.  No last-held auto-capture (#1897 J820-E2).
         """
-        has_explicit_pin_intent = (
-            origin_chat_message_ids is not None or origin_chat_message_id is not None
-        )
         explicit: List[object] = []
         if origin_chat_message_ids is not None:
             explicit.extend(origin_chat_message_ids)
         if origin_chat_message_id is not None:
             explicit.append(origin_chat_message_id)
-        pinned_ids = self._coerce_positive_message_ids(explicit)
-        if not pinned_ids and not has_explicit_pin_intent:
-            # Auto-capture: any still-held user bloodline (cross-turn F4 included).
-            # Prefer same-turn first so pure-public earlier-turn held is not
-            # stolen when a fresh same-turn oral exists.
-            for name in dict.fromkeys(
-                n for n in (
-                    str(origin_minister_name or "").strip(),
-                    str(assignee_name or "").strip(),
-                ) if n
-            ):
-                mid = self._latest_held_user_chat_message_id(name, int(state.turn))
-                if mid is None:
-                    mid = self._latest_held_user_chat_message_id(name)
-                if mid is not None and mid not in pinned_ids:
-                    pinned_ids.append(mid)
-        return pinned_ids
+        return self._coerce_positive_message_ids(explicit)
 
     def _brief_origin_chat_message_ids(self, order_id: int) -> List[int]:
-        """Durable oral pins already registered on this order's brief (may be empty)."""
+        """Durable oral pins already registered on this order's brief (may be empty).
+
+        源身份 JSON 腐坏响亮，禁 or "[]"/except 静默跳过（#1897 E1 P1）。
+        """
         row = self.conn.execute(
             "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
             (int(order_id),),
         ).fetchone()
         if row is None:
             return []
-        try:
-            parsed = json.loads(row["origin_chat_message_ids"] or "[]")
-        except (TypeError, ValueError):
-            return []
-        if not isinstance(parsed, list):
-            return []
-        return self._coerce_positive_message_ids(parsed)
+        return self._load_durable_origin_message_ids(
+            row["origin_chat_message_ids"],
+            surface=f"secret_order_briefs#{int(order_id)} origin_chat_message_ids",
+        )
 
     def _classify_secret_order_audience(
         self,
@@ -9529,11 +9610,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
     ) -> None:
         """Brief upsert + pin-mode oral withhold/release (create and non-create isomorphic)."""
         pins = self._resolve_secret_oral_pins(
-            state,
             origin_chat_message_id=origin_chat_message_id,
             origin_chat_message_ids=origin_chat_message_ids,
-            origin_minister_name=origin_minister_name,
-            assignee_name=minister_name,
         )
         self.upsert_secret_order_brief(
             state, int(order_id), minister_name, title, body,
@@ -9541,14 +9619,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             origin_chat_message_ids=pins,
             commit=commit,
         )
-
-    def _current_open_night_id(self) -> int:
-        """当前开着（open/closing）的召对夜 id；无开放夜返回 0（#498）。"""
-        row = self.conn.execute(
-            "SELECT id FROM audience_nights "
-            "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        return int(row["id"]) if row is not None else 0
 
     # ── #571 旨意案卷公共接口 ──────────────────────────────────────
 
@@ -9600,7 +9670,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
     def _normalize_directive_dossier_payload(
         self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
-        """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
+        """机械旨意的唯一结构边界；领域不完整 → DMVE；真实读取故障原样上抛。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         # #658：纯御笔强推不经 ordinary triad 归一（prepare/commit/ensure 共吃）。
         # text/actor 等会话字段须保留——pending payload 以它们为成案正文真源。
         if classify_directive_structured_kind(payload) == "push":
@@ -9635,26 +9706,31 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 if purpose and not field_population_allowed(
                     "grant_allocation", "purpose", normalized,
                 ):
-                    raise ValueError(f"非协饷拨帑不得夹带 purpose={purpose}")
+                    raise DecreeMaterializationValidationError(f"非协饷拨帑不得夹带 purpose={purpose}")
                 # #1716：amount/account 唯一验形；分类默认 grant_action=「无」时只借金钱动作过 shape，不回写。
                 # 普通/legacy fallback（缺/空 grant_action）须显式非空 account，禁默认国库。
                 shape_ga = grant_action if grant_action not in {"", "无"} else "赏赉"
                 if grant_action in {"", "无"}:
                     account_raw = normalized.get("account")
                     if account_raw is None or not str(account_raw).strip():
-                        raise ValueError("拨帑旨意缺少 account")
-                shaped = require_grant_allocation_shape(
-                    grant_action=shape_ga,
-                    amount=normalized.get("amount"),
-                    account=normalized.get("account"),
-                )
+                        raise DecreeMaterializationValidationError("拨帑旨意缺少 account")
+                try:
+                    shaped = require_grant_allocation_shape(
+                        grant_action=shape_ga,
+                        amount=normalized.get("amount"),
+                        account=normalized.get("account"),
+                    )
+                except DecreeMaterializationValidationError:
+                    raise
+                except ValueError as exc:
+                    raise DecreeMaterializationValidationError(str(exc)) from exc
                 normalized["amount"] = int(shaped["amount"])
                 normalized["account"] = str(shaped["account"])
                 surface = str(
                     normalized.get("execution_surface") or "in_transit"
                 ).strip()
                 if surface not in {"immediate", "in_transit"}:
-                    raise ValueError("拨帑旨意 execution_surface 非法")
+                    raise DecreeMaterializationValidationError("拨帑旨意 execution_surface 非法")
                 normalized["execution_surface"] = surface
                 normalized.pop("delta", None)
         elif action == "pay_order_override":
@@ -9662,7 +9738,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             # 仍由成案点与物化点共 prepare_pay_order_entries 同一验形，不在此重复）。
             entries = normalized.get("entries")
             if not isinstance(entries, list) or not entries:
-                raise ValueError("pay_order_override 旨意缺少 entries 结构化载荷")
+                raise DecreeMaterializationValidationError("pay_order_override 旨意缺少 entries 结构化载荷")
         elif action in {
             "assignment", "authorization", "secret_authorization", "military_order",
         }:
@@ -9676,7 +9752,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 from ming_sim.session import _find_existing_minister
                 assignee = _find_existing_minister(content, assignee, self) or ""
             if not assignee and action in {"authorization", "secret_authorization"}:
-                raise ValueError(f"{action} 旨意缺少 canonical assignee")
+                raise DecreeMaterializationValidationError(f"{action} 旨意缺少 canonical assignee")
             if assignee:
                 normalized["assignee_id"] = assignee
             else:
@@ -9694,7 +9770,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             if priv in {"", "无"}:
                 priv = "便宜行事"
             if priv not in AUTHORITY_PRIVILEGE_SET:
-                raise ValueError("委任授权 privilege 非法")
+                raise DecreeMaterializationValidationError("委任授权 privilege 非法")
             normalized["privilege"] = priv
             scope = str(normalized.get("scope") or "").strip()
             if not scope or ":" not in scope:
@@ -9706,7 +9782,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     scope = f"{t_kind}:{t_id}"
             kind, separator, target = scope.partition(":")
             if not separator or not kind.strip() or not target.strip():
-                raise ValueError("委任授权缺少典范 scope")
+                raise DecreeMaterializationValidationError("委任授权缺少典范 scope")
             normalized["scope"] = f"{kind.strip()}:{target.strip()}"
             normalized["target_kind"] = kind.strip()
             normalized["target_id"] = target.strip()
@@ -9717,20 +9793,20 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 or ""
             ).strip()
             if not holder:
-                raise ValueError("委任授权缺少 holder_id")
+                raise DecreeMaterializationValidationError("委任授权缺少 holder_id")
             normalized["holder_id"] = holder
             normalized["name"] = holder
             normalized["assignee_id"] = holder
         if action == "revoke_authority":
             # #523 / #611：收权生产项必带现存 authority_records.id；不得从 payload 拼 id。
             try:
-                aid = strict_int(
+                aid = strict_sqlite_id(
                     normalized.get("authority_id"), accept_numeric_strings=True,
                 )
             except (TypeError, ValueError):
                 aid = 0
             if aid <= 0:
-                raise ValueError("收权旨意缺少 authority_id")
+                raise DecreeMaterializationValidationError("收权旨意缺少 authority_id")
             normalized["authority_id"] = aid
             holder = str(
                 normalized.get("holder_id")
@@ -9744,7 +9820,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 normalized["target_kind"] = "character"
                 normalized["target_id"] = holder
             try:
-                grant_did = strict_int(
+                grant_did = strict_sqlite_id(
                     normalized.get("grant_dossier_id"), accept_numeric_strings=True,
                 )
             except (TypeError, ValueError):
@@ -9758,18 +9834,18 @@ CREATE TABLE IF NOT EXISTS authority_records (
             # #523：目标仅承诺/旨意；纯授权不得入撤回成命。
             raw_target = str(normalized.get("target_id") or "").strip()
             if raw_target.startswith("authority:"):
-                raise ValueError("撤回成命目标不得为纯授权")
+                raise DecreeMaterializationValidationError("撤回成命目标不得为纯授权")
             revoke_did = 0
             revoke_iid = 0
             try:
-                revoke_did = strict_int(
+                revoke_did = strict_sqlite_id(
                     normalized.get("revoke_target_dossier_id"),
                     accept_numeric_strings=True,
                 )
             except (TypeError, ValueError):
                 revoke_did = 0
             try:
-                revoke_iid = strict_int(
+                revoke_iid = strict_sqlite_id(
                     normalized.get("revoke_target_issue_id"),
                     accept_numeric_strings=True,
                 )
@@ -9785,11 +9861,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     kind = "issue"
                     raw = raw.split(":", 1)[1].strip()
                 try:
-                    tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
+                    tid = strict_sqlite_id(raw, accept_numeric_strings=True) if raw else 0
                 except (TypeError, ValueError):
                     tid = 0
                 if tid <= 0:
-                    raise ValueError("撤回成命缺少目标成命标识")
+                    raise DecreeMaterializationValidationError("撤回成命缺少目标成命标识")
                 if kind == "issue":
                     revoke_iid = tid
                 else:
@@ -9817,13 +9893,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     and issue_disposition not in issue_dispositions_allowed()
                 )
             ):
-                raise ValueError(
+                raise DecreeMaterializationValidationError(
                     f"惩处旨意 punish_action 非法或缺失：{punish_action or '(空)'}"
                 )
             if issue_disposition == "办人" and punish_action != "拿问下狱":
-                raise ValueError("弹劾潮办人须使用 canonical 拿问下狱动作")
+                raise DecreeMaterializationValidationError("弹劾潮办人须使用 canonical 拿问下狱动作")
             if issue_disposition == "压下" and punish_action != "无":
-                raise ValueError("弹劾潮压下须使用 canonical 无动作")
+                raise DecreeMaterializationValidationError("弹劾潮压下须使用 canonical 无动作")
             normalized["punish_action"] = punish_action
             # #517 r2：罚俸须正数 amount，成案前响亮拒绝（不得归零暂存后判后才炸）。
             if punish_action == "罚俸":
@@ -9834,7 +9910,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 except ValueError:
                     amount = 0
                 if amount <= 0:
-                    raise ValueError("罚俸旨意缺少正数 amount")
+                    raise DecreeMaterializationValidationError("罚俸旨意缺少正数 amount")
                 normalized["amount"] = amount
         if action == "military_order":
             # #521 r1：仅限期出战（无 station 调驻面）强制未来 due_turn；
@@ -9852,14 +9928,14 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 due_turn = deadline = 0
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
-            station = str(normalized.get("station") or "").strip()
+            station = str(normalized.get("station") or "")  # Free prose place name F21
             has_deadline_intent = due_turn > 0 or deadline > 0
-            requires_due = not station  # 限期出战：无调驻面，due 为限期载体
+            requires_due = not station.strip()  # 判空用副本；原串照存
             if due_turn > int(current_turn or 0):
                 normalized["due_turn"] = due_turn
                 normalized.pop("deadline_months", None)
             elif requires_due or has_deadline_intent:
-                raise ValueError("军令缺少有效未来 due_turn/deadline_months")
+                raise DecreeMaterializationValidationError("军令缺少有效未来 due_turn/deadline_months")
             else:
                 # 无期限调驻/移镇：不写虚假 due
                 normalized.pop("due_turn", None)
@@ -9874,17 +9950,24 @@ CREATE TABLE IF NOT EXISTS authority_records (
             )
             for banned in ("owner", "assignee", "assignee_id"):
                 if str(normalized.get(banned) or "").strip():
-                    raise ValueError(f"下议旨意不得携带 {banned}")
+                    raise DecreeMaterializationValidationError(f"下议旨意不得携带 {banned}")
             cleaned = parse_responsible_bodies(normalized.get("responsible_bodies"))
             if not cleaned:
-                raise ValueError("下议旨意缺少 responsible_bodies")
-            assert_responsible_bodies_org_only(
-                cleaned,
-                known_person_names=character_person_names(self),
-                current_minister=str(
-                    normalized.get("actor") or normalized.get("minister_name") or ""
-                ),
-            )
+                raise DecreeMaterializationValidationError("下议旨意缺少 responsible_bodies")
+            # 名册读取在领域断言外；查询故障不得洗成 DMVE（#1897 E1）。
+            known_names = character_person_names(self)
+            try:
+                assert_responsible_bodies_org_only(
+                    cleaned,
+                    known_person_names=known_names,
+                    current_minister=str(
+                        normalized.get("actor") or normalized.get("minister_name") or ""
+                    ),
+                )
+            except DecreeMaterializationValidationError:
+                raise
+            except ValueError as exc:
+                raise DecreeMaterializationValidationError(str(exc)) from exc
             normalized["responsible_bodies"] = cleaned
             try:
                 end_turn = strict_int(
@@ -9903,7 +9986,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 if months > 0:
                     end_turn = int(current_turn) + months
             if end_turn <= int(current_turn or 0):
-                raise ValueError("下议缺少有效未来 end_turn/deadline_months")
+                raise DecreeMaterializationValidationError("下议缺少有效未来 end_turn/deadline_months")
             normalized["end_turn"] = end_turn
             normalized.pop("deadline_months", None)
         target_kind = str(normalized.get("target_kind") or "").strip()
@@ -9920,17 +10003,17 @@ CREATE TABLE IF NOT EXISTS authority_records (
             normalized["target_id"] = target_id
         else:
             normalized.pop("target_id", None)
-            raise ValueError("旨意缺少 canonical target")
+            raise DecreeMaterializationValidationError("旨意缺少 canonical target")
         if action == "military_order":
             # #521 r2：成案前验 target_kind=army 且军队存在（含无 station 催战）。
             # 不得静默改写错误 target_kind；不得等到判后才发现虚假 id。
             if target_kind != "army":
-                raise ValueError("军令 target_kind 须为 army")
+                raise DecreeMaterializationValidationError("军令 target_kind 须为 army")
             existing_army = self.conn.execute(
                 "SELECT id FROM armies WHERE id = ?", (target_id,),
             ).fetchone()
             if existing_army is None:
-                raise ValueError(
+                raise DecreeMaterializationValidationError(
                     f"军令引用未入库军队 '{target_id}'（成案前须存在）"
                 )
             normalized["target_kind"] = "army"
@@ -9940,7 +10023,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         from ming_sim.execution_pressure import normalize_locality_scope
         final_kind = str(normalized.get("target_kind") or "").strip()
         if final_kind not in TARGET_KINDS:
-            raise ValueError(f"target_kind 非法：{final_kind!r}")
+            raise DecreeMaterializationValidationError(f"target_kind 非法：{final_kind!r}")
         normalized["target_kind"] = final_kind
         normalized["locality_scope"] = normalize_locality_scope(
             normalized.get("locality_scope"),
@@ -10003,35 +10086,39 @@ CREATE TABLE IF NOT EXISTS authority_records (
             out["secret_order_id"] = int(out["secret_order_id"])
         out["rescript_pending"] = bool(out.get("rescript_pending"))
         try:
-            payload = json.loads(out.get("payload_json") or "{}")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} payload_json 无效") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"案卷#{out['id']} payload_json 非对象")
+            payload = _load_durable_json_object(
+                out.get("payload_json"), surface=f"案卷#{out['id']} payload_json",
+            )
+        except ValueError as exc:
+            raise ValueError(f"案卷#{out['id']} payload_json 无效：{exc}") from exc
         out["payload"] = payload
         out["mode"] = cls._normalize_dossier_mode(
             payload["mode"] if "mode" in payload else "ordinary"
         )
         try:
-            stigma = json.loads(out.get("stigma_json") or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} stigma_json 无效") from exc
-        if not isinstance(stigma, list):
-            raise ValueError(f"案卷#{out['id']} stigma_json 非列表")
+            stigma = _load_durable_json_list(
+                out.get("stigma_json"), surface=f"案卷#{out['id']} stigma_json",
+            )
+        except ValueError as exc:
+            raise ValueError(f"案卷#{out['id']} stigma_json 无效：{exc}") from exc
         out["stigma"] = stigma
+        # 与 project_execution_liability_parties / participant_roster_names 共权威（#1897 E1）。
+        from ming_sim.participant_roster import decode_durable_participant_roster
         try:
-            roster = json.loads(out.get("participant_roster") or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} participant_roster 无效") from exc
-        if not isinstance(roster, list):
-            raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
-        out["participant_roster"] = roster
+            out["participant_roster"] = decode_durable_participant_roster(
+                out.get("participant_roster"),
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"案卷#{out['id']} participant_roster 无效：{exc}"
+            ) from exc
         try:
-            extension = json.loads(out.get("extension_json") or "{}")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} extension_json 无效") from exc
-        if not isinstance(extension, dict):
-            raise ValueError(f"案卷#{out['id']} extension_json 非对象")
+            extension = _load_durable_json_object(
+                out.get("extension_json"),
+                surface=f"案卷#{out['id']} extension_json",
+            )
+        except ValueError as exc:
+            raise ValueError(f"案卷#{out['id']} extension_json 无效：{exc}") from exc
         signal = extension.get("execution_signal")
         if signal is not None and not isinstance(signal, dict):
             raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
@@ -10041,30 +10128,85 @@ CREATE TABLE IF NOT EXISTS authority_records (
     # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
     DOSSIER_REPORT_ORIGIN_NS = "dossier-report:"
     DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
+    DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
+    DOSSIER_REPORT_ORIGIN_RUSH = "dossier-report:rush"
+    DOSSIER_REPORT_ORIGIN_REVIEW = "dossier-report:review_claim"
+
 
     @classmethod
     def _normalize_dossier_report_origin(
-        cls, origin: object,
+        cls, origin: object, *, is_terminal: bool = False,
     ) -> str:
         raw = str(origin or "").strip()
         if not raw:
-            return cls.DOSSIER_REPORT_ORIGIN_MONTHLY
+            return (
+                cls.DOSSIER_REPORT_ORIGIN_VERDICT
+                if is_terminal
+                else cls.DOSSIER_REPORT_ORIGIN_MONTHLY
+            )
         prefix = cls.DOSSIER_REPORT_ORIGIN_NS
         if not raw.startswith(prefix) or not raw[len(prefix):].strip():
             raise ValueError("奏报 origin 须带 dossier-report 命名空间前缀")
         return raw
 
+    @staticmethod
+    def _require_progress_flag(raw: object, *, field: str) -> bool:
+        """报告结案位：JSON bool 或 SQL 0/1；禁 bool('false')/真值洗（#1897 E1）。"""
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, int) and raw in (0, 1):
+            return raw == 1
+        raise ValueError(
+            f"密令奏报 {field} 须为布尔或 0/1，得 {type(raw).__name__}"
+        )
+
     @classmethod
     def _coerce_dossier_progress_row(
         cls, item: Mapping[str, object], *, dossier_id: int,
     ) -> Dict[str, object]:
-        origin = cls._normalize_dossier_report_origin(item.get("origin"))
+        """单一报告行合同权威：读写共吃。
+
+        正文 durable prose；id/turn/dossier_id 走 strict_int（拒 bool/float 截断）；
+        is_terminal 仅 JSON bool 或 SQL 0/1——禁有损 int()/bool() 洗白（#1897 E1）。
+        """
+        from ming_sim.strict_types import strict_int
+
+        is_terminal = cls._require_progress_flag(
+            item.get("is_terminal", False), field="is_terminal",
+        )
+        # Empty origin defaults live only in _normalize_dossier_report_origin.
+        origin = cls._normalize_dossier_report_origin(
+            item.get("origin"), is_terminal=is_terminal,
+        )
+        try:
+            report_id = strict_int(
+                item["id"], accept_numeric_strings=False,
+            )
+            turn = strict_int(
+                item["turn"], accept_numeric_strings=False,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("密令奏报 id/turn 须为整数") from exc
+        band = _require_durable_prose(
+            item.get("progress_band"), field="progress_band",
+        )
+        text = _require_durable_prose(
+            item.get("memorial_text"), field="memorial_text",
+        )
+        dossier_raw = item.get("dossier_id", dossier_id)
+        try:
+            dossier_val = strict_int(
+                dossier_raw, accept_numeric_strings=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("密令奏报 dossier_id 须为整数") from exc
         return {
-            "id": int(item["id"]),
-            "dossier_id": int(item.get("dossier_id") or dossier_id),
-            "turn": int(item["turn"]),
-            "progress_band": str(item["progress_band"]),
-            "memorial_text": str(item["memorial_text"]),
+            "id": report_id,
+            "dossier_id": dossier_val,
+            "turn": turn,
+            "progress_band": band,
+            "memorial_text": text,
+            "is_terminal": is_terminal,
             "origin": origin,
         }
 
@@ -10076,6 +10218,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         band: str,
         text: str,
         *,
+        is_terminal: bool,
         origin: str,
         commit: bool,
     ) -> int:
@@ -10085,15 +10228,38 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         if row is None:
             raise ValueError("密令不存在")
-        reports = json.loads(row["dossier_progress_json"] or "[]")
-        existing = next((item for item in reports
-                         if int(item.get("turn", 0)) == int(turn)), None)
-        if existing is None:
+        surface = f"secret_orders#{int(order_id)} dossier_progress_json"
+        raw_reports = _load_durable_json_list(
+            row["dossier_progress_json"], surface=surface,
+        )
+        # 读写共吃 _coerce_dossier_progress_row，坏 memorial_text 不得 str() 洗（#1897 E1）。
+        reports: List[Dict[str, object]] = []
+        for index, item in enumerate(raw_reports):
+            if not isinstance(item, Mapping):
+                raise ValueError(
+                    f"{surface}[{index}] 须为对象，得 {type(item).__name__}"
+                )
+            reports.append(
+                self._coerce_dossier_progress_row(
+                    item, dossier_id=int(dossier_id),
+                )
+            )
+        # 同月、同一业务身份只留一条。标记（同派/私货）不是另一月。
+        # 催办/核议与月度奏报 base 不同，同月并存。
+        from ming_sim.supervision import report_origin_base
+        incoming = report_origin_base(origin)
+        existing = next((
+            item for item in reports
+            if not item.get("is_terminal")
+            and int(item.get("turn", 0)) == int(turn)
+            and report_origin_base(item.get("origin")) == incoming
+        ), None)
+        if existing is None or is_terminal:
             report_id = max((int(item.get("id", 0)) for item in reports), default=0) + 1
             existing = {
                 "id": report_id, "dossier_id": int(dossier_id), "turn": int(turn),
                 "progress_band": band, "memorial_text": text,
-                "origin": origin,
+                "is_terminal": bool(is_terminal), "origin": origin,
             }
             reports.append(existing)
         else:
@@ -10117,18 +10283,21 @@ CREATE TABLE IF NOT EXISTS authority_records (
         band: str,
         text: str,
         *,
+        is_terminal: bool,
         origin: str,
         commit: bool,
     ) -> int:
         owns_transaction = self.owns_transaction() if commit else False
-        existing = self.conn.execute(
-            """
-            SELECT id FROM dossier_reported_progress
-            WHERE dossier_id=? AND turn=?
-            ORDER BY id DESC LIMIT 1
-            """,
-            (int(dossier_id), int(turn)),
-        ).fetchone()
+        existing = None
+        if not is_terminal:
+            existing = self.conn.execute(
+                """
+                SELECT id FROM dossier_reported_progress
+                WHERE dossier_id=? AND turn=? AND is_terminal=0
+                ORDER BY id DESC LIMIT 1
+                """,
+                (int(dossier_id), int(turn)),
+            ).fetchone()
         if existing is not None:
             report_id = int(existing["id"])
             self.conn.execute(
@@ -10143,11 +10312,12 @@ CREATE TABLE IF NOT EXISTS authority_records (
             cur = self.conn.execute(
                 """
                 INSERT INTO dossier_reported_progress
-                    (dossier_id, turn, progress_band, memorial_text, origin)
-                VALUES (?,?,?,?,?)
+                    (dossier_id, turn, progress_band, memorial_text, is_terminal, origin)
+                VALUES (?,?,?,?,?,?)
                 """,
                 (
-                    int(dossier_id), int(turn), band, text, origin,
+                    int(dossier_id), int(turn), band, text,
+                    1 if is_terminal else 0, origin,
                 ),
             )
             report_id = int(cur.lastrowid)
@@ -10162,6 +10332,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         progress_band: str,
         memorial_text: str,
         *,
+        is_terminal: bool = False,
         origin: str = "",
         commit: bool = True,
     ) -> int:
@@ -10172,32 +10343,35 @@ CREATE TABLE IF NOT EXISTS authority_records (
         Reported rows never enter apply (ADR 0073).
         """
         dossier = self.get_decree_dossier(int(dossier_id))
-        band = str(progress_band or "").strip()
-        text = str(memorial_text or "")
+        # 写口正文：禁 str()/or 洗白；空陈词与坏类型按既有合同区分（#1897 J820-E1）。
+        raw_band = _require_durable_prose(
+            progress_band, field="progress_band", required=False,
+        )
+        text = _require_durable_prose(
+            memorial_text, field="memorial_text", required=False,
+        )
         if dossier is None:
             raise ValueError("案卷不存在")
-        if not band or not text.strip():
+        if not raw_band.strip() or not text.strip():
             raise ValueError("进展档和密奏均不能为空")
-        origin_norm = self._normalize_dossier_report_origin(origin)
+        origin_norm = self._normalize_dossier_report_origin(
+            origin, is_terminal=bool(is_terminal),
+        )
         secret_order_id = dossier.get("secret_order_id")
         if secret_order_id:
             return self._record_secret_dossier_progress(
-                int(dossier_id), int(secret_order_id), int(turn), band, text,
-                origin=origin_norm, commit=commit,
+                int(dossier_id), int(secret_order_id), int(turn), raw_band, text,
+                is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
             )
-        payload = {}
-        try:
-            loaded = json.loads(str(dossier.get("payload_json") or "{}"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        except (TypeError, ValueError):
-            payload = {}
+        # get_decree_dossier 已响亮解析 payload；不平行宽容重读（#1897 E1/K2）。
+        payload = dossier["payload"]
         if not self._dossier_has_execution_surface(dossier.get("action_type"), payload):
             raise ValueError("非执行面案卷不可挂奏报")
         return self._record_general_dossier_progress(
-            int(dossier_id), int(turn), band, text,
-            origin=origin_norm, commit=commit,
+            int(dossier_id), int(turn), raw_band, text,
+            is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
         )
+
 
     def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
         """Unified read seam over secret private rail and general reported rail."""
@@ -10211,13 +10385,29 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ).fetchone()
             if row is None:
                 return []
-            return [
-                self._coerce_dossier_progress_row(item, dossier_id=int(dossier_id))
-                for item in json.loads(row["dossier_progress_json"] or "[]")
-            ]
+            surface = (
+                f"secret_orders#{int(dossier['secret_order_id'])} "
+                f"dossier_progress_json"
+            )
+            reports = _load_durable_json_list(
+                row["dossier_progress_json"], surface=surface,
+            )
+            out_rows: List[Dict[str, object]] = []
+            for index, item in enumerate(reports):
+                if not isinstance(item, Mapping):
+                    raise ValueError(
+                        f"{surface}[{index}] 须为对象，得 {type(item).__name__}"
+                    )
+                out_rows.append(
+                    self._coerce_dossier_progress_row(
+                        item, dossier_id=int(dossier_id),
+                    )
+                )
+            return out_rows
         rows = self.conn.execute(
             """
-            SELECT id, dossier_id, turn, progress_band, memorial_text, origin
+            SELECT id, dossier_id, turn, progress_band, memorial_text,
+                   is_terminal, origin
             FROM dossier_reported_progress
             WHERE dossier_id=?
             ORDER BY turn, id
@@ -10259,11 +10449,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
         target = self.get_decree_dossier(int(dossier_id))
         reports = self.list_dossier_progress(int(dossier_id))
-        reported_bands = [
-            str(item.get("progress_band") or "").strip()
-            for item in reports
-            if str(item.get("progress_band") or "").strip()
-        ]
+        reported_bands = []
+        for item in reports:
+            raw_band = str(item.get("progress_band") or "")
+            if raw_band.strip():
+                reported_bands.append(raw_band)
         execution_outcome = (
             str(target.get("execution_outcome") or "").strip() if target else ""
         )
@@ -10295,7 +10485,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
         _ = turn  # 签名保留；0058 候选不按结算回合收缩
         rows = self.conn.execute(
             """
-            SELECT d.* FROM decree_dossiers d
+            SELECT d.*, s.title AS secret_title, s.content AS secret_content,
+                   s.due_turn AS secret_due_turn
+            FROM decree_dossiers d
             JOIN secret_orders s ON s.id=d.secret_order_id
             WHERE d.status IN ('promulgated','executing') AND s.status='active'
             ORDER BY d.id
@@ -10304,16 +10496,12 @@ CREATE TABLE IF NOT EXISTS authority_records (
         out: List[Dict[str, object]] = []
         for row in rows:
             dossier_id = int(row["id"])
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            # #1897 S2：题名／现行要旨／期限读 secret_orders，不读案卷 payload 平行副本。
             item: Dict[str, object] = {
                 "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
-                "title": payload.get("title", ""),
+                "title": str(row["secret_title"] or ""),
+                "due_turn": int(row["secret_due_turn"] or 0),
                 "progress": self.list_dossier_progress(dossier_id),
             }
             # #622 AC5：仅当稽核链在场时挂分叉信号键；无链则键不出现。
@@ -10349,11 +10537,16 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     raise ValueError("not positive")
             except (TypeError, ValueError) as exc:
                 raise ValueError("长差月报案卷编号无效") from exc
-            band = str(item.get("progress_band") or "").strip()
-            text = str(item.get("memorial_text") or "")
-            if dossier_id not in candidates or dossier_id in supplied or not band or not text.strip():
+            # 月报正文进入写口前禁 str()/or 洗白（#1897 J820-E1）。
+            band = _require_durable_prose(
+                item.get("progress_band"), field="progress_band",
+            )
+            text = _require_durable_prose(
+                item.get("memorial_text"), field="memorial_text",
+            )
+            if dossier_id not in candidates or dossier_id in supplied:
                 raise ValueError("长差月报存在未知、重复或空白条目")
-            supplied[dossier_id] = item
+            supplied[dossier_id] = {**item, "progress_band": band, "memorial_text": text}
         if set(supplied) != set(candidates):
             raise ValueError("合资格长差案卷月报未完整覆盖")
         return supplied
@@ -10376,9 +10569,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
         for dossier_id, item in supplied.items():
             # 派系同／敌只留在监督史。origin 只承接本条密奏里声明的行动。
             origin = self._monthly_report_origin(item)
+            # supply 已校验正文；写口再吃 _require_durable_prose，禁二次 str 洗（#1897 J820-E1）。
             self.record_dossier_progress(
-                dossier_id, int(turn), str(item["progress_band"]).strip(),
-                str(item.get("memorial_text") or ""),
+                dossier_id, int(turn), item["progress_band"], item["memorial_text"],
                 origin=origin,
                 commit=False,
             )
@@ -10392,6 +10585,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         关联——这是 owner 2026-09-30 裁定的常态口径。案卷载荷里的 ``escort`` 是
         参与人名单 ``participant_roster`` 的押解投影（ADR 0053 单一真源），此处只
         判「有没有押解安排」，不重解名单。
+        已持久 payload 解码走单一权威；腐坏响亮，不 catch-to-False（#1897 E1）。
         """
         row = self.conn.execute(
             "SELECT payload_json FROM decree_dossiers WHERE id=?",
@@ -10399,10 +10593,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         if row is None:
             return False
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            return False
+        payload = self.parse_engine_payload_json(
+            row["payload_json"],
+            surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+        )
         return payload_declares_escort(payload)
 
     # #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。
@@ -10447,12 +10641,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
         from ming_sim.materials import dossier_paid_amount
         targets: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(str(row["payload_json"] or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            dossier_id = int(row["id"])
+            dossier = self.get_decree_dossier(dossier_id)
+            if dossier is None:
+                raise ValueError(f"案卷不存在：{dossier_id}")
+            payload = dossier["payload"]
             policy = dossier_action_policy("grant_allocation", payload)
             if policy.get("execution_surface") != "in_transit":
                 continue
@@ -10466,7 +10659,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 ordered = 0
             if ordered <= 0:
                 continue
-            dossier_id = int(row["id"])
             basis = ordered
             if (
                 str(row["status"] or "") == "closed"
@@ -10920,14 +11112,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchall()
         out: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            den_id = int(row["id"])
+            payload = self.parse_engine_payload_json(
+                row["payload_json"],
+                surface=f"faction_denunciations#{den_id}.payload_json",
+            )
             out.append({
-                "id": int(row["id"]),
+                "id": den_id,
                 "turn": int(row["turn"]),
                 "accuser_name": str(row["accuser_name"] or ""),
                 "accuser_faction": str(row["accuser_faction"] or ""),
@@ -10951,12 +11142,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
         raw = self.kv_get(self.MEMORIAL_READS_KV_KEY)
         if not raw:
             return set()
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            return set()
-        if not isinstance(data, list):
-            return set()
+        data = _load_durable_json_list(
+            raw, surface="kv_store.memorial_reads",
+        )
         return {str(item) for item in data if str(item or "").strip()}
 
     def mark_memorials_read(self, keys: Iterable[str]) -> None:
@@ -11013,10 +11201,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
         out.sort(key=lambda item: (int(item["turn"]), str(item["key"])), reverse=True)
         return out
-
-    def unread_memorial_count(self) -> int:
-        """未读奏报数（进度 + 检举）。"""
-        return sum(1 for row in self.list_player_memorials() if row.get("unread"))
 
     def build_faction_denunciation_facts(self, *, exclude_dossier_ids: Optional[Set[int]] = None) -> Dict[str, object]:
         """#627 供事实：派系恩怨/分叉/处境/个性——注入既有叙事 LLM 步。
@@ -11285,12 +11469,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 (accuser, dossier_id, origin),
             ).fetchone()
             if prior_row is not None:
-                try:
-                    prev_payload = json.loads(prior_row["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    prev_payload = {}
-                if not isinstance(prev_payload, dict):
-                    prev_payload = {}
+                prev_payload = self.parse_engine_payload_json(
+                    prior_row["payload_json"],
+                    surface="faction_denunciations.payload_json",
+                )
                 if not denunciation_case_upgraded(prev_payload, fork_state):
                     continue
 
@@ -11397,9 +11579,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         for todo in self.list_next_audience_todos(status="consumed"):
             if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
                 continue
-            payload = todo.get("payload_json") or {}
-            if not isinstance(payload, dict):
-                continue
+            payload = todo["payload_json"]
             if str(payload.get(PLEA_VERDICT_KEY) or "") != PLEA_VERDICT_PERSIST:
                 continue
             cid = int(todo.get("commitment_ref") or 0)
@@ -11530,7 +11710,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if commit and triggered:
             self.conn.commit()
         return triggered
-
 
 
     @staticmethod
@@ -12111,12 +12290,19 @@ CREATE TABLE IF NOT EXISTS authority_records (
         # prepare_pay_order_entries 同一验形（禁两套漂移）。
         if action == "pay_order_override":
             from ming_sim.pay_order import prepare_pay_order_entries
+            from ming_sim.action_materialize import DecreeMaterializationValidationError
             entries = normalized_payload.get("entries")
             if not isinstance(entries, list) or not entries:
-                raise ValueError("pay_order_override 案卷 payload.entries 须为非空列表")
+                raise DecreeMaterializationValidationError(
+                    "pay_order_override 案卷 payload.entries 须为非空列表",
+                    failed_fields=("entries",),
+                )
             for entry in entries:
                 if not isinstance(entry, dict):
-                    raise ValueError(f"pay_order_override entry 非字典：{entry!r}")
+                    raise DecreeMaterializationValidationError(
+                        f"pay_order_override entry 非字典：{entry!r}",
+                        failed_fields=("entries",),
+                    )
             prepare_pay_order_entries(self, entries)
         # #1503：拨饷类成案即规范化补饷载荷（缺字段 fail-loud）。
         if action == "grant_allocation":
@@ -12359,59 +12545,159 @@ CREATE TABLE IF NOT EXISTS authority_records (
         return dossier_id
 
     @staticmethod
-    def _validate_dossier_delegations(roster: Iterable[Dict[str, object]]) -> None:
+    def _validate_dossier_delegations(
+        roster: Iterable[Dict[str, object]],
+        *,
+        only: Optional[Iterable[Dict[str, object]]] = None,
+        as_declaration: bool = False,
+    ) -> None:
+        """委派链校验。only 限定检查对象（追加项）；as_declaration 时抛 DMVE。"""
         entries = list(roster)
         responsible = {
             str(item.get("character_id") or "") for item in entries
             if item.get("tier") in {"主办", "协办"}
         }
-        for item in entries:
+        checked = list(only) if only is not None else entries
+        for item in checked:
             delegator = str(item.get("delegator_id") or "")
             character = str(item.get("character_id") or "")
             if delegator and (delegator == character or delegator not in responsible):
+                if as_declaration:
+                    from ming_sim.action_materialize import (
+                        DecreeMaterializationValidationError,
+                    )
+                    raise DecreeMaterializationValidationError(
+                        "委派人须为同案主办/协办且不得自委派",
+                        category="invalid_participant_roster",
+                    )
                 raise ValueError("委派人须为同案主办/协办且不得自委派")
+
+    @staticmethod
+    def _normalize_endorsement_fields(
+        *,
+        form: object,
+        endorser_id: object = "",
+        imperial: object = False,
+        source_chat_turn_id: object = 0,
+        decision_key: object = "",
+    ) -> tuple[int, str, str, str, bool]:
+        """背书字段契约唯一权威（#658 / #1897）：类型、form 闭集、御笔/具名、provenance XOR。
+
+        返回 (source_cid, dkey, kind, person, is_imperial)。
+        声明路径抛 DecreeMaterializationValidationError；调用方在持久边界自行升格 ValueError。
+        不查 dossier/character/chat 引用——那是边界上下文，由调用方按有无案卷分别处理。
+        """
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        if isinstance(source_chat_turn_id, bool) or not isinstance(source_chat_turn_id, int):
+            raise DecreeMaterializationValidationError(
+                "背书来源对话轮 id 须为整数",
+                failed_fields=("source_chat_turn_id",), category="invalid_item",
+            )
+        if not isinstance(decision_key, str):
+            raise DecreeMaterializationValidationError(
+                "背书 decision_key 须为字符串",
+                failed_fields=("decision_key",), category="invalid_item",
+            )
+        if not isinstance(form, str) or not isinstance(endorser_id, str):
+            raise DecreeMaterializationValidationError(
+                "背书形式与人物须为字符串", failed_fields=("form",), category="invalid_item",
+            )
+        if not isinstance(imperial, bool):
+            raise DecreeMaterializationValidationError(
+                "御笔标记须为布尔", failed_fields=("imperial",), category="invalid_item",
+            )
+        cid = int(source_chat_turn_id)
+        dkey = decision_key.strip()
+        kind, person = form.strip(), endorser_id.strip()
+        is_imperial = imperial
+        # 恰一种 provenance：召对 chat_turn XOR 批红/下旨 decision_key。
+        has_turn = cid > 0
+        has_key = bool(dkey)
+        if has_turn == has_key:
+            raise DecreeMaterializationValidationError(
+                "背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一",
+                failed_fields=("source_chat_turn_id", "decision_key"), category="invalid_item",
+            )
+        if kind not in {"会签", "当面站台", "御笔手敕"}:
+            raise DecreeMaterializationValidationError(
+                "背书形式非法", failed_fields=("form",), category="invalid_item",
+            )
+        if kind == "御笔手敕":
+            if not is_imperial or person:
+                raise DecreeMaterializationValidationError(
+                    "御笔手敕必须使用御笔标记且不得具名大臣",
+                    failed_fields=("form", "imperial"), category="invalid_item",
+                )
+            person = ""
+            is_imperial = True
+        else:
+            if is_imperial or not person:
+                raise DecreeMaterializationValidationError(
+                    "会签/当面站台必须具名背书人",
+                    failed_fields=("form", "endorser_id"), category="invalid_item",
+                )
+        return cid, dkey, kind, person, is_imperial
+
+    def _require_endorsement_shared_refs(
+        self, *, source_cid: int, kind: str, person: str,
+    ) -> None:
+        """背书共同引用唯一权威：来源轮 / 具名人物存在性（#1897 禁平行）。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        if source_cid > 0:
+            if self.conn.execute(
+                "SELECT 1 FROM chat_turns WHERE id=?", (source_cid,),
+            ).fetchone() is None:
+                raise DecreeMaterializationValidationError(
+                    "背书来源对话轮不存在",
+                    failed_fields=("source_chat_turn_id",), category="missing_ref",
+                )
+        if kind != "御笔手敕":
+            if self.conn.execute(
+                "SELECT 1 FROM characters WHERE name=?", (person,),
+            ).fetchone() is None:
+                raise DecreeMaterializationValidationError(
+                    "背书人物不存在",
+                    failed_fields=("endorser_id",), category="hallucinated_id",
+                )
 
     def _validate_dossier_endorsement(
         self, dossier_id: object, *, form: object,
         source_chat_turn_id: object = 0, decision_key: object = "",
         endorser_id: object = "", imperial: object = False,
     ) -> tuple[int, int, str, str, str, bool]:
-        """#658：provenance 恰取 source_chat_turn_id>0 或 decision_key 非空之一。"""
+        """成案背书：字段权威 + 共同引用 + 案卷身份（成案独有）。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         if isinstance(dossier_id, bool) or not isinstance(dossier_id, int):
-            raise ValueError("背书案卷 id 须为整数")
-        if isinstance(source_chat_turn_id, bool) or not isinstance(source_chat_turn_id, int):
-            raise ValueError("背书来源对话轮 id 须为整数")
-        if not isinstance(decision_key, str):
-            raise ValueError("背书 decision_key 须为字符串")
-        if not isinstance(form, str) or not isinstance(endorser_id, str):
-            raise ValueError("背书形式与人物须为字符串")
-        did, cid = dossier_id, int(source_chat_turn_id)
-        dkey = decision_key.strip()
-        kind, person = form.strip(), endorser_id.strip()
-        if not isinstance(imperial, bool):
-            raise ValueError("御笔标记须为布尔")
-        is_imperial = imperial
-        # 恰一种 provenance：召对 chat_turn XOR 批红/下旨 decision_key。
-        has_turn = cid > 0
-        has_key = bool(dkey)
-        if has_turn == has_key:
-            raise ValueError("背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一")
+            raise DecreeMaterializationValidationError(
+                "背书案卷 id 须为整数", failed_fields=("dossier_id",), category="invalid_item",
+            )
+        cid, dkey, kind, person, is_imperial = self._normalize_endorsement_fields(
+            form=form, endorser_id=endorser_id, imperial=imperial,
+            source_chat_turn_id=source_chat_turn_id, decision_key=decision_key,
+        )
+        did = dossier_id
         if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
-            raise ValueError("背书所指案卷不存在")
-        if has_turn:
-            if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
-                raise ValueError("背书来源对话轮不存在")
-        if kind not in {"会签", "当面站台", "御笔手敕"}:
-            raise ValueError("背书形式非法")
-        if kind == "御笔手敕":
-            if not is_imperial or person:
-                raise ValueError("御笔手敕必须使用御笔标记且不得具名大臣")
-        else:
-            if is_imperial or not person:
-                raise ValueError("会签/当面站台必须具名背书人")
-            if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
-                raise ValueError("背书人物不存在")
+            raise DecreeMaterializationValidationError(
+                "背书所指案卷不存在", failed_fields=("dossier_id",), category="missing_ref",
+            )
+        self._require_endorsement_shared_refs(
+            source_cid=cid, kind=kind, person=person,
+        )
         return did, cid, dkey, kind, person, is_imperial
+
+    def _validate_pending_endorsement_entry(
+        self, *, form: object, endorser_id: object = "",
+        imperial: object = False, source_chat_turn_id: object = 0,
+    ) -> tuple[int, str, str, bool]:
+        """暂存背书（尚无 dossier）：字段权威 + 共同引用。"""
+        cid, _dkey, kind, person, is_imperial = self._normalize_endorsement_fields(
+            form=form, endorser_id=endorser_id, imperial=imperial,
+            source_chat_turn_id=source_chat_turn_id, decision_key="",
+        )
+        self._require_endorsement_shared_refs(
+            source_cid=cid, kind=kind, person=person,
+        )
+        return cid, kind, person, is_imperial
 
     def add_dossier_endorsement(
         self, dossier_id: int, *, form: str,
@@ -12488,37 +12774,43 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         if row is None:
             return None
-        out = self._dossier_row(row)
-        # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
-        try:
-            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            out["payload"] = {}
-        if not isinstance(out["payload"], dict):
-            out["payload"] = {}
-        return out
+        # _dossier_row 已响亮解析 payload；不平行宽容重读（#1897 E1/K2）。
+        return self._dossier_row(row)
 
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *,
         state: Optional[GameState] = None, commit: bool = True,
     ) -> List[Dict[str, object]]:
-        """Append ADR 0053 roster entries without replacing durable members."""
+        """Append ADR 0053 roster entries without replacing durable members.
+
+        来源分界（#1897 E1/K2 / ADR0005）：
+        - 本次追加项领域错误 → DMVE（调用方可逐项拒收）
+        - 已持久名册 schema/引用腐坏 → 裸 ValueError（内部故障，不记声明拒收）
+        """
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+
         owns_transaction = self.owns_transaction() if commit else False
-        row = self.conn.execute(
-            "SELECT participant_roster,action_type,decree_text FROM decree_dossiers WHERE id=?",
-            (int(dossier_id),),
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        try:
-            existing_raw = json.loads(row["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            existing_raw = []
-        existing = self._normalize_participant_roster(
-            existing_raw if isinstance(existing_raw, list) else []
+        # —— 1. 本次追加项准入（声明侧）——
+        additions = self._normalize_participant_roster(
+            participants, strict_structured=True,
         )
-        additions = self._normalize_participant_roster(participants, strict_structured=True)
         self._validate_participant_roster_references(additions)
+
+        # —— 2. 已持久名册响亮读取（内部）——
+        dossier = self.get_decree_dossier(int(dossier_id))
+        if dossier is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        existing_raw = dossier.get("participant_roster") or []
+        if not isinstance(existing_raw, list):
+            raise ValueError(f"案卷#{dossier_id} participant_roster 非列表")
+        existing = self._normalize_participant_roster(
+            existing_raw, strict_structured=True, as_durable=True,
+        )
+        self._validate_participant_roster_references(existing, as_durable=True)
+        # 旧名册委派链：同一权威规则，内部故障出口（裸 ValueError），不跳过。
+        self._validate_dossier_delegations(existing)
+
+        # —— 3. 合并：冲突/委派只归责追加项 ——
         by_character = {str(item["character_id"]): item for item in existing}
         added: List[Dict[str, object]] = []
         for item in additions:
@@ -12526,13 +12818,18 @@ CREATE TABLE IF NOT EXISTS authority_records (
             prior = by_character.get(character_id)
             if prior is not None:
                 if prior != item:
-                    raise ValueError(f"参与人物已在案且机械档不同：{character_id}")
+                    raise DecreeMaterializationValidationError(
+                        f"参与人物已在案且机械档不同：{character_id}",
+                        category="invalid_participant_roster",
+                    )
                 continue
             by_character[character_id] = item
             added.append(item)
         merged = existing + added
-        self._validate_dossier_delegations(merged)
-        self._validate_participant_roster_references(merged)
+        # 追加项委派相对合并后主协办集；领域拒收（DMVE）。
+        self._validate_dossier_delegations(
+            merged, only=added, as_declaration=True,
+        )
         if added:
             archive_keys: set[str] = set()
             raw_keys_row = self.conn.execute(
@@ -12541,14 +12838,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ).fetchone()
             raw_keys = (
                 raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None
-            ) or "[]"
-            parsed_keys = json.loads(raw_keys)
-            if not isinstance(parsed_keys, list):
-                raise ValueError(
-                    f"office_archive_keys 须为 JSON 数组：dossier {int(dossier_id)}"
-                )
-            archive_keys = {str(item) for item in parsed_keys}
-            if str(row["action_type"] or "") != "secret_order":
+            )
+            parsed_keys = _load_durable_str_list(
+                raw_keys,
+                surface=f"decree_dossiers#{int(dossier_id)}.office_archive_keys",
+            )
+            archive_keys = set(parsed_keys)
+            if str(dossier.get("action_type") or "") != "secret_order":
                 for item in added:
                     if str(item.get("tier") or "") != "主办":
                         continue
@@ -12575,14 +12871,14 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     int(dossier_id),
                 ),
             )
-            if state is not None and str(row["action_type"] or "") != "secret_order":
+            if state is not None and str(dossier.get("action_type") or "") != "secret_order":
                 for item in added:
                     identity = ":".join(str(item.get(key) or "-") for key in (
                         "character_id", "tier", "role", "delegator_id",
                     ))
                     self.register_character_knowledge_source(
                         state, [item], "assignment", "旨意案卷追加参与",
-                        str(row["decree_text"] or ""),
+                        str(dossier.get("decree_text") or ""),
                         source_id=f"dossier:{int(dossier_id)}:participant:{identity}",
                         commit=False,
                     )
@@ -12639,45 +12935,12 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         return None if row is None else self._dossier_row(row)
 
-    def list_dossiers_for_directive(
-        self, directive_id: int,
-    ) -> List[Dict[str, object]]:
-        """#654：directive 名下全部子差务，ORDER BY region_id, id。"""
-        rows = self.conn.execute(
-            "SELECT * FROM decree_dossiers WHERE directive_id=? "
-            "ORDER BY region_id, id",
-            (int(directive_id),),
-        ).fetchall()
-        return [self._dossier_row(r) for r in rows]
-
     def get_dossier_for_secret_order(self, secret_order_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
             "SELECT * FROM decree_dossiers WHERE secret_order_id=?",
             (int(secret_order_id),),
         ).fetchone()
         return None if row is None else self._dossier_row(row)
-
-    def list_endorsed_dossier_candidates(
-        self, current_turn: int,
-    ) -> List[Dict[str, object]]:
-        """Typed backing choices projected from durable named endorsements."""
-        rows = self.conn.execute(
-            """SELECT d.id AS dossier_id, e.endorser_id, d.decree_text AS subject
-               FROM decree_dossier_endorsements e
-               JOIN decree_dossiers d ON d.id=e.dossier_id
-               WHERE e.endorser_id<>'' AND d.created_turn<=?
-               ORDER BY d.id DESC, e.id DESC""",
-            (int(current_turn),),
-        ).fetchall()
-        result: List[Dict[str, object]] = []
-        for row in rows:
-            dossier_id = int(row["dossier_id"])
-            result.append({
-                "dossier_id": dossier_id,
-                "endorser_id": str(row["endorser_id"]),
-                "subject": str(row["subject"] or ""),
-            })
-        return result
 
     # Central yamen archive identity: offices.json allowed_types minus non-yamen
     # kinds. Never union characters.office_type (外臣/内臣/宗藩/未仕 would leak).
@@ -12870,7 +13133,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     or bool(row["was_force_promulgated"])
                     or int(row["id"]) in known_dossier_ids
                     or reader_archive_key in set(
-                        json.loads(row["office_archive_keys"] or "[]")
+                        _load_durable_str_list(
+                            row["office_archive_keys"],
+                            surface=f"decree_dossiers#{int(row['id'])}.office_archive_keys",
+                        )
                     )
                 )
             ) or (
@@ -12901,16 +13167,17 @@ CREATE TABLE IF NOT EXISTS authority_records (
         commit: bool = True,
     ) -> None:
         """把确认后的新→旧案卷关联整批落账；任一坏引用则整批拒收并留痕。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         owns_transaction = self.owns_transaction() if commit else False
-        source_id = strict_int(source_dossier_id, accept_numeric_strings=False)
+        source_id = strict_sqlite_id(source_dossier_id, accept_numeric_strings=False)
         source = self.get_decree_dossier(source_id)
         if source is None:
-            raise ValueError("关联来源指向不存在案卷")
+            raise DecreeMaterializationValidationError("关联来源指向不存在案卷", category="hallucinated_id")
         normalized: List[Tuple[int, str, str]] = []
         rejection: Optional[Tuple[int, str, str, str]] = None
         for item in links:
             try:
-                target_id = strict_int(
+                target_id = strict_sqlite_id(
                     item.get("target_dossier_id"), accept_numeric_strings=False
                 )
             except (AttributeError, ValueError):
@@ -12921,12 +13188,16 @@ CREATE TABLE IF NOT EXISTS authority_records (
             note = str(item.get("note") or "") if isinstance(item, dict) else ""
             if self.get_decree_dossier(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
+                category = "hallucinated_id"
             elif target_id >= source_id:
                 rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
+                category = "invalid_state"
             elif relation not in DOSSIER_LINK_TYPES:
                 rejection = (target_id, relation, note, "案卷关联类型非法")
+                category = "invalid_enum"
             elif not note.strip():
-                rejection = (target_id, relation, note, "关联说明不能为空")
+                rejection = (target_id, relation, note, "案卷关联说明不能为空")
+                category = "invalid_shape"
             if rejection is not None:
                 break
             normalized.append((target_id, relation, note))
@@ -12936,7 +13207,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 source_id, target_id, relation, note, reason,
             )
             self._commit_dossier_write(commit, owns_transaction=owns_transaction)
-            exc = ValueError(reason)
+            exc = DecreeMaterializationValidationError(reason, category=category)
             # commit_pending_actions rolls its business savepoint back.  Carry the
             # rejected item across that boundary so its outer failure path can
             # persist the audit without retaining the incomplete secret order.
@@ -12961,23 +13232,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         column = "source_dossier_id" if direction == "outgoing" else "target_dossier_id"
         rows = self.conn.execute(
             f"SELECT * FROM decree_dossier_links WHERE {column}=? ORDER BY id",
-            (strict_int(dossier_id, accept_numeric_strings=False),),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def list_dossier_link_rejections(
-        self, source_dossier_id: Optional[int] = None, *,
-        pending_action_id: Optional[int] = None,
-    ) -> List[Dict[str, object]]:
-        if (source_dossier_id is None) == (pending_action_id is None):
-            raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
-        if pending_action_id is not None:
-            column, value = "pending_action_id", pending_action_id
-        else:
-            column, value = "source_dossier_id", source_dossier_id
-        rows = self.conn.execute(
-            f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
-            (strict_int(value, accept_numeric_strings=False),),
+            (strict_sqlite_id(dossier_id, accept_numeric_strings=False),),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -12998,9 +13253,15 @@ CREATE TABLE IF NOT EXISTS authority_records (
             try:
                 dossier_id = int(supplied.split(":", 1)[1])
             except (TypeError, ValueError):
-                raise ValueError("commitment origin_ref 案卷 id 非法")
-            if self.get_decree_dossier(dossier_id) is None:
-                raise ValueError("commitment origin_ref 指向不存在案卷")
+                raise KeyError("commitment origin_ref 案卷 id 非法")
+            # 缺行/越界 id=模型坏引用→KeyError 逐项拒（同 effect_origin_rejection
+            # 捕 OverflowError）；_dossier_row 解码故障 RuntimeError 穿透
+            try:
+                dossier = self.get_decree_dossier(dossier_id)
+            except OverflowError as exc:
+                raise KeyError("commitment origin_ref 案卷 id 非法") from exc
+            if dossier is None:
+                raise KeyError("commitment origin_ref 指向不存在案卷")
             return supplied
         from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX, is_secret_order_origin
 
@@ -13008,10 +13269,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
             try:
                 secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):])
             except (TypeError, ValueError):
-                raise ValueError("commitment origin_ref 密令 id 非法")
-            dossier = self.get_dossier_for_secret_order(secret_order_id)
+                raise KeyError("commitment origin_ref 密令 id 非法")
+            try:
+                dossier = self.get_dossier_for_secret_order(secret_order_id)
+            except OverflowError as exc:
+                raise KeyError("commitment origin_ref 密令 id 非法") from exc
             if dossier is None:
-                raise ValueError("commitment origin_ref 指向无案卷密令")
+                raise KeyError("commitment origin_ref 指向无案卷密令")
             return f"dossier:{int(dossier['id'])}"
         if str(origin_kind or "") == "decree":
             row = self.conn.execute(
@@ -13019,7 +13283,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 (int(state.turn),),
             ).fetchone()
             if row is not None and int(row["n"] or 0) > 0:
-                raise ValueError(
+                raise KeyError(
                     "承诺 origin_ref 必须由产出它的明确案卷携带 dossier:<id>"
                 )
         return supplied
@@ -13061,14 +13325,17 @@ CREATE TABLE IF NOT EXISTS authority_records (
             item["id"] = int(item["id"])
             item["dossier_id"] = int(item["dossier_id"])
             item["turn"] = int(item["turn"])
-            item["primary_opponents"] = json.loads(
-                str(item.pop("primary_opponents_json") or "[]")
+            item["primary_opponents"] = _load_durable_json_list(
+                item.pop("primary_opponents_json"),
+                surface="decree_dossier_decisions.primary_opponents_json",
             )
-            item["criteria_snapshot"] = json.loads(
-                str(item.pop("criteria_snapshot_json") or "{}")
+            item["criteria_snapshot"] = self.parse_engine_payload_json(
+                item.pop("criteria_snapshot_json"),
+                surface="decree_dossier_decisions.criteria_snapshot_json",
             )
-            item["affected_parties"] = json.loads(
-                str(item.pop("affected_parties_json") or "[]")
+            item["affected_parties"] = _load_durable_json_list(
+                item.pop("affected_parties_json"),
+                surface="decree_dossier_decisions.affected_parties_json",
             )
             item["midzhi_unpromulgatable"] = bool(
                 item["midzhi_unpromulgatable"]
@@ -13123,18 +13390,19 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchall()
         visible = []
         for row in rows:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            policy = dossier_action_policy(row["action_type"], payload)
+            decoded = self._dossier_row(row)
+            payload = decoded["payload"]
+            policy = dossier_action_policy(decoded["action_type"], payload)
             # Admission-owned effects never run through the simulator again.
             # An in-transit dossier remains visible as execution context until
             # its execution verdict closes it, however.
-            if str(row["action_type"]) == "secret_order":
+            if str(decoded["action_type"]) == "secret_order":
                 continue
             if (
                 policy["effect_owner"] != "immediate"
-                or str(row["status"]) == "executing"
+                or str(decoded["status"]) == "executing"
             ):
-                visible.append(self._dossier_row(row))
+                visible.append(decoded)
         return visible
 
     def transition_decree_dossier(
@@ -13153,7 +13421,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            payload = json.loads(str(row["payload_json"] or "{}"))
+            payload = self.parse_engine_payload_json(
+                row["payload_json"],
+                surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+            )
             if self._dossier_has_execution_surface(row["action_type"], payload):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
@@ -13269,8 +13540,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-        immediate = not self._dossier_has_execution_surface(row["action_type"], payload)
+        immediate = not self._dossier_has_execution_surface(row["action_type"], row["payload"])
         if row["status"] == "promulgated" and not immediate:
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
         if row["status"] == "executing" and not str(row.get("execution_outcome") or ""):
@@ -13320,13 +13590,12 @@ CREATE TABLE IF NOT EXISTS authority_records (
             raise ValueError("executing 是非终态，必须以 close=False 记录")
         immediate = (
             row["status"] == "promulgated"
-            and not self._dossier_has_execution_surface(
-                row["action_type"],
-                json.loads(str(row.get("payload_json") or "{}")),
-            )
+            and not self._dossier_has_execution_surface(row["action_type"], row["payload"])
         )
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
+        # 执行注正文：禁 str()/or 洗白（#1897 J820-E1）。
+        note_text = _require_durable_prose(note, field="execution_note", required=False)
         self.conn.execute(
             """
             UPDATE decree_dossiers
@@ -13335,7 +13604,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             WHERE id=?
             """,
             (
-                outcome, str(note or ""),
+                outcome, note_text,
                 0 if outcome == "executing" else int(turn),
                 int(dossier_id),
             ),
@@ -13343,7 +13612,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if close:
             self.close_decree_dossier(
                 dossier_id,
-                str(note or "") if outcome == "failed" else "",
+                note_text if outcome == "failed" else "",
                 commit=False,
             )
         # #625：走样/变形/烂尾终值 → 空子暴露（与对账路统一：本 turn 稽核在场门）
@@ -13448,9 +13717,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 self._append_midzhi_stigma(
                     dossier_id, decision="promulgated", turn=state.turn, commit=False,
                 )
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            if not isinstance(payload, dict):
-                raise ValueError("案卷 payload 非对象")
+            payload = row["payload"]
             policy = dossier_action_policy(row["action_type"], payload)
             signal = row.get("execution_signal") or {}
             if (
@@ -13538,28 +13805,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     )
                     if not office_changes:
                         raise ValueError("任免案卷载荷物化失败")
-                    if (
-                        pa["action"] == "任命"
-                        and str(payload.get("summon_after") or "否") == "是"
-                    ):
-                        from ming_sim.audience_night import activate_office_summon
-                        entry = activate_office_summon(self, int(pa["id"]))
-                        if entry is None:
-                            raise ValueError("任命后传召缺原始故事账")
-                        # Activate only here; #670 consumes once per night/person
-                        # after the batch (apply_dossier_verdicts) or at the end of
-                        # this single promulgation when not deferred.
-                        nights = getattr(self.conn, "_deferred_office_summon_nights", None)
-                        if nights is not None:
-                            nights.add(int(entry["night_id"]))
-                        else:
-                            from ming_sim.audience_night import (
-                                commit_fresh_summons_for_night,
-                            )
-                            commit_fresh_summons_for_night(
-                                self, state, int(entry["night_id"]),
-                                content=content,
-                            )
                 finally:
                     self.conn._materializing_dossier_id = previous_materializing
             elif row["action_type"] == "grant_allocation":
@@ -13811,11 +14056,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         if row is None:
             raise ValueError("强颁缺少当前回合 Judge affected_parties")
-        try:
-            value = json.loads(str(row["affected_parties_json"] or ""))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("强颁当前回合 Judge affected_parties 非法") from exc
-        if not isinstance(value, list) or not value:
+        value = _load_durable_json_list(
+            row["affected_parties_json"], surface="decree_dossier_decisions.affected_parties_json",
+        )
+        if not value:
             raise ValueError("强颁当前回合 Judge affected_parties 必须为非空 typed 清单")
         validate_affected_parties(
             value,
@@ -14111,9 +14355,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
         #659：只改人读驻地/结构化驻地；不触 pay_source_region。仅 station 无 region
         时只改人读字段，region 保持原值（禁止从 station 文本反推）。
         """
-        dest = str(station or "").strip()
+        dest = str(station or "")  # Free prose place name F21
+        dest_present = bool(dest.strip())
         dest_region = str(station_region or "").strip()
-        if not dest and not dest_region:
+        if not dest_present and not dest_region:
             return
         if not army_id:
             raise ValueError("军令调驻缺少军队 target")
@@ -14305,8 +14550,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
     ) -> None:
         """#523：收权案卷顺颁后走 #611 authority_changes 收回槽。
 
-        生产项显式携 authority_id + 本项 dossier_id；观感边由 #611 槽写入。
-        不走 0056 毁约轨。
+        生产项显式携 authority_id + 本项 dossier_id；只落收回事实。
+        人物是否结怨走既有关系声明口（#1895），不走 0056 毁约轨。
         """
         from ming_sim.issues import apply_score_extraction
         from ming_sim.strict_types import strict_int
@@ -14459,7 +14704,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         army_id = str(
             payload.get("target_id") or row.get("target_id") or ""
         ).strip()
-        station = str(payload.get("station") or "").strip()
+        station = str(payload.get("station") or "")  # Free prose place name F21
         station_region = str(
             payload.get("station_region")
             or payload.get("实际驻地")
@@ -14675,11 +14920,15 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if isinstance(ongoing, dict) and ongoing:
             ni["ongoing_effects"] = ongoing
         # #620 扩展面：分段里程碑（#520 本体字段语义不动）
-        from ming_sim.staged_commitment import stages_to_json
+        from ming_sim.staged_commitment import (
+            stages_source_from_issue_item,
+            stages_to_json,
+        )
         # 分段承诺是机械事实，只认显式结构化 stages：非 JSON 散文串响亮 ValueError。
         # 引擎不再从已归一正文（stage_text）里正则抠年份（ADR 0142 / 御批 2026-09-30）。
+        # stages | stages_json 回落与 new_issues 共用；显式 {} 不经 or 洗成缺省（#1897 C1）。
         stages_norm = json.loads(stages_to_json(
-            payload.get("stages") or payload.get("stages_json"),
+            stages_source_from_issue_item(payload),
         ))
         if stages_norm:
             ni["stages"] = stages_norm
@@ -14724,8 +14973,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 return
             if issue_disposition == "办人":
                 try:
-                    roster = json.loads(str(issue["target_roster"] or "[]"))
-                except (TypeError, ValueError) as exc:
+                    roster = _load_durable_json_list(
+                        issue["target_roster"],
+                        surface=f"issues#{issue_id}.target_roster",
+                    )
+                except ValueError as exc:
                     raise ValueError("弹劾潮 target_roster 非法") from exc
                 if target not in roster:
                     raise ValueError("办人目标不在弹劾潮 target_roster")
@@ -14880,9 +15132,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 break
         if not hit:
             return
-        # Free reason prose: empty-check without mutating carried body (P6).
-        reason_raw = str(reason or "")
-        context = reason_raw if reason_raw.strip() else "处置站台者"
+        # #1897：站台处置理由自由正文原样；仅真正空串才回落缺省。
+        context = str(reason or "") or "处置站台者"
         from ming_sim.credit_events import KIND_BETRAY, write_credit_event
         write_credit_event(
             self, state,
@@ -14985,13 +15236,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
         # both SQLite and the caller's in-memory GameState.
         from ming_sim.decree import atomic_and_reload
 
-        # Defer #670 fresh-summon consumption until every office origin in this
-        # batch has been activated — one departure write per person/night.
-        previous_summon_nights = getattr(self.conn, "_deferred_office_summon_nights", None)
         previous_reco_prevalidated = getattr(
             self.conn, "_recommendation_snapshots_prevalidated", False,
         )
-        self.conn._deferred_office_summon_nights = set()
         self.conn._recommendation_snapshots_prevalidated = True
         try:
             with atomic_and_reload(self, state, content=content):
@@ -15013,21 +15260,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     self._record_dossier_verdict_metadata(
                         state, strict_int(verdict.get("dossier_id")), verdict,
                     )
-                summon_nights = set(getattr(self.conn, "_deferred_office_summon_nights", set()) or set())
-                if summon_nights:
-                    from ming_sim.audience_night import commit_fresh_summons_for_night
-                    for night_id in sorted(summon_nights):
-                        commit_fresh_summons_for_night(
-                            self, state, int(night_id),
-                            content=content,
-                        )
+                # Consumption of this promulgation batch is the same atomic unit as
+                # effect application; outer settlement rollback restores both.
         finally:
             self.conn._recommendation_snapshots_prevalidated = previous_reco_prevalidated
-            if previous_summon_nights is None:
-                if hasattr(self.conn, "_deferred_office_summon_nights"):
-                    delattr(self.conn, "_deferred_office_summon_nights")
-            else:
-                self.conn._deferred_office_summon_nights = previous_summon_nights
 
     def interrupt_dossiers_for_character(
         self, state: GameState, character_name: str, reason: str, *,
@@ -15056,10 +15292,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     (int(order_id),),
                 ).fetchone()
                 if order is not None and order["status"] == "active":
-                    previous = str(order["result"] or "")
-                    result = "\n".join(x for x in (previous, reason) if x)
+                    from ming_sim.covert_progress import player_facing_secret_order_close_text
+                    result = player_facing_secret_order_close_text(
+                        dict(order), self.list_dossier_progress(dossier_id),
+                    )
                     self.close_secret_order(
-                        int(order_id), "failed", result, int(state.turn), commit=False,
+                        int(order_id), "failed", result, int(state.turn),
+                        execution_note=reason, commit=False,
                     )
                     continue
             self.record_dossier_execution(
@@ -15069,18 +15308,26 @@ CREATE TABLE IF NOT EXISTS authority_records (
         self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         return len(rows)
 
-    def _night_id_for_staged_write(self, night_id: Optional[int], *, what: str) -> int:
+    def _night_id_for_staged_write(
+        self, night_id: Optional[int], *, what: str, source_chat_turn_id: int = 0,
+    ) -> int:
         """声明已持有源夜时盖源夜；未持有则盖当前开放夜。
 
         封夜后的迟到转译传入已封源夜：CLOSED 原样放行，不改挂落账当下的开放夜。
-        CLOSING 仍拒。night_id 缺或 <=0 维持开夜查找（无开放夜则为 0）。
+        CLOSING 在 source_chat_turn_id 为迟到源轮时放行（与 assert 同源）。
+        night_id 缺或 <=0 维持开夜查找（无开放夜则为 0）。
         """
         from ming_sim.audience_night import assert_night_accepts_player_input
         requested = int(night_id) if night_id is not None else 0
+        ctid = int(source_chat_turn_id or 0)
         if requested > 0:
-            bound = assert_night_accepts_player_input(self, requested, what=what)
+            bound = assert_night_accepts_player_input(
+                self, requested, what=what, source_chat_turn_id=ctid,
+            )
         else:
-            bound = assert_night_accepts_player_input(self, what=what)
+            bound = assert_night_accepts_player_input(
+                self, what=what, source_chat_turn_id=ctid,
+            )
         return int(bound["id"]) if bound is not None else 0
 
     def stage_pending_action(
@@ -15093,18 +15340,25 @@ CREATE TABLE IF NOT EXISTS authority_records (
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
         颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。
 
-        ``source_chat_turn_id``（#1890）：本道交办的来源对话轮。交办暂存的
-        统一身份就是本行 id + 这一列来源轮——撤回该轮时按此列整轮作废，
-        不必回溯 ``chat_turn_rollback_items`` 去猜哪条暂存出自哪一轮。
-        0 = 非召对来源（过月世界段 / 框架写入），不随任何召对轮撤回。
-
         Secret oral provenance must be pinned by the source turn at the caller;
         another turn's held message is never a valid substitute.
+
+        ``night_id``：显式承接的源夜（ADR 0038 后出注记的迟到转译）。夜已收时
+        ``get_open_night`` 返 None 会把补译暂存挂成 night_id=0，随后应允按
+        「不属本夜暂存清单」missing_ref——补译交办因此接不上源夜。给出源夜时
+        仍走同一条 CLOSING 冻结校验，只是不再取「当前开着的夜」。
+        ``source_chat_turn_id``（#1890）：本道交办的来源对话轮——统一身份=
+        本行 id + 这一列；撤回该轮按此列整轮作废。同时用于迟到转译放行收夜
+        持闸窗口（判据唯一真源见 :func:`assert_night_accepts_player_input`）。
+        0 = 非召对来源（过月世界段 / 框架写入），不随任何召对轮撤回。
         """
         payload_data: Dict[str, object] = dict(payload or {})
         # #498：未持源夜时挂当前开放夜。#1900：声明路径传入源夜则盖源夜。
         # CLOSING freezes new staged actions.
-        night_id = self._night_id_for_staged_write(night_id, what="暂存")
+        night_id = self._night_id_for_staged_write(
+            night_id, what="暂存",
+            source_chat_turn_id=int(source_chat_turn_id or 0),
+        )
         # 写前捕获归属：INSERT 后 in_transaction 会使 owns_transaction() 恒 False。
         owns = self.owns_transaction()
         cur = self.conn.execute(
@@ -15186,56 +15440,48 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if row is None:
             raise KeyError(f"暂存动作不存在：{aid}")
         if str(row["status"] or "") != "pending":
-            raise ValueError(f"暂存动作状态不可挂背书：{row['status']}")
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        form = str(entry.get("form") or "").strip()
-        endorser_id = str(entry.get("endorser_id") or "").strip()
-        imperial = bool(entry.get("imperial", False))
-        source_cid = int(entry.get("source_chat_turn_id") or 0)
-        # 暂存阶段尚无 dossier：只验形式/人物/来源轮（与 _validate 同口径）。
-        if form == "御笔手敕":
-            imperial, endorser_id = True, ""
-        if form not in {"会签", "当面站台", "御笔手敕"}:
-            raise ValueError("背书形式非法")
-        if form == "御笔手敕":
-            if not imperial or endorser_id:
-                raise ValueError("御笔手敕必须使用御笔标记且不得具名大臣")
-        else:
-            if imperial or not endorser_id:
-                raise ValueError("会签/当面站台必须具名背书人")
-            if self.conn.execute(
-                "SELECT 1 FROM characters WHERE name=?", (endorser_id,),
-            ).fetchone() is None:
-                raise ValueError("背书人物不存在")
-        if source_cid <= 0:
-            raise ValueError("背书来源对话轮 id 须为正整数")
-        if self.conn.execute(
-            "SELECT 1 FROM chat_turns WHERE id=?", (source_cid,),
-        ).fetchone() is None:
-            raise ValueError("背书来源对话轮不存在")
-        items = list(payload.get("endorsements") or [])
-        if not isinstance(items, list):
-            items = []
-        # 同轮同形同人去重（INSERT OR IGNORE 同语义）。
+            from ming_sim.action_materialize import DecreeMaterializationValidationError
+            raise DecreeMaterializationValidationError(
+                f"暂存动作状态不可挂背书：{row['status']}",
+                failed_fields=("status",), category="invalid_item",
+            )
+        # 已持久候选解码响亮，不吞成空背书底（#1897 E1）。
+        payload = self.parse_engine_payload_json(
+            row["payload_json"], surface="pending_actions.payload_json",
+        )
+        # 新入：字段权威 + 暂存引用边界（尚无 dossier）。
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        source_cid, form, endorser_id, imperial = self._validate_pending_endorsement_entry(
+            form=entry.get("form"),
+            endorser_id=entry.get("endorser_id", ""),
+            imperial=entry.get("imperial", False),
+            source_chat_turn_id=entry.get("source_chat_turn_id", 0),
+        )
+        # 已持久条目：容器 + 同一字段权威；契约腐坏升格 ValueError（#1897 E1）。
+        items = _durable_payload_endorsements(
+            payload, surface=f"pending_actions#{aid}.endorsements",
+        )
         key = (form, endorser_id, imperial, source_cid)
         kept = []
-        for raw in items:
-            if not isinstance(raw, Mapping):
-                continue
-            k = (
-                str(raw.get("form") or "").strip(),
-                str(raw.get("endorser_id") or "").strip(),
-                bool(raw.get("imperial", False)),
-                int(raw.get("source_chat_turn_id") or 0),
-            )
+        for idx, raw in enumerate(items):
+            try:
+                cid, kind, person, is_imp = self._validate_pending_endorsement_entry(
+                    form=raw.get("form"),
+                    endorser_id=raw.get("endorser_id", ""),
+                    imperial=raw.get("imperial", False),
+                    source_chat_turn_id=raw.get("source_chat_turn_id", 0),
+                )
+            except DecreeMaterializationValidationError as exc:
+                raise ValueError(
+                    f"pending_actions#{aid}.endorsements[{idx}] 契约腐坏：{exc}"
+                ) from exc
+            k = (kind, person, is_imp, cid)
             if k == key:
                 continue
-            kept.append(dict(raw))
+            kept.append({
+                "form": kind, "endorser_id": person,
+                "imperial": is_imp, "source_chat_turn_id": cid,
+            })
         kept.append({
             "form": form, "endorser_id": endorser_id,
             "imperial": imperial, "source_chat_turn_id": source_cid,
@@ -15253,29 +15499,30 @@ CREATE TABLE IF NOT EXISTS authority_records (
     ) -> List[int]:
         """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
         owns = self.owns_transaction() if commit else False
-        raw_items = payload.get("endorsements") if isinstance(payload, Mapping) else None
-        if not isinstance(raw_items, list) or not raw_items:
+        if not isinstance(payload, Mapping):
+            return []
+        # 容器解码 + add（内调字段权威/_validate）；持久边界 DMVE→ValueError（#1897 E1）。
+        raw_items = _durable_payload_endorsements(
+            payload, surface=f"dossier#{int(dossier_id)}.payload.endorsements",
+        )
+        if not raw_items:
             return []
         new_ids: List[int] = []
-        for raw in raw_items:
-            if not isinstance(raw, Mapping):
-                continue
-            form = str(raw.get("form") or "").strip()
-            endorser_id = str(raw.get("endorser_id") or "").strip()
-            imperial = bool(raw.get("imperial", False))
-            source_cid = int(raw.get("source_chat_turn_id") or 0)
-            if form == "御笔手敕":
-                imperial, endorser_id = True, ""
-            if form not in {"会签", "当面站台", "御笔手敕"} or source_cid <= 0:
-                continue
-            eid = self.add_dossier_endorsement(
-                int(dossier_id),
-                form=form,
-                endorser_id=endorser_id,
-                imperial=imperial,
-                source_chat_turn_id=source_cid,
-                commit=False,
-            )
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        for idx, raw in enumerate(raw_items):
+            try:
+                eid = self.add_dossier_endorsement(
+                    int(dossier_id),
+                    form=raw.get("form"),
+                    endorser_id=raw.get("endorser_id", ""),
+                    imperial=raw.get("imperial", False),
+                    source_chat_turn_id=raw.get("source_chat_turn_id", 0),
+                    commit=False,
+                )
+            except DecreeMaterializationValidationError as exc:
+                raise ValueError(
+                    f"持久 endorsements[{idx}] 契约腐坏：{exc}"
+                ) from exc
             new_ids.append(int(eid))
         if owns and new_ids:
             self.conn.commit()
@@ -15319,51 +15566,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             for r in rows
         ]
 
-    def upsert_pending_directive(
-        self, turn: int, minister_name: str, payload: Dict[str, object],
-        source_chat_turn_id: int = 0,
-    ) -> int:
-        """暂存或原地更新(last-write-wins)一条 kind=directive 拟旨意图(ADR 0006)。
-        同一回合同一大臣至多一条 pending directive——新意图覆盖旧(补充=原地更新,非新增态)。
-        返回行 id。
-
-        ``source_chat_turn_id``（#1890）只在新起一行时钉身份；命中既有行的
-        改稿分支刻意不换身份（见该分支注记）。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="暂存")
-        row = self.conn.execute(
-            "SELECT id FROM pending_actions "
-            "WHERE turn=? AND minister_name=? AND kind='directive' AND status='pending'",
-            (int(turn), str(minister_name)),
-        ).fetchone()
-        if row is not None:
-            # #498：同回合可跨两夜（一月多夜）。旧夜遗留的 pending directive 被本夜复用更新时，
-            # 必须把归属原子迁到当前开着的夜并清 night_approved，否则本夜应允的
-            # WHERE night_id=当前夜 更新零行、收夜漏交、随后被默认同意旁路批交。
-            # #502 L5（同缝）：合并保留下划线控制键，正文改草不抹待澄清/夜内态。
-            existing_payload = self.conn.execute(
-                "SELECT payload_json FROM pending_actions WHERE id=?", (int(row["id"]),),
-            ).fetchone()
-            merged = self._merge_directive_payload(
-                existing_payload["payload_json"] if existing_payload else "{}", payload or {})
-            self._discard_pending_decree_forecast(int(row["id"]))
-            self.conn.execute(
-                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
-                "version=version+1 WHERE id=?",
-                (json.dumps(merged, ensure_ascii=False),
-                 self._current_open_night_id(), int(row["id"])),
-            )
-            self.conn.commit()
-            return int(row["id"])
-        # #1890：只有 INSERT 分支钉来源轮。改草分支（上方 UPDATE）刻意不动
-        # source_chat_turn_id —— 一道交办的身份是它首次被说出口的那一轮，
-        # 补充/改稿不换身份，否则撤回前一轮会连带作废后来轮的修订。
-        return self.stage_pending_action(
-            turn, kind="directive", action="拟旨",
-            minister_name=minister_name, target_id=None, payload=payload,
-            source_chat_turn_id=source_chat_turn_id,
-        )
-
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
         *,
@@ -15371,10 +15573,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
         source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
-        与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
-        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。
+        改草走 :meth:`update_directive_candidate`。同臣同月 last-write-wins upsert 已退役（#1897 D2）。
 
-        ``source_chat_turn_id``（#1890）：本道交办的来源轮，随新行落库。"""
+        ``night_id``：与 :meth:`stage_pending_action` 同义——显式承接的源夜，供
+        间接暂存入口（``action_materialize.stage_*_candidate``）把 ADR 0038
+        迟到转译的归属夜传下去，不再退回「当前开着的夜」。``source_chat_turn_id``
+        同义：迟到转译的源轮，放行收夜持闸窗口。
+        """
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
@@ -15386,14 +15591,19 @@ CREATE TABLE IF NOT EXISTS authority_records (
         self, candidate_id: int, payload: Dict[str, object],
         *,
         night_id: Optional[int] = None,
+        source_chat_turn_id: int = 0,
     ) -> int:
         """#529：原地更新某一道 pending office（任免）候选 payload（特旨/署理路径应答）。
 
         与 directive 改草同纪律——未持源夜时归属迁到当前开夜并清 night_approved；
         声明路径传入源夜则盖源夜。合并保留下划线控制键。
+        ``source_chat_turn_id``：迟到转译源轮，放行收夜持闸窗口。
         返回该行 id（不存在/非 pending office 则 0）。
         """
-        stamp = self._night_id_for_staged_write(night_id, what="任免路径应答")
+        stamp = self._night_id_for_staged_write(
+            night_id, what="任免路径应答",
+            source_chat_turn_id=int(source_chat_turn_id or 0),
+        )
         owns = self.owns_transaction()
         row = self.conn.execute(
             "SELECT id,payload_json,status FROM pending_actions "
@@ -15418,15 +15628,16 @@ CREATE TABLE IF NOT EXISTS authority_records (
         self, candidate_id: int, payload: Dict[str, object],
         *,
         night_id: Optional[int] = None,
+        source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
-        未持源夜时与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清
-        night_approved，使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入
-        源夜则盖源夜。返回该行 id（不存在/非 pending 则 0）。
-        合并保留下划线控制键（如 _directive_status），不抹掉提交态。
-        #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
-        声明路径传入源夜则盖源夜，不把既有候选迁到落账当下的开放夜。"""
-        stamp = self._night_id_for_staged_write(night_id, what="改草")
+        未持源夜时把归属迁到当前开着的夜并清 night_approved；声明路径传入源夜则盖源夜。
+        返回该行 id。``source_chat_turn_id``：迟到转译源轮，放行收夜持闸窗口。
+        """
+        stamp = self._night_id_for_staged_write(
+            night_id, what="改草",
+            source_chat_turn_id=int(source_chat_turn_id or 0),
+        )
         row = self.conn.execute(
             "SELECT id,payload_json,status,version FROM pending_actions "
             "WHERE id=? AND kind='directive'",
@@ -15449,12 +15660,12 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
     @staticmethod
     def _is_typed_business_refusal(exc: BaseException) -> bool:
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         from ming_sim.exceptions import OfficeAppointmentRejection, PendingActionRefusal
-        from ming_sim.participant_roster import UnknownParticipantRefError
 
         return isinstance(
             exc,
-            (PendingActionRefusal, OfficeAppointmentRejection, UnknownParticipantRefError),
+            (PendingActionRefusal, OfficeAppointmentRejection, DecreeMaterializationValidationError),
         )
 
     def _dispose_pending_action_apply_exception(
@@ -15472,10 +15683,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
         rejection = getattr(exc, "dossier_link_rejection", None)
         if rejection is not None:
             # 业务拒收（模型指向不存在案卷）：durable 审计 + 终态 failed，
-            # 不是代码故障，不上抛。
+            # 不是代码故障，不上抛。类别随 typed 拒收贯通 promises 缝。
             self._record_dossier_link_rejection(
                 *rejection, pending_action_id=int(pa["id"]),
             )
+            self._record_typed_business_refusal(pa, exc, rejection_collector)
             self.conn.execute(
                 "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
             tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
@@ -15534,6 +15746,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
                         "UPDATE pending_actions SET status='failed' WHERE id=?",
                         (int(pa["id"]),),
                     )
+                    # 明确业务 False 进入既有拒收报告管线；failed 终态不代替 ADR0015 轨（#1897 L1）。
+                    # 坏持久 payload 不得走此路——_apply 须响亮上抛（#1897 E1）。
+                    self._record_pending_domain_rejection(
+                        rejection_collector, state, pa, payload,
+                        reason="领域条件不成立，该暂存已失败",
+                        category="invalid_state",
+                    )
             except Exception as exc:
                 self.conn.execute(f"ROLLBACK TO {savepoint}")
                 if restore_on_rollback is not None:
@@ -15554,6 +15773,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             return
         from ming_sim.applier import Provenance, RejectedItem
 
+        rejection_collector.note_commit_rejection(int(pa["id"]), exc)
         raw_item = getattr(exc, "item", None)
         item = dict(raw_item) if isinstance(raw_item, dict) else {}
         item.update({
@@ -15610,16 +15830,14 @@ CREATE TABLE IF NOT EXISTS authority_records (
     ) -> Dict[str, object]:
         """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
         旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态/待澄清闸（#502 L5）。"""
-        try:
-            old = json.loads(existing_json or "{}") if not isinstance(
-                existing_json, (dict, list)) else existing_json
-        except (ValueError, TypeError):
-            old = {}
+        # 已持久候选 JSON 腐坏响亮，不洗成空底丢控制键（#1897 E1）。
+        old = GameDB.parse_engine_payload_json(
+            existing_json, surface="pending_actions.payload_json",
+        )
         merged: Dict[str, object] = dict(new_payload or {})
-        if isinstance(old, dict):
-            for k, v in old.items():
-                if str(k).startswith("_") and k not in merged:
-                    merged[k] = v
+        for k, v in old.items():
+            if str(k).startswith("_") and k not in merged:
+                merged[k] = v
         return merged
 
     def _merge_directive_payload(
@@ -15724,26 +15942,41 @@ CREATE TABLE IF NOT EXISTS authority_records (
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
     ) -> Dict[str, object]:
-        """Classify and, only when valid, project one staged directive."""
+        """Classify and, only when valid, project one staged directive.
+
+        Persistence decode is outside product-rejection catch (loud). Model/
+        business field faults stay per-item invalid with a real refusal reason.
+        """
         if (
             pa.get("status") != "pending"
             or pa.get("kind") != "directive"
             or pa.get("action") != "拟旨"
         ):
             return {"classification": "invalid"}
+        # 已持久候选 JSON 腐坏响亮上抛（#1897 E1）。
+        payload = self.parse_engine_payload_json(
+            pa.get("payload_json"), surface="pending_actions.payload_json",
+        )
+        # 归一内真实查询／未分类故障原样上抛；仅 typed 领域拒收归 invalid
+        # （与 _apply_pending_action / _commit_conversational_draft 同缝，#1897 E1）。
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         try:
-            payload = json.loads(str(pa.get("payload_json") or "{}"))
-            if not isinstance(payload, dict):
-                return {"classification": "invalid"}
-            payload = self._normalize_directive_dossier_payload(
-                payload, content=content, current_turn=int(state.turn),
+            normalized = self._normalize_directive_dossier_payload(
+                dict(payload), content=content, current_turn=int(state.turn),
             )
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return {"classification": "invalid"}
-        text = str(payload.get("text") or "")
-        if not text.strip():
-            return {"classification": "invalid"}
-        actor = str(payload.get("actor") or pa.get("minister_name") or "").strip()
+        except DecreeMaterializationValidationError:
+            return {"classification": "invalid", "payload": payload}
+        payload = normalized
+        # 已持久正文：类型／空缺 schema 故障响亮，不记领域 invalid（#1897 E1）。
+        text = _require_durable_prose(payload.get("text"), field="text")
+        actor_raw = payload.get("actor", pa.get("minister_name") or "")
+        if actor_raw is None:
+            actor_raw = ""
+        if not isinstance(actor_raw, str):
+            raise ValueError(
+                f"持久字段 actor 须为字符串，得 {type(actor_raw).__name__}"
+            )
+        actor = actor_raw.strip()
         payload["text"] = text
         payload["actor"] = actor
         return {
@@ -15796,6 +16029,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         "draft" for decree-checkpoint default approval, "pending" for chat-approved
         candidates that must still pass the later准/驳 interface.
         返回已落库动作摘要。"""
+
         if kind_filter is not None and kind_filter_exclude is not None:
             raise ValueError("kind_filter and kind_filter_exclude are mutually exclusive")
         if directive_status not in ("draft", "pending"):
@@ -15825,6 +16059,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
+                        self._record_pending_domain_rejection(
+                            rejection_collector, state, pa, prepared["payload"],
+                            reason="拟旨暂存领域校验未通过",
+                            category="invalid_shape",
+                        )
+                        if rejection_collector is not None:
+                            rejection_collector.flush_to_db(self)
                     continue
                 payload = dict(prepared["payload"])
                 payload["_canonical_pending_directive"] = True
@@ -15835,12 +16076,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 if committed is not None:
                     applied.append(committed)
                 continue
-            try:
-                payload = json.loads(pa["payload_json"] or "{}")
-                if not isinstance(payload, dict):
-                    payload = {}
-            except (ValueError, TypeError):
-                payload = {}
+            # 已持久候选解码故障响亮，不洗成空载荷续 apply（#1897 E1）。
+            payload = self.parse_engine_payload_json(
+                pa.get("payload_json"), surface="pending_actions.payload_json",
+            )
             office_memory_key = None
             office_memory_before = None
             office_memory_had_key = False
@@ -15935,56 +16174,135 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "action": pa["action"], "target_id": pa["target_id"],
         }
 
+    def _record_pending_domain_rejection(
+        self,
+        rejection_collector: Any,
+        state: GameState,
+        pa: Mapping[str, object],
+        payload: Mapping[str, object],
+        exc: BaseException | None = None,
+        *,
+        reason: str | None = None,
+        category: str | None = None,
+    ) -> None:
+        """领域坏项进既有 rejection_reports；内存 sideband 只供同步应允读回原因。
+
+        覆盖 typed 异常、classification=invalid、_apply 返回 False 三类出口。
+        真故障不经此路（调用方已 re-raise）。失败 status 不能代替法定拒收留痕。
+        """
+        if rejection_collector is None:
+            return
+        from ming_sim.applier import Provenance, RejectedItem
+        if exc is not None:
+            rejection_collector.note_commit_rejection(int(pa["id"]), exc)
+            cat = str(
+                category
+                or getattr(exc, "category", "")
+                or "invalid_state"
+            )
+            why = str(reason if reason is not None else exc)
+        else:
+            cat = str(category or "invalid_state")
+            why = str(reason or "领域条件不成立，该暂存已失败")
+        item = {
+            "id": int(pa["id"]),
+            "kind": str(pa.get("kind") or ""),
+            "action": str(pa.get("action") or ""),
+            "target_id": pa.get("target_id"),
+            "minister_name": str(pa.get("minister_name") or ""),
+            "payload": dict(payload) if isinstance(payload, Mapping) else {},
+        }
+        rejection_collector.record(
+            f"pending_{item['kind'] or 'action'}",
+            RejectedItem(
+                item=item,
+                reason=why,
+                category=cat,
+                # 与 _record_typed_business_refusal 同一来源规则（#1897 L1）。
+                source=(
+                    Provenance.secret_order
+                    if str(pa.get("kind") or "") == "secret_order"
+                    else Provenance.player_decree
+                ),
+            ),
+            int(state.turn),
+        )
+
     def _apply_pending_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, rejection_collector=None,
     ) -> bool:
-        """把单条暂存动作落到真实表。未知 kind/action 或目标非 active 不落、返 False(由
-        commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。
-        office(任免)落库需 content；缺则返 False(标 failed,不静默)。"""
+        """把单条暂存动作落到真实表。
+
+        明确业务目标失效返 False（commit 标 failed + 业务拒收轨）。
+        未知 kind/action 及坏持久 schema 裸 ValueError 上抛（#1897 E1），
+        不得标 failed/invalid_state 伪装业务拒收。
+        office(任免)落库需 content；缺则返 False(标 failed,不静默)。
+        """
         if pa["kind"] == "office":
             return self._materialize_office_appointment_dossier(
                 state, pa, payload, content=content,
             )
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
-            if pa["action"] == "新建":
-                title = str(payload.get("title") or "")
-                content_text = str(payload.get("content") or "")
-                assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title.strip() or not content_text.strip() or not assignee:
-                    return False
-                tags_raw = payload.get("tags") or []
-                tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
-                deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
-                excluded = payload.get("excluded_names") or []
-                excluded = [str(t).strip() for t in excluded if str(t).strip()] if isinstance(excluded, list) else []
-                excluded_offices = payload.get("excluded_offices") or []
-                excluded_offices = [str(t).strip() for t in excluded_offices if str(t).strip()] if isinstance(excluded_offices, list) else []
+            action = pa["action"]
+            _SECRET_ORDER_ACTIONS = {
+                "新建", "更新", "催办", "提交核议", "记进展",
+            }
+            # 未知内部动作先于目标缺省检查；禁 oid is None 把 schema 故障洗成业务 False（#1897 E1）。
+            if action not in _SECRET_ORDER_ACTIONS:
+                raise ValueError(f"未知内部动作 secret_order/{action}")
+            if action == "新建":
+                # 自由文本零删改（CLAUDE.md P6）：判空在副本上做，存的仍是原文。
+                # 已持久散文：禁 str() 洗类型；空缺／非 str 响亮（#1897 E1）。
+                title = _require_durable_prose(payload.get("title"), field="title")
+                content_text = _require_durable_prose(
+                    payload.get("content"), field="content",
+                )
+                if "assignee" in payload and payload.get("assignee") is not None:
+                    assignee = _require_durable_prose(
+                        payload.get("assignee"), field="assignee",
+                    ).strip()
+                else:
+                    assignee = str(pa["minister_name"] or "").strip()
+                if not assignee:
+                    raise ValueError("持久字段 assignee 不得为空")
+                # 可选集合：缺省合法空；present 非 list/非 str 成员响亮（#1897 E1）。
+                # 禁 payload.get(key) or [] 的 falsy 洗空。
+                tags = _optional_payload_str_list(
+                    payload, "tags", surface="密令 tags",
+                )
+                # 已持久期限：类型腐坏响亮，不伪装领域拒收（#1897 E1）。
+                deadline = _coerce_deadline_months(
+                    payload.get("deadline_months"), default=0, durable=True,
+                )
+                excluded = _optional_payload_str_list(
+                    payload, "excluded_names", surface="密令 excluded_names",
+                )
+                excluded_offices = _optional_payload_str_list(
+                    payload, "excluded_offices", surface="密令 excluded_offices",
+                )
                 # pa["minister_name"] = audience speaker who captured the oral
                 # decree; may differ from final assignee (跨人承办).
                 # Stage-time pin: do not re-guess max(held) after confirm utterance.
-                origin_mid = self._parse_origin_chat_message_id(payload)
+                # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
+                origin_mid = self._parse_origin_chat_message_id(
+                    payload, durable=True,
+                )
                 from ming_sim.covert_progress import (
                     CovertContractError,
                     build_covert_task_contract,
                     covert_task_from_payload,
                 )
                 raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
+                # 准入已要求 covert_task；已持久缺/坏 = schema 腐坏，裸 ValueError（#1897 E1）。
                 if not raw_task:
-                    raise PendingActionRefusal(
-                        "密令确认缺少差务类型",
-                        category="missing_task_type",
-                        item={"pending_action_id": int(pa["id"])},
-                    )
-                # 输入校验拒收仅包声明契约；create_secret_order 内部执行异常交已有真出口（#1853 J9）。
+                    raise ValueError("持久密令缺 covert_task")
                 try:
                     frozen_task = build_covert_task_contract(covert_task=raw_task)
                 except CovertContractError as exc:
-                    raise PendingActionRefusal(
-                        str(exc),
-                        category="covert_contract",
-                        item={"pending_action_id": int(pa["id"])},
+                    raise ValueError(
+                        f"持久 covert_task 契约腐坏：{exc}",
                     ) from exc
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
@@ -15998,11 +16316,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
                     if not isinstance(links, list):
-                        raise PendingActionRefusal(
-                            "密令案卷关联必须为列表",
-                            category="dossier_links_shape",
-                            item={"pending_action_id": int(pa["id"])},
-                        )
+                        raise ValueError("持久密令 dossier_links 须为列表")
                     dossier = self.get_dossier_for_secret_order(int(order_id))
                     if dossier is None:
                         raise ValueError("密令成案后未找到案卷")
@@ -16016,23 +16330,41 @@ CREATE TABLE IF NOT EXISTS authority_records (
             # latest held (pure public must not become secret-origin withheld).
             # No pin → skip classify (do not invent bloodline; pure public stays
             # held until settle release, never withheld).
-            origin_mid = self._parse_origin_chat_message_id(payload)
+            # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
+            origin_mid = self._parse_origin_chat_message_id(
+                payload, durable=True,
+            )
             origin_speaker = str(pa.get("minister_name") or "") or None
-            if pa["action"] == "更新":
-                deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
+            if action == "更新":
+                deadline = _coerce_deadline_months(
+                    payload.get("deadline_months"), default=0, durable=True,
+                )
+                # 已持久更新正文禁 str() 洗类型（#1897 E1）。
+                new_title = _require_durable_prose(
+                    payload.get("new_title"), field="new_title",
+                )
+                new_content = _require_durable_prose(
+                    payload.get("new_content"), field="new_content",
+                )
                 # No pin → update_secret_order_by_id preserves brief pins (no pure-public auto-capture).
                 return self.update_secret_order_by_id(
                     state, int(oid),
-                    str(payload.get("new_title") or ""),
-                    str(payload.get("new_content") or ""),
+                    new_title,
+                    new_content,
                     tags=None, deadline_months=deadline,
                     origin_minister_name=origin_speaker,
                     origin_chat_message_id=origin_mid,
                 )
-            if pa["action"] == "催办":
-                deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
+            if action == "催办":
+                deadline = _coerce_deadline_months(
+                    payload.get("deadline_months", 1), default=1, durable=True,
+                )
+                # 已持久催办理由：空陈词合法；坏类型响亮（#1897 J820-E1）。
+                rush_reason = _require_durable_prose(
+                    payload.get("reason", ""), field="reason", required=False,
+                )
                 self.rush_secret_order(
-                    int(oid), state, deadline_months=deadline, reason=str(payload.get("reason") or ""))
+                    int(oid), state, deadline_months=deadline, reason=rush_reason)
                 if origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
@@ -16043,9 +16375,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
                             origin_chat_message_id=origin_mid,
                         )
                 return True
-            if pa["action"] == "提交核议":
+            if action == "提交核议":
+                # 已持久核议陈词：空串只缩期限；坏类型 schema 故障（#1897 J820-E1）。
+                claim = _require_durable_prose(
+                    payload.get("claim", ""), field="claim", required=False,
+                )
                 ok = self.submit_secret_order_for_review(
-                    int(oid), str(payload.get("claim") or ""), state.year, state.period)
+                    int(oid), claim, state.year, state.period)
                 if ok and origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
@@ -16056,9 +16392,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
                             origin_chat_message_id=origin_mid,
                         )
                 return ok
-            if pa["action"] == "记进展":
+            if action == "记进展":
+                # 已持久进展正文：空串按写口合同不落条；坏类型响亮（#1897 J820-E1）。
+                note = _require_durable_prose(
+                    payload.get("note", ""), field="note", required=False,
+                )
                 ok = self.update_secret_order_progress(
-                    int(oid), str(payload.get("note") or ""), state.year, state.period)
+                    int(oid), note, state.year, state.period)
                 if ok and origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
@@ -16074,22 +16414,38 @@ CREATE TABLE IF NOT EXISTS authority_records (
             target_id = pa.get("target_id")
             if target_id is None:
                 return False
-            try:
-                stage_idx = int(payload.get("stage_idx") if payload.get("stage_idx") is not None else 0)
-            except (TypeError, ValueError):
+            raw_stage = payload.get("stage_idx")
+            if raw_stage is None:
                 stage_idx = 0
-            deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
+            else:
+                # 已持久 stage_idx：类型腐坏裸 ValueError，不伪装领域 failed（#1897 E1）。
+                # 准入侧坏值仍走声明路径 DecreeMaterializationValidationError。
+                from ming_sim.strict_types import strict_int
+                try:
+                    stage_idx = strict_int(raw_stage, accept_numeric_strings=False)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "持久字段 stage_idx must be a whole integer index",
+                    ) from exc
+            deadline = _coerce_deadline_months(
+                payload.get("deadline_months", 1), default=1, durable=True,
+            )
+            # 已持久催办理由：空陈词合法；坏类型响亮（#1897 J820-E1）。
+            commitment_reason = _require_durable_prose(
+                payload.get("reason", ""), field="reason", required=False,
+            )
             from ming_sim.urge_lever import rush_staged_commitment_stage
             result = rush_staged_commitment_stage(
                 self, state,
                 commitment_ref=int(target_id),
                 stage_idx=stage_idx,
                 deadline_months=deadline,
-                reason=str(payload.get("reason") or ""),
+                reason=commitment_reason,
                 commit=False,
                 record_history=False,  # 本 pending 行标 committed 即史源，禁双插
             )
-            # 史源字段写回本行 payload（commit_pending_actions 随后标 committed）
+            # 史源字段写回本行 payload（commit_pending_actions 随后标 committed）。
+            # reason 回写已校验的 staged 原文，不吃写口缺省替换（#1897 空白原文）。
             merged = dict(payload)
             merged.update({
                 "stage_idx": int(stage_idx),
@@ -16097,7 +16453,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 "new_due": int(result["due_turn"]),
                 "deadline_months": int(result["deadline_months"]),
                 "tightness": max(0, int(result["old_due"]) - int(result["due_turn"])),
-                "reason": str(result.get("reason") or ""),
+                "reason": commitment_reason,
             })
             self.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -16113,10 +16469,22 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 payload = self._normalize_directive_dossier_payload(
                     payload, content=content, current_turn=int(state.turn),
                 )
-            text = str(payload.get("text") or "")
-            actor = str(payload.get("actor") or pa["minister_name"] or "")
-            if not text.strip():
-                return False
+            # 已持久正文：与 prepare 共吃 _require_durable_prose，禁 str() 洗白（#1897 E1）。
+            text = _require_durable_prose(payload.get("text"), field="text")
+            actor_raw = payload.get("actor", pa["minister_name"] or "")
+            if actor_raw is None:
+                actor_raw = ""
+            if not isinstance(actor_raw, str):
+                raise ValueError(
+                    f"持久字段 actor 须为字符串，得 {type(actor_raw).__name__}"
+                )
+            actor = actor_raw.strip()
+            # actor FK → characters(name)：空串/非名册不得落库（SQLite FK 不接受空串）。
+            if actor and self.conn.execute(
+                "SELECT 1 FROM characters WHERE name=?", (actor,),
+            ).fetchone() is None:
+                actor = ""
+            actor_db = actor or None
             status = "pending" if str(payload.get("_directive_status") or "draft") == "pending" else "draft"
             # 不回到颁诏 checkpoint 时默认同意为 draft；召对里明确应允只表示接受为候选，
             # 仍写成 pending 交给既有准/驳界面，避免绕过后续颁诏流程（#412）。
@@ -16128,8 +16496,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 VALUES (?, ?, ?, NULL, ?, ?, '大臣拟旨', ?, ?, ?, ?)
                 """,
                 (
-                    state.turn, state.year, state.period, actor, text, status,
-                    f"由{actor}拟旨入档",
+                    state.turn, state.year, state.period, actor_db, text, status,
+                    f"由{actor}拟旨入档" if actor else "拟旨入档",
                     json.dumps(payload, ensure_ascii=False),
                     int(pa["id"]),
                 ),
@@ -16166,7 +16534,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 ):
                     return False
             return True
-        return False
+        # 未知 kind/action 是内部 schema 故障，不得标 failed+业务 invalid_state（#1897 E1）。
+        raise ValueError(
+            f"未知内部动作 {pa.get('kind')}/{pa.get('action')}"
+        )
 
     @staticmethod
     def _appointment_slice_from_combined_payload(
@@ -16188,7 +16559,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "name": name, "office": office, "appoint_action": action,
         }
         for key in (
-            "appointment_tenure", "任别", "faction", "summon_after",
+            "appointment_tenure", "任别", "faction",
             "text", "affair_id", "region_id", "endorsements", "reason", "recommendation",
         ):
             value = payload.get(key)
@@ -16213,9 +16584,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ),
         }
         decree_text = str(payload.get("text") or sliced.get("text") or "")
+        # #1897：声明正文原样；仅真正空串才视作缺省，禁 strip 判空改 None。
         return self._materialize_office_appointment_dossier(
             state, office_pa, sliced, content=content,
-            decree_text=decree_text if decree_text.strip() else None,
+            decree_text=decree_text if decree_text else None,
         )
 
     def _materialize_office_appointment_dossier(
@@ -16331,17 +16703,15 @@ CREATE TABLE IF NOT EXISTS authority_records (
     def _invalid_office_recommendation_snapshots(
         self, state: GameState, dossiers: Iterable[Dict[str, object]],
     ) -> set[int]:
-        """返回批前盘面中确实不匹配的荐人快照案号；其他异常原样上抛。"""
+        """返回批前盘面中确实不匹配的荐人快照案号；其他异常原样上抛。
+
+        dossiers 须为 canonical 案卷行（get_decree_dossier/list_decree_dossiers 已解码 payload）。
+        """
         invalid = set()
         for row in dossiers:
             if str(row.get("action_type") or "") != "appointment":
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = row["payload"]
             if payload.get("recommendation") is None:
                 continue
             minister = str(payload.get("_minister_name") or "")
@@ -16379,8 +16749,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if pa["action"] == "任命":
             # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
             reason = str(payload.get("reason") or "奉旨任免")
-            if not reason.strip():
-                reason = "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
             try:
                 appointment_tenure = appointment_tenure_from(payload)
@@ -16502,9 +16870,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 self._discard_pending_decree_forecast(
                     action_id, int(row["version"] or 1),
                 )
-            if str(row["kind"] or "") == "office":
-                from ming_sim.audience_night import discard_inactive_office_summon
-                discard_inactive_office_summon(self, action_id)
             self.conn.execute(
                 "UPDATE pending_actions SET status='voided', night_approved=0 "
                 "WHERE id=? AND status='pending'",
@@ -16542,8 +16907,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
     def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
-        已 committed / 非本回合 / 不存在 → False。
-        仍 inactive 的 office:<id> 传召 origin 同步清掉（#672 颁前反悔）。"""
+        已 committed / 非本回合 / 不存在 → False。"""
         owns_transaction = self.owns_transaction()
         row = self.conn.execute(
             "SELECT id, kind, version FROM pending_actions "
@@ -16560,9 +16924,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
             (int(action_id), int(turn)),
         )
-        if cur.rowcount > 0 and str(row["kind"] or "") == "office":
-            from ming_sim.audience_night import discard_inactive_office_summon
-            discard_inactive_office_summon(self, int(action_id))
         if owns_transaction:
             self.conn.commit()
         return cur.rowcount > 0
@@ -16592,57 +16953,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if owns_transaction:
             self.conn.commit()
         return int(cur.rowcount or 0)
-
-    def drop_pending_actions_for_minister(
-        self, turn: int, minister_name: str, kind_filter_exclude: Optional[str] = None,
-        action_ids: Optional[Iterable[int]] = None,
-    ) -> int:
-        """对话确认皇帝拒绝:丢弃该召对对象本回合尚未落库的暂存动作(删 pending 行)。
-        返回删除条数。只动该大臣、只动 pending(已 committed 不动)。
-        action_ids 非空=进一步只删指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）。
-        kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
-        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。
-        仍 inactive 的 office:<id> 传召 origin 随 pending 同步清（#672 颁前拒绝）。"""
-        owns_transaction = self.owns_transaction()
-        params: List[object] = [int(turn), str(minister_name)]
-        where = "turn=? AND minister_name=? AND status='pending'"
-        if action_ids is not None:
-            allowed_ids = [int(action_id) for action_id in action_ids]
-            if not allowed_ids:
-                return 0
-            placeholders = ",".join("?" for _ in allowed_ids)
-            where += f" AND id IN ({placeholders})"
-            params.extend(allowed_ids)
-        if kind_filter_exclude is not None:
-            where += " AND kind<>?"
-            params.append(str(kind_filter_exclude))
-        office_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='office'",
-                tuple(params),
-            ).fetchall()
-        ]
-        directive_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='directive'",
-                tuple(params),
-            ).fetchall()
-        ]
-        for pending_id in directive_ids:
-            self._discard_deleted_directive_forecast(pending_id)
-        cur = self.conn.execute(
-            f"DELETE FROM pending_actions WHERE {where}",
-            tuple(params),
-        )
-        if office_ids:
-            from ming_sim.audience_night import discard_inactive_office_summon
-            for pending_id in office_ids:
-                discard_inactive_office_summon(self, pending_id)
-        if owns_transaction:
-            self.conn.commit()
-        return cur.rowcount
 
     def discard_failed_secret_order_intents(self) -> int:
         """过回合前丢弃既有 failed secret-order intents（CONTEXT：未处理失败下达在过回合丢弃）。
@@ -16697,21 +17007,104 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         if row is None:
             return None
-        def _load(text: str, default, label: str):
-            try:
-                return json.loads(text) if text else default
-            except Exception as exc:
-                tlog(f"[db] resolve_context {label} JSON 损坏，回退默认、恢复将丢该段（turn={turn}）：{exc}")  # #14 surface
-                return default
         attendant_message = str(row["attendant_message"] or "")
         return {
             "decree_text": row["decree_text"],
-            "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
+            "simulator_payload": self.parse_engine_payload_json(
+                row["simulator_payload_json"],
+                surface="pending_resolve_context.simulator_payload_json",
+            ),
             "source": row["source"] or "system_simulation",
             "attendant_message": attendant_message,  # #671 王承恩独立递话
         }
 
-    # ── #1234 月初快照（路③呈现投影）────────────────────────────────
+    def list_economy_moves_for_origin(self, origin: str) -> List[Dict[str, object]]:
+        rows: List[Dict[str, object]] = []
+        for row in self.conn.execute(
+            "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id",
+            (origin,),
+        ).fetchall():
+            item = dict(row)
+            # Normalize beyond_intent to bool for adjudicator consumers (#622).
+            item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(
+                item.get("beyond_intent")
+            ))
+            rows.append(item)
+        return rows
+
+    def list_fiscal_effects_for_origin(self, origin: str) -> List[Dict[str, object]]:
+        rows: List[Dict[str, object]] = []
+        for effect_kind, table, order in (
+            ("create", "fiscal_config_creations", "id"),
+            ("change", "fiscal_config_changes", "id"),
+            ("remove", "fiscal_config_tombstones", "id"),
+        ):
+            for row in self.conn.execute(
+                f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY {order}", (origin,)
+            ).fetchall():
+                item = dict(row)
+                item["effect_kind"] = effect_kind
+                # #1260：与 list_economy_moves_for_dossier 同款归一 bool。
+                item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(
+                    item.get("beyond_intent")
+                ))
+                rows.append(item)
+        return rows
+
+    def list_world_effect_history(
+        self, origin: str,
+    ) -> Dict[str, object]:
+        """Read landed effects for a world affair file; never include staged verdicts.
+
+        Dossier callers retain the existing actual rail. Audit log / person_logs
+        whole-row dumps stay out of material supply (#1834 F12); four textual-fact
+        rails remain #1873's job.
+        """
+        from ming_sim.entities.affair.store import parse_origin_ref
+
+        kind, target = parse_origin_ref(origin)
+        history: Dict[str, object] = {
+            "实况轨": (
+                self.list_dossier_actual_rail(target) if kind == "dossier"
+                else self.list_durable_effects_for_origin(origin)
+            ),
+        }
+        if kind == "affair":
+            for table, order in (
+                ("issues", "id"), ("characters", "name"), ("relation_edge_events", "id"),
+            ):
+                # Person details already have their P4-safe roster/experience files.
+                # Keep only the affair membership, not an unprojected character dump.
+                columns = "name" if table == "characters" else "*"
+                history[table] = [dict(row) for row in self.conn.execute(
+                    f"SELECT {columns} FROM {table} WHERE affair_id=? ORDER BY {order}", (target,),
+                ).fetchall()]
+            for row in history["issues"]:
+                # Durable history supply: one authority per shape duty (F39).
+                # Bare json.loads washes wrong-shape values (e.g. effect '[]') into
+                # normal empty facts for material consumers — refuse here instead.
+                for field in (
+                    "tags", "participants", "participant_roster",
+                    "target_roster", "stages_json",
+                ):
+                    row[field] = _load_durable_json_list(
+                        row[field], surface=f"issues.{field}",
+                    )
+                for field in (
+                    "ongoing_effects", "effect_on_resolve", "effect_on_fail",
+                ):
+                    row[field] = loads_effect_dict(row[field])
+                row["cancel_cost"] = self.parse_engine_payload_json(
+                    row["cancel_cost"], surface="issues.cancel_cost",
+                )
+                # The numeric stop gate is an execution detail, not a second
+                # explanation of the issue's human resolve/fail conditions.
+                row.pop("stop_condition", None)
+        return history
+
+    def list_durable_effects_for_origin(self, origin: str) -> List[Dict[str, object]]:
+        """Economy/fiscal merge shared by dossier and direct affair origins."""
+        return self.list_economy_moves_for_origin(origin) + self.list_fiscal_effects_for_origin(origin)
 
     def capture_month_open_snapshot(self, state: GameState) -> bool:
         """点击受理：独立提交点击前四键 + 所属回合。已有本回合行则不覆盖（幂等）。
@@ -16834,19 +17227,19 @@ CREATE TABLE IF NOT EXISTS authority_records (
             actors.add(executor_id)
         roster = dossier.get("participant_roster") or []
         if isinstance(roster, str):
-            try:
-                roster = json.loads(roster)
-            except (TypeError, ValueError):
-                roster = []
-        if isinstance(roster, list):
-            for entry in roster:
-                if not isinstance(entry, dict):
-                    continue
-                if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
-                    continue
-                character_id = str(entry.get("character_id") or "").strip()
-                if character_id:
-                    actors.add(character_id)
+            roster = _load_durable_json_list(
+                roster, surface="participant_roster",
+            )
+        elif not isinstance(roster, list):
+            raise ValueError("participant_roster 须为列表")
+        for entry in roster:
+            if not isinstance(entry, dict):
+                raise ValueError("participant_roster 每项须为对象")
+            if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
+                continue
+            character_id = str(entry.get("character_id") or "").strip()
+            if character_id:
+                actors.add(character_id)
         target_kind = str(dossier.get("target_kind") or "").strip()
         target_id = str(dossier.get("target_id") or "").strip()
         domains: set[str] = set()
@@ -16872,16 +17265,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 })
         projected.sort(key=lambda item: int(item["id"]))
         return projected
-
-    def list_office_effects_for_dossier(
-        self, dossier_id: int,
-    ) -> List[Dict[str, object]]:
-        return [
-            dict(row) for row in self.conn.execute(
-                "SELECT * FROM office_change_records WHERE dossier_id=? ORDER BY id",
-                (int(dossier_id),),
-            ).fetchall()
-        ]
 
     def add_directive(
         self,
@@ -16910,14 +17293,44 @@ CREATE TABLE IF NOT EXISTS authority_records (
             directive_id = int(cursor.lastrowid)
         return directive_id
 
+    def _load_directive_pending_source(
+        self, directive_id: int,
+    ) -> Tuple[int, int]:
+        """持久读 turn_directives→pending 来源身份；(pending_action_id, source_chat_turn_id)。
+
+        整段查询与列解码任一失败均为账本/代码故障（RuntimeError），不得落入
+        ensure 产物 ValueError 捕获（F39）。无 pending 关联 → (0, 0)。
+        """
+        try:
+            pending = self.conn.execute(
+                """
+                SELECT pa.id, pa.source_chat_turn_id
+                FROM turn_directives td
+                JOIN pending_actions pa ON pa.id = td.source_pending_action_id
+                WHERE td.id = ?
+                ORDER BY pa.id DESC LIMIT 1
+                """,
+                (int(directive_id),),
+            ).fetchone()
+            if pending is None:
+                return 0, 0
+            return int(pending["id"]), int(pending["source_chat_turn_id"] or 0)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"旨稿#{directive_id} pending 来源持久读失败"
+            ) from exc
+
     def _ensure_directive_dossier(
         self, state: GameState, directive_id: int, text: str,
-        payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
+        payload: Optional[Dict[str, object]] = None, *,
+        pending_source: Optional[Tuple[int, int]] = None,
+        commit: bool = True,
     ) -> List[int]:
         """旧式/新式旨稿共用的幂等成案口；返回已成案 dossier id 列表（#1778 起 national 亦单行）。
 
         #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
         不新建第二案卷。directive identity = directive:<id>。
+        pending_source：ensure 批缝在产物 catch 外预读的 (pending_id, source_turn)。
         """
         owns_transaction = self.owns_transaction() if commit else False
         structured = dict(payload or {})
@@ -16974,27 +17387,25 @@ CREATE TABLE IF NOT EXISTS authority_records (
         target_kind = str(structured.get("target_kind") or "").strip()
         target_id = str(structured.get("target_id") or "").strip()
         if not target_kind or not target_id:
-            raise ValueError("普通旨意缺少受控目标，拒绝成案")
+            from ming_sim.action_materialize import DecreeMaterializationValidationError
+            raise DecreeMaterializationValidationError(
+                "普通旨意缺少受控目标，拒绝成案",
+                failed_fields=("target_kind", "target_id"),
+            )
         executor_kind, executor_id = self._directive_executor(action_type, structured)
-        pending = self.conn.execute(
-            """
-            SELECT pa.id, pa.source_chat_turn_id
-            FROM turn_directives td
-            JOIN pending_actions pa ON pa.id = td.source_pending_action_id
-            WHERE td.id = ?
-            ORDER BY pa.id DESC LIMIT 1
-            """,
-            (int(directive_id),),
-        ).fetchone()
-        # #1890：来源轮优先认 pending_actions.source_chat_turn_id（经
-        # turn_directives.source_pending_action_id 从新指旧，ADR 0054）。
-        # 无 pending 的直写路径仍从载荷读 source_chat_turn_id——这是现役直写接缝，
-        # 不是旧档缺列迁移；同版无 pending 的成案仍消费此回落。
-        dossier_source_turn = 0
-        if pending is not None:
-            dossier_source_turn = int(pending["source_chat_turn_id"] or 0)
+        # pending 来源由 ensure 批缝在产物 catch 外预读传入（F39）；无预读时再读一次。
+        if pending_source is None:
+            pending_source = self._load_directive_pending_source(int(directive_id))
+        pending_action_id, dossier_source_turn = pending_source
         if dossier_source_turn <= 0:
-            dossier_source_turn = int(structured.get("source_chat_turn_id") or 0)
+            # 无 pending 的直写路径仍从载荷读 source_chat_turn_id——现役直写接缝。
+            # 坏值仍属模型/契约产物错（ValueError）。
+            try:
+                dossier_source_turn = int(structured.get("source_chat_turn_id") or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"旨意 source_chat_turn_id 非法：{structured.get('source_chat_turn_id')!r}"
+                ) from exc
         return self.create_decree_dossiers(
             state,
             action_type=action_type,
@@ -17004,7 +17415,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             executor_kind=executor_kind,
             executor_id=executor_id,
             source_chat_turn_id=dossier_source_turn,
-            pending_action_id=0 if pending is None else int(pending["id"]),
+            pending_action_id=pending_action_id,
             directive_id=int(directive_id),
             payload=structured,
             due_turn=int(structured.get("due_turn") or 0),
@@ -17041,13 +17452,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
         raw: object, *, directive_id: Optional[int] = None,
     ) -> Dict[str, object]:
         label = f"旨稿#{directive_id}" if directive_id is not None else "既有旨稿"
+        # 与 parse_engine_payload_json / _load_durable_json_object 同一权威（#1897 E1）。
         try:
-            payload = json.loads(raw or "{}")
-        except (TypeError, ValueError) as exc:
+            return GameDB.parse_engine_payload_json(
+                raw, surface=f"{label}.dossier_payload_json",
+            )
+        except ValueError as exc:
             raise ValueError(f"{label} 结构化载荷损坏") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"{label} 结构化载荷必须为对象")
-        return payload
 
     def read_directive_dossier_payload(self, row: object) -> Dict[str, object]:
         """Strictly decode a durable turn_directives payload at the DB read seam."""
@@ -17086,8 +17497,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
 
         #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨产物错记 rejection、保持 draft，不波及他旨。
-        #1769：产物错（ValueError，含 PayOrderKeyError）逐项留痕；真代码故障不得洗成
-        locality_fanout_failed——回滚后写错误包并 SettlementAbort（0005/0008 D1/D6）。
+        #1769/#1897 E1：产物错（ValueError，含 DMVE/PayOrderKeyError）逐项留痕；
+        已持久载荷损坏与真代码故障不得洗成 locality_fanout_failed——回滚后写错误包
+        并 SettlementAbort（0005/0008 D1/D6）。
         #1778：create 不再 collector-only 返回零案卷；未成案形状＝抛 ValueError，
         保持 draft、进返回列表供补交、终态落痕。
         record_rejections=False：仅探测供补交，不落 rejection_reports（拒只在
@@ -17112,37 +17524,43 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     # 已有案卷：幂等跳过（补交重跑 ensure 时不重复建）
                     if self.get_dossier_for_directive(did) is not None:
                         continue
+                    # 持久读全部在产物 ValueError 捕获之外（F39）：载荷、pending 来源。
+                    payload = self.read_directive_dossier_payload(row)
+                    pending_source = self._load_directive_pending_source(did)
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
                     try:
+                        from ming_sim.action_materialize import is_declaration_domain_error
+
+                        # 仅既有领域契约异常进逐项拒收；未识别异常（含标准库
+                        # Unicode/JSON 解码子类）默认传播（#1897 E1）。
                         self._ensure_directive_dossier(
                             state, did, str(row["text"]),
-                            self.read_directive_dossier_payload(row), commit=False,
+                            payload, pending_source=pending_source, commit=False,
                         )
-                    except ValueError as exc:
-                        # 产物/契约错：逐项隔离留痕，保持 draft（#1769 补交/耗尽入口）
-                        self.conn.execute(f"ROLLBACK TO {sp}")
-                        reason = str(exc)
-                        rejection_rows.append({"directive_id": did, "reason": reason})
-                        # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
-                        if record_rejections:
-                            collector.record(
-                                "directive_locality",
-                                RejectedItem(
-                                    item={"directive_id": did},
-                                    reason=reason,
-                                    category="locality_fanout_failed",
-                                    source=Provenance.player_decree,
-                                ),
-                                int(state.turn),
-                            )
-                        tlog(f"[ensure_dossiers] 旨#{did} 成案产物错：{exc}")
                     except Exception as exc:
-                        # 真代码故障：不得当产物错洗白后继续（0005）
                         self.conn.execute(f"ROLLBACK TO {sp}")
-                        code_fault = exc
-                        tlog(f"[ensure_dossiers] 旨#{did} 成案代码故障：{exc}")
-                        raise
+                        if is_declaration_domain_error(exc):
+                            reason = str(exc)
+                            rejection_rows.append(
+                                {"directive_id": did, "reason": reason},
+                            )
+                            if record_rejections:
+                                collector.record(
+                                    "directive_locality",
+                                    RejectedItem(
+                                        item={"directive_id": did},
+                                        reason=reason,
+                                        category="locality_fanout_failed",
+                                        source=Provenance.player_decree,
+                                    ),
+                                    int(state.turn),
+                                )
+                            tlog(f"[ensure_dossiers] 旨#{did} 成案产物错：{exc}")
+                        else:
+                            code_fault = exc
+                            tlog(f"[ensure_dossiers] 旨#{did} 成案系统故障：{exc}")
+                            raise
                     finally:
                         self.conn.execute(f"RELEASE {sp}")
                 if record_rejections:
@@ -17165,18 +17583,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return rejection_rows
 
-    def reject_directive(self, directive_id: int) -> None:
-        """皇帝驳回大臣拟旨：pending → rejected。"""
-        self.conn.execute(
-            """
-            UPDATE turn_directives
-            SET status = 'rejected', updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND status = 'pending'
-            """,
-            (directive_id,),
-        )
-        self.conn.commit()
-
     def count_pending_directives(self, state: GameState) -> int:
         """本回合待核定（pending）的大臣拟旨数。颁诏前须为 0。"""
         row = self.conn.execute(
@@ -17195,13 +17601,14 @@ CREATE TABLE IF NOT EXISTS authority_records (
         replace_payload=True（#1769 结算补交）：整份采用新 payload，不经 merge——
         避免 pay_order entries 等旧键残留到新动作类型上。默认 False 保持改草合并语义。
         """
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         if self.get_dossier_for_directive(directive_id) is not None:
-            raise ValueError("已成案旨意不得编辑")
+            raise DecreeMaterializationValidationError("已成案旨意不得编辑")
         row = self.conn.execute(
             "SELECT dossier_payload_json FROM turn_directives WHERE id=?", (directive_id,)
         ).fetchone()
         if row is None:
-            raise ValueError("旨意不存在")
+            raise DecreeMaterializationValidationError("旨意不存在")
         incoming = dict(dossier_payload or {})
         if replace_payload:
             payload = incoming
@@ -17210,7 +17617,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 row["dossier_payload_json"], incoming,
             )
         if not directive_payload_admits_structured_write(payload):
-            raise ValueError("旨意编辑须提供完整结构化动作与目标")
+            raise DecreeMaterializationValidationError(
+                "旨意编辑须提供完整结构化动作与目标",
+            )
         with atomic(self):
             self.conn.execute(
                 """
@@ -17288,12 +17697,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "SELECT * FROM issues WHERE closed_turn = ? AND status IN ('resolved','failed','dropped') ORDER BY id",
             (int(closed_turn),),
         ).fetchall()
-
-    def count_active_initiatives(self) -> int:
-        row = self.conn.execute(
-            "SELECT COUNT(*) AS n FROM issues WHERE kind='initiative' AND status='active'"
-        ).fetchone()
-        return int(row["n"] or 0)
 
     def find_active_issue_by_origin(self, origin_kind: str, origin_ref: str) -> sqlite3.Row | None:
         return self.conn.execute(
@@ -17414,7 +17817,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason),
+            (event_id, state.turn, state.year, state.period, source, str(reason or "")),
         )
         if commit:
             self.conn.commit()
@@ -17437,7 +17840,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason),
+            (event_id, state.turn, state.year, state.period, source, str(reason or "")),
         )
         if commit:
             self.conn.commit()
@@ -17640,30 +18043,34 @@ CREATE TABLE IF NOT EXISTS authority_records (
     def parse_engine_payload_json(
         raw: object, *, surface: str = "payload_json",
     ) -> Dict[str, object]:
-        """#624 / ADR 0005：引擎侧 payload 读路单一助手。
+        """#624 / ADR 0005 / #1897 E1：引擎侧持久对象解码单一权威。
 
-        真空/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + ValueError（禁静默吞成空底）。
+        与 ``_load_durable_json_object`` 同契约：SQL NULL/缺省 → {}；
+        空串/空白/非对象/腐坏 JSON → 响亮 ValueError（禁 falsy 洗空）。
         """
         if isinstance(raw, dict):
             return dict(raw)
-        if raw is None:
-            return {}
-        text = str(raw).strip()
-        if not text or text == "{}":
-            return {}
         try:
-            data = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            tlog(f"[{surface}] 腐坏 JSON，拒绝静默等同空底：{text[:80]!r}")
-            raise ValueError(
-                f"{surface} 腐坏 JSON：{text[:80]!r}"
-            ) from exc
-        if not isinstance(data, dict):
-            tlog(f"[{surface}] 非对象，拒绝静默：{type(data).__name__}")
-            raise ValueError(
-                f"{surface} 须为对象，得 {type(data).__name__}"
-            )
-        return dict(data)
+            return _load_durable_json_object(raw, surface=surface)
+        except ValueError:
+            preview = repr(raw)[:80] if not isinstance(raw, str) else repr(raw[:80])
+            tlog(f"[{surface}] 持久 JSON 解码失败：{preview}")
+            raise
+
+
+    @staticmethod
+    def optional_object(value: object, *, surface: str) -> Optional[Dict[str, Any]]:
+        """已解码可选对象：None→None；dict（含合法空{}）→dict；非对象响亮。
+
+        业务空值回落（``{} or next``）由消费方决定；本权威只保形状。
+        """
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return dict(value)
+        tlog(f"[{surface}] 非对象，拒绝静默：{type(value).__name__}")
+        raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
+
 
     @classmethod
     def _parse_todo_payload_json(cls, raw: object) -> Dict[str, object]:
@@ -18114,12 +18521,12 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 start_month, duration_months, status, clear_gate, legacy_key)
                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
             (
-                str(name), source_issue_id,
+                str(name or ""), source_issue_id,
                 json.dumps(modifiers, ensure_ascii=False),
-                str(narrative_hint),
+                str(narrative_hint or ""),
                 start_month, int(duration_months),
                 json.dumps(clear_gate or {}, ensure_ascii=False),
-                str(legacy_key)[:60],
+                str(legacy_key or ""),
             ),
         )
         if commit:
@@ -18186,11 +18593,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         for lg in self.conn.execute(
             "SELECT modifiers FROM legacies WHERE status='active' ORDER BY id"
         ).fetchall():
-            try:
-                eff = json.loads(str(lg["modifiers"] or "{}"))
-            except Exception as exc:
-                tlog(f"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}")  # #14 surface
-                continue
+            eff = _load_durable_json_object(lg["modifiers"], surface="legacies.modifiers")
             for acc in ("国库", "内库", "民心", "皇威"):
                 v = eff.get(acc)
                 if isinstance(v, (int, float)):
@@ -18351,33 +18754,15 @@ CREATE TABLE IF NOT EXISTS authority_records (
         )
 
     def list_fiscal_effects_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        origin = f"dossier:{int(dossier_id)}"
-        rows: List[Dict[str, object]] = []
-        for effect_kind, table, order in (
-            ("create", "fiscal_config_creations", "id"),
-            ("change", "fiscal_config_changes", "id"),
-            ("remove", "fiscal_config_tombstones", "id"),
-        ):
-            for row in self.conn.execute(
-                f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY {order}", (origin,)
-            ).fetchall():
-                item = dict(row)
-                item["effect_kind"] = effect_kind
-                # #1260：与 list_economy_moves_for_dossier 同款归一 bool。
-                item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(
-                    item.get("beyond_intent")
-                ))
-                rows.append(item)
-        return rows
+        """案卷口：构造 origin 后委托唯一财政读权威。"""
+        return self.list_fiscal_effects_for_origin(f"dossier:{int(dossier_id)}")
 
     def list_dossier_durable_effects(self, dossier_id: int) -> List[Dict[str, object]]:
         """#1260 单源：案卷 durable_effects = economy + fiscal（已归一 beyond_intent bool）。
 
-        只供事实，不参与裁决形状。四读端改调此处，禁再各写一份合并。
+        只供事实，不参与裁决形状。构造 origin 后委托合并权威，禁再各写一份合并。
         """
-        return list(self.list_economy_moves_for_dossier(int(dossier_id))) + list(
-            self.list_fiscal_effects_for_dossier(int(dossier_id))
-        )
+        return self.list_durable_effects_for_origin(f"dossier:{int(dossier_id)}")
 
     def record_dossier_actual_progress(
         self,
@@ -18387,35 +18772,68 @@ CREATE TABLE IF NOT EXISTS authority_records (
         units: float,
         fidelity_state: str,
         floor_state: str,
-        note: str = "",
+        note: Optional[str] = None,
         commit: bool = True,
     ) -> Dict[str, object]:
-        """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。"""
+        """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。
+
+        同一 (dossier, turn) 的 note 与推演实况正文共用。冲突更新改单位与执行态。
+        note is None＝本次数值写未提供正文字段，保留已存正文；note 为 str（含空白）
+        ＝显式承接，原文原样写入，不以空白形状仲裁旧／新（P6 / #1897 N2）。
+        已提供 note 禁 str() 洗白；坏类型响亮（#1897 J820-E1）。
+        """
         owns = self.owns_transaction() if commit else False
         did = int(dossier_id)
         origin = f"dossier:{did}"
-        self.conn.execute(
-            """
-            INSERT INTO dossier_actual_progress
-                (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(dossier_id, turn) DO UPDATE SET
-                units=excluded.units,
-                fidelity_state=excluded.fidelity_state,
-                floor_state=excluded.floor_state,
-                note=excluded.note,
-                origin_ref=excluded.origin_ref
-            """,
-            (
-                did,
-                int(turn),
-                float(units),
-                str(fidelity_state),
-                str(floor_state),
-                str(note or ""),
-                origin,
-            ),
+        note_provided = note is not None
+        note_value = (
+            _require_durable_prose(note, field="note", required=False)
+            if note_provided else ""
         )
+        if note_provided:
+            self.conn.execute(
+                """
+                INSERT INTO dossier_actual_progress
+                    (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dossier_id, turn) DO UPDATE SET
+                    units=excluded.units,
+                    fidelity_state=excluded.fidelity_state,
+                    floor_state=excluded.floor_state,
+                    note=excluded.note,
+                    origin_ref=excluded.origin_ref
+                """,
+                (
+                    did,
+                    int(turn),
+                    float(units),
+                    str(fidelity_state),
+                    str(floor_state),
+                    note_value,
+                    origin,
+                ),
+            )
+        else:
+            self.conn.execute(
+                """
+                INSERT INTO dossier_actual_progress
+                    (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
+                VALUES (?, ?, ?, ?, ?, '', ?)
+                ON CONFLICT(dossier_id, turn) DO UPDATE SET
+                    units=excluded.units,
+                    fidelity_state=excluded.fidelity_state,
+                    floor_state=excluded.floor_state,
+                    origin_ref=excluded.origin_ref
+                """,
+                (
+                    did,
+                    int(turn),
+                    float(units),
+                    str(fidelity_state),
+                    str(floor_state),
+                    origin,
+                ),
+            )
         if owns:
             self.conn.commit()
         row = self.conn.execute(
@@ -18428,7 +18846,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "units": float(units),
             "fidelity_state": str(fidelity_state),
             "floor_state": str(floor_state),
-            "note": str(note or ""),
+            "note": note_value,
             "origin_ref": origin,
         }
 
@@ -18488,7 +18906,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             """,
             (
                 target, key, int(turn or 0), int(year or 0), int(period or 0),
-                eff, str(origin_ref or "")[:120],
+                eff, str(origin_ref or ""),
             ),
         )
         if owns:
@@ -18541,18 +18959,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        rows: List[Dict[str, object]] = []
-        for row in self.conn.execute(
-            "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id",
-            (f"dossier:{int(dossier_id)}",),
-        ).fetchall():
-            item = dict(row)
-            # Normalize beyond_intent to bool for adjudicator consumers (#622).
-            item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(
-                item.get("beyond_intent")
-            ))
-            rows.append(item)
-        return rows
+        """案卷口：构造 origin 后委托唯一经济读权威。"""
+        return self.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")
 
     def kv_get(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
@@ -18570,9 +18978,25 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
     @staticmethod
     def _normalize_participant_roster(
-        participants: Iterable[object] | str | None, *, strict_structured: bool = False,
+        participants: Iterable[object] | str | None, *,
+        strict_structured: bool = False, as_durable: bool = False,
     ) -> List[Dict[str, object]]:
-        """Normalize ADR 0053 entries while retaining explicit legacy string input."""
+        """Normalize ADR 0053 entries while retaining explicit legacy string input.
+
+        as_durable=True：已持久名册 schema 腐坏 → 裸 ValueError（内部故障）；
+        声明严格面 schema 错误 → DMVE（#1897 E1）。
+        """
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+
+        def _schema_error(message: str):
+            if as_durable:
+                return ValueError(f"已持久名册{message}")
+            return DecreeMaterializationValidationError(
+                message,
+                failed_fields=("participant_roster",),
+                category="invalid_participant_roster",
+            )
+
         values = [participants] if isinstance(participants, str) else list(participants or [])
         roster: List[Dict[str, object]] = []
         for value in values:
@@ -18584,20 +19008,38 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     character_id = str(value.get("character_id") or value.get("name") or "").strip()
                     tier_value = value.get("tier") if "tier" in value else value.get("档")
                 if strict_structured and not character_id:
-                    raise ValueError("参与人物 character_id 不能为空")
+                    raise _schema_error("参与人物 character_id 不能为空")
                 if strict_structured and tier_value is None:
-                    raise ValueError("参与人物 tier 必须显式提供")
+                    raise _schema_error("参与人物 tier 必须显式提供")
                 tier = str(tier_value or ("" if strict_structured else "知情")).strip()
-                raw_role = str(value.get("role") or value.get("职分") or "")
-                role = raw_role if raw_role.strip() else ""
+                # 职分是自由文字：原值持久；strip 只作局部判空，不改写（#1897 E2）。
+                if "role" in value:
+                    role_raw = value.get("role")
+                elif "职分" in value:
+                    role_raw = value.get("职分")
+                else:
+                    role_raw = ""
+                if role_raw is None:
+                    role = ""
+                elif not isinstance(role_raw, str):
+                    if strict_structured or as_durable:
+                        raise _schema_error(
+                            f"参与人 role 须为字符串，得 {type(role_raw).__name__}"
+                        )
+                    role = str(role_raw)
+                else:
+                    role = role_raw
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
                 if strict_structured:
-                    raise ValueError("结构化参与人名单每项必须为对象")
+                    raise _schema_error("结构化参与人名单每项必须为对象")
                 character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
             if not character_id:
                 continue
             if tier not in PARTICIPANT_TIERS:
+                # 声明严格面 → 领域拒收；持久/宽松读侧裸 VE（#1897 E1）。
+                if strict_structured:
+                    raise _schema_error(f"参与人机械档非法：{tier}")
                 raise ValueError(f"参与人机械档非法：{tier}")
             item = {"character_id": character_id, "tier": tier, "role": role,
                     "delegator_id": delegator or None}
@@ -18614,20 +19056,27 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
         与 ``_merge_directive_payload`` 名册分支同一条规则；不按 character_id
         静默丢后项。持久化案卷追加冲突（同人异档）仍走
-        ``append_decree_dossier_participants``。通用宽松规范化仍由
-        ``_normalize_participant_roster`` 服务其他业务读缝，本合并口不再保留
-        无消费者的宽松 incoming 开关。
+        ``append_decree_dossier_participants``。两侧均走 canonical 严格路径；
+        通用字符串规范化仍由 ``_normalize_participant_roster`` 服务 create_issue
+        等合法接缝，本合并口不猜补历史裸名。
         """
-        base = GameDB._normalize_participant_roster(list(existing or []))
+        base = GameDB._normalize_participant_roster(
+            list(existing or []), strict_structured=True,
+        )
         add = GameDB._normalize_participant_roster(
             list(incoming or []), strict_structured=True,
         )
         return base + [item for item in add if item not in base]
 
     def _validate_participant_roster_references(
-        self, roster: Iterable[Mapping[str, object]],
+        self, roster: Iterable[Mapping[str, object]], *,
+        as_durable: bool = False,
     ) -> None:
-        """Enforce ADR 0053 character primary-key references at the DB write seam."""
+        """Enforce ADR 0053 character primary-key references at the DB write seam.
+
+        as_durable=True：已持久名册坏引用 → 裸 ValueError（内部故障）；
+        False：本次声明项 → DMVE（领域拒收）。二者不混（#1897 E1/K2）。
+        """
         entries = list(roster)
         referenced = {
             str(value).strip()
@@ -18650,20 +19099,25 @@ CREATE TABLE IF NOT EXISTS authority_records (
             is_non_person_participant_name,
         )
 
-        def _roster_ref_error(label: str, name: str) -> UnknownParticipantRefError:
+        def _roster_ref_error(label: str, name: str):
             # #1380：拒「皇帝」等非人通称时给人话提示；控制面认类型不认词面（#1902 T2）。
             if is_non_person_participant_name(name):
                 msg = (
                     f"{label}不存在：{name}。"
                     f"人物参与人须为朝堂名册中的大臣姓名，"
                     f"不可填「{name}」等非人通称或机构名。"
+                    if is_non_person_participant_name(name)
+                    else f"请填写朝堂名册中已有的大臣姓名。"
                 )
             else:
                 msg = (
                     f"{label}不存在：{name}。"
                     f"请填写朝堂名册中已有的大臣姓名。"
                 )
+            if as_durable:
+                return ValueError(f"已持久名册坏引用：{msg}")
             return UnknownParticipantRefError(label, name, msg)
+
 
         for item in entries:
             character_id = str(item.get("character_id") or "").strip()
@@ -18807,10 +19261,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
             (source, source),
         ).fetchone()
         if row is not None:
-            try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
+            names = _load_durable_str_list(
+                row["excluded_names"],
+                surface="character_knowledge_events excluded_names",
+            )
+            return list(names)
         # Private briefs and public disclosure events inherit exclusions from
         # secret_orders. Bare ``secret_order:N`` shared sources are not produced
         # and are not a lookup key here (register gate rejects that prefix).
@@ -18823,10 +19278,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
             ).fetchone()
             if order is not None:
-                try:
-                    return [str(name) for name in json.loads(order["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                names, _ = _load_secret_order_exclusions(
+                    order, surface=f"secret_orders#{order_id}",
+                )
+                return [str(name) for name in names]
         # #1829 reopen：公开说法排除名单与正文同表，按 public_saying:<id> 回查。
         match = re.fullmatch(r"public_saying:(\d+)", source)
         if match:
@@ -18835,39 +19290,48 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 (int(match.group(1)),),
             ).fetchone()
             if saying is not None:
-                try:
-                    return [str(name) for name in json.loads(saying["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                names = _load_durable_str_list(
+                    saying["excluded_names"],
+                    surface="public_sayings excluded_names",
+                )
+                return list(names)
             return []
         row = self.conn.execute(
             "SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
         if row is not None:
-            try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
+            names = _load_durable_str_list(
+                row["excluded_names"],
+                surface="character_knowledge_sources excluded_names",
+            )
+            return list(names)
         return []
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
+
+        def _people_offices(raw: object, *, surface: str) -> Dict[str, List[str]]:
+            payload = _load_exclusion_targets(raw, surface=surface)
+            return {
+                "people": [str(x) for x in payload.get("people", [])],
+                "offices": [str(x) for x in payload.get("offices", [])],
+            }
+
         # Private briefs and public disclosure events share canonical
         # exclusions persisted on secret_orders.
         match = re.fullmatch(r"secret_order_brief:(\d+)", source)
         if match is None:
             match = re.fullmatch(r"secret_order_disclosure:(\d+)(?::.*)?", source)
         if match:
+            order_id = int(match.group(1))
             row = self.conn.execute(
                 "SELECT excluded_targets FROM secret_orders WHERE id=?",
-                (int(match.group(1)),),
+                (order_id,),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            return {"people": [str(x) for x in payload.get("people", [])],
-                    "offices": [str(x) for x in payload.get("offices", [])]}
+            raw = row["excluded_targets"] if row is not None else "{}"
+            return _people_offices(
+                raw, surface=f"secret_orders#{order_id} excluded_targets",
+            )
         # #1829 reopen：公开说法排除目标与正文同表。
         match = re.fullmatch(r"public_saying:(\d+)", source)
         if match:
@@ -18875,23 +19339,19 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 "SELECT excluded_targets FROM public_sayings WHERE id=?",
                 (int(match.group(1)),),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            return {"people": [str(x) for x in payload.get("people", [])],
-                    "offices": [str(x) for x in payload.get("offices", [])]}
+            raw = row["excluded_targets"] if row is not None else "{}"
+            return _people_offices(
+                raw, surface="public_sayings excluded_targets",
+            )
         row = self.conn.execute(
             "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
         if row is None:
             return {"people": [], "offices": []}
-        try:
-            payload = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
-            payload = {}
-        return {"people": [str(x) for x in payload.get("people", [])],
-                "offices": [str(x) for x in payload.get("offices", [])]}
+        return _people_offices(
+            row["excluded_targets"],
+            surface="character_knowledge_sources excluded_targets",
+        )
 
     def record_participation_record(
         self, state: GameState, record: Mapping[str, object], *, kind: str,
@@ -18936,11 +19396,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             source_id or str(record.get("source_id") or ""), excluded_names, commit=commit,
         )
 
-    @staticmethod
-    def _is_audience_chat_shared_channel(kind: str = "", source_id: str = "") -> bool:
-        """召对 chat → shared-ledger channel (#883/#976)."""
-        return str(kind or "") == "audience" or str(source_id or "").startswith("chat_message:")
-
 
     def _delete_shared_knowledge_source_ids(
         self, source_ids: Iterable[str], *, commit: bool = True,
@@ -18962,7 +19417,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
     def _coerce_positive_message_ids(
         self, message_ids: Optional[Iterable[Any]] = None,
     ) -> List[int]:
-        """Normalize chat_message id pins to a stable unique positive list."""
+        """Normalize chat_message id pins to a stable unique positive list.
+
+        声明/调用侧宽松：坏成员跳过。已持久 brief 源身份用
+        ``_load_durable_origin_message_ids`` 响亮解码（#1897 E1）。
+        """
         out: List[int] = []
         seen: set = set()
         for raw in message_ids or ():
@@ -18973,6 +19432,26 @@ CREATE TABLE IF NOT EXISTS authority_records (
             if mid > 0 and mid not in seen:
                 seen.add(mid)
                 out.append(mid)
+        return out
+
+    def _load_durable_origin_message_ids(
+        self, raw: object, *, surface: str,
+    ) -> List[int]:
+        """Durable brief/pin message-id array: corrupt / non-int members fail loud."""
+        values = _load_durable_json_list(raw, surface=surface)
+        out: List[int] = []
+        seen: set = set()
+        for index, item in enumerate(values):
+            if isinstance(item, bool) or not isinstance(item, int):
+                raise ValueError(
+                    f"{surface}[{index}] 须为正整 message id，"
+                    f"得 {type(item).__name__}"
+                )
+            if item <= 0:
+                raise ValueError(f"{surface}[{index}] 须为正整 message id")
+            if item not in seen:
+                seen.add(item)
+                out.append(item)
         return out
 
     def _secret_origin_message_protection(self) -> Dict[int, bool]:
@@ -18999,28 +19478,19 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "WHERE kind='secret_order' AND status IN ('pending','failed')"
         ).fetchall()
         for row in brief_rows:
-            raw = row["origin_chat_message_ids"] if row is not None else "[]"
-            try:
-                parsed = json.loads(raw or "[]")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(parsed, list):
-                continue
-            for item in parsed:
-                try:
-                    mid = int(item)
-                except (TypeError, ValueError):
-                    continue
-                if mid > 0:
-                    out[mid] = True
+            # 源身份损坏不得静默跳过致 release 泄密（#1897 E1 P1）。
+            pins = self._load_durable_origin_message_ids(
+                row["origin_chat_message_ids"] if row is not None else None,
+                surface="secret_order_briefs.origin_chat_message_ids",
+            )
+            for mid in pins:
+                out[mid] = True
         for row in pending_rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(payload, dict):
-                continue
-            mid = self._parse_origin_chat_message_id(payload)
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="pending_actions.payload_json",
+            )
+            # 已持久 pending 源钉与 brief 同严；坏身份不得视作无源致 release 泄密。
+            mid = self._parse_origin_chat_message_id(payload, durable=True)
             if mid is not None:
                 out.setdefault(mid, False)
         if out:
@@ -19356,12 +19826,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             self.conn.commit()
         return event_id
 
-    def list_recommendation_events(
-        self, state: GameState, recommender: Optional[str] = None,
-    ) -> List[Dict[str, object]]:
-        from ming_sim.recommendations import list_recommendation_events
-        return list_recommendation_events(self, state, recommender)
-
     def create_secret_order(
         self,
         state: GameState,
@@ -19380,7 +19844,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         covert_task: Optional[Mapping[str, object]] = None,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
-        # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
+        # API / 大臣工具 / CLI 自然语言全路（cmr R6 cross-section）。
         # 先经 _find_existing_minister 把别名（如「福王」）解到规范 key，再校资格、并以规范名落库——
         # 否则别名绕过资格闸（codex+CodeRabbit R2 concur），且按别名存会让后续按规范名查不到此令
         # （CodeRabbit R3 Major）。lazy import 避 db↔session 循环。
@@ -19583,12 +20047,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
     ) -> bool:
-        """按**精确 id** 更新 active 密令要旨（title/content/tags/限期），记一条「奉旨更新」进展。
-        返回是否更新（id 存在且状态为 active）。
+        """按**精确 id** 更新 active 密令要旨（title/content/tags/限期）。
+        返回是否更新（id 存在且状态为 active）。不写月度奏报。
 
-        会话动作「更新」已解析出确切 target id 时必须走本方法，否则大臣有多条
-        active 密令会改错条（CMR F1）。旧按「该大臣最新 active」改写的 upsert 入口
-        已无生产消费者，已清退。
+
         tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。
 
         Oral-decree pins (stage ``origin_chat_message_id`` / speaker) feed the same
@@ -19601,22 +20063,31 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         if row is None or row["status"] != "active":
             return False
-        self._read_secret_order_body_before_write(int(order_id))
         persisted_title = title
-        tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
+        if tags is not None:
+            if not isinstance(tags, list):
+                raise ValueError(
+                    f"secret_orders#{int(order_id)} tags 须为列表，"
+                    f"得 {type(tags).__name__}"
+                )
+            tags_json = json.dumps(
+                _require_str_list_members(
+                    tags, surface=f"secret_orders#{int(order_id)} tags",
+                ),
+                ensure_ascii=False,
+            )
+        else:
+            # 保留原标签：空串/腐坏响亮，不 or "[]" 洗（#1897 E1）。
+            tags_json = json.dumps(
+                _load_durable_str_list(
+                    row["tags"], surface=f"secret_orders#{int(order_id)} tags",
+                ),
+                ensure_ascii=False,
+            )
         deadline = max(0, min(int(deadline_months or 0), 36))
-        try:
-            prior_targets = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
-            prior_targets = {}
-        if not isinstance(prior_targets, dict):
-            prior_targets = {}
-        try:
-            legacy_people = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
-            legacy_people = []
-        if not isinstance(legacy_people, list):
-            legacy_people = []
+        legacy_people, prior_targets = _load_secret_order_exclusions(
+            row, surface=f"secret_orders#{int(order_id)}",
+        )
         people, offices = canonical_secret_order_exclusions(
             self.content, [*legacy_people, *prior_targets.get("people", [])],
             prior_targets.get("offices", []),
@@ -19650,20 +20121,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 origin_chat_message_ids=classify_ids,
                 commit=False,
             )
-            dossier = self.get_dossier_for_secret_order(int(order_id))
-            if dossier is not None:
-                try:
-                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                except (TypeError, ValueError):
-                    payload = {}
-                if not isinstance(payload, dict):
-                    payload = {}
-                payload["title"] = persisted_title
-                payload["content"] = content
-                payload["tags"] = json.loads(tags_json)
-                self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
+            # #1897 S2：现行要旨／期限权威面＝secret_orders；案卷 decree_text／
+            # payload.text 保留发令历史原诏，不再平行改写 payload.content 等现行副本。
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
-        self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
         return True
 
     def list_secret_orders(
@@ -19683,8 +20143,12 @@ CREATE TABLE IF NOT EXISTS authority_records (
             f"SELECT * FROM secret_orders {where} ORDER BY id DESC",
             params,
         ).fetchall()
-        return [
-            {
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            excluded_names, excluded_targets = _load_secret_order_exclusions(
+                r, surface=f"secret_orders#{int(r['id'])}",
+            )
+            out.append({
                 "id": int(r["id"]),
                 "turn_issued": int(r["turn_issued"]),
                 "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
@@ -19694,11 +20158,12 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 "minister_name": r["minister_name"],
                 "title": r["title"],
                 "content": r["content"],
-                "tags": json.loads(r["tags"] or "[]"),
+                "tags": _load_durable_str_list(
+                    r["tags"], surface=f"secret_orders#{int(r['id'])} tags",
+                ),
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",
-                "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
                 # Emperor-facing secret-order payload is an authorized private
                 # product seam; expose the same canonical monthly rail used by
                 # the personnel extractor and future dossier inquiry.
@@ -19707,12 +20172,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     if (dossier := self.get_dossier_for_secret_order(int(r["id"])))
                     else []
                 ),
-                "excluded_names": json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else [],
-                "excluded_targets": json.loads(r["excluded_targets"] or "{}") if "excluded_targets" in r.keys() else {},
+                "excluded_names": excluded_names,
+                "excluded_targets": excluded_targets,
                 "turn_closed": r["turn_closed"],
-            }
-            for r in rows
-        ]
+            })
+        return out
 
     def get_active_secret_orders_for_minister(self, minister_name: str) -> List[Dict[str, object]]:
         """返回该大臣名下未结案密令（active）。done/failed 已结案不再返回。"""
@@ -19725,13 +20189,27 @@ CREATE TABLE IF NOT EXISTS authority_records (
         result: str,
         turn_closed: int,
         *,
+        execution_note: Optional[str] = None,
         commit: bool = True,
     ) -> None:
         owns = self.owns_transaction() if commit else False
 
         def close_in_current_transaction() -> None:
             dossier = self.get_dossier_for_secret_order(int(order_id))
-            close_text = str(result or "")
+            if dossier is None:
+                # #1897 / ADR0005：在办密令缺必需案卷是内部故障，不得半截结案。
+                raise ValueError("密令进展缺少对应案卷")
+            # 结案正文：禁 str()/or 洗白；空串合法（#1897 J820-E1）。
+            close_text = _require_durable_prose(
+                result, field="result", required=False,
+            )
+            # execution_note=None＝缺省空串合同；已提供则须为字符串。
+            if execution_note is None:
+                exec_note_text = ""
+            else:
+                exec_note_text = _require_durable_prose(
+                    execution_note, field="execution_note", required=False,
+                )
             self.conn.execute(
                 """
                 UPDATE secret_orders
@@ -19740,16 +20218,17 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 """,
                 (status, close_text, turn_closed, int(order_id)),
             )
-            if dossier is not None and dossier["status"] != "closed":
+            if dossier["status"] != "closed":
                 if dossier["status"] == "promulgated":
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
                     )
+                # #1897 / ADR0073：执行格只吃实况 note；奏报正文(result)不得回填。
                 self.record_dossier_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
-                    close_text, int(turn_closed),
-                    close=True, commit=False,
+                    exec_note_text,
+                    int(turn_closed), close=True, commit=False,
                 )
 
         if self.conn.in_transaction:
@@ -19777,113 +20256,68 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 raise
         tlog(f"[secret_order] close id={order_id} status={status}")
 
-    def _load_secret_order_body_row(self, order_id: int, *, active_only: bool) -> Optional[sqlite3.Row]:
-        sql = "SELECT * FROM secret_orders WHERE id = ?"
-        if active_only:
-            sql += " AND status = 'active'"
-        return self.conn.execute(sql, (int(order_id),)).fetchone()
+    def _current_game_turn(self, fallback: int = 0) -> int:
+        row = self.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
+        return int(row["turn"]) if row is not None else int(fallback)
 
-    def _read_secret_order_body_before_write(self, order_id: int) -> None:
-        """写正文前先读账。读失败在调用方事务内、本写事务外抛出。"""
-        row = self._load_secret_order_body_row(int(order_id), active_only=True)
-        if row is not None:
-            _secret_order_body_log(row)
+    def _note_secret_order_report(
+        self, order_id: int, text: str, *, band: str, origin: str,
+    ) -> bool:
+        """把一条奏报原文写入 0058 密令轨。月份身份是当前 game_state.turn。
 
-    def _write_secret_order_body(
-        self,
-        order_id: int,
-        column: str,
-        records: Sequence[Mapping[str, object]],
-        *,
-        extra_assignments: str = "",
-        extra_params: Sequence[object] = (),
-    ) -> None:
-        assert column in _SECRET_ORDER_BODY_COLUMNS
-        row = self._load_secret_order_body_row(order_id, active_only=False)
-        if row is None:
-            return
-        log = _secret_order_body_log(row)
-        log[column] = [dict(record) for record in records]
-        params: List[object] = list(extra_params)
-        params.extend((
-            _project_secret_order_bodies(log[column]),
-            json.dumps(log, ensure_ascii=False),
-        ))
-        sets = f"{column} = ?, text_log_json = ?, updated_at = CURRENT_TIMESTAMP"
-        if extra_assignments:
-            sets = f"{extra_assignments}, {sets}"
-        params.append(int(order_id))
-        self.conn.execute(
-            f"UPDATE secret_orders SET {sets} WHERE id = ?",
-            params,
-        )
-
-    def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
-        """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账。
-
-        claim 按记录追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
+        正文原样入库。判空只用副本。调用方持有事务。
         """
-        row = self._load_secret_order_body_row(int(order_id), active_only=True)
-        if row is None:
+        # 已持久/调用方正文：禁 str()/or 洗白；空陈词不落条（#1897 J820-E1）。
+        raw = _require_durable_prose(text, field="text", required=False)
+        if not raw.strip():
             return False
-        turn_row = self.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
-        current_turn = int(turn_row["turn"]) if turn_row is not None else int(row["turn_issued"] or 0)
-        note = _secret_order_kept_body(claim)
-        records = _secret_order_body_log(row)["result"]
-        records.append({
-            "year": int(year),
-            "period": int(period),
-            "marker": "[提交核议] ",
-            "body": note,
-        })
-        with atomic(self):
-            self._write_secret_order_body(
-                int(order_id), "result", records,
-                extra_assignments="due_turn = ?",
-                extra_params=(current_turn,),
-            )
-            self.mark_secret_order_in_progress(int(order_id), commit=False)
-        tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}")
+        row = self.conn.execute(
+            "SELECT status FROM secret_orders WHERE id=?", (int(order_id),),
+        ).fetchone()
+        if row is None or row["status"] != "active":
+            # 未知／非 active：领域拒收（调用方见 False），不是内部故障。
+            return False
+        dossier = self.get_dossier_for_secret_order(int(order_id))
+        if dossier is None:
+            # #1897 / ADR0005：已准入 active 密令缺案卷 → 响亮故障；不得洗成 False 终结暂存。
+            raise ValueError("密令进展缺少对应案卷")
+        self.record_dossier_progress(
+            int(dossier["id"]), self._current_game_turn(), band, raw,
+            origin=origin, commit=False,
+        )
         return True
 
-    def _has_secret_order_period_line(self, order_id: int, column: str, year: int, period: int) -> bool:
-        """本年月该列是否已有进展记录（用于一回合一步闸门）。"""
-        assert column in _SECRET_ORDER_BODY_COLUMNS
-        row = self._load_secret_order_body_row(int(order_id), active_only=False)
-        if row is None:
-            return False
-        return _secret_order_period_recorded(
-            _secret_order_body_log(row)[column], year, period,
-        )
+    def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
+        """#1504：大臣自认办结 → 缩 due_turn 至当月，月末按实况对账。
 
-    def _append_secret_order_line(
-        self, order_id: int, column: str, note: str, year: int, period: int,
-        reject_if_same_period: bool = False,
-        commit: bool = True,
-    ) -> bool:
-        """把一条进展/副作用按记录追加进密令正文。
-        reject_if_same_period=True 时，本年月已有记录则拒写（返回 False，用于一回合一步）；
-        否则同年月再写替换当月记录。不同年月一律新增。返回是否实际写入。"""
-        assert column in _SECRET_ORDER_BODY_COLUMNS
-        row = self._load_secret_order_body_row(int(order_id), active_only=True)
-        if row is None:
-            return False  # 已结案或不存在，不追加
-        records = _secret_order_body_log(row)[column]
-        if reject_if_same_period and _secret_order_period_recorded(records, year, period):
-            return False  # 本回合已推过一步，拒
-        records = [
-            record for record in records
-            if int(record.get("year") or 0) != int(year)
-            or int(record.get("period") or 0) != int(period)
-        ]
-        records.append({
-            "year": int(year),
-            "period": int(period),
-            "body": _secret_order_kept_body(note),
-        })
-        self._write_secret_order_body(int(order_id), column, records)
-        if commit:
-            self.conn.commit()
+        claim 是自由文本，原样进入奏报轨的核议 origin，不改实况、不改御限以外的世界。
+        空陈词只缩短到期回合。年月参数不参与条目身份。
+        坏类型 schema 故障，不洗成空陈词（#1897 J820-E1）。
+        """
+        _ = (year, period)
+        row = self.conn.execute(
+            "SELECT status, turn_issued FROM secret_orders WHERE id = ?", (int(order_id),)
+        ).fetchone()
+        if not row or row["status"] != "active":
+            return False
+        current_turn = self._current_game_turn(int(row["turn_issued"] or 0))
+        claim_text = _require_durable_prose(claim, field="claim", required=False)
+        with atomic(self):
+            self.conn.execute(
+                """
+                UPDATE secret_orders
+                SET due_turn = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'active'
+                """,
+                (current_turn, int(order_id)),
+            )
+            if claim_text.strip():
+                self._note_secret_order_report(
+                    int(order_id), claim_text, band="核议",
+                    origin=self.DOSSIER_REPORT_ORIGIN_REVIEW,
+                )
+            self.mark_secret_order_in_progress(int(order_id), commit=False)
+        tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={claim_text[:60]!r}")
         return True
 
     def update_secret_order_progress(
@@ -19895,22 +20329,29 @@ CREATE TABLE IF NOT EXISTS authority_records (
         *,
         commit: bool = True,
     ) -> bool:
-        """承办人推进一步：按年月追加进 result 历史时间线，不改 status。
-        同月再报则替换当月行（修改最新进度，不叠加多条）。"""
-        self._read_secret_order_body_before_write(int(order_id))
-        with atomic(self):
-            ok = self._append_secret_order_line(
-                order_id,
-                "result",
-                progress_note,
-                year,
-                period,
-                reject_if_same_period=False,
-                commit=False,
+        """承办人推进一步：写入当月奏报轨，不改 status、不改实况。
+
+        同月再报替换同一条月度奏报。正文里的日期不另立月份。
+        坏类型 schema 故障，不洗成空串领域拒收（#1897 J820-E1）。
+        """
+        _ = (year, period)
+        note = _require_durable_prose(progress_note, field="note", required=False)
+        if commit:
+            with atomic(self):
+                ok = self._note_secret_order_report(
+                    order_id, note, band="进展",
+                    origin=self.DOSSIER_REPORT_ORIGIN_MONTHLY,
+                )
+                if ok:
+                    self.mark_secret_order_in_progress(order_id, commit=False)
+        else:
+            ok = self._note_secret_order_report(
+                order_id, note, band="进展",
+                origin=self.DOSSIER_REPORT_ORIGIN_MONTHLY,
             )
             if ok:
                 self.mark_secret_order_in_progress(order_id, commit=False)
-        tlog(f"[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}")
+        tlog(f"[secret_order] progress id={order_id} ok={ok} note={note[:40]!r}")
         return ok
 
     def update_secret_order_sim_note(
@@ -19922,27 +20363,59 @@ CREATE TABLE IF NOT EXISTS authority_records (
         *,
         commit: bool = True,
     ) -> None:
-        """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
-        不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
-        self._read_secret_order_body_before_write(int(order_id))
+        """推演写本月推进实况。原文进入实况轨当月 note，不覆盖单位。
+
+        月份身份是当前 game_state.turn。年月参数不参与存储，正文日期不另立月份。
+        不进奏报轨。
+        """
+        _ = (year, period)
         if commit:
             with atomic(self):
-                self._update_secret_order_sim_note_in_transaction(
-                    order_id, sim_note, year, period,
-                )
+                self._update_secret_order_sim_note_in_transaction(order_id, sim_note)
         else:
-            self._update_secret_order_sim_note_in_transaction(
-                order_id, sim_note, year, period,
-            )
-        tlog(f"[secret_order] sim_note id={order_id} note={sim_note[:40]!r}")
+            self._update_secret_order_sim_note_in_transaction(order_id, sim_note)
+        tlog(f"[secret_order] actual note id={order_id} note={str(sim_note)[:40]!r}")
 
     def _update_secret_order_sim_note_in_transaction(
-        self, order_id: int, sim_note: str, year: int, period: int,
+        self, order_id: int, sim_note: str,
     ) -> None:
-        """调用方持有事务时写密令实况并同步案卷，不自行落定。"""
-        self._append_secret_order_line(
-            order_id, "sim_note", sim_note, year, period, commit=False,
-        )
+        """调用方持有事务时把实况原文写入当月实况轨，并同步案卷在办。
+
+        只写 note，不改 units。显式传入的正文（含空白）原样写入，不以
+        strip/TRIM 仲裁旧／新（P6 / #1897 N2）。数值写口见
+        record_dossier_actual_progress：note is None 才保留已存正文。
+        坏类型 schema 故障，禁 str()/or 洗白（#1897 J820-E1）。
+        """
+        raw = _require_durable_prose(sim_note, field="sim_note", required=False)
+        row = self.conn.execute(
+            "SELECT id FROM secret_orders WHERE id=? AND status='active'",
+            (int(order_id),),
+        ).fetchone()
+        if row is None:
+            return
+        dossier = self.get_dossier_for_secret_order(int(order_id))
+        if dossier is None:
+            raise ValueError("密令进展缺少对应案卷")
+        did = int(dossier["id"])
+        turn = self._current_game_turn()
+        existing = self.conn.execute(
+            "SELECT id, units FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+            (did, int(turn)),
+        ).fetchone()
+        if existing is None:
+            self.conn.execute(
+                """
+                INSERT INTO dossier_actual_progress
+                    (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
+                VALUES (?, ?, 0, '', '', ?, ?)
+                """,
+                (did, int(turn), raw, f"dossier:{did}"),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE dossier_actual_progress SET note=? WHERE id=?",
+                (raw, int(existing["id"])),
+            )
         self.mark_secret_order_in_progress(order_id, commit=False)
 
     def mark_secret_order_in_progress(
@@ -19970,7 +20443,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
     ) -> Dict[str, object]:
         """缩短 active 密令期限。deadline_months<=0 表示本月到期对账。"""
         row = self.conn.execute(
-            "SELECT id, title, status, result, due_turn FROM secret_orders WHERE id = ?",
+            "SELECT id, title, status, due_turn FROM secret_orders WHERE id = ?",
             (int(order_id),),
         ).fetchone()
         if row is None:
@@ -19991,41 +20464,44 @@ CREATE TABLE IF NOT EXISTS authority_records (
             months = 1
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
-        why = reason if str(reason or "").strip() else "奉旨加急"
-        body_row = self._load_secret_order_body_row(int(order_id), active_only=True)
-        records = _secret_order_body_log(body_row)["result"] if body_row is not None else []
+        # #1897 J820-E1：催办理由已是/须是字符串；坏类型响亮；仅真正空串回落缺省。
+        raw_reason = _require_durable_prose(reason, field="reason", required=False)
+        why = raw_reason if raw_reason else "奉旨加急"
         with atomic(self):
             if months <= 0:
-                records.append({
-                    "year": int(state.year),
-                    "period": int(state.period),
-                    "marker": "[奉旨即核] ",
-                    "body": f"{why}；本月到期按实进度对账。",
-                })
-                due_turn = int(state.turn)
-                self._write_secret_order_body(
-                    int(order_id), "result", records,
-                    extra_assignments="due_turn = ?, deadline_span = 0",
-                    extra_params=(due_turn,),
+                self.conn.execute(
+                    """
+                    UPDATE secret_orders
+                    SET due_turn = ?, deadline_span = 0, updated_at=CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (int(state.turn), int(order_id)),
                 )
                 status = "active"
+                due_turn = int(state.turn)
             else:
                 due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
-                records.append({
-                    "year": int(state.year),
-                    "period": int(state.period),
-                    "marker": "[奉旨加急] ",
-                    "body": f"{why}；御限改为 {months} 个月内核议。",
-                })
-                self._write_secret_order_body(
-                    int(order_id), "result", records,
-                    extra_assignments="due_turn = ?, deadline_span = ?",
-                    extra_params=(due_turn, max(int(due_turn) - int(state.turn), 0)),
+                self.conn.execute(
+                    """
+                    UPDATE secret_orders
+                    SET due_turn = ?, deadline_span = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        due_turn,
+                        max(int(due_turn) - int(state.turn), 0),
+                        int(order_id),
+                    ),
                 )
                 status = "active"
+            self._note_secret_order_report(
+                int(order_id), why, band="催办",
+                origin=self.DOSSIER_REPORT_ORIGIN_RUSH,
+            )
             self.mark_secret_order_in_progress(int(order_id), commit=False)
         tlog(f"[secret_order] rush id={order_id} old_due={old_due} due={due_turn} status={status}")
         return {"id": int(order_id), "title": row["title"], "status": status, "due_turn": due_turn}
+
 
     def get_secret_order(self, order_id: int) -> Optional[Dict[str, object]]:
         """单查一条密令（任意状态），给承办人查进度工具用。不存在返回 None。"""
@@ -20034,14 +20510,18 @@ CREATE TABLE IF NOT EXISTS authority_records (
         ).fetchone()
         if not r:
             return None
+        excluded_names, excluded_targets = _load_secret_order_exclusions(
+            r, surface=f"secret_orders#{int(order_id)}",
+        )
         return {
             "id": int(r["id"]), "minister_name": r["minister_name"],
             "title": r["title"], "content": r["content"],
             "status": r["status"], "result": r["result"] or "",
-            "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
             "turn_issued": int(r["turn_issued"]),
             "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
             "turn_closed": r["turn_closed"],
+            "excluded_names": excluded_names,
+            "excluded_targets": excluded_targets,
         }
 
     def auto_submit_due_secret_orders(self, state: GameState) -> List[Dict[str, object]]:
@@ -20074,82 +20554,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
     # ── 调试用通用 CRUD（仅限白名单核心表）──────────────────────
     # 表名 → 主键列。只暴露核心几张，防误删元数据/日志表。
-    ADMIN_TABLES: Dict[str, str] = {
-        "game_state": "id",        # 局势
-        "metrics": "key",          # 国家修正（国库/内库/民心/皇威）
-        "regions": "id",           # 地区
-        "armies": "id",            # 军队
-        "characters": "name",      # 人物
-        "buildings": "id",         # 建筑
-    }
-
-    def admin_check_table(self, table: str) -> str:
-        pk = self.ADMIN_TABLES.get(table)
-        if pk is None:
-            raise ValueError(f"表 {table!r} 不在调试白名单")
-        return pk
-
-    def admin_columns(self, table: str) -> List[Dict[str, object]]:
-        """PRAGMA 取列定义：name/type/notnull/pk/default。"""
-        self.admin_check_table(table)
-        cur = self.conn.execute(f"PRAGMA table_info({table})")
-        return [
-            {
-                "name": r["name"],
-                "type": r["type"],
-                "notnull": bool(r["notnull"]),
-                "pk": bool(r["pk"]),
-                "default": r["dflt_value"],
-            }
-            for r in cur.fetchall()
-        ]
-
-    def admin_rows(self, table: str) -> List[Dict[str, object]]:
-        pk = self.admin_check_table(table)
-        cur = self.conn.execute(f"SELECT * FROM {table} ORDER BY {pk}")
-        return [dict(r) for r in cur.fetchall()]
-
-    def _admin_valid_cols(self, table: str) -> set:
-        return {c["name"] for c in self.admin_columns(table)}
-
-    def admin_upsert(self, table: str, values: Dict[str, object]) -> Dict[str, object]:
-        """按主键原位 upsert，返回落库后的行。只接受表内有的列。"""
-        pk = self.admin_check_table(table)
-        valid = self._admin_valid_cols(table)
-        data = {k: v for k, v in values.items() if k in valid}
-        if pk not in data or data[pk] in (None, ""):
-            raise ValueError(f"缺主键 {pk}")
-        cols = list(data.keys())
-        placeholders = ",".join("?" for _ in cols)
-        collist = ",".join(cols)
-        update_cols = [column for column in cols if column != pk]
-        conflict_action = (
-            "DO UPDATE SET "
-            + ",".join(f"{column}=excluded.{column}" for column in update_cols)
-            if update_cols else "DO NOTHING"
-        )
-        self.conn.execute(
-            f"INSERT INTO {table} ({collist}) VALUES ({placeholders}) "
-            f"ON CONFLICT({pk}) {conflict_action}",
-            [data[c] for c in cols],
-        )
-        # 国库/内库同时落在 economy_accounts.balance，load_state 会用后者盖回 metrics。
-        # 只改 metrics 表会在下回合被覆盖，故此处同步 economy_accounts。
-        if table == "metrics" and data.get("key") in ("国库", "内库") and "value" in data:
-            self.conn.execute(
-                "UPDATE economy_accounts SET balance = ? WHERE account = ?",
-                (int(data["value"]), data["key"]),
-            )
-        self.conn.commit()
-        row = self.conn.execute(f"SELECT * FROM {table} WHERE {pk}=?", (data[pk],)).fetchone()
-        return dict(row) if row else {}
-
-    def admin_delete(self, table: str, pk_value: object) -> int:
-        """按主键删行，返回受影响行数。"""
-        pk = self.admin_check_table(table)
-        cur = self.conn.execute(f"DELETE FROM {table} WHERE {pk}=?", (pk_value,))
-        self.conn.commit()
-        return cur.rowcount
 
     def record_relation_edge_event(
         self,
@@ -20265,11 +20669,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             for row in rows
         ]
 
-    # ------------------------------------------------------------------
-    # #636 关系摘要层 S5：两段式存储＋月末增量重酿腿的持久化接缝。
-    # 摘要文本机械原样存取（LLM 自由文本零删改，CLAUDE.md P6/ADR 0142）；
-    # 奠基段只增不改、近况段覆盖式幂等由 apply 路机械保证。
-    # ------------------------------------------------------------------
 
     def apply_seed_founding_segment(
         self,
@@ -20456,13 +20855,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             "SELECT * FROM faction_stance_summaries ORDER BY faction"
         ).fetchall()
         return [dict(row) for row in rows]
-
-    def get_faction_stance_summary(self, faction: str) -> Optional[Dict[str, Any]]:
-        row = self.conn.execute(
-            "SELECT * FROM faction_stance_summaries WHERE faction = ?",
-            (str(faction),),
-        ).fetchone()
-        return dict(row) if row is not None else None
 
     def claim_faction_brew_targets(self, *, year: int, period: int) -> int:
         """settled 年月涉派派系先作 durable claim（庭裁 r1 F2：复用既有认领机制）。

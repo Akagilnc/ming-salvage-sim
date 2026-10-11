@@ -120,31 +120,14 @@ def build_faction_brew_input(
     summary: Any,
     new_events: List[Dict[str, Any]],
     has_pending: bool,
-    db: Any = None,
-    character_factions: Any = None,
 ) -> Dict[str, Any]:
     """单派的酿制输入（旧态势段＋涉派新边事件＋当前年月，ADR 0083/0084 口径）。
 
-    新增 source_faction/target_faction 纯数据字段（庭裁 r1 F1＋F2 缝合）：
-    取 project_character_factions() 现算投影，皇帝端与表外党籍显式 None，不猜
-    不建映射表；禁任何拼接串（ADR 0142/P6，给数据不给话术）。若调用方已通过
-    collect_new_edge_events_for_faction 取数，事件行自带两字段则直接透传；
-    否则若显式传入 db/character_factions 则现算，否则按 None 兜底（显式 null）。
+    事件由 prepare 经 collect_new_edge_events_for_faction 投影，原样运输
+    source_faction/target_faction；皇帝端与表外党籍的 None 不在此重算。
     """
-    # 现算投影（若提供）：优先显式映射，其次 db 现算；未提供则依赖事件自带或 None。
-    projection: Any = None
-    if character_factions is not None:
-        projection = dict(character_factions)
-    elif db is not None:
-        projection = project_character_factions(db)
     new_events_projected: List[Dict[str, Any]] = []
     for event in new_events:
-        if projection is not None:
-            sf = projection.get(event["source"])
-            tf = projection.get(event["target"])
-        else:
-            sf = event.get("source_faction") if "source_faction" in event else None
-            tf = event.get("target_faction") if "target_faction" in event else None
         new_events_projected.append({
             "event_kind": event["event_kind"],
             "context": event["context"],
@@ -153,8 +136,8 @@ def build_faction_brew_input(
             "period": int(event["period"]),
             "source": event["source"],
             "target": event["target"],
-            "source_faction": sf,
-            "target_faction": tf,
+            "source_faction": event["source_faction"],
+            "target_faction": event["target_faction"],
         })
     return {
         "view": VIEW_FACTION_STANCE,
@@ -175,7 +158,7 @@ def parse_faction_stance_output(raw: str, stage: str = "派系态势酿制") -> 
     """酿制输出契约：{"stance_segment": "..."}。
 
     与 parse_brew_output 同一严格解析边界（庭裁 Z1 同型）：raw 必须本身就是唯一、
-    完整、合法的 JSON object——不做任何 fence 剥离/控制字节清洗/首对象截取等修补；
+    完整、合法的 JSON object——不做任何 fence 剥离/外围截取/首对象截取等修补；
     畸形产出一律契约错拒收（LLMContractError/ValueError），沿单条降级保旧摘要与
     pending；绝不把改写/择取后的散文当模型产出落库（ADR 0142 零删改）。零长度
     管辖：stance_segment 原样存储，不截断不 clamp。"""

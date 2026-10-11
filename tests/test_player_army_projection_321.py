@@ -7,6 +7,7 @@ import pytest
 
 import web_app
 
+
 ARMY = "guanning"
 
 

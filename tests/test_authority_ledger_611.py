@@ -1,4 +1,4 @@
-"""#611 authority ledger: production slot, projection, restore, revoke impression."""
+"""#611 authority ledger: production slot, projection, restore, revoke facts."""
 
 import pytest
 
@@ -6,13 +6,7 @@ from ming_sim.db import GameDB
 from ming_sim import issues as issue_engine
 import ming_sim.decree as decree_mod
 from ming_sim.relations import EMPEROR_NODE
-
-
-def _minister(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
+from tests.readback_helpers import ming_character_name as _minister
 
 
 def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
@@ -57,12 +51,8 @@ def _revoke(db, state, content, authority_id, dossier):
     return result
 
 
-
-
-
-
-def test_production_path_grant_restore_revoke_impression_tracer(game):
-    """Real production-slot lifecycle: grant → judge → restore → revoke → restore."""
+def test_production_path_grant_restore_revoke_without_auto_grudge(game):
+    """Grant → restore → revoke keeps authority facts; no auto holder→emperor 结怨 (#1895)."""
     db, state, content = game
     holder = _minister(db)
     domain = "issue:清丈田亩"
@@ -138,12 +128,10 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert record["revoked"] is True
     assert record["revoked_turn"] == final_state.turn
 
-    edges = final.get_relation_edge_events(
+    # #1895 / J19: first revoke records only the revoke fact — no automatic 结怨.
+    assert final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
-    )
-    assert len(edges) == 1
-    assert edges[0]["origin"].startswith(f"authority_revoke:{authority_id}")
-    assert not edges[0]["evidence"]
+    ) == []
 
     # Zero 0056 / 皇威 / faction cost on revoke.
     assert final_state.metrics == metrics_before
@@ -159,7 +147,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert gone["dossiers"][0]["held_authorities"] == []
     assert gone["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
 
-    # Idempotent already_revoked: no second edge, no revoked_turn rewrite.
+    # Idempotent already_revoked: no revoked_turn rewrite, still no auto edge.
     first_revoked_turn = record["revoked_turn"]
     again = issue_engine.apply_score_extraction(final, final_state, {
         "authority_changes": [{
@@ -171,9 +159,9 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert again["authority_changes"][0]["reason"] == "already_revoked"
     assert again["authority_changes"][0].get("rejected") is not True
     assert final.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
-    assert len(final.get_relation_edge_events(
+    assert final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
-    )) == 1
+    ) == []
 
 
 def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
@@ -274,20 +262,12 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     dossier = db.get_decree_dossier(dossier_id)
     projected = db.project_applicable_authorities(state.turn, dossier)
     assert [row["id"] for row in projected] == [typed]
-    assert bare not in {row["id"] for row in projected}
-    assert informed_only not in {row["id"] for row in projected}
 
     context = decree_mod.build_promulgation_judge_context(db, state, [dossier])
     assert context["dossiers"][0]["held_authorities"] == projected
     assert context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
         str(typed),
     ]
-    assert "payload-auth" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
-    assert "payload-list" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
 
 
 def test_same_dossier_grant_replay_is_idempotent(game):

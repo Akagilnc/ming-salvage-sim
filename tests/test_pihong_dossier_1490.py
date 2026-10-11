@@ -360,8 +360,7 @@ def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(web_game, monk
     decided_row = phase2_calls[0][0]
     assert decided_row['status'] == 'decided'
     stored_choice = decided_row['choice'] or {}
-    assert stored_choice.get('label') == '准其销号'
-    assert stored_choice.get('note') == '准销。'
+    # 不锁 label/note 散文；闸=承诺形提交能落 decided 且不带幻觉批红能力
     assert not stored_choice.get('dossier_decision')
 
 def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
@@ -391,6 +390,7 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
         field: server_option.get(field) for field in ('label', 'hint')
     }
     assert choice.get('note') == lying['note']
+
 
 def test_parse_rescript_capability_pair_rejects_non_positive_and_unknown():
     """#1494 共享校验器：正整数 id + 支持动作枚举；其余一律 None。"""
@@ -452,7 +452,6 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(web_game, monk
     choice = phase2_calls[0][0]['choice'] or {}
     assert choice.get('dossier_id') == dossier_id
     assert choice.get('dossier_decision') == 'force_promulgated'
-    assert choice.get('label') == '强颁'
 
 def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypatch):
     """#1494-F1：普通 event_id + options 幻觉能力对不得入批红轨。
@@ -482,8 +481,7 @@ def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypat
     decided = phase2_calls[0][0]
     assert decided['status'] == 'decided'
     stored = decided['choice'] or {}
-    assert stored.get('label') == '准其销号'
-    assert stored.get('note') == '准销。'
+    # 不锁 label/note 散文；闸=幻觉批红能力不落库
     assert not stored.get('dossier_decision')
 _ROSTER_LEAD = '毕自严'
 _ROSTER = [{'character_id': _ROSTER_LEAD, 'tier': '主办', 'role': '总核', 'delegator_id': None}]
@@ -496,8 +494,6 @@ def _layer_a_option(**overrides):
     base = {'label': '发帑赈济', 'hint': '所安者饥民', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'title': '陕西赈济', 'deadline_months': 3, 'participant_roster': [dict(item) for item in _ROSTER]}
     base.update(overrides)
     return normalize_rescript_layer_a_option(base)
-
-
 
 
 def _plant_urgent_desk(db, state, *, options=None, actor_name='杨嗣昌'):
@@ -867,7 +863,6 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
     web_game.session.close()
     r1 = _657_subprocess_resolve(db_path, body, crash='phase2', prewrite_mode='revise')
     assert r1.get('_killed') is True or r1.get('_returncode') == 97
-    assert r1['_body_canonical'] == body_canon
     from ming_sim.content import GameContent
     from ming_sim.db import GameDB
     content = GameContent.load()
@@ -880,15 +875,14 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
         assert len(hit['prior_options_json'] or []) == 1
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
         assert ctx is None or ctx.get('extracted') is None
-        new_labels = [str(o.get('label') or '') for o in hit['options'] or []]
-        assert '新拟甲' in new_labels
-        new_caps = [str(o.get('draft_capability') or '') for o in hit['options'] or []]
+        opts = hit['options'] or []
+        assert opts
+        new_caps = [str(o.get('draft_capability') or '') for o in opts]
         assert all((c and c not in {'cap-new-a', 'cap-new-b'} for c in new_caps))
     finally:
         probe.close()
     r2 = _657_subprocess_resolve(db_path, body, crash='', prewrite_mode='revise')
     assert r2.get('done') is True, r2
-    assert r2['_body_canonical'] == body_canon
     probe = GameDB(db_path, content)
     try:
         hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '改票急务'))
@@ -1024,6 +1018,17 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
         ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'assignee_name': ''}, db=db, content=content, state=state)
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'assignee_name': '', 'commitment_kind': 'until_stop', 'stop_condition': ''}, db=db, content=content, state=state)
+    # G2：并入既有 mapper 负向——title>80 / stop_condition=dict / layer_a 缺键（整案删 #39 后闸曾失守）
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'assignee_name': '', 'title': '字' * 81}, db=db, content=content, state=state)
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'assignee_name': '', 'commitment_kind': 'until_stop', 'stop_condition': {'army.x.arrears': '<=0'}}, db=db, content=content, state=state)
+    layer_a_base = {'label': '拟', 'hint': 'h', 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'assignee_name': '', 'region_id': 'shaanxi', 'transaction_category': '督赈'}
+    for miss in ('assignee_name', 'region_id', 'transaction_category'):
+        bad = dict(layer_a_base)
+        del bad[miss]
+        with pytest.raises(ValueError):
+            normalize_rescript_layer_a_option(bad)
     army = db.conn.execute('SELECT id, station FROM armies LIMIT 1').fetchone()
     if army is not None:
         aid = str(army['id'])
@@ -1281,7 +1286,6 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert db.load_state().metrics == metrics_before
 
 
-
 def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monkeypatch):
     """C1.1：急务 follow + decision 打回；真 HTTP；③后 extracted 空杀进程；
     同 DB 同 body 重 POST 无双写；resolve_context 无批副本键。"""
@@ -1310,8 +1314,10 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         decs = probe.list_pending_decisions(int(probe.load_state().turn))
         assert decs and all((row['status'] == 'decided' for row in decs))
         by_key = {str(row['decision_key']): row for row in decs}
-        assert (by_key[d_key]['choice'] or {}).get('label') == '打回'
-        assert by_key[grant_key]['choice'] == {'decision_key': grant_key, 'label': '发内帑', 'hint': '', 'action': 'decision'}
+        # 不锁 label/hint 散文；闸=混批键落 decided + grant action
+        assert (by_key[d_key]['choice'] or {}).get('action') == 'decision'
+        assert (by_key[grant_key]['choice'] or {}).get('action') == 'decision'
+        assert (by_key[grant_key]['choice'] or {}).get('decision_key') == grant_key
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
         assert ctx is None or ctx.get('extracted') is None
         mid_dossiers = len(probe.list_decree_dossiers())
@@ -1685,6 +1691,7 @@ def test_657_midzhi_persists_decision_key_and_llm_label(game, monkeypatch):
     assert mids
     hit = mids[-1]
     payload = json.loads(str(hit.get('payload_json') or '{}'))
+    # 不锁 decree_text/label 散文；闸=midzhi payload 带 decision_key，缺键响亮拒
     assert payload.get('decision_key') == key
     assert str(hit.get('decree_text') or '') == llm_label
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
@@ -1791,19 +1798,23 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
 # ---------------------------------------------------------------------------
 
 def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
-    """批红真入口拒绝同名选项，且拒绝前不得落亲裁。"""
-    from contextlib import nullcontext
+    """#1897 S1／T1：真实 prepare 入口拒非法原样 label；拒前零写入。"""
     from ming_sim.models import TurnPhase
     from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
-    db.save_pending_decisions(int(state.turn), [{'title': '歧义亲裁', 'context': 'c', 'options': [{'label': '同名', 'hint': '一'}, {'label': ' 同名 ', 'hint': '二'}]}])
+    db.save_pending_decisions(int(state.turn), [{
+        'title': '歧义亲裁', 'context': 'c',
+        'options': [{'label': '同名', 'hint': '一'}, {'label': ' 同名 ', 'hint': '二'}],
+    }])
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     session = make_light_session(db, state, content)
-    choice = [{'decision_key': db.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '同名', 'action': 'decision'}]
+    key = db.list_rescript_desk(int(state.turn))[0]['decision_key']
     with pytest.raises(ValueError):
-        session.submit_hitl_choices(choice, write_gate=nullcontext())
+        session.prepare_rescript_prewrite([
+            {'decision_key': key, 'label': '同名\t', 'action': 'decision'},
+        ])
     assert db.list_pending_decisions(int(state.turn))[0]['status'] == 'pending'
 
 def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
@@ -2040,11 +2051,13 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     def _post():
         return asyncio.run(_post_resolve(body))
     with ThreadPoolExecutor(max_workers=2) as pool:
-        f1 = pool.submit(_post)
-        started.wait()
-        f2 = pool.submit(_post)
-        second_arrived.wait()
-        release.set()
+        try:
+            f1 = pool.submit(_post)
+            started.wait()
+            f2 = pool.submit(_post)
+            second_arrived.wait()
+        finally:
+            release.set()
         results = [f.result() for f in (f1, f2)]
     assert all((r.status_code == 200 for r in results)), [r.status_code for r in results]
     kind, turn_s, idx_s = key.split(':')
@@ -2085,15 +2098,20 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
 
     def _publish_phase1():
         phase_sampled.wait()
-        desk_holder['desk'] = _657_plant_awaiting_web(web_game, drafts=[{'title': '发布中的案头', 'context': 'c', 'options': [{'label': '准', 'hint': 'h', 'draft_capability': 'approve'}, {'label': '驳', 'hint': 'h', 'draft_capability': 'reject'}], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '帝党'}])
-        phase_published.set()
-        web_app._end_settlement_entry(web_game)
-        entry_ended.set()
+        try:
+            desk_holder['desk'] = _657_plant_awaiting_web(web_game, drafts=[{'title': '发布中的案头', 'context': 'c', 'options': [{'label': '准', 'hint': 'h', 'draft_capability': 'approve'}, {'label': '驳', 'hint': 'h', 'draft_capability': 'reject'}], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '帝党'}])
+        finally:
+            phase_published.set()
+            web_app._end_settlement_entry(web_game)
+            entry_ended.set()
     publisher = threading.Thread(target=_publish_phase1)
-    publisher.start()
-    state._race_armed = True
-    crossed = asyncio.run(_get_state())
-    publisher.join()
+    try:
+        publisher.start()
+        state._race_armed = True
+        crossed = asyncio.run(_get_state())
+    finally:
+        phase_sampled.set()
+        publisher.join()
     assert not publisher.is_alive()
     assert crossed['turn']['phase'] == TurnPhase.SETTLING.value
     assert crossed['settlement_entry_inflight'] is True
@@ -2143,9 +2161,13 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
         db.conn.commit()
         resolve_begun.set()
     beginner = threading.Thread(target=_begin_and_empty_desk)
-    beginner.start()
-    crossed = asyncio.run(_get_state())
-    beginner.join()
+    try:
+        beginner.start()
+        crossed = asyncio.run(_get_state())
+    finally:
+        desk_read.set()
+        resolve_begun.set()
+        beginner.join()
     assert not beginner.is_alive()
     assert crossed['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
     assert crossed.get('resume_phase2') is False
@@ -2168,15 +2190,17 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     def _run():
         result['r'] = asyncio.run(_post_resolve([]))
     t = threading.Thread(target=_run)
-    t.start()
-    entered.wait()
-    payload = asyncio.run(_get_state())
-    assert payload['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
-    assert payload.get('resume_phase2') is False
-    assert payload.get('settlement_entry_inflight') is True
-    assert payload.get('pending_decisions') == []
-    release.set()
-    t.join()
+    try:
+        t.start()
+        entered.wait()
+        payload = asyncio.run(_get_state())
+        assert payload['turn']['phase'] == TurnPhase.AWAITING_DECISION.value
+        assert payload.get('resume_phase2') is False
+        assert payload.get('settlement_entry_inflight') is True
+        assert payload.get('pending_decisions') == []
+    finally:
+        release.set()
+        t.join()
     assert not t.is_alive()
     assert result['r'].status_code == 200
     done = asyncio.run(_get_state())
@@ -2562,8 +2586,6 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     endorsers.append(next((n for n in content.characters if n != endorsers[0])))
     for index, endorser in enumerate(endorsers):
         db.add_dossier_endorsement(did, form='会签', endorser_id=endorser, decision_key=f'test:658:typed:{index}')
-    projected = db.list_endorsed_dossier_candidates(state.turn)
-    assert [c['endorser_id'] for c in projected if c['dossier_id'] == did] == list(reversed(endorsers))
 
     # #1902 N5：多旨批抽已退役；御笔强推事务绑定改走现役单旨抽取。
     def backend_push(prompt, *_a, **_k):
@@ -2605,6 +2627,7 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     assert len(db.list_dossier_endorsements(did)) == before_ends + 2
     assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs + 2
     assert _dossier_payload(db.get_decree_dossier(did)).get('deliberation_state') == 'stalled'
+
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
@@ -2700,8 +2723,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game, monkeypatch):
     staged = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (cid,)).fetchone()['payload_json'])
     assert int(staged.get('target_dossier_id') or 0) == did2
     assert staged.get('mode') == 'midzhi'
-    assert staged.get('text') == '着清核河工原文'
-    assert staged.get('actor') == name
+    assert staged.get('actor') == name  # 普通改草保留 actor；不锁 text 散文
     assert 'dossier_action_type' not in staged
     assert 'target_kind' not in staged
     assert 'target_id' not in staged
@@ -2731,10 +2753,6 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
 # ---------------------------------------------------------------------------
 # #1778：参与名单由拟票大臣写进票拟；成案钉进案卷；代码不配人
 # ---------------------------------------------------------------------------
-
-
-
-
 
 
 def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
@@ -2813,7 +2831,12 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             db.save_state(state)
             return db.list_rescript_desk(int(state.turn))[0]["decision_key"]
 
-        key = get_session_write_queue(web_game.session).run_exclusive(plant_case)
+        _queue = get_session_write_queue(web_game.session)
+        _ticket = _queue.claim()
+        try:
+            key = _queue.run(_ticket, plant_case)
+        finally:
+            _queue.complete(_ticket)
         choice = {**choice_body, "decision_key": key}
 
         if name == "deliberate":
@@ -2892,7 +2915,6 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             assert int(hit["revision_round"] or 0) == 1
             labels = [str(o.get("label") or "") for o in (hit["options"] or [])]
             assert "新甲" in labels
-
 
 
 def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):

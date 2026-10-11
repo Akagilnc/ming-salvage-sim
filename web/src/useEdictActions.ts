@@ -49,6 +49,7 @@ export function useEdictActions({
 
   const stillOwns = (ownership: number) => ownershipRef.current === ownership;
 
+
   const deleteDirective = async (directiveId: number) => {
     const ownership = ownershipRef.current;
     const localKey = `del-${directiveId}-${++localSeq.current}`;

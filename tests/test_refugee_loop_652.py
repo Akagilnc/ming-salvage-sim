@@ -18,20 +18,10 @@ from ming_sim.applier import atomic
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
+from tests.readback_helpers import class_population as _pop
 
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
-
-
-
-
-
-def _pop(db: GameDB, name: str, region_id: str) -> int:
-    row = db.conn.execute(
-        "SELECT population FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    return int(row[0]) if row else 0
 
 
 def _strength(db: GameDB, power_id: str) -> int:
@@ -55,8 +45,6 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
     return dossier_id
 
 
-
-
 def _reset_shaanxi_pool(db):
     db.conn.execute(
         "UPDATE classes SET population=? WHERE name='流民' AND region_id='shaanxi'",
@@ -70,7 +58,6 @@ def _reset_shaanxi_pool(db):
 
 
 # ── 刀① 池清单 + 投贼吸收 ───────────────────────────────────────────────────
-
 
 
 def _database_path(db: GameDB) -> str:
@@ -142,8 +129,6 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
     assert db.conn.execute(
         "SELECT fiscal FROM regions WHERE id='shaanxi'"
     ).fetchone()[0] == before_fiscal
-
-
 
 
 def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):

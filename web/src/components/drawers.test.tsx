@@ -276,8 +276,6 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
     });
 
     const after = cardPos(host, "施凤来");
-    expect(after).not.toBeNull();
-    expect(after!.left).not.toBe("");
     // 完成拖拽后 → 非空服务端 layout 回包不得回滚本地
     expect(after).toEqual(dragged);
 
@@ -812,8 +810,7 @@ describe("#1683 MinisterCardList place ⊥ office DOM", () => {
     ]);
 
     const transit = host.querySelector(".minister-place.minister-transit");
-    expect(transit).not.toBeNull();
-    expect(transit!.textContent).toBe("山东");
+    expect(transit?.textContent).toBe("山东");
     expect(host.querySelectorAll(".minister-place")).toHaveLength(1);
     expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
   });
@@ -829,9 +826,8 @@ describe("#1683 MinisterCardList place ⊥ office DOM", () => {
     ]);
 
     const place = host.querySelector(".minister-place");
-    expect(place).not.toBeNull();
-    expect(place!.classList.contains("minister-transit")).toBe(false);
-    expect(place!.textContent).toBe("河南");
+    expect(place?.classList?.contains("minister-transit")).toBe(false);
+    expect(place?.textContent).toBe("河南");
     expect(host.querySelector(".minister-office")?.textContent).toBe("兵部右侍郎");
   });
 
@@ -848,8 +844,7 @@ describe("#1683 MinisterCardList place ⊥ office DOM", () => {
     ]);
 
     const transit = host.querySelector(".minister-place.minister-transit");
-    expect(transit).not.toBeNull();
-    expect(transit!.textContent).toBe("山东");
+    expect(transit?.textContent).toBe("山东");
     expect(host.querySelectorAll(".minister-place")).toHaveLength(1);
     expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
   });

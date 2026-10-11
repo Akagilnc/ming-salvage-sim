@@ -57,13 +57,8 @@ class _RecordingDB:
     def set_character_status(self, *a, **k):
         self.writes.append("set_character_status")
 
-    def admin_upsert(self, *a, **k):
-        self.writes.append("admin_upsert")
-        return {"key": "x", "value": "1"}
 
-    def admin_delete(self, *a, **k):
-        self.writes.append("admin_delete")
-        return 1
+
 
     def capture_month_open_snapshot(self, *a, **k):
         return False
@@ -150,8 +145,6 @@ def _endpoint_cases():
         ("favorite_add", lambda: web_app.api_add_favorite("某大臣")),
         ("favorite_remove", lambda: web_app.api_remove_favorite("某大臣")),
         ("court_layout", lambda: web_app.api_set_court_layout({"layout": "{}"})),
-        ("admin_upsert", lambda: web_app.api_admin_upsert("metrics", {"key": "国库", "value": "1"})),
-        ("admin_delete", lambda: web_app.api_admin_delete("metrics", {"pk_value": "国库"})),
         # #1902：立绘两端点退出写闸矩阵——DELETE 路由退役（前端零调用），上传端点在
         # 拿闸前先校 content_type/大小（400），不属相位/闸守门路径。
         # #1902：拟诏台手写入口（create/update directive）退役，不列入写门面；
@@ -281,7 +274,8 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)
         assert exc.status_code == 409
-        assert game.db.writes == []
+        # #1235 点即入：409 前可已 capture；不得再跑 advance_without_decree 写盘。
+        assert "advance_without_decree" not in game.db.writes
     finally:
         game._write_gate.release()
         worker.join()
@@ -340,7 +334,8 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
         exc = result.get("exc")
         assert isinstance(exc, HTTPException), result
         assert exc.status_code == 409
-        assert game.db.writes == []
+        # #1235 点即入：409 前可已 capture；不得再跑 advance_without_decree 写盘。
+        assert "advance_without_decree" not in game.db.writes
     finally:
         gate_held_by_peer.set()  # 解 worker 侧 wait，避免 finally 再挂
         if game._write_gate.locked():

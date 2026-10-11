@@ -2,7 +2,7 @@
 （fail_chat_turn）并释放写路径——否则留下 active 且无大臣回复的孤儿轮，后续召对/drain 永久卡住。
 
 #1185: observe public fail/error events + serial write-path availability (drain /
-_serialized_web_write), not private _write_gate.locked() / _pending_writes_count pins.
+_serialized_web_write), not private _write_gate.locked() / _runtime_write_queue() count pins.
 
 #1452: 非流式 chat/decree LLMUnavailable → 非 500 结构化；流式 RunErrorEvent → 结构化 SSE。
 #1465: 召对 API transport 统一重试（attempt 预算/分类/系统层终失败/独立空转）。
@@ -33,7 +33,7 @@ from tests.sse_helpers import parse_sse_event_pairs
 def _assert_write_path_free(runtime) -> None:
     """After failpath cleanup, a subsequent gated write and drain must not block.
 
-    Hang → CI job final line; no fixed wall-clock probe (#1723).
+    等待有界；失败时仍清理外来写者，不让非守护线程阻止 pytest 退出。
     """
     entered = threading.Event()
 
@@ -43,8 +43,8 @@ def _assert_write_path_free(runtime) -> None:
 
     t = threading.Thread(target=_try_serialized_write, daemon=True)
     t.start()
-    entered.wait()
-    t.join()
+    entered.wait(timeout=30)
+    t.join(timeout=30)
     assert entered.is_set() and not t.is_alive(), "serialized write path still blocked"
 
     drained = threading.Event()
@@ -57,8 +57,8 @@ def _assert_write_path_free(runtime) -> None:
 
     td = threading.Thread(target=_try_drain, daemon=True)
     td.start()
-    drained.wait()
-    td.join()
+    drained.wait(timeout=30)
+    td.join(timeout=30)
     assert drained.is_set() and not td.is_alive(), "drain still blocked (pending write leak)"
 
 
@@ -214,18 +214,23 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
-    gen = runtime.chat_stream("殿上", "辽东军情如何？")
-    with pytest.raises(RuntimeError):
-        next(gen)
+    try:
+        gen = runtime.chat_stream("殿上", "辽东军情如何？")
+        with pytest.raises(RuntimeError):
+            next(gen)
 
-    # Foreign holder must still own the serialized write path after prologue finally.
-    assert other_entered.is_set()
-    assert other_completed_ok == [], (
-        "foreign holder's critical section was broken by prologue finally"
-    )
-    allow_other_exit.set()
+        # 共核 prologue 同一事务回滚，未提交的轮不走 fail_chat_turn。
+        # Foreign holder must still own the serialized write path after prologue finally.
+        assert other_entered.is_set()
+        assert other_completed_ok == [], (
+            "foreign holder's critical section was broken by prologue finally"
+        )
+    finally:
+        allow_other_exit.set()
+        for other in other_thread_holder:
+            other.join(timeout=30)
+
     assert other_thread_holder, "foreign writer thread was not started"
-    other_thread_holder[0].join()
     assert not other_thread_holder[0].is_alive()
     assert other_completed_ok == [True], (
         "foreign holder could not complete its own serialized write"
@@ -614,8 +619,6 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
     attempts = detail.get("transport_attempts") or []
     assert len(attempts) == 1
     assert attempts[0].get("outcome") == "terminal_fail"
-
-
 
 
 def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):

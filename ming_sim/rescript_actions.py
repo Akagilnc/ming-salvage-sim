@@ -72,40 +72,6 @@ def _stable_json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, object]:
-    """非玩家探针的首选项投影；Web 批红不得用它代皇帝作选择。
-
-    - 急务 ``rescript_draft``：首选 option → ``follow_draft`` + ``draft_capability``
-    - 普通 decision：首选 option 原样（补 decision_key）
-    """
-    raw_options = decision.get("options")
-    options = list(raw_options) if isinstance(raw_options, (list, tuple)) else []
-    picked = options[0] if options else {}
-    if not isinstance(picked, dict):
-        picked = {"label": str(picked or "")}
-    item = dict(picked)
-    dk = str(decision.get("decision_key") or "").strip()
-    if not dk:
-        kind = str(decision.get("kind") or "decision").strip() or "decision"
-        turn = decision.get("source_turn", decision.get("turn"))
-        idx = decision.get("idx")
-        if turn is not None and idx is not None:
-            dk = f"{kind}:{int(turn)}:{int(idx)}"
-    if dk:
-        item.setdefault("decision_key", dk)
-    kind = str(decision.get("kind") or "").strip()
-    if kind == "rescript_draft":
-        item["action"] = "follow_draft"
-        cap = str(item.get("draft_capability") or "").strip()
-        if not cap:
-            # derive_draft_capability 为纯函数，缺字段回填默认后哈希，不上抛业务异常
-            cap = derive_draft_capability(item)
-        item["draft_capability"] = cap
-        if not str(item.get("label") or "").strip():
-            item["label"] = "依拟"
-    return item
-
-
 def canonical_choice(raw: object) -> Dict[str, object]:
     """确定性规范化 choice：键序固定、缺省填协议默认、decision_key/action/capability 必在。"""
     if not isinstance(raw, dict):
@@ -466,7 +432,8 @@ def validate_all(
             )
 
             event_id = str(row.get("event_id") or "")
-            # Free presentation phrases: empty-check without mutating (P6).
+            # #1897 S1：选项身份与 bind_decision_options 同规——原样 label 命中；
+            # strip 只作判空局部副本，不改写请求身份、不另立兼容通道。
             label = str(req.get("label") or "")
             note = str(req.get("note") or "")
             if (
@@ -487,10 +454,9 @@ def validate_all(
                 ))
                 continue
             labels = bind_decision_options(row.get("options") or [])
-            match_key = label.strip()
-            if match_key not in labels:
+            if label not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
-            matched = labels[match_key]
+            matched = labels[label]
             validate_season_option(matched)
             # Persist only the canonical request identity.  The stored option is
             # batch-local execution authority and never changes retry identity.
@@ -771,8 +737,9 @@ def map_rescript_option_or_choice(
             raise ValueError("military_order 缺 assignee_name")
         payload["assignee_id"] = assignee_name
         payload["name"] = assignee_name
-        station = str(src.get("station") or "").strip()
-        if station:
+        # 人读 station：保原文；判空只用局部副本（#1834 F21 / ADR 0142）。
+        station = str(src.get("station") or "")
+        if station.strip():
             payload["station"] = station
         else:
             due = 0
@@ -1234,11 +1201,7 @@ def apply_imperial_deliberation_push(
         raise ValueError(f"御笔强推目标案卷不存在：{did}")
     if str(row.get("status") or "") != "proposed":
         raise ValueError(f"御笔强推只接 proposed 案卷：{did}")
-    payload = row.get("payload")
-    if not isinstance(payload, dict):
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-    if not isinstance(payload, dict):
-        raise ValueError("廷议案卷 payload 非对象")
+    payload = row["payload"]
     if str(payload.get("deliberation_state") or "") != "stalled":
         raise ValueError(f"御笔强推只接 stalled 廷议：{did}")
     origin = f"dossier:{did}"
@@ -1286,7 +1249,7 @@ def _apply_return_revise(
     new_options = prewrite.revise_by_key.get(item.decision_key)
     if not isinstance(new_options, list) or not new_options:
         raise ValueError(f"return_revise 缺 prewrite 新 options：{item.decision_key}")
-    # 改票 options 必经层 A 单真源（与 normalize_rescript_layer_a_option 同缝）
+    # 改票 options 必经层 A 单真源（normalize_rescript_layer_a_option）
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     stamped: List[Dict[str, object]] = []
     for opt in new_options:
@@ -1520,19 +1483,17 @@ def clear_return_revise_choice_anchors(
         "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
     ).fetchall()
     for r in rows:
-        raw = r["choice_json"] or "{}"
+        from ming_sim.db import GameDB
         try:
-            choice = json.loads(raw)
-        except json.JSONDecodeError as exc:
+            choice = GameDB.parse_engine_payload_json(
+                r["choice_json"],
+                surface=f"pending_decisions.choice_json:turn={r['turn']}:idx={r['idx']}",
+            )
+        except ValueError as exc:
             raise ValueError(
                 f"return_revise 清锚 choice_json 损坏："
                 f"turn={r['turn']} idx={r['idx']}"
             ) from exc
-        if not isinstance(choice, dict):
-            raise ValueError(
-                f"return_revise 清锚 choice 非 object："
-                f"turn={r['turn']} idx={r['idx']} type={type(choice).__name__}"
-            )
         row = {
             "status": r["status"],
             "revision_round": r["revision_round"],

@@ -108,7 +108,6 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
     assert leaked == 0
 
 
-
 def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
     db, state, content = game
     actor = db.conn.execute(

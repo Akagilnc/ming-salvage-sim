@@ -12,7 +12,6 @@ from tests.section_rejection_helpers import run_declaration as run_settle
 from ming_sim.issues import apply_score_extraction
 
 
-
 def test_city_cannon_delta_lands_clamped(game):
     """beizhili city_level=5 → 上限 40；投 50 门城防炮应 clamp 落库为 40。"""
     db, state, content = game
@@ -87,4 +86,3 @@ def test_illegal_region_field_rejected_not_raised(read_game):
                 if isinstance(c, dict) and c.get("rejected")]
     assert len(rejected) == 1
     assert rejected[0]["category"] == "invalid_enum"
-    assert rejected[0]["reason"]

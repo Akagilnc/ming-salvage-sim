@@ -12,6 +12,7 @@ import pytest
 
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 
 # ---------------------------------------------------------------------------

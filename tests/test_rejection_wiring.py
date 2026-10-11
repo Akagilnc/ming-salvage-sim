@@ -148,8 +148,6 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     assert rows[0][1]  # reason 非空
 
 
-
-
 def test_bridge_synthesizes_reason_when_producer_omits(game):
     """桥接层集中守 ADR「拒收行必带原因」不变式:任何 producer 漏给 reason,
     落库前合成非空兜底——规则写一处,未来新 section 免疫同类缺陷(fix-coverage
@@ -220,7 +218,6 @@ def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeyp
         (turn,)).fetchone()
     assert row is not None
     item = _json.loads(row[0])
-    assert "rejected" not in item  # 不是 wrapper
     assert item == {"power_id": "查无此势力", "changes": {"leverage": 5}}  # 原件
 
 
@@ -248,7 +245,6 @@ def test_person_change_rejection_item_json_keeps_original_delta_item(game, monke
     ).fetchone()
     assert row is not None
     item = _json.loads(row[0])
-    assert "rejected" not in item
     assert item == raw_item
 
 
@@ -284,7 +280,6 @@ def test_power_move_rejection_item_json_keeps_original_person_delta_item(game, m
     ).fetchone()
     assert row is not None
     item = _json.loads(row[0])
-    assert "rejected" not in item
     assert item == raw_item
 
 
@@ -315,7 +310,6 @@ def test_office_change_rejection_item_json_keeps_original_person_delta_item(game
     assert row is not None
     assert row["category"] == "missing_field"
     item = _json.loads(row["item_json"])
-    assert "rejected" not in item
     assert item == raw_item
 
 
@@ -353,7 +347,6 @@ def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, m
         assert row is not None
         assert row["category"] == "invalid_transition"
         item = _json.loads(row["item_json"])
-        assert "rejected" not in item
         assert item == raw_item
     finally:
         ch.power_id = old_power
@@ -481,7 +474,6 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         ch.power_id = old_power
         ch.office = old_office
         ch.office_type = old_office_type
-
 
 
 def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):
