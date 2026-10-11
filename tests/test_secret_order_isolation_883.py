@@ -136,7 +136,10 @@ def test_883_audience_chat_path_does_not_leave_secret_in_shared_sources(game):
         (f"chat_message:{mid}",),
     ).fetchone()[0] == 0
 
-    oid = create_test_secret_order(db, state, assignee.name, "乙巳密查旁路", marker, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "乙巳密查旁路", marker, [],
+        origin_chat_message_id=mid,
+    )
     assert oid > 0
 
     status = db.conn.execute(
@@ -183,8 +186,9 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     other_public = "臣报：山东漕粮本月起运如常，无阻。"
     mid_other = db.append_chat_message(other.name, state.turn, "user", other_public)
 
-    oid = create_test_secret_order(db,
-        state, assignee.name, extracted_title, extracted_body, [],
+    oid = create_test_secret_order(
+        db, state, assignee.name, extracted_title, extracted_body, [],
+        origin_chat_message_id=mid_origin,
     )
     assert oid > 0
 
@@ -264,7 +268,10 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
         (f"chat_message:{mid_public}",),
     ).fetchone()[0] == 0
 
-    oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
+        origin_chat_message_id=mid_secret,
+    )
     assert oid > 0
 
 
@@ -333,7 +340,10 @@ def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):
     ).fetchone()["knowledge_status"] == "held"
     state.turn = int(state.turn) + 1
     db.save_state(state)
-    oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
+        origin_chat_message_id=mid,
+    )
     assert oid > 0
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
@@ -360,8 +370,9 @@ def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game)
     mid = db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
     state.turn = int(state.turn) + 1
     db.save_state(state)
-    oid = create_test_secret_order(db,
-        state, assignee.name, extracted_title, extracted_body, [],
+    oid = create_test_secret_order(
+        db, state, assignee.name, extracted_title, extracted_body, [],
+        origin_chat_message_id=mid,
     )
     assert oid > 0
 
@@ -465,7 +476,10 @@ def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game
     db.update_chat_turn_messages(
         secret_turn, user_message_id=mid_origin,
     )
-    oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
+        origin_chat_message_id=mid_origin,
+    )
     assert oid > 0
     mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
     db.update_chat_turn_messages(secret_turn, minister_message_id=mid_ack)
@@ -526,8 +540,9 @@ def test_976_withhold_does_not_yank_old_released_public_user(game):
     state.turn = int(state.turn) + 5
     db.save_state(state)
     mid_secret = db.append_chat_message(assignee.name, state.turn, "user", secret_origin)
-    oid = create_test_secret_order(db,
-        state, assignee.name, "密查国丈", "暗访国丈家产", [],
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", "暗访国丈家产", [],
+        origin_chat_message_id=mid_secret,
     )
     assert oid > 0
 
@@ -714,9 +729,10 @@ def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):
     extracted = "暗访国丈家产虚实"
 
     mid = db.append_chat_message(speaker.name, state.turn, "user", secret_text)
-    oid = create_test_secret_order(db,
-        state, assignee.name, "密查国丈", extracted, [],
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
         origin_minister_name=speaker.name,
+        origin_chat_message_id=mid,
     )
     assert oid > 0
 
@@ -755,7 +771,10 @@ def test_976_same_window_pure_public_user_survives_secret_classification(game):
     mid_pub = db.append_chat_message(assignee.name, state.turn, "user", public_q)
     mid_ans = db.append_chat_message(assignee.name, state.turn, "minister", public_a)
     mid_sec = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
-    oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
+    oid = create_test_secret_order(
+        db, state, assignee.name, "密查国丈", extracted, [],
+        origin_chat_message_id=mid_sec,
+    )
     assert oid > 0
 
     pub_status = db.conn.execute(
@@ -1142,9 +1161,8 @@ def _stage_new_secret(db, state, minister_name: str, marker: str) -> tuple[int, 
 
 
 
-
-def test_976_rejected_secret_pin_stays_withheld_during_other_commit(game):
-    """A rejected secret intent must not leak when another intent commits."""
+def test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit(game):
+    """落库失败仍可原对话重试，故 pin 在失败生命周期内继续禁行。"""
     db, state, content = game
     assignee = _active_ministers(db, content)[0]
     failed_marker = "失败可重试甲密：暗查不存在案卷-A976"
@@ -1157,13 +1175,20 @@ def test_976_rejected_secret_pin_stays_withheld_during_other_commit(game):
         state.turn, kind="secret_order", action="更新",
         minister_name=assignee.name, target_id=999999,
         payload={
-            "title": "暗查不存在案卷", "content": failed_marker,
+            "new_title": "暗查不存在案卷", "new_content": failed_marker,
             "origin_chat_message_id": mid_failed,
         },
     )
     assert db.commit_pending_actions(
         state, minister_name=assignee.name, action_ids={failed_id}, content=content,
     ) == []
+    failed_rows = [
+        row for row in db.list_pending_actions(
+            state.turn, status="failed", minister_name=assignee.name,
+        )
+        if row["kind"] == "secret_order"
+    ]
+    assert failed_rows[0]["id"] == failed_id
 
     mid_committed, committed_id = _stage_new_secret(
         db, state, assignee.name, committed_marker,
@@ -1198,7 +1223,10 @@ def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
     for mid in (mid_a_user, mid_a_min, mid_b_user, mid_b_min):
         assert _ks(db, mid) == "held"
 
-    oid_a = create_test_secret_order(db, state, a.name, "甲密查国丈", marker_a, [])
+    oid_a = create_test_secret_order(
+        db, state, a.name, "甲密查国丈", marker_a, [],
+        origin_chat_message_id=mid_a_user,
+    )
     assert oid_a > 0
 
     # create(A) 后 B 仍 held（不得 prematurely release 进共享）
@@ -1218,7 +1246,10 @@ def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
     pins_a = _json.loads(brief_a["origin_chat_message_ids"] or "[]")
     assert mid_a_user in pins_a
 
-    oid_b = create_test_secret_order(db, state, b.name, "乙密查阉党", marker_b, [])
+    oid_b = create_test_secret_order(
+        db, state, b.name, "乙密查阉党", marker_b, [],
+        origin_chat_message_id=mid_b_user,
+    )
     assert oid_b > 0
 
     assert _ks(db, mid_b_user) == "withheld"
@@ -1357,7 +1388,10 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
         a.name, state.turn, "minister", "臣领密旨，即查火器局。",
     )
     db.update_chat_turn_messages(ctid, user_message_id=mid_u, minister_message_id=mid_m)
-    oid = create_test_secret_order(db, state, a.name, "密查火器局", marker, [])
+    oid = create_test_secret_order(
+        db, state, a.name, "密查火器局", marker, [],
+        origin_chat_message_id=mid_u,
+    )
     after = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(ctid, before, after)
 
@@ -1465,7 +1499,10 @@ def test_976_rt05_save_restore_between_hold_and_release(game, tmp_path):
     )
     mid_pub = db.append_chat_message(b.name, state.turn, "minister", pending_public)
 
-    oid = create_test_secret_order(db, state, a.name, "密查驿递", marker, [])
+    oid = create_test_secret_order(
+        db, state, a.name, "密查驿递", marker, [],
+        origin_chat_message_id=mid_u,
+    )
     st_pre = {
         "u": _ks(db, mid_u),
         "ack": _ks(db, mid_ack),

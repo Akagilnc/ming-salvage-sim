@@ -201,8 +201,14 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
 
 
 
-@pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
-def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
+@pytest.mark.parametrize(
+    "labels, expect_empty",
+    [
+        (["", "乙"], True),  # 空白 label 拒收整块
+        (["甲", " 甲 "], False),  # #1897：label 原样为键，空白变体非歧义重复
+    ],
+)
+def test_decision_parser_rejects_empty_or_ambiguous_labels(labels, expect_empty):
     from ming_sim.settlement_payload import parse_decision_blocks
 
     block = {
@@ -211,4 +217,10 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     }
     raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
     decisions = parse_decision_blocks(raw)
-    assert decisions == []
+    if expect_empty:
+        assert decisions == []
+    else:
+        assert decisions == [{
+            "title": block["title"], "context": block["context"],
+            "options": block["options"],
+        }]

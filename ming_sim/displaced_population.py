@@ -62,21 +62,22 @@ def apply_levy_driven_transfers(
     for row in rows:
         region_id = str(row["id"])
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
+            from ming_sim.db import GameDB
+            fiscal = GameDB.parse_engine_payload_json(
+                row["fiscal"], surface=f"regions.fiscal:{region_id}",
+            )
+        except ValueError as exc:
             raise ValueError(f"{region_id}.fiscal 持久 JSON 损坏，无法结算加派账") from exc
-        if not isinstance(fiscal, dict):
-            raise ValueError(f"{region_id}.fiscal 必须是 object，无法结算加派账")
-        settle = fiscal.get("settle")
         # 财政月效的动态成员只包括已有 settle 基座的明省；legacy/内容扩展中
         # 合法的无基座省自然出列，不能让任意 delta apply 因此失败。
+        settle = GameDB.optional_object(
+            fiscal.get("settle"), surface=f"{region_id}.fiscal.settle",
+        )
         if settle is None:
             continue
-        if not isinstance(settle, dict):
-            raise ValueError(f"{region_id}.fiscal.settle 必须是 object，无法结算加派账")
-        meta = settle.get("_meta")
-        if meta is not None and not isinstance(meta, dict):
-            raise ValueError(f"{region_id}.fiscal.settle._meta 必须是 object，无法结算加派账")
+        meta = GameDB.optional_object(
+            settle.get("_meta"), surface=f"{region_id}.fiscal.settle._meta",
+        )
         raw = meta.get(SETTLE_META_JIAPIAI_KEY, 0) if meta is not None else 0
         if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(float(raw)):
             raise ValueError(f"{region_id}.settle._meta.{SETTLE_META_JIAPIAI_KEY} 必须是有限数值")
@@ -172,15 +173,17 @@ def apply_recovery_driven_transfers(
         if (dossier_id, turn) in seen_keys:
             continue
         # payload_json 是引擎自己写的持久列，解析失败＝账本腐值，必须响亮失败
-        # 交外层事务回滚；静默 continue 会让这案赈济回流无声消失。
+        # 交外层事务回滚；静默 continue 会让这案赈济回流无声消失（#1897 E1）。
+        from ming_sim.db import GameDB
         try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError) as exc:
+            payload = GameDB.parse_engine_payload_json(
+                row["payload_json"],
+                surface=f"displaced.dossier#{dossier_id}.payload_json",
+            )
+        except ValueError as exc:
             raise ValueError(
                 f"dossier {dossier_id}.payload_json 持久 JSON 损坏，无法结算回流"
             ) from exc
-        if not isinstance(payload, dict):
-            continue
         grant_action = str(payload.get("grant_action") or "").strip()
         if grant_action not in RECOVERY_GRANT_ACTIONS:
             continue

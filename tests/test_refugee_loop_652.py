@@ -21,12 +21,14 @@ from ming_sim.constants import (
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
+from tests.readback_helpers import class_population as _pop
 
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
 
 
-from tests.fiscal_test_utils import class_population as _pop
+
+
 
 def _strength(db: GameDB, power_id: str) -> int:
     return int(db.conn.execute(

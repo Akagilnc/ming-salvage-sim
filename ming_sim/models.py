@@ -34,20 +34,14 @@ from ming_sim.person_archive_contract import PERSON_ACTIONS
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:
-    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）：
-    - 已是 dict（调用方传解析过的对象）→ 原样返回；
-    - JSON 字符串 → 解析；解析失败或真值非 dict（脏库/历史写路径/标量）→ {}。
-    所有 effect-列读取统一经此，下游 .get/.items 永不在非 dict 上崩回合。放 models（leaf，只依赖 json）
-    避免 db↔issues 循环——db / issues / simulation / web_app 都从这里取（cmr #117 R4）。"""
-    if isinstance(raw, dict):
-        return raw
-    if not raw:  # None / 空串等常见空值：快速返 {}，免 json.loads 解析开销（gemini PR#127 R2）
-        return {}
-    try:
-        v = json.loads(raw)
-    except (ValueError, TypeError):
-        return {}
-    return v if isinstance(v, dict) else {}
+    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口。
+
+    真空→{}；腐坏/非对象响亮 ValueError（#1834 F39，不得洗成空 effect）。
+    放 models 避免 db↔issues 循环——调用方 lazy 取 GameDB 解析助手。
+    """
+    from ming_sim.db import GameDB
+
+    return GameDB.parse_engine_payload_json(raw, surface="effect_json")
 
 
 def _nonzero_int(raw: object) -> bool:
@@ -220,6 +214,30 @@ def _character_effect_has_work(raw: object) -> bool:
     return False
 
 
+def _character_status_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if _nonempty_text(item.get("name")) and _nonempty_text(item.get("status")):
+            return True
+    return False
+
+
+def _character_power_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if _nonempty_text(item.get("name")) and (
+            _nonempty_text(item.get("new_power")) or _nonempty_text(item.get("power_id"))
+        ):
+            return True
+    return False
+
+
 def _power_renames_effect_has_work(raw: object) -> bool:
     if not isinstance(raw, list):
         return False
@@ -255,6 +273,8 @@ def _legacy_effect_has_work(raw: object) -> bool:
 
 def effect_dict_has_work(raw: object) -> bool:
     """Return whether an effect/ongoing payload has semantic work, not just a non-empty shell."""
+    from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS
+
     effect = loads_effect_dict(raw)
     if not effect:
         return False
@@ -285,9 +305,13 @@ def effect_dict_has_work(raw: object) -> bool:
         ),
         _building_effect_has_work(effect.get("buildings")),
         _new_armies_effect_has_work(effect.get("new_armies")),
-        _person_effect_has_work(effect.get("人物变更")),
-        _person_effect_has_work(effect.get("person_changes")),
-        _character_effect_has_work(effect.get("character")),
+        *(
+            _character_effect_has_work(effect.get(key)) if key == "character"
+            else _person_effect_has_work(effect.get(key))
+            for key in PERSON_EFFECT_KEYS
+        ),
+        _character_status_effect_has_work(effect.get("character_status_changes")),
+        _character_power_effect_has_work(effect.get("character_power_changes")),
         _power_renames_effect_has_work(effect.get("power_renames")),
         _legacy_effect_has_work(effect.get("legacy")),
     )
@@ -408,9 +432,9 @@ def is_vassal_prince(character: "Character") -> bool:
 
     **规则边界（玩家动作 vs 世界事件，cmr R7 拍）**：守的是「皇帝把宗室当朝堂命官来召见/任免/
     罢免/下密令」这类玩家动作面。**世界段叙事处置故意不守**——宗室可因世界事件
-    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），转译产生的「人物变更」罢黜/处置路
-    （issues 人物变更落库）应允许改宗藩状态；况且 dismiss/dead 不改 office_type，宗藩照旧
-    不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。
+    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），转译产生的 character_status_changes 的
+    罢黜/处置路（issues.apply_person_status_changes）应允许改宗藩状态；况且 dismiss/dead 不改
+    office_type，宗藩照旧不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。
 
     容 None（防御，R3 gemini）：传 None 返 False，使本判据不比调用点的存在性检查更严。"""
     return character is not None and character.office_type == VASSAL_PRINCE_OFFICE_TYPE

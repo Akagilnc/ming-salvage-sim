@@ -220,7 +220,8 @@ def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(gam
     ).fetchone()["payload_json"])
     assert "assignee" not in bare_payload
     assert bare_payload.get("actor") == "陈新甲"
-    db.commit_pending_actions(state, content=content, action_ids=[bare_id])
+    with pytest.raises(ValueError):
+        db.commit_pending_actions(state, content=content, action_ids=[bare_id])
     assert db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (bare_id,),
     ).fetchone() is None

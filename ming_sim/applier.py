@@ -11,7 +11,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, List, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 
 def sanitize_sqlite_text(value: Any) -> Any:
@@ -345,6 +345,16 @@ class RejectionCollector:
     attempt: int = 1
     _buffer: List[dict] = field(default_factory=list, init=False, repr=False)
     _flushed: List[dict] = field(default_factory=list, init=False, repr=False)
+    _commit_rejections: Dict[int, BaseException] = field(
+        default_factory=dict, init=False, repr=False,
+    )
+
+    def note_commit_rejection(self, action_id: int, exc: BaseException) -> None:
+        """Carry an explicit domain rejection across the business savepoint."""
+        self._commit_rejections[int(action_id)] = exc
+
+    def commit_rejection(self, action_id: int) -> Optional[BaseException]:
+        return self._commit_rejections.get(int(action_id))
 
     def record(self, section: str, rejected_item: RejectedItem, turn: int) -> None:
         """暂存一条拒收记录到内存缓冲，不写 DB。
@@ -403,6 +413,7 @@ class RejectionCollector:
         """丢弃缓冲与待镜像快照（回滚路径：DB 行已随事务回滚，内存同步清场）。"""
         self._buffer.clear()
         self._flushed.clear()
+        self._commit_rejections.clear()
 
 
 def register_runtime_outcome_callbacks(

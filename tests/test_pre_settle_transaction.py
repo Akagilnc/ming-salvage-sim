@@ -20,12 +20,7 @@ import pytest
 import ming_sim.decree as decree_mod
 from ming_sim.decree import pre_settle
 from tests.dossier_test_helpers import create_test_secret_order
-
-
-def _ledger_count(db, turn: int) -> int:
-    return db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
-    ).fetchone()[0]
+from tests.readback_helpers import economy_ledger_count as _ledger_count
 
 
 def test_settling_survives_begin_turn_phase_whitelist(web_game):

@@ -81,7 +81,10 @@ def dossier_action_policy(action_type: object, payload=None):
     action = str(action_type or "")
     policy = dict(DOSSIER_ACTION_POLICY[action])
     if action == "grant_allocation":
-        payload = payload or {}
+        # 已解码可选对象权威；业务缺省 {} 在权威返回后由本调用方决定。
+        from ming_sim.db import GameDB
+
+        payload = GameDB.optional_object(payload, surface="dossier payload") or {}
         grant_action = str(payload.get("grant_action") or "").strip()
         cadence = str(payload.get("cadence") or "").strip()
         if grant_action in {"加衔", "荫叙"}:
@@ -125,12 +128,6 @@ DOSSIER_OUTCOME_CN = {
     "transformed": "变形",
 }
 
-# 奏报轨终值旁路：定性 band；正文只搬已有模型原奏，缺原奏不造。
-_TERMINAL_REPORT_FACADE_BAND = {
-    "transformed": "已竣",
-    "degraded": "将结",
-}
-
 
 def format_public_progress_disclosure(progress_rows: object) -> str:
     """公开披露面：progress_band + memorial_text 的 join 渲染（#622 AC6 面2 单源）。"""
@@ -139,32 +136,6 @@ def format_public_progress_disclosure(progress_rows: object) -> str:
         for item in (progress_rows or [])
     )
 
-
-def terminal_report_facade(
-    outcome: object,
-    *,
-    prior_reports: object = None,
-) -> tuple[str, str] | None:
-    """终值奏报行的（progress_band, memorial_text）。
-
-    只搬运已有非终值模型原奏；缺原奏返回 None（不造模板正文）。
-    progress_band 一律定性中文；不得回填判官真值。
-    """
-    key = str(outcome or "").strip()
-    band = _TERMINAL_REPORT_FACADE_BAND.get(key, "办结")
-    memorial = ""
-    for item in reversed(list(prior_reports or [])):
-        if not isinstance(item, dict):
-            continue
-        if item.get("is_terminal"):
-            continue
-        text = str(item.get("memorial_text") or "")
-        if text.strip():
-            memorial = text
-            break
-    if not memorial.strip():
-        return None
-    return band, memorial
 
 def qualitative_dossier_status(value: object) -> str:
     key = str(value or "").strip()
@@ -256,6 +227,7 @@ def render_referenceable_dossier_brief(candidates) -> str:
     for row in candidates:
         if not isinstance(row, dict):
             continue
+        # Free prose title / execution_note: preserve raw; strip only emptiness (#1834 F16).
         title = str(
             row.get("secret_title") or row.get("decree_text") or row.get("action_type") or ""
         )
@@ -273,7 +245,7 @@ def render_referenceable_dossier_brief(candidates) -> str:
             facts.append(f"颁布：{decision_cn}")
         if outcome_cn:
             facts.append(f"执行：{outcome_cn}")
-        if note:
+        if note.strip():
             facts.append(f"说明：{note}")
         if markers:
             facts.append("标记：" + "、".join(markers))

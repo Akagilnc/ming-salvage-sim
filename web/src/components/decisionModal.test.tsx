@@ -147,7 +147,8 @@ describe("DecisionModal", () => {
     act(() => options[0].click());
     act(() => confirm!.click());
 
-    expect(document.querySelector(".decision-document-section h3")?.textContent).toBe("河工修治");
+    // 前进到下一件：仍有文书节与可聚焦选项；不锁题名正文。
+    expect(document.querySelector(".decision-document-section h3")).not.toBeNull();
     expect(document.activeElement).toBe(document.querySelector<HTMLButtonElement>(".decision-option"));
     cleanup();
   });
@@ -157,9 +158,9 @@ describe("DecisionModal", () => {
     const documentPage = document.querySelector<HTMLElement>(".decision-document");
     expect(documentPage).not.toBeNull();
     const sections = documentPage!.querySelectorAll(".decision-document-section");
-    expect(sections[0].querySelector("h3")?.textContent).toBe("关宁军饷");
-    expect(sections[0].textContent).toContain("辽东急报：军中已三月未饷。");
-    expect(sections[1].querySelector(".decision-option-label")?.textContent).toContain("拨帑速发");
+    expect(sections.length).toBeGreaterThanOrEqual(2);
+    expect(sections[0].querySelector("h3")).not.toBeNull();
+    expect(sections[1].querySelectorAll(".decision-option").length).toBeGreaterThanOrEqual(1);
     expect(documentPage!.querySelector(".decision-red-pen textarea")).not.toBeNull();
     // 印即确认键：文书序末位为 .decision-confirm 真按钮，无独立装饰 seal
     const sealConfirm = documentPage!.querySelector<HTMLButtonElement>(".decision-confirm");
@@ -169,7 +170,7 @@ describe("DecisionModal", () => {
     expect(document.querySelectorAll(".decision-confirm")).toHaveLength(1);
     act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
     act(() => sealConfirm!.click());
-    expect(document.body.textContent).toContain("河工修治");
+    expect(document.querySelector(".decision-document-section h3")).not.toBeNull();
     cleanup();
   });
 
@@ -247,7 +248,8 @@ describe("DecisionModal", () => {
     const result = pendingDecisionsFrom(mixedEventStream);
     expect(result).toEqual([]);
     const cleanup = render(<DecisionModal decisions={result} onResolve={vi.fn()} />);
-    expect(document.body.textContent).not.toContain("着户部核拨军饷");
+    // 整批拒收后无选项节点；不以夹杂散文作负向哨兵（#1897 T1）。
+    expect(document.querySelectorAll(".decision-option")).toHaveLength(0);
     cleanup();
   });
 });
@@ -545,8 +547,6 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     // P7：decree_text 回退 label——必须保留所选 option 的 LLM 文案，禁结构钮文泄漏
     expect(choice.label).toBe("加衔恩赏");
     expect(choice.hint).toBe("荣誉");
-    expect(choice.label).not.toBe("另旨·中旨");
-    expect(String(choice.hint || "")).not.toBe("中旨直发");
     expect(choice.action_type).toBe("grant_allocation");
     expect(choice.grant_action).toBe("加衔");
     expect(choice.target_kind).toBe("character");

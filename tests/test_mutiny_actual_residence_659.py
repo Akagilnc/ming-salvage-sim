@@ -13,14 +13,13 @@ from __future__ import annotations
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
-from tests.fiscal_test_utils import class_population
+from tests.readback_helpers import class_population
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
 JUNHU_LIAODONG = 230000
 JUNHU_DONGJIANG = 95000
 LIUMIN_LIAODONG = 0
 LIUMIN_DONGJIANG = 0
-
 
 
 def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
@@ -66,7 +65,6 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     assert row["station"] == "山东 / 登州"
     assert row["station_region"] == "shandong"
     assert row["pay_source_region"] == pay_src == "liaodong"
-
 
 def test_station_region_rejects_unknown_region_id(game):
     """非空 station_region 必须是已入库 regions.id；不从 station 反推。"""

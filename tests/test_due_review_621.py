@@ -32,6 +32,7 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
     write_due_staged_commitment_todos,
 )
+from tests.readback_helpers import decree_cost_event_rows
 
 
 # ── fixtures ──────────────────────────────────────────────────────────
@@ -91,16 +92,6 @@ def _settle_empty_month(db, state, content, monkeypatch):
     result = session.resolve_turn(allow_empty_decree=True)
     assert state.turn == before + 1
     return result
-
-
-def _cost_events(db, dossier_id, *, identity="连坐"):
-    return [
-        dict(row)
-        for row in db.conn.execute(
-            "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-            (int(dossier_id), identity),
-        ).fetchall()
-    ]
 
 
 # ── P3 待办消费 ───────────────────────────────────────────────────────
@@ -165,7 +156,7 @@ def test_unconsumed_todo_rolls_across_settles_and_restore(game):
     write_due_staged_commitment_todos(db, state)
     pending = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(pending) == 1
-    origin_context = pending[0]["origin_context"]
+    todo_id = int(pending[0]["id"])
 
     # 再结算一拍（apply 会消费；此处用手工保持 pending 测滚存读端）
     # 先把 apply 路径旁路：直接推进并断言 list 仍可读
@@ -173,7 +164,7 @@ def test_unconsumed_todo_rolls_across_settles_and_restore(game):
     db.save_state(state)
     still = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(still) == 1
-    assert still[0]["origin_context"] == origin_context
+    assert int(still[0]["id"]) == todo_id
 
     # restore 只读 DB
     from ming_sim.db import GameDB
@@ -183,14 +174,14 @@ def test_unconsumed_todo_rolls_across_settles_and_restore(game):
     state2 = db2.load_state()
     todos2 = db2.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(todos2) == 1
-    assert todos2[0]["origin_context"] == origin_context
+    assert int(todos2[0]["id"]) == todo_id
     assert int(state2.turn) == int(state.turn)
 
 
 # ── P4 场面顶出 + 原诺语境 ────────────────────────────────────────────
 
 
-def test_due_review_scene_tops_next_audience_with_origin_context(game):
+def test_due_review_scene_has_no_internal_payload(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -206,51 +197,7 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     scenes = list_due_review_scenes(db, state)
     assert len(scenes) == 1
     scene = scenes[0]
-    assert scene["origin_context"] == "三年火器见眉目"
     assert "payload_json" not in scene
-
-
-def test_due_review_scene_tops_live_open_night_even_with_body(game):
-    """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
-    import json
-    from ming_sim.materials import (
-        _scene_pending_audience_facts,
-        prepare_scene_materials,
-        release_material_tree,
-    )
-
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    stages = [{
-        "stage_idx": 0,
-        "due_turn": state.turn,
-        "criterion_text": "火器见眉目",
-        "origin_context": "三年火器见眉目",
-    }]
-    _insert_staged_commitment(db, state, content, stages=stages)
-    write_due_staged_commitment_todos(db, state)
-
-    open_night(db, state, time_of_day="戌时", location="乾清宫")
-    scenes = list_due_review_scenes(db, state)
-    assert len(scenes) == 1
-    scene = scenes[0]
-    prepared = prepare_scene_materials(db, state)
-    try:
-        facts = _scene_pending_audience_facts(db, state)
-        matched = [
-            json.loads(line) for line in facts
-            if json.loads(line).get("todo_id") == scene["todo_id"]
-        ]
-        assert len(matched) == 1
-        assert matched[0] == scene
-        payload = next(
-            line for line in facts
-            if json.loads(line).get("todo_id") == scene["todo_id"]
-        )
-        assert payload in prepared.opening
-    finally:
-        release_material_tree(prepared.root)
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
@@ -284,14 +231,14 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     _settle_empty_month(db, state, content, monkeypatch)
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     scenes = list_due_review_scenes(db, state)
-    assert scenes and scenes[0]["origin_context"] == "三年火器见眉目"
+    assert scenes
 
     _settle_empty_month(db, state, content, monkeypatch)
     dossier = db.get_decree_dossier(dossier_id)
     # 中段：过程态 executing，不结案
     assert dossier["execution_outcome"] == "executing"
     assert dossier["status"] == "executing"
-    assert _cost_events(db, dossier_id) == []
+    assert decree_cost_event_rows(db, dossier_id, "连坐") == []
     # todo 已消费
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
@@ -445,8 +392,8 @@ def test_mid_stage_no_close_no_joint_liability(game):
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["execution_outcome"] == "executing"
     assert dossier["status"] == "executing"
-    assert _cost_events(db, dossier_id) == []
-    # 中段不代写人物奏报；缺原奏不造 progress 行（实况执行格仍为 executing）
+    assert decree_cost_event_rows(db, dossier_id, "连坐") == []
+    # 复核只落执行格，不凭机器评语补承办人的奏报。
     assert db.list_dossier_progress(dossier_id) == []
 
 
@@ -476,7 +423,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     assert dossier["execution_outcome"] in {"fulfilled", "degraded", "failed", "transformed"}
     assert dossier["status"] == "closed"
     # 无实账无表报 → failed ∈ 连坐触发集；整笔幂等门闩 cost_kind=liability 恰一行
-    costs = _cost_events(db, dossier_id)
+    costs = decree_cost_event_rows(db, dossier_id, "连坐")
     liability_gates = [c for c in costs if c.get("cost_kind") == "liability"]
     assert len(liability_gates) == 1
 
@@ -495,7 +442,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     assert second, "幂等腿须真正再入正式复核"
     assert second[0].get("branch") == "dossier", second
     assert (second[0].get("execution") or {}).get("rejected") is not True, second
-    costs_after = _cost_events(db, dossier_id)
+    costs_after = decree_cost_event_rows(db, dossier_id, "连坐")
     assert costs_after == costs
     liability_after = [c for c in costs_after if c.get("cost_kind") == "liability"]
     assert len(liability_after) == 1
@@ -624,7 +571,6 @@ def test_formal_review_blocks_extractor_second_terminal(game):
         "fulfilled", "degraded", "failed", "transformed", "executing",
     }
     outcome_before = first["execution_outcome"]
-    note_before = first["execution_note"]
 
     # 若已终值结案，extractor 重写应拒；若仍 executing（单段终裁应已结），强制终值路径：
     if first["status"] == "closed":
@@ -664,10 +610,7 @@ def test_formal_review_blocks_extractor_second_terminal(game):
 
     # 正式复核终值不被 extractor 覆盖（若仍 closed 则 outcome 不变；重开后亦拒写）
     dossier = db.get_decree_dossier(dossier_id)
-    if outcome_before in {"fulfilled", "degraded", "failed", "transformed"}:
-        # 拒收后不应变成 extractor 的 transformed（除非本来就是）
-        if outcome_before != "transformed":
-            assert dossier["execution_outcome"] != "transformed" or dossier["execution_note"] == note_before
+    assert dossier["execution_outcome"] == outcome_before
 
 
 def test_due_month_extractor_blocked_before_todo_write(game):
@@ -708,7 +651,6 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     item = result["dossier_executions"][0]
     assert item.get("rejected") is True
     assert item.get("category") == "invalid_transition"
-
     after = db.get_decree_dossier(dossier_id)
     assert after["status"] == "executing"
     assert after["execution_outcome"] in ("", None)

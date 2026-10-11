@@ -140,12 +140,12 @@ export function useChatActions({
 
   const sendChat = async (targetMinisterName: string, text = input) => {
     if (busy) return;
-    // #1847 N6：判空可读 trim；运输玩家原文不得赋 trim 结果。
-    if (!text.trim()) {
+    // Free prose: preserve raw bytes; emptiness on a local copy (#1834 F16).
+    const message = text;
+    if (!message.trim()) {
       setComposerHint("请先问话或点一个奏对题目");
       return;
     }
-    const message = text;
     recoveryRun.current += 1;
     window.clearTimeout(recoveryTimer.current);
 

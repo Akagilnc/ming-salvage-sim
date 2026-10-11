@@ -6,13 +6,7 @@ from ming_sim.db import GameDB
 from ming_sim import issues as issue_engine
 import ming_sim.decree as decree_mod
 from ming_sim.relations import EMPEROR_NODE
-
-
-def _minister(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
+from tests.readback_helpers import ming_character_name as _minister
 
 
 def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
@@ -272,20 +266,12 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     dossier = db.get_decree_dossier(dossier_id)
     projected = db.project_applicable_authorities(state.turn, dossier)
     assert [row["id"] for row in projected] == [typed]
-    assert bare not in {row["id"] for row in projected}
-    assert informed_only not in {row["id"] for row in projected}
 
     context = decree_mod.build_promulgation_judge_context(db, state, [dossier])
     assert context["dossiers"][0]["held_authorities"] == projected
     assert context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
         str(typed),
     ]
-    assert "payload-auth" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
-    assert "payload-list" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
 
 
 def test_same_dossier_grant_replay_is_idempotent(game):

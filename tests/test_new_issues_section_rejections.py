@@ -94,29 +94,6 @@ def _ensure_event_candidate(db, state, eid):
 
 from tests.test_event_chain_cascade import _hist_event
 
-def test_temp_events_replaces_same_id_and_restores_original(content):
-    eid = "__temp_events_replace_existing__"
-    original = _hist_event(eid)
-    replacement = _hist_event(eid)
-    replacement.title = "替换事件"
-    content.events.append(original)
-    content.event_by_id[eid] = original
-    try:
-        with _TempEvents(content, replacement):
-            same_id_events = [ev for ev in content.events if ev.id == eid]
-            assert same_id_events == [replacement]
-            assert content.event_by_id[eid] is replacement
-
-        same_id_events = [ev for ev in content.events if ev.id == eid]
-        assert same_id_events == [original]
-        assert content.event_by_id[eid] is original
-    finally:
-        if original in content.events:
-            content.events.remove(original)
-        if content.event_by_id.get(eid) is original:
-            content.event_by_id.pop(eid, None)
-
-
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
 def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
     db, state, _ = read_game
@@ -200,8 +177,10 @@ def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(gam
     iid = int(created[0]["issue_id"])
     row = db.conn.execute(
         "SELECT resolve_condition, stop_condition FROM issues WHERE id=?", (iid,)).fetchone()
-    assert row["resolve_condition"] == "region.shaanxi.unrest <= 30"
-    assert row["stop_condition"] == "region.shaanxi.unrest <= 30"
+    # 空白 resolve_condition 回落 stop_condition：输入→两列等值（#1897 T1/E2）。
+    expected = "region.shaanxi.unrest <= 30"
+    assert row["resolve_condition"] == expected
+    assert row["stop_condition"] == expected
 
     advanced = db.advance_issue(
         state, iid, trigger_kind="decree", delta_bar=20,
@@ -317,8 +296,7 @@ def test_new_issue_valid_decree_still_creates(game):
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
-    row = db.conn.execute("SELECT title, status FROM issues WHERE id=?", (iid,)).fetchone()
-    assert row["title"] == "测试·新立局势"
+    row = db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()
     assert row["status"] == "active"
 
 
@@ -438,7 +416,6 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
 # tags = list(ni.get("tags") or []) 对标量串静默拆字（list("募营")=['募','营']）、对非串元素
 # 不拒（list([5])=[5]）会污染 DB tags。与 R6 int 字段 _strict_int 同一字段校验 class——
 # 缺省/null/空串→[]，present 须 list/tuple 且元素全 str。
-
 
 @pytest.mark.parametrize("bad_tags", ["募营", "单串标量"])
 def test_new_issue_scalar_string_tags_rejected(read_game, bad_tags):

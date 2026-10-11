@@ -8,6 +8,8 @@ from ming_sim.issues import (
     commitment_progress_payload,
 )
 from ming_sim.situation_drift import apply_situation_monthly_drift
+from tests.readback_helpers import faction_satisfaction as _faction_satisfaction
+from tests.readback_helpers import class_satisfaction as _class_satisfaction
 
 
 from tests.test_decree_commitment_creation_136 import _promulgated_commitment_origin
@@ -34,21 +36,6 @@ def _character_loyalty(db, name: str) -> int:
     row = db.conn.execute("SELECT loyalty FROM characters WHERE name=?", (name,)).fetchone()
     assert row is not None
     return int(row["loyalty"])
-
-
-def _faction_satisfaction(db, name: str) -> int:
-    row = db.conn.execute("SELECT satisfaction FROM factions WHERE name=?", (name,)).fetchone()
-    assert row is not None
-    return int(row["satisfaction"])
-
-
-def _class_satisfaction(db, name: str, region_id: str = "") -> int:
-    row = db.conn.execute(
-        "SELECT satisfaction FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    assert row is not None
-    return int(row["satisfaction"])
 
 
 def _region_cannon(db, region_id: str) -> int:
@@ -508,8 +495,6 @@ def test_commitment_progress_contexts_are_structured(game):
     progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
     assert progress is not None
     assert progress["months_elapsed"] == 1
-
-
 
 
 def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):

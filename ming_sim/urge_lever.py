@@ -155,16 +155,15 @@ def collect_urge_history(
 def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional[int]) -> Dict[str, object]:
     """承办人：案卷主办优先，否则 issue participants 首名；缺省中性档。"""
     name = ""
+    # 名册/参与人持久列表：腐坏响亮，不 catch-to-[]（#1897 E1）。
+    from ming_sim.db import _load_durable_str_list
+    from ming_sim.participant_roster import decode_durable_participant_roster
     if dossier_id is not None:
         dossier = db.get_decree_dossier(int(dossier_id))
         if isinstance(dossier, dict):
+            # get_decree_dossier 已解码名册为 list[dict]。
             roster = dossier.get("participant_roster") or []
-            if isinstance(roster, str):
-                try:
-                    roster = json.loads(roster)
-                except (TypeError, ValueError):
-                    roster = []
-            for item in roster or []:
+            for item in roster:
                 if isinstance(item, dict) and str(item.get("tier") or "") == "主办":
                     name = str(item.get("character_id") or "").strip()
                     if name:
@@ -175,21 +174,17 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             (int(commitment_ref),),
         ).fetchone()
         if row is not None:
-            try:
-                roster = json.loads(row["participant_roster"] or "[]")
-            except (TypeError, ValueError):
-                roster = []
-            for item in roster or []:
-                if isinstance(item, dict):
-                    cand = str(item.get("character_id") or "").strip()
-                    if cand:
-                        name = cand
-                        break
+            roster = decode_durable_participant_roster(row["participant_roster"])
+            for item in roster:
+                cand = str(item.get("character_id") or "").strip()
+                if cand:
+                    name = cand
+                    break
             if not name:
-                try:
-                    parts = json.loads(row["participants"] or "[]")
-                except (TypeError, ValueError):
-                    parts = []
+                parts = _load_durable_str_list(
+                    row["participants"],
+                    surface=f"issues#{int(commitment_ref)}.participants",
+                )
                 if parts:
                     name = str(parts[0]).strip()
     integrity, courage = 50, 50
@@ -342,7 +337,11 @@ def rush_staged_commitment_stage(
         (stages_blob, int(commitment_ref)),
     )
 
-    why = reason if str(reason or "").strip() else "奉旨加急"
+    # 真正空串才回落缺省；合法空白原文原样运输，禁 strip 改字（#1897）。
+    # 类型合同复用 _require_durable_prose，不另建校验器。
+    from ming_sim.db import _require_durable_prose
+    raw_reason = _require_durable_prose(reason, field="reason", required=False)
+    why = raw_reason if raw_reason else "奉旨加急"
     if record_history:
         _record_commitment_urge(
             db, state,

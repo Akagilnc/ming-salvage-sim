@@ -105,7 +105,6 @@ def test_delegator_only_responsible_is_eligible_target(game):
     item = candidates[0]
     assert item["dossier_id"] == did
     assert item["participant_ids"] == [owner, aide]
-    assert delegator not in item["participant_ids"]
     assert delegator in item["responsible_person_ids"]
     assert delegator in item["eligible_target_ids"]
     # 协办本人非责任人：可在 eligible（在朝），但不得进 responsible。

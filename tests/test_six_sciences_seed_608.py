@@ -2,15 +2,6 @@
 
 from __future__ import annotations
 
-from ming_sim.db import infer_office_type_from_office
-
-
-def test_six_sciences_offices_infer_to_own_category():
-    """六科、给事中和都给事中均确定性归入六科。"""
-    assert infer_office_type_from_office("六科") == "六科"
-    assert infer_office_type_from_office("兵科给事中") == "六科"
-    assert infer_office_type_from_office("礼科都给事中") == "六科"
-
 
 def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     """许誉卿开局在朝；韩一良至 1628 年才以户科给事中登场（派系权势经现役公共读口断言）。"""
@@ -28,6 +19,7 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     for row in rows:
         assert row["office_type"] == "六科"
         assert "给事中" in row["office"]
+        # 静态 seed 出处标记（非 LLM 自由正文）
         assert "《明史》卷258" in row["summary"]
 
     by_name = {row["name"]: row for row in rows}

@@ -23,7 +23,6 @@ class FieldSpec:
     zh: str
     allowed: Optional[FrozenSet[str]] = None
     default: Any = ""
-    max_len: Optional[int] = None
     as_int: bool = False
     int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
@@ -32,6 +31,20 @@ class FieldSpec:
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
     # Field is populated only when another canonical field has one of these values.
     populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
+
+
+# Free-prose string fields feed issues → materials; do not strip/rewrite (#1834 F16).
+# Machine keys / ids keep .strip() below.
+_FREE_PROSE_FIELD_NAMES = frozenset({
+    "new_content",
+    "title",
+    "stop_condition",
+    "ongoing_effects",
+    "stages",
+    "responsible_bodies",
+    "station",
+    "new_title",
+})
 
 
 @dataclass(frozen=True)
@@ -269,11 +282,13 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if isinstance(raw, (dict, list, tuple)):
                 s = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
             else:
-                # Canonical generated body is transport, not user-entered metadata:
-                # preserve the extractor's bytes (including edge whitespace).
-                s = str(raw or "")
-            if spec.max_len is not None:
-                s = s[: spec.max_len]
+                # Free prose → materials: preserve extractor bytes (incl. edge whitespace).
+                # Machine keys / ids still strip. No length crop (#1834 F16).
+                s = (
+                    str(raw or "")
+                    if name in _FREE_PROSE_FIELD_NAMES
+                    else str(raw or "").strip()
+                )
             out[name] = s
     if "draft_text" in obj:
         out["draft_text"] = obj.get("draft_text")

@@ -7,6 +7,7 @@ import pytest
 from ming_sim.models import Character
 from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
 from tests.dossier_test_helpers import promulgate_proposed_appointments
+from tests.recommendation_rows import recommendation_events
 
 
 def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge(game):
@@ -210,7 +211,7 @@ def test_adopted_recommendation_is_an_auditable_event_after_restore(game):
     row = next(row for row in rows if row["name"] == candidate.name)
     db.record_recommendation(state, recommender.name, row, "巡盐御史", "旧任有实绩，罢居后仍可起复")
     restored = db.load_state()
-    events = db.list_recommendation_events(restored, recommender.name)
+    events = recommendation_events(db, restored, recommender.name)
     assert events[0]["recommender"] == recommender.name
     assert events[0]["candidate"] == candidate.name
     assert events[0]["candidate_kind"] == "起复"
@@ -257,7 +258,7 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
         promulgate_proposed_appointments(db, state, content)
 
     restored = db.load_state()
-    events = db.list_recommendation_events(restored, recommender.name)
+    events = recommendation_events(db, restored, recommender.name)
     by_candidate = {event["candidate"]: event for event in events}
     assert by_candidate[offstage["name"]]["candidate_kind"] == "起复"
     assert by_candidate[active["name"]]["candidate_kind"] == "在职"

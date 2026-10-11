@@ -43,8 +43,9 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
-from ming_sim.constants import GATE_METRIC_KEYS, ROOT_DIR
-from ming_sim.paths import user_data_path, user_data_dir
+from ming_sim.constants import ROOT_DIR, GATE_METRIC_KEYS
+from ming_sim.db import _load_durable_json_list
+from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
@@ -98,7 +99,6 @@ from ming_sim.session_write_queue import (
 from ming_sim.token_stats import tlog
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
-from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import (
     API_DEFAULT_TIMEOUT_SECONDS,
     Character,
@@ -803,7 +803,10 @@ class WebGame:
             for name, msgs in self.db.load_all_chat_history().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
             _fav_raw = self.db.kv_get("favorites")
-            self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
+            self.favorites: set = (
+                set(_load_durable_json_list(_fav_raw, surface="kv.favorites"))
+                if _fav_raw else set(_DEFAULT_FAVORITES)
+            )
             if not _fav_raw:
                 self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
             # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
@@ -1018,7 +1021,10 @@ class WebGame:
             for name, msgs in candidate.db.load_all_chat_history().items():
                 chat_history.setdefault(name, []).extend(msgs)
             fav_raw = candidate.db.kv_get("favorites")
-            favorites = set(json.loads(fav_raw)) if fav_raw else set(_DEFAULT_FAVORITES)
+            favorites = (
+                set(_load_durable_json_list(fav_raw, surface="kv.favorites"))
+                if fav_raw else set(_DEFAULT_FAVORITES)
+            )
             if not fav_raw:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
             candidate.db.reconcile_interrupted_chat_turns()
@@ -1103,11 +1109,6 @@ class WebGame:
     def _complete_pending_write(self, ticket: Optional[WriteTicket] = None) -> None:
         """释放领票（成功/失败/空放行同形）。"""
         self._runtime_write_queue().complete(ticket)
-
-    @property
-    def _pending_writes_count(self) -> int:
-        """兼容只读：队列在途票据数（旧 counter 名，事实来源=队列）。"""
-        return int(self._runtime_write_queue().inflight_count())
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
@@ -1344,7 +1345,9 @@ class WebGame:
                 "phase": row["phase"],
                 "stage_text": row["stage_text"],
                 "severity": int(row["severity"]),
-                "tags": list(json.loads(str(row["tags"] or "[]"))),
+                "tags": list(_load_durable_json_list(
+                    row["tags"], surface="issues.tags",
+                )),
                 "inertia": int(row["inertia"] or 0),
                 "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
                 "fail_condition": _humanize_condition(row["fail_condition"] or ""),
@@ -1382,14 +1385,13 @@ class WebGame:
             if leg.clear_narrative
         }
         for row in self.db.list_active_legacies(self.state):
-            try:
-                eff = json.loads(str(row["modifiers"] or "{}"))
-            except (json.JSONDecodeError, TypeError):
-                eff = {}
-            try:
-                clear_gate = json.loads(str(row["clear_gate"] or "{}"))
-            except (json.JSONDecodeError, TypeError):
-                clear_gate = {}
+            # Durable legacies JSON: reuse authoritative loud read (F39); no parallel wash-to-{}.
+            eff = self.db.parse_engine_payload_json(
+                row["modifiers"], surface="legacies.modifiers",
+            )
+            clear_gate = self.db.parse_engine_payload_json(
+                row["clear_gate"], surface="legacies.clear_gate",
+            )
             remaining_months = self.db.legacy_remaining_months(row, self.state)
             clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")
             if not clear_condition and clear_gate:
@@ -1918,9 +1920,6 @@ class WebGame:
         court_action: str = "",
         next_minister: str = "",
         proposed_directive: Optional[Dict[str, Any]] = None,
-        appointed_minister: str = "",
-        registered_minister: str = "",
-        displaced_minister: str = "",
         secret_order_id: int = 0,
         pending_action_id: int = 0,
         chat_turn_id: int = 0,
@@ -1969,9 +1968,6 @@ class WebGame:
             "court_action": court_action,
             "next_minister": next_minister,
             "proposed_directive": proposed_directive,
-            "appointed_minister": appointed_minister,
-            "registered_minister": registered_minister,
-            "displaced_minister": displaced_minister,
             "secret_order_id": secret_order_id or 0,
             "pending_action_id": pending_action_id or 0,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
@@ -1987,7 +1983,6 @@ class WebGame:
         新入口（如 #505 重试）不再另抄一份 if（stream 入口走 yield-error 控制流，自持一份）。"""
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
-
 
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
@@ -2117,9 +2112,7 @@ class WebGame:
                     payload = self._chat_payload(
                         minister_name, result.answer,
                         court_action=result.court_action, next_minister=result.next_minister,
-                        proposed_directive=proposed, appointed_minister=result.appointed_minister,
-                        registered_minister=result.registered_minister,
-                        displaced_minister=result.displaced_minister,
+                        proposed_directive=proposed,
                         secret_order_id=result.secret_order_id,
                         pending_action_id=getattr(result, "pending_action_id", 0),
                         chat_turn_id=chat_turn_id,
@@ -2239,9 +2232,6 @@ class WebGame:
                     court_action=getattr(result, "court_action", "") or "",
                     next_minister=getattr(result, "next_minister", "") or "",
                     proposed_directive=proposed,
-                    appointed_minister=getattr(result, "appointed_minister", "") or "",
-                    registered_minister=getattr(result, "registered_minister", "") or "",
-                    displaced_minister=getattr(result, "displaced_minister", "") or "",
                     secret_order_id=int(getattr(result, "secret_order_id", 0) or 0),
                     pending_action_id=int(getattr(result, "pending_action_id", 0) or 0),
                     chat_turn_id=chat_turn_id,
@@ -2390,7 +2380,7 @@ class WebGame:
         """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。
 
         #1353 r7：无待补时不领票——空 catch-up 占票会与同 session 的 barrier/
-        `_pending_writes_count` 钉竞态（全量 xdist 下 residual ticket）。有待补才
+        `inflight_count()` 钉竞态（全量 xdist 下 residual ticket）。有待补才
         claim+spawn；key=("startup",) 与 turn/pending 区分。
         #1353 r10：预检 list_unextracted 短持 runtime gate（共享 conn 禁裸读）。
         # #1853 J8：启动预检与转译重试查询同属必备接口直调；禁缺接口当「无待补」。
@@ -2469,8 +2459,8 @@ class WebGame:
         if minister_name != SCENE_CHAT_SPEAKER:
             yield {"type": "error", "message": "召对只从殿上入口进行。"}
             return
-        # #1847 N6：判空可读 strip；召对玩家原文运输不得赋 strip 结果。
-        text = str(message or "")
+        # Free prose emperor message: preserve raw; emptiness on local copy (#1834 F16).
+        text = message if isinstance(message, str) else str(message or "")
         if not text.strip():
             yield {"type": "error", "message": "问话不能为空。"}
             return
@@ -3167,7 +3157,12 @@ def _settlement_period_entry(
             if entered and not settled_ok:
                 # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
                 # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
-                _exit_settlement_display_on_failure(game, blocking=created_display)
+                # advance 走 _serialized_web_write（非阻塞 409 契约）：失败清快照也不得
+                # 阻塞等闸——否则「他方持闸 → 本路 409 → exit blocking 等同一闸」自锁死。
+                exit_blocking = bool(
+                    created_display and write_cm is not _serialized_web_write
+                )
+                _exit_settlement_display_on_failure(game, blocking=exit_blocking)
         finally:
             if entered:
                 _end_settlement_entry(game)
@@ -4873,16 +4868,6 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/map")
-async def api_map() -> Dict[str, Any]:
-    return {"nodes": get_game().map_nodes()}
-
-
-@app.get("/api/buildings")
-async def api_buildings(region_id: str = "") -> Dict[str, Any]:
-    return {"buildings": get_game().db.building_payload(region_id)}
-
-
 @app.post("/api/favorites/{minister_name}")
 async def api_add_favorite(minister_name: str) -> Dict[str, Any]:
     game = get_game()
@@ -5159,6 +5144,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:
                 raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
+            # Free prose directive text: pass raw (emptiness checked above).
             game.session.update_directive(
                 directive_id, text, dossier_payload=dossier_payload,
             )

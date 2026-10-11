@@ -254,7 +254,12 @@ def test_revision_keeps_original_source_turn_and_undo_restores_it(game):
         minister=minister, night_id=night_id, ctid=first_ctid,
     )
     first_id = int(first.commissions.applied[0]["id"])
-    before_text = _payload(db, first_id)["text"]
+    before = db.conn.execute(
+        "SELECT version, payload_json, source_chat_turn_id FROM pending_actions WHERE id=?",
+        (first_id,),
+    ).fetchone()
+    before_version = int(before["version"] or 1)
+    before_payload = before["payload_json"]
 
     _, ctid = open_hall_turn(db, state, minister)
     _finish_turn(db, state, minister, ctid, "再办一件")
@@ -272,24 +277,28 @@ def test_revision_keeps_original_source_turn_and_undo_restores_it(game):
     assert revised.commissions.rejected == []
     assert int(revised.commissions.applied[0]["id"]) == first_id
 
-    # 改稿确实落在同一行上，且内容确实变了、身份没搬。
+    # 改稿确实落在同一行上：version 递增 + 载荷快照变了；身份仍属前轮。
+    # version/payload_json 是机械字段与前像等值，不是锁模型会写什么正文（#1897 T1）。
     row = db.conn.execute(
-        "SELECT status, source_chat_turn_id, payload_json FROM pending_actions WHERE id=?",
+        "SELECT status, source_chat_turn_id, payload_json, version FROM pending_actions WHERE id=?",
         (first_id,),
     ).fetchone()
-    assert _payload(db, first_id)["text"] != before_text
     assert int(row["source_chat_turn_id"]) == first_ctid
+    assert int(row["version"] or 1) == before_version + 1
+    assert row["payload_json"] != before_payload
 
     db.undo_chat_turn(ctid)
 
     row = db.conn.execute(
-        "SELECT status, source_chat_turn_id, payload_json FROM pending_actions WHERE id=?",
+        "SELECT status, source_chat_turn_id, payload_json, version FROM pending_actions WHERE id=?",
         (first_id,),
     ).fetchone()
     assert row is not None, "改稿不该把前轮那道交办删掉"
-    assert _payload(db, first_id)["text"] == before_text
     assert row["status"] == "pending"
     assert int(row["source_chat_turn_id"]) == first_ctid
+    # ADR 0038：撤回复原是新改草，version 继续递增；正文/载荷须回到前像。
+    assert int(row["version"] or 1) > before_version + 1
+    assert row["payload_json"] == before_payload
 
 
 def test_void_discards_that_directive_night_forecast(game):
@@ -374,10 +383,10 @@ def test_declared_new_secret_order_lands_and_undo_removes_all_records(game):
     ).fetchone()
     assert order is not None, "声明的新建密令没有成案"
     order_id = int(order["id"])
-    assert order["title"] == "密查边镇军械"
-    assert db.conn.execute(
-        "SELECT COUNT(*) c FROM secret_order_briefs WHERE order_id=?", (order_id,),
-    ).fetchone()["c"] == 1
+    brief = db.conn.execute(
+        "SELECT order_id FROM secret_order_briefs WHERE order_id=?", (order_id,),
+    ).fetchone()
+    assert int(brief["order_id"]) == order_id
 
     # 撤「准」那一轮：密令本体与 briefs 一并逆转（ADR 0038 白名单①的前像还原）。
     db.undo_chat_turn(ctid2)

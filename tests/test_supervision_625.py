@@ -2,7 +2,6 @@
 
 Seams:
 - dossier_supervision_presence / dossier_loophole_exposures 事实表
-- record_monthly_supervision_presence（与 grant recon 同段）
 - build_due_review_input.supervision_history
 - 督办复核的监督事实观察槽
 - auto_trigger 涌现缝反制 issue
@@ -111,7 +110,6 @@ def _audit_dossier(db, state, *, auditor: str, subject_id: int, token: str = "au
 
 
 
-
 def test_ac1_settle_segment_writes_presence(game, monkeypatch):
     """事实行随真实过月 grant recon 同段写入。"""
     db, state, content = game
@@ -131,7 +129,6 @@ def test_ac1_settle_segment_writes_presence(game, monkeypatch):
 
 
 # ── AC2 成对锚观察槽 + 反制硬门 ───────────────────────────────────
-
 
 
 

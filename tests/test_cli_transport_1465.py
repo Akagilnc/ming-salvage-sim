@@ -157,8 +157,8 @@ def test_cli_chat_stream_two_transient_then_success_three_attempts(monkeypatch, 
 def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_resend(monkeypatch, web_game, tmp_path):
     """②三次瞬断耗尽 → 系统层终失败呈现、夜不封、可重发。
 
-    #1847 N10：注入改用宿主空输出（可重试 typed），不扫正文认证词表。
-    runtime 即使误配为五次，玩家的一次动作仍以票面三次为硬上限。
+    注入 = rc=0 空输出（可重试 typed 空输出，结构化路径）；耗尽后换出文脚本重发即成。
+    #1834 F26：不再用成功正文词表冒充认证/连接故障。
     """
     from ming_sim import audience_night as an
 
@@ -192,6 +192,7 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
         str(payload.get("content") or "") for name, payload in events if name == "delta"
     )
     assert deltas.strip() == "", deltas
+    # 夜不封：终失败不封夜，玩家可再召
     assert night_closed["n"] == 0
     assert an.get_open_night(db) is not None
 

@@ -32,15 +32,16 @@ def decision_prompt_contract() -> str:
 
 
 def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
-    """Bind normalized labels to stored options, rejecting ambiguous decisions."""
+    """Bind raw option labels to stored options; empty/duplicate labels rejected."""
     bound: Dict[str, Dict[str, object]] = {}
     if not isinstance(options, list):
         raise ValueError("decision options 须为 list")
     for option in options:
         if not isinstance(option, dict):
             continue
+        # #1897：label 原样作键；判空用局部副本。
         label = str(option.get("label") or "")
-        if not label.strip() or any(key.strip() == label.strip() for key in bound):
+        if not label.strip() or label in bound:
             raise ValueError(f"decision option label 为空或重复：{label!r}")
         bound[label] = option
     return bound
@@ -62,16 +63,17 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         if not isinstance(obj, dict):
             continue
+        # #1897：请旨自由字段原样；判空用局部副本，不把 strip 写回。
         title = str(obj.get("title") or "")
         raw_opts = obj.get("options")
-        if not title or not isinstance(raw_opts, list):
+        if not title.strip() or not isinstance(raw_opts, list):
             continue
         options: List[Dict[str, object]] = []
         for o in raw_opts:
             if not isinstance(o, dict):
                 continue
             label = str(o.get("label") or "")
-            if not label:
+            if not label.strip():
                 continue
             # #1847 N11：请旨选项只保留 label/hint；旧 season-option 执行载荷退役。
             options.append({

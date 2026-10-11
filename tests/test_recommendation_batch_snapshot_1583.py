@@ -12,6 +12,7 @@ import pytest
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.decree_forecast import decree_ref_for_dossier
 from ming_sim.exceptions import SettlementAbort
+from tests.recommendation_rows import recommendation_events
 
 
 def _pick_recommender(content):
@@ -109,7 +110,7 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
     assert char["status"] == "active"
     assert char["office"] == second_office
 
-    events = db.list_recommendation_events(state, recommender.name)
+    events = recommendation_events(db, state, recommender.name)
     by_office = {event["target_office"]: event for event in events}
     assert first_office in by_office
     assert second_office in by_office
@@ -152,7 +153,7 @@ def test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch(gam
         session.resolve_turn(allow_empty_decree=True)
     assert db.get_decree_dossier(did)["status"] == "proposed"
 
-    assert db.list_recommendation_events(state, recommender.name) == []
+    assert recommendation_events(db, state, recommender.name) == []
     char = db.conn.execute(
         "SELECT office, status FROM characters WHERE name=?", (row["name"],),
     ).fetchone()

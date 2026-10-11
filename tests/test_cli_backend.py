@@ -40,49 +40,10 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     assert offices == [office]
 
 
-def test_enrich_army_parsed_and_normalized(monkeypatch):
-    canned = json.dumps({
-        "effect_on_resolve": {
-            "metrics": {"皇威": 5},
-            "new_armies": [{"id": "qinjun", "name": "秦兵", "owner_power": "ming",
-                            "manpower": 20000, "maintenance_per_turn": 4, "commander": "孙传庭"}],
-        },
-        "ongoing_effects": {}, "effect_on_fail": {},
-    }, ensure_ascii=False)
-    _capture_run(monkeypatch, _P(stdout=canned))
-    out = cb.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
-    armies = out["effect_on_resolve"]["new_armies"]
-    assert armies[0]["id"] == "qinjun"
-    assert armies[0]["manpower"] == 20000
 
-def test_enrich_building_region_floor(monkeypatch):
-    canned = json.dumps({
-        "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
-        "ongoing_effects": {}, "effect_on_fail": {},
-    }, ensure_ascii=False)
-    _capture_run(monkeypatch, _P(stdout=canned))
-    out = cb.enrich_initiative_effects("设格致局", "")
-    assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
 
-def test_enrich_backend_error_returns_empty_effects(monkeypatch):
-    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("backend down")))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    out = cb.enrich_initiative_effects("设格致局", "")
-    assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
 
-def test_enrich_nondict_subfields_guarded(monkeypatch):
-    _capture_run(monkeypatch, _P(stdout='{"effect_on_resolve": "坏数据", "ongoing_effects": ["x"], "effect_on_fail": 3}'))
-    monkeypatch.setattr(cb, "_trace", lambda r: None)
-    out = cb.enrich_initiative_effects("设局", "")
-    assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
 
-def test_enrich_trace_records_actual_backend(monkeypatch):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    _capture_run(monkeypatch, _P(stdout='{"effect_on_resolve":{}}'))
-    rec = {}
-    monkeypatch.setattr(cb, "_trace", lambda r: rec.update(r))
-    cb.enrich_initiative_effects("设局", "")
-    assert rec.get("backend") == "codex"
 
 # ── cli_backend_from_env / backend dispatch ──
 

@@ -205,23 +205,14 @@ def _surface_capture(label: str, text: str) -> dict:
 
 
 def _auto_complete_hitl(session: GameSession) -> Optional[str]:
-    """真实结算若出 HITL，一次 awaiting 自动选第一项；返回完整 report。
-
-    #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
-    探针明确提交拟批标签；不投影旧效果载荷。
-    """
-
+    """真实结算若出 HITL：CLI/脚本缺亲裁能力，如实停在 awaiting（#1812 第9项）。"""
     result = session.advance_without_decree()
     if result is None:
         return None
-    if not result.awaiting:
+    if result.awaiting:
+        print("[hitl] 脚本缺亲裁能力，停在 awaiting，不自动代裁。")
         return result.report
-    decisions = list(result.decisions) or session.pending_decisions()
-    choices = [
-        {"decision_key": d["decision_key"], "label": d["options"][0]["label"], "action": d["options"][0].get("dossier_decision") or d["options"][0].get("action") or ""}
-        for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0))
-    ]
-    return session.submit_hitl_choices(choices, write_gate=session._write_gate)
+    return result.report
 
 
 def _first_month_gazette_via_production_settle(
@@ -527,7 +518,6 @@ def main() -> int:
     content = GameContent.load()
     bind_content(content)
     bind_issue_content(content)
-    bind_agent_content(content)
     cfg = _config(args)
     trace_path = require_fresh_cli_trace(cfg)
 

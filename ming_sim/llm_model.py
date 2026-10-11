@@ -299,7 +299,7 @@ def extract_agent_text(run_output: object) -> str:
     else:
         text = str(content)
     # #1299/#1310：治本在缝——ERROR status 翻 typed，错误串永不得进 content 当叙事。
-    # #1847 N10：不扫成功正文词表猜认证失败；只信宿主 status／事件／异常。
+    # #1834 F26：不从成功正文词表猜认证/连接故障；只认结构化 status / 原生异常。
     # #1465 ④ / P7 / ADR 0046：玩家可见走系统层人话，禁固定戏内话术；
     # 机器横幅只进 provider_message（与 map_run_error_event 同权威）。
     if _run_output_status_is_error(run_output):

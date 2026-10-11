@@ -10,7 +10,7 @@ import ming_sim.month_chain as month_chain
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
-from ming_sim.materials import list_materials, prepare_character_materials, read_material, release_material_tree
+from ming_sim.materials import list_materials, prepare_character_materials, prepare_world_materials, read_material, release_material_tree
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
@@ -363,12 +363,11 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert seen["treasury_options"]["exclude_origin_prefix"] == "secret_order:"
     assert secret_did in seen["treasury_options"]["exclude_dossier_ids"]
     from ming_sim.materials import _safe_segment
-    fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
-    # 公开事实路径在作者目录；正文/密报筛选由 accepted_facts／accepted_events 结构化集合承担。
-    assert fact_rel in seen["author_files"]
-    exp_rel = f"人物/{_safe_segment(minister)}/经历.txt"
-    assert exp_rel in seen["author_files"]
-    assert seen["author_files"][exp_rel].strip()
+    fact_rel = f"人物/{_safe_segment(minister)}/按月实况.txt"
+    assert _PUBLIC_FACT in seen["author_files"][fact_rel]
+    assert _PLAIN_DOSSIER_FACT in seen["author_files"][fact_rel]
+    # 独立写入的普通低语仍须完整搬运，不从筛选 helper 重建经历正文。
+    assert _PRIVATE_KEEP in seen["author_files"][f"人物/{_safe_segment(minister)}/经历.txt"]
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
@@ -388,7 +387,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         str((item.get("item") or {}).get("origin_ref") or "") != "secret_order:9"
         for item in payload["rejections"]
     )
-    assert payload["world_segment"] == "WORLD_PUBLIC_SEGMENT"
     assert [row["event_id"] for row in payload["rescript_answers"]] == ["note:1"]
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
@@ -423,14 +421,25 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert f"secret_order_brief:{order_id}" not in public_ids
     prepared = prepare_character_materials(db, state, character)
     try:
-        paths = list_materials(prepared.root)
-        # 邸报路径在目录；标题/正文已由 archive／list_turn_reports 结构化字段承担。
-        assert any(path.startswith("公开说法/邸报/") for path in paths)
-        # 亲历载体：本人经历.txt 在册且非空。密令简报由 typed 来源 ID 承担。
-        experience = next(path for path in paths if path.endswith("/经历.txt"))
-        assert read_material(prepared.root, experience).strip()
+        # 公开说法/邸报/ 载体在册（路径键，非正文）。亲历载体见下。
+        assert any(
+            path.startswith("公开说法/邸报/") for path in list_materials(prepared.root)
+        )
+        # 亲历载体：本人经历.txt 在册。旧账正文哨兵已删；路径存在性由 next 承担，
+        # 不重复 endswith 自证（#1897 T1 C4）。
+        next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
     finally:
         release_material_tree(prepared.root)
+    world_tree = prepare_world_materials(db, state)
+    try:
+        # 世界目录：亲历／盘面路径键在册；不锁正文真值，不重复 endswith 自证。
+        world_experience = [
+            rel for rel in list_materials(world_tree.root) if rel.endswith("/经历.txt")
+        ]
+        assert world_experience
+        next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
+    finally:
+        release_material_tree(world_tree.root)
 
 
 def test_gazette_failure_retries_report_only(game, monkeypatch):
@@ -475,6 +484,7 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0] == 1
+    # 重试后作者返回题名／正文原样进归档
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT

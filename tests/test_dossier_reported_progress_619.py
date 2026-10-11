@@ -217,7 +217,7 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
         content=content,
     )
 
-    # 缺原奏不造终值奏报行；fulfilled/failed 本就不挂奏报旁路。
+    # 结案不代角色新造终值奏报；角色事前未写的奏报轨保持空。
     assert db.list_dossier_progress(degraded_id) == []
     assert db.list_dossier_progress(transformed_id) == []
     assert db.list_dossier_progress(fulfilled_id) == []

@@ -110,7 +110,6 @@ class TextualFactStore:
         ).fetchall()
         return tuple(_row_to_fact(row) for row in rows)
 
-
 def _row_to_fact(row: Any) -> TextualFact:
     return TextualFact(
         id=int(row["id"]),

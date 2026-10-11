@@ -197,6 +197,7 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
     agents_mod.run_agent_text(agent, "probe", tag="test-tag")
     record = _last_record()
     assert record["tag"] == "test-tag"
+    # 消息输入原样写入记录（#1897 T1 运输）
     assert record["messages"][0]["content"] == msg.content
     assert record["messages"][0]["reasoning_content"] == msg.reasoning_content
     assert record["messages"][0]["reasoning"] == msg.reasoning

@@ -105,6 +105,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         if not crime_raw.strip() and seed_guilt_fields["severity"] != "无":
             raise SystemExit(f"设定字段应为非空字符串：{seed_guilt_context}.crime")
         seed_guilt = {
+            # Free prose crime: preserve raw; strip only emptiness above (#1834 F16).
             "crime": crime_raw,
             "severity": str_field(seed_guilt_fields, "severity", seed_guilt_context),
         }
@@ -119,7 +120,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         status = str(item.get("status") or "active")
         office_type = str_field(item, "office_type", f"characters.json.characters[{idx}]")
-        status_reason = str(item.get("status_reason") or "").strip()
+        status_reason = str(item.get("status_reason") or "")
         # ADR 0009：在事者 office 必非空。离事者现职以 characters.json 为名分真源
         # （允许空 office 合法读取）；不在装载时二次洗职，也不解析 status_reason。
         if status in PERSON_OUSTED_STATUSES:
@@ -148,6 +149,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
             status=status,
+            # Free prose status_reason: preserve raw (#1834 F16).
             status_reason=status_reason,
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
@@ -601,6 +603,7 @@ def load_opening_legacies() -> List[OpeningLegacy]:
             modifiers=modifiers,
             narrative_hint=str_field(entry, "narrative_hint", path),
             clear_gate={str(k): str(v) for k, v in clear_gate.items()},
+            # Free prose clear_narrative: preserve raw (#1834 F16).
             clear_narrative=str(entry.get("clear_narrative") or ""),
         ))
     if not out:

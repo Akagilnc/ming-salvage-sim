@@ -87,7 +87,7 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(we
     assert row["status"] == "interrupted"
     assert row["error_pack_path"]
     assert [r["content"] for r in runtime.db.conn.execute("SELECT content FROM chat_messages WHERE role='user'")] == ["请奏"]
-    assert runtime._pending_writes_count == 0
+    assert runtime._runtime_write_queue().inflight_count() == 0
 
 
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(web_game, monkeypatch):
@@ -174,4 +174,4 @@ def test_nonstream_chat_rejects_when_session_draining(web_game):
 
     events = list(runtime.chat_stream("殿上", "边饷如何？"))
     assert events and events[0].get("type") == "error"
-    assert runtime._pending_writes_count == 0
+    assert runtime._runtime_write_queue().inflight_count() == 0

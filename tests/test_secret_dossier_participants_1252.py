@@ -9,8 +9,8 @@ import pytest
 from tests.conftest import with_monthly_reports
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.dossier_test_helpers import create_test_secret_order
+from tests.readback_helpers import active_character_name as _actor
 
-from tests.test_grant_reconciliation_567 import _actor
 def _people(db, count):
     rows = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT ?",
@@ -42,7 +42,6 @@ def test_s1_public_projection_filter_unchanged(game):
     assert all(str(row.get("action_type") or "") != "secret_order" for row in visible)
 
 # ── S2: 私字段 + 冻结授权 + apply ───────────────────────────
-
 
 
 
