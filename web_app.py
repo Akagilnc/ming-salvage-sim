@@ -470,7 +470,7 @@ def _exception_detail(exc: BaseException, prefix: str = "") -> Dict[str, Any]:
     cause = exc
     while cause.__cause__ is not None and not isinstance(cause, LLMUnavailable):
         cause = cause.__cause__
-    detail["error_type"] = type(cause).__name__
+    detail["error_type"] = getattr(cause, "error_type", None) or type(cause).__name__
     detail["reason"] = str(cause) or type(cause).__name__
     if isinstance(cause, BaseExceptionGroup):
         detail["reason"] = "；".join(str(sub) for sub in cause.exceptions)

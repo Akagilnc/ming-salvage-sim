@@ -320,6 +320,7 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
     assert out.tool_calls == []
+    assert out.content == runner_text
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):

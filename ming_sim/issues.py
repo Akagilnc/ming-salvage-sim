@@ -198,8 +198,10 @@ def _apply_authority_change_item(
 
     try:
         authority_id = _parse_sqlite_id(item.get("authority_id"))
-    except (TypeError, ValueError):
-        raise ValueError("unknown_authority_id") from None
+    except (TypeError, ValueError) as exc:
+        raise DecreeMaterializationValidationError(
+            str(exc), category="unknown_authority_id",
+        ) from exc
     if authority_id <= 0:
         raise ValueError("unknown_authority_id")
     record = db.get_authority(authority_id)
@@ -2572,8 +2574,8 @@ def _admit_transit_departure(
         return None, ("transit_to 地区不存在", "missing_ref")
     try:
         tone = normalize_travel_tone(item.get("行程语气"))
-    except ValueError:
-        return None, ("行程语气不在闭合枚举", "invalid_enum")
+    except ValueError as exc:
+        return None, (str(exc), "invalid_enum")
     previous_destination = str(row.get("transit_to") or "")
     if previous_destination and previous_destination != transit_to:
         return None, ("在途人物不可改道", "invalid_transition")
@@ -3479,8 +3481,8 @@ def _strategic_event_result_preflight_error(
             return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
         try:
             int(value)
-        except (TypeError, ValueError):
-            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
+        except (TypeError, ValueError) as exc:
+            return str(exc)
         return ""
 
     def _noop_error(kind: str, target_id: str, raw_field: object, value: object) -> str:
@@ -3793,11 +3795,8 @@ def _strategic_event_result_preflight_error(
                         current_tenure = str(row["appointment_tenure"] or "真除")
                         try:
                             target_tenure = appointment_tenure_from(item)
-                        except ValueError:
-                            return (
-                                f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
-                                f"{name}{action} 任别非白名单"
-                            )
+                        except ValueError as exc:
+                            return str(exc)
                         if (
                             target_office == current_office
                             and target_type == current_type
@@ -4173,10 +4172,10 @@ def apply_issue_tracker_output(
             # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit → ValueError（含 10**100 这类
             # int() 过得了但绑定 SQLite 抛 OverflowError 的脏 id，避免上抛崩整月，同 close_issues）。
             issue_id = _parse_sqlite_id(adv.get("issue_id"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
             applied_advances.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": f"advances issue_id 非法（非整数或超 SQLite 范围）：{adv.get('issue_id')!r}",
+                "reason": str(exc),
                 "item": adv,
             })
             continue
@@ -4883,10 +4882,10 @@ def apply_issue_tracker_output(
             # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit 范围 → ValueError（含 10**100
             # 这类 int() 过得了但绑定 SQLite 抛 OverflowError 的脏 id，避免上抛崩整月，codex r1）。
             issue_id = _parse_sqlite_id(cl.get("issue_id"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
             applied_closes.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": f"close_issues issue_id 非法（非整数或超 SQLite 范围）：{cl.get('issue_id')!r}",
+                "reason": str(exc),
                 "item": cl,
             })
             continue
@@ -6012,8 +6011,8 @@ def _apply_person_changes(
             # 别名归一已在动作分派前统一完成，确保任命与处置/行止/易主同口径。
             try:
                 appointment_tenure = appointment_tenure_from(item)
-            except ValueError:
-                applied.append(rejected(item, "任别非白名单", "invalid_enum"))
+            except ValueError as exc:
+                applied.append(rejected(item, str(exc), "invalid_enum"))
                 continue
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
@@ -6800,8 +6799,8 @@ def _apply_bandit_absorptions(
         raw_req = item.get("requested_count")
         try:
             requested = _strict_int(raw_req, accept_numeric_strings=False)
-        except (TypeError, ValueError):
-            _reject("invalid_enum", f"bandit_absorptions requested_count 非整数：{raw_req!r}")
+        except (TypeError, ValueError) as exc:
+            _reject("invalid_enum", str(exc))
             continue
         if requested <= 0:
             _reject("invalid_enum", f"bandit_absorptions requested_count 须为正整数：{requested!r}")
@@ -7475,10 +7474,10 @@ def _apply_score_extraction_body(
             continue
         try:
             did = _parse_sqlite_id(item.get("dossier_id"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
             authority_change_results.append({
                 "rejected": True, "category": "missing_dossier_source",
-                "reason": "missing_dossier_source", "item": item,
+                "reason": str(exc), "item": item,
             })
             continue
         if did <= 0:
@@ -7496,7 +7495,7 @@ def _apply_score_extraction_body(
             )
         except (TypeError, ValueError, KeyError) as exc:
             reason = str(exc)
-            category = "invalid_authority_change"
+            category = getattr(exc, "category", "invalid_authority_change")
             if reason in {
                 "missing_dossier_source",
                 "dossier_not_effect_eligible",
@@ -8571,9 +8570,9 @@ def _apply_score_extraction_body(
             continue
         try:
             real_id = _parse_sqlite_id(raw_id)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
-                                          "category": "invalid_enum", "reason": "order_id 非整数或超界"})
+                                          "category": "invalid_enum", "reason": str(exc)})
             continue
         # 未知/非 active 密令的副作用写不进（update 对非 active 直接返回）→ 须显式拒收，
         # 否则未知 id 被无脑 append 成功 = 静默报「已应用」（cmr secret-order r1 codex，#14）。

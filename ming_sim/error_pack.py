@@ -224,7 +224,7 @@ def write_error_pack(
         "period": getattr(state, "period", None),
         "version": _read_version(),
         "attempt": attempt,
-        "exception_type": type(exc).__name__,
+        "exception_type": getattr(exc, "error_type", None) or type(exc).__name__,
         "exception_message": str(exc),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

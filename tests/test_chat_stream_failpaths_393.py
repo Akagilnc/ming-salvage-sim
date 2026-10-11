@@ -693,7 +693,7 @@ def _provider_http_error_agent(status: int | None, message: str, *, http_hits: d
 
 def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game):
     """#1452 B / #1465：真实 web 流入口——无 typed status 的 RunErrorEvent
-    → 一次不重试、系统层 typed 终失败、provider_message 保真。"""
+    → 一次不重试，原始原因进入系统错误出口。"""
     agent = _RunErrorAgent()
     web_game, minister = _transport_web_game(game, agent, monkeypatch)
     calls = {"n": 0}
@@ -712,13 +712,11 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
     assert events, response.text
     assert events[-1][0] == "error"
     detail = events[-1][1]
-    assert detail.get("code") == "llm_stream_error"
+    assert detail.get("error_type") == "RuntimeError"
+    assert detail.get("code") is None
     assert detail.get("message")
-    assert "Unknown model error" in str(detail.get("provider_message") or "")
+    assert detail.get("reason") == "Unknown model error"
     assert calls["n"] == 1
-    attempts = detail.get("transport_attempts") or []
-    assert len(attempts) == 1
-    assert attempts[0].get("outcome") == "terminal_fail"
 
 
 
@@ -878,12 +876,10 @@ def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, g
     events = _parse_sse(response.text)
     assert events[-1][0] == "error"
     detail = events[-1][1]
-    assert detail.get("code") == "llm_stream_error"
+    assert detail.get("error_type") == "model_provider_error"
+    assert detail.get("code") is None
     assert detail.get("status_code") is None
     assert http_hits["n"] == 1
-    attempts = detail.get("transport_attempts") or []
-    assert len(attempts) == 1
-    assert attempts[0].get("outcome") == "terminal_fail"
 
 
 def test_chat_stream_typed_429_preserved(monkeypatch, game):
@@ -1142,7 +1138,7 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp(
 def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     monkeypatch, game,
 ):
-    """#1465 ④：流终包 status=ERROR → 真入口 SSE typed code + 横幅不进 message。
+    """#1465 ④：流终包 status=ERROR → 真入口 SSE 保留运行错误原因。
 
     replace 序由 halfstream_terminal_fail_replaces_temp 承担。
     """
@@ -1166,7 +1162,7 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
     detail = events[-1][1]
-    assert detail.get("code") == "llm_run_error"
+    assert detail.get("error_type") == "RuntimeError"
+    assert detail.get("code") is None
     assert detail.get("message"), detail
-    assert provider not in detail["message"]
-    assert detail.get("provider_message") == provider
+    assert detail.get("reason") == provider

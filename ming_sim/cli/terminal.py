@@ -94,8 +94,8 @@ def choose_minister(session: GameSession) -> Optional[Character]:
             # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
             try:
                 candidate = session.summon_character(raw)
-            except ValueError:
-                print("请输入有效编号或姓名。")
+            except ValueError as exc:
+                print(str(exc))
                 continue
         # 召对总闸 can_summon（含宗藩拒 + 非 active 拒）——按名/编号/模糊任一路解析到的人都过此闸，
         # 与 web /chat、LLM summon 工具同口径集中守（cmr R6：CLI 选臣菜单原先只查 status、漏宗藩）。
@@ -147,8 +147,8 @@ def _handle_court_command(
         # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
         try:
             target = session.summon_character(name_fragment, current)
-        except ValueError:
-            print("人物未建档，须先补档后方可召见。\n")
+        except ValueError as exc:
+            print(str(exc))
             return "handled"
         # #670：夜内换人与初选同吃 consume_audience_admission；场外/在途只落传召账，不返 summon:。
         decision = session.consume_audience_admission(

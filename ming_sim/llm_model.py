@@ -277,13 +277,9 @@ def extract_agent_text(run_output: object) -> str:
         text = ""
     else:
         text = str(content)
-    # #1299/#1310：治本在缝——ERROR status 翻 typed，错误串永不得进 content 当叙事。
-    # #1834 F26：不从成功正文词表猜认证/连接故障；只认结构化 status / 原生异常。
-    # #1465 ④ / P7 / ADR 0046：玩家可见走系统层人话，禁固定戏内话术；
-    # 机器横幅只进 provider_message（与 map_run_error_event 同权威）。
+    # ERROR is a failed run, not evidence of a model/provider failure.
     if _run_output_status_is_error(run_output):
         from ming_sim.llm_transport import (
-            ClassifiedFailure,
             take_remembered_typed_failure,
             transport_failure_unavailable,
         )
@@ -293,18 +289,7 @@ def extract_agent_text(run_output: object) -> str:
             raise transport_failure_unavailable(
                 remembered, attempts=1, exhausted=False,
             )
-        pmsg = text.strip() or "run status=ERROR"
-        raise transport_failure_unavailable(
-            ClassifiedFailure(
-                retryable=False,
-                code="llm_run_error",
-                status_code=None,
-                provider_message=pmsg,
-                message="LLM 调用失败。",
-            ),
-            attempts=1,
-            exhausted=False,
-        )
+        raise RuntimeError(text)
     return text
 
 

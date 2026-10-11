@@ -23,10 +23,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
 
   React.useEffect(() => {
     let alive = true;
-    void fetch("/api/history/turns").then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
-    }).then((data) => {
+    void api<{ turns: HistoryTurnItem[] }>("/api/history/turns").then((data) => {
       if (!alive) return;
       const list = ((data.turns || []) as HistoryTurnItem[]).filter((item) => item.kind === "night");
       setNights(list);
@@ -46,10 +43,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
     setTranslationRetries([]);
     setRetryError(null);
     setError("");
-    void fetch(`/api/audience/scroll?night_id=${selected.night_id}`).then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
-    }).then((data) => { if (alive) { setMessages(data.messages || []); setNightCharacters(data.characters || []); setPendingTranslationTurnIds(data.pending_translation_turn_ids || []); setTranslationRetries(data.translation_retries || []); } })
+    void api<any>(`/api/audience/scroll?night_id=${selected.night_id}`).then((data) => { if (alive) { setMessages(data.messages || []); setNightCharacters(data.characters || []); setPendingTranslationTurnIds(data.pending_translation_turn_ids || []); setTranslationRetries(data.translation_retries || []); } })
       .catch((reason) => { if (alive) setError(reason?.message || "加载失败"); });
     return () => { alive = false; };
   }, [selected]);
@@ -70,9 +64,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
         completedRetries.current.add(chatTurnId);
       }
       if (selectedNightId.current !== nightId) return;
-      const response = await fetch(`/api/audience/scroll?night_id=${nightId}`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
+      const data = await api<any>(`/api/audience/scroll?night_id=${nightId}`);
       if (selectedNightId.current !== nightId) return;
       setMessages(data.messages || []);
       setNightCharacters(data.characters || []);

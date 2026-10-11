@@ -354,7 +354,7 @@ def run_gazette_text(
     import json
 
     from ming_sim.agents import create_gazette_author_agent, parse_agent_json, run_agent_text
-    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.exceptions import LLMContractError, LLMUnavailable
     from ming_sim.llm_transport import audience_transport_policy
     from ming_sim.materials import release_material_tree
 
@@ -374,9 +374,9 @@ def run_gazette_text(
     title = data.get("title")
     report = data.get("report")
     if not isinstance(title, str) or not title.strip():
-        raise LLMUnavailable("邸报缺少作者标题", stage="gazette")
+        raise LLMContractError("邸报缺少作者标题", raw_value=data)
     if not isinstance(report, str) or not report.strip():
-        raise LLMUnavailable("邸报缺少正文", stage="gazette")
+        raise LLMContractError("邸报缺少正文", raw_value=data)
     return title, report
 
 
@@ -1300,10 +1300,7 @@ def run_secret_orders_supply(
         )
     finally:
         release_material_tree(prepared.root)
-    data = parse_agent_json(raw, "secret_orders_supply")
-    if not isinstance(data, dict):
-        raise LLMUnavailable("整月供料产物非有效 JSON 对象", stage="secret_orders_supply")
-    return data
+    return parse_agent_json(raw, "secret_orders_supply")
 
 
 def _step_4a_secret_order_supply(

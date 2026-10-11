@@ -405,19 +405,11 @@ def empty_output_failure() -> ClassifiedFailure:
 
 
 def run_error_event_failure(
-    content: object = None, status_code: object = None,
+    content: object, status_code: int,
 ) -> ClassifiedFailure:
-    """RunErrorEvent → 分类唯一构造。无 typed status 时不洗成瞬断（#1452）。"""
-    pmsg = str(content or "").strip() or "stream error"
+    """Classify only an event with an actual provider HTTP status."""
+    pmsg = str(content or "")
     status_i = _coerce_status(status_code)
-    if status_i is None:
-        return ClassifiedFailure(
-            retryable=False,
-            code="llm_stream_error",
-            status_code=None,
-            provider_message=pmsg,
-            message=f"LLM 流式调用失败：{pmsg}",
-        )
     return ClassifiedFailure(
         retryable=_status_retryable(status_i),
         code=f"llm_http_{status_i}",
@@ -444,15 +436,7 @@ def take_remembered_typed_failure() -> Optional[ClassifiedFailure]:
 
 
 def map_run_error_event(event: Any) -> Optional[BaseException]:
-    """RunErrorEvent → LLMUnavailable 单真源（agents/web 三处同权威；#12/#14）。
-
-    非 RunErrorEvent 返回 None。分类语义 = run_error_event_failure；
-    系统层出口 = transport_failure_unavailable。typed status 只认事件字段或
-    提供方层捕获的 status_code，不解析 content 散文。
-
-    提供方层已 typed 的失败（CLI 空转/空输出/瞬断等）由 _remember_typed_failure
-    在 model 调用边界记下：SDK 吞成散文事件后按记忆还原分类，禁在此重新猜语义。
-    """
+    """Preserve SDK facts; only identified transport failures are LLMUnavailable."""
     if type(event).__name__ != "RunErrorEvent":
         return None
     remembered = take_remembered_typed_failure()
@@ -462,6 +446,10 @@ def map_run_error_event(event: Any) -> Optional[BaseException]:
         )
     status = _typed_status_from_run_error_event(event)
     _typed_provider_status.set(None)
+    if status is None:
+        error = RuntimeError(getattr(event, "content", None) or "")
+        error.error_type = getattr(event, "error_type", None)
+        return error
     return transport_failure_unavailable(
         run_error_event_failure(
             getattr(event, "content", None), status_code=status,

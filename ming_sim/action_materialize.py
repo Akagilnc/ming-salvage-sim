@@ -271,7 +271,7 @@ def stage_punishment_candidate(
             linked_issue_id = strict_sqlite_id(issue_id)
         except (TypeError, ValueError) as exc:
             raise DecreeMaterializationValidationError(
-                f"issue_id 非法：{issue_id!r}",
+                str(exc),
                 failed_fields=("issue_id",),
                 category="invalid_shape",
             ) from exc
@@ -482,7 +482,7 @@ def require_grant_allocation_shape(
         amt = strict_int(amount, accept_numeric_strings=True)
     except ValueError as exc:
         raise _grant_shape_value_error(
-            f"grant 金钱 amount 须为正整数，拒 {amount!r}",
+            str(exc),
             field="amount",
             current=amount,
             expected=amount_expected,
@@ -590,15 +590,18 @@ class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
         self,
         *,
         field_failures: list,
+        reason: str | None = None,
     ) -> None:
         # 权威 require_explicit_xiexang_fields 一次给出完整事实；此处只携带
         facts = tuple(dict(f) for f in field_failures)
         fields = tuple(str(f["field"]) for f in facts)
         self.field_failures = facts
         super().__init__(
-            "拨饷旨意缺少结构化字段："
-            + "/".join(str(f) for f in fields)
-            + "（不猜散文）",
+            reason if reason is not None else (
+                "拨饷旨意缺少结构化字段："
+                + "/".join(str(f) for f in fields)
+                + "（不猜散文）"
+            ),
             failed_fields=fields,
         )
 
@@ -616,14 +619,16 @@ def require_explicit_xiexang_fields(
     from ming_sim.strict_types import strict_int
 
     facts: list = []
+    amount_error = None
 
     def _note(field: str, *, current: object, expected: object) -> None:
         facts.append({"field": field, "current": current, "expected": expected})
 
     try:
         n = strict_int(amount, accept_numeric_strings=False)
-    except ValueError:
-        n = 0  # Invalid model input joins the existing field-specific rejection below.
+    except ValueError as exc:
+        amount_error = exc
+        n = 0
     if n <= 0:
         _note("amount", current=amount, expected={"type": "positive_int"})
     # #1620：太仓→国库唯一权威 resolve_grant_account；此处不再平行 if。
@@ -651,7 +656,9 @@ def require_explicit_xiexang_fields(
             expected=["一次性", "每月", ""],
         )
     if facts:
-        raise IncompleteXiexangPayloadError(field_failures=facts)
+        raise IncompleteXiexangPayloadError(
+            field_failures=facts, reason=str(amount_error) if amount_error is not None else None,
+        ) from amount_error
     return {
         "amount": n,
         "account": canonical_account,
@@ -737,7 +744,7 @@ def _assignment_absolute_end_turn(
             return int(raw)
         except (TypeError, ValueError, OverflowError) as exc:
             raise DecreeMaterializationValidationError(
-                f"{field} must be a finite integer",
+                str(exc),
                 failed_fields=(field,),
                 category="invalid_shape",
             ) from exc
@@ -1099,8 +1106,10 @@ def _parse_revoke_decree_target(
     from ming_sim.strict_types import strict_sqlite_id
     try:
         tid = strict_sqlite_id(raw, accept_numeric_strings=True)
-    except (TypeError, ValueError):
-        return None
+    except (TypeError, ValueError) as exc:
+        raise DecreeMaterializationValidationError(
+            str(exc), failed_fields=("target_id",),
+        ) from exc
     if tid <= 0:
         return None
     if kind == "issue":
@@ -1118,8 +1127,10 @@ def _parse_revoke_decree_target(
                 linked = strict_sqlite_id(
                     origin.split(":", 1)[1], accept_numeric_strings=True,
                 )
-            except (TypeError, ValueError):
-                linked = 0
+            except (TypeError, ValueError) as exc:
+                raise DecreeMaterializationValidationError(
+                    str(exc), failed_fields=("target_id",),
+                ) from exc
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
         if linked <= 0:
             return None
@@ -1167,7 +1178,7 @@ def _resolve_pending_target_candidate(
         want_id = strict_sqlite_id(pointed, accept_numeric_strings=True)
     except (TypeError, ValueError) as exc:
         raise DecreeMaterializationValidationError(
-            "续办目标候选须为既有候选 id",
+            str(exc),
             failed_fields=("target_candidate",),
         ) from exc
     if want_id <= 0:

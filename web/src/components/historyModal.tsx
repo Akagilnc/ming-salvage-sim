@@ -1,6 +1,7 @@
 import React from "react";
 import { FullscreenModal } from "./hud";
 import type { HistoryDetail, HistoryTurnItem } from "../types";
+import { api } from "../api";
 
 export function HistoryModal({
   onClose,
@@ -22,9 +23,7 @@ export function HistoryModal({
     let alive = true;
     (async () => {
       try {
-        const resp = await fetch("/api/history/turns");
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
+        const data = await api<{ turns: HistoryTurnItem[] }>("/api/history/turns");
         if (!alive) return;
         const list: HistoryTurnItem[] = (data.turns || []).filter((item: HistoryTurnItem) => item.kind === "month");
         setTurns(list);
@@ -45,11 +44,7 @@ export function HistoryModal({
     setDetailLoading(true);
     setDetailError("");
     setDetail(null);
-    void fetch(`/api/history/turn/${selectedTurn}`)
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
+    void api<HistoryDetail>(`/api/history/turn/${selectedTurn}`)
       .then((data) => { if (alive) setDetail(data); })
       .catch((error) => { if (alive) setDetailError(error?.message || "加载失败"); })
       .finally(() => { if (alive) setDetailLoading(false); });

@@ -601,12 +601,12 @@ def _apply_economy_list(
         # bool/float，与 faction/region/army 同约）。no-op（可解析的 0/缺额）行无钱动 → 静默跳，
         # 不论 account（空占位行不当拒收，免噪声 + 假玩家提示，#14 cmr r1 线上 codex）。
         raw_delta = move.get("delta")
+        delta_error = None
         try:
             delta = 0 if raw_delta in (None, "") else _strict_int(raw_delta)
-            bad_delta = False
-        except (TypeError, ValueError):
-            delta, bad_delta = 0, True
-        if not bad_delta and delta == 0:
+        except (TypeError, ValueError) as exc:
+            delta, delta_error = 0, str(exc)
+        if delta_error is None and delta == 0:
             continue
         account = str(move.get("account") or "")
         if account not in ("国库", "内库"):
@@ -615,9 +615,9 @@ def _apply_economy_list(
                             "reason": f"economy_moves 账户非法（须 国库/内库）：{account!r}",
                             "item": move})
             continue
-        if bad_delta:
+        if delta_error is not None:
             applied.append({"account": account, "rejected": True, "category": "invalid_enum",
-                            "reason": f"economy_moves delta 非整数：{raw_delta!r}",
+                            "reason": delta_error,
                             "item": move})
             continue
         category = str(move.get("category") or move.get("reason") or "事项")
@@ -1233,14 +1233,13 @@ class DeltaApplyResult(NamedTuple):
     rejections: List[Dict[str, object]]
 
 
-def _value_reject(key: str, raw: object, item: object, field: str = "") -> Dict[str, object]:
+def _value_reject(key: str, reason: str, item: object, field: str = "") -> Dict[str, object]:
     """构造 faction/class 值级 invalid_enum 拒收项（坏值留痕，#14 模式 A）。
     item 载原始 delta 项（供恢复重放/诊断，ADR 决定 5「原 item 原样保留」）。"""
-    where = f"{field} " if field else ""
     out: Dict[str, object] = {
         "name": str(key), "rejected": True,
         "category": "invalid_enum",
-        "reason": f"「{key}」{where}值非整数：{raw!r}",
+        "reason": reason,
         "item": {str(key): item},
     }
     if field:
@@ -1276,8 +1275,8 @@ def _apply_faction_dict(
                     continue
                 try:
                     d = _strict_int(raw)
-                except (TypeError, ValueError):
-                    rejected.append(_value_reject(key, raw, val, fname))
+                except (TypeError, ValueError) as exc:
+                    rejected.append(_value_reject(key, str(exc), val, fname))
                     continue
                 if d != 0:
                     entry[fname] = d
@@ -1286,8 +1285,8 @@ def _apply_faction_dict(
         else:
             try:
                 d = _strict_int(val)
-            except (TypeError, ValueError):
-                rejected.append(_value_reject(key, val, val))
+            except (TypeError, ValueError) as exc:
+                rejected.append(_value_reject(key, str(exc), val))
                 continue
             if d != 0:
                 cleaned[str(key)] = d
@@ -1402,8 +1401,8 @@ def _apply_population_transfers(
             # 数量契约＝严格 int（含拒无损整数串）：extractor 提示明令直接输出数字，
             # 转移账不沿用 fiscal 的整数串宽容（#649 票面：amount 非 int 即拒）。
             amount = _strict_int(raw_amount, accept_numeric_strings=False)
-        except (TypeError, ValueError):
-            _reject("invalid_enum", f"population_transfers amount 非整数：{raw_amount!r}")
+        except (TypeError, ValueError) as exc:
+            _reject("invalid_enum", str(exc))
             continue
         if amount <= 0:
             _reject("invalid_enum", f"population_transfers amount 须为正整数：{amount!r}")
@@ -1541,8 +1540,8 @@ def _apply_class_dict(
                 continue
             try:
                 d = _strict_int(raw)
-            except (TypeError, ValueError):
-                rejected.append(_value_reject(key, raw, fields, fname))
+            except (TypeError, ValueError) as exc:
+                rejected.append(_value_reject(key, str(exc), fields, fname))
                 continue
             if d == 0:
                 continue

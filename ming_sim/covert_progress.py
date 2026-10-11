@@ -293,8 +293,8 @@ def canonicalize_delivery_unit(unit: object, target: object) -> tuple[str, float
     raw = str(unit or "").strip()
     try:
         qty = float(target)
-    except (TypeError, ValueError):
-        raise CovertContractError("密令确认缺少可数交付目标") from None
+    except (TypeError, ValueError) as exc:
+        raise CovertContractError(str(exc)) from exc
     if qty <= 0.0:
         raise CovertContractError("密令确认交付目标必须为正数")
     if raw not in CANONICAL_UNITS:
@@ -305,8 +305,8 @@ def canonicalize_delivery_unit(unit: object, target: object) -> tuple[str, float
 def _require_effect_sign(raw: object) -> int:
     try:
         sign = int(raw)
-    except (TypeError, ValueError):
-        raise CovertContractError("密令确认缺少效果符号") from None
+    except (TypeError, ValueError) as exc:
+        raise CovertContractError(str(exc)) from exc
     if sign not in (-1, 1):
         raise CovertContractError("密令确认效果符号须为 +1 或 -1")
     return sign
@@ -396,8 +396,8 @@ def build_covert_task_contract(
     if inv_target:
         try:
             qty = float(delivery_target_units)
-        except (TypeError, ValueError):
-            raise CovertContractError("密令确认缺少可数交付目标") from None
+        except (TypeError, ValueError) as exc:
+            raise CovertContractError(str(exc)) from exc
         if qty <= 0.0:
             raise CovertContractError("密令确认交付目标必须为正数")
         delivery = {
@@ -614,7 +614,7 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
             qty = float(delivery.get("target_units"))
         except (TypeError, ValueError) as exc:
             raise CovertContractError(
-                "持久 covert_task_contract：target_units 非法",
+                str(exc),
             ) from exc
         if qty <= 0.0:
             _reject("target_units 须为正")
@@ -625,12 +625,9 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
         if str(delivery.get("investigation_target") or "").strip() != inv_target:
             _reject("investigation_target 不一致")
         return copy.deepcopy(dict(raw))
-    try:
-        unit, target = canonicalize_delivery_unit(
-            delivery.get("unit"), delivery.get("target_units"),
-        )
-    except CovertContractError as exc:
-        raise CovertContractError(f"持久 covert_task_contract：{exc}") from exc
+    unit, target = canonicalize_delivery_unit(
+        delivery.get("unit"), delivery.get("target_units"),
+    )
     if delivery.get("effect_sign") not in (-1, 1):
         _reject("effect_sign 非法")
     if list(delivery.get("canonical_fields") or []) != canonical_fields_for_delivery(unit=unit):
@@ -673,7 +670,7 @@ def contract_target_units(contract: Mapping[str, object]) -> float:
     try:
         target = float(delivery.get("target_units"))
     except (TypeError, ValueError) as exc:
-        raise CovertContractError("typed contract 缺少可数目标") from exc
+        raise CovertContractError(str(exc)) from exc
     if target <= 0.0:
         raise CovertContractError("typed contract 目标必须为正数")
     return target
