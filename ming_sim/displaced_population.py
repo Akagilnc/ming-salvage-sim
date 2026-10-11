@@ -50,9 +50,7 @@ def apply_levy_driven_transfers(
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
     records: List[Dict[str, object]] = []
-    rows = db.conn.execute(
-        "SELECT id, fiscal, public_support FROM regions WHERE controlled_by='ming' ORDER BY id"
-    ).fetchall()
+    rows = db.regions.read_apply_levy_driven_transfers(())
     for row in rows:
         region_id = str(row["id"])
         try:
@@ -83,9 +81,11 @@ def apply_levy_driven_transfers(
         amount = int(round(raw_persons))
         if amount <= 0:
             continue
-        balance = int(db.conn.execute(
-            "SELECT population FROM classes WHERE name='农民' AND region_id=?", (region_id,)
-        ).fetchone()["population"])
+        balance = int(
+            db.classes.read_apply_population_transfers(("农民", region_id))[
+                "population"
+            ]
+        )
         amount = min(amount, balance)  # clamp：原语超余额即拒，先钳免噪音
         if amount <= 0:
             continue

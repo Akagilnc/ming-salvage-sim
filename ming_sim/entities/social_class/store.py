@@ -41,45 +41,6 @@ class ClassStore:
             (name, region_id, population, satisfaction, leverage, agenda),
         )
 
-    def set_satisfaction_leverage(
-        self,
-        *,
-        name: str,
-        region_id: str,
-        satisfaction: object,
-        leverage: object,
-    ) -> None:
-        self._conn.execute(
-            "UPDATE classes SET satisfaction = ?, leverage = ?, "
-            "updated_at = CURRENT_TIMESTAMP WHERE name = ? AND region_id = ?",
-            (satisfaction, leverage, name, region_id),
-        )
-
-    def add_population(self, *, name: str, region_id: str, delta: object) -> None:
-        """Apply a signed population delta. The caller has already capped it."""
-        self._conn.execute(
-            "UPDATE classes SET population = population + ?, "
-            "updated_at = CURRENT_TIMESTAMP WHERE name = ? AND region_id = ?",
-            (delta, name, region_id),
-        )
-
-    def append_transfer(
-        self,
-        *,
-        turn: int,
-        source: str,
-        target: str,
-        amount: int,
-        reason: str,
-        origin_ref: str,
-    ) -> None:
-        self._conn.execute(
-            "INSERT INTO population_transfer_ledger "
-            "(turn, source, target, amount, reason, origin_ref) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (int(turn), source, target, int(amount), reason, origin_ref),
-        )
-
     def read_surcharge_population_pool_members(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')", params).fetchall()
 
@@ -88,3 +49,64 @@ class ClassStore:
 
     def read_names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT DISTINCT name FROM classes', params)
+
+    def read_class_report(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT c.name, c.region_id, c.satisfaction, c.leverage, r.name AS region_name\n            FROM classes c\n            LEFT JOIN regions r ON r.id = c.region_id\n            WHERE c.region_id <> '' AND c.satisfaction <= 30 AND c.leverage >= 60\n            ORDER BY c.satisfaction ASC, c.leverage DESC\n            ",
+            params,
+        ).fetchall()
+
+    def read_adjust_classes(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT satisfaction, leverage FROM classes WHERE name = ? AND region_id = ?",
+            params,
+        ).fetchone()
+
+    def read_ordered_names(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT DISTINCT name FROM classes ORDER BY name", params
+        ).fetchall()
+
+
+    def read_apply_population_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT population FROM classes WHERE name=? AND region_id=?", params
+        ).fetchone()
+
+
+    def read_apply_recovery_driven_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM classes WHERE name='农民' AND region_id=?", params
+        ).fetchone()
+
+    def write_adjust_classes(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE classes SET satisfaction = ?, leverage = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name = ? AND region_id = ?",
+            params,
+        )
+
+    def write_apply_population_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name=? AND region_id=?",
+            params,
+        )
+
+    def record_population_transfer(
+        self, source_class: str, source_region: str,
+        target_class: str, target_region: str, amount: int,
+        *, turn: int, source: str, target: str, reason: str, origin_ref: str,
+    ) -> None:
+        """Write both population stocks and their one transfer in the caller's transaction."""
+        self.write_apply_population_transfers((amount, source_class, source_region))
+        self._conn.execute(
+            "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name=? AND region_id=?",
+            (amount, target_class, target_region),
+        )
+        self._conn.execute(
+            "INSERT INTO population_transfer_ledger "
+            "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
+            (turn, source, target, amount, reason, origin_ref),
+        )

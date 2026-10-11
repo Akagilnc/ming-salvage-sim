@@ -1,6 +1,5 @@
 """明制品级带与任命破格标记的确定性领域函数。"""
 from __future__ import annotations
-from ming_sim.entities.character.store import CharacterStore
 
 from typing import Any, Optional
 
@@ -178,10 +177,7 @@ def appointment_break_rank(
     target = str(new_office or "").strip()
     target_type = str(new_office_type or "").strip()
     new_band = office_rank_band(target, target_type)
-    row = db.conn.execute(
-        "SELECT office,office_type,status,reason_code FROM characters WHERE name=?",
-        (person,),
-    ).fetchone()
+    row = db.characters.read_appointment_break_rank((person,))
 
     historical = False
     current_title = ""
@@ -196,7 +192,7 @@ def appointment_break_rank(
             or (current_title == "听用候铨" and str(row["reason_code"] or "") == "被顶替")
         )
         if may_have_history:
-            archived = CharacterStore(db.conn).read_appointment_break_rank_o_office_title_SELECT_c_office_type((person,))
+            archived = db.characters.read_appointment_break_rank_o_office_title_SELECT_c_office_type((person,))
             if archived is not None and _is_substantive_office(
                 archived["office_title"], archived["office_type"]
             ):

@@ -80,36 +80,13 @@ class ChatMessageStore:
                 out.append(item)
         return out
 
-    def highlights(self, message_id: int) -> List[str]:
-        row = self._conn.execute(
-            "SELECT highlights_json FROM chat_messages WHERE id = ?",
-            (int(message_id),),
-        ).fetchone()
-        if row is None:
-            return []
-        return self.parse_highlights(row["highlights_json"])
 
     def content_of(self, message_id: int) -> Optional[str]:
-        row = self._conn.execute(
-            "SELECT content FROM chat_messages WHERE id=?",
-            (int(message_id),),
-        ).fetchone()
+        row = self.read_build_night_said_so_far((int(message_id),))
         if row is None:
             return None
         return str(row["content"] or "")
 
-    def scroll_row(self, message_id: int) -> Optional[Dict[str, object]]:
-        row = self._conn.execute(
-            "SELECT content, created_at, highlights_json FROM chat_messages WHERE id=?",
-            (int(message_id),),
-        ).fetchone()
-        if row is None:
-            return None
-        return {
-            "content": row["content"],
-            "created_at": row["created_at"],
-            "highlights_json": row["highlights_json"],
-        }
 
     def history_by_minister(self) -> Dict[str, List[Dict[str, str]]]:
         rows = self._conn.execute(
@@ -134,18 +111,22 @@ class ChatMessageStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def read_read_night_scroll(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT content,created_at,highlights_json FROM chat_messages WHERE id=?",
+            params,
+        ).fetchone()
 
-    def existing_ids(self, message_ids: Iterable[int]) -> List[int]:
-        ids = [int(message_id) for message_id in message_ids]
-        if not ids:
-            return []
-        placeholders = ",".join("?" for _ in ids)
-        rows = self._conn.execute(
-            f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
-            ids,
-        ).fetchall()
-        return [int(row["id"]) for row in rows]
+    def read_build_night_said_so_far(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT content FROM chat_messages WHERE id=?", params
+        ).fetchone()
 
+
+    def read_chat_message_speaker(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT minister_name FROM chat_messages WHERE id = ?", params
+        ).fetchone()
 
 
 class TurnReportStore:
@@ -221,18 +202,32 @@ class TurnReportStore:
             for row in rows
         ]
 
-    def presence_rows(self) -> List[Dict[str, object]]:
-        rows = self._conn.execute(
+
+    def read_previous_turn_reign_period_label(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT year, period, report FROM turn_reports WHERE turn = ?", params
+        ).fetchone()
+
+    def read_list_monthly_archives(self, params: Any = ()) -> Any:
+        return self._conn.execute(
             """
-            SELECT turn, year, period,
-                   CASE WHEN length(trim(COALESCE(report, ''), char(9)||char(10)||char(13)||' ')) > 0
-                        THEN 1 ELSE 0 END AS has_report,
-                   CASE WHEN length(trim(COALESCE(attendant_message, ''), char(9)||char(10)||char(13)||' ')) > 0
-                        THEN 1 ELSE 0 END AS has_attendant
-            FROM turn_reports
-            """
+                SELECT turn, MAX(year) AS year, MAX(period) AS period,
+                       MAX(has_report) AS has_report,
+                       MAX(has_attendant) AS has_attendant,
+                       MAX(has_directive) AS has_directive
+                FROM (
+                    SELECT turn, year, period,
+                           CASE WHEN length(trim(COALESCE(report, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_report,
+                           CASE WHEN length(trim(COALESCE(attendant_message, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_attendant,
+                           0 AS has_directive
+                    FROM turn_reports
+                    UNION ALL
+                    SELECT turn, year, period, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
+                )
+                GROUP BY turn ORDER BY turn
+                """,
+            params,
         ).fetchall()
-        return [dict(row) for row in rows]
 
 
 class ResolveContextStore:
@@ -287,10 +282,6 @@ class ResolveContextStore:
             (int(turn), decree_text, simulator_payload_json, source, attendant_message),
         )
 
-    def delete(self, turn: int) -> None:
-        self._conn.execute(
-            "DELETE FROM pending_resolve_context WHERE turn = ?", (int(turn),),
-        )
 
     def get(self, turn: int) -> Optional[Dict[str, object]]:
         row = self._conn.execute(

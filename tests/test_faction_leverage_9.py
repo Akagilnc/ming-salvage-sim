@@ -138,20 +138,20 @@ def test_restore_uses_new_office_weight_not_old(game):
     # 两人都退场（清各自权重），记基准
     db.set_character_status(state, name_hi, "dismissed", reason="清算")
     db.set_character_status(state, name_lo, "dismissed", reason="清算")
-    base_after_both_out = db.faction_leverage("阉党")
+    base_after_both_out = db.factions.faction_leverage("阉党")
 
     # name_lo 起复到地方(低权)
     result_lo = apply_office_appointment(
         db, state, content, name_lo, "某府知府",
         reason="起复地方", faction="阉党", region_id="henan",
     source=Provenance.system_simulation)
-    after_low = db.faction_leverage("阉党")
+    after_low = db.factions.faction_leverage("阉党")
 
     # name_hi 起复到内阁(高权)
     result_hi = apply_office_appointment(
         db, state, content, name_hi, "内阁大学士", reason="起复内阁", faction="阉党"
     , source=Provenance.system_simulation)
-    after_high = db.faction_leverage("阉党")
+    after_high = db.factions.faction_leverage("阉党")
 
     # cmr R3 finding#3 防假绿：两次任命都必须真落库（未被拒）——若低职任命被拒(inc_low=0)，
     # 高职任命成功仍满足 inc_high>inc_low，本测试会假绿（没真验「加的是新职权重」）。
@@ -208,7 +208,7 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     assert name is not None
     name = name["name"]
     db.set_character_status(state, name, "dismissed", reason="清算")
-    before = db.faction_leverage("阉党")
+    before = db.factions.faction_leverage("阉党")
 
     orig = db.set_character_office
 
@@ -229,7 +229,7 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     finally:
         db.set_character_office = orig  # type: ignore[assignment]
 
-    after = db.faction_leverage("阉党")
+    after = db.factions.faction_leverage("阉党")
     assert after == before, (
         f"失败任命回滚后阉党 leverage 应不变(before={before} after={after})"
     )
@@ -256,13 +256,13 @@ def test_displaced_minister_faction_leverage_recomputed(game):
     assert new_holder["faction"] == "东林", "孙承宗应为东林(≠阉党)"
     assert "兵部尚书" in (chong["office"] or ""), "崔呈秀应持兵部尚书(独占实职)"
 
-    before = db.faction_leverage("阉党")
+    before = db.factions.faction_leverage("阉党")
     result = apply_office_appointment(
         db, state, content, "孙承宗", "兵部尚书", reason="起复掌兵部", faction="东林"
     , source=Provenance.system_simulation)
     assert not isinstance(result, RejectedItem), result
     assert result.get("displaced"), f"应顶替崔呈秀的兵部尚书：{result}"
-    after = db.faction_leverage("阉党")
+    after = db.factions.faction_leverage("阉党")
     assert after < before, (
         f"被顶替者(崔呈秀)所属阉党 leverage 应在顶替后全重算下跌(before={before} after={after})"
     )
@@ -339,7 +339,7 @@ def test_add_character_appointment_lifts_faction_leverage(game):
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (new_name,)
     ).fetchone() is None, "测试用新人物不应已在册"
-    before = db.faction_leverage(faction)
+    before = db.factions.faction_leverage(faction)
     before_ws = db._faction_office_weight_sum(faction)
     result = apply_office_appointment(
         db, state, content, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
@@ -349,7 +349,7 @@ def test_add_character_appointment_lifts_faction_leverage(game):
     # 新成员确入册且 active/ming（add_character 落库成功），权重和随之上升。
     after_ws = db._faction_office_weight_sum(faction)
     assert after_ws > before_ws, f"新建大臣应使{faction}权重和上升(before={before_ws} after={after_ws})"
-    after = db.faction_leverage(faction)
+    after = db.factions.faction_leverage(faction)
     assert after > before, (
         f"经 add_character 新建大臣加入{faction}后 leverage 应上升(before={before} after={after})"
     )
@@ -535,7 +535,7 @@ def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
     互补：那条证机制、本条证生产 wiring（含 settle-tail reconcile）。"""
     db, state, content = game
     faction = "阉党"  # 白名单
-    before = db.faction_leverage(faction)
+    before = db.factions.faction_leverage(faction)
     before_turn = state.turn
 
     # faction_delta payload 真实 schema：顶层 key=faction_delta（canonical 英文；
@@ -556,7 +556,7 @@ def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
 
     # 结算后 turn 已推进（证明 settle-tail reconcile 在 next_period 之前已跑过整条路）。
     assert state.turn == before_turn + 1, "结算后回合应已推进（整条结算路跑完）"
-    after = db.faction_leverage(faction)
+    after = db.factions.faction_leverage(faction)
     # +8 已含进 offset → settle-tail recompute_all 算出的公式值已含 +8，不被抹回。
     assert after == before + 8, (
         f"白名单 faction_delta +8 经玩家月链（含结算尾 reconcile）后应留存、不被抹回"
@@ -632,12 +632,12 @@ def test_power_id_defection_drops_faction_leverage_immediately(game):
     ).fetchone()
     assert row is not None, "阉党需有握高权官的 active ming 成员"
     name = row["name"]
-    before = db.faction_leverage("阉党")
+    before = db.factions.faction_leverage("阉党")
     # 直接调 apply_character_power_changes（power_id 翻转落库入口），不走结算路
     db.apply_character_power_changes(
         [{"name": name, "new_power": "houjin", "reason": "通虏投敌"}]
     , source=Provenance.system_simulation)
-    after = db.faction_leverage("阉党")
+    after = db.factions.faction_leverage("阉党")
     assert after < before, (
         f"投敌后原派系 leverage 应即时下跌（不等 reconcile）：before={before} after={after}"
     )

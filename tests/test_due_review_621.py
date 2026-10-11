@@ -620,7 +620,7 @@ def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
         state, "国库", -3, "清丈经费", "履行期逐月已落",
         origin_ref=f"dossier:{dossier_id}", commit=True,
     )
-    before_moves = db.reign.list_economy_moves_for_dossier(dossier_id)
+    before_moves = db.reign.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")
     assert before_moves
     stages = [{
         "stage_idx": 0,
@@ -644,7 +644,7 @@ def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
 
     dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] == "fulfilled"
-    after_moves = db.reign.list_economy_moves_for_dossier(dossier_id)
+    after_moves = db.reign.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")
     assert after_moves == before_moves
 
 

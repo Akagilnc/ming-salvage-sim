@@ -44,7 +44,7 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
 
     monkeypatch.setattr(db, "army_report", forbidden)
     monkeypatch.setattr(db, "treasury_report", forbidden)
-    monkeypatch.setattr(db, "get_faction_stance_summaries", forbidden)
+    monkeypatch.setattr(db.factions, "get_faction_stance_summaries", forbidden)
 
     view = db.get_character_knowledge(state, minister.name)["world"]
     assert db.characters.current_court_rows(state.year, state.period)
@@ -699,7 +699,7 @@ def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkey
     def forbidden(*_a, **_k):
         raise AssertionError("unauthorised faction_report")
 
-    monkeypatch.setattr(db, "get_faction_stance_summaries", forbidden)
+    monkeypatch.setattr(db.factions, "get_faction_stance_summaries", forbidden)
     previous = content.characters["王承恩"]
     messenger = content.characters["曹化淳"]
     db.set_character_office(previous.name, "内廷随侍", "内廷")

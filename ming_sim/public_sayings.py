@@ -12,12 +12,10 @@ from ming_sim.models import (
     require_persistent_string_list,
 )
 
-import json
 from typing import Any, Iterable
 
 from ming_sim.applier import connection_owns_transaction
 
-SOURCE_PREFIX = "public_saying:"
 LAYER_TITLE = "有此说法"
 
 
@@ -42,27 +40,9 @@ def record_public_saying(
     text = body
     affair = affair_ref.strip()
     people = _character_names(involved_characters)
-    people_json = json.dumps(people, ensure_ascii=False)
     owns = bool(commit) and connection_owns_transaction(db.conn)
-    cur = db.conn.execute(
-        "INSERT INTO public_sayings "
-        "(turn, year, period, body, involved_characters, affair_ref, source_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            int(state.turn),
-            int(state.year),
-            int(state.period),
-            text,
-            people_json,
-            affair,
-            f"{SOURCE_PREFIX}pending",
-        ),
-    )
-    saying_id = int(cur.lastrowid)
-    source_id = f"{SOURCE_PREFIX}{saying_id}"
-    db.conn.execute(
-        "UPDATE public_sayings SET source_id=? WHERE id=?",
-        (source_id, saying_id),
+    saying_id = db.character_knowledge.insert_public_saying(
+        state.turn, state.year, state.period, text, people, affair,
     )
     if owns:
         db.conn.commit()
@@ -85,7 +65,6 @@ def _json_name_list(raw: object) -> list[str]:
     return _load_durable_str_list(raw)
 
 
-
 def _row_as_saying(row: Any) -> dict[str, object]:
     return {
         "id": int(row["id"]),
@@ -105,10 +84,7 @@ def list_public_sayings(
     involved_character: str | None = None,
     affair_ref: str | None = None,
 ) -> list[dict[str, object]]:
-    rows = db.conn.execute(
-        "SELECT id, turn, year, period, body, involved_characters, affair_ref, source_id "
-        "FROM public_sayings ORDER BY id"
-    ).fetchall()
+    rows = db.character_knowledge.read_list_public_sayings()
     result = [_row_as_saying(row) for row in rows]
     if involved_character is not None:
         name = str(involved_character).strip()

@@ -21,7 +21,6 @@ import math
 from typing import Dict, List, Optional, Tuple
 
 from ming_sim.assets import format_wanliang_amount
-from ming_sim.entities.army.store import ArmyStore
 from ming_sim.constants import SALARY_RATE_ANCHOR, TURN_UNIT
 from ming_sim.db import GameDB, mutiny_loyalty_cap
 from ming_sim.models import GameState
@@ -160,8 +159,8 @@ def _clear_zero_manpower_mutiny_latch(db: "GameDB", state: "GameState", row) -> 
     if not int(row["is_mutinied"] or 0):
         return
     army_id = str(row["id"])
-    ArmyStore(db.conn).update(army_id, {"is_mutinied": 0})
-    ArmyStore(db.conn).append_log({
+    db.armies.update(army_id, {"is_mutinied": 0})
+    db.armies.append_log({
         "turn": state.turn, "year": state.year, "period": state.period,
         "army_id": army_id, "field": "is_mutinied",
         "old_value": "1", "new_value": "0", "delta": -1,
@@ -184,7 +183,7 @@ def _maybe_third_strike_defect(
     """
     if not (bool(new_latched) and int(new_mutiny_count) >= 3):
         return False
-    row = ArmyStore(db.conn).row(army_id)
+    row = db.armies.row(army_id)
     if row is None:
         return False
     # 已非明军则不重复转移
@@ -225,7 +224,7 @@ def settle_hub_central_army_pay(
             # 本缝是其连续缺口计数唯一 owner——零有效 Due 月亦按「本月缺口=0」归零。
             # 不入 shortfall/due 月桥、不改 central_pay_arrears、不跑 morale/流水。
             if float(row["province_pay_share"] or 0) <= 0:
-                ArmyStore(db.conn).update(
+                db.armies.update(
                     army_id, {"consecutive_pay_shortfall_months": 0}, touch=False,
                 )
             continue
@@ -250,14 +249,14 @@ def settle_hub_central_army_pay(
             # so this is their existing monthly settlement owner seam.
             months = int(row["consecutive_pay_shortfall_months"] or 0)
             months = months + 1 if shortfall > 1e-9 else 0
-            ArmyStore(db.conn).update(
+            db.armies.update(
                 army_id, {"consecutive_pay_shortfall_months": months}, touch=False,
             )
             # #653：折发后中央份额应得额（无折＝原值）；morale 公式不变，只吃折后 Due。
             morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
         new_morale = max(0, min(100, old_morale + morale_delta))
 
-        ArmyStore(db.conn).update(
+        db.armies.update(
             army_id,
             {
                 "central_pay_arrears": central_arrears,
@@ -271,7 +270,7 @@ def settle_hub_central_army_pay(
             )
         else:
             reason_tag = f"{TURN_UNIT}中央军饷足额"
-        ArmyStore(db.conn).append_logs([
+        db.armies.append_logs([
             {
                 "turn": state.turn, "year": state.year, "period": state.period,
                 "army_id": army_id, "field": "arrears",
@@ -305,7 +304,7 @@ def settle_hub_army_loyalty_tick(db: "GameDB", state: "GameState") -> None:
 
     欠饷以两源合计为准（arrears 列滞后时以 province+central 合计纠偏）。
     """
-    loyalty_rows = ArmyStore(db.conn).read_apply_fixed_period_flows_id_name_manpower_salary_rate_owner_power_arrears_province_pay_arr()
+    loyalty_rows = db.armies.read_apply_fixed_period_flows_id_name_manpower_salary_rate_owner_power_arrears_province_pay_arr()
     for lr in loyalty_rows:
         full_needed_loyalty = army_needed(lr)
         if full_needed_loyalty <= 0:
@@ -340,7 +339,7 @@ def settle_hub_army_loyalty_tick(db: "GameDB", state: "GameState") -> None:
             full_pay_streak=int(lr["full_pay_streak"]),
             redemption_count=int(lr["redemption_count"]),
         )
-        ArmyStore(db.conn).update(
+        db.armies.update(
             army_id_loyalty,
             {
                 "loyalty": new_loyalty_val,
@@ -352,7 +351,7 @@ def settle_hub_army_loyalty_tick(db: "GameDB", state: "GameState") -> None:
             },
         )
         loyalty_reason_unified = _army_loyalty_reason(new_arrears_loyalty, full_needed_loyalty)
-        ArmyStore(db.conn).append_logs([
+        db.armies.append_logs([
             {
                 "turn": state.turn, "year": state.year, "period": state.period,
                 "army_id": army_id_loyalty, "field": "loyalty",
@@ -407,7 +406,7 @@ def _auto_pay_arrears_by_priority(
         else None
     )
     # arrears = province + central 生成合计；既有 Store 读口按 arrears>0 取应付池。
-    rows = ArmyStore(db.conn).read_auto_pay_arrears_by_priority()
+    rows = db.armies.read_auto_pay_arrears_by_priority()
     if allowed_ids is not None:
         rows = [row for row in rows if str(row["id"]) in allowed_ids]
     army_map = {str(r["id"]): r for r in rows}
@@ -485,7 +484,7 @@ def _pay_single_army_arrears(
     province_new = max(0.0, province_old - province_pay)
     central_new = max(0.0, central_old - central_pay)
     new_arrears = province_new + central_new
-    ArmyStore(db.conn).update(
+    db.armies.update(
         str(row["id"]),
         {
             "province_pay_arrears": province_new,
@@ -493,7 +492,7 @@ def _pay_single_army_arrears(
         },
         touch=False,
     )
-    ArmyStore(db.conn).append_log({
+    db.armies.append_log({
         "turn": state.turn, "year": state.year, "period": state.period,
         "army_id": str(row["id"]), "field": "arrears",
         "old_value": str(current_arrears), "new_value": str(new_arrears),

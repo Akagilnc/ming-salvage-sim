@@ -150,7 +150,7 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch)
     for origin in origins:
         if origin != origins[3]:
             stage_declaration(db, decree_ref=origin, turn=int(state.turn), declaration={"textual_facts": []}, forecast_text=origin)
-            db.staged_declarations.mark_settled(origin)
+            db.staged_declarations.mark_terminal(origin)
         db.textual_facts.append(subject_kind="character", subject_id=name, body=f"fact:{origin}", year=state.year, period=state.period, turn=state.turn, origin_ref=origin)
         db.conn.execute("INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,origin_ref) VALUES (?,?,?,'国库',-1,1,'测试',?,?)", (state.turn,state.year,state.period,f"ledger:{origin}",origin))
         collector = RejectionCollector()

@@ -11,8 +11,6 @@
 
 from __future__ import annotations
 from ming_sim.staged_commitment import normalize_commitment_stages
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.issue.store import IssueStore
 
 from ming_sim.participant_roster import decode_durable_participant_roster
 
@@ -68,9 +66,8 @@ def derive_opportunity_band(durable_effects: object) -> str:
 
 
 def _parse_payload(raw: object) -> Dict[str, object]:
-    """催办史 payload 读路：与 GameDB.parse_engine_payload_json 合一；腐坏响亮。"""
-    from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(raw)
+    """催办史 payload 读路：与 applier.parse_engine_payload_json 合一；腐坏响亮。"""
+    return parse_engine_payload_json(raw)
 
 
 def _payload_int(payload: Dict[str, object], key: str, default: int = 0) -> int:
@@ -88,16 +85,9 @@ def collect_urge_history(
     """催办史：committed pending_actions(action=催办)。缺源=[]。"""
     out: List[Dict[str, object]] = []
     # 承诺/案卷层
-    rows = db.conn.execute(
-        """
-        SELECT id, turn, kind, action, target_id, payload_json, status
-        FROM pending_actions
-        WHERE status='committed' AND action=?
-          AND kind=? AND target_id=?
-        ORDER BY turn, id
-        """,
-        (URGE_PENDING_ACTION, URGE_PENDING_KIND_COMMITMENT, int(commitment_ref)),
-    ).fetchall()
+    rows = db.dossiers.urge_history(
+        URGE_PENDING_ACTION, URGE_PENDING_KIND_COMMITMENT, int(commitment_ref)
+    )
     for row in rows:
         payload = _parse_payload(row["payload_json"])
         out.append({
@@ -121,16 +111,7 @@ def collect_urge_history(
         if isinstance(dossier, dict):
             so_id = int(dossier.get("secret_order_id") or 0)
         if so_id > 0:
-            so_rows = db.conn.execute(
-                """
-                SELECT id, turn, kind, action, target_id, payload_json, status
-                FROM pending_actions
-                WHERE status='committed' AND action=?
-                  AND kind='secret_order' AND target_id=?
-                ORDER BY turn, id
-                """,
-                (URGE_PENDING_ACTION, so_id),
-            ).fetchall()
+            so_rows = db.dossiers.urge_history(URGE_PENDING_ACTION, "secret_order", so_id)
             for row in so_rows:
                 payload = _parse_payload(row["payload_json"])
                 out.append({
@@ -163,7 +144,7 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
     if dossier_id is not None:
         dossier = db.dossiers.get(int(dossier_id))
         if isinstance(dossier, dict):
-            # get_decree_dossier 已解码名册为 list[dict]。
+            # DossierStore.get 已解码名册为 list[dict]。
             roster = dossier.get("participant_roster") or []
             for item in roster:
                 if item.get("tier") == "主办":
@@ -171,10 +152,7 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
                     if name:
                         break
     if not name:
-        row = db.conn.execute(
-            "SELECT participants, participant_roster FROM issues WHERE id=?",
-            (int(commitment_ref),),
-        ).fetchone()
+        row = db.issues.read_resolve_host_character((int(commitment_ref),))
         if row is not None:
             roster = decode_durable_participant_roster(row["participant_roster"])
             for item in roster:
@@ -188,10 +166,7 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
                     name = parts[0].strip()
     integrity, courage = 50, 50
     if name:
-        crow = db.conn.execute(
-            "SELECT integrity, courage FROM characters WHERE name=?",
-            (name,),
-        ).fetchone()
+        crow = db.characters.read_resolve_host_character((name,))
         if crow is not None:
             integrity = int(crow["integrity"])
             courage = int(crow["courage"])
@@ -219,24 +194,24 @@ def _record_commitment_urge(
         "tightness": tightness,
         "reason": str(reason or ""),
     }
-    db.conn.execute(
-        """
-        INSERT INTO pending_actions
-            (turn, kind, action, target_id, minister_name, payload_json, status)
-        VALUES (?, ?, ?, ?, '', ?, 'committed')
-        """,
+    db.dossiers.insert_pending_action(
         (
-            int(getattr(state, "turn", 0) or 0),
+            int(getattr(state, 'turn', 0) or 0),
             URGE_PENDING_KIND_COMMITMENT,
             URGE_PENDING_ACTION,
             int(commitment_ref),
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        ),
+            '',
+            json.dumps(payload, ensure_ascii=False, separators=(',', ':')),
+            'committed',
+            0,
+            0,
+            0,
+        )
     )
 
 
 def _issue_exists(db: Any, commitment_ref: int) -> bool:
-    row = IssueStore(db.conn).read_issue_exists((int(commitment_ref),))
+    row = db.issues.read_issue_exists((int(commitment_ref),))
     return row is not None
 
 
@@ -265,10 +240,7 @@ def rush_staged_commitment_stage(
             item={"commitment_ref": int(commitment_ref)},
         )
 
-    row = db.conn.execute(
-        "SELECT id, stages_json, status, commitment_kind FROM issues WHERE id=?",
-        (int(commitment_ref),),
-    ).fetchone()
+    row = db.issues.read_rush_staged_commitment_stage((int(commitment_ref),))
     if str(row["status"] or "") != "active":
         raise PendingActionRefusal(
             f"承诺 issue#{int(commitment_ref)} 状态 {row['status']}，不能催办",
@@ -315,14 +287,7 @@ def rush_staged_commitment_stage(
     stages_blob = stages_to_json(stages)
 
     # 唯一写口：stages_json[].due_turn。禁侧写 issues.end_turn（票面单口 + #620 不落 DB）。
-    db.conn.execute(
-        """
-        UPDATE issues
-        SET stages_json=?, updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (stages_blob, int(commitment_ref)),
-    )
+    db.issues.update(int(commitment_ref), {"stages_json": stages_blob})
 
     # 真正空串才回落缺省；合法空白原文原样运输，禁 strip 改字（#1897）。
 

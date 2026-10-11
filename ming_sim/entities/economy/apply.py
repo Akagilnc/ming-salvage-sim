@@ -149,9 +149,7 @@ def _apply_economy_list(
             rejections.append(RejectedItem(item=move, reason="economy_moves 补饷必须指定 target_kind='army' 与有效 target_id", category="missing_ref", source=source))
             continue
         if purpose == "补饷" and target_kind == "army" and delta < 0 and raw_target_id:
-            row = db.conn.execute(
-                "SELECT * FROM armies WHERE id = ?", (raw_target_id,)
-            ).fetchone()
+            row = db.armies.row(raw_target_id)
             if row is None:
                 rejections.append(RejectedItem(item=move, reason=f"economy_moves 补饷目标军队未入库：{raw_target_id}", category="missing_ref", source=source))
                 continue

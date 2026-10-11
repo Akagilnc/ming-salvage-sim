@@ -38,9 +38,6 @@ def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[s
 class ArmyStore:
     """Single write port for an army and its change log."""
 
-    def ordered_ids(self) -> list[str]:
-        return [str(row["id"]) for row in self._conn.execute("SELECT id FROM armies ORDER BY id").fetchall()]
-
     def field_row(self, field: str, army_id: str) -> Any:
         """Read a schema field already validated by the gate/subject consumer."""
         return self._conn.execute(f"SELECT {field} FROM armies WHERE id=?", (army_id,)).fetchone()
@@ -96,23 +93,11 @@ class ArmyStore:
         )
 
 
-    def delete(self, army_id: str) -> int:
-        cursor = self._conn.execute("DELETE FROM armies WHERE id=?", (army_id,))
-        return int(cursor.rowcount or 0)
-
     def has_any(self) -> bool:
         return self._conn.execute("SELECT 1 FROM armies LIMIT 1").fetchone() is not None
 
     def row(self, army_id: str) -> Any:
         return self._conn.execute('SELECT * FROM armies WHERE id = ?', (army_id,)).fetchone()
-
-    def ordered_rows(self, *, limit: int | None = None) -> Any:
-        sql = "SELECT * FROM armies ORDER BY theater, name"
-        params = ()
-        if limit is not None:
-            sql += " LIMIT ?"
-            params = (limit,)
-        return self._conn.execute(sql, params).fetchall()
 
     def read_auto_pay_arrears_by_priority(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM armies WHERE owner_power='ming' AND arrears>0", params).fetchall()
@@ -122,3 +107,152 @@ class ArmyStore:
 
     def read_army_register(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name,manpower FROM armies WHERE owner_power='ming' ORDER BY name", params).fetchall()
+
+
+    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, name FROM armies ORDER BY id", params
+        ).fetchall()
+
+    def read_initialize_army_pay_source_spine(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT id, owner_power, arrears, pay_source_region,\n                   province_pay_share, central_pay_share, is_tusi, self_funded_pay\n            FROM armies\n            ORDER BY id\n            ",
+            params,
+        ).fetchall()
+
+    def read_has_complete_province_pay_containers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT DISTINCT pay_source_region\n            FROM armies\n            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n              AND pay_source_region != ''\n              AND (province_pay_share > 0 OR province_pay_arrears > 0)\n            ",
+            params,
+        ).fetchall()
+
+    def read_assert_army_pay_source_container_conservation(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "\n            SELECT id, province_pay_share, central_pay_share,\n                   province_pay_arrears, central_pay_arrears, arrears\n            FROM armies\n            WHERE (owner_power != 'ming' OR is_tusi != 0 OR self_funded_pay != 0)\n              AND (\n                ABS(COALESCE(province_pay_share, 0)) > 1e-9 OR\n                ABS(COALESCE(central_pay_share, 0)) > 1e-9 OR\n                ABS(COALESCE(province_pay_arrears, 0)) > 1e-9 OR\n                ABS(COALESCE(central_pay_arrears, 0)) > 1e-9 OR\n                ABS(COALESCE(arrears, 0)) > 1e-9\n              )\n            ORDER BY id\n            LIMIT 1\n            ",
+            params,
+        ).fetchone()
+
+    def read_assert_army_pay_source_container_conservation_id_pay_source_region(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "\n            SELECT id, pay_source_region\n            FROM armies\n            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n              AND (\n                ABS(COALESCE(province_pay_share, 0)) > 1e-9 OR\n                ABS(COALESCE(province_pay_arrears, 0)) > 1e-9\n              )\n            ORDER BY id\n            ",
+            params,
+        ).fetchall()
+
+    def read_assert_army_pay_source_container_conservation_COALESCE_SUM_province_pay_arrears_0_AS_province_total_COALESCE_SU(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "\n            SELECT\n              COALESCE(SUM(province_pay_arrears), 0) AS province_total,\n              COALESCE(SUM(central_pay_arrears), 0) AS central_total,\n              COALESCE(SUM(arrears), 0) AS army_total\n            FROM armies\n            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n            ",
+            params,
+        ).fetchone()
+
+    def read_army_pay_source_rows_for_region(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, morale,\n                   province_pay_share, central_pay_share, province_pay_arrears,\n                   central_pay_arrears, is_tusi, self_funded_pay\n            FROM armies\n            WHERE pay_source_region = ? AND owner_power = 'ming'\n              AND is_tusi = 0 AND self_funded_pay = 0\n              AND province_pay_share > 0\n            ORDER BY id\n            ",
+            params,
+        ).fetchall()
+
+    def read_army_report(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT SUM(manpower) AS total FROM armies", params
+        ).fetchone()
+
+    def read_army_roster(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name",
+            params,
+        ).fetchall()
+
+    def read_reconcile_central_army_pay_arrears_container(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "\n            SELECT COALESCE(SUM(central_pay_arrears), 0) AS total\n            FROM armies\n            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n            ",
+            params,
+        ).fetchone()
+
+    def read_reconcile_region_army_pay_container(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT COALESCE(SUM(province_pay_arrears), 0) AS total\n            FROM armies\n            WHERE pay_source_region = ? AND owner_power = 'ming'\n              AND is_tusi = 0 AND self_funded_pay = 0\n            ",
+            params,
+        ).fetchone()
+
+    def read_army_rows(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT * FROM armies", params).fetchall()
+
+    def read_create_armies_from_extraction(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, name FROM armies WHERE id = ? OR name = ?", params
+        ).fetchone()
+
+    def read_assert_commission_grant_target_exists(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT 1 FROM armies WHERE id=?", params).fetchone()
+
+    def read_apply_extracted_army_delta(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", params
+        ).fetchone()
+
+    def read_compute_budget_lines(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n        SELECT id, manpower, salary_rate, owner_power, central_pay_share,\n               pay_source_region\n        FROM armies\n        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n          AND central_pay_share > 0\n        ",
+            params,
+        ).fetchall()
+
+    def read_apply_fixed_period_flows(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n        SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,\n               pay_source_region, province_pay_share, central_pay_share,\n               province_pay_arrears, central_pay_arrears, consecutive_pay_shortfall_months,\n               is_tusi, self_funded_pay\n        FROM armies\n        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n          AND central_pay_share > 0\n        ",
+            params,
+        ).fetchall()
+
+    def read_apply_fixed_period_flows_id_manpower_salary_rate_owner_power_is_mutinied_mutiny_count(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT id, manpower, salary_rate, owner_power, is_mutinied, mutiny_count FROM armies",
+            params,
+        ).fetchall()
+
+    def read_world(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id,name FROM armies WHERE commander=? OR controller=? ORDER BY name",
+            params,
+        ).fetchall()
+
+
+    def write_apply_region_army_pay_tick(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n                UPDATE armies\n                SET province_pay_arrears = ?,  morale = ?,\n                    consecutive_pay_shortfall_months = CASE\n                        WHEN ? > 1e-9 THEN consecutive_pay_shortfall_months + 1 ELSE 0 END,\n                    updated_at = CURRENT_TIMESTAMP\n                WHERE id = ?\n                ",
+            params,
+        )
+
+    def read_assert_army_pay_source_container_conservation_armies(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            """
+                SELECT id, arrears, province_pay_arrears, central_pay_arrears
+                FROM armies
+                WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+                  AND ABS(
+                    COALESCE(arrears, 0)
+                    - (COALESCE(province_pay_arrears, 0) + COALESCE(central_pay_arrears, 0))
+                  ) > 1e-6
+                ORDER BY id
+                LIMIT 1
+                """,
+            params,
+        ).fetchone()
+
+
+    def ordered_rows(self, *, limit: int | None = None) -> Any:
+        sql = "SELECT * FROM armies ORDER BY theater, name"
+        params = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        return self._conn.execute(sql, params).fetchall()

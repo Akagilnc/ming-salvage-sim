@@ -22,20 +22,17 @@ boundary and travel with the row that carries the content.
 from __future__ import annotations
 
 import json
-import re
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
-from uuid import uuid4
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
+from ming_sim.entities.column_write import upsert_by_pk
 from ming_sim.applier import (
     StoredDocumentError,
     durable_int,
-    load_stored_json,
     load_stored_list,
-    load_stored_object,
     safe_json_dumps,
 )
-from ming_sim.participant_roster import participant_roster_names
-from ming_sim.entities.column_write import upsert_by_pk
+
+PUBLIC_SAYING_SOURCE_PREFIX = "public_saying:"
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS character_knowledge_events (
@@ -72,81 +69,50 @@ CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
     ON character_knowledge_sources(turn, id);
 """
 
-# Source-id shapes that identify a private brief.
-_SECRET_ORDER_SOURCE = re.compile(r"secret_order_brief:(\d+)")
-_PUBLIC_SAYING_SOURCE = re.compile(r"public_saying:(\d+)")
-
-
-def source_is_blank(source_id: object = "") -> bool:
-    """True only when source_id has no non-whitespace content."""
-    return not str(source_id or "").strip()
-
-
-def source_identity(source_id: str = "") -> str:
-    """Durable source identity for knowledge writes.
-
-    Explicit identity (any non-blank string) is returned byte-for-byte so write
-    and delete/lookup stay on the same key. Only a blank id is replaced: mint a
-    unique structured token. Never derive identity from free title/body, and
-    never strip or rewrite a provided non-blank id.
-    """
-    raw = str(source_id or "")
-    if not source_is_blank(raw):
-        return raw
-    return f"knowledge:{uuid4().hex}"
-
-
 def ensure_schema(conn: Any) -> None:
     conn.executescript(_SCHEMA_SQL)
 
 
-def _names(values: Optional[Iterable[str]]) -> List[str]:
-    """De-duplicated, order-preserving list of non-empty names."""
-    return list(dict.fromkeys(
-        str(v).strip() for v in (values or []) if str(v).strip()
-    ))
-
-
-
-
-def _load_list(raw: object) -> List[str]:
-    parsed = load_stored_list(raw, label="角色见闻名单")
-    if any(not isinstance(item, str) for item in parsed):
-        raise ValueError("名单成员须为文字")
-    return parsed
-
-
-
-
 _SNAPSHOT_COLUMNS = {
-    "secret_orders": frozenset({
-        "id", "turn_issued", "due_turn", "deadline_span", "year_issued", "period_issued",
-        "minister_name", "title", "content", "tags", "importance", "status", "result",
-        "dossier_progress_json",
-        "turn_closed", "created_at", "updated_at",
-    }),
-    "public_sayings": frozenset({
-        "id", "turn", "year", "period", "body", "involved_characters", "affair_ref",
-        "source_id", "created_at",
-    }),
+    "secret_orders": frozenset(
+        {
+            "id",
+            "turn_issued",
+            "due_turn",
+            "deadline_span",
+            "year_issued",
+            "period_issued",
+            "minister_name",
+            "title",
+            "content",
+            "tags",
+            "importance",
+            "status",
+            "result",
+            "dossier_progress_json",
+            "turn_closed",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "public_sayings": frozenset(
+        {
+            "id",
+            "turn",
+            "year",
+            "period",
+            "body",
+            "involved_characters",
+            "affair_ref",
+            "source_id",
+            "created_at",
+        }
+    ),
 }
 
 
 class CharacterKnowledgeStore:
     """Single write port for both knowledge ledgers; reads return plain dicts."""
-
-    def snapshot_rows(self, table: str) -> Any:
-        if table not in _SNAPSHOT_COLUMNS:
-            raise ValueError(table)
-        return self._conn.execute(f"SELECT * FROM {table}").fetchall()
-
-    def restore_snapshot(self, table: str, row: Mapping[str, object]) -> None:
-        upsert_by_pk(self._conn, table, row, pk="id", allowed=_SNAPSHOT_COLUMNS[table], what=table)
-
-    def delete_snapshot(self, table: str, row_id: object) -> None:
-        if table not in _SNAPSHOT_COLUMNS:
-            raise ValueError(table)
-        self._conn.execute(f"DELETE FROM {table} WHERE id=?", (row_id,))
 
     def secret_order_rows(self, status: str | None = None, minister_name: str | None = None) -> Any:
         clauses, params = [], []
@@ -168,141 +134,7 @@ class CharacterKnowledgeStore:
     def ensure_schema(conn: Any) -> None:
         ensure_schema(conn)
 
-    def upsert_secret_brief(
-        self, *, order_id: int, turn: int, year: int, period: int,
-        minister_name: str, title: str, body: str, origin_chat_message_ids: str,
-    ) -> None:
-        self._conn.execute(
-            "INSERT INTO secret_order_briefs "
-            "(order_id,turn,year,period,minister_name,title,body,origin_chat_message_ids) "
-            "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(order_id) DO UPDATE SET "
-            "turn=excluded.turn,year=excluded.year,period=excluded.period,"
-            "minister_name=excluded.minister_name,title=excluded.title,body=excluded.body,"
-            "origin_chat_message_ids=excluded.origin_chat_message_ids,updated_at=CURRENT_TIMESTAMP",
-            (order_id, turn, year, period, minister_name, title, body, origin_chat_message_ids),
-        )
-
-    def secret_briefs_for(self, minister_name: str) -> list[Any]:
-        return self._conn.execute(
-            "SELECT turn,year,period,title,body,order_id FROM secret_order_briefs "
-            "WHERE minister_name=? ORDER BY turn,order_id", (minister_name,),
-        ).fetchall()
-
-    def secret_brief_pins(self, order_id: int | None = None) -> list[Any]:
-        if order_id is None:
-            return self._conn.execute(
-                "SELECT order_id,origin_chat_message_ids FROM secret_order_briefs",
-            ).fetchall()
-        return self._conn.execute(
-            "SELECT order_id,origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
-            (order_id,),
-        ).fetchall()
-
-    def record_participation(
-        self, *, turn: int, year: int, period: int, participants: Iterable[str],
-        kind: str, title: str, body: str = "", source_id: str = "",
-        commit: bool = True,
-    ) -> int:
-        """Record that each named character took part in one event.
-
-        One source produces one row per participant, so re-recording the same
-        event is idempotent (the unique key is character+kind+source).
-        Identity is explicit source_id, or a fresh structured token when omitted
-        — never free title, never a shared empty string.
-        """
-        source = source_identity(source_id)
-        written = 0
-        for name in _names(participants):
-            self._conn.execute(
-                "INSERT OR REPLACE INTO character_knowledge_events "
-                "(turn,year,period,character_name,kind,title,body,source_id) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    int(turn), int(year), int(period), name, str(kind), str(title),
-                    str(body), source,
-                ),
-            )
-            written += 1
-        if commit:
-            self._conn.commit()
-        return written
-
-    def record_public_event(
-        self, *, turn: int, year: int, period: int, title: str, body: str = "",
-        source_id: str = "",
-        kind: str = "public", commit: bool = True,
-    ) -> None:
-        """Record one event in the public lane (character_name='').
-
-        Identity is explicit source_id, or a fresh structured token when omitted
-        — never free title, never a shared empty string.
-        """
-        source = source_identity(source_id)
-        self._conn.execute(
-            "INSERT OR REPLACE INTO character_knowledge_events "
-            "(turn,year,period,character_name,kind,title,body,source_id) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (
-                int(turn), int(year), int(period), "", kind,
-                str(title), str(body), source,
-            ),
-        )
-        if commit:
-            self._conn.commit()
-
-    def register_source(
-        self, *, turn: int, year: int, period: int, kind: str, title: str,
-        body: str = "", source_id: str = "",
-        participant_roster: Iterable[Mapping[str, object]] = (),
-        commit: bool = True,
-    ) -> str:
-        """Register a durable shared source and the characters who know it.
-
-        Identity is explicit source_id, or a fresh structured token when omitted
-        — never free title, never a shared empty string.
-        """
-        source = source_identity(source_id)
-        roster = [
-            dict(item) for item in participant_roster
-            if item.get("character_id") or item.get("name")
-        ]
-        self._conn.execute(
-            "INSERT OR REPLACE INTO character_knowledge_sources "
-            "(turn,year,period,kind,title,body,source_id,participant_roster) VALUES (?,?,?,?,?,?,?,?)",
-            (
-                int(turn), int(year), int(period), kind,
-                title, body,
-                source,
-                safe_json_dumps(roster, ensure_ascii=False),
-            ),
-        )
-        if commit:
-            self._conn.commit()
-        return source
-
     # ── delete port ──────────────────────────────────────────────
-
-    def delete_by_source_ids(self, source_ids: Iterable[str], *, commit: bool = True) -> int:
-        """Drop every ledger row produced by these sources (events + sources).
-
-        A retracted statement must leave no trace: the engine is a physical-fact
-        ledger, so keeping the row would let a withdrawn claim stay knowable.
-        """
-        ids = list(dict.fromkeys(
-            str(sid) for sid in source_ids if str(sid or "").strip()))
-        if not ids:
-            return 0
-        removed = 0
-        for sid in ids:
-            removed += self._conn.execute(
-                "DELETE FROM character_knowledge_events WHERE source_id = ?", (sid,)
-            ).rowcount
-            removed += self._conn.execute(
-                "DELETE FROM character_knowledge_sources WHERE source_id = ?", (sid,)
-            ).rowcount
-        if commit:
-            self._conn.commit()
-        return removed
 
     def delete_sources_matching(self, pattern: str, *, commit: bool = True) -> int:
         """Drop source rows whose source_id matches a LIKE pattern."""
@@ -315,68 +147,6 @@ class CharacterKnowledgeStore:
         return max(0, int(removed))
 
     # ── read port ────────────────────────────────────────────────
-
-    def participant_record_rows(self):
-        """Discover durable roster-bearing records without exposing dossier secrets."""
-        tables = self._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') "
-            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
-        ).fetchall()
-        for row in tables:
-            table = str(row['name'])
-            if table in {'character_knowledge_sources', 'decree_dossiers'}:
-                continue
-            quoted = '"' + table.replace('"', '""') + '"'
-            columns = {str(c['name']) for c in self._conn.execute(f'PRAGMA table_info({quoted})').fetchall()}
-            if 'participant_roster' not in columns:
-                continue
-            id_expr = 'id' if 'id' in columns else 'rowid'
-            prefix = table[:-1] if table.endswith('s') else table
-            source = 'source_id' if 'source_id' in columns else f"'{prefix}:' || {id_expr}"
-            turn = next((c for c in ('turn', 'origin_turn', 'created_turn') if c in columns), '0')
-            year = next((c for c in ('year', 'created_year') if c in columns), '0')
-            period = next((c for c in ('period', 'created_period') if c in columns), '0')
-            kind = 'kind' if 'kind' in columns else "'assignment'"
-            title = 'title' if 'title' in columns else "''"
-            body = next((c for c in ('body', 'stage_text', 'content', 'decree_text') if c in columns), "''")
-            yield from self._conn.execute(
-                f"SELECT {turn} AS turn, {year} AS year, {period} AS period, "
-                f"{kind} AS kind, {title} AS title, {body} AS body, "
-                f"{source} AS source_id, participant_roster "
-                f"FROM {quoted} WHERE participant_roster <> '[]' ORDER BY turn, {id_expr}"
-            ).fetchall()
-
-    def events_for(
-        self, character_name: str,
-    ) -> List[Dict[str, object]]:
-        """One character's own events, oldest first (``''`` = the public lane)."""
-        rows = self._conn.execute(
-            "SELECT turn, year, period, kind, title, body, source_id "
-            "FROM character_knowledge_events WHERE character_name=? ORDER BY turn, id",
-            (str(character_name or ""),),
-        ).fetchall()
-        return [self._event_row(row) for row in rows]
-
-    def all_sources(self) -> List[Dict[str, object]]:
-        """Every registered shared source, oldest first."""
-        return [
-            dict(row) for row in self._conn.execute(
-                "SELECT turn, year, period, kind, title, body, source_id, "
-                "participant_roster "
-                "FROM character_knowledge_sources ORDER BY turn, id"
-            ).fetchall()
-        ]
-
-    def public_events_for_turn(self, turn: int) -> List[Dict[str, object]]:
-        """The public lane for one month, oldest first."""
-        return [
-            dict(row) for row in self._conn.execute(
-                "SELECT id, turn, year, period, kind, title, body, source_id "
-                "FROM character_knowledge_events WHERE character_name='' AND turn=? "
-                "ORDER BY id",
-                (int(turn),),
-            ).fetchall()
-        ]
 
     def record_investigation_spoiled_fact(
         self,
@@ -444,32 +214,12 @@ class CharacterKnowledgeStore:
             "turn_closed": r["turn_closed"],
         }
 
-    def secret_brief_origin_chat_message_ids(self, order_id: int) -> list[int]:
-        """Durable oral pins already registered on this order's brief (may be empty)."""
-        from ming_sim.applier import StoredDocumentError, durable_int, load_stored_list
-
-        rows = self.secret_brief_pins(int(order_id))
-        if not rows:
-            return []
-        parsed = load_stored_list(
-            rows[0]["origin_chat_message_ids"], label="origin_chat_message_ids",
-        )
-        pins: list[int] = []
-        for pin in parsed:
-            value = durable_int(
-                pin, label="origin_chat_message_ids", blank=None,
-            )
-            if value <= 0:
-                raise StoredDocumentError("origin_chat_message_ids 必须为正整数")
-            pins.append(value)
-        return list(dict.fromkeys(pins))
-
     def list_secret_orders(
         self,
         status: str | None = None,
         minister_name: str | None = None,
     ) -> list[dict[str, object]]:
-        from ming_sim.applier import durable_int, load_stored_list, load_stored_object
+        from ming_sim.applier import durable_int, load_stored_list
         from ming_sim.entities.dossier.store import DossierStore
 
         rows = self.secret_order_rows(status, minister_name)
@@ -516,109 +266,6 @@ class CharacterKnowledgeStore:
         return self.list_secret_orders(status="active", minister_name=minister_name)
 
 
-    def sources_for_turn(self, turn: int) -> List[Dict[str, object]]:
-        """Shared sources registered in one month, oldest first."""
-        return [
-            dict(row) for row in self._conn.execute(
-                "SELECT id, turn, year, period, title, body, source_id, "
-                "participant_roster "
-                "FROM character_knowledge_sources WHERE turn=? ORDER BY id",
-                (int(turn),),
-            ).fetchall()
-        ]
-
-    def public_kind_for_source(self, source_id: str) -> Optional[str]:
-        """The public-lane kind already recorded for this source, if any."""
-        if source_is_blank(source_id):
-            return None
-        source = str(source_id or "")
-        row = self._conn.execute(
-            "SELECT kind FROM character_knowledge_events "
-            "WHERE character_name='' AND source_id=?",
-            (source,),
-        ).fetchone()
-        return None if row is None else str(row["kind"] or "")
-
-
-
-    def source_by_id(self, source_id: str) -> Optional[Dict[str, object]]:
-        """One registered shared source, or None."""
-        if source_is_blank(source_id):
-            return None
-        source = str(source_id or "")
-        row = self._conn.execute(
-            "SELECT source_id, kind, participant_roster "
-            "FROM character_knowledge_sources WHERE source_id=?",
-            (source,),
-        ).fetchone()
-        return None if row is None else dict(row)
-
-    def sources_of_kind(self, kind: str) -> List[Dict[str, object]]:
-        """Registered shared sources of one kind, oldest first."""
-        return [
-            dict(row) for row in self._conn.execute(
-                "SELECT source_id, participant_roster "
-                "FROM character_knowledge_sources WHERE kind=? ORDER BY id",
-                (str(kind or ""),),
-            ).fetchall()
-        ]
-
-
-    def has_public_event_with_prefix(self, prefix: str) -> bool:
-        """Whether the public lane already holds an event under this id prefix.
-
-        Idempotence for disclosure: a secret order must not be published twice.
-        """
-        row = self._conn.execute(
-            "SELECT 1 FROM character_knowledge_events "
-            "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
-            (str(prefix or ""),),
-        ).fetchone()
-        return row is not None
-
-    def has_event_for_source(self, source_id: str) -> bool:
-        """Whether any event row carries this source (event rows outrank source rows)."""
-        if source_is_blank(source_id):
-            return False
-        return self._conn.execute(
-            "SELECT 1 FROM character_knowledge_events WHERE source_id=? LIMIT 1",
-            (str(source_id or ""),),
-        ).fetchone() is not None
-
-
-
-
-
-    @staticmethod
-    def roster_names(raw: object) -> set[str]:
-        """Character names on a persisted roster column."""
-        return participant_roster_names(raw)
-
-    @staticmethod
-    def secret_order_id_in(source_id: str) -> Optional[int]:
-        """Order id when this source id names a private brief."""
-        match = _SECRET_ORDER_SOURCE.fullmatch(str(source_id or ""))
-        return None if match is None else int(match.group(1))
-
-    @staticmethod
-    def public_saying_id_in(source_id: str) -> Optional[int]:
-        """Public-saying id when this source id names one."""
-        match = _PUBLIC_SAYING_SOURCE.fullmatch(str(source_id or ""))
-        return None if match is None else int(match.group(1))
-
-    @staticmethod
-    def _event_row(row: Any) -> Dict[str, object]:
-        item: Dict[str, object] = {
-            "turn": int(row["turn"]),
-            "year": int(row["year"]),
-            "period": int(row["period"]),
-            "kind": row["kind"],
-            "title": row["title"],
-            "body": row["body"],
-            "source_id": row["source_id"],
-        }
-        return item
-
     def record_secret_dossier_progress(
         self,
         order_id: int,
@@ -636,10 +283,7 @@ class CharacterKnowledgeStore:
         """
         from ming_sim.supervision import report_origin_base
 
-        row = self._conn.execute(
-            "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
-            (int(order_id),),
-        ).fetchone()
+        row = self.read_record_secret_dossier_progress((int(order_id),))
         if row is None:
             raise ValueError("密令不存在")
         reports = load_stored_list(
@@ -731,19 +375,18 @@ class CharacterKnowledgeStore:
 
     def list_secret_dossier_progress_items(self, order_id: int) -> list:
         """Load private-rail progress members; missing order is legal absence ([])."""
-        row = self._conn.execute(
-            "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
-            (int(order_id),),
-        ).fetchone()
+        row = self.read_record_secret_dossier_progress((int(order_id),))
         if row is None:
             return []
         return load_stored_list(
             row["dossier_progress_json"], label="dossier_progress_json",
         )
 
-
     def write_close_in_current_transaction(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n                UPDATE secret_orders\n                SET status = ?, result = ?, turn_closed = ?, updated_at = CURRENT_TIMESTAMP\n                WHERE id = ?\n                ', params)
+        return self._conn.execute(
+            "\n                UPDATE secret_orders\n                SET status = ?, result = ?, turn_closed = ?, updated_at = CURRENT_TIMESTAMP\n                WHERE id = ?\n                ",
+            params,
+        )
 
     def write_submit_secret_order_for_review(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -752,12 +395,26 @@ class CharacterKnowledgeStore:
             params,
         )
 
-    def write_rush_secret_order(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE secret_orders SET due_turn = ?, deadline_span = 0, "
-            "updated_at=CURRENT_TIMESTAMP WHERE id = ?",
-            params,
+    def restore_secret_order_brief_projection(
+        self, order_id: int, origin_chat_message_ids: Iterable[int],
+    ) -> None:
+        order = self.secret_order_row(int(order_id))
+        if order is None:
+            return
+        pins = list(origin_chat_message_ids)
+        self.write_restore_secret_order_brief_projection_in_tx(
+            (
+                int(order_id),
+                int(order["turn_issued"]),
+                int(order["year_issued"]),
+                int(order["period_issued"]),
+                str(order["minister_name"]),
+                str(order["title"]),
+                str(order["content"]),
+                safe_json_dumps(pins, ensure_ascii=False),
+            )
         )
+
 
     def write_rush_secret_order_secret_orders(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -766,5 +423,249 @@ class CharacterKnowledgeStore:
             params,
         )
 
-    def write_record_public_saying_public_sayings(self, params: Any = ()) -> Any:
-        return self._conn.execute('UPDATE public_sayings SET source_id=? WHERE id=?', params)
+    def read_auto_submit_due_secret_orders(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT id, title, result FROM secret_orders\n            WHERE status = 'active' AND due_turn > 0 AND due_turn <= ?\n            ORDER BY id\n            ",
+            params,
+        ).fetchall()
+
+    def read_create_secret_order(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM secret_orders WHERE status='active'", params
+        ).fetchone()
+
+
+    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, title, status FROM secret_orders ORDER BY id", params
+        ).fetchall()
+
+    def write_restore_secret_order_brief_projection_in_tx(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            """
+                INSERT INTO secret_order_briefs
+                    (order_id,turn,year,period,minister_name,title,body,origin_chat_message_ids)
+                VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                    turn=excluded.turn, year=excluded.year, period=excluded.period,
+                    minister_name=excluded.minister_name, title=excluded.title, body=excluded.body,
+                    origin_chat_message_ids=excluded.origin_chat_message_ids,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+            params,
+        )
+
+    def write_register_character_knowledge_source(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT OR REPLACE INTO character_knowledge_sources "
+            "(turn,year,period,kind,title,body,source_id,participant_roster) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            params,
+        )
+
+    def write_record_public_knowledge_event(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id) VALUES (?,?,?,?,?,?,?,?)",
+            params,
+        )
+
+    def write_create_secret_order(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                    INSERT INTO secret_orders
+                        (turn_issued, due_turn, deadline_span, year_issued, period_issued, minister_name, title, content, tags, importance, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                    """,
+            params,
+        )
+
+    def read_brief_origin_chat_message_ids(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+            params,
+        ).fetchone()
+
+    def read_record_secret_dossier_progress(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT dossier_progress_json FROM secret_orders WHERE id=?", params
+        ).fetchone()
+
+    def read_character_knowledge_events(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT turn, year, period, kind, title, body, source_id, participant_roster "
+            "FROM character_knowledge_sources ORDER BY turn, id",
+            params,
+        ).fetchall()
+
+
+    def update_secret_order(
+        self, order_id: int, title: str, content: str, tags_json: str,
+        *, due_turn: Optional[int], deadline_span: Optional[int],
+    ) -> None:
+        self._conn.execute(
+            "UPDATE secret_orders SET title=?, content=?, tags=?, "
+            "due_turn=COALESCE(?,due_turn), deadline_span=COALESCE(?,deadline_span), "
+            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (title, content, tags_json, due_turn, deadline_span, int(order_id)),
+        )
+
+
+    def read_character_knowledge_events_character_knowledge_events(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT turn, year, period, kind, title, body, source_id "
+            "FROM character_knowledge_events WHERE character_name='' ORDER BY turn, id",
+            params,
+        ).fetchall()
+
+    def read_character_knowledge_events_secret_order_briefs(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT turn, year, period, title, body, order_id FROM secret_order_briefs "
+            "WHERE minister_name=? ORDER BY turn, order_id",
+            params,
+        ).fetchall()
+
+    def read_record_secret_order_disclosure(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM character_knowledge_events "
+            "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
+            params,
+        ).fetchone()
+
+    def read_origin_visible_to(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
+            params,
+        ).fetchone()
+
+    def insert_public_saying(
+        self, turn: int, year: int, period: int, body: str,
+        involved_characters: list[str], affair_ref: str,
+    ) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO public_sayings "
+            "(turn, year, period, body, involved_characters, affair_ref, source_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                int(turn), int(year), int(period), body,
+                json.dumps(involved_characters, ensure_ascii=False), affair_ref,
+                f"{PUBLIC_SAYING_SOURCE_PREFIX}pending",
+            ),
+        )
+        saying_id = int(cur.lastrowid)
+        self._conn.execute(
+            "UPDATE public_sayings SET source_id=? WHERE id=?",
+            (f"{PUBLIC_SAYING_SOURCE_PREFIX}{saying_id}", saying_id),
+        )
+        return saying_id
+
+    def read_list_public_sayings(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, turn, year, period, body, involved_characters, affair_ref, source_id "
+            "FROM public_sayings ORDER BY id",
+            params,
+        ).fetchall()
+
+    def read_known_names(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT source_id, participant_roster, kind FROM character_knowledge_sources",
+            params,
+        ).fetchall()
+
+    def snapshot_rows(self, table: str) -> Any:
+        if table not in _SNAPSHOT_COLUMNS:
+            raise ValueError(table)
+        return self._conn.execute(f"SELECT * FROM {table}").fetchall()
+
+    def restore_snapshot(self, table: str, row: Mapping[str, object]) -> None:
+        upsert_by_pk(
+            self._conn,
+            table,
+            row,
+            pk="id",
+            allowed=_SNAPSHOT_COLUMNS[table],
+            what=table,
+        )
+
+    def delete_snapshot(self, table: str, row_id: object) -> None:
+        if table not in _SNAPSHOT_COLUMNS:
+            raise ValueError(table)
+        self._conn.execute(f"DELETE FROM {table} WHERE id=?", (row_id,))
+
+    def secret_brief_pins(self, order_id: int | None = None) -> list[Any]:
+        if order_id is None:
+            return self._conn.execute(
+                "SELECT order_id,origin_chat_message_ids FROM secret_order_briefs",
+            ).fetchall()
+        return self._conn.execute(
+            "SELECT order_id,origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+            (order_id,),
+        ).fetchall()
+
+    def participant_record_rows(self):
+        for table, columns in self.participant_roster_tables():
+            quoted = '"' + table.replace('"', '""') + '"'
+            selected = {name: name for name in columns}
+            id_expr = selected.get("id", "rowid")
+            source_expr = selected.get("source_id")
+            # Tables without source_id use their own record identity.
+            fallback_prefix = table[:-1] if table.endswith("s") else table
+            source_sql = (
+                source_expr if source_expr else f"'{fallback_prefix}:' || {id_expr}"
+            )
+            turn_expr = (
+                selected.get("turn")
+                or selected.get("origin_turn")
+                or selected.get("created_turn")
+                or "0"
+            )
+            year_expr = selected.get("year") or selected.get("created_year") or "0"
+            period_expr = (
+                selected.get("period") or selected.get("created_period") or "0"
+            )
+            kind_expr = selected.get("kind") or "'assignment'"
+            title_expr = selected.get("title") or "''"
+            body_expr = (
+                selected.get("body")
+                or selected.get("stage_text")
+                or selected.get("content")
+                or selected.get("decree_text")
+                or "''"
+            )
+            secrecy_sql = (
+                " AND action_type <> 'secret_order'"
+                if table == "decree_dossiers"
+                else ""
+            )
+            query = (
+                f"SELECT {turn_expr} AS turn, {year_expr} AS year, {period_expr} AS period, "
+                f"{kind_expr} AS kind, {title_expr} AS title, {body_expr} AS body, "
+                f"{source_sql} AS source_id, participant_roster "
+                f"FROM {quoted} WHERE participant_roster <> '[]'{secrecy_sql} ORDER BY turn, {id_expr}"
+            )
+            yield from self._conn.execute(query).fetchall()
+
+    def participant_roster_tables(self) -> list[tuple[str, set[str]]]:
+        """List durable user tables that expose the common roster column."""
+        tables = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        result: list[tuple[str, set[str]]] = []
+        for row in tables:
+            table = str(row["name"])
+            if table in {"character_knowledge_sources", "issues"}:
+                continue
+            columns = {
+                str(column["name"])
+                for column in self._conn.execute(
+                    'PRAGMA table_info("' + table.replace('"', '""') + '")'
+                ).fetchall()
+            }
+            if "participant_roster" in columns:
+                result.append((table, columns))
+        return result

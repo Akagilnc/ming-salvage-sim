@@ -88,7 +88,7 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
 
     applied = settle_delta(state, db, {'fiscal_creates': [{'key': '剿饷浮收', 'account': '国库', 'direction': 'income', 'init_value': 15, 'reason': '借剿饷名义加派', 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content))
     assert view(applied, "fiscal_creates"), applied
-    rows = db.fiscal_config.effects_for_dossier(did)
+    rows = db.fiscal_config.effects_for_origin(f"dossier:{int(did)}")
     create_rows = [r for r in rows if r.get("effect_kind") == "create"]
     assert {r["key"] for r in create_rows} == {"剿饷浮收_base", "剿饷浮收_rate"}
     assert all(r["beyond_intent"] is True for r in create_rows), create_rows
@@ -111,7 +111,7 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
         out = settle_delta(state, db, {'fiscal_creates': [{'key': key, 'account': '国库', 'direction': 'income', 'init_value': 3, 'reason': f'负向{key}', 'origin_ref': origin, **flag}]}, SettlementContext(content=content))
         assert view(out, "fiscal_creates"), out
     neg_rows = [
-        r for r in db.fiscal_config.effects_for_dossier(did)
+        r for r in db.fiscal_config.effects_for_origin(f"dossier:{int(did)}")
         if r.get("effect_kind") == "create"
         and str(r.get("key") or "").endswith("_base")
         and any(str(r.get("key") or "").startswith(k) for k, _ in cases)
@@ -137,7 +137,7 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
     applied = settle_delta(state, db, {'fiscal_changes': [{'key': rate_key, 'delta': 1, 'reason': '借旨加派一成', 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content))
     assert view(applied, "fiscal_changes"), applied
     change_rows = [
-        r for r in db.fiscal_config.effects_for_dossier(did)
+        r for r in db.fiscal_config.effects_for_origin(f"dossier:{int(did)}")
         if r.get("effect_kind") == "change"
     ]
     assert change_rows and all(r["beyond_intent"] is True for r in change_rows), change_rows
@@ -151,7 +151,7 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
         out = settle_delta(state, db, {'fiscal_changes': [{'key': rate_key, 'delta': 1, 'reason': f'调率负向{label}', 'origin_ref': origin, **flag}]}, SettlementContext(content=content))
         assert view(out, "fiscal_changes"), out
     all_changes = [
-        r for r in db.fiscal_config.effects_for_dossier(did)
+        r for r in db.fiscal_config.effects_for_origin(f"dossier:{int(did)}")
         if r.get("effect_kind") == "change"
     ]
     # first is True; the three negatives are False
@@ -185,7 +185,7 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
         out = settle_delta(state, db, {'fiscal_removes': [{'key': stem, 'reason': f'裁撤{stem}', 'origin_ref': origin, **flag}]}, SettlementContext(content=content))
         assert view(out, "fiscal_removes"), out
         tomb = [
-            r for r in db.fiscal_config.effects_for_dossier(did)
+            r for r in db.fiscal_config.effects_for_origin(f"dossier:{int(did)}")
             if r.get("effect_kind") == "remove" and str(r.get("key") or "").startswith(stem)
         ]
         assert tomb, stem
@@ -215,7 +215,7 @@ def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
         text="赏银月拨",
     )
     assert created
-    rows = db.fiscal_config.effects_for_dossier(did)
+    rows = db.fiscal_config.effects_for_origin(f"dossier:{int(did)}")
     create_rows = [r for r in rows if r.get("effect_kind") == "create"]
     assert create_rows
     assert all(r["beyond_intent"] is False for r in create_rows), create_rows
@@ -234,9 +234,9 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     applied = settle_delta(state, db, {'fiscal_creates': [{'key': '借旨新税', 'account': '国库', 'direction': 'income', 'init_value': 20, 'reason': '借剿饷名义新立浮收', 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content))
     assert view(applied, "fiscal_creates")
     # Zero beyond-flagged economy moves (foundation seed may add plain spend later)
-    eco = db.reign.list_economy_moves_for_dossier(did)
+    eco = db.reign.list_economy_moves_for_origin(f"dossier:{int(did)}")
     assert not any(bool(m.get("beyond_intent")) for m in eco), eco
-    fisc = db.fiscal_config.effects_for_dossier(did)
+    fisc = db.fiscal_config.effects_for_origin(f"dossier:{int(did)}")
     assert any(r.get("beyond_intent") is True for r in fisc), fisc
 
     # Single-source helpers

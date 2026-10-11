@@ -56,9 +56,7 @@ def _prepare_authority_change_item(
         kind, separator, target_id = scope.partition(":")
         if not separator or not kind or not target_id:
             raise AuthorityDataError("invalid_authority_scope")
-        if not db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=?", (holder_id,)
-        ).fetchone():
+        if not db.characters.read_assert_characters_exist((holder_id,)):
             raise AuthorityDataError("授权对象不在人物档")
         origin = db.characters.find_authority_by_origin(
             dossier_id, holder_id=holder_id, privilege=privilege, scope=scope,
@@ -132,15 +130,15 @@ def _write_authority_change_item(
 ) -> Dict[str, object]:
     """落一条已校验的授权变更。写后故障原样上抛。"""
     if prepared["op"] == "grant":
-        cursor = db.conn.execute(
-            "INSERT INTO authority_records "
-            "(holder_id,privilege,scope,effective_turn,expires_turn,dossier_id) "
-            "VALUES (?,?,?,?,?,?)",
+        cursor = db.characters.write_apply_authority_change_item_authority_records(
             (
-                prepared["holder_id"], prepared["privilege"], prepared["scope"],
-                prepared["effective_turn"], prepared["expires_turn"],
+                prepared["holder_id"],
+                prepared["privilege"],
+                prepared["scope"],
+                prepared["effective_turn"],
+                prepared["expires_turn"],
                 prepared["dossier_id"],
-            ),
+            )
         )
         return {
             "动作": "授予",
@@ -152,9 +150,8 @@ def _write_authority_change_item(
         }
     authority_id = int(prepared["authority_id"])
     record = prepared["record"]
-    revoked = db.conn.execute(
-        "UPDATE authority_records SET revoked=1,revoked_turn=? "
-        "WHERE id=? AND revoked=0", (int(state.turn), authority_id),
+    revoked = db.characters.write_apply_authority_change_item(
+        (int(state.turn), authority_id)
     )
     if revoked.rowcount <= 0:
         raise ValueError("unknown_authority_id")
@@ -185,7 +182,7 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.dossiers.get(dossier_id)
     if row is None or not db.dossiers.authorizes_effects(dossier_id):
         return None
-    payload = row["payload"]  # GameDB.get_decree_dossier 已校验持久 JSON。
+    payload = row["payload"]  # DossierStore.get 已校验持久 JSON。
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
         return None
     return row

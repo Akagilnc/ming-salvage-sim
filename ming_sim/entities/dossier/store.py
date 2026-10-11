@@ -25,6 +25,7 @@ from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, dossier_action_poli
 from ming_sim.strict_types import strict_int
 from ming_sim.participant_roster import decode_durable_participant_roster
 from ming_sim.entities.character.store import CharacterStore
+from ming_sim.exceptions import DeclarationDataError
 
 DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
 DOSSIER_TRANSITIONS = {
@@ -50,24 +51,6 @@ _DOSSIER_COLUMNS = frozenset({
     "execution_note", "closed_turn", "interruption_reason", "created_turn",
     "created_year", "created_period", "created_at", "updated_at", "closed_at",
     "affair_id",
-})
-_DECISION_COLUMNS = frozenset({
-    "id", "dossier_id", "turn", "decision", "blocked_layer", "rescript_action",
-    "reason", "legal_reason_code", "primary_opponents_json", "gatekeeper_id",
-    "criteria_snapshot_json", "affected_parties_json", "midzhi_unpromulgatable",
-    "created_at",
-})
-_PROGRESS_COLUMNS = frozenset({
-    "id", "dossier_id", "turn", "progress_band", "memorial_text", "is_terminal",
-    "origin", "created_at",
-})
-_PENDING_ACTION_COLUMNS = frozenset({
-    "id", "turn", "kind", "action", "target_id", "minister_name", "payload_json",
-    "status", "night_id", "night_approved", "version",
-    "source_chat_turn_id", "created_at",
-})
-_LINK_COLUMNS = frozenset({
-    "id", "source_dossier_id", "target_dossier_id", "relation_type", "note", "created_at",
 })
 DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
 DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
@@ -350,7 +333,7 @@ CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
 def normalize_dossier_mode(value: object) -> str:
     mode = value.strip() if isinstance(value, str) else value
     if not isinstance(mode, str) or mode not in DOSSIER_MODES:
-        raise ValueError(f"案卷 mode 非法：{mode}")
+        raise DeclarationDataError(f"案卷 mode 非法：{mode}")
     return mode
 
 
@@ -409,6 +392,69 @@ def hydrate_dossier_row(row: Any) -> dict[str, Any]:
         except Exception:
             label = "案卷"
         raise StoredDocumentError(f"{label} 持久行损坏：{exc}") from exc
+
+
+_DECISION_COLUMNS = frozenset(
+    {
+        "id",
+        "dossier_id",
+        "turn",
+        "decision",
+        "blocked_layer",
+        "rescript_action",
+        "reason",
+        "legal_reason_code",
+        "primary_opponents_json",
+        "gatekeeper_id",
+        "criteria_snapshot_json",
+        "affected_parties_json",
+        "midzhi_unpromulgatable",
+        "created_at",
+    }
+)
+
+_PROGRESS_COLUMNS = frozenset(
+    {
+        "id",
+        "dossier_id",
+        "turn",
+        "progress_band",
+        "memorial_text",
+        "is_terminal",
+        "origin",
+        "created_at",
+    }
+)
+
+_PENDING_ACTION_COLUMNS = frozenset(
+    {
+        "id",
+        "turn",
+        "kind",
+        "action",
+        "target_id",
+        "minister_name",
+        "payload_json",
+        "status",
+        "committed_directive_id",
+        "night_id",
+        "night_approved",
+        "version",
+        "source_chat_turn_id",
+        "created_at",
+    }
+)
+
+_LINK_COLUMNS = frozenset(
+    {
+        "id",
+        "source_dossier_id",
+        "target_dossier_id",
+        "relation_type",
+        "note",
+        "created_at",
+    }
+)
 
 
 class DossierStore:
@@ -475,27 +521,6 @@ class DossierStore:
             f"SELECT * FROM decree_dossiers{where} ORDER BY id", params
         ).fetchall()
         return [hydrate_dossier_row(row) for row in rows]
-
-    def find_by_decision_key(
-        self, decision_key: str,
-    ) -> Optional[dict[str, Any]]:
-        """按批红 decision_key 取廷议案卷（payload.decision_key + deliberation_state）。"""
-        key = str(decision_key or "").strip()
-        if not key:
-            return None
-        row = self._conn.execute(
-            """
-            SELECT * FROM decree_dossiers
-            WHERE json_extract(payload_json, '$.decision_key') = ?
-              AND json_extract(payload_json, '$.deliberation_state') IS NOT NULL
-            ORDER BY id LIMIT 1
-            """,
-            (key,),
-        ).fetchone()
-        if row is None:
-            return None
-        # hydrate_dossier_row 是唯一解析口（payload 已解析并 fail-loud），不再二次解析。
-        return hydrate_dossier_row(row)
 
     def authorizes_effects(self, dossier_id: int) -> bool:
         """Return whether a dossier crossed either lawful promulgation path."""
@@ -599,6 +624,8 @@ class DossierStore:
             raise ValueError(
                 f"next_audience_todos.payload_json 类型非法：{type(payload_json).__name__}"
             )
+        if isinstance(payload_json, str) and not payload_json.strip():
+            payload_json = None  # 可选写入参数缺省；落库仍为合法 '{}' 文档。
         data = load_stored_object(payload_json, label="next_audience_todos.payload_json")
         return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
@@ -750,29 +777,12 @@ class DossierStore:
         self._commit(commit, owns)
         return int(cur.rowcount or 0) > 0
 
-    def set_audience_todo_origin(self, todo_id: int, origin: str) -> None:
-        self._conn.execute(
-            "UPDATE next_audience_todos SET origin_context=? WHERE id=?", (origin, todo_id),
-        )
-
-    def count_audience_todos(self, params: Any) -> Any:
-        return self._conn.execute(
-            "SELECT COUNT(*) AS c FROM next_audience_todos "
-            "WHERE commitment_ref=? AND entry_kind=? AND status=?", params,
-        ).fetchone()
-
     def urge_history(self, action: str, kind: str, target_id: int) -> Any:
         return self._conn.execute(
             "SELECT id, turn, kind, action, target_id, payload_json, status FROM pending_actions "
             "WHERE status='committed' AND action=? AND kind=? AND target_id=? ORDER BY turn, id",
             (action, kind, target_id),
         ).fetchall()
-
-    def append_commitment_urge(self, params: Any) -> None:
-        self._conn.execute(
-            "INSERT INTO pending_actions (turn, kind, action, target_id, minister_name, payload_json, status) "
-            "VALUES (?, ?, ?, ?, '', ?, 'committed')", params,
-        )
 
     def exists(self, dossier_id: int) -> bool:
         return self._conn.execute(
@@ -989,70 +999,6 @@ class DossierStore:
 
     # ── write port ───────────────────────────────────────────────
 
-    def find_existing_for_source(
-        self, *, secret_order_id: Optional[int], directive_id: int,
-        pending_action_id: int, action: str, region_id: str,
-    ) -> Optional[int]:
-        """Idempotency key lookup: only real (>0) source ids key a dossier row."""
-        if secret_order_id is not None:
-            sql, params = "secret_order_id = ?", (int(secret_order_id),)
-        elif int(directive_id or 0) > 0:
-            sql, params = (
-                "directive_id = ? AND region_id = ?",
-                (int(directive_id), region_id),
-            )
-        elif int(pending_action_id or 0) > 0:
-            # #1837：同 pending 可挂多 action_type（组合拨帑+任免）；幂等按三类键查。
-            sql, params = (
-                "pending_action_id = ? AND region_id = ? AND action_type = ?",
-                (int(pending_action_id), region_id, action),
-            )
-        else:
-            return None
-        existing = self._conn.execute(
-            f"SELECT id FROM decree_dossiers WHERE {sql}", params,
-        ).fetchone()
-        return None if existing is None else int(existing["id"])
-
-    def insert_row(
-        self, *, action: str, target_kind: str, target_id: str,
-        executor_kind: str, executor_id: str, source_chat_turn_id: int,
-        pending_action_id: int, directive_id: int,
-        secret_order_id: Optional[int], region_id: str, decree_text: str,
-        payload: Mapping[str, object], status: str, due_turn: int,
-        extension: Mapping[str, object], participant_roster: object,
-        office_archive_keys: list[str], turn: int, year: int, period: int,
-        affair_id: int,
-    ) -> int:
-        """The single INSERT that brings a dossier into being."""
-        cur = self._conn.execute(
-            """
-            INSERT INTO decree_dossiers
-                (action_type,target_kind,target_id,executor_kind,executor_id,
-                 source_chat_turn_id,pending_action_id,
-                 directive_id,secret_order_id,region_id,decree_text,payload_json,status,due_turn,
-                 extension_json,participant_roster,office_archive_keys,
-                 created_turn,created_year,created_period,affair_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                action, target_kind, target_id,
-                executor_kind, executor_id,
-                int(source_chat_turn_id), int(pending_action_id),
-                None if int(directive_id) <= 0 else int(directive_id),
-                None if secret_order_id is None else int(secret_order_id),
-                region_id,
-                decree_text, json.dumps(dict(payload), ensure_ascii=False), status,
-                max(0, int(due_turn)),
-                json.dumps(dict(extension), ensure_ascii=False),
-                json.dumps(participant_roster, ensure_ascii=False),
-                json.dumps(sorted(office_archive_keys), ensure_ascii=False),
-                int(turn), int(year), int(period),
-                int(affair_id),
-            ),
-        )
-        return int(cur.lastrowid)
-
     def set_stigma(
         self, dossier_id: int, stigma: list[dict[str, object]], *, commit: bool = True,
     ) -> None:
@@ -1091,22 +1037,6 @@ class DossierStore:
         ):
             stigma.append(marker)
             self.set_stigma(int(dossier_id), stigma, commit=False)
-        self._commit(commit, owns)
-
-    def set_participants_and_archive(
-        self, dossier_id: int, roster: object, archive_keys: list[str], *,
-        commit: bool = True,
-    ) -> None:
-        owns = self._owns()
-        self._conn.execute(
-            "UPDATE decree_dossiers SET participant_roster=?,office_archive_keys=?, "
-            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (
-                json.dumps(roster, ensure_ascii=False),
-                json.dumps(sorted(archive_keys), ensure_ascii=False),
-                int(dossier_id),
-            ),
-        )
         self._commit(commit, owns)
 
     # ── endorsements ──────────────────────────────────────────────
@@ -1296,10 +1226,10 @@ class DossierStore:
         )
 
     def insert_decision(
-        self, dossier_id: int, turn: int, *, decision: str, blocked_layer: str,
-        rescript_action: str, reason: str, legal_reason_code: str,
-        primary_opponents_json: str, gatekeeper_id: Optional[str],
-        criteria_snapshot_json: str,
+        self, dossier_id: int, turn: int, *, decision: str, blocked_layer: str = "",
+        rescript_action: str = "", reason: str = "", legal_reason_code: str = "",
+        primary_opponents_json: str = "[]", gatekeeper_id: Optional[str] = None,
+        criteria_snapshot_json: str = "{}",
     ) -> None:
         """Append one row to the append-only verdict history."""
         self._conn.execute(
@@ -1380,7 +1310,8 @@ class DossierStore:
             held_turn=held_turn, turn=current_turn,
         )
         self.insert_decision(
-            int(dossier_id), current_turn,
+            int(dossier_id),
+            current_turn,
             decision=promulgation if decision != "hold" else "rejected",
             blocked_layer=blocked_layer,
             rescript_action=decision if decision in {"hold", "withdrawn"} else "",
@@ -1530,171 +1461,6 @@ class DossierStore:
         )
 
 
-    def grant_escort_presence(
-        self, dossier_id: int,
-    ) -> tuple[bool, int | None, str]:
-        """被护案卷侧查入链：护卫/稽核在场与否（0054 逐路独立）。"""
-        escort_relations = frozenset({"护卫", "稽核"})
-        for link in self.links(int(dossier_id), direction="incoming"):
-            relation = str(link.get("relation_type") or "").strip()
-            if relation in escort_relations:
-                return True, int(link["source_dossier_id"]), relation
-        return False, None, ""
-
-    def set_interruption_reason_if_empty(self, dossier_id: int, reason: str) -> None:
-        self._conn.execute(
-            "UPDATE decree_dossiers SET interruption_reason="
-            "CASE WHEN interruption_reason='' THEN ? ELSE interruption_reason END "
-            "WHERE id=?",
-            (reason, int(dossier_id)),
-        )
-
-    def force_close(self, dossier_id: int, *, turn: int, reason: str) -> None:
-        self._conn.execute(
-            "UPDATE decree_dossiers SET status='closed',closed_turn=?,"
-            "interruption_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?",
-            (int(turn), reason, int(dossier_id)),
-        )
-
-    def ids_for_secret_order(self, secret_order_id: int) -> list[int]:
-        rows = self._conn.execute(
-            "SELECT id FROM decree_dossiers WHERE secret_order_id=? ORDER BY region_id, id",
-            (int(secret_order_id),),
-        ).fetchall()
-        return [int(r["id"]) for r in rows]
-
-    def first_id_by_region(
-        self, *, directive_id: int = 0, pending_action_id: int = 0,
-    ) -> dict[str, int]:
-        """Composite-key 查补：first existing id per region for one source key."""
-        if int(directive_id or 0) > 0:
-            sql, params = "directive_id=?", (int(directive_id),)
-        else:
-            sql, params = "pending_action_id=?", (int(pending_action_id),)
-        rows = self._conn.execute(
-            f"SELECT id, region_id FROM decree_dossiers WHERE {sql} ORDER BY region_id, id",
-            params,
-        ).fetchall()
-        out: dict[str, int] = {}
-        for row in rows:
-            key = str(row["region_id"] or "")
-            if key not in out:
-                out[key] = int(row["id"])
-        return out
-
-    def bound_to_directive(self, dossier_id: int, directive_id: int) -> Optional[int]:
-        row = self._conn.execute(
-            "SELECT id FROM decree_dossiers WHERE id=? AND directive_id=?",
-            (int(dossier_id), int(directive_id)),
-        ).fetchone()
-        return None if row is None else int(row["id"])
-
-    def bind_directive(self, dossier_id: int, directive_id: int) -> None:
-        self._conn.execute(
-            "UPDATE decree_dossiers SET directive_id=?, updated_at=CURRENT_TIMESTAMP "
-            "WHERE id=? AND (directive_id IS NULL OR directive_id=0 OR directive_id=?)",
-            (int(directive_id), int(dossier_id), int(directive_id)),
-        )
-
-    def bind_pending_action(self, dossier_id: int, pending_action_id: int) -> None:
-        self._conn.execute(
-            "UPDATE decree_dossiers SET pending_action_id=? "
-            "WHERE directive_id=? AND (pending_action_id IS NULL "
-            "OR pending_action_id=0 OR pending_action_id=?)",
-            (int(pending_action_id), int(dossier_id), int(pending_action_id)),
-        )
-
-    def open_by_executor(self, character_name: str) -> list[Any]:
-        return self._conn.execute(
-            """
-            SELECT id,secret_order_id,status FROM decree_dossiers
-            WHERE executor_kind='character' AND executor_id=?
-              AND status IN ('promulgated','executing')
-            ORDER BY id
-            """,
-            (str(character_name),),
-        ).fetchall()
-
-    def in_transit_grants(self) -> list[Any]:
-        """executing 且仍在途的拨帑案卷（成案不足额已 failed+close 的不在此列）。"""
-        return self._conn.execute(
-            """
-            SELECT * FROM decree_dossiers
-            WHERE status='executing' AND action_type='grant_allocation'
-            """
-        ).fetchall()
-
-    def active_effect_facts(self) -> list[Any]:
-        return self._conn.execute(
-            """
-            SELECT id, decree_text, execution_outcome, executor_id,
-                   executor_kind, participant_roster, status
-            FROM decree_dossiers
-            WHERE status IN ('promulgated', 'executing')
-               OR (status='closed' AND execution_outcome='transformed')
-            ORDER BY id
-            """
-        ).fetchall()
-
-    def closed_outcome_rows_before(self, turn: int) -> list[Any]:
-        return self._conn.execute(
-            """
-            SELECT id, execution_outcome, closed_turn, status
-            FROM decree_dossiers
-            WHERE execution_outcome IN ('failed', 'transformed')
-              AND closed_turn > 0
-              AND closed_turn < ?
-            ORDER BY id
-            """,
-            (int(turn),),
-        ).fetchall()
-
-    def next_id(self) -> int:
-        row = self._conn.execute(
-            "SELECT COALESCE(MAX(id),0)+1 FROM decree_dossiers"
-        ).fetchone()
-        return int(row[0] if row else 1)
-
-    def payload_of(self, dossier_id: int) -> str:
-        row = self._conn.execute(
-            "SELECT payload_json FROM decree_dossiers WHERE id=?", (int(dossier_id),)
-        ).fetchone()
-        return str(row["payload_json"] or "{}") if row is not None else "{}"
-
-    def executor_payload_of(self, dossier_id: int) -> tuple[str, str]:
-        row = self._conn.execute(
-            "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?",
-            (int(dossier_id),),
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        return str(row["executor_id"] or ""), str(row["payload_json"] or "{}")
-
-    def all_ids(self) -> list[int]:
-        return [
-            int(r["id"]) for r in
-            self._conn.execute("SELECT id FROM decree_dossiers ORDER BY id").fetchall()
-        ]
-
-    def all_payloads(self) -> list[tuple[int, str]]:
-        return [
-            (int(r["id"]), str(r["payload_json"] or "{}")) for r in
-            self._conn.execute(
-                "SELECT id, payload_json FROM decree_dossiers ORDER BY id"
-            ).fetchall()
-        ]
-
-    def active_secret_order_dossiers(self) -> list[Any]:
-        return self._conn.execute(
-            """
-            SELECT d.* FROM decree_dossiers d
-            JOIN secret_orders s ON s.id=d.secret_order_id
-            WHERE s.status='active'
-              AND d.status IN ('promulgated','executing')
-            ORDER BY d.id
-            """
-        ).fetchall()
-
     def reconciliation_loss_rows(self, turn: int) -> list[Any]:
         return self._conn.execute(
             """
@@ -1706,57 +1472,6 @@ class DossierStore:
             """,
             (int(turn),),
         ).fetchall()
-
-    def participant_row(self, dossier_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT participant_roster,action_type,decree_text "
-            "FROM decree_dossiers WHERE id=?",
-            (int(dossier_id),),
-        ).fetchone()
-
-    def archive_keys_row(self, dossier_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT office_archive_keys FROM decree_dossiers WHERE id=?",
-            (int(dossier_id),),
-        ).fetchone()
-
-    def referenceable_rows(self, current_turn: int) -> list[Any]:
-        return self._conn.execute(
-            """SELECT d.*,
-                      s.title AS secret_title,
-                      EXISTS(
-                          SELECT 1 FROM decree_dossier_decisions h
-                          WHERE h.dossier_id=d.id
-                            AND h.rescript_action='force_promulgated'
-                      ) AS was_force_promulgated
-               FROM decree_dossiers d
-               LEFT JOIN secret_orders s ON s.id=d.secret_order_id
-               WHERE d.created_turn <= ?
-               ORDER BY d.id DESC""",
-            (int(current_turn),),
-        ).fetchall()
-
-    def force_promulgate(self, dossier_id: int) -> None:
-        self._conn.execute(
-            "UPDATE decree_dossiers SET status='promulgated',rescript_pending=0,"
-            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (int(dossier_id),),
-        )
-
-    def secret_order_for_pending(self, pending_action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT secret_order_id FROM decree_dossiers "
-            "WHERE pending_action_id=? AND secret_order_id IS NOT NULL "
-            "ORDER BY id DESC LIMIT 1",
-            (int(pending_action_id),),
-        ).fetchone()
-
-    def dossier_count_created_turn(self, turn: int) -> int:
-        row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM decree_dossiers WHERE created_turn=?",
-            (int(turn),),
-        ).fetchone()
-        return 0 if row is None else int(row["n"] or 0)
 
     # ── satellite fact tables ─────────────────────────────────────
 
@@ -1800,28 +1515,6 @@ class DossierStore:
         return row is not None
 
     # ── satellite read seams ─────────────────────────────────────
-
-    def pending_action_dossier_ids(
-        self, pending_action_id: int, *, secret_only: bool = False,
-    ) -> list[int]:
-        sql = "SELECT id FROM decree_dossiers WHERE pending_action_id=?"
-        if secret_only:
-            sql += " AND secret_order_id IS NOT NULL"
-        return [
-            int(r["id"]) for r in self._conn.execute(sql + " ORDER BY id", (int(pending_action_id),)).fetchall()
-        ]
-
-    def has_incoming_audit_link(self, dossier_id: int) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM decree_dossier_links "
-            "WHERE target_dossier_id=? AND relation_type='稽核' LIMIT 1",
-            (int(dossier_id),),
-        ).fetchone() is not None
-
-    def rows_with_affair(self) -> list[Any]:
-        return self._conn.execute(
-            "SELECT affair_id, participant_roster FROM decree_dossiers WHERE affair_id != 0"
-        ).fetchall()
 
     def reported_progress_rows(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
@@ -1885,53 +1578,6 @@ class DossierStore:
             }
             for r in rows
         ]
-
-    def directives_with_dossiers(self, turn: int) -> list[dict[str, object]]:
-        """Draft directives whose dossier creation succeeded."""
-        rows = self._conn.execute(
-            """SELECT td.* FROM turn_directives td
-               WHERE td.turn<=? AND td.status='draft'
-                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
-               ORDER BY td.id""",
-            (int(turn),),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def upsert_reconciliation(
-        self, dossier_id: int, turn: int, *, ordered: int, arrived: int,
-        escorted: bool, escort_source_dossier_id: Optional[int],
-        relation_type: str, note: str,
-    ) -> None:
-        """One reconciliation row per (dossier, turn); re-run overwrites in place."""
-        self._conn.execute(
-            """
-            INSERT INTO decree_dossier_reconciliations
-                (dossier_id, turn, ordered_amount, arrived_amount, loss_amount,
-                 escorted, escort_source_dossier_id, relation_type, note)
-            VALUES (?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(dossier_id, turn) DO UPDATE SET
-                ordered_amount=excluded.ordered_amount,
-                arrived_amount=excluded.arrived_amount,
-                loss_amount=excluded.loss_amount,
-                escorted=excluded.escorted,
-                escort_source_dossier_id=excluded.escort_source_dossier_id,
-                relation_type=excluded.relation_type,
-                note=excluded.note
-            """,
-            (
-                int(dossier_id), int(turn), int(ordered), int(arrived),
-                int(ordered) - int(arrived), 1 if escorted else 0,
-                None if escort_source_dossier_id is None else int(escort_source_dossier_id),
-                relation_type, note,
-            ),
-        )
-
-    def has_reconciliation(self, dossier_id: int, turn: int) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM decree_dossier_reconciliations "
-            "WHERE dossier_id=? AND turn=? LIMIT 1",
-            (int(dossier_id), int(turn)),
-        ).fetchone() is not None
 
     def upsert_presence(
         self, dossier_id: int, turn: int, *, auditor_name: str,
@@ -2189,38 +1835,6 @@ class DossierStore:
         ).fetchone()
         return None if row is None else (int(row["turn"] or 0), str(row["rescript_action"] or ""))
 
-    def rescript_history_rows(self) -> list[Any]:
-        """中旨/强颁 durable markers joined to their dossier payload mode."""
-        return self._conn.execute(
-            "SELECT d.dossier_id,d.turn,d.decision,d.rescript_action,x.payload_json "
-            "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
-            "ORDER BY d.turn,d.dossier_id,d.id"
-        ).fetchall()
-
-    def transformed_rows_between(self, low_turn: int, high_turn: int) -> list[Any]:
-        return self._conn.execute(
-            "SELECT id,closed_turn,participant_roster,decree_text,execution_note,"
-            "execution_outcome FROM decree_dossiers "
-            "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
-            (max(0, int(low_turn)), int(high_turn)),
-        ).fetchall()
-
-    def grant_allocation_rows(self) -> list[Any]:
-        return self._conn.execute(
-            "SELECT id, status, target_kind, target_id, payload_json, "
-            "execution_outcome, closed_turn FROM decree_dossiers "
-            "WHERE action_type='grant_allocation' ORDER BY id"
-        ).fetchall()
-
-    def due_grant_rows(self, turn: int) -> list[Any]:
-        return self._conn.execute(
-            "SELECT id, decree_text, payload_json, due_turn, execution_outcome, status "
-            "FROM decree_dossiers WHERE status='executing' "
-            "AND action_type='grant_allocation' AND due_turn > 0 AND due_turn <= ? "
-            "ORDER BY id",
-            (int(turn),),
-        ).fetchall()
-
     def committed_directive_candidates(self, night_id: int) -> list[Any]:
         return self._conn.execute(
             """SELECT td.id AS directive_id, td.actor, td.text, MIN(d.id) AS dossier_id
@@ -2232,18 +1846,6 @@ class DossierStore:
                GROUP BY td.id, td.actor, td.text ORDER BY td.id""",
             (int(night_id),),
         ).fetchall()
-
-    def secret_order_ids_for(self, dossier_ids: Iterable[int]) -> dict[int, int]:
-        """Batch map dossier id -> its secret_order_id (0 when not a 密令案卷)."""
-        ids = sorted({int(i) for i in dossier_ids if int(i) > 0})
-        if not ids:
-            return {}
-        placeholders = ",".join("?" for _ in ids)
-        rows = self._conn.execute(
-            f"SELECT id, secret_order_id FROM decree_dossiers WHERE id IN ({placeholders})",
-            ids,
-        ).fetchall()
-        return {int(r["id"]): int(r["secret_order_id"] or 0) for r in rows}
 
     # ── 稽核链连接读（links × 两端案卷状态） ─────────────────────
 
@@ -2287,7 +1889,11 @@ class DossierStore:
         ).fetchall()
         out: list[dict[str, object]] = []
         for row in rows:
-            payload = load_stored_object(row["payload_json"], label="检举 payload_json")
+            payload = {
+                **json.loads(
+                    "{}" if row["payload_json"] is None else row["payload_json"]
+                )
+            }
             out.append({
                 "id": int(row["id"]),
                 "turn": int(row["turn"]),
@@ -2302,44 +1908,6 @@ class DossierStore:
             })
         return out
 
-    def latest_denunciation_for(
-        self, *, accuser_name: str, target_dossier_id: int, origin: str,
-    ) -> Any:
-        """去重键=检举人×案卷×真伪类（origin 含真伪 mark，不含 turn）。"""
-        return self._conn.execute(
-            f"""SELECT id, turn, payload_json FROM {DENUNCIATION_TABLE}
-                WHERE accuser_name=? AND target_dossier_id=? AND origin=?
-                ORDER BY id DESC LIMIT 1""",
-            (str(accuser_name), int(target_dossier_id), str(origin)),
-        ).fetchone()
-
-    def insert_denunciation(
-        self, *, turn: int, accuser_name: str, accuser_faction: str,
-        subject_name: str, subject_faction: str, target_dossier_id: int,
-        origin: str, payload: Mapping[str, object], memorial_text: str,
-    ) -> int:
-        cur = self._conn.execute(
-            f"""INSERT INTO {DENUNCIATION_TABLE}
-                    (turn, accuser_name, accuser_faction, subject_name,
-                     subject_faction, target_dossier_id, origin,
-                     payload_json, memorial_text)
-                VALUES (?,?,?,?,?,?,?,?,?)""",
-            (
-                int(turn), accuser_name, accuser_faction, subject_name,
-                subject_faction, int(target_dossier_id), origin,
-                json.dumps(dict(payload), ensure_ascii=False), memorial_text,
-            ),
-        )
-        return int(cur.lastrowid)
-
-    def denunciation_origins(self, target_dossier_id: int) -> list[str]:
-        return [
-            str(r["origin"]) for r in self._conn.execute(
-                f"SELECT origin FROM {DENUNCIATION_TABLE} WHERE target_dossier_id=?",
-                (int(target_dossier_id),),
-            ).fetchall()
-        ]
-
     # ── affair pointer seam (ADR 0154：事务指针由 AffairStore 编排，列读写在此) ──
 
     def affair_id_of(self, dossier_id: int) -> int:
@@ -2349,16 +1917,6 @@ class DossierStore:
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         return int(row["affair_id"] or 0)
-
-    def snapshot_rows(self, table: str) -> Any:
-        sql = {
-            "decree_dossiers": "SELECT * FROM decree_dossiers",
-            "decree_dossier_decisions": "SELECT * FROM decree_dossier_decisions",
-            "dossier_reported_progress": "SELECT * FROM dossier_reported_progress",
-            "pending_actions": "SELECT * FROM pending_actions",
-            "decree_dossier_links": "SELECT * FROM decree_dossier_links",
-        }[table]
-        return self._conn.execute(sql).fetchall()
 
     def set_affair_id_if_unbound(self, dossier_id: int, affair_id: int) -> int:
         from ming_sim.entities.column_write import bind_affair_once
@@ -2377,47 +1935,6 @@ class DossierStore:
             "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
             (int(dossier_id),),
         ).fetchall()
-
-    def recent_reported_progress(self) -> list[Any]:
-        return self._conn.execute(
-            "SELECT id, turn, memorial_text, dossier_id FROM dossier_reported_progress "
-            "ORDER BY turn DESC, id DESC"
-        ).fetchall()
-
-    def has_override_party_cost(self, dossier_id: int) -> bool:
-        """Any reaction party cost already booked for this dossier's override."""
-        return self._conn.execute(
-            "SELECT 1 FROM decree_cost_events "
-            "WHERE dossier_id=? AND cost_kind='satisfaction' AND cost_identity='override' "
-            "LIMIT 1",
-            (int(dossier_id),),
-        ).fetchone() is not None
-
-    def set_latest_decision_parties(
-        self, dossier_id: int, affected_parties_json: str, midzhi_unpromulgatable: int,
-    ) -> None:
-        self._conn.execute(
-            """UPDATE decree_dossier_decisions
-               SET affected_parties_json=?, midzhi_unpromulgatable=?
-               WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
-            (affected_parties_json, int(midzhi_unpromulgatable), int(dossier_id)),
-        )
-
-    def latest_judge_parties_json(self, dossier_id: int, turn: int) -> Optional[str]:
-        row = self._conn.execute(
-            """SELECT affected_parties_json FROM decree_dossier_decisions
-               WHERE dossier_id=? AND turn=? AND rescript_action=''
-               ORDER BY id DESC LIMIT 1""",
-            (int(dossier_id), int(turn)),
-        ).fetchone()
-        return None if row is None else str(row["affected_parties_json"] or "")
-
-    def delete_endorsements_for_chat_turn(self, source_chat_turn_id: int) -> None:
-        """#506 rollback: endorsements derive from a spoken turn, so undo it too."""
-        self._conn.execute(
-            "DELETE FROM decree_dossier_endorsements WHERE source_chat_turn_id = ?",
-            (int(source_chat_turn_id),),
-        )
 
     def record_actual_progress(
         self, dossier_id: int, turn: int, *, units: float, fidelity_state: str,
@@ -2471,80 +1988,11 @@ class DossierStore:
             allowed=_DOSSIER_COLUMNS, what="decree_dossiers",
         )
 
-    def restore_decision(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-        upsert_by_pk(
-            self._conn, "decree_dossier_decisions", row, pk="id",
-            allowed=_DECISION_COLUMNS, what="decree_dossier_decisions",
-        )
-
-    def restore_reported_progress(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-        upsert_by_pk(
-            self._conn, "dossier_reported_progress", row, pk="id",
-            allowed=_PROGRESS_COLUMNS, what="dossier_reported_progress",
-        )
-
-    def restore_pending_action(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-        upsert_by_pk(
-            self._conn, "pending_actions", row, pk="id",
-            allowed=_PENDING_ACTION_COLUMNS, what="pending_actions",
-        )
-
-    def restore_link(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-        upsert_by_pk(
-            self._conn, "decree_dossier_links", row, pk="id",
-            allowed=_LINK_COLUMNS, what="decree_dossier_links",
-        )
-
-    def delete_dossier(self, dossier_id: object) -> None:
-        self._conn.execute("DELETE FROM decree_dossiers WHERE id=?", (dossier_id,))
-
-    def delete_decision(self, decision_id: object) -> None:
-        self._conn.execute(
-            "DELETE FROM decree_dossier_decisions WHERE id=?", (decision_id,),
-        )
-
-    def delete_reported_progress(self, progress_id: object) -> None:
-        self._conn.execute(
-            "DELETE FROM dossier_reported_progress WHERE id=?", (progress_id,),
-        )
-
-    def delete_pending_action(self, action_id: object) -> None:
-        self._conn.execute("DELETE FROM pending_actions WHERE id=?", (action_id,))
-
-    def delete_link(self, link_id: object) -> None:
-        self._conn.execute("DELETE FROM decree_dossier_links WHERE id=?", (link_id,))
-
     # ── pending_actions persistence primitives (fact owner) ─────────
-
-    def pending_action_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT * FROM pending_actions WHERE id=?", (int(action_id),),
-        ).fetchone()
-
-    def pending_action_payload_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?", (int(action_id),),
-        ).fetchone()
 
     def pending_action_payload_status(self, action_id: int) -> Any:
         return self._conn.execute(
             "SELECT payload_json, status FROM pending_actions WHERE id=?",
-            (int(action_id),),
-        ).fetchone()
-
-    def pending_directive_version_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
-            (int(action_id),),
-        ).fetchone()
-
-    def pending_kind_version_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT kind, version FROM pending_actions WHERE id=?",
             (int(action_id),),
         ).fetchone()
 
@@ -2559,95 +2007,6 @@ class DossierStore:
             "SELECT night_id FROM pending_actions WHERE id=?",
             (int(action_id),),
         ).fetchone()
-
-    def pending_kind_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT kind FROM pending_actions WHERE id=?", (int(action_id),),
-        ).fetchone()
-
-    def pending_forecast_state_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT status,kind,action,night_approved,night_id,version "
-            "FROM pending_actions WHERE id=?",
-            (int(action_id),),
-        ).fetchone()
-
-    def pending_version_forecast_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT version, status, kind, action, night_approved, night_id "
-            "FROM pending_actions WHERE id=?",
-            (int(action_id),),
-        ).fetchone()
-
-    def pending_row_for_turn(self, action_id: int, turn: int) -> Any:
-        return self._conn.execute(
-            "SELECT id, night_id, status, payload_json FROM pending_actions "
-            "WHERE id=? AND turn=?",
-            (int(action_id), int(turn)),
-        ).fetchone()
-
-    def pending_decision_row(self, action_id: int, turn: int) -> Any:
-        return self._conn.execute(
-            "SELECT night_id, kind, action, minister_name, night_approved, payload_json "
-            "FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
-            (int(action_id), int(turn)),
-        ).fetchone()
-
-    def pending_office_candidate_row(self, candidate_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT id,payload_json,status FROM pending_actions "
-            "WHERE id=? AND kind='office'",
-            (int(candidate_id),),
-        ).fetchone()
-
-    def pending_directive_candidate_row(self, candidate_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT id,payload_json,status,version FROM pending_actions "
-            "WHERE id=? AND kind='directive'",
-            (int(candidate_id),),
-        ).fetchone()
-
-    def pending_id_for_committed_directive(self, directive_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT pa.id FROM pending_actions pa JOIN turn_directives td "
-            "ON td.source_pending_action_id=pa.id WHERE td.id=? "
-            "ORDER BY pa.id DESC LIMIT 1",
-            (int(directive_id),),
-        ).fetchone()
-
-    def pending_ids_for_turn(self, turn: int, *, status: str = "pending") -> list[int]:
-        return [
-            int(row["id"])
-            for row in self._conn.execute(
-                "SELECT id FROM pending_actions WHERE turn=? AND status=?",
-                (int(turn), str(status)),
-            ).fetchall()
-        ]
-
-    def night_approved_directive_ids(self, action_ids: Iterable[int]) -> list[int]:
-        ids = sorted({int(i) for i in action_ids})
-        if not ids:
-            return []
-        placeholders = ",".join("?" for _ in ids)
-        rows = self._conn.execute(
-            "SELECT id FROM pending_actions WHERE id IN (" + placeholders + ") "
-            "AND kind='directive' AND action='拟旨' AND status='pending' "
-            "AND night_approved=1 AND night_id>0",
-            ids,
-        ).fetchall()
-        return [int(row["id"]) for row in rows]
-
-    def closed_nights_with_approved_pending(
-        self, turn: int, closed_status: str,
-    ) -> list[Any]:
-        """Cross-entity projection: nights that still hold night-approved pending."""
-        return self._conn.execute(
-            "SELECT DISTINCT n.id FROM audience_nights n "
-            "JOIN pending_actions pa ON pa.night_id=n.id "
-            "WHERE n.turn=? AND n.status=? AND "
-            "pa.status='pending' AND pa.night_approved=1 ORDER BY n.id",
-            (int(turn), str(closed_status)),
-        ).fetchall()
 
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
@@ -2665,33 +2024,6 @@ class DossierStore:
                 "ORDER BY id",
                 (int(turn), str(status), str(minister_name)),
             ).fetchall()
-        return [
-            {
-                "id": int(r["id"]),
-                "turn": int(r["turn"]),
-                "kind": r["kind"],
-                "action": r["action"],
-                "target_id": None if r["target_id"] is None else int(r["target_id"]),
-                "minister_name": r["minister_name"],
-                "payload_json": r["payload_json"],
-                "status": r["status"],
-            }
-            for r in rows
-        ]
-
-    def list_failed_secret_order_actions(
-        self, minister_name: Optional[str] = None,
-    ) -> list[dict[str, object]]:
-        sql = (
-            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
-            "FROM pending_actions WHERE status='failed' AND kind='secret_order'"
-        )
-        params: tuple[object, ...] = ()
-        if minister_name is not None:
-            sql += " AND minister_name=?"
-            params = (str(minister_name),)
-        sql += " ORDER BY turn DESC, id"
-        rows = self._conn.execute(sql, params).fetchall()
         return [
             {
                 "id": int(r["id"]),
@@ -2743,107 +2075,10 @@ class DossierStore:
             for r in rows
         ]
 
-    def list_pending_for_translate(
-        self, turn: int, *, night_id: int = 0,
-    ) -> list[Any]:
-        params: list[object] = [int(turn)]
-        sql = (
-            "SELECT id, kind, action, payload_json, night_id, night_approved "
-            "FROM pending_actions WHERE turn=? AND status='pending'"
-        )
-        if int(night_id or 0) > 0:
-            sql += " AND night_id=?"
-            params.append(int(night_id))
-        sql += " ORDER BY id"
-        return self._conn.execute(sql, tuple(params)).fetchall()
-
-    def secret_order_pending_payloads(self) -> list[Any]:
-        return self._conn.execute(
-            "SELECT payload_json FROM pending_actions "
-            "WHERE kind='secret_order' AND status IN ('pending','failed')"
-        ).fetchall()
-
-    def insert_pending_action(
-        self,
-        turn: int,
-        kind: str,
-        action: str,
-        target_id: Optional[int],
-        minister_name: str,
-        payload_json: str,
-        night_id: int,
-        source_chat_turn_id: int = 0,
-    ) -> int:
-        cur = self._conn.execute(
-            """INSERT INTO pending_actions
-               (turn, kind, action, target_id, minister_name, payload_json, status,
-                night_id, night_approved, source_chat_turn_id)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?)""",
-            (
-                int(turn), str(kind), str(action),
-                None if target_id is None else int(target_id),
-                str(minister_name or ""),
-                payload_json,
-                int(night_id),
-                int(source_chat_turn_id or 0),
-            ),
-        )
-        return int(cur.lastrowid)
-
     def set_pending_payload(self, action_id: int, payload_json: str) -> None:
         self._conn.execute(
             "UPDATE pending_actions SET payload_json=? WHERE id=?",
             (payload_json, int(action_id)),
-        )
-
-    def set_pending_payload_clear_approval(
-        self, action_id: int, payload_json: str,
-    ) -> None:
-        self._conn.execute(
-            "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
-            (payload_json, int(action_id)),
-        )
-
-    def set_pending_payload_bump_version(
-        self, action_id: int, payload_json: str,
-    ) -> None:
-        self._conn.execute(
-            "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
-            (payload_json, int(action_id)),
-        )
-
-    def rehome_pending_payload(
-        self,
-        action_id: int,
-        payload_json: str,
-        night_id: int,
-        *,
-        bump_version: bool = False,
-    ) -> None:
-        if bump_version:
-            self._conn.execute(
-                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
-                "version=version+1 WHERE id=?",
-                (payload_json, int(night_id), int(action_id)),
-            )
-        else:
-            self._conn.execute(
-                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 "
-                "WHERE id=?",
-                (payload_json, int(night_id), int(action_id)),
-            )
-
-    def set_pending_status(self, action_id: int, status: str) -> None:
-        self._conn.execute(
-            "UPDATE pending_actions SET status=? WHERE id=?",
-            (str(status), int(action_id)),
-        )
-
-    def carry_pending_to_turn(self, action_id: int, turn: int) -> None:
-        self._conn.execute(
-            "UPDATE pending_actions "
-            "SET turn=?, night_id=0, night_approved=0 WHERE id=?",
-            (int(turn), int(action_id)),
         )
 
     def mark_pending_night_approved(
@@ -2898,20 +2133,6 @@ class DossierStore:
             self._commit(commit, owns)
         return updated
 
-    def withdraw_pending_action_row(self, action_id: int, turn: int) -> Any:
-        return self._conn.execute(
-            "SELECT id, kind, version FROM pending_actions "
-            "WHERE id=? AND turn=? AND status='pending'",
-            (int(action_id), int(turn)),
-        ).fetchone()
-
-    def delete_pending_if_pending(self, action_id: int, turn: int) -> int:
-        cur = self._conn.execute(
-            "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
-            (int(action_id), int(turn)),
-        )
-        return int(cur.rowcount or 0)
-
     def delete_failed_secret_order_intents(self) -> int:
         cur = self._conn.execute(
             "DELETE FROM pending_actions WHERE status='failed' AND kind='secret_order'"
@@ -2926,37 +2147,745 @@ class DossierStore:
         ).fetchone()
         return float(row["total"] if row is not None else 0.0)
 
-    def actual_progress_at(self, dossier_id: int, turn: int) -> Optional[dict[str, object]]:
-        row = self._conn.execute(
-            "SELECT id, units FROM dossier_actual_progress "
-            "WHERE dossier_id=? AND turn=? LIMIT 1",
-            (int(dossier_id), int(turn)),
-        ).fetchone()
-        return dict(row) if row is not None else None
-
     def pending_source_status(self, action_id: int) -> Any:
         return self._conn.execute(
             "SELECT source_chat_turn_id, status FROM pending_actions WHERE id=?",
             (int(action_id),),
         ).fetchone()
 
-    def pending_voidable_for_chat_turn(self, chat_turn_id: int) -> list[Any]:
+    def recent_reported_progress(self) -> list[Any]:
+        return self._conn.execute(
+            "SELECT id, turn, memorial_text, dossier_id FROM dossier_reported_progress "
+            "ORDER BY turn DESC, id DESC"
+        ).fetchall()
+
+    def active_effect_facts(self) -> list[Any]:
+        return self._conn.execute(
+            """
+                SELECT id, decree_text, execution_outcome, executor_id,
+                       executor_kind, participant_roster, status
+                FROM decree_dossiers
+                WHERE status IN ('promulgated', 'executing')
+                   OR (status='closed' AND execution_outcome='transformed')
+                ORDER BY id
+                """
+        ).fetchall()
+
+    def rescript_history_rows(self) -> list[Any]:
+        """中旨/强颁 durable markers joined to their dossier payload mode."""
+        return self._conn.execute(
+            "SELECT d.dossier_id,d.turn,d.decision,d.rescript_action,x.payload_json "
+            "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
+            "ORDER BY d.turn,d.dossier_id,d.id"
+        ).fetchall()
+
+    def grant_allocation_rows(self) -> list[Any]:
+        return self._conn.execute(
+            "SELECT id, status, target_kind, target_id, payload_json, "
+            "execution_outcome, closed_turn FROM decree_dossiers "
+            "WHERE action_type='grant_allocation' ORDER BY id"
+        ).fetchall()
+
+    def insert_row(
+        self,
+        *,
+        action: str,
+        target_kind: str,
+        target_id: str,
+        executor_kind: str,
+        executor_id: str,
+        source_chat_turn_id: int,
+        pending_action_id: int,
+        directive_id: int,
+        secret_order_id: Optional[int],
+        region_id: str,
+        decree_text: str,
+        payload: Mapping[str, object],
+        status: str,
+        due_turn: int,
+        extension: Mapping[str, object],
+        participant_roster: object,
+        office_archive_keys: list[str],
+        turn: int,
+        year: int,
+        period: int,
+        affair_id: int,
+    ) -> int:
+        """The single INSERT that brings a dossier into being."""
+        cur = self._conn.execute(
+            """
+                INSERT INTO decree_dossiers
+                    (action_type,target_kind,target_id,executor_kind,executor_id,
+                     source_chat_turn_id,pending_action_id,
+                     directive_id,secret_order_id,region_id,decree_text,payload_json,status,due_turn,
+                     extension_json,participant_roster,office_archive_keys,
+                     created_turn,created_year,created_period,affair_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+            (
+                action,
+                target_kind,
+                target_id,
+                executor_kind,
+                executor_id,
+                int(source_chat_turn_id),
+                int(pending_action_id),
+                None if int(directive_id) <= 0 else int(directive_id),
+                None if secret_order_id is None else int(secret_order_id),
+                region_id,
+                decree_text,
+                json.dumps(dict(payload), ensure_ascii=False),
+                status,
+                max(0, int(due_turn)),
+                json.dumps(dict(extension), ensure_ascii=False),
+                json.dumps(participant_roster, ensure_ascii=False),
+                json.dumps(sorted(office_archive_keys), ensure_ascii=False),
+                int(turn),
+                int(year),
+                int(period),
+                int(affair_id),
+            ),
+        )
+        return int(cur.lastrowid)
+
+    def set_participants_and_archive(
+        self,
+        dossier_id: int,
+        roster: object,
+        archive_keys: list[str],
+        *,
+        commit: bool = True,
+    ) -> None:
+        owns = self._owns()
+        self._conn.execute(
+            "UPDATE decree_dossiers SET participant_roster=?,office_archive_keys=?, "
+            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (
+                json.dumps(roster, ensure_ascii=False),
+                json.dumps(sorted(archive_keys), ensure_ascii=False),
+                int(dossier_id),
+            ),
+        )
+        self._commit(commit, owns)
+
+    def find_existing_for_source(
+        self,
+        *,
+        secret_order_id: Optional[int],
+        directive_id: int,
+        pending_action_id: int,
+        action: str,
+        region_id: str,
+    ) -> Optional[int]:
+        """Idempotency key lookup: only real (>0) source ids key a dossier row."""
+        if secret_order_id is not None:
+            sql, params = "secret_order_id = ?", (int(secret_order_id),)
+        elif int(directive_id or 0) > 0:
+            sql, params = (
+                "directive_id = ? AND region_id = ?",
+                (int(directive_id), region_id),
+            )
+        elif int(pending_action_id or 0) > 0:
+            # #1837：同 pending 可挂多 action_type（组合拨帑+任免）；幂等按三类键查。
+            sql, params = (
+                "pending_action_id = ? AND region_id = ? AND action_type = ?",
+                (int(pending_action_id), region_id, action),
+            )
+        else:
+            return None
+        existing = self._conn.execute(
+            f"SELECT id FROM decree_dossiers WHERE {sql}",
+            params,
+        ).fetchone()
+        return None if existing is None else int(existing["id"])
+
+    def read_apply_existing_appointment_hit(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", params
+        ).fetchone()
+
+    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, action_type, target_kind, target_id FROM decree_dossiers "
+            "WHERE status='executing' AND action_type='grant_allocation' ORDER BY id",
+            params,
+        ).fetchall()
+
+    def write_merge_plea_kind_into_todo(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE next_audience_todos SET origin_context=? WHERE id=?", params
+        )
+
+    def read_sponsor_transferred(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?", params
+        ).fetchone()
+
+    def read_write_exposure_todos(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM decree_dossiers ORDER BY id", params
+        ).fetchall()
+
+    def read_write_exposure_todos_faction_denunciations(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT origin FROM faction_denunciations WHERE target_dossier_id=?", params
+        ).fetchall()
+
+    def read_write_exposure_todos_decree_dossier_links(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM decree_dossier_links WHERE target_dossier_id=? AND relation_type='稽核' LIMIT 1",
+            params,
+        ).fetchone()
+
+    def read_globally_used_fact_keys(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT id FROM decree_dossiers", params).fetchall()
+
+    def read_investigation_monthly_capacity(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT COUNT(*) AS n FROM decree_dossiers "
+            "WHERE executor_kind='character' AND executor_id=? "
+            "AND status IN ('promulgated','executing') AND id<>?",
+            params,
+        ).fetchone()
+
+    def read_apply_investigation_selection(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, units FROM dossier_actual_progress "
+            "WHERE dossier_id=? AND turn=? LIMIT 1",
+            params,
+        ).fetchone()
+
+    def write_record_dossier_verdict_metadata(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """UPDATE decree_dossier_decisions
+                   SET affected_parties_json=?, midzhi_unpromulgatable=?
+                   WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
+            params,
+        )
+
+    def insert_pending_action(self, params: Any) -> Any:
+        return self._conn.execute(
+            "INSERT INTO pending_actions "
+            "(turn, kind, action, target_id, minister_name, payload_json, status, night_id, "
+            "night_approved, source_chat_turn_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params,
+        )
+
+    def write_update_office_candidate_payload(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
+            params,
+        )
+
+    def write_update_directive_candidate(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
+            "version=version+1 WHERE id=?",
+            params,
+        )
+
+    def write_withdraw_pending_action(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
+            params,
+        )
+
+    def write_undo_chat_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "DELETE FROM decree_dossier_endorsements WHERE source_chat_turn_id = ?",
+            params,
+        )
+
+    def record_monthly_grant_reconciliation(self, params: Any) -> Optional[dict[str, object]]:
+        """Record the first monthly reconciliation; later segments leave it untouched."""
+        cur = self._conn.execute(
+            """
+                    INSERT INTO decree_dossier_reconciliations
+                        (dossier_id, turn, ordered_amount, arrived_amount, loss_amount,
+                         escorted, escort_source_dossier_id, relation_type, note)
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(dossier_id, turn) DO NOTHING
+                    """,
+            params,
+        )
+        return self.reconciliations(int(params[0]))[-1] if cur.rowcount else None
+
+    def write_accept_faction_denunciations(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                    INSERT INTO faction_denunciations
+                        (turn, accuser_name, accuser_faction, subject_name,
+                         subject_faction, target_dossier_id, origin,
+                         payload_json, memorial_text)
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                    """,
+            params,
+        )
+
+    def write_pending_action_status(self, params: Any) -> Any:
+        return self._conn.execute(
+            "UPDATE pending_actions SET status=? WHERE id=?", params
+        )
+
+    def write_void_pending_actions_for_chat_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE pending_actions SET status='voided', night_approved=0 "
+            "WHERE id=? AND status='pending'",
+            params,
+        )
+
+    def write_create_secret_order(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                    UPDATE decree_dossiers
+                    SET promulgation_decision='promulgated',
+                        promulgation_blocked_layer='palace_rescript',
+                        promulgation_reason='内批自动顺颁'
+                    WHERE id=?
+                    """,
+            params,
+        )
+
+
+    def set_actual_progress_note(self, dossier_id: int, turn: int, note: str) -> None:
+        """Set this month's original note without changing existing progress units."""
+        self._conn.execute(
+            "INSERT INTO dossier_actual_progress "
+            "(dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref) "
+            "VALUES (?, ?, 0, '', '', ?, ?) "
+            "ON CONFLICT(dossier_id, turn) DO UPDATE SET note=excluded.note",
+            (int(dossier_id), int(turn), note, f"dossier:{int(dossier_id)}"),
+        )
+
+    def read_list_monthly_dossier_progress_nudges(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                SELECT d.*, s.title AS secret_title, s.content AS secret_content,
+                       s.due_turn AS secret_due_turn
+                FROM decree_dossiers d
+                JOIN secret_orders s ON s.id=d.secret_order_id
+                WHERE d.status IN ('promulgated','executing') AND s.status='active'
+                ORDER BY d.id
+                """,
+            params,
+        ).fetchall()
+
+    def read_dossier_declares_escort(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?", params
+        ).fetchone()
+
+    def read_list_referenceable_dossiers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """SELECT d.*,
+                          s.title AS secret_title,
+                          EXISTS(
+                              SELECT 1 FROM decree_dossier_decisions h
+                              WHERE h.dossier_id=d.id
+                                AND h.rescript_action='force_promulgated'
+                          ) AS was_force_promulgated
+                   FROM decree_dossiers d
+                   LEFT JOIN secret_orders s ON s.id=d.secret_order_id
+                   WHERE d.created_turn <= ?
+                   ORDER BY d.id DESC""",
+            params,
+        ).fetchall()
+
+    def write_record_dossier_promulgation(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                        UPDATE decree_dossiers
+                        SET status='promulgated',rescript_pending=0,
+                            updated_at=CURRENT_TIMESTAMP
+                        WHERE id=?
+                        """,
+            params,
+        )
+
+
+    def read_current_judge_affected_parties(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """SELECT affected_parties_json FROM decree_dossier_decisions
+                   WHERE dossier_id=? AND turn=? AND rescript_action=''
+                   ORDER BY id DESC LIMIT 1""",
+            params,
+        ).fetchone()
+
+    def write_breach_decree_dossier(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE decree_dossiers SET interruption_reason=CASE WHEN interruption_reason='' THEN ? ELSE interruption_reason END WHERE id=?",
+            params,
+        )
+
+    def read_interrupt_dossiers_for_character(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                SELECT id,secret_order_id,status FROM decree_dossiers
+                WHERE executor_kind='character' AND executor_id=?
+                  AND status IN ('promulgated','executing')
+                ORDER BY id
+                """,
+            params,
+        ).fetchall()
+
+    def read_update_office_candidate_payload(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id,payload_json,status FROM pending_actions "
+            "WHERE id=? AND kind='office'",
+            params,
+        ).fetchone()
+
+    def read_update_directive_candidate(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id,payload_json,status,version FROM pending_actions "
+            "WHERE id=? AND kind='directive'",
+            params,
+        ).fetchone()
+
+    def read_discard_deleted_directive_forecast(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT kind, version FROM pending_actions WHERE id=?", params
+        ).fetchone()
+
+    def write_apply_pending_action(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE decree_dossiers SET pending_action_id=? "
+            "WHERE directive_id=? AND (pending_action_id IS NULL "
+            "OR pending_action_id=0 OR pending_action_id=?)",
+            params,
+        )
+
+    def read_void_pending_actions_for_chat_turn(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT id, kind, version FROM pending_actions "
             "WHERE source_chat_turn_id = ? AND status = 'pending' ORDER BY id",
-            (int(chat_turn_id),),
+            params,
         ).fetchall()
 
-    def pending_ids_for_chat_turn(self, chat_turn_id: int) -> list[int]:
-        rows = self._conn.execute(
+    def read_withdraw_pending_action(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, kind, version FROM pending_actions "
+            "WHERE id=? AND turn=? AND status='pending'",
+            params,
+        ).fetchone()
+
+    def read_secret_origin_message_ids(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT minister_name, payload_json FROM pending_actions "
+            "WHERE kind='secret_order' AND status IN ('pending','failed')",
+            params,
+        ).fetchall()
+
+    def read_undo_chat_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT source_chat_turn_id FROM pending_actions WHERE id=?", params
+        ).fetchone()
+
+    def read_list_monthly_grant_reconciliation_targets(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                    SELECT * FROM decree_dossiers
+                    WHERE status='executing' AND action_type='grant_allocation'
+                    ORDER BY id
+                    """,
+            params,
+        ).fetchall()
+
+    def read_list_monthly_grant_reconciliation_targets_decree_dossiers(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            """
+                    SELECT * FROM decree_dossiers
+                    WHERE action_type='grant_allocation'
+                      AND (
+                        status='executing'
+                        OR (status='closed' AND closed_turn=?)
+                      )
+                    ORDER BY id
+                    """,
+            params,
+        ).fetchall()
+
+    def read_accept_faction_denunciations(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                    SELECT id, turn, payload_json FROM faction_denunciations
+                    WHERE accuser_name=? AND target_dossier_id=? AND origin=?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+            params,
+        ).fetchone()
+
+    def read_create_decree_dossiers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM decree_dossiers WHERE secret_order_id=? "
+            "ORDER BY region_id, id",
+            params,
+        ).fetchall()
+
+    def read_create_decree_dossiers_decree_dossiers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, region_id FROM decree_dossiers WHERE directive_id=? "
+            "ORDER BY region_id, id",
+            params,
+        ).fetchall()
+
+    def read_append_decree_dossier_participants(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT office_archive_keys FROM decree_dossiers WHERE id=?", params
+        ).fetchone()
+
+    def read_resolve_commitment_origin_ref(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT COUNT(*) AS n FROM decree_dossiers WHERE created_turn=?", params
+        ).fetchone()
+
+    def read_apply_override_costs(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """SELECT 1 FROM decree_cost_events
+                   WHERE dossier_id=? AND cost_kind='satisfaction' AND cost_identity='override'
+                   LIMIT 1""",
+            params,
+        ).fetchone()
+
+
+    def read_discard_pending_decree_forecast(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
+            params,
+        ).fetchone()
+
+    def read_create_decree_dossiers_decree_dossiers_2(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, region_id FROM decree_dossiers WHERE pending_action_id=? "
+            "ORDER BY region_id, id",
+            params,
+        ).fetchall()
+
+    def read_undo_chat_turn_pending_actions(self, params: Any = ()) -> Any:
+        return self._conn.execute(
             "SELECT id FROM pending_actions WHERE source_chat_turn_id = ? ORDER BY id",
-            (int(chat_turn_id),),
+            params,
+        ).fetchall()
+
+    def read_commit_pending_actions(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT secret_order_id FROM decree_dossiers "
+            "WHERE pending_action_id=? AND secret_order_id IS NOT NULL "
+            "ORDER BY id DESC LIMIT 1",
+            params,
+        ).fetchone()
+
+    def read_list_world_effect_history(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM dossier_actual_progress WHERE dossier_id=? ORDER BY turn, id",
+            params,
+        ).fetchall()
+
+    def read_dispatch_endorsements(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, night_id, status, payload_json FROM pending_actions "
+            "WHERE id=? AND turn=?",
+            params,
+        ).fetchone()
+
+    def read_dispatch_promises(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT night_id, kind, action, minister_name, night_approved, payload_json FROM pending_actions "
+            "WHERE id=? AND turn=? AND status='pending'",
+            params,
+        ).fetchone()
+
+    def write_dispatch_promises(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
+            params,
+        )
+
+    def read_dispatch_declaration_sections(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM pending_actions WHERE turn=? AND status='pending'", params
+        ).fetchall()
+
+    def read_dispatch_endorsements_decree_dossiers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM decree_dossiers WHERE pending_action_id=? ORDER BY id",
+            params,
+        ).fetchall()
+
+    def write_dispatch_promises_pending_actions(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
+            params,
+        )
+
+    def read_pending_snapshot(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM pending_actions WHERE id=?", params
+        ).fetchone()
+
+    def read_uncased_grant_catalog_token(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM decree_dossiers "
+            "WHERE action_type='grant_allocation' AND pending_action_id=? LIMIT 1",
+            params,
+        ).fetchone()
+
+    def read_failed_forecast_key(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id,version,night_id FROM pending_actions WHERE turn=?", params
+        ).fetchall()
+
+    def read_current_forecast_ref(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status,kind,action,night_approved,night_id,version "
+            "FROM pending_actions WHERE id=?",
+            params,
+        ).fetchone()
+
+    def read_pending_snapshot_decree_dossiers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT COALESCE(MAX(id),0)+1 FROM decree_dossiers", params
+        ).fetchone()
+
+    def read_gather_impeachment_surge_candidates(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id,closed_turn,participant_roster,decree_text,execution_note,execution_outcome "
+            "FROM decree_dossiers "
+            "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
+            params,
+        ).fetchall()
+
+    def read_origin_visible_to(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT secret_order_id FROM decree_dossiers WHERE id=?", params
+        ).fetchone()
+
+    def read_own_affair_lines(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, affair_id, secret_order_id, participant_roster "
+            "FROM decree_dossiers WHERE affair_id != 0",
+            params,
+        ).fetchall()
+
+    def read_list_due_grant_report_dossiers_for_scan(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+            SELECT id, due_turn, execution_outcome
+            FROM decree_dossiers
+            WHERE status='executing'
+              AND action_type='grant_allocation'
+              AND due_turn > 0
+              AND due_turn <= ?
+            ORDER BY id
+            """,
+            params,
+        ).fetchall()
+
+
+    def snapshot_rows(self, table: str) -> Any:
+        sql = {
+            "decree_dossiers": "SELECT * FROM decree_dossiers",
+            "decree_dossier_decisions": "SELECT * FROM decree_dossier_decisions",
+            "dossier_reported_progress": "SELECT * FROM dossier_reported_progress",
+            "pending_actions": "SELECT * FROM pending_actions",
+            "decree_dossier_links": "SELECT * FROM decree_dossier_links",
+        }[table]
+        return self._conn.execute(sql).fetchall()
+
+    def restore_decision(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+
+        upsert_by_pk(
+            self._conn,
+            "decree_dossier_decisions",
+            row,
+            pk="id",
+            allowed=_DECISION_COLUMNS,
+            what="decree_dossier_decisions",
+        )
+
+    def restore_reported_progress(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+
+        upsert_by_pk(
+            self._conn,
+            "dossier_reported_progress",
+            row,
+            pk="id",
+            allowed=_PROGRESS_COLUMNS,
+            what="dossier_reported_progress",
+        )
+
+    def restore_pending_action(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+
+        upsert_by_pk(
+            self._conn,
+            "pending_actions",
+            row,
+            pk="id",
+            allowed=_PENDING_ACTION_COLUMNS,
+            what="pending_actions",
+        )
+
+    def restore_link(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+
+        upsert_by_pk(
+            self._conn,
+            "decree_dossier_links",
+            row,
+            pk="id",
+            allowed=_LINK_COLUMNS,
+            what="decree_dossier_links",
+        )
+
+    def delete_dossier(self, dossier_id: object) -> None:
+        self._conn.execute("DELETE FROM decree_dossiers WHERE id=?", (dossier_id,))
+
+    def delete_decision(self, decision_id: object) -> None:
+        self._conn.execute(
+            "DELETE FROM decree_dossier_decisions WHERE id=?",
+            (decision_id,),
+        )
+
+    def delete_reported_progress(self, progress_id: object) -> None:
+        self._conn.execute(
+            "DELETE FROM dossier_reported_progress WHERE id=?",
+            (progress_id,),
+        )
+
+    def delete_pending_action(self, action_id: object) -> None:
+        self._conn.execute("DELETE FROM pending_actions WHERE id=?", (action_id,))
+
+    def delete_link(self, link_id: object) -> None:
+        self._conn.execute("DELETE FROM decree_dossier_links WHERE id=?", (link_id,))
+
+    def night_approved_directive_ids(self, action_ids: Iterable[int]) -> list[int]:
+        ids = sorted({int(i) for i in action_ids})
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._conn.execute(
+            "SELECT id FROM pending_actions WHERE id IN (" + placeholders + ") "
+            "AND kind='directive' AND action='拟旨' AND status='pending' "
+            "AND night_approved=1 AND night_id>0",
+            ids,
         ).fetchall()
         return [int(row["id"]) for row in rows]
 
-    def void_pending_if_pending(self, action_id: int) -> None:
-        self._conn.execute(
-            "UPDATE pending_actions SET status='voided', night_approved=0 "
-            "WHERE id=? AND status='pending'",
-            (int(action_id),),
+    def pending_summary_rows(self, turn: int, night_id: int = 0) -> Any:
+        params: list[Any] = [int(turn)]
+        sql = (
+            "SELECT id, kind, action, payload_json, night_id, night_approved "
+            "FROM pending_actions WHERE turn=? AND status='pending'"
         )
+        if int(night_id or 0) > 0:
+            sql += " AND night_id=?"
+            params.append(int(night_id))
+        sql += " ORDER BY id"
+        return self._conn.execute(sql, tuple(params)).fetchall()

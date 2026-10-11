@@ -26,14 +26,21 @@ CHARACTER_COLUMNS = frozenset({
 
 _MUTABLE_COLUMNS = CHARACTER_COLUMNS - {"name"}
 
-OFFICE_COLUMNS = frozenset({
-    "character_name", "office_title", "source", "dossier_id",
-    "appointment_tenure", "region_id", "updated_at",
-})
-
-
 def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
     return checked_columns(values, allowed, what="characters")
+
+
+OFFICE_COLUMNS = frozenset(
+    {
+        "character_name",
+        "office_title",
+        "source",
+        "dossier_id",
+        "appointment_tenure",
+        "region_id",
+        "updated_at",
+    }
+)
 
 
 class CharacterStore:
@@ -45,10 +52,6 @@ class CharacterStore:
     def field_row(self, field: str, name: str) -> Any:
         """Read a schema field already validated by the gate/subject consumer."""
         return self._conn.execute(f"SELECT {field} FROM characters WHERE name=?", (name,)).fetchone()
-
-    def snapshot_rows(self, table: str) -> Any:
-        sql = {"characters": "SELECT * FROM characters", "character_offices": "SELECT * FROM character_offices"}[table]
-        return self._conn.execute(sql).fetchall()
 
     def has_any(self, table: str) -> bool:
         if table not in ("characters", "character_offices", "office_slots"):
@@ -69,13 +72,6 @@ class CharacterStore:
         return self._conn.execute(
             "SELECT name,office,office_type,faction,status,status_reason "
             f"FROM characters WHERE {' AND '.join(clauses)} ORDER BY name", params,
-        ).fetchall()
-
-    def named_status_rows(self, names: Iterable[str]) -> Any:
-        names = tuple(names)
-        placeholders = ','.join('?' for _ in names)
-        return self._conn.execute(
-            f"SELECT name,faction,status FROM characters WHERE name IN ({placeholders})", names,
         ).fetchall()
 
     def __init__(self, conn: Any) -> None:
@@ -105,11 +101,6 @@ class CharacterStore:
 
     def delete(self, name: str) -> None:
         self._conn.execute("DELETE FROM characters WHERE name=?", (name,))
-
-    def delete_office(self, name: str) -> None:
-        self._conn.execute(
-            "DELETE FROM character_offices WHERE character_name=?", (name,),
-        )
 
     def upsert_office(
         self,
@@ -158,77 +149,15 @@ class CharacterStore:
             (name, office_title, office_type, source, dossier_id, appointment_tenure),
         )
 
-    def clear_office_archive(self) -> None:
-        """Drop every current-office row and every office-change row."""
-        self._conn.execute("DELETE FROM character_offices")
-        self._conn.execute("DELETE FROM office_change_records")
-
-    def insert_office_snapshots(self, rows: list[Mapping[str, object]]) -> None:
-        """Restore archive rows, including the stored ``updated_at``."""
-        if not rows:
-            return
-        self._conn.executemany(
-            "INSERT INTO character_offices "
-            "(character_name, office_title, source, dossier_id, "
-            "appointment_tenure, region_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    row["character_name"],
-                    row["office_title"],
-                    row["source"],
-                    row.get("dossier_id"),
-                    row["appointment_tenure"],
-                    str(row.get("region_id") or ""),
-                    row["updated_at"],
-                )
-                for row in rows
-            ],
-        )
-
-    def insert_office_change_snapshots(self, rows: list[Mapping[str, object]]) -> None:
-        """Restore change rows, including the stored id and ``created_at``."""
-        if not rows:
-            return
-        self._conn.executemany(
-            "INSERT INTO office_change_records "
-            "(id, character_name, office_title, office_type, source, dossier_id, "
-            "appointment_tenure, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    row["id"],
-                    row["character_name"],
-                    row["office_title"],
-                    row["office_type"],
-                    row["source"],
-                    row.get("dossier_id"),
-                    row["appointment_tenure"],
-                    row["created_at"],
-                )
-                for row in rows
-            ],
-        )
-
-    def upsert(self, row: Mapping[str, object]) -> None:
-        """Debug replace of one person. Caller commits."""
+    def restore_row(self, row: Mapping[str, object]) -> None:
+        """Undo writes the before-image through this store."""
         upsert_by_pk(
             self._conn, "characters", row,
             pk="name", allowed=CHARACTER_COLUMNS, what="characters",
         )
 
-    def restore_row(self, row: Mapping[str, object]) -> None:
-        """Undo writes the before-image through this store."""
-        self.upsert(row)
-
-    def restore_office_row(self, row: Mapping[str, object]) -> None:
-        upsert_by_pk(
-            self._conn, "character_offices", row,
-            pk="character_name", allowed=OFFICE_COLUMNS, what="character_offices",
-        )
-
     def affair_id_of(self, name: str) -> int:
-        row = self._conn.execute(
-            "SELECT affair_id FROM characters WHERE name=?", (str(name),),
-        ).fetchone()
+        row = self.field_row('affair_id', str(name))
         if row is None:
             raise KeyError(f"人物不存在：{name}")
         return int(row["affair_id"] or 0)
@@ -239,8 +168,6 @@ class CharacterStore:
     def read_commission_fallback_actor(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 1", params).fetchone()
 
-    def read_commission_fallback_actor_name(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name FROM characters WHERE name=? LIMIT 1', params).fetchone()
 
     def read_assert_characters_exist(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM characters WHERE name=?', params).fetchone()
@@ -248,20 +175,10 @@ class CharacterStore:
     def read_names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name FROM characters', params).fetchall()
 
-    def read_dead_person_core_subjects(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status FROM characters WHERE name = ?', params).fetchone()
-
-    def read_displace_duplicate_offices_faction(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT faction FROM characters WHERE name=?', params).fetchone()
-
-    def read_get_character_status(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status, status_reason FROM characters WHERE name=?', params).fetchone()
 
     def read_knowledge_items_for_turn(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name, office, office_type FROM characters', params).fetchall()
 
-    def read_character_office_region(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT region_id FROM character_offices WHERE character_name=?', params).fetchone()
 
     def office_region(self, character_name: object) -> str:
         """Jurisdiction of the character's current appointment (一次任职)."""
@@ -269,7 +186,9 @@ class CharacterStore:
         if not name:
             return ""
         # Required table: empty name / no row stay business-empty; schema faults surface.
-        row = self.read_character_office_region((name,))
+        row = self._conn.execute(
+            "SELECT region_id FROM character_offices WHERE character_name=?", (name,)
+        ).fetchone()
         return str(row["region_id"] or "").strip() if row is not None else ""
 
     def read_resolve_executor_appointment_tenure(self, params: Any = ()) -> Any:
@@ -284,8 +203,6 @@ class CharacterStore:
     def read_minister_eligible_for_monthly_covert(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT 1 FROM characters WHERE name=? AND status='active'", params).fetchone()
 
-    def read_live_investigation_fact_keys(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT seed_guilt FROM characters WHERE name=?', params).fetchone()
 
     def read_character_faction_integrity(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT faction, integrity FROM characters WHERE name=?', params).fetchone()
@@ -296,8 +213,6 @@ class CharacterStore:
     def read_project_unsettled_summon_kind(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT location, transit_to, status FROM characters WHERE name=?', params).fetchone()
 
-    def read_list_waiting_audience_summons(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT location FROM characters WHERE name=?', params).fetchone()
 
     def read_current_character_office(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT office, office_type FROM characters WHERE name = ?', params).fetchone()
@@ -308,17 +223,11 @@ class CharacterStore:
     def read_admit_audience(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT location, transit_to FROM characters WHERE name=?', params).fetchone()
 
-    def write_apply_authority_change_item(self, params: Any = ()) -> Any:
-        return self._conn.execute('UPDATE authority_records SET revoked=1,revoked_turn=? WHERE id=? AND revoked=0', params)
-
-    def write_apply_authority_change_item_authority_records(self, params: Any = ()) -> Any:
-        return self._conn.execute('INSERT INTO authority_records (holder_id,privilege,scope,effective_turn,expires_turn,dossier_id) VALUES (?,?,?,?,?,?)', params)
-
-    def read_get_authority(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM authority_records WHERE id=?', params).fetchone()
 
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
-        row = self.read_get_authority((int(authority_id),))
+        row = self._conn.execute(
+            "SELECT * FROM authority_records WHERE id=?", (int(authority_id),)
+        ).fetchone()
         if row is None:
             return None
         result = dict(row)
@@ -356,10 +265,15 @@ class CharacterStore:
         self, dossier_id: int, *, holder_id: str, privilege: str, scope: str,
     ) -> Optional[Dict[str, object]]:
         """Return the stable row for an exact grant origin, regardless of status."""
-        row = self.read_find_authority_by_origin((
-            int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
-            str(scope).strip(),
-        ))
+        row = self._conn.execute(
+            "SELECT * FROM authority_records WHERE dossier_id=? AND holder_id=? AND privilege=? AND scope=? ORDER BY id LIMIT 1",
+            (
+                int(dossier_id),
+                str(holder_id).strip(),
+                str(privilege).strip(),
+                str(scope).strip(),
+            ),
+        ).fetchone()
         if row is None:
             return None
         result = dict(row)
@@ -367,17 +281,13 @@ class CharacterStore:
         return result
 
     def get_character_status(self, name: str) -> tuple[str, str]:
-        row = self.read_get_character_status((name,))
+        row = self._conn.execute(
+            "SELECT status, status_reason FROM characters WHERE name=?", (name,)
+        ).fetchone()
         if row is None:
             return ("active", "")
         return (row["status"], row["status_reason"] or "")
 
-
-    def read_find_authority_by_origin(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM authority_records WHERE dossier_id=? AND holder_id=? AND privilege=? AND scope=? ORDER BY id LIMIT 1', params).fetchone()
-
-    def write_ensure_office_type_parent(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n            INSERT OR IGNORE INTO offices\n            (office_type, power, responsibility, corruption_risk)\n            VALUES (?, ?, ?, ?)\n            ', params)
 
     def write_record_recommendation(self, params: Any = ()) -> Any:
         return self._conn.execute("INSERT INTO recommendation_events\n           (turn,year,period,recommender,candidate,candidate_kind,target_office,basis,reason,status)\n           VALUES (?,?,?,?,?,?,?,?,?,'adopted')", params)
@@ -388,8 +298,275 @@ class CharacterStore:
     def write_seed_opening_world(self, params: Any = ()) -> Any:
         return self._conn.executemany('\n            INSERT INTO office_slots\n                (office_title, office_type, region_id, jurisdiction, sort_order)\n            VALUES (?, ?, ?, ?, ?)\n            ', params)
 
-    def write_ensure_office_type_parents_owned(self, params: Any, fragment_1: str) -> Any:
-        return self._conn.execute(f'DELETE FROM offices WHERE office_type IN ({fragment_1})', params)
-
     def read_list_active_authorities_owned(self, params: Any, fragment_1: str) -> Any:
         return self._conn.execute(f'SELECT * FROM authority_records WHERE revoked=0 AND effective_turn<=? AND (expires_turn IS NULL OR expires_turn>=?){fragment_1} ORDER BY id', params)
+
+    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, office FROM characters WHERE status='active' ORDER BY name",
+            params,
+        ).fetchall()
+
+    def read_reclaim_bundled_authorities(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM authority_records WHERE dossier_id=? AND revoked=0 ORDER BY id",
+            params,
+        ).fetchall()
+
+    def read_sponsor_transferred(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status, office FROM characters WHERE name=?", params
+        ).fetchone()
+
+    def read_sponsor_transferred_office_title(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT office_title FROM character_offices WHERE character_name=?", params
+        ).fetchone()
+
+    def read_sponsor_transferred_office_title_by_character_name(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "\n        SELECT office_title FROM office_change_records\n        WHERE character_name=? ORDER BY id DESC LIMIT 1\n        ",
+            params,
+        ).fetchone()
+
+    def read_sponsor_transferred_1(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n                        SELECT 1 FROM office_change_records\n                        WHERE character_name=? AND dossier_id IS NOT NULL\n                          AND dossier_id != ?\n                        ORDER BY id DESC LIMIT 1\n                        ",
+            params,
+        ).fetchone()
+
+    def write_ensure_office_type_parent(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            INSERT OR IGNORE INTO offices\n            (office_type, power, responsibility, corruption_risk)\n            VALUES (?, ?, ?, ?)\n            ",
+            params,
+        )
+
+    def read_faction_office_weight_sum(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT office_type, office FROM characters WHERE faction=? AND status='active' AND power_id='ming'",
+            params,
+        ).fetchall()
+
+
+    def read_apply_historical_deaths(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, office, faction, historical_death_year, historical_death_month\n               FROM characters\n               WHERE status = 'active' AND historical_death_year > 0",
+            params,
+        ).fetchall()
+
+    def read_apply_historical_debuts(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, office, faction, debut_year, debut_month\n               FROM characters\n               WHERE status = 'offstage' AND debut_year > 0",
+            params,
+        ).fetchall()
+
+    def read_next_pool_portrait_id(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT portrait_id FROM characters WHERE portrait_id LIKE ?", params
+        ).fetchall()
+
+
+    def read_find_pacification_target(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status, power_id FROM characters WHERE name=?", params
+        ).fetchone()
+
+    def read_build_faction_denunciation_facts(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT name, faction, integrity, identity, status\n            FROM characters\n            WHERE status='active' AND COALESCE(faction,'') <> ''\n            ORDER BY name\n            ",
+            params,
+        ).fetchall()
+
+    def read_list_referenceable_dossiers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT office,office_type,location FROM characters WHERE name=?", params
+        ).fetchone()
+
+    def read_ensure_office_type_parent(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM offices WHERE office_type=?", params
+        ).fetchone()
+
+    def read_apply_character_power_changes(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT power_id, faction FROM characters WHERE name=?", params
+        ).fetchone()
+
+    def read_accept_faction_denunciations(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, faction, status FROM characters WHERE name=?", params
+        ).fetchone()
+
+    def read_require_local_office_region(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT office_title, region_id FROM character_offices WHERE character_name=?",
+            params,
+        ).fetchone()
+
+    def read_set_character_office(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT office_type FROM characters WHERE name=? AND power_id='ming'",
+            params,
+        ).fetchone()
+
+
+    def read_breach_decree_dossier(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT faction,status FROM characters WHERE name=?", params
+        ).fetchone()
+
+
+    def read_tick_transit_arrivals(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn FROM characters WHERE status='active' AND COALESCE(transit_to, '') != '' AND transit_distance_remaining IS NOT NULL AND transit_speed_factor IS NOT NULL ORDER BY name",
+            params,
+        ).fetchall()
+
+    def write_apply_authority_change_item(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE authority_records SET revoked=1,revoked_turn=? WHERE id=? AND revoked=0",
+            params,
+        )
+
+    def write_apply_authority_change_item_authority_records(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "INSERT INTO authority_records (holder_id,privilege,scope,effective_turn,expires_turn,dossier_id) VALUES (?,?,?,?,?,?)",
+            params,
+        )
+
+    def read_character_row(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, status, office, office_type, power_id, status_reason, status_changed_turn, reason_code, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
+            params,
+        ).fetchone()
+
+    def read_apply_person_changes(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, loyalty FROM characters WHERE name=?", params
+        ).fetchone()
+
+    def read_apply_person_changes_name_style(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, style FROM characters WHERE name=?", params
+        ).fetchone()
+
+    def read_apply_person_changes_status_location_transit_to_transit_distance_remaining_transit_spe(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT status, location, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
+            params,
+        ).fetchone()
+
+    def read_displace_duplicate_offices(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
+            params,
+        ).fetchall()
+
+
+    def read_knowledge_row_visible_to(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name, office, office_type FROM characters WHERE name=?", params
+        ).fetchone()
+
+    def read_appointment_break_rank(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT office,office_type,status,reason_code FROM characters WHERE name=?",
+            params,
+        ).fetchone()
+
+
+    def read_sync_offices_from_db_impl(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n        SELECT c.name, c.office, c.office_type, c.faction, c.aliases, c.personal_skills,\n               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.intrigue, c.seed_guilt,\n               c.birth_year, c.historical_death_year, c.historical_death_month,\n               c.debut_year, c.debut_month, c.status, c.status_reason, c.reason_code,\n               c.portrait_id, c.power_id, c.location, c.transit_to,\n               c.transit_distance_remaining, c.transit_speed_factor, c.transit_start_turn,\n               c.summary,\n               COALESCE(co.region_id, '') AS office_region\n        FROM characters c\n        LEFT JOIN character_offices co ON co.character_name = c.name\n        ",
+            params,
+        ).fetchall()
+
+    def read_strategic_event_result_preflight_error(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status, location, transit_to FROM characters WHERE name = ?", params
+        ).fetchone()
+
+    def read_strategic_event_result_preflight_error_c_office_c_office_type_COALESCE_co_appointment_tenure_真除_AS_appoi(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT c.office, c.office_type, COALESCE(co.appointment_tenure, '真除') AS appointment_tenure FROM characters c LEFT JOIN character_offices co ON co.character_name = c.name WHERE c.name = ?",
+            params,
+        ).fetchone()
+
+    def read_resolve_host_character(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT integrity, courage FROM characters WHERE name=?", params
+        ).fetchone()
+
+
+    def read_investigation_monthly_capacity(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT ability, location, transit_to FROM characters WHERE name=?", params
+        ).fetchone()
+
+
+    def read_world_roster_names(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name FROM characters UNION "
+            "SELECT subject_id AS name FROM textual_facts WHERE subject_kind='character' "
+            "ORDER BY name",
+            params,
+        ).fetchall()
+
+    def snapshot_rows(self, table: str) -> Any:
+        sql = {
+            "characters": "SELECT * FROM characters",
+            "character_offices": "SELECT * FROM character_offices",
+        }[table]
+        return self._conn.execute(sql).fetchall()
+
+    def restore_office_row(self, row: Mapping[str, object]) -> None:
+        upsert_by_pk(
+            self._conn,
+            "character_offices",
+            row,
+            pk="character_name",
+            allowed=OFFICE_COLUMNS,
+            what="character_offices",
+        )
+
+    def delete_office(self, name: str) -> None:
+        self._conn.execute(
+            "DELETE FROM character_offices WHERE character_name=?",
+            (name,),
+        )
+
+    def named_status_rows(self, names: Iterable[str]) -> Any:
+        names = tuple(names)
+        placeholders = ",".join("?" for _ in names)
+        return self._conn.execute(
+            f"SELECT * FROM characters WHERE name IN ({placeholders})",
+            names,
+        ).fetchall()
+
+    def gatekeeper_rows(
+        self, office_titles: Iterable[str], *, include_six_offices: bool = False
+    ) -> Any:
+        offices = tuple(office_titles)
+        placeholders = ",".join("?" for _ in offices)
+        office_clause = f"office IN ({placeholders})"
+        if include_six_offices:
+            office_clause = f"({office_clause} OR office_type='六科')"
+        order = "office_type,office,name" if include_six_offices else "name"
+        return self._conn.execute(
+            f"SELECT * FROM characters WHERE status='active' AND power_id='ming' "
+            f"AND {office_clause} ORDER BY {order}",
+            offices,
+        ).fetchall()
+
+    def rows_for_affair(self, affair_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT name FROM characters WHERE affair_id=? ORDER BY name", (affair_id,)
+        ).fetchall()

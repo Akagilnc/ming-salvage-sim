@@ -169,7 +169,7 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
 
     # 全回滚零残留：不落任命、不落荐人事件、零边。
     assert db.conn.execute("SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()["n"] == 0
-    assert db.get_relation_edge_events() == []
+    assert db.person_logs.get_relation_edge_events() == []
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
     assert char_row["office"] != "巡盐御史"

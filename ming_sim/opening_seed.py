@@ -21,11 +21,6 @@ from ming_sim.db import (
     infer_office_type_from_office,
     normalize_office,
 )
-from ming_sim.entities.army.store import ArmyStore
-from ming_sim.entities.building.store import BuildingStore
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.faction.store import FactionStore
-from ming_sim.entities.social_class.store import ClassStore
 from ming_sim.intelligence import OFFICE_SLOTS
 
 
@@ -36,7 +31,7 @@ def seed_opening_world(db: Any) -> None:
     any save that already has content.
     """
     db._ensure_office_type_parents()
-    characters = CharacterStore(db.conn)
+    characters = db.characters
 
     if not characters.has_any("office_slots"):
         characters.write_seed_opening_world([(*slot, index) for index, slot in enumerate(OFFICE_SLOTS)])
@@ -102,7 +97,7 @@ def seed_opening_world(db: Any) -> None:
                 "开局 seed", region_id=seat,
             )
 
-    is_fresh_factions_seed = not FactionStore(db.conn).has_any()
+    is_fresh_factions_seed = not db.factions.has_any()
     if is_fresh_factions_seed:
         for faction in db.content.factions.values():
             db.factions.insert(
@@ -111,7 +106,7 @@ def seed_opening_world(db: Any) -> None:
                 leverage=faction.leverage,
                 agenda=faction.agenda,
             )
-    if not ClassStore(db.conn).has_any():
+    if not db.classes.has_any():
         # 人口一律「人」。classes 首次 seed；已有行不重 seed。
         for cls in db.content.classes.values():
             db.classes.insert(
@@ -163,7 +158,7 @@ def seed_opening_world(db: Any) -> None:
             "controlled_by": region.controlled_by,
             "fiscal": json.dumps(region.fiscal, ensure_ascii=False),
         })
-    is_fresh_armies_seed = not ArmyStore(db.conn).has_any()
+    is_fresh_armies_seed = not db.armies.has_any()
     if is_fresh_armies_seed:
         for army in db.content.armies.values():
             db.armies.insert({
@@ -195,7 +190,7 @@ def seed_opening_world(db: Any) -> None:
                 "status": army.status,
                 "owner_power": army.owner_power,
             })
-    if not BuildingStore(db.conn).has_any():
+    if not db.buildings.has_any():
         for building in db.content.buildings.values():
             db.buildings.insert({
                 "id": building.id,

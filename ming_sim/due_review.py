@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 from ming_sim.staged_commitment import load_commitment_stages
-from ming_sim.entities.issue.store import IssueStore
 
 from typing import Any, Dict, List, Optional
 
@@ -64,7 +63,7 @@ _TERMINAL_OUTCOMES = frozenset({"fulfilled", "degraded", "failed", "transformed"
 
 
 def _issue_meta(db: Any, commitment_ref: int) -> Dict[str, object]:
-    row = IssueStore(db.conn).read_issue_meta((int(commitment_ref),))
+    row = db.issues.read_issue_meta((int(commitment_ref),))
     if row is None:
         return {
             "id": int(commitment_ref),

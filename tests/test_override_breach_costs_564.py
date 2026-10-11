@@ -203,7 +203,7 @@ def test_breach_skips_dead_but_records_living_offstage_relations(game):
     db.set_character_status(state, "毕自严", "offstage", reason="在世非现任")
 
     assert db.breach_decree_dossier(state, dossier_id) is True
-    targets = {row["target"] for row in db.get_relation_edge_events(event_kind="辜负")}
+    targets = {row["target"] for row in db.person_logs.get_relation_edge_events(event_kind="辜负")}
     assert "徐光启" not in targets
     assert "毕自严" in targets
     assert _sat(db, "factions", dead_faction) == max(0, before_dead_faction - 4)
@@ -437,7 +437,7 @@ def test_breach_charges_authority_ministers_and_related_factions_once(game):
     assert db.breach_decree_dossier(state, dossier_id, reason="撤回成命") is True
     assert db.breach_decree_dossier(state, dossier_id, reason="重复撤回") is False
     assert state.metrics["皇威"] == max(0, authority - 5)
-    edges = db.get_relation_edge_events(event_kind="辜负")
+    edges = db.person_logs.get_relation_edge_events(event_kind="辜负")
     assert {e["target"] for e in edges if e["origin"].startswith(f"dossier:{dossier_id}:breach")} == {
         "倪元璐", "徐光启", "毕自严",
     }

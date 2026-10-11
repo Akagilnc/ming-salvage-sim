@@ -20,7 +20,7 @@ TRAVEL_SPEED_BY_TONE = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
 def load_valid_regions(db: GameDB) -> set[str]:
     return {
         str(row["id"])
-        for row in db.conn.execute("SELECT id FROM regions").fetchall()
+        for row in db.regions.read_load_pending_gate_valid_regions(())
     }
 
 

@@ -15,7 +15,6 @@ run）；监督在场行、连续月数、稽核人派系与操守定性等事�
 """
 
 from __future__ import annotations
-from ming_sim.entities.character.store import CharacterStore
 
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
@@ -59,15 +58,6 @@ INTEGRITY_MEDIOCRE_BANDS = frozenset({"操守多亏", "操守未稳", "操守平
 # #1889 / ADR 0151：检举、在场、暴露三表的表名、PRAGMA 列白名单与禁钝化列
 # 片段随 schema 一并归案卷 store（此处的平行副本即第二份 schema 知识）。
 # 此处只作再导出，供既有 import 路径不断。
-from ming_sim.entities.dossier import (  # noqa: E402
-    DENUNCIATION_ALLOWED_COLS,
-    DENUNCIATION_TABLE,
-    EXPOSURE_ALLOWED_COLS,
-    EXPOSURE_TABLE,
-    FORBIDDEN_DULLING_COL_FRAGMENTS,
-    PRESENCE_ALLOWED_COLS,
-    PRESENCE_TABLE,
-)
 
 
 def integrity_band(value: object) -> str:
@@ -309,7 +299,7 @@ def build_transformation_tendency_facts(
 def character_tenure(db: Any, name: str) -> str:
     if not name:
         return "真除"
-    row = CharacterStore(db.conn).read_resolve_executor_appointment_tenure((name,))
+    row = db.characters.read_resolve_executor_appointment_tenure((name,))
     if row is None:
         return "真除"
     return normalize_appointment_tenure(row["appointment_tenure"])
@@ -318,7 +308,7 @@ def character_tenure(db: Any, name: str) -> str:
 def character_faction_integrity(db: Any, name: str) -> Tuple[str, object]:
     if not name:
         return "", None
-    row = CharacterStore(db.conn).read_character_faction_integrity((name,))
+    row = db.characters.read_character_faction_integrity((name,))
     if row is None:
         return "", None
     return str(row["faction"] or ""), row["integrity"]

@@ -1,7 +1,6 @@
 """大臣荐人读取与审计写入（#493）。"""
 
 from __future__ import annotations
-from ming_sim.entities.person_log.store import PersonLogStore
 from ming_sim.entities.character.store import CharacterStore
 
 from typing import Any, Dict, List
@@ -14,9 +13,7 @@ from .relations import EMPEROR_NODE
 def _known_names(db: Any, recommender: str) -> set[str]:
     """Read independently recorded source rosters once, without event mirrors."""
     names: set[str] = set()
-    for source in db.conn.execute(
-        "SELECT source_id, participant_roster, kind FROM character_knowledge_sources"
-    ).fetchall():
+    for source in db.character_knowledge.read_known_names():
         roster = participant_roster_names(source["participant_roster"])
         if (source["kind"] == "public" or recommender in roster) and knowledge_row_visible_to(
             db, source, recommender,
@@ -33,7 +30,7 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     allowed, so an unrelated person remains invisible.
     """
     conn = db.conn
-    source = CharacterStore(conn).read_displace_duplicate_offices_faction((recommender,))
+    source = CharacterStore(conn).field_row("faction", recommender)
     if source is None:
         return []
     faction = str(source["faction"] or "")
@@ -114,7 +111,7 @@ def record_recommendation(db: Any, state: Any, recommender: str,
     event_kind = {"荐起复": "起复", "荐在职": "在职"}.get(
         str(candidate.get("candidate_kind") or ""), str(candidate.get("candidate_kind") or "")
     )
-    cur = CharacterStore(db.conn).write_record_recommendation((int(state.turn), int(state.year), int(state.period), recommender,
+    cur = db.characters.write_record_recommendation((int(state.turn), int(state.year), int(state.period), recommender,
          str(candidate.get("name") or ""), event_kind,
          target_office, str(candidate.get("basis") or ""), reason))
     return int(cur.lastrowid)
@@ -146,7 +143,7 @@ def record_recommendation_edges(db: Any, state: Any, recommender: str,
         """荐人专属幂等：稳定 origin（|round 后缀前）+端点+腿别，跨回合、
         忽略可变 context；命中即返回原 id，不重写。"""
         base = f"recommendation:{int(event_id)}:{leg_kind}"
-        row = PersonLogStore(db.conn).read_existing_leg_id((leg_source, leg_target, leg_kind, base, f"{base}|%"))
+        row = db.person_logs.read_existing_leg_id((leg_source, leg_target, leg_kind, base, f"{base}|%"))
         return int(row["id"]) if row is not None else None
 
     grace = _existing_leg_id("恩义", source, target)

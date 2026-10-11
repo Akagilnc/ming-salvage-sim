@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ming_sim.applier import coerce_beyond_intent_flag
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.applier import Provenance, atomic
 import json
@@ -71,7 +72,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     # 月末 extractor 落旨外恶果（浮收翻倍样例）——同 origin 载体
     applied = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': 12, 'category': '地方浮收', 'reason': '借清丈之名额外加派入私', 'origin_ref': f'dossier:{xf_id}', 'beyond_intent': True}]}, SettlementContext(content=content))
     assert view(applied, "economy_moves"), applied
-    moves = db.reign.list_economy_moves_for_dossier(xf_id)
+    moves = db.reign.list_economy_moves_for_origin(f"dossier:{int(xf_id)}")
     assert moves and moves[0]["beyond_intent"] is True
     assert moves[0]["origin_ref"] == f"dossier:{xf_id}"
 
@@ -102,7 +103,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     xf_progress = db.dossiers.list_dossier_progress(xf_id)
     assert xf_progress, "prior reported progress must remain"
     assert all(not r.get("is_terminal") for r in xf_progress)
-    assert db.reign.list_economy_moves_for_dossier(xf_id)
+    assert db.reign.list_economy_moves_for_origin(f"dossier:{int(xf_id)}")
     bands = {r["progress_band"] for r in xf_progress}
     assert "transformed" not in bands
 
@@ -112,7 +113,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     db.backup_to(str(backup))
     restored = GameDB(str(backup), content=content)
     try:
-        r_moves = restored.reign.list_economy_moves_for_dossier(xf_id)
+        r_moves = restored.reign.list_economy_moves_for_origin(f"dossier:{int(xf_id)}")
         assert r_moves and r_moves[0]["beyond_intent"] is True
         assert r_moves[0]["origin_ref"] == f"dossier:{xf_id}"
         assert restored.dossiers.get(xf_id)["execution_outcome"] == "transformed"
@@ -126,7 +127,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
         commit=True,
     )
     # 无 durable beyond_intent 效果——仅表报
-    assert db.reign.list_economy_moves_for_dossier(deg_id) == []
+    assert db.reign.list_economy_moves_for_origin(f"dossier:{int(deg_id)}") == []
 
     # 模型声明 degraded：有表报无旨外实绩的分叉由声明写格，不由代码代判
     result_deg = _prime_and_apply_due_review(
@@ -493,7 +494,7 @@ def test_coerce_beyond_intent_flag_closed_affirmative_world():
 
     正向肯定经真实补饷入口与 ledger/回执案覆盖；本处只锁负向。
     """
-    coerce = GameDB.coerce_beyond_intent_flag
+    coerce = coerce_beyond_intent_flag
 
     # 否定 / 缺省
     for value in (False, 0, 0.0, None, "否", "无", "off", "false", "no", "0"):

@@ -384,9 +384,7 @@ def register_unlisted_person_record(
         db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         if owns_transaction:
             db.conn.commit()
-    row = db.conn.execute(
-        "SELECT portrait_id FROM characters WHERE name=?", (name,),
-    ).fetchone()
+    row = db.characters.field_row('portrait_id', name)
     if row:
         character.portrait_id = str(row["portrait_id"])
     return character
@@ -418,10 +416,7 @@ def _appointment_intent_is_current_office_noop(
     if conn is None or not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    row = conn.execute(
-        "SELECT status, office FROM characters WHERE name = ?",
-        (canonical,),
-    ).fetchone()
+    row = CharacterStore(conn).read_sponsor_transferred((canonical,))
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -519,9 +514,7 @@ def apply_appointment(
     content.characters[name] = character
     db.add_character(state, character, llm_config=llm_config, commit=commit)
     # add_character 已写入并分配 portrait_id，回写到内存对象
-    row = db.conn.execute(
-        "SELECT portrait_id FROM characters WHERE name=?", (name,)
-    ).fetchone()
+    row = db.characters.field_row('portrait_id', name)
     if row:
         character.portrait_id = str(row["portrait_id"])
     return (name, displaced)
@@ -530,21 +523,7 @@ def apply_appointment(
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。
     DB 是持久化真相；不要在这里修写 DB。"""
-    rows = db.conn.execute(
-        """
-        SELECT c.name, c.office, c.office_type, c.faction, c.aliases, c.personal_skills,
-               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.intrigue,
-               c.seed_guilt,
-               c.birth_year, c.historical_death_year, c.historical_death_month,
-               c.debut_year, c.debut_month, c.status, c.status_reason, c.reason_code,
-               c.portrait_id, c.power_id, c.location, c.transit_to,
-               c.transit_distance_remaining, c.transit_speed_factor, c.transit_start_turn,
-               c.summary,
-               COALESCE(co.region_id, '') AS office_region
-        FROM characters c
-        LEFT JOIN character_offices co ON co.character_name = c.name
-        """
-    ).fetchall()
+    rows = db.characters.read_sync_offices_from_db_impl(())
     characters: Dict[str, Character] = {}
     for row in rows:
         name = row["name"]
@@ -836,7 +815,7 @@ class GameSession:
         eligible, reason = self.can_summon(character)
         if not eligible:
             return AudienceAdmissionDecision(None, reason=reason)
-        row = CharacterStore(self.db.conn).read_admit_audience((character.name,))
+        row = self.db.characters.read_admit_audience((character.name,))
         # #670：无 DB 行不得 blank fail-open 入殿；在册空 location 仍 fail-open 在京。
         if row is None:
             return AudienceAdmissionDecision(
@@ -1404,9 +1383,9 @@ class GameSession:
         """chat_messages 某行的归属大臣名；无此行时返回空串。"""
         if not message_id:
             return ""
-        row = self.db.conn.execute(
-            "SELECT minister_name FROM chat_messages WHERE id = ?", (int(message_id),),
-        ).fetchone()
+        row = self.db.chat_messages.read_chat_message_speaker(
+            (int(message_id),)
+        )
         return str(row["minister_name"] or "") if row else ""
 
     def fail_audience_chat_turn(
@@ -1431,10 +1410,9 @@ class GameSession:
 
         if not turn.chat_turn_id:
             return False
-        row = self.db.conn.execute(
-            "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
-            (turn.chat_turn_id,),
-        ).fetchone()
+        row = self.db.reign.read_fail_audience_chat_turn(
+            (turn.chat_turn_id,)
+        )
         reply_landed = bool(
             row is not None
             and row["status"] == "active"
@@ -1455,10 +1433,9 @@ class GameSession:
             self.db.capture_chat_rollback_snapshot(),
         )
         if not turn.user_message_id:
-            user_row = self.db.conn.execute(
-                "SELECT user_message_id FROM chat_turns WHERE id = ?",
-                (turn.chat_turn_id,),
-            ).fetchone()
+            user_row = self.db.reign.chat_turn_user_message_id(
+                turn.chat_turn_id
+            )
             turn.user_message_id = int(user_row["user_message_id"] or 0) if user_row else 0
         if turn.user_message_id:
             restored_ids = self.db.restore_interrupted_after_failed_retry(turn.chat_turn_id)
@@ -1756,9 +1733,8 @@ class GameSession:
                     )
                     xuan_ctid = int(chat_turn_id or 0)
                     if xuan_ctid > 0:
-                        self.db.conn.execute(
-                            "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
-                            (target.name, xuan_ctid),
+                        self.db.reign.set_chat_turn_protagonist(
+                            xuan_ctid, target.name
                         )
                         if (
                             not bool(getattr(self.db.conn, "_commit_suspended", False))
@@ -1937,9 +1913,9 @@ class GameSession:
         # 说话人是源轮上已落的结构化身份。空串会把查访/进展闸当成殿上整场放行。
         minister_name = ""
         if hasattr(self.db, "conn"):
-            row = self.db.conn.execute(
-                "SELECT minister_name FROM chat_turns WHERE id=?", (ctid,),
-            ).fetchone()
+            row = self.db.reign.read_apply_scene_turn_translation(
+                (ctid,)
+            )
             if row is not None:
                 minister_name = str(row["minister_name"] or "")
         result.pending_audience_translation = {
@@ -2366,7 +2342,7 @@ class GameSession:
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
         # pre_settle owning transaction 与财政等副作用一起物化。
         for pending in self.db.issues.list_directives(self.state.turn, statuses=('pending',)):
-            self.db.confirm_directive(int(pending["id"]))
+            self.db.issues.confirm_directive(int(pending["id"]))
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
         # #1769：产物错 → 告诉 LLM 失败事实与原产物后重交；耗尽保持 draft、月照过

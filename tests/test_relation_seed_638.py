@@ -148,7 +148,7 @@ def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
     sess, _content = fresh_session
     state = sess.state
     pair_events = [
-        e for e in sess.db.get_relation_edge_events()
+        e for e in sess.db.person_logs.get_relation_edge_events()
         if e["source"] == "魏忠贤" and e["target"] == "杨涟"
     ]
     assert pair_events, "样例 seed 缺魏忠贤→杨涟奠基边"

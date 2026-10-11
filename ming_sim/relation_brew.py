@@ -26,7 +26,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.person_log.store import PersonLogStore
 
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -73,7 +72,7 @@ def select_brew_targets(db: Any, *, year: int, period: int) -> List[Dict[str, An
         (row["source"], row["target"]): row for row in db.person_logs.get_relation_brew_pending()
     }
     latest_event_id: Dict[Tuple[str, str], int] = {}
-    for row in PersonLogStore(db.conn).read_select_faction_brew_targets((int(year), int(period))):
+    for row in db.person_logs.read_select_faction_brew_targets((int(year), int(period))):
         latest_event_id[(row["source"], row["target"])] = int(row["max_id"])
 
     targets: List[Dict[str, Any]] = []
@@ -378,9 +377,9 @@ class MonthEndRelationBrewLeg:
                     reason = str(exc) if exc is not None else "空结果"
                     tlog(f"[relation-brew] {faction} 态势酿制失败降级（保旧摘要）：{reason}")
                     # 认领先行下 pending 已持久在册（不靠此处补记）；本写只刷新失败原因。
-                    self._db.person_logs.mark_faction_brew_pending(
-                        faction=faction, year=self.year, period=self.period,
-                        reason=reason,
+                    self._db.person_logs.mark_relation_brew_pending(
+                        source="", target=faction, year=self.year, period=self.period,
+                        reason=reason, item_kind=KIND_FACTION,
                     )
                     report["degraded"].append({"faction": faction, "reason": reason})
                     continue

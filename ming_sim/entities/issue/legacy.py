@@ -1,10 +1,10 @@
 """开局帝国修正（legacy）清算与落库：由 issues.py 清算迁入（ADR 0150 决定 8）。"""
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 import ming_sim.issues as issues
 
-import json
 from typing import List
 
 from ming_sim.db import (
@@ -16,21 +16,16 @@ from ming_sim.models import GameState
 def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     """每月调一次：取所有 active 且带 clear_gate 的 legacy，gate 达标即置 'cleared'。
     返回被消除的 legacy 名称列表（供叙事/提示用，不强制使用）。"""
-    rows = db.conn.execute(
-        "SELECT id, name, clear_gate, narrative_hint FROM legacies "
-        "WHERE status='active' AND clear_gate != '' AND clear_gate != '{}'"
-    ).fetchall()
+    rows = db.reign.read_clear_gated_legacies(())
     cleared: List[str] = []
     for row in rows:
-        gate = GameDB.parse_engine_payload_json(
+        gate = parse_engine_payload_json(
             row["clear_gate"],
         )
         if not gate:
             continue
         if issues._gate_passed(gate, state.metrics, db):
-            db.conn.execute(
-                "UPDATE legacies SET status='cleared' WHERE id=?", (int(row["id"]),)
-            )
+            db.reign.write_legacy_statuses([("cleared", int(row["id"]))])
             cleared.append(str(row["name"]))
     if cleared:
         db._legacy_mod_cache = None  # active 集变了，修正符缓存失效
@@ -44,41 +39,9 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
     一个函数覆盖新档（全补）/旧档（补缺）/达标档（不补/清残）。"""
     for leg in issues._ctx().opening_legacies:
         passed = issues._gate_passed(leg.clear_gate, state.metrics, db)
-        existing = db.conn.execute(
-            "SELECT id FROM legacies WHERE legacy_key=? AND status='active'",
-            (leg.key,),
-        ).fetchone()
-        if existing is not None:
-            db.conn.execute(
-                """UPDATE legacies
-                   SET name=?, modifiers=?, narrative_hint=?, clear_gate=?
-                   WHERE legacy_key=? AND status='active'""",
-                (
-                    leg.name,
-                    json.dumps(leg.modifiers, ensure_ascii=False),
-                    leg.narrative_hint,
-                    json.dumps(leg.clear_gate, ensure_ascii=False),
-                    leg.key,
-                ),
-            )
+        if db.reign.sync_opening_legacy(
+            legacy_key=leg.key, name=leg.name, modifiers=leg.modifiers,
+            narrative_hint=leg.narrative_hint, clear_gate=leg.clear_gate,
+            passed=passed, start_month=int(state.year) * 12 + int(state.period),
+        ):
             db._legacy_mod_cache = None
-        if passed:
-            if existing is not None:
-                db.conn.execute(
-                    "UPDATE legacies SET status='cleared' WHERE legacy_key=? AND status='active'",
-                    (leg.key,),
-                )
-                db._legacy_mod_cache = None
-            continue
-        # 未达标且无 active 行 → 补上
-        if existing is None:
-            db.insert_legacy(
-                state,
-                name=leg.name,
-                modifiers=leg.modifiers,
-                narrative_hint=leg.narrative_hint,
-                duration_months=-1,
-                clear_gate=leg.clear_gate,
-                legacy_key=leg.key,
-                commit=False,
-            )

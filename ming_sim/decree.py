@@ -4,9 +4,7 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.social_class.store import ClassStore
-from ming_sim.entities.faction.store import FactionStore
+from ming_sim.applier import parse_engine_payload_json
 
 import json
 import sqlite3
@@ -35,7 +33,6 @@ from ming_sim.exceptions import (
 )
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
 from ming_sim.entities.fiscal.levy import apply_historical_fiscal_rates
-from ming_sim.entities.issue.legacy import clear_gated_legacies
 from ming_sim.issues import gather_impeachment_surge_candidates
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
@@ -134,8 +131,7 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     payload = row.get("payload")
     if isinstance(payload, dict):
         return payload
-    from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(
+    return parse_engine_payload_json(
         row.get("payload_json"),
     )
 
@@ -151,12 +147,8 @@ def build_promulgation_judge_context(
     dossiers: Sequence[Dict[str, object]],
 ) -> Dict[str, object]:
     """Build the deterministic snapshot from persisted dossier evidence only."""
-    faction_rows = db.conn.execute(
-        "SELECT name,leverage,agenda FROM factions ORDER BY name"
-    ).fetchall()
-    class_rows = db.conn.execute(
-        "SELECT DISTINCT name FROM classes ORDER BY name"
-    ).fetchall()
+    faction_rows = db.factions.read_build_promulgation_judge_context(())
+    class_rows = db.classes.read_ordered_names(())
     issue_rows = db.issues.active_rows()
     authority = int(state.metrics.get("皇威", 0))
     authority_band = imperial_authority_band(authority)
@@ -198,22 +190,12 @@ def build_promulgation_judge_context(
             "courage": qualitative_character_axis("courage", row["courage"]),
             "integrity": qualitative_character_axis("integrity", row["integrity"]),
         }
-        for row in db.conn.execute(
-            "SELECT name,office,office_type,faction,courage,integrity FROM characters "
-            "WHERE status='active' AND power_id='ming' AND "
-            "(office IN ({placeholders}) OR office_type='六科') "
-            "ORDER BY office_type,office,name".format(
-                placeholders=",".join("?" for _ in _GATEKEEPER_OFFICE_TITLES),
-            ),
-            _GATEKEEPER_OFFICE_TITLES,
-        ).fetchall()
+        for row in db.characters.gatekeeper_rows(
+            _GATEKEEPER_OFFICE_TITLES, include_six_offices=True
+        )
     ]
     history = []
-    for item in db.conn.execute(
-        "SELECT d.dossier_id,d.turn,d.decision,d.rescript_action,x.payload_json "
-        "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
-        "ORDER BY d.turn,d.dossier_id,d.id"
-    ).fetchall():
+    for item in db.dossiers.rescript_history_rows():
         from ming_sim.db import _load_durable_json
         payload = _load_durable_json(item["payload_json"])
         mode = str(payload.get("mode") or "ordinary")
@@ -370,15 +352,15 @@ def _validate_promulgation_verdict_item(
         }
     else:
         faction_names = {
-            str(item["name"]) for item in FactionStore(db.conn).read_names()
+            str(item["name"]) for item in db.factions.read_names()
         }
         class_names = {
             str(item["name"])
-            for item in ClassStore(db.conn).read_names()
+            for item in db.classes.read_names()
         }
         gatekeeper_ids = {
             str(item["name"])
-            for item in CharacterStore(db.conn).read_names()
+            for item in db.characters.read_names()
         }
         context_dossiers = {}
 
@@ -470,25 +452,20 @@ def validate_promulgation_verdicts(
         # Minimal identity sets when callers do not pass the judge snapshot.
         context = {
             "dossiers": [],
-            "factions": [
-                dict(item) for item in db.conn.execute("SELECT name FROM factions")
-            ],
+            "factions": [dict(item) for item in db.factions.read_names()],
             "classes": [
-                str(item["name"]) for item in db.conn.execute(
-                    "SELECT DISTINCT name FROM classes ORDER BY name"
-                )
+                str(item["name"]) for item in db.classes.read_ordered_names()
             ],
             "gatekeepers": [
                 {"name": str(item["name"])}
-                for item in db.conn.execute("SELECT name FROM characters")
+                for item in db.characters.read_names()
             ],
         }
     proposed_modes: Dict[int, str] = {}
     for dossier in proposed_dossiers:
         payload = dossier.get("payload")
         if not isinstance(payload, dict):
-            from ming_sim.db import GameDB
-            payload = GameDB.parse_engine_payload_json(
+            payload = parse_engine_payload_json(
                 dossier.get("payload_json"),
             )
         action_type = dossier.get("action_type")
@@ -743,14 +720,7 @@ def tick_transit_arrivals(
     由外层事务（如 pre_settle 的 atomic_and_reload）统一提交。
     """
     current_turn = int(state.turn)
-    rows = db.conn.execute(
-        "SELECT name, transit_to, transit_distance_remaining, transit_speed_factor, "
-        "transit_start_turn FROM characters "
-        "WHERE status='active' AND COALESCE(transit_to, '') != '' "
-        "AND transit_distance_remaining IS NOT NULL "
-        "AND transit_speed_factor IS NOT NULL "
-        "ORDER BY name"
-    ).fetchall()
+    rows = db.characters.read_tick_transit_arrivals(())
     arrivals: List[Dict[str, object]] = []
     for row in rows:
         name = str(row["name"])
@@ -947,8 +917,6 @@ def pre_settle(
         raise
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return []
-
-
 
 
 def resolve_decisions_phase2(

@@ -24,7 +24,6 @@ _ISSUE_ENTITY_FIELDS = {
 }
 
 
-
 def _apply_issue_buildings(
     db: GameDB,
     state: GameState,
@@ -233,7 +232,7 @@ def _apply_issue_entities(
             if not power_id or not new_name.strip():
                 tolerated.append(RejectedItem(item=item, reason="势力更名缺 power_id/new_name", category="missing_field", source=source))
                 continue
-            if db.conn.execute("SELECT 1 FROM powers WHERE id=?", (power_id,)).fetchone() is None:
+            if db.powers.read_apply_issue_entities((power_id,)) is None:
                 tolerated.append(RejectedItem(item=item, reason="势力更名目标未入库", category="missing_ref", source=source))
                 continue
             db.apply_power_rename(
@@ -291,7 +290,6 @@ def _clamp_pct(v: object) -> Optional[int]:
     if pct == 0:
         return None
     return max(-_LEGACY_PCT_CAP, min(_LEGACY_PCT_CAP, pct))
-
 
 
 def _spawn_legacy_from_effect(
@@ -375,7 +373,7 @@ def _spawn_legacy_from_effect(
             if not isinstance(fields, dict):
                 refuse(item, "帝国修正实体项须为对象", "invalid_shape")
                 continue
-            if db.conn.execute(f"SELECT 1 FROM {scope} WHERE id=?", (entity_id,)).fetchone() is None:
+            if {"regions": db.regions, "armies": db.armies}[scope].row(entity_id) is None:
                 refuse(item, "帝国修正实体未入库", "missing_ref")
                 continue
             fields_out: Dict[str, int] = {}
@@ -414,7 +412,6 @@ def _spawn_legacy_from_effect(
     dur_label = "永久" if duration < 0 else f"{duration}月"
     print(f"[帝国修正] 局势#{issue_id}「{issue_title}」落「{name}」({dur_label}) {modifiers}")
     return summary, rejected
-
 
 
 def _invalid_monthly_mapping_shape(

@@ -1,5 +1,6 @@
 """加派旨记账。调用方拥有事务，本核不提交。"""
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 from ming_sim.constants import _SETTLE_META_JIAPIAI_KEY as SETTLE_META_JIAPIAI_KEY
 
@@ -56,17 +57,18 @@ def _apply_surcharge_decrees(
             )
             continue
         region_id = str(item.get("region_id") or "").strip()
-        row = db.conn.execute(
-            "SELECT controlled_by, fiscal FROM regions WHERE id=?", (region_id,)
-        ).fetchone() if region_id else None
+        row = (
+            db.regions.read_apply_surcharge_decrees((region_id,))
+            if region_id
+            else None
+        )
         if row is None:
             _reject("missing_ref", f"surcharge_decrees 未知 region_id：{region_id!r}")
             continue
         if str(row["controlled_by"] or "") != "ming":
             _reject("missing_ref", f"surcharge_decrees 非明省不可加派：{region_id!r}")
             continue
-        from ming_sim.db import GameDB
-        fiscal = GameDB.parse_engine_payload_json(
+        fiscal = parse_engine_payload_json(
             row["fiscal"],
         )
         settle = fiscal.get("settle")
@@ -91,7 +93,7 @@ def _apply_surcharge_decrees(
             _reject("invalid_enum", f"surcharge_decrees monthly_amount 非有限值(NaN/inf)：{raw_amount!r}")
             continue
         if amount == 0:
-            continue  # 无操作不落拒（同 fiscal_changes 0-delta 口径）
+            continue
         origin_ref = str(item.get("origin_ref") or "").strip()
         dossier_match = re.fullmatch(r"dossier:([1-9][0-9]*)", origin_ref)
         if dossier_match is None:
@@ -113,9 +115,8 @@ def _apply_surcharge_decrees(
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
         meta[_SETTLE_META_JIAPIAI_KEY] = new
         settle["_meta"] = meta
-        db.conn.execute(
-            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (json.dumps(fiscal, ensure_ascii=False), region_id),
+        db.regions.update(
+            region_id, {"fiscal": json.dumps(fiscal, ensure_ascii=False)}
         )
         claimed_origins.add(claim)
         applied.append({

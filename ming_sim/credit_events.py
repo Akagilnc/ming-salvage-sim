@@ -15,8 +15,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.issue.store import IssueStore
-from ming_sim.entities.person_log.store import PersonLogStore
 
 import re
 
@@ -80,8 +78,6 @@ def scapegoat_actor_kind_from_origin(origin: object) -> Optional[str]:
     return None
 
 
-
-
 def _credit_origin(scope: str, scope_id: int, *parts: str) -> str:
     """唯一 origin 拼装器——禁第二拼装路径。"""
     tail = ":".join(str(p) for p in parts if str(p))
@@ -117,7 +113,7 @@ def _existing_edge_id(
     if not base:
         return None
     bare = base.split("|", 1)[0]
-    row = PersonLogStore(db.conn).read_existing_leg_id((source, target, event_kind, base, f"{bare}|%"))
+    row = db.person_logs.read_existing_leg_id((source, target, event_kind, base, f"{bare}|%"))
     return int(row["id"]) if row is not None else None
 
 
@@ -184,7 +180,7 @@ def _sponsor_names(db: Any, dossier_id: int) -> List[str]:
 
 
 def _commitment_ids_for_dossier(db: Any, dossier_id: int) -> List[int]:
-    rows = IssueStore(db.conn).read_commitment_ids_for_dossier((f"dossier:{int(dossier_id)}",))
+    rows = db.issues.read_commitment_ids_for_dossier((f"dossier:{int(dossier_id)}",))
     return [int(row["id"]) for row in rows]
 
 
@@ -525,9 +521,7 @@ def _pending_urge_todos(db: Any, state: Any) -> List[Dict[str, object]]:
 
 def _host_person_for_commitment(db: Any, cid: int) -> str:
     host = resolve_host_character(db, commitment_ref=cid, dossier_id=None)
-    row = db.conn.execute(
-        "SELECT origin_ref FROM issues WHERE id=?", (cid,),
-    ).fetchone()
+    row = db.issues.read_rush_staged_commitment_stage_origin_ref((cid,))
     if row is not None:
         did = dossier_id_in_origin(row["origin_ref"])
         if did is not None:

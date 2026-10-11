@@ -33,11 +33,7 @@ def record_secret_order_disclosure(
     like_prefix = (
         disclosure_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     )
-    already_disclosed = db.conn.execute(
-        "SELECT 1 FROM character_knowledge_events "
-        "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
-        (f"{like_prefix}%",),
-    ).fetchone()
+    already_disclosed = db.character_knowledge.read_record_secret_order_disclosure((f"{like_prefix}%",))
     if already_disclosed is not None:
         return False
     dossier = db.dossiers.get_for_secret_order(order_id)
