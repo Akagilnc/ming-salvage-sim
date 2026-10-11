@@ -238,7 +238,6 @@ def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
     sess.deaths_this_turn = []
     sess.debuts_this_turn = []
     sess.last_decree = ""
-    sess.last_report = ""
     sess._decree_draft_fingerprint = ()
     sess.auto_save = lambda *_a, **_k: None
 
@@ -279,7 +278,6 @@ def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
     sess.deaths_this_turn = []
     sess.debuts_this_turn = []
     sess.last_decree = ""
-    sess.last_report = ""
     sess._decree_draft_fingerprint = ()
     sess.auto_save = lambda *_a, **_k: None
 

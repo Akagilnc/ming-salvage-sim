@@ -339,9 +339,7 @@ def _merge_effect_field(
 ) -> None:
     """把一条效果 envelope 的一个字段并进本旨 effects 载荷（只并声明带来的字段）。
 
-    旧五模块包装时代这里先 deepcopy 一整份 ``EMPTY_EXTRACTION`` 空壳再逐字段填，
-    于是每个 envelope 都拖着 30+ 个恒空容器进核算口；那份空壳不携带任何归属或
-    顺序信息，纯属旧包装遗留，随 C0 声明契约退役（#1835 F1）。
+    只并入 envelope 自带的字段，不预置整份空壳（#1835 F1）。
     """
     if isinstance(value, list):
         current = extraction.get(field)

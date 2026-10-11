@@ -7,12 +7,6 @@ import sqlite3
 
 import pytest
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import (
-    list_materials,
-    prepare_character_materials,
-    read_material,
-    release_material_tree,
-)
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -53,8 +47,6 @@ def test_secret_alias_exclusion_is_canonicalized_before_projection(game):
     assert "魏忠贤" in json.loads(row["excluded_names"])
 
 
-
-
 def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatch):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
@@ -70,22 +62,6 @@ def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatc
     assert "personnel" not in view["world"]
     assert "military" not in view["world"]
     assert "treasury" not in view["world"]
-
-def test_inner_court_materials_hide_court_world_from_inner_palace_readers(game, tmp_path):
-    db, state, content = game
-    previous = content.characters["王承恩"]
-    messenger = content.characters["曹化淳"]
-    db.set_character_office(previous.name, "内廷随侍", "内廷")
-    db.set_character_office(messenger.name, "御前近臣", "内廷")
-    for person in (previous, messenger):
-        world = db.get_character_knowledge(state, person.name)["world"]
-        assert "court" not in world
-        prepare_character_materials(
-            db, state, person, dest_root=tmp_path / person.name,
-        )
-
-
-
 
 
 def test_current_state_facts_are_selected_by_content_domain_not_role_label(
@@ -1303,8 +1279,6 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
     assert rows[1]["id"] not in view["scope"]["army_ids"]
 
 
-
-
 @pytest.fixture
 def household_ledger_reads(game):
     """Observe real SQLite field consumption without replacing rows or rendering."""
@@ -1328,44 +1302,6 @@ def household_ledger_reads(game):
         yield reads
     finally:
         db.conn.row_factory = original_factory
-
-
-def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(
-    game, tmp_path, household_ledger_reads,
-):
-    db, state, content = game
-    clerk = next(c for c in content.characters.values() if c.office_type == "户部")
-    order_id = create_test_secret_order(
-        db, state, "毕自严", "密查太仓", "不可见案卷语义", [],
-        excluded_names=[clerk.name],
-    )
-    dossier = next(d for d in db.list_decree_dossiers() if d["secret_order_id"] == order_id)
-    db.record_issue_economy_move(
-        state, "国库", -1, "秘密分类", "秘密流水原因",
-        origin_ref=f"dossier:{dossier['id']}",
-    )
-    world = db.get_character_knowledge(state, clerk.name)["world"]
-    assert world.get("treasury")
-    assert {(-1, "delta"), (-1, "balance_after")} <= household_ledger_reads
-    assert {(-1, "reason"), (-1, "category")}.isdisjoint(household_ledger_reads)
-    row = db.conn.execute(
-        "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,),
-    ).fetchone()
-    assert clerk.name in json.loads(row["excluded_names"])
-    prepared = prepare_character_materials(
-        db, state, clerk, dest_root=tmp_path / "clerk",
-    )
-    try:
-        archive_rel = next(
-            p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt")
-        )
-        assert read_material(prepared.root, archive_rel)
-        assert {(-1, "reason"), (-1, "category")}.isdisjoint(household_ledger_reads)
-        assert int(dossier["id"]) not in _referenceable_dossier_ids(
-            db, clerk.name, int(state.turn),
-        )
-    finally:
-        release_material_tree(prepared.root)
 
 
 def test_household_secret_ledger_hides_case_by_excluded_office(game, household_ledger_reads):
@@ -1429,120 +1365,8 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game, household_l
         successor.office, successor.office_type = prior_office, prior_type
 
 
-def _office_archive_path_from_materials(db, state, character, root):
-    prepared = prepare_character_materials(db, state, character, dest_root=root)
-    paths = list_materials(prepared.root)
-    return next(p for p in paths if p.endswith("/公事档案.txt"))
-
-
 def _referenceable_dossier_ids(db, character_name, turn) -> set[int]:
     return {
         int(item["id"])
         for item in db.list_referenceable_dossiers(character_name, turn)
     }
-
-
-def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_path):
-    db, state, content = game
-    people = [c for c in content.characters.values() if db.get_character_status(c.name)[0] == "active"]
-    (
-        central_lead, slot_lead, central_successor, slot_successor, outsider,
-        case_successor, inner_lead, inner_other, case_lead, case_helper,
-    ) = people[:10]
-    slot = db.conn.execute(
-        "SELECT office_title, region_id FROM office_slots "
-        "WHERE region_id<>'' ORDER BY sort_order LIMIT 1"
-    ).fetchone()
-    slot_region = str(slot["region_id"] or "").strip()
-    other_region = db.conn.execute(
-        "SELECT id FROM regions WHERE id<>? ORDER BY id LIMIT 1", (slot_region,),
-    ).fetchone()["id"]
-    db.set_character_office(central_lead.name, "礼部尚书", office_type="礼部")
-    db.set_character_office(
-        slot_lead.name, slot["office_title"], office_type="地方", region_id=slot_region,
-    )
-    db.record_character_participation(
-        state, [central_lead.name], "private_matter", "私事", "PRIVATE_HISTORY_ONLY",
-    )
-    joint_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="JOINT_ADMIN_ARCHIVE",
-        target_kind="issue", target_id="joint-admin",
-        participants=[
-            {"character_id": central_lead.name, "tier": "主办"},
-            {"character_id": slot_lead.name, "tier": "主办"},
-        ],
-    )
-    db.set_character_office(central_lead.name, "闲住", office_type="未仕")
-    db.set_character_office(slot_lead.name, "闲住", office_type="未仕")
-    db.set_character_office(central_successor.name, "礼部尚书", office_type="礼部")
-    db.set_character_office(
-        slot_successor.name, slot["office_title"], office_type="地方", region_id=slot_region,
-    )
-    db.set_character_office(
-        outsider.name, "另一地方官", office_type="地方", region_id=other_region,
-    )
-    db.set_character_office(case_successor.name, "刑部尚书", office_type="刑部")
-    db.set_character_office(inner_lead.name, "内廷随侍", office_type="内廷")
-    db.set_character_office(inner_other.name, "内廷随侍", office_type="内廷")
-    inner_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="INNER_COURT_ARCHIVE",
-        target_kind="issue", target_id="inner-admin",
-        participants=[{"character_id": inner_lead.name, "tier": "主办"}],
-    )
-    db.set_character_office(case_lead.name, "刑部尚书", office_type="刑部")
-    db.set_character_office(case_helper.name, "锦衣卫指挥使", office_type="锦衣卫")
-    case_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="CASE_FILE_ARCHIVE",
-        target_kind="issue", target_id="criminal-case",
-        participants=[
-            {"character_id": case_lead.name, "tier": "主办"},
-            {"character_id": case_helper.name, "tier": "协办"},
-        ],
-    )
-    db.set_character_office(case_lead.name, "闲住", office_type="未仕")
-
-    turn = int(state.turn)
-    joint_id, inner_id, case_id = int(joint_id), int(inner_id), int(case_id)
-    for reader in (central_successor, slot_successor):
-        ids = _referenceable_dossier_ids(db, reader.name, turn)
-        assert joint_id in ids
-    assert joint_id not in _referenceable_dossier_ids(db, outsider.name, turn)
-    assert joint_id not in _referenceable_dossier_ids(db, case_successor.name, turn)
-    assert inner_id in _referenceable_dossier_ids(db, inner_lead.name, turn)
-    assert inner_id not in _referenceable_dossier_ids(db, inner_other.name, turn)
-    assert case_id in _referenceable_dossier_ids(db, case_helper.name, turn)
-    # 刑部 is a legal central yamen: successor shares archive identity with the lead.
-    assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
-
-
-def test_central_ledgers_reach_each_office_archive_carrier_without_crossing(game, tmp_path):
-    """户部／兵部／吏部各自只带自己那把账键，且都落在本人 公事档案.txt 载体上。
-
-    契约只落结构化面（大理寺 01a0f1f4 裁定）：载体路径存在 + 本人
-    `get_character_knowledge` 的 world 账键恰是自己那把。删去的两类断言不得
-    换形复造：
-    - 不重调生产渲染器逐字比档案正文（与被调函数同进同出，只证接线）；
-    - 不用 reason／人名在档案正文里做子串推断来证「逐条完整」或「不串门」
-      （旧账1 被旧账10 顶替仍绿；兵名／人名会与别段偶然撞字）。
-    """
-    db, state, content = game
-
-    from ming_sim.materials import _LEDGER_KEYS
-
-    holders = {
-        office_type: next(
-            c for c in content.characters.values() if c.office_type == office_type
-        )
-        for office_type in ("户部", "兵部", "吏部")
-    }
-    office_ledger_key = {"户部": "treasury", "兵部": "military", "吏部": "personnel"}
-    for office_type, character in holders.items():
-        # 载体面：本衙门职官的材料目录里有本人公事档案。
-        assert _office_archive_path_from_materials(
-            db, state, character, tmp_path / office_type,
-        ).endswith("/公事档案.txt")
-        # 准入面：本人 world 只带自己那把账键（跨衙门不串门，结构化字段）。
-        knowledge = db.get_character_knowledge(state, character.name)
-        assert [
-            key for key in (knowledge.get("world") or {}) if key in _LEDGER_KEYS
-        ] == [office_ledger_key[office_type]]

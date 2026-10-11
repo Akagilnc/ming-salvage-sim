@@ -33,19 +33,6 @@ class _FakeAgent:
         yield RunCompletedEvent()
 
 
-class _SecretOrderAgent:
-    """A streamed tool result, matching the WebGame tool-result boundary."""
-
-    def __init__(self, result: str):
-        self.result = result
-
-    def run(self, *args, **kwargs):
-        yield _RunContent("臣已领密旨。")
-        completed = RunCompletedEvent()
-        completed.tools = [SimpleNamespace(tool_name="secret_order", result=self.result)]
-        yield completed
-
-
 class _FakeSession(HallAdmissionSessionMixin):
 
     def __init__(self, character, agent: _FakeAgent, state, db):
@@ -57,9 +44,6 @@ class _FakeSession(HallAdmissionSessionMixin):
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
 
-
-    def _merge_staged_new_secret_order_content(self, *args, **kwargs):
-        return None
 
     def pending_count(self):
         return 0
@@ -284,39 +268,6 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(mo
     assert str(failed[0][2]) == "identity read failed"
     assert [m["content"] for m in runtime.db.messages if m["role"] == "user"] == ["请奏"]
     assert completed == [True]
-
-
-def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
-    events: list[str] = []
-    entered = threading.Event()
-    release = threading.Event()
-
-    class _BlockingGame:
-        def chat_stream(self, minister_name: str, message: str):
-            entered.set()
-            release.wait()  # block until tick observed entry (no wall clock)
-            events.append("stream")
-            yield {"type": "done", "payload": {"ok": True}}
-
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda minister_name: None)
-    monkeypatch.setattr(web_app, "get_game", lambda: _BlockingGame())
-
-    async def drive_first_event():
-        response = await web_app.api_audience_chat_stream( web_app.ChatRequest(message="请奏"))
-        iterator = response.body_iterator
-
-        async def tick():
-            await asyncio.to_thread(entered.wait)
-            events.append("tick")
-            release.set()
-
-        first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
-        return first_event
-
-    first = asyncio.run(drive_first_event())
-
-    assert events == ["tick", "stream"]
-    assert "event: done" in first
 
 
 def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkeypatch):

@@ -36,18 +36,6 @@ _GATE_BUSY_DETAIL = "月末结算或上一步写入进行中，请稍候再操�
 # ── 轻量 canned 边界（与 #498 web tracer 同形，仅中和 LLM）────────────────
 
 
-class _CannedExtractor:
-    def run(self, _material):
-        class _R:
-            content = '{"facts":[]}'
-        return _R()
-
-
-class _BoomExtractor:
-    def run(self, _material):
-        raise RuntimeError("抽取持续失败·真失败注入")
-
-
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",
@@ -114,15 +102,6 @@ def _click_before(state) -> dict[str, int]:
     return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
 
 
-def _terminal_sse(response: httpx.Response) -> tuple[str, dict]:
-    blocks = [block for block in response.text.split("\n\n") if block.strip()]
-    assert blocks
-    lines = blocks[-1].splitlines()
-    event = next(line[7:] for line in lines if line.startswith("event: "))
-    data = next(line[6:] for line in lines if line.startswith("data: "))
-    return event, json.loads(data)
-
-
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):
     """票面夹具：开夜 + 回话已落、story 抽取未落（extract_status 待补）。"""
     db, state = game.db, game.state
@@ -163,12 +142,6 @@ def _runtime_payload(db, state):
 
 
 # ── 1. 未了续跑：未落账回话退朝不 409，自动接续至月完 ────────────────────
-
-
-
-
-
-
 
 
 # ── 2. 点即入：capture 先于 await/close（失败前已入核账，失败后出展示态）──

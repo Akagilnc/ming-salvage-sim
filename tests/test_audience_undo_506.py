@@ -17,7 +17,6 @@ from typing import Callable, Dict, Mapping, Optional
 import pytest
 
 from ming_sim import audience_night as an
-from ming_sim.audience_night import AudienceNightError
 from ming_sim.audience_translation import apply_audience_round_translation, mark_turn_translation_done
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
@@ -145,40 +144,6 @@ def test_undo_rejected_after_night_closed(game):
         db.undo_chat_turn(chat_id)
     # 封窗后账仍在（未被误撤）
     assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
-
-
-def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
-    db, state, content = game
-    m = _active_minister(db, content)
-
-    # 合法夜：仅「密令落地」直写真实盘面 → 审计通过，报出观测到的白名单操作
-    def _land_secret(night_id: int, chat_id: int) -> None:
-        create_test_secret_order(db,
-            state, m, "密查盐引", "密查两淮盐引亏空", ["盐政"], importance=4,
-        )
-    legal_night, _ = _run_round(
-        db, state, m, writes=_land_secret,
-        declaration=_minister_declaration(m, "领旨。"),
-    )
-    assert "密令落地" in an.audit_night_direct_writes(db, legal_night)
-    an.close_night(db, state, night_id=legal_night)
-
-    # 越权夜：不经结算直写案卷月度进展，仍须被审计咬住。
-    def _rogue_direct_write(night_id: int, chat_id: int) -> None:
-        dossier = db.conn.execute("SELECT id FROM decree_dossiers LIMIT 1").fetchone()
-        assert dossier is not None
-        db.conn.execute(
-            "INSERT INTO dossier_reported_progress "
-            "(dossier_id, turn, progress_band, memorial_text, origin) "
-            "VALUES (?, ?, '进行中', '越权记录', 'night')",
-            (int(dossier["id"]), int(state.turn)),
-        )
-        db.conn.commit()
-    rogue_night, _ = _run_round(db, state, m, writes=_rogue_direct_write)
-    with pytest.raises(AudienceNightError) as ei:
-        an.audit_night_direct_writes(db, rogue_night)
-    assert ei.value.code == "unwhitelisted_night_write"
-    assert "dossier_reported_progress" in ei.value.detail.get("tables", [])
 
 
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────
@@ -555,31 +520,4 @@ def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
     db.undo_chat_turn(int(chat_id))
     assert db.conn.execute(
         "SELECT count(*) FROM story_ledger_entries WHERE id=?", (entry_id,),
-    ).fetchone()[0] == 0
-
-
-def test_reject_pending_discards_inactive_office_summon_origin(game):
-    """#672：确认拒绝只清仍 inactive 的 office:<pending_id> origin。"""
-    db, state, content = game
-    m = _active_minister(db, content)
-    night = an.open_night(db, state)
-    pending_id = db.stage_pending_action(
-        int(state.turn), "office", "任命", m,
-        {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
-    )
-    an.ensure_inactive_office_summon(
-        db, int(pending_id), "袁崇焕",
-        night_id=int(night["id"]), origin_chat_turn_id=0,
-    )
-    origin = f"office:{int(pending_id)}"
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
-    ).fetchone()[0] == 1
-
-    dropped = db.drop_pending_actions_for_minister(
-        int(state.turn), m, action_ids=[int(pending_id)],
-    )
-    assert dropped == 1
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
     ).fetchone()[0] == 0

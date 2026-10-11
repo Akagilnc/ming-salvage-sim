@@ -10,7 +10,6 @@ from ming_sim.exceptions import DeclarationDataError
 
 import json
 import logging
-import re
 import threading
 import time
 import uuid
@@ -20,11 +19,10 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:
-    from ming_sim.materials import PreparedMaterials
+    pass
 
 from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
-from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.materials import prepare_scene_materials
 from ming_sim.registry import create_scene_agent
@@ -57,9 +55,8 @@ from ming_sim.decree import (
 )
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.entities.issue.legacy import sync_opening_legacies
-from ming_sim.audience_night import is_inner_court_attendant
-from ming_sim.llm_model import create_agno_db, extract_agent_text
-from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
+from ming_sim.llm_model import create_agno_db
+from ming_sim.models import Character, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
 
 logger = logging.getLogger(__name__)
@@ -135,18 +132,9 @@ class DirectiveView:
 
 
 @dataclass
-class MinisterView:
-    name: str
-    office: str
-    office_type: str
-    faction: str
-    status: str
-
-
-@dataclass
 class ChatTurnResult:
     answer: str
-    court_action: str = ""   # "" | dismiss | summon | court_break | handled
+    court_action: str = ""   # "" | court_break
     next_minister: str = ""
     proposed_directive: Optional[DirectiveView] = None
     appointed_minister: str = ""   # 吏部本轮铨选新任的人物姓名（已可召见）
@@ -347,8 +335,6 @@ def register_unlisted_person_record(
     return character
 
 
-
-
 def _canonical_minister_key(content: Any, name: str, db: "GameDB") -> str:
     """姓名归一到在册原始 key（别名→原名）；无 content / 查不到时返回去空白原名。
 
@@ -387,8 +373,6 @@ def _appointment_intent_is_current_office_noop(
     desired_parts = {p for p in desired.split(",") if p}
     current_parts = {p for p in current.split(",") if p}
     return bool(desired_parts) and desired_parts.issubset(current_parts)
-
-
 
 
 def canonical_new_appointment_person_fields(
@@ -486,9 +470,6 @@ def apply_appointment(
     if row:
         character.portrait_id = str(row["portrait_id"])
     return (name, displaced)
-
-
-
 
 
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
@@ -769,23 +750,6 @@ class GameSession:
 
     # ── 召见阶段 ──────────────────────────────────────────────────────────
 
-    def list_ministers(self) -> List[MinisterView]:
-        # 状态以 DB 为准（历史卒/登场/罢黜均落 DB）；offstage 未登场者不进名单。
-        # 可召资格单真源 _is_summonable_court_minister（#1317 r2：身份归一∧非宗藩∧非未仕；
-        # 与 can_summon/visible_in_court/CLI/事实块同口径。resolve 惰性入参，禁第二份类型表）。
-        views: List[MinisterView] = []
-        resolve = self.db.resolve_power_id
-        for c in self.content.characters.values():
-            if not _is_summonable_court_minister(c, resolve_power_id=resolve):
-                continue
-            status, _ = self.db.get_character_status(c.name)
-            if status == "offstage":
-                continue
-            views.append(MinisterView(
-                name=c.name, office=c.office, office_type=c.office_type,
-                faction=c.faction, status=status,
-            ))
-        return views
 
     def _character(self, name: str) -> Character:
         return character_from_name(name)
@@ -928,7 +892,6 @@ class GameSession:
         return decision
 
 
-
     def _recognize_audience_command_verdict(self, message: str) -> str:
         """同步识别明确退朝口令。纯封闭集匹配，无 Future/宽降级。"""
         from ming_sim.audience_night import (
@@ -1064,7 +1027,6 @@ class GameSession:
         """
         from ming_sim.audience_night import (
             CMD_CLOSE_NIGHT,
-            CMD_NONE,
             SCENE_CHAT_SPEAKER,
             close_night,
             ensure_open_night_for_audience,
@@ -1354,7 +1316,6 @@ class GameSession:
         )
 
 
-
     # ── 拟旨 / 草案阶段 ───────────────────────────────────────────────────
 
     def list_directives(self, include_pending: bool = True) -> List[DirectiveView]:
@@ -1440,30 +1401,6 @@ class GameSession:
             return
         self._set_phase(TurnPhase.SUMMONING)
 
-    def write_decree(self) -> str:
-        """生成诏书。要求无 pending 残留、≥1 条 draft。"""
-        if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
-            # -> str 契约：亲裁期不能拟诏，响亮拒绝走既有 ValueError 错误路径
-            # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
-            raise DeclarationDataError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
-        self._refuse_if_settling()
-        # #498 AC8：拟诏（write_decree）不是收夜触发器——收夜只在真实颁诏/过回合边界
-        # （resolve_turn / advance_without_decree）发生。夜内可拟多道旨并继续斟酌（#497/#502）。
-        # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
-        # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
-        # 拟诏是 preview：只据已 draft 的候选生成诏书，绝不在此把未表态 pending 默认同意成 draft
-        # （#497：未表态只到真实颁诏/过回合才 default-agree；拟诏改 pending status = 制造持久副作用）。
-        # 无 draft 可预览 → 响亮拒绝，不为 preview 造持久态。
-        directives = self.db.list_directives(self.state, statuses=("draft",))
-        if not directives:
-            raise DeclarationDataError("无草案不能拟诏（未表态拟旨须先准驳，或于颁诏时默认同意）。")
-        decree = write_decree_with_agno(self.llm_config, self.state, directives, db=self.db)
-        self.last_decree = decree
-        # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
-        # 草案），凭此判定 last_decree 已陈旧、强制重生成纳入新 draft，不许把新 draft 标记
-        # 为已颁却不进诏书正文。
-        self._decree_draft_fingerprint = self._draft_fingerprint(directives)
-        return decree
 
     # #1341/#1338：set_decree 已删——裸设总诏正文绕过逐道草案结构化，违 P1；
     # Web PATCH /api/decree 同步拆除。改稿只走 add_directive / update_directive。

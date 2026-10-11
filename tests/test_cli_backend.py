@@ -12,7 +12,6 @@ import os
 from types import SimpleNamespace
 
 import pytest
-from agno.agent import Agent
 from agno.models.message import Message
 from pydantic import BaseModel
 
@@ -25,22 +24,6 @@ def _cli_codex_cfg() -> LLMConfig:
         api_key="cli-backend", base_url="", model="api-fallback",
         channel="cli", cli_runner="codex", cli_model="gpt-5.5",
     )
-
-
-def _so_json(**fields) -> str:
-    base = {
-        "标题": "密查",
-        "内容": "TASK_BODY",
-        "承办人": "",
-        "期限月数": 0,
-        "标签": [],
-    }
-    base.update(fields)
-    return json.dumps(base, ensure_ascii=False)
-
-
-def _patch_backend(monkeypatch, payload: str):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
 
 
 def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
@@ -57,42 +40,6 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     )
     assert people == [character.name]
     assert offices == [office]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ── cli_backend_from_env / backend dispatch ──
@@ -408,27 +355,7 @@ def test_run_codex_absolutizes_relative_resolved_bin(monkeypatch):
     assert captured["cmd"][0] == cb.os.path.abspath("./bin/codex")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ── lenient JSON via public extract seam ──
-
-
-
-
-
 
 
 # ── CliChat public: prompt shape + typed completion structure ──

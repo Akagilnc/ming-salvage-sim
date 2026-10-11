@@ -53,11 +53,6 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     return dossier_id
 
-def _reflux(transfers, *, dossier_id=None):
-    out = [t for t in transfers if t.get("reason") == "回流"]
-    if dossier_id is not None:
-        out = [t for t in out if t.get("origin_ref") == f"dossier:{dossier_id}"]
-    return out
 
 def _reset_shaanxi_pool(db):
     db.conn.execute(

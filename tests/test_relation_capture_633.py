@@ -123,9 +123,6 @@ def test_shape_garbage_rejected_per_existing_extractor_contract(game):
     assert len(rejected) == 4
     assert all(r.category == "invalid_relation_event" for r in rejected)
     assert any(r.category == "invalid_relation_event" for r in rejected)
-    assert any(r.category == "invalid_relation_event" for r in rejected)
-    assert any(r.category == "invalid_relation_event" for r in rejected)
-    assert any(r.category == "invalid_relation_event" for r in rejected)
     # 全部拒收：库里零写入
     assert _edge_rows(db) == []
 
@@ -139,8 +136,6 @@ def test_non_string_actor_target_context_shapes_rejected(game):
     assert len(rejected) == 6
     assert all(r.category == "invalid_relation_event" for r in rejected)
     assert any(r.category == "invalid_relation_event" for r in rejected)
-    assert any(r.category == "invalid_relation_event" for r in rejected)
-    assert any(r.category == "invalid_relation_event" for r in rejected)
     assert _edge_rows(db) == []
 
 def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
@@ -153,9 +148,7 @@ def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
     assert len(rejected) == 8
     assert all(r.category == "invalid_relation_event" for r in rejected)
     assert all(
-        r.category == "invalid_relation_event" or r.category == "invalid_relation_event"
-        or r.category == "invalid_relation_event"
-        for r in rejected
+        r.category == "invalid_relation_event" for r in rejected
     )
     # 全部拒收：库里零边、无任何 origin 被默认成「盘面自发」落库
     assert _edge_rows(db) == []
@@ -172,7 +165,6 @@ def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
     res = view(out, "relation_edge_event_resolutions")
     rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == len(variants), res
-    assert all(r.category == "invalid_relation_event" for r in rejected)
     assert all(r.category == "invalid_relation_event" for r in rejected)
     # 零写入：无任何归一后的「盘面自发」origin 溜进库
     assert _edge_rows(db) == []
@@ -221,7 +213,6 @@ def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
         r for r in section(out, "relation_edge_event_resolutions").rejected
         if isinstance(r.item, dict) and r.item.get("语境") == "空白包裹的案卷引用。"
     )
-    assert padded.category == "invalid_relation_event"
     assert padded.category == "invalid_relation_event"
     assert len(res) == 1
     # 恰一行合法边落库；无归一后的 dossier origin 变体
@@ -346,16 +337,6 @@ def test_writer_rejects_non_string_context(game):
 
 # ── P5 并行装配：新模块并入同一 executor，不串行 ────────────────────
 
-_CANNED = {
-    "internal": '{"economy_moves": [], "fiscal_changes": [], "fiscal_creates": [], "fiscal_removes": []}',
-    "military_external": '{"army_delta": {}, "new_armies": [], "power_updates": {}, "world_advance": {}}',
-    "issues": '{"issue_advances": [], "new_issues": [], "事件结局": {}, "cancels": [], "close_issues": []}',
-    "personnel_secret": '{"人物变更": [], "secret_order_updates": [], "emperor_fate": null}',
-    "relations": '{"大臣互动": [{"施动者": "温体仁", "受动者": ["钱龙锡"], "类目": "联名", "语境": "联名上疏。"}]}',
-}
-
-def _module_of(tag: str) -> str:
-    return tag.split("/", 1)[1]
 
 # ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
 
@@ -366,7 +347,6 @@ def test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges(game):
     res = view(out, "relation_edge_event_resolutions")
     rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 5
-    assert all(r.category == "invalid_relation_event" for r in rejected)
     assert all(r.category == "invalid_relation_event" for r in rejected)
     assert _edge_rows(db) == []
 
@@ -425,7 +405,6 @@ def test_empty_or_all_invalid_targets_reject_whole_item_zero_edges(
     assert len(rejected) == 1
     assert rejected[0].category == "invalid_relation_event"
     assert rejected[0].item["施动者"] == "温体仁"
-    assert rejected[0].category == "invalid_relation_event"
     # 坏项零边写入；同批独立好互动不受牵连照常落库
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
@@ -480,7 +459,6 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 2
     assert all(r.category == "invalid_relation_event" for r in rejected)
-    assert all(r.category == "invalid_relation_event" for r in rejected)
     assert any(r.category == "invalid_relation_event" for r in rejected)
     assert _triplets(_edge_rows(db)) == {
         ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
@@ -504,7 +482,6 @@ def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     source=Provenance.system_simulation)
     assert res == []
     assert len(res_rejections) == 1
-    assert res_rejections[0].category == "invalid_relation_event"
     assert res_rejections[0].category == "invalid_relation_event"
     assert _edge_rows(db) == []  # 零边写入
 

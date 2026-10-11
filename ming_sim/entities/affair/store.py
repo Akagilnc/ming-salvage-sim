@@ -6,7 +6,6 @@ ADR 0154（2026-09-30）：不设「宣布了结」动作；closed 态由世界�
 from __future__ import annotations
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
-import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -387,35 +386,6 @@ class AffairStore:
         if authorized_ids is not None:
             authorized_ids.add(int(affair_id))
         return self.origin_ref(affair_id)
-
-    def experiences(self, affair_id: int) -> tuple[dict[str, object], ...]:
-        """Read-time projection: story-ledger rows whose origin_ref points at this affair."""
-        self.get(affair_id)
-        refs = self.origin_refs(affair_id)
-        affair_ref = self.origin_ref(affair_id)
-        placeholders = ",".join("?" for _ in refs)
-        rows = self._conn.execute(
-            "SELECT id, person_names, tags, body, origin_ref "
-            "FROM story_ledger_entries WHERE origin_ref IN ("
-            + placeholders
-            + ") OR origin_ref LIKE ? ORDER BY id",
-            (*refs, f"{affair_ref}/%"),
-        ).fetchall()
-        out: list[dict[str, object]] = []
-        for row in rows:
-            origin = str(row["origin_ref"] or "").strip()
-            tags = json.loads(row["tags"] or "[]")
-            people = json.loads(row["person_names"] or "[]")
-            if not isinstance(tags, list) or not isinstance(people, list):
-                raise ValueError("持久化事务正文的 tags/person_names 须为列表")
-            out.append({
-                "id": int(row["id"]),
-                "body": str(row["body"] or ""),
-                "origin_ref": origin,
-                "person_names": [str(name) for name in people if str(name).strip()],
-                "tags": [str(tag) for tag in tags if str(tag).strip()],
-            })
-        return tuple(out)
 
 
 def parse_positive_affair_id(raw: object) -> int:

@@ -18,12 +18,10 @@
 from __future__ import annotations
 from ming_sim.exceptions import DeclarationDataError
 
-from concurrent.futures import ThreadPoolExecutor
 
 import codecs
 import json
 import logging
-from ming_sim.exceptions import LLMUnavailable
 import os
 import queue
 import re
@@ -1203,25 +1201,10 @@ def _messages_to_prompt(
     return prompt
 
 
-# ── 拟旨 / 下密令入档（CLI 后端）────────────────────────────────────────
-# 原版（api key）靠 agno 工具 propose_directive/secret_order，模型 function-call 触发。
-# agy/codex/claude 不做 function-calling，唯一缺口在此。玩家用「拟旨/下密令」按钮 =
-# 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，据此分派：
-#   拟旨：大臣回话原文即这道圣旨草稿，整段入档（单一文本字段，够用；多轮聊出多道 →
-#         颁诏时玩家去重）。
-#   密令（#397/#413/#1274 K1）：结构化载荷由声明分派承接；secret_order_can_land
-#         作现役落地门。旧 CLI LLM 抽取 helper 已退役。
-_DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
-_SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
-
-
 # 大臣会话动作抽取（CLI 后端无 function-calling）：
 # 不靠关键字白名单（脆、永远漏），交给 LLM 读对话判意图——皇帝本轮对该大臣【现有密令】
 # 要做什么（更新内容 / 提交核议 / 催办 / 记进展），以及若是妃嫔有无调教。
 # 只在「大臣有 active 密令 或 是妃嫔」时调（省 token）。
-
-
-
 
 
 def _directive_mode(value: object) -> Optional[str]:
@@ -3100,7 +3083,6 @@ def extract_draft_intent(
     return _finalize_extract_with_combo(cand_result, needs_combo=needs_combo)
 
 
-
 # 八值 target_kind 真源在 decree_vocabulary.TARGET_KINDS（#654 / owner A 禁双定义）
 from ming_sim.decree_vocabulary import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
 from ming_sim.execution_pressure import normalize_locality_scope as _normalize_locality_scope
@@ -3367,20 +3349,6 @@ def resubmit_draft_admission_payload(
     if _is_manual_special_decree_fallback(payload):
         raise DeclarationDataError("结算补交重写落空载 special_decree fallback")
     return payload
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _loads_lenient(raw: str) -> Optional[Dict[str, Any]]:

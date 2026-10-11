@@ -9,10 +9,6 @@ import pytest
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
 
-def _make_ri(category="hallucinated_id") -> RejectedItem:
-    return RejectedItem(item={}, reason="x", category=category, source=Provenance.unknown)
-
-
 @pytest.fixture
 def clean_rejections(game):
     """game 基底是活存档 probe.db 副本——真实游玩可能已写入 rejection_reports。

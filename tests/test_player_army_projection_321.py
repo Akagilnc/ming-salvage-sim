@@ -31,15 +31,6 @@ _MUTINY_ORDINAL_KEYS = frozenset(
         "mutiny_state",
     }
 )
-_PERSISTENT_COL_TOKENS = (
-    "is_mutinied",
-    "mutiny_count",
-    "mutiny_probation",
-    "full_pay_streak",
-    "redemption_count",
-)
-
-
 
 
 def _configure(db) -> None:
@@ -144,8 +135,6 @@ def _assert_structured_situation(card: dict, label: str, *, expected_tier: str |
     assert isinstance(card["arrears_text"], str) and card["arrears_text"].strip()
     if expected_tier is not None:
         assert card["mutiny_tier"] == expected_tier, f"{label}.mutiny_tier"
-
-
 
 
 def test_four_chains_embed_situation_matrix(game):

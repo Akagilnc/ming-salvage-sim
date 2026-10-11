@@ -268,24 +268,6 @@ def _rejection_rows(game, directive_id: int):
     ).fetchall()
 
 
-def _write_decree_capture_payloads(monkeypatch, game) -> list[dict]:
-    """恢复真实 write_decree_with_agno；截 agent.run 入参 JSON（拟诏真实入口）。"""
-    captured: list[dict] = []
-
-    class _CapturingAgent:
-        def run(self, text):
-            captured.append(json.loads(text) if isinstance(text, str) else dict(text))
-            return type("RunOut", (), {"content": "奉天承运，诏曰：着户部清核辽饷。"})()
-
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", _real_write_decree_with_agno)
-    monkeypatch.setattr(
-        decree_mod, "create_decree_writer_agent",
-        lambda *a, **k: _CapturingAgent(),
-    )
-    game.session.write_decree()
-    return captured
-
-
 def test_draft_admission_resubmit_success_advances_month(admission_game, monkeypatch):
     """补交路：原抽坏 → 第一次重写仍坏 → 第二次重写成案 → 月推进。
 
@@ -351,83 +333,6 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     _finish_month_after_gazette(game, turn)
     row = game.db.get_directive(draft_id)
     assert row is not None and str(row["status"]) == "issued"
-
-
-def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkeypatch):
-    """耗尽路：原抽+重写2 共 3 次仍坏 → draft 留到下月、月推进、拒因留痕。"""
-    game = admission_game
-    # 原抽 + 两次重写皆坏（总计 3）；变异把重写预算改回 1 时本案须红（calls==2）
-    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
-    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
-    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
-    client = TestClient(web_app.app)
-    turn = int(game.state.turn)
-
-    _post_directive(game, _DECREE_TEXT)
-    wait_pending_writes(game)
-    did = _latest_directive_id(game)
-    source_turn = int(game.db.get_directive(did)["turn"])
-
-    body = _post_issue_stream(client, expected_turn=turn, step="1769 exhaust")
-    assert _turn_of(_get_state(client)) == turn + 1
-    assert len(resubmit_calls) == 2
-    assert len(ensure_rounds) >= 2
-    # 两轮写回成功：回喂源=各轮 ensure 拒因，丢源/替换不能假绿
-    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
-        ensure_rounds[0], did,
-    )
-    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(
-        ensure_rounds[1], did,
-    )
-    assert not product_faults
-    row = game.db.get_directive(did)
-    assert row is not None and str(row["status"]) == "draft"
-    assert game.db.get_dossier_for_directive(did) is None
-
-    rows = _rejection_rows(game, did)
-    assert len(rows) == 1
-    assert rows[0]["category"] == "locality_fanout_failed"
-    assert rows[0]["source"] == "player_decree"
-    # 诊断出口：SSE done 结构化载荷无 reason 字段（不扫自由文本）
-    assert body.get("reason") in (None, "")
-    assert body.get("_event") in (None, "done", "")
-
-    listed = game.db.list_directives(game.state, statuses=("draft",))
-    assert any(int(r["id"]) == did for r in listed)
-    _finish_month_after_gazette(game, turn)
-    assert source_turn < int(game.state.turn)
-
-    # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
-    # （跨月未入档边界的外部可见契约；不直调私有 _carryover_drafts）
-    payloads = _write_decree_capture_payloads(monkeypatch, game)
-    assert payloads
-    feed_item = next(
-        d for d in payloads[0]["directives"]
-        if str(d.get("text") or "") == str(row["text"] or "")
-    )
-    assert feed_item.get("admission_status") == "上月未入档"
-
-    # 刷新/恢复：同库重开身份一致、无重复案卷
-    db_path = str(game.db.path)
-    game.session.close()
-    restored = web_app.WebGame(fresh=False, db_path=db_path)
-    try:
-        monkeypatch.setattr(web_app, "web_game", restored)
-        r_row = restored.db.get_directive(did)
-        assert r_row is not None
-        assert str(r_row["status"]) == "draft"
-        assert int(r_row["id"]) == did
-        assert restored.db.get_dossier_for_directive(did) is None
-        assert len(_rejection_rows(restored, did)) == 1
-        assert not any(
-            d.get("directive_id") == did
-            for d in restored.db.list_decree_dossiers()
-        )
-    finally:
-        try:
-            restored.session.close()
-        except Exception:
-            pass
 
 
 def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypatch):

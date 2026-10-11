@@ -11,7 +11,6 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双�
 
 from __future__ import annotations
 
-import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.issues import bind_content
@@ -126,7 +125,6 @@ def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
     rejections = section(applied, "class_delta").rejected
     assert len(rejections) == 1
     assert rejections[0].category == "invalid_enum"
-    assert rejections[0].category == "invalid_enum"  # 指向合法入口
     row2 = db.conn.execute(
         "SELECT population, satisfaction FROM classes "
         "WHERE name='流民' AND region_id='shaanxi'"
@@ -191,4 +189,3 @@ def test_new_save_restore_jianzhou_keeps_persons_unit(game):
     ).fetchone()[0]
     assert after == JIANZHOU_RESTORE_POP_PERSONS
     assert after != 90  # 漏迁/漏换算任一即 FAIL（×10⁴ mutation 咬点）
-

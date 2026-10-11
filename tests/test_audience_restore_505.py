@@ -21,7 +21,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-import ming_sim.issues as issues_mod
 import ming_sim.entities.issue.legacy as issue_legacy
 import web_app
 from ming_sim import audience_night as an
@@ -316,8 +315,6 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
 
 
-
-
 def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env):
     db, state, content = restore_env.db, restore_env.state, restore_env.content
     minister = _active_minister(db, content)
@@ -342,7 +339,6 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env
     assert [r["content"] for r in db.conn.execute(
         "SELECT content FROM chat_messages WHERE role='minister'"
     )] == ["臣遵旨。"]
-
 
 
 def test_retry_without_interrupted_turn_is_rejected(restore_env):
@@ -542,18 +538,6 @@ def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
     db.conn.commit()
 
 
-def _insert_agno_table_run(db, session_id: str, run_id: str, run_index: int) -> None:
-    """Insert one Agno 3 table run row (shared by transport failpath fixtures)."""
-    _ensure_agno_runs_table(db)
-    db.conn.execute(
-        "INSERT INTO agno_runs "
-        "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
-        "VALUES (?, ?, 'agent', 'FAILED', ?, ?, ?)",
-        (run_id, session_id, run_index, json.dumps({"run_id": run_id}), run_index + 1),
-    )
-    db.conn.commit()
-
-
 def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -583,8 +567,6 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
-
-
 
 
 def test_reconcile_marks_questionless_orphan_failed(restore_env):

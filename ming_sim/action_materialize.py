@@ -26,53 +26,7 @@ from ming_sim.action_clusters import (
 )
 
 
-def minister_speaker_role(
-    minister_name: str,
-    character: Any = None,
-    db: Any = None,
-) -> str:
-    """ADR 0033 objective characterization for recovery speaker (not name/office alone)."""
-    from ming_sim.context import faction_context_with_db, minister_dossier
-    from ming_sim.models import Character
-
-    ch = character
-    if not isinstance(ch, Character) and db is not None:
-        content = db.content
-        roster = getattr(content, "characters", None) if content is not None else None
-        if isinstance(roster, dict):
-            found = roster.get(str(minister_name or "").strip())
-            if isinstance(found, Character):
-                ch = found
-    if isinstance(ch, Character):
-        parts = [
-            f"{ch.name}，{ch.office}",
-            minister_dossier(ch),
-        ]
-        if db is not None:
-            parts.append(faction_context_with_db(ch, db))
-        return "\n".join(p for p in parts if str(p or "").strip())
-    office = str(getattr(ch, "office", "") or "").strip() if ch is not None else ""
-    office_type = (
-        str(getattr(ch, "office_type", "") or "").strip() if ch is not None else ""
-    )
-    bits = [p for p in (str(minister_name or "").strip(), office or office_type) if p]
-    return "，".join(bits) or "大臣"
-
-
-
-
-
-
-
-
-
-
-
-
 # ── handlers（委派既有 stage，不另造落库）────────────────────────────
-
-
-
 
 
 def _persist_appointment_summon(
@@ -218,8 +172,6 @@ def _apply_existing_appointment_hit(
                 origin_chat_turn_id=int(origin_chat_turn_id or 0),
             )
         return resolved
-
-
 
 
 def stage_pacification_candidate(
@@ -490,8 +442,6 @@ def stage_punishment_candidate(
     )
 
 
-
-
 GRANT_ACTIONS = frozenset({
     "无", "赏赉", "发内帑", "加衔", "荫叙", "赈灾", "招抚屯田", "项目经费", "协饷",
 })
@@ -606,7 +556,6 @@ def require_grant_allocation_shape(
         )
     out["amount"] = amt
     return out
-
 
 
 def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
@@ -782,7 +731,6 @@ def require_materializable_xiexang_payload(
     }
 
 
-
 def _parse_json_field(raw: object) -> Any:
     """Classifier FieldSpec 只能承字符串；dict/list JSON 串在此还原。"""
     if isinstance(raw, (dict, list)):
@@ -825,29 +773,7 @@ def _assignment_absolute_end_turn(
     return 0
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # 纯授权案卷归收权·罢差（ADR 0041/0071）；不得入撤回成命目标域。
-
-
-
-
-
 
 
 _RESPONSIBLE_BODY_SPLIT = re.compile(r"[,，、/;／|]")
@@ -920,9 +846,6 @@ def assert_responsible_bodies_org_only(
             raise DeclarationDataError(f"responsible_bodies 禁个人名：{name}")
 
 
-
-
-
 def _list_pending_office_rows(
     db: Any,
     turn: int,
@@ -993,9 +916,6 @@ def _match_office_row_by_name_office(
             continue
         hits.append(row)
     return hits
-
-
-
 
 
 def _annotate_office_pending_path(
@@ -1115,9 +1035,6 @@ def _write_path_nature_ledger(
         source_chat_turn_id=source_cid,
         check_dead=False,
     )
-
-
-
 
 
 _PURE_AUTHORITY_DOSSIER_ACTIONS = frozenset({

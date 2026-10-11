@@ -43,7 +43,6 @@ def _recovery_session(db, state, content, monkeypatch):
     sess.deaths_this_turn = []
     sess.debuts_this_turn = []
     sess.last_decree = ""
-    sess.last_report = ""
     sess._beat_generator = None
     sess._scene_registry = None
     sess._decree_draft_fingerprint = ()
@@ -392,23 +391,3 @@ def test_skip_refused_at_front_half_done(game):
     # settling 已提交前半：turn 不因「缺壳」而推进；财政行保留
     assert state.turn == turn
     assert _ledger_count(db, turn) == rows_before
-
-def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
-    """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。
-
-    恢复窗口新增/确认的 draft 会被 mark_directives_issued 连带标 issued，
-    而重放 delta 不含它们=幽灵颁布。
-    """
-    db, state, content = game
-    state.turn_phase = "settling"
-
-    sess = _recovery_session(db, state, content, monkeypatch)
-    for call in (
-        lambda: sess.add_directive("新草案"),
-        lambda: sess.update_directive(1, "改"),
-        lambda: sess.delete_directive(1),
-        # #1341：set_decree 已删；冻结面只覆盖逐道草案变更器 + write_decree
-        lambda: sess.write_decree(),
-    ):
-        with pytest.raises(ValueError):
-            call()

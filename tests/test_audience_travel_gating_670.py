@@ -688,7 +688,7 @@ def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatc
 
 
 def test_cli_midflow_summon_rejects_unknown_unregistered_person(game):
-    """#670：CLI 夜内换人未知人物不得 summon-temp 旁路，须 ADR 0038 持久入册后再 admission。"""
+    """#670：CLI 夜内换人未知人物不得绕过入册，须 ADR 0038 持久入册后再 admission。"""
     from ming_sim.cli import terminal
 
     sess = _session(game)

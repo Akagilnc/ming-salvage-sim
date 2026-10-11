@@ -363,7 +363,6 @@ def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):
     assert f"chat_message:{mid}" not in _view_source_ids(db, state, other.name)
     assert f"secret_order_brief:{oid}" not in _view_source_ids(db, state, other.name)
     assert _shared_source_body(db, f"chat_message:{mid}") is None
-    assert f"chat_message:{mid}" not in _view_source_ids(db, state, other.name)
 
 
 def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game):
@@ -1130,9 +1129,6 @@ def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
         # private/released 则接令者/参与者当即可记。
         if pub_status in ("private", "released"):
             assert f"chat_message:{mid_pub}" in _view_source_ids(db, state, minister)
-            assert f"chat_message:{mid_pub}" in _view_source_ids(db, state, minister), (
-                f"{action}: pure public not remembered after project"
-            )
 
 
 
@@ -1202,9 +1198,7 @@ def test_976_pending_secret_pin_survives_partial_commit_same_minister(game):
     assert _shared_source_count(db, mid_a_reply) == 0
 
     # 明确拒绝后，pin 退出可重试生命周期；下一次既有 release 可按公开召对投轨。
-    assert db.drop_pending_actions_for_minister(
-        state.turn, assignee.name, action_ids={pending_a},
-    ) == 1
+    assert db.withdraw_pending_action(pending_a, state.turn) is True
     db.release_held_audience_knowledge()
     assert _ks(db, mid_a) == "released"
     assert _ks(db, mid_a_reply) == "released"
@@ -1609,7 +1603,6 @@ def test_976_rt05_save_restore_between_hold_and_release(game, tmp_path):
         assert _ks(db2, mid_pub) == "released"
         assert _shared_source_count(db2, mid_pub) == 1
         assert _shared_source_body(db2, f"chat_message:{mid_late}") == late
-        assert _ks(db2, mid_pub) == "released"
         assert _shared_source_body(db2, f"chat_message:{mid_pub}") == pending_public
         # silence: state2 used
         assert state2.turn == state.turn

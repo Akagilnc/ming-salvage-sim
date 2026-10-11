@@ -16,9 +16,6 @@ from typing import Any, Mapping
 
 from ming_sim.applier import atomic, connection_owns_transaction
 
-_STATUS_STAGED = "staged"
-_STATUS_DISCARDED = "discarded"
-_STATUS_SETTLED = "settled"
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS staged_declarations (

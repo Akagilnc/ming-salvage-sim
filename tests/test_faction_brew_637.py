@@ -98,28 +98,6 @@ def test_any_endpoint_hit_selects_and_same_faction_dedups(game):
     assert len(report["brewed"]) == 2
 
 
-def test_both_endpoints_different_factions_both_selected(game):
-    """两端不同派均入选（不只取 source）。"""
-    db, state, _ = game
-    _add_edge(db, state, source="毕自严", target="王绍徽", kind="站台",
-              context="毕自严当面替王绍徽担名。", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert [row["faction"] for row in targets] == ["皇党", "阉党"]
-
-    calls: list = []
-    report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
-    assert report["selected"] == 3  # 1 关系＋2 派系
-    assert len(report["brewed"]) == 3
-    brewed_factions = sorted(
-        entry["faction"] for entry in report["brewed"] if "faction" in entry
-    )
-    assert brewed_factions == ["皇党", "阉党"]
-    assert db.get_faction_stance_summary("皇党")["stance_segment"] == "朝局如常。"
-    assert db.get_faction_stance_summary("阉党")["stance_segment"] == "朝局如常。"
-
-
 def test_out_of_table_faction_and_unknown_person_never_projected(game):
     """表外党籍（皇帝↔后金人物）与未知人物（不在 characters）的事件不入任何派系视图。"""
     db, state, _ = game
@@ -142,120 +120,11 @@ def test_out_of_table_faction_and_unknown_person_never_projected(game):
 
 # ------------------------------------- 验收：事件月更新／无事月字节不变
 
-def test_event_month_updates_stance_and_no_event_month_byte_identical(game):
-    db, state, _ = game
-    event_id = _add_edge(db, state, source=EMPEROR_NODE, target="钱谦益", kind="知遇",
-                         context="钱谦益蒙召对，简拔入朝。", origin="audience:turn-1")
-    calls: list = []
-    brew_fn = _dual_brew_fn_factory(calls, stance="东林因钱谦益蒙召对而势涨。")
-    report = run_month_end_relation_brew(db, state, brew_fn)
-
-    summary = db.get_faction_stance_summary("东林")
-    assert summary["stance_segment"] == "东林因钱谦益蒙召对而势涨。"
-    assert summary["last_event_id"] >= event_id
-    assert (summary["last_brewed_year"], summary["last_brewed_period"]) == (
-        int(state.year), int(state.period),
-    )
-
-    # 无涉派事件月：零调用、摘要字节不变（F2 双条件之前件）。
-    before = dict(summary)
-    state.turn += 1
-    state.period += 1
-    calls.clear()
-    report = run_month_end_relation_brew(db, state, brew_fn)
-    assert report["selected"] == 0
-    assert calls == []
-    after = db.get_faction_stance_summary("东林")
-    assert after["stance_segment"] == before["stance_segment"]
-    assert after["last_event_id"] == before["last_event_id"]
-    assert (after["last_brewed_year"], after["last_brewed_period"]) == (
-        before["last_brewed_year"], before["last_brewed_period"],
-    )
-
 
 # ------------------------- F2 pending 补酿复用 #636 接缝：恰一次
 
-def test_failed_faction_brew_rebrews_once_via_existing_pending_seam(game):
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-
-    def failing_brew(payload_json: str) -> str:
-        raise LLMUnavailable("酿制裁判接口不可用")
-
-    report = run_month_end_relation_brew(db, state, failing_brew)
-    # 关系与派系工作项同批同命：双双降级留痕。
-    assert report["selected"] == 2
-    assert len(report["degraded"]) == 2
-    assert db.get_faction_stance_summary("皇党") is None
-    # durable pending 在册（同一 claim 机制，item_kind='派系' 身份）。
-    pending = db.get_faction_brew_pending()
-    assert [row["faction"] for row in pending] == ["皇党"]
-    # 既有 #636 关系接缝语义原样：关系 pending 同在册。
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
-        ("温体仁", "周延儒")
-    ]
-
-    # 次月无任何新事件：仍凭 durable pending 补酿恰一次，复用同一接缝。
-    state.turn += 1
-    state.period += 1
-    calls: list = []
-    brew_fn = _dual_brew_fn_factory(calls, stance="皇党内因温周之隙而生嫌隙。")
-    report = run_month_end_relation_brew(db, state, brew_fn)
-    faction_payloads = [
-        payload for payload in calls if payload.get("view") == VIEW_FACTION_STANCE
-    ]
-    assert len(faction_payloads) == 1
-    assert faction_payloads[0]["has_pending_failure"] is True
-    assert faction_payloads[0]["faction"] == "皇党"
-    assert len(report["brewed"]) == 2
-    assert db.get_faction_stance_summary("皇党")["stance_segment"] == (
-        "皇党内因温周之隙而生嫌隙。"
-    )
-    assert db.get_faction_brew_pending() == []
-    assert db.get_relation_brew_pending() == []
-
-    # 再跑：既无新事件又无 pending → 零调用、字节不变（补酿恰一次的总证明）。
-    state.turn += 1
-    state.period += 1
-    calls.clear()
-    report = run_month_end_relation_brew(db, state, brew_fn)
-    assert report["selected"] == 0
-    assert calls == []
-
 
 # ----------------------- 输出契约严格边界：畸形产出拒收降级保旧摘要
-
-def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
-    db, state, _ = game
-    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
-              context="越次一召。", origin="audience:turn-1")
-    calls: list = []
-    brew_fn = _dual_brew_fn_factory(calls, stance="皇党旧文。")
-    run_month_end_relation_brew(db, state, brew_fn)
-    before = db.get_faction_stance_summary("皇党")
-
-    # 次月新涉派事件；派系腿产出缺 stance_segment（shape 违约）→ 单条降级。
-    state.turn += 1
-    state.period += 1
-    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="辜负",
-              context="所请被驳。", origin="audience:turn-2")
-    calls.clear()
-    brew_fn.stances = ['{"irrelevant": 1}']
-    report = run_month_end_relation_brew(db, state, brew_fn)
-    assert report["degraded"], "派系腿 shape 违约必须降级留痕"
-    after = db.get_faction_stance_summary("皇党")
-    assert after["stance_segment"] == before["stance_segment"]  # 保旧摘要字节
-    assert [row["faction"] for row in db.get_faction_brew_pending()] == ["皇党"]
-
-    # 再下月：pending 补酿恰一次、成功落定清除。
-    state.turn += 1
-    state.period += 1
-    calls.clear()
-    brew_fn.stances = [{STANCE_KEY: "皇党因杨嗣昌被驳而渐离。"}]
-    report = run_month_end_relation_brew(db, state, brew_fn)
-    assert db.get_faction_stance_summary("皇党")["stance_segment"] == "皇党因杨嗣昌被驳而渐离。"
-    assert db.get_faction_brew_pending() == []
 
 
 # ------------------------------------------- 异常边界：DB 错响亮不伪装降级

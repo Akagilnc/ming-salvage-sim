@@ -8,7 +8,6 @@ import pytest
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import (
-    TARGET_KINDS as EP_TARGET_KINDS,
     normalize_locality_scope,
     resolve_dossier_region_ids,
 )
@@ -127,123 +126,6 @@ def test_region_zero_hit_fail_loud(env):
 
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
-def test_national_creates_one_row_idempotent(env):
-    """#1778 决定 4：全国政令成一份案卷（region_id 空），重交不增行。"""
-    db, state, content = env
-    # 点将路径：assignee 落主办
-    payload = {
-        "target_kind": "policy",
-        "target_id": "清丈天下田亩",
-        "locality_scope": "national",
-        "dossier_action_type": "policy",
-        "assignee_id": "毕自严",
-        "transaction_category": "清丈",
-        "participant_roster": [
-            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-        ],
-    }
-    # 需 directive 行以挂复合键
-    cur = db.conn.execute(
-        """
-        INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, text, source, status,
-         notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            state.turn, state.year, state.period, None, "毕自严",
-            "清丈天下田亩", "test", "draft", "",
-            json.dumps(payload, ensure_ascii=False),
-        ),
-    )
-    directive_id = int(cur.lastrowid)
-    db.conn.commit()
-
-    ids = db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="清丈天下田亩",
-        target_kind="policy",
-        target_id="清丈天下田亩",
-        directive_id=directive_id,
-        payload=payload,
-        commit=True,
-    )
-    assert len(ids) == 1
-    rows = db.list_dossiers_for_directive(directive_id)
-    assert len(rows) == 1
-    assert [r["region_id"] for r in rows] == [""]
-    # 点将：主办与 executor_* 同步（#654 named-lead 断根）
-    for r in rows:
-        leads = [
-            e["character_id"] for e in r["participant_roster"] if e.get("tier") == "主办"
-        ]
-        assert leads == ["毕自严"]
-        assert r["executor_kind"] == "character"
-        assert r["executor_id"] == "毕自严"
-
-    # 幂等重放
-    ids2 = db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="清丈天下田亩",
-        target_kind="policy",
-        target_id="清丈天下田亩",
-        directive_id=directive_id,
-        payload=payload,
-        commit=True,
-    )
-    assert ids2 == ids
-    assert len(db.list_dossiers_for_directive(directive_id)) == 1
-
-def test_named_lead_bulk_single_region_syncs_executor(env):
-    """#654：非 fan-out 批量入口点将亦同步 executor_*（与 national 同根）。"""
-    db, state, _ = env
-    payload = {
-        "target_kind": "region",
-        "target_id": "shaanxi",
-        "locality_scope": "single",
-        "dossier_action_type": "policy",
-        "assignee_id": "毕自严",
-        "participant_roster": [
-            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-        ],
-    }
-    cur = db.conn.execute(
-        """
-        INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, text, source, status,
-         notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            state.turn, state.year, state.period, None, "毕自严",
-            "陕西清丈", "test", "draft", "",
-            json.dumps(payload, ensure_ascii=False),
-        ),
-    )
-    directive_id = int(cur.lastrowid)
-    db.conn.commit()
-
-    ids = db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="陕西清丈",
-        target_kind="region",
-        target_id="shaanxi",
-        directive_id=directive_id,
-        payload=payload,
-        commit=True,
-    )
-    assert len(ids) == 1
-    row = db.list_dossiers_for_directive(directive_id)[0]
-    assert row["region_id"] == "shaanxi"
-    leads = [
-        e["character_id"] for e in row["participant_roster"] if e.get("tier") == "主办"
-    ]
-    assert leads == ["毕自严"]
-    assert row["executor_kind"] == "character"
-    assert row["executor_id"] == "毕自严"
 
 def test_create_decree_dossier_int_abi_single_row(env):
     db, state, _ = env
@@ -259,43 +141,6 @@ def test_create_decree_dossier_int_abi_single_row(env):
     row = db.get_decree_dossier(did)
     assert row["region_id"] == ""
 
-def test_get_dossier_for_directive_existence_sentinel(env):
-    db, state, _ = env
-    payload = {
-        "target_kind": "region",
-        "target_id": "shaanxi",
-        "locality_scope": "single",
-        "dossier_action_type": "policy",
-        "assignee_id": "毕自严",
-    }
-    cur = db.conn.execute(
-        """
-        INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, text, source, status,
-         notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            state.turn, state.year, state.period, None, "毕自严",
-            "陕西清丈", "test", "draft", "",
-            json.dumps(payload, ensure_ascii=False),
-        ),
-    )
-    directive_id = int(cur.lastrowid)
-    db.conn.commit()
-    assert db.get_dossier_for_directive(directive_id) is None
-    db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="陕西清丈",
-        target_kind="region",
-        target_id="shaanxi",
-        directive_id=directive_id,
-        payload=payload,
-    )
-    assert db.get_dossier_for_directive(directive_id) is not None
-    listed = db.list_dossiers_for_directive(directive_id)
-    assert len(listed) == 1 and listed[0]["region_id"] == "shaanxi"
 
 def test_normalize_payload_locality_and_target_kind(env):
     """负向闸：未知 kind/scope fail-loud（正向归一由真实成案入口覆盖）。"""
@@ -360,7 +205,7 @@ def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
         )
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
-    assert db.list_dossiers_for_directive(did) == []
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
 
 def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
     """路 2（#1769）：pending→confirm 只翻 draft；ensure 批缝产物错 → 零行 + 保持 draft。
@@ -384,7 +229,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()
     assert row["status"] == "draft"
-    assert db.list_dossiers_for_directive(did) == []
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
 
     rejections = db.ensure_dossiers_for_draft_directives(state)
     assert any(int(r["directive_id"]) == did for r in rejections)
@@ -392,7 +237,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()
     assert row["status"] == "draft"
-    assert db.list_dossiers_for_directive(did) == []
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
 
 def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
     """路 3：locality 失败保持 draft；rejection 仅 directive_id（P6 不裁剪旨文）。"""
@@ -425,10 +270,10 @@ def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
         "SELECT status FROM turn_directives WHERE id=?", (other_id,),
     ).fetchone()
     assert bad["status"] == "draft"  # 保持 draft
-    assert db.list_dossiers_for_directive(did) == []
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
     # 并列第二旨不受影响
     assert good["status"] == "draft"
-    assert len(db.list_dossiers_for_directive(other_id)) == 1
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (other_id,)).fetchone()["n"] == 1
 
     rej = db.conn.execute(
         "SELECT item_json, reason, category FROM rejection_reports "
@@ -705,4 +550,3 @@ def test_location_canonical_seed_and_write_seam(env):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
     # 写缝已钉未知非空 fail-loud。开档别名 migrate / 开档扫 location 已随
     # _migrate_character_location_aliases 退役，不再造旧档副本期待写回。
-

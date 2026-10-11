@@ -5,6 +5,18 @@ from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _r
 from tests.dossier_test_helpers import create_test_secret_order
 
 
+def _link_rejections(db, *, source=None, pending=None):
+    """拒收审计真源表（持久行）；只读观察，不经生产查询门。"""
+    if pending is not None:
+        sql, arg = "pending_action_id", pending
+    else:
+        sql, arg = "source_dossier_id", source
+    rows = db.conn.execute(
+        f"SELECT * FROM decree_dossier_link_rejections WHERE {sql}=? ORDER BY id", (arg,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _make_dossier(db, state, text):
     return db.create_decree_dossier(
         state,
@@ -132,7 +144,7 @@ def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(gam
 
     assert len(db.list_secret_orders()) == before_orders
     assert db.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
-    audit = db.list_dossier_link_rejections(pending_action_id=action_id)
+    audit = _link_rejections(db, pending=action_id)
     assert audit[-1]["target_dossier_id"] == 999999
     assert audit[-1]["reason"]
 
@@ -148,7 +160,7 @@ def test_unknown_target_link_is_rejected_and_audited(game):
         )
 
     assert db.list_dossier_links(source) == []
-    audit = db.list_dossier_link_rejections(source)
+    audit = _link_rejections(db, source=source)
     assert audit[-1]["target_dossier_id"] == 999999
     assert audit[-1]["reason"]
 
@@ -187,5 +199,5 @@ def test_pending_rejection_does_not_follow_reused_rolled_back_source_id(game):
     )
     assert db.commit_pending_actions(state, action_ids=[action_id]) == []
     reused_id = _make_dossier(db, state, "后建案卷")
-    assert db.list_dossier_link_rejections(reused_id) == []
-    assert db.list_dossier_link_rejections(pending_action_id=action_id)
+    assert _link_rejections(db, source=reused_id) == []
+    assert _link_rejections(db, pending=action_id)

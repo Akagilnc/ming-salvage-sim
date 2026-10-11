@@ -11,7 +11,6 @@ canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5；#1843
 
 from __future__ import annotations
 
-import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -187,8 +186,6 @@ def test_class_delta_population_key_upgraded_to_per_item_rejection(game):
     rejections = section(applied, "class_delta").rejected
     assert len(rejections) == 1
     assert rejections[0].category == "invalid_enum"
-    assert rejections[0].category == "invalid_enum"
-    assert rejections[0].category == "invalid_enum"  # 指向合法入口
     row = db.conn.execute(
         "SELECT population, satisfaction FROM classes WHERE name='流民' AND region_id='shaanxi'"
     ).fetchone()
@@ -206,7 +203,6 @@ def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game)
     applied = settle_delta(state, db, {'class_delta': {'农民@shaanxi': {'满意': 1, '人口': 3000}, '农民': {'满意': -2}}}, SettlementContext(content=content))
     rejections = section(applied, "class_delta").rejected
     assert len(rejections) == 1
-    assert rejections[0].category == "invalid_enum"
     assert rejections[0].category == "invalid_enum"
     row = db.conn.execute(
         "SELECT population, satisfaction FROM classes WHERE name='农民' AND region_id='shaanxi'"

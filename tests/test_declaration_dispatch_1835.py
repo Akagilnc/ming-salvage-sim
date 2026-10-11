@@ -1185,8 +1185,7 @@ def test_secret_order_title_lands_verbatim_through_the_real_write_mouth(game):
     assert order["title"] == title  # 含首尾空白与换行，未被 strip 篡改
 
 def test_effects_reach_accounting_mouth_without_preseeded_empty_shell(game, monkeypatch):
-    """#1835 F1b（Owner 裁定 2026-09-30 授权拆旧五模块包装）：声明 effects 只把
-    **自己带的字段**送到既有核算口，不再预置一整份 ``EMPTY_EXTRACTION`` 空壳
+    """#1835 F1b：声明 effects 只把**自己带的字段**送到既有核算口，不预置整份空壳
     （30+ 恒空容器）。此断言按真实失败形状钉：核算口收到的键集必须等于声明所带
     字段集，且不含任何未声明的 effects 键。
     """

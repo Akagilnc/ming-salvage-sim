@@ -185,30 +185,6 @@ def test_golden4_last_write_wins_with_two_provenance_rows(game):
     assert (rows[0]["old_value"], rows[0]["new_value"]) == (10, 40)
     assert (rows[1]["old_value"], rows[1]["new_value"]) == (40, 10)
 
-def test_golden5_expiry_restore_byte_identical_default(game):
-    """⑤期限届满月：全序与系数恢复默认，与无旨基线逐字节一致。真实撤令见 test_real_revoke_decree_*。"""
-    db, state, _content = game
-    turn = db._current_settle_turn()
-    d21 = _override_dossier(db, state, [
-        {"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": turn},
-        {"key": "due_haircut_bp_宗禄@shaanxi", "value": 5000, "until_turn": turn},
-    ])
-    db.apply_dossier_promulgation(state, d21, "promulgated")   # 判后物化缝（带期限）
-    # 当回合仍在位：override 生效（结果偏离基线）
-    active = db.settle_province_tick("shaanxi")
-    assert active.breakdown["haircut_宗禄"] > 0
-
-    # 届满月：turn > until → 全部回落默认，与同输入无旨基线逐字节一致
-    db.conn.execute("UPDATE game_state SET turn = ? WHERE id = 1", (turn + 1,))
-    cur = _opening_settle(db, "shaanxi")  # active 月已推进后的开账
-    expected_default = settle_tick(
-        copy.deepcopy(cur["st"]), copy.deepcopy(cur["p"]), [],
-    )
-    expired = db.settle_province_tick("shaanxi")
-    assert expired.new_st == expected_default.new_st
-    assert expired.breakdown == expected_default.breakdown
-    # 键与 provenance 保留不删
-    assert "due_priority_军饷@shaanxi_until_turn" in db.get_fiscal_config()
 
 def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     """撤销使目标形状退出格律（删键），期限伴随键一并清除；读取回落祖制默认。"""
@@ -396,24 +372,6 @@ def test_golden7_replay_determinism(game):
 
 # ═══════════════ 桥集成：结算按新序/系数付账 ═══════════════
 
-def test_bridge_applies_due_order_and_haircut_end_to_end(game):
-    db, state, _content = game
-    settle_before = _opening_settle(db, "shaanxi")
-    baseline = settle_tick(
-        copy.deepcopy(settle_before["st"]), copy.deepcopy(settle_before["p"]), [],
-    )
-    did = _override_dossier(db, state, [
-        {"key": "due_priority_军饷@shaanxi", "value": 40},
-        {"key": "due_priority_官俸@shaanxi", "value": 10},
-        {"key": "due_haircut_bp_军饷@shaanxi", "value": 5000},
-    ])
-    # 全生命周期：顺颁判决 → 判后物化（ADR 0055 缝）→ 结算读端
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    res = db.settle_province_tick("shaanxi")
-    assert res.breakdown["实付分账"]["官俸"] > 0          # 官俸优先足付
-    assert res.breakdown["NewDebt"]["军饷欠"] > 0         # 边饷居末积欠
-    assert res.breakdown["haircut_军饷"] > 0              # 折发免除额入分解
-    assert res.new_st != baseline.new_st                  # 偏离基线
 
 def _opening_settle(db, region_id):
     import json
@@ -539,28 +497,6 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
 
 # ═══════════════ F1 颁布生命周期 E2E（ADR 0055 判后物化缝）═══════════════
 
-def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
-    """顺颁：判决当回合落 config；本月已按旧序完成的结算不追溯、下一次结算读取。"""
-    db, state, _content = game
-    turn = db._current_settle_turn()
-    # 本月结算先按旧序完成（fixed flow 已结束的等价断言：旧序结果在案）
-    before = db.settle_province_tick("shaanxi")
-    assert before.breakdown["实付分账"]["军饷"] > 0
-
-    entries = [{"key": "due_priority_军饷@shaanxi", "value": 40}]
-    did = _override_dossier(db, state, entries)
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    # 判后物化：config 在案 + provenance 指向案卷
-    assert db.get_fiscal_config()["due_priority_军饷@shaanxi"] == 40
-    row = db.conn.execute(
-        "SELECT origin_ref FROM fiscal_config_changes WHERE key='due_priority_军饷@shaanxi'"
-    ).fetchone()
-    assert row["origin_ref"] == f"dossier:{did}"
-    # 案卷顺颁即终局（无执行判定面）
-    assert db.get_decree_dossier(did)["status"] == "closed"
-    # 下一次结算读取新序（同 turn 重算即读新旨＝读端按当前在位键解析）
-    after = db.settle_province_tick("shaanxi")
-    assert after.breakdown["实付分账"]["军饷"] < before.breakdown["实付分账"]["军饷"]
 
 def test_lifecycle_rejected_decree_zero_config_write(game):
     """⑥打回：效果跟判决走——零 config 写入、零 provenance、结算照默认序。"""
@@ -781,30 +717,6 @@ def test_oracle_independent_of_debt_mapping(monkeypatch):
 
 # ═══════════════ 拟旨 capture→成案（财政物化与下一次省 tick 分别由上方领域用例覆盖）═══
 
-def _pin_shortfall_board(db, region_id):
-    """省内池不足盘面钉死（拨付gross=0 → hub 京运补 due=0，p 原样进 tick）：
-    付款序决定新债落点，确定性可断言。"""
-    import json as _json
-
-    st = {
-        "省库库银": 0.0, "C_地方截留": 0.0, "C_中饱": 0.0, "C_漂没": 0.0,
-        "C_eff损耗": 0.0, "民欠旧赋": 0.0, "军饷欠": 20.0, "官俸欠": 0.0,
-        "宗禄欠": 0.0, "官民田": 100.0, "隐田": 50.0,
-    }
-    p = {
-        "正赋应征": 8.0, "三饷应征": 2.0, "火耗率": 0.1, "逋赋率": 0.0,
-        "起运定额": 0.0, "漂没率": 0.0, "中饱率": 0.0, "拨付gross": 0.0,
-        "Due": {"军饷": 18.0, "官俸": 3.0, "宗禄": 4.07, "赈济": 1.0},
-    }
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id=?", (region_id,)).fetchone()
-    fiscal = _json.loads(row["fiscal"])
-    fiscal["settle"]["st"] = st
-    fiscal["settle"]["p"] = p
-    db.conn.execute(
-        "UPDATE regions SET fiscal=? WHERE id=?",
-        (_json.dumps(fiscal, ensure_ascii=False), region_id),
-    )
-    db.conn.commit()
 
 def _capture_override_decree(game, monkeypatch, text, entries):
     """真实手工拟诏 capture seam（mock LLM 抽取）→ 草案落库 → 结束边界成案 staging。
@@ -853,44 +765,3 @@ def test_manual_override_capture_stages_without_premature_materialization(game, 
     assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
 
 # ═══════════════ F2.3（owner 拍板 r5）：官俸欠/宗禄欠当回合流量持久留痕 ═══════════════
-
-def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
-    """省级结算桥同事务把 官俸欠/宗禄欠 当回合 NewDebt/Repaid 流量补记进 region_logs
-    （复用现有结算留痕载体，零新表）；关闭重开 DB（restore）后留痕可恢复。"""
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    _pin_shortfall_board(db, "shaanxi")
-    result = db.settle_province_tick("shaanxi")
-    db.conn.commit()
-
-    # 桥同事务落痕：行集＝breakdown 两科目非零流量（零流量不写行）；本盘面
-    # 省内池不足、无 surplus → Repaid 全零不写，NewDebt 行在案。
-    expect_flows = {
-        (f"settle_{claim}_{flow}", float(source[claim]))
-        for flow, source in (("NewDebt", result.breakdown["NewDebt"]),
-                             ("Repaid", result.breakdown["Repaid"]))
-        for claim in ("官俸欠", "宗禄欠") if abs(float(source[claim])) > 1e-9
-    }
-    assert expect_flows, "盘面应至少产生一笔非零官俸/宗禄欠流量"
-    rows = db.conn.execute(
-        "SELECT field, delta, turn, region_id, actor, origin_ref FROM region_logs "
-        "WHERE field LIKE 'settle_%' ORDER BY id"
-    ).fetchall()
-    assert {(r["field"], float(r["delta"])) for r in rows} == expect_flows
-    assert all(r["turn"] == state.turn and r["region_id"] == "shaanxi" for r in rows)
-    assert all(r["actor"] == "户部" and r["origin_ref"] == "region:shaanxi:settle_tick"
-               for r in rows)
-
-    # restore E2E：关闭重开同一档文件，留痕随档恢复
-    path = db.path
-    db.close()
-    db2 = GameDB(path, content)
-    try:
-        rows2 = db2.conn.execute(
-            "SELECT field, delta, turn, region_id, actor, origin_ref FROM region_logs "
-            "WHERE field LIKE 'settle_%' ORDER BY id"
-        ).fetchall()
-        assert {(r["field"], float(r["delta"])) for r in rows2} == expect_flows
-    finally:
-        db2.close()

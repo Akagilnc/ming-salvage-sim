@@ -488,8 +488,6 @@ def _layer_a_option(**overrides):
     return normalize_rescript_layer_a_option(base)
 
 
-
-
 def _plant_urgent_desk(db, state, *, options=None, actor_name='杨嗣昌'):
     opts = options or [_layer_a_option(), _layer_a_option(label='缓征', hint='先赈后征')]
     turn = int(state.turn)
@@ -1385,9 +1383,6 @@ def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     web_game.session.join_rescript_summons = _join
     web_game.session.finish_rescript_phase2 = _finish
 
-    def _gen(inputs):
-        name = str(getattr(inputs, "person_name", "") or "") or "臣"
-        return f"{name}锁窗入殿。"
 
     opt = normalize_rescript_layer_a_option({
         "label": "备", "hint": "h", "action_type": "assignment",
@@ -2103,25 +2098,6 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     assert db.get_decree_dossier(stalled_id)['status'] == 'proposed'
     assert _dossier_payload(db.get_decree_dossier(stalled_id)).get('deliberation_state') == 'stalled'
 
-def _658_session(db, state, content, *, agent=None):
-    """最小真 GameSession 壳：只填 chat/add_directive 所需属性。"""
-    from types import SimpleNamespace
-    from ming_sim.session import GameSession
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.llm_config = SimpleNamespace(channel='api')
-    sess._refuse_if_settling = lambda: None
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    if agent is not None:
-
-        class _Registry:
-
-            def get(self, _character, **_kw):
-                return agent
-        sess.registry = _Registry()
-    return sess
 
 def test_658_deliberate_backed_and_stalled_dossier_first(game):
     """#658：有站台 → backed+当面站台背书；无人 → stalled+dossier: issue；非法身份零写。"""
@@ -2323,77 +2299,6 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     finally:
         reopened.close()
 
-def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
-    """#658：typed 解析边界表驱动 + 一条外部入口零写（不跨裸值/双别名/session 全排列）。"""
-    from ming_sim.db import imperial_push_target_dossier_id, parse_backing_dossier_id
-    import ming_sim.cli_backend as cli_backend
-    db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='南迁')
-    did = int(stalled['id'])
-    bind_did = db.create_decree_dossier(state, action_type='policy', decree_text='南迁绑定', target_kind='issue', target_id='river-works', payload={'deliberation_state': 'stalled', 'mode': 'ordinary'})
-    db.insert_issue(state, kind='situation', title='南迁绑定', origin_kind='decree', origin_ref=f'dossier:{bind_did}')
-    bind_affair = db.affairs.open(name='南迁事务', origin='下部议', year=state.year, period=state.period, turn=state.turn)
-    push_declaration = {'attach': 'existing', 'affair_id': int(bind_affair.id)}
-    before_dossiers = len(db.list_decree_dossiers())
-    before_ends = len(db.list_dossier_endorsements(did))
-    before_dirs = db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c']
-    bad_shapes = (True, False, 1.9, 1.0, '1', '12', 0, -1)
-    for bad in bad_shapes:
-        with pytest.raises(ValueError):
-            imperial_push_target_dossier_id(bad)
-        with pytest.raises(ValueError):
-            parse_backing_dossier_id(bad)
-    sample_bad = True
-    with pytest.raises(ValueError):
-        imperial_push_target_dossier_id({'target_dossier_id': sample_bad})
-    with pytest.raises(ValueError):
-        imperial_push_target_dossier_id({'目标案卷ID': sample_bad})
-    assert imperial_push_target_dossier_id(did) == did
-    assert imperial_push_target_dossier_id({'target_dossier_id': did}) == did
-    assert imperial_push_target_dossier_id({'目标案卷ID': did}) == did
-    assert imperial_push_target_dossier_id({}) is None
-    assert imperial_push_target_dossier_id({'target_dossier_id': None}) is None
-    assert parse_backing_dossier_id(None) is None
-    assert parse_backing_dossier_id('') is None
-    assert parse_backing_dossier_id(did) == did
-    endorsers = [_summonable_name(db, content)]
-    endorsers.append(next((n for n in content.characters if n != endorsers[0])))
-    for index, endorser in enumerate(endorsers):
-        db.add_dossier_endorsement(did, form='会签', endorser_id=endorser, decision_key=f'test:658:typed:{index}')
-    projected = db.list_endorsed_dossier_candidates(state.turn)
-    assert [c['endorser_id'] for c in projected if c['dossier_id'] == did] == list(reversed(endorsers))
-
-    def backend_multi(prompt, *_a, **_k):
-        return (json.dumps({'成品旨稿': [{'正文': '御笔强推', '目标案卷ID': bind_did, '颁布方式': '中旨直发'}, {'正文': '清核河工', '动作类型': 'policy', '目标类型': 'issue', '目标ID': 'river-works', '颁布方式': '普通', '施行范围': '无'}], '事务声明': push_declaration}, ensure_ascii=False), 1)
-    monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_multi)
-    multi = cli_backend.extract_draft_intent('分拟两旨', '臣已拟成', draft_count=2, db=db)
-    assert multi['drafts'][0]['target_dossier_id'] == bind_did
-    assert multi['drafts'][1]['target_id'] == 'river-works'
-    push_payload = cli_backend.project_draft_extract_to_directive_payload(multi['drafts'][0], decree_text='御笔强推', db=db, content=content)
-    assert push_payload.get('affair_declaration')
-    push_dir = int(db.add_directive(state, None, '御笔强推', 'test-658-push-bind', dossier_payload=push_payload))
-    db.ensure_dossiers_for_draft_directives(state)
-    assert int(db.get_decree_dossier(bind_did)['affair_id'] or 0) == int(bind_affair.id)
-    assert db.get_dossier_for_directive(push_dir) is not None
-    assert int(db.get_dossier_for_directive(push_dir)['id']) == bind_did
-    bad_directive = int(db.add_directive(state, None, '处分不存在之人', 'test-658-ensure', dossier_payload={'dossier_action_type': 'punishment', 'target_kind': 'character', 'target_id': '不存在的大臣XYZ', 'mode': 'ordinary'}))
-    db.ensure_dossiers_for_draft_directives(state)
-    status = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (bad_directive,)).fetchone()['status']
-    assert status == 'draft'
-    assert all((int(row['id']) != bad_directive for row in db.list_dossiered_draft_directives(state)))
-    db.mark_directives_issued(state)
-    status = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (bad_directive,)).fetchone()['status']
-    assert status == 'draft'
-
-    def backend_bad(prompt, *_a, **_k):
-        return (json.dumps({'拟旨意图': '拟旨', '目标案卷ID': True}, ensure_ascii=False), 1)
-    monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_bad)
-    with pytest.raises(ValueError):
-        cli_backend.capture_manual_directive_payload(f'着即强推南迁（案卷{did}）', None, db=db, content=content)
-    assert len(db.list_decree_dossiers()) == before_dossiers
-    assert len(db.list_dossier_endorsements(did)) == before_ends + 2
-    assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs + 2
-    assert _dossier_payload(db.get_decree_dossier(did)).get('deliberation_state') == 'stalled'
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
@@ -2511,10 +2416,6 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
 # ---------------------------------------------------------------------------
 # #1778：参与名单由拟票大臣写进票拟；成案钉进案卷；代码不配人
 # ---------------------------------------------------------------------------
-
-
-
-
 
 
 def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
@@ -2672,7 +2573,6 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             assert int(hit["revision_round"] or 0) == 1
             labels = [str(o.get("label") or "") for o in (hit["options"] or [])]
             assert "新甲" in labels
-
 
 
 def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):

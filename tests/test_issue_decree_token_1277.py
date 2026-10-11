@@ -32,7 +32,6 @@ def _session(db, state, content):
     session.deaths_this_turn = []
     session.debuts_this_turn = []
     session.last_decree = ""
-    session.last_report = ""
     session._decree_draft_fingerprint = ()
     session.auto_save = lambda *a, **k: None
     return session

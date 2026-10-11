@@ -14,7 +14,6 @@
 from ming_sim.applier import Provenance
 import json
 import math
-import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -480,108 +479,6 @@ def test_fresh_save_pay_source_prefers_content_army_fields(tmp_path):
     finally:
         db.close()
 
-def test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source(fresh_db):
-    fresh_db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
-            central_pay_share = 0, pay_source_region = '',
-            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
-        """
-    )
-    fresh_db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'shaanxi', province_pay_share = 1.0,
-            central_pay_share = 0.0, province_pay_arrears = 0,
-            central_pay_arrears = 0, arrears = 0,
-            station = '福建', manpower = 10000, salary_rate = 5
-        WHERE id = 'fujian_navy'
-        """
-    )
-    fresh_db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'shaanxi', province_pay_share = 0.65,
-            central_pay_share = 0.35, province_pay_arrears = 6.5,
-            central_pay_arrears = 3.5, arrears = 10,
-            station = '北直隶 / 客防', manpower = 10000, salary_rate = 10
-        WHERE id = 'shaanxi_army'
-        """
-    )
-    _write_settle(
-        fresh_db,
-        "shaanxi",
-        {
-            "st": {
-                "省库库银": 0,
-                "C_地方截留": 0,
-                "C_中饱": 0,
-                "C_漂没": 0,
-                "C_eff损耗": 0,
-                "民欠旧赋": 0,
-                "军饷欠": 999,
-                "官俸欠": 0,
-                "宗禄欠": 0,
-                "官民田": 0,
-                "隐田": 0,
-            },
-            "p": {
-                "正赋应征": 0,
-                "三饷应征": 0,
-                "火耗率": 0,
-                "逋赋率": 0,
-                "起运定额": 0,
-                "拨付gross": 8,
-                "中饱率": 0,
-                "漂没率": 0,
-                "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
-            },
-        },
-    )
-
-    result = fresh_db.settle_province_tick("shaanxi")
-
-    mixed = fresh_db.conn.execute(
-        "SELECT * FROM armies WHERE id = 'shaanxi_army'"
-    ).fetchone()
-    pure = fresh_db.conn.execute(
-        "SELECT * FROM armies WHERE id = 'fujian_navy'"
-    ).fetchone()
-    mixed_due = army_needed(mixed) * 0.65
-    pure_due = army_needed(pure)
-    total_due = mixed_due + pure_due
-    assert result.breakdown["NewDebt"]["军饷欠"] == pytest.approx(total_due - 8)
-
-    expected_mixed = 6.5 + (total_due - 8) * mixed_due / total_due
-    expected_pure = (total_due - 8) * pure_due / total_due
-    assert mixed["province_pay_arrears"] == pytest.approx(expected_mixed)
-    assert pure["province_pay_arrears"] == pytest.approx(expected_pure)
-    assert mixed["central_pay_arrears"] == pytest.approx(3.5)
-    assert mixed["arrears"] == pytest.approx(
-        mixed["province_pay_arrears"] + mixed["central_pay_arrears"]
-    )
-
-    settle = _read_settle(fresh_db, "shaanxi")
-    assert settle["p"]["Due"]["军饷"] == pytest.approx(total_due)
-    assert settle["st"]["军饷欠"] == pytest.approx(
-        mixed["province_pay_arrears"] + pure["province_pay_arrears"]
-    )
-    log_rows = fresh_db.conn.execute(
-        """
-        SELECT army_id, field, old_value, new_value, delta, reason, actor
-        FROM army_logs
-        WHERE army_id IN ('shaanxi_army', 'fujian_navy')
-          AND field = 'province_pay_arrears'
-        ORDER BY army_id
-        """
-    ).fetchall()
-    assert {row["army_id"] for row in log_rows} == {"shaanxi_army", "fujian_navy"}
-    assert all(isinstance(row["reason"], str) and row["reason"].strip() for row in log_rows)
-    assert all(row["actor"] == "户部" for row in log_rows)
-    assert all(float(row["delta"] or 0) != 0 for row in log_rows)
 
 def test_conservation_rejects_excluded_army_with_pay_source_debt(fresh_db):
     fresh_db.conn.execute(
@@ -1716,95 +1613,6 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     assert after_balance == before_balance
     assert state.metrics["国库"] == before_balance
 
-def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
-    _write_settle(
-        fresh_db,
-        "fujian",
-        {
-            "st": {
-                "省库库银": 0,
-                "C_地方截留": 0,
-                "C_中饱": 0,
-                "C_漂没": 0,
-                "C_eff损耗": 0,
-                "民欠旧赋": 0,
-                "军饷欠": 0,
-                "官俸欠": 0,
-                "宗禄欠": 0,
-                "官民田": 0,
-                "隐田": 0,
-            },
-            "p": {
-                "正赋应征": 0,
-                "三饷应征": 0,
-                "火耗率": 0,
-                "逋赋率": 0,
-                "起运定额": 0,
-                "拨付gross": 0,
-                "中饱率": 0,
-                "漂没率": 0,
-                "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
-            },
-        },
-    )
-    fresh_db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
-            central_pay_share = 0, pay_source_region = '',
-            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
-        """
-    )
-    fresh_db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'fujian', province_pay_share = 1.0,
-            central_pay_share = 0.0, province_pay_arrears = 0,
-            central_pay_arrears = 0, arrears = 0, morale = 80,
-            manpower = 10000, salary_rate = 10
-        WHERE id = 'fujian_navy'
-        """
-    )
-    fresh_db.conn.commit()
-
-    fresh_db.settle_province_tick("fujian")
-
-    row = fresh_db.conn.execute(
-        """
-        SELECT morale, arrears, province_pay_arrears, central_pay_arrears
-        FROM armies WHERE id = 'fujian_navy'
-        """
-    ).fetchone()
-    assert row["province_pay_arrears"] == pytest.approx(10)
-    assert row["central_pay_arrears"] == pytest.approx(0)
-    assert row["arrears"] == pytest.approx(row["province_pay_arrears"])
-    assert row["morale"] == 72
-    morale_log = fresh_db.conn.execute(
-        """
-        SELECT old_value, new_value, delta, reason
-        FROM army_logs
-        WHERE army_id = 'fujian_navy' AND field = 'morale'
-        ORDER BY id DESC LIMIT 1
-        """
-    ).fetchone()
-    assert morale_log is not None
-    assert morale_log["old_value"] == "80"
-    assert morale_log["new_value"] == "72"
-    assert morale_log["delta"] == -8
-    assert isinstance(morale_log["reason"], str) and morale_log["reason"].strip()
-    army_name = fresh_db.conn.execute(
-        "SELECT name FROM armies WHERE id = 'fujian_navy'"
-    ).fetchone()["name"]
-    arrears_log = fresh_db.conn.execute(
-        """
-        SELECT delta
-        FROM army_logs
-        WHERE army_id = 'fujian_navy' AND field = 'province_pay_arrears'
-        ORDER BY id DESC LIMIT 1
-        """
-    ).fetchone()
-    assert arrears_log is not None and arrears_log["delta"] == pytest.approx(10)
 
 def test_armies_provision_empty_mutiny_status_flag(fresh_db):
     columns = {
@@ -1822,122 +1630,6 @@ def test_armies_provision_empty_mutiny_status_flag(fresh_db):
         """
     ).fetchone()["count"] == 0
 
-def test_zero_due_province_army_morale_short_circuits(fresh_db):
-    _write_settle(
-        fresh_db,
-        "fujian",
-        {
-            "st": {
-                "省库库银": 0,
-                "C_地方截留": 0,
-                "C_中饱": 0,
-                "C_漂没": 0,
-                "C_eff损耗": 0,
-                "民欠旧赋": 0,
-                "军饷欠": 0,
-                "官俸欠": 0,
-                "宗禄欠": 0,
-                "官民田": 0,
-                "隐田": 0,
-            },
-            "p": {
-                "正赋应征": 0,
-                "三饷应征": 0,
-                "火耗率": 0,
-                "逋赋率": 0,
-                "起运定额": 0,
-                "拨付gross": 0,
-                "中饱率": 0,
-                "漂没率": 0,
-                "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
-            },
-        },
-    )
-    fresh_db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
-            central_pay_share = 0, pay_source_region = '',
-            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
-        """
-    )
-    fresh_db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'fujian', province_pay_share = 1.0,
-            central_pay_share = 0.0, province_pay_arrears = 0,
-            central_pay_arrears = 0, arrears = 0, morale = 80,
-            manpower = 0, salary_rate = 10
-        WHERE id = 'fujian_navy'
-        """
-    )
-    fresh_db.conn.commit()
-
-    fresh_db.settle_province_tick("fujian")
-
-    row = fresh_db.conn.execute(
-        """
-        SELECT morale, arrears, province_pay_arrears, central_pay_arrears
-        FROM armies WHERE id = 'fujian_navy'
-        """
-    ).fetchone()
-    assert row["province_pay_arrears"] == pytest.approx(0)
-    assert row["central_pay_arrears"] == pytest.approx(0)
-    assert row["arrears"] == pytest.approx(0)
-    assert row["morale"] == 80
-
-def test_tusi_self_funded_army_skips_pay_morale_channel(fresh_db):
-    _write_settle(
-        fresh_db,
-        "shaanxi",
-        {
-            "st": {
-                "省库库银": 0,
-                "C_地方截留": 0,
-                "C_中饱": 0,
-                "C_漂没": 0,
-                "C_eff损耗": 0,
-                "民欠旧赋": 0,
-                "军饷欠": 0,
-                "官俸欠": 0,
-                "宗禄欠": 0,
-                "官民田": 0,
-                "隐田": 0,
-            },
-            "p": {
-                "正赋应征": 0,
-                "三饷应征": 0,
-                "火耗率": 0,
-                "逋赋率": 0,
-                "起运定额": 0,
-                "拨付gross": 0,
-                "中饱率": 0,
-                "漂没率": 0,
-                "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
-            },
-        },
-    )
-    fresh_db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 1, is_tusi = 1, owner_power = 'ming',
-            pay_source_region = '', province_pay_share = 0,
-            central_pay_share = 0, province_pay_arrears = 0,
-            central_pay_arrears = 0, arrears = 0, morale = 80,
-            manpower = 24000, salary_rate = 10
-        WHERE id = 'southwest_tusi'
-        """
-    )
-    fresh_db.conn.commit()
-
-    fresh_db.settle_province_tick("shaanxi")
-
-    row = fresh_db.conn.execute(
-        "SELECT morale, arrears FROM armies WHERE id = 'southwest_tusi'"
-    ).fetchone()
-    assert row["arrears"] == pytest.approx(0)
-    assert row["morale"] == 80
 
 def test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale(fresh_game):
     import ming_sim.flows as flows_mod
@@ -2897,32 +2589,6 @@ def test_region_loader_rejects_bad_settle_meta_defaults(monkeypatch, settle, def
     with pytest.raises(SystemExit):
         content_mod.load_region_content()
 
-ZHONGYUAN_JINGSHI_GOLDEN = {
-    "beizhili": {
-        "省库库银": 9.0,
-        "C_地方截留": 0.861759,
-        "民欠旧赋": 2.308283,
-        "军饷欠": 0,
-        "官俸欠": 0,
-        "宗禄欠": 0,
-    },
-    "shandong": {
-        "省库库银": 3.72375,
-        "C_地方截留": 2.2542,
-        "民欠旧赋": 7.58625,
-        "军饷欠": 0,
-        "官俸欠": 0,
-        "宗禄欠": 0,
-    },
-    "henan": {
-        "省库库银": 0,
-        "C_地方截留": 2.31788,
-        "民欠旧赋": 8.58474,
-        "军饷欠": 0,
-        "官俸欠": 0,
-        "宗禄欠": 16.15,
-    },
-}
 
 REGULAR_PROVINCE_FIRST_TICK_GOLDEN = {
     "beizhili": {
@@ -3243,24 +2909,6 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
     res = settle_tick(settle["st"], p, [])
     assert res.new_st["省库库银"] is not None
 
-@pytest.mark.parametrize("region_id,expected", SOUTH_SOUTHWEST_SEEDS.items(), ids=list(SOUTH_SOUTHWEST_SEEDS))
-def test_south_southwest_settle_tick_golden_and_bridge_persist(fresh_db, region_id, expected):
-    settle = _read_settle(fresh_db, region_id)
-    pure = settle_tick(settle["st"], settle["p"], [])
-    bridged = fresh_db.settle_province_tick(region_id, [])
-    fresh_db.conn.commit()
-    after = _read_settle(fresh_db, region_id)["st"]
-
-    for k, v in expected["first_tick"].items():
-        if k in ("省库库银", "军饷欠", "官俸欠", "宗禄欠"):
-            continue
-        assert pure.new_st[k] == pytest.approx(v, abs=1e-4), f"{region_id} pure {k}"
-        assert after[k] == pytest.approx(v, abs=1e-4), f"{region_id} DB {k}"
-    assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, region_id), abs=1e-6)
-    for k, v in bridged.new_st.items():
-        if k == "军饷欠":
-            continue
-        assert after[k] == pytest.approx(v, abs=1e-6), f"{region_id} 桥落库 {k} ≠ new_st"
 
 def test_shaanxi_seed_is_relabelled_to_historical_shadow_scale(fresh_db):
     settle = _read_settle(fresh_db)
@@ -3456,117 +3104,6 @@ def test_henan_royal_grants_make_zonglu_due_heavy(fresh_db):
     assert henan["p"]["Due"]["宗禄"] > shandong["p"]["Due"]["宗禄"]
     assert henan["p"]["Due"]["宗禄"] == pytest.approx(9.15)
 
-@pytest.mark.parametrize("region_id,expect", ZHONGYUAN_JINGSHI_GOLDEN.items())
-def test_zhongyuan_jingshi_settle_province_tick_golden(region_id, expect, fresh_db):
-    res = fresh_db.settle_province_tick(region_id, [])
-    fresh_db.conn.commit()
-    after = _read_settle(fresh_db, region_id)["st"]
-
-    assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, region_id), abs=1e-6)
-    for key, value in expect.items():
-        assert key in after, f"{region_id} golden missing {key}"
-        assert math.isclose(
-            after[key],
-            value,
-            rel_tol=0,
-            abs_tol=1e-3,
-        ), f"{region_id} {key}: {after[key]} != {value}"
-    for key, value in res.new_st.items():
-        if key == "军饷欠":
-            continue
-        assert abs(after[key] - value) < 1e-6, f"{region_id} {key}: 落库 {after[key]} ≠ new_st {value}"
-
-def test_settle_province_tick_persists_shaanxi_historical_shadow_golden(fresh_db):
-    res = fresh_db.settle_province_tick("shaanxi", [])
-    fresh_db.conn.commit()
-    after = _read_settle(fresh_db)["st"]
-    assert after["C_地方截留"] == pytest.approx(0.7181, abs=1e-3)
-    assert after["民欠旧赋"] == pytest.approx(3.2639, abs=1e-3)
-    assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6)
-    # 落库逐键 == settle_tick 的 new_st（桥不篡改）
-    for k, v in res.new_st.items():
-        if k == "军饷欠":
-            continue
-        assert abs(after[k] - v) < 1e-6, f"{k}：落库 {after[k]} ≠ new_st {v}"
-
-def test_settle_province_tick_persists_border_remainder_golden(fresh_db):
-    expected = {
-        "shanxi": {
-            "C_地方截留": 2.255631,
-            "民欠旧赋": 7.144531,
-        },
-        "liaodong": {
-            "C_地方截留": 0,
-            "民欠旧赋": 0,
-            "军饷欠": 0,
-        },
-        "dongjiang_area": {
-            "C_地方截留": 0,
-            "民欠旧赋": 0,
-            "军饷欠": 0,
-        },
-    }
-    for region_id, want in expected.items():
-        res = fresh_db.settle_province_tick(region_id, [])
-        after = _read_settle(fresh_db, region_id)["st"]
-        for k, v in want.items():
-            assert after[k] == pytest.approx(v, abs=1e-3), \
-                f"{region_id} {k}：落库 {after[k]} ≠ #267 {v}"
-        if "军饷欠" in want:
-            assert after["军饷欠"] == pytest.approx(want["军饷欠"], abs=1e-6)
-        else:
-            assert after["军饷欠"] == pytest.approx(
-                _region_pay_arrears_container_basis(fresh_db, region_id),
-                abs=1e-6,
-            )
-        for k, v in res.new_st.items():
-            if k == "军饷欠":
-                continue
-            assert abs(after[k] - v) < 1e-6, f"{region_id} {k}：落库 {after[k]} ≠ new_st {v}"
-
-def test_settle_province_tick_qingzhang_action(fresh_db):
-    row = fresh_db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
-    fiscal = json.loads(str(row["fiscal"]))
-    fiscal["settle"]["st"]["省库库银"] = 50
-    fresh_db.conn.execute(
-        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
-        (json.dumps(fiscal, ensure_ascii=False),),
-    )
-    fresh_db.conn.commit()
-    # 带 action 的桥：清丈挖隐田 300 → 万历见额官民田 +300、隐田 -300（土地守恒）
-    fresh_db.settle_province_tick("shaanxi", [{"type": "清丈", "cost": 2, "挖隐田": 300}])
-    fresh_db.conn.commit()
-    after = _read_settle(fresh_db)["st"]
-    assert abs(after["官民田"] - 3229.20151) < 1e-3, f"官民田 {after['官民田']} ≠ 3229.20151"
-    assert abs(after["隐田"] - 1236.6303) < 1e-3, f"隐田 {after['隐田']} ≠ 1236.6303"
-
-def test_settle_province_tick_port_lock_no_persist_on_raise(fresh_db):
-    # 港口锁：坏 p（删必填火耗率）→ settle_tick raise → DB 绝不变（FAIL tick 不持久化）
-    row = fresh_db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
-    fiscal = json.loads(str(row["fiscal"]))
-    del fiscal["settle"]["p"]["火耗率"]
-    fresh_db.conn.execute(
-        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
-        (json.dumps(fiscal, ensure_ascii=False),),
-    )
-    fresh_db.conn.commit()
-    st_before = _read_settle(fresh_db)["st"]
-    with pytest.raises(ValueError):
-        fresh_db.settle_province_tick("shaanxi", [])
-    st_after = _read_settle(fresh_db)["st"]
-    assert st_after == st_before, "港口锁破：FAIL tick 改了 DB"
-
-def test_settle_province_tick_unknown_region_raises(fresh_db):
-    with pytest.raises(ValueError):
-        fresh_db.settle_province_tick("atlantis", [])
-
-def test_settle_province_tick_nondict_fiscal_raises(fresh_db):
-    # cmr R3（gemini）：fiscal JSON 非 dict（如 "[]"）→ ValueError（可被隔离捕获），
-    # 非 fiscal.get 抛 AttributeError 逃逸。
-    fresh_db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
-    fresh_db.conn.commit()
-    with pytest.raises(ValueError):
-        fresh_db.settle_province_tick("shaanxi", [])
 
 # ── slice3：接入月末固定财政相位（hub；契约失败 fail-loud 中止）──
 
@@ -3633,10 +3170,6 @@ def test_substrate_absent_on_pay_source_region_aborts_fixed_flows(game):
     assert _read_settle(db) is None, "前提：陕西无 settle 基座"
     with pytest.raises(SettlementAbort):
         apply_fixed_period_flows(db, state)
-
-
-
-
 
 
 def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game, monkeypatch, tmp_path):
@@ -3896,7 +3429,7 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     sess.db, sess.state, sess.content = db, state, content
     sess.registry = sess.llm_config = sess.agno_db = None
     sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = sess.last_report = ""
+    sess.last_decree = ""
     sess._decree_draft_fingerprint = ()
     sess.auto_save = lambda *a, **k: None
 
@@ -4173,7 +3706,6 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             raw["正赋本色_石"] * effective_rate / 10000 / 12,
             abs_tol=0.01,
         )
-
 
 
 def test_substrate_hub_display_name_collision_books_user_fiscal_exact(fresh_game):

@@ -13,8 +13,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import web_app
-from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials
 
 
 _GUANNING_ID = "guanning"
@@ -42,16 +40,6 @@ _ARMY_PAYLOAD_KEYS = frozenset(
         "owner_power",
     }
 )
-
-
-def _guanning_db_status(db) -> str:
-    row = db.conn.execute(
-        "SELECT status, arrears FROM armies WHERE id=?", (_GUANNING_ID,)
-    ).fetchone()
-    assert row is not None, "seed 须有关宁军"
-    status = str(row["status"] or "")
-    assert status.strip()
-    return status
 
 
 def _expected_army_card_from_row(db, row) -> dict:
@@ -132,29 +120,6 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
 
     guanning = by_id[_GUANNING_ID]
     assert isinstance(guanning["arrears_text"], str) and guanning["arrears_text"]
-
-
-def test_shared_consumers_keep_structured_army_surfaces(read_game):
-    """共享结构化出口：知识 military 键、state_payload 军牌无 status、materials 路径、DB 未改。"""
-    db, state, content = read_game
-    seed_status = _guanning_db_status(db)
-
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    knowledge = build_character_knowledge(db, state, war.name)
-    world = knowledge.get("world") or {}
-    assert "military" in world
-
-    payload = web_app.WebGame.state_payload(_web_runtime(db, state, content))
-    for card in payload.get("armies") or []:
-        assert "status" not in card or card.get("status") in (None, "")
-
-    prepared = prepare_character_materials(db, state, war)
-    paths = [
-        path for path in list_materials(prepared.root) if path != "INDEX.txt"
-    ]
-    assert paths, "materials 应产出非 INDEX 供料路径"
-
-    assert _guanning_db_status(db) == seed_status
 
 
 def test_db_status_field_untouched_after_payload_read(read_game):

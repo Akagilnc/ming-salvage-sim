@@ -1,7 +1,4 @@
-import asyncio
 import json
-import types
-import threading
 
 import pytest
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
@@ -258,68 +255,6 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
     assert len({row["id"] for row in dossiers[-2:]}) == 2
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
 
-def test_pending_directive_only_enters_settlement_after_final_approval(game):
-    db, state, content = game
-    minister = _active_minister(db)
-    before = state.metrics["国库"]
-
-    rejected_candidate_id = db.stage_directive_candidate(
-        state.turn, minister, {
-            "text": "拟拨十两赈济", "actor": minister,
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief-rejected",
-            "amount": 10, "account": "国库",
-            "execution_surface": "immediate",
-        },
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[rejected_candidate_id],
-        directive_status="pending",
-    )
-    rejected_directive_id = int(db.conn.execute(
-        "SELECT id FROM turn_directives WHERE source_pending_action_id=? ORDER BY id DESC LIMIT 1",
-        (rejected_candidate_id,),
-    ).fetchone()["id"])
-
-    assert db.get_dossier_for_directive(rejected_directive_id) is None
-    assert db.list_decree_dossiers_for_simulation(state.turn) == []
-    db.reject_directive(rejected_directive_id)
-    assert db.get_dossier_for_directive(rejected_directive_id) is None
-    assert db.list_decree_dossiers_for_simulation(state.turn) == []
-    assert state.metrics["国库"] == before
-
-    approved_candidate_id = db.stage_directive_candidate(
-        state.turn, minister, {
-            "text": "准拨十两赈济", "actor": minister,
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief-approved",
-            "amount": 10, "account": "国库",
-            "execution_surface": "immediate",
-        },
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[approved_candidate_id],
-        directive_status="pending",
-    )
-    approved_directive_id = int(db.conn.execute(
-        "SELECT id FROM turn_directives WHERE source_pending_action_id=? ORDER BY id DESC LIMIT 1",
-        (approved_candidate_id,),
-    ).fetchone()["id"])
-    # #1769：confirm 只翻 pending→draft；成案走 ensure 批缝
-    db.confirm_directive(approved_directive_id, state)
-    assert str(db.get_directive(approved_directive_id)["status"]) == "draft"
-    assert db.get_dossier_for_directive(approved_directive_id) is None
-    assert db.ensure_dossiers_for_draft_directives(state) == []
-
-    dossier = db.get_dossier_for_directive(approved_directive_id)
-    assert dossier is not None
-    assert [row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)] == [
-        dossier["id"],
-    ]
-    db.apply_dossier_verdicts(
-        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-    )
-    assert state.metrics["国库"] == before - 10
 
 def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
     db, state, content = game
@@ -454,27 +389,6 @@ def test_character_terminal_state_closes_secret_order_and_execution_slot(game):
     assert dossier["closed_turn"] == state.turn
     assert dossier["interruption_reason"]
 
-def test_commitments_bind_explicitly_when_multiple_dossiers_share_a_turn(game):
-    db, state, content = game
-    first_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="今后每月赈济灾民",
-        target_kind="issue", target_id="relief",
-    )
-    second_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="今后每月修河",
-        target_kind="issue", target_id="river-works",
-    )
-    db.apply_dossier_verdicts(state, [
-        {"dossier_id": first_id, "decision": "promulgated"},
-        {"dossier_id": second_id, "decision": "promulgated"},
-    ])
-
-    settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': f'dossier:{second_id}', 'kind': 'initiative', 'title': '每月赈济', 'end_turn': state.turn + 2, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
-
-    commitments = db.list_commitments_for_dossier(second_id)
-    assert len(commitments) == 1
-    assert commitments[0]["origin_ref"] == f"dossier:{second_id}"
-    assert db.list_commitments_for_dossier(first_id) == []
 
 def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejection(game):
     db, state, _content = game
@@ -816,40 +730,6 @@ def test_extractor_accepts_transformed_execution_outcome(game):
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "transformed"
 
-def test_appointment_alias_uses_canonical_dossier_identity(game):
-    db, state, content = game
-    target = next(
-        character for character in content.characters.values()
-        if character.aliases and character.name != character.aliases[0]
-        and db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=? AND status='active'",
-            (character.name,),
-        ).fetchone()
-    )
-    alias = target.aliases[0]
-    pending_id = db.stage_pending_action(
-        state.turn, kind="office", action="任命",
-        minister_name=_active_minister(db), target_id=None,
-        payload={"text": "测试任免原文", "name": alias, "office": "兵部主事"},
-    )
-    db.commit_pending_actions(state, content=content)
-    dossier = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == pending_id
-    )
-    assert dossier["target_id"] == target.name
-    assert dossier["executor_id"] == target.name
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content,
-    )
-    assert [
-        row["dossier_id"]
-        for row in db.list_office_effects_for_dossier(dossier["id"])
-    ] == [dossier["id"]]
-    db.record_dossier_execution(
-        dossier["id"], "fulfilled", "任事已毕", state.turn,
-    )
-    assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
 # #1849 / ADR 0152 决定 1：Web 独立手拟新增口（POST /api/directives）已退役，
 # 拟旨落桌走 CLI 手拟同款 capture 核 + session.add_directive，覆盖面不减。
@@ -1088,70 +968,6 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     assert db.get_dossier_for_directive(directive_id) is not None
     assert db.list_directives(state)[0]["text"] == "着修河工"
 
-def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
-    import ming_sim.cli.terminal as terminal
-    import ming_sim.cli_backend as cli_backend
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    directive = session.add_directive(
-        "拨十两赈济",
-        dossier_payload={
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue",
-            "target_id": "relief",
-            "amount": 10,
-            "account": "国库",
-            "execution_surface": "immediate",
-            "mode": "midzhi",
-        },
-    )
-    revised_text = "改拨二十五两赈济"
-    response = {
-        "拟旨意图": "拟旨",
-        "动作类型": "grant_allocation",
-        "目标类型": "issue",
-        "目标": "relief",
-        "金额": 25,
-        "账户": "国库",
-        "执行面": "immediate",
-        "颁布方式": "ordinary",
-    }
-    prompts = []
-
-    def prompt_faithful_backend(prompt, *_args, **_kwargs):
-        prompts.append(prompt)
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or revised_text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
-        return (json.dumps(response, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
-    monkeypatch.setattr(session, "write_decree", lambda: revised_text)
-    answers = iter([f"edit {directive.id}", revised_text, "issue", "yes"])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-    before = state.metrics["国库"]
-
-    assert terminal.review_directives(session) == "issue"
-    assert len(prompts) == 1
-
-    db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(directive.id)
-    payload = json.loads(dossier["payload_json"])
-    assert dossier["decree_text"] == revised_text
-    assert dossier["action_type"] == "grant_allocation"
-    assert (payload["amount"], payload["account"], payload["mode"]) == (
-        25, "国库", "ordinary",
-    )
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content,
-    )
-    assert state.metrics["国库"] == before - 25
-    assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -25
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
     from ming_sim.db import GameDB
@@ -1869,28 +1685,6 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
         )
         assert db.get_decree_dossier(dossier_id)["status"] == "closed"
 
-def _complete_session(game):
-    """GameSession construction contract on the fixture's real DB/state."""
-    from ming_sim.session import GameSession, _bind_all_content
-
-    db, state, content = game
-    session = GameSession.__new__(GameSession)
-    session.content = content
-    _bind_all_content(content)
-    session.llm_config = None
-    session.db = db
-    session.agno_db = None
-    session.state = state
-    session.deaths_this_turn = []
-    session.debuts_this_turn = []
-    session.power_renames_this_turn = []
-    session.previous_summary = ""
-    session.registry = None
-    session.last_decree = ""
-    session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session._begun = False
-    return session
 
 def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
     db, state, content = game

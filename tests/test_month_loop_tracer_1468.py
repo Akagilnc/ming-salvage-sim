@@ -16,42 +16,20 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-import ming_sim.agents as agents_mod
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_audience_translate
 
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
-
-
-class _CannedExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"facts":[]}')
-
-
-class _BoomExtractor:
-    def run(self, _material):
-        raise RuntimeError("抽取持续失败·#1468 负向钉")
-
-
-
-class _CannedMinisterAgent:
-    """非流式 session.chat 读 agent.run().content（非 generator）。"""
-
-    def run(self, *_a, **_k):
-        return SimpleNamespace(content="臣已知悉，边饷当速清。", tools=[])
-
-
 
 
 def _stub_outer_llm_seams(monkeypatch) -> None:
@@ -166,20 +144,9 @@ def _pick_active_minister(state: dict) -> str:
     raise AssertionError(f"no active ming minister in state ministers={state.get('ministers')!r}")
 
 
-def _install_canned_minister(game, monkeypatch) -> None:
-    agent = _CannedMinisterAgent()
-    stub_scene_agent(monkeypatch, agent)
-
-
 def _turn_of(state: dict) -> int:
     turn = state.get("turn") or {}
     return int(turn.get("turn") or 0)
-
-
-def _month_ord_of(state: dict) -> int:
-    """跨年安全月序：HTTP turn.year*12 + turn.period（禁只盯 turn 计数）。"""
-    turn = state.get("turn") or {}
-    return int(turn.get("year") or 0) * 12 + int(turn.get("period") or 0)
 
 
 def _get_state(client: TestClient) -> dict:
@@ -200,7 +167,6 @@ def _pending_payload(client: TestClient) -> dict:
     return {"pending": retries, "count": len(retries)}
 
 
-
 def _parse_sse(text: str) -> list[dict]:
     """解析 SSE 文本为 [{event, data}, ...]（与仓内其他 ASGI tracer 同形）。"""
     events: list[dict] = []
@@ -214,29 +180,6 @@ def _parse_sse(text: str) -> list[dict]:
         if cur:
             events.append(cur)
     return events
-
-
-def _choices_from_decisions(decisions: list) -> list[dict]:
-    """按契约从 d['options'] 取真实 option → {label, hint?, note?, dossier_*}。"""
-    choices: list[dict] = []
-    for d in decisions:
-        opts = d.get("options") or []
-        assert opts, f"decision missing options: {d!r}"
-        opt0 = opts[0]
-        if isinstance(opt0, dict):
-            choice: dict = {"label": str(opt0.get("label") or "准")}
-            if opt0.get("hint") is not None:
-                choice["hint"] = opt0.get("hint")
-            if opt0.get("note") is not None:
-                choice["note"] = opt0.get("note")
-            if "dossier_id" in opt0:
-                choice["dossier_id"] = opt0.get("dossier_id")
-            if "dossier_decision" in opt0:
-                choice["dossier_decision"] = opt0.get("dossier_decision")
-            choices.append(choice)
-        else:
-            choices.append({"label": str(opt0)})
-    return choices
 
 
 def _post_issue_stream(
@@ -285,22 +228,6 @@ def _post_issue_stream(
     )
 
 
-def _resolve_decisions_via_stream(
-    client: TestClient, decisions: list, *, step: str,
-) -> None:
-    """亲裁续跑：按 {label,hint?} 契约提交，消费 resolve SSE 到 done。"""
-    choices = _choices_from_decisions(decisions)
-    resolve = client.post(
-        "/api/decree/resolve_decisions/stream",
-        json={"choices": choices},
-    )
-    _assert_not_bare_500(resolve, step=step)
-    assert resolve.status_code == 200, f"{step} → {resolve.status_code}: {resolve.text}"
-    assert "event: error" not in resolve.text, f"{step} error SSE: {resolve.text}"
-    assert "event: done" in resolve.text, f"{step} missing done: {resolve.text}"
-
-
-
 def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     """生产同核欠账：开夜 + 回话落库未抽。返回 chat_turn_id。"""
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
@@ -312,8 +239,6 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
 
     return int(ctid)
-
-
 
 
 def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
@@ -373,28 +298,3 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 
 
 # ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
-
-
-def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) -> None:
-    """外部可见契约：court_break、夜关闭、参与者无殿上 presence/entrance 账。"""
-    assert body.get("court_action") == "court_break", body
-    assert not body.get("admission"), body
-    _wait_pending_writes(game)
-    assert an.get_open_night(game.db) is None
-    night_row = game.db.conn.execute(
-        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
-    ).fetchone()
-    assert night_row is not None
-    assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
-    # #1716 durable 物理账：场外/临时收夜不得写入该人 entrance/presence。
-    assert remote not in an.present_names_at(game.db, night_id), remote
-    assert remote not in an.persons_entered_tonight(game.db, night_id), remote
-    for entry in an.list_ledger(game.db, night_id):
-        names = entry.get("person_names") or []
-        if remote not in names:
-            continue
-        tags = entry.get("tags") or []
-        assert an.TAG_ENTER not in tags, entry
-        assert str(entry.get("presence_effect") or "") not in {
-            an.PRESENCE_ENTER, "enter",
-        }, entry

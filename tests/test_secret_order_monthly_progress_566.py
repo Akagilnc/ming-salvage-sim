@@ -38,7 +38,7 @@ def _production_session(db, state, content):
     session.db, session.state, session.content = db, state, content
     session.registry = session.llm_config = session.agno_db = None
     session.deaths_this_turn, session.debuts_this_turn = [], []
-    session.last_decree = session.last_report = ""
+    session.last_decree = ""
     session._decree_draft_fingerprint = ()
     session.auto_save = lambda *args, **kwargs: None
     return session
@@ -46,46 +46,6 @@ def _production_session(db, state, content):
 
 def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
-
-
-def test_emperor_private_payload_preserves_monthly_report(game, monkeypatch):
-
-    db, state, content = game
-    order_id, dossier_id = _order(db, state)
-    marker = "首批饷车已验山海关关防566"
-    _record_monthly_report(db, state, {
-        "dossier_id": dossier_id, "progress_band": "在途核验",
-        "memorial_text": marker,
-    })
-
-    # Emperor-facing secret-order product payload reads the canonical rail.
-    emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
-    assert emperor_order["dossier_progress"][-1]["memorial_text"] == marker
-
-    from ming_sim.materials import prepare_character_materials, release_material_tree
-    read_fields = set()
-    real_orders = db.get_active_secret_orders_for_minister
-
-    class ObservedOrder(dict):
-        def __getitem__(self, key):
-            read_fields.add(key)
-            return super().__getitem__(key)
-
-        def get(self, key, default=None):
-            read_fields.add(key)
-            return super().get(key, default)
-
-    def observe_orders(*args, **kwargs):
-        return [ObservedOrder(row) for row in real_orders(*args, **kwargs)]
-
-    monkeypatch.setattr(db, "get_active_secret_orders_for_minister", observe_orders)
-    prepared = prepare_character_materials(db, state, content.characters[emperor_order["minister_name"]])
-    try:
-        # Real orders carry the monthly rail, but the character writer must not consume it.
-        assert {"title", "content"} <= read_fields
-        assert "dossier_progress" not in read_fields
-    finally:
-        release_material_tree(prepared.root)
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):

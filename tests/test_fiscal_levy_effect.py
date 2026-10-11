@@ -64,14 +64,6 @@ def _emperor_decides(db, state, *event_labels):
         event_terminal.apply_petition_event_outcome(state, db, event_id, label)
 
 
-def _settled_land_by_region(db):
-    land_by_region = {}
-    for region_id in _settled_region_ids(db):
-        settle = _settle_payload(db, region_id)
-        land_by_region[region_id] = max(0.0, float(settle["st"].get("官民田") or 0.0))
-    return land_by_region
-
-
 def _expected_land_share_levy(settle, national_monthly, total_land):
     land = max(0.0, float(settle["st"].get("官民田") or 0.0))
     if total_land <= 0:
@@ -166,7 +158,7 @@ def test_liao_levy_rise_approved_lands_on_no_edict_advance_before_fiscal_tick(ga
     sess.db, sess.state, sess.content = db, state, content
     sess.registry = sess.llm_config = sess.agno_db = None
     sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = sess.last_report = ""
+    sess.last_decree = ""
     sess._decree_draft_fingerprint = ()
     sess.auto_save = lambda *a, **k: None
     sess.advance_without_decree()
@@ -266,12 +258,6 @@ def test_fiscal_levy_capstone_golden_all_seeded_provinces(
         ), region_id
         assert settle["p"]["起运定额"] >= settle["p"]["三饷应征"]
         assert settle["p"]["起运定额"] >= 0
-
-
-
-
-
-
 
 
 def test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game, monkeypatch):
@@ -411,8 +397,6 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, mo
     )
 
 
-
-
 @pytest.mark.parametrize("bad_shape", ["land", "p", "st", "settle"])
 def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
     game, monkeypatch, bad_shape
@@ -469,8 +453,6 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
     assert math.isclose(restored["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
 
 
-
-
 @pytest.mark.parametrize("bad_meta_key", ["剿饷基线", "练饷基线", "饷率田亩分母基线"])
 def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     game, monkeypatch, bad_meta_key
@@ -517,10 +499,6 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     restored = _settle_payload(db, "huguang")
     assert "剿饷基线" in restored["_meta"]
     assert restored["p"]["三饷应征"] > expected_liao
-
-
-
-
 
 
 def test_fiscal_levy_is_not_auto_approved_without_emperor_decision(game):
@@ -751,8 +729,6 @@ def test_fiscal_levy_outcome_label_outside_closed_set_aborts(game):
     ).fetchone() is None
 
 
-
-
 def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
     db, state, content = game
     issues.bind_content(content)
@@ -824,10 +800,6 @@ def test_fiscal_levy_pending_choice_waits_for_event_window(game):
         ("lian_levy_start_1639",),
     ).fetchone()
     assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已准"}
-
-
-
-
 
 
 def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_p(game):

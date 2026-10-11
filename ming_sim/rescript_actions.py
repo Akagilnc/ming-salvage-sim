@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -48,9 +47,6 @@ from ming_sim.settlement_payload import (
 RESCRIPT_DESK_ACTIONS = frozenset({
     "follow_draft", "return_revise", "midzhi", "deliberate", "hold", "summon",
 })
-_TERMINAL_ACTIONS = frozenset({
-    "follow_draft", "midzhi", "deliberate", "hold", "summon",
-})
 
 _DecisionKey = str  # "{kind}:{source_turn}:{idx}"
 
@@ -71,7 +67,6 @@ def _parse_decision_key(key: object) -> Tuple[str, int, int]:
 
 def _stable_json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
 
 
 def canonical_choice(raw: object) -> Dict[str, object]:

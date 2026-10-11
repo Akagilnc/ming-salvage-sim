@@ -15,9 +15,8 @@ from ming_sim.constants import (
     EXIT_COMMANDS,
     TURN_UNIT,
 )
-from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
-from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
+from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character
 from ming_sim.session import (
     GameSession,
     TurnPhase,
@@ -34,10 +33,6 @@ _STATUS_LABEL = {
     "retired": "致仕",
     "dead": "亡",
 }
-
-# 皇帝当场对拟旨草稿的回应
-_CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
-_REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
 
 
 def _print_header(session: GameSession) -> None:
@@ -186,7 +181,6 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
         f"{f'（「{question}」）' if question.strip() else ''}。"
         "输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
     )
-
 
 
 def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Optional[str]:
@@ -387,13 +381,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             print(f"【人物补档】{result.registered_minister}已补入人物档，本回合起可召见。\n")
         if result.displaced_minister:
             print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
-        if result.court_action == "dismiss":
-            # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
-            return "dismiss"
-        if result.court_action == "summon" and result.next_minister:
-            is_temporary = result.next_minister in session.temporary_characters
-
-            return f"{'summon-temp' if is_temporary else 'summon'}:{result.next_minister}"
 
 
 def review_directives(session: GameSession) -> str:

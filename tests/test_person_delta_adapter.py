@@ -1267,15 +1267,6 @@ def test_apply_office_appointment_rejects_vassal_prince(game):
     assert row["office_type"] == "宗藩", "宗藩 office_type 被授官改写=反解隐藏"
     assert row["status"] == "offstage", "宗藩被授官路径翻成 active"
 
-def test_list_ministers_excludes_active_prince(read_game):
-    """召见阶段名册 GameSession.list_ministers 与各 roster 同口径排除 active 宗藩（cmr R5）。"""
-    from ming_sim.session import GameSession
-    db, state, content = read_game
-    name = _materialize_active_prince(db, state, content)
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    assert name not in [v.name for v in sess.list_ministers()], f"宗藩 {name} 漏进 list_ministers"
 
 def test_create_secret_order_rejects_vassal_prince(read_game):
     """密令创建唯一 DB 写口 create_secret_order 拒宗藩——集中守此一处覆盖 API/大臣工具/CLI/upsert
