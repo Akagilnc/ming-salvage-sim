@@ -494,10 +494,11 @@ def test_revoke_later_same_dim_decree_not_stomped(game):
 def test_lifecycle_rejected_decree_zero_config_write(game, monkeypatch):
     from dossier_test_helpers import rejected_verdict
     db, state, _content = game
-    did = _capture_override_decree(game, monkeypatch, '今岁边饷居末', [{'key': 'due_priority_军饷', 'value': 40}])
     before_cfg = db.fiscal_config.values()
     before_rows = db.conn.execute('SELECT COUNT(*) c FROM fiscal_config_changes').fetchone()['c']
+    did = _capture_override_decree(game, monkeypatch, '今岁边饷居末', [{'key': 'due_priority_军饷', 'value': 40}])
     assert db.fiscal_config.values() == before_cfg
+    assert db.conn.execute('SELECT COUNT(*) c FROM fiscal_config_changes').fetchone()['c'] == before_rows
     assert db.dossiers.get(did)["status"] == "proposed"
     db.apply_dossier_verdicts(state, [rejected_verdict(did)])
     assert db.fiscal_config.values() == before_cfg

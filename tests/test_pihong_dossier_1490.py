@@ -986,11 +986,12 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
     ("deliberate", RuntimeError), ("deliberate", KeyboardInterrupt),
     ("return_revise", RuntimeError), ("return_revise", KeyboardInterrupt),
     ("return_revise", "shape"), ("return_revise", "foreign_army"),
-    ("return_revise", "missing_grant_kind"), ("return_revise", "direct_xiexang"),
+    ("return_revise", "direct_xiexang"), ("return_revise", "grant_kind_mutex"),
     ("deliberate", "shape"),
 ])
 def test_657_prewrite_failure_zero_db_writes(game, monkeypatch, action, failure):
     from tests.month_chain_helpers import make_light_session
+    from ming_sim.rescript_draft import RescriptOptionMissingFieldsError
     import ming_sim.agents as agents
     db, state, content = game
     urgent, _ = _plant_urgent_desk(db, state)
@@ -999,11 +1000,22 @@ def test_657_prewrite_failure_zero_db_writes(game, monkeypatch, action, failure)
     before = db.issues.list_rescript_drafts()
     writes = db.conn.total_changes
     fault = failure("injected model boundary failure") if isinstance(failure, type) else None
-    option = {"label": "补发关宁军饷", "hint": "输入", "action_type": "grant_allocation", "target_kind": "army", "target_id": "guanning", "locality_scope": "none", "amount": 300, "account": "国库", "purpose": "补饷", "grant_action": "协饷", "participant_roster": _roster(_ROSTER_LEAD)}
-    if failure == "direct_xiexang":
+    option = {
+        "label": "补发关宁军饷", "hint": "输入", "action_type": "grant_allocation",
+        "assignee_name": "", "region_id": "", "transaction_category": "",
+        "target_kind": "army", "target_id": "guanning", "locality_scope": "none",
+        "amount": 300, "account": "国库", "purpose": "补饷", "grant_action": "协饷",
+        "participant_roster": _roster(_ROSTER_LEAD),
+    }
+    if failure == "grant_kind_mutex":
         option["grant_kind"] = "army_pay"
     if failure == "foreign_army":
-        option = {"label": "调驻", "hint": "输入", "action_type": "military_order", "assignee_name": "祖大寿", "target_kind": "army", "target_id": "manchu_banners_main", "locality_scope": "none", "station": "宁远", "participant_roster": _roster("祖大寿")}
+        option = {
+            "label": "调驻", "hint": "输入", "action_type": "military_order",
+            "assignee_name": "祖大寿", "region_id": "", "transaction_category": "",
+            "target_kind": "army", "target_id": "manchu_banners_main", "locality_scope": "none",
+            "station": "宁远", "participant_roster": _roster("祖大寿"),
+        }
     product = {"title": "议", "body": "议"} if action == "deliberate" else ({"items": []} if failure == "shape" else {"options": [option]})
     def fail(*_a, **_k):
         if fault is not None:
@@ -1016,6 +1028,14 @@ def test_657_prewrite_failure_zero_db_writes(game, monkeypatch, action, failure)
         session.prepare_rescript_prewrite([{"decision_key": urgent["decision_key"], "action": action, "label": "输入", "note": "输入"}])
     if fault is not None:
         assert (exc.value.__cause__ if failure is RuntimeError else exc.value) is fault
+    elif failure in {"direct_xiexang", "grant_kind_mutex"}:
+        cause = exc.value.__cause__
+        assert isinstance(cause, RescriptOptionMissingFieldsError)
+        assert {fact["field"] for fact in cause.field_failures} == (
+            {"grant_kind"} if failure == "direct_xiexang" else {"grant_kind", "grant_action"}
+        )
+    elif failure == "foreign_army":
+        assert type(exc.value.__cause__) is ValueError
     assert db.issues.list_rescript_drafts() == before
     assert db.conn.total_changes == writes
 
