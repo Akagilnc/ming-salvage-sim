@@ -3985,7 +3985,7 @@ def test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error
     db.conn.commit()
 
     with pytest.raises(SettlementAbort) as exc_info:
-        resolve_directives(state, db, None, None, [object()], "诏曰：照旧。")
+        resolve_directives(state, db, None, None, "诏曰：照旧。")
 
     abort = exc_info.value
     assert abort.stage == "fixed_fiscal"
@@ -4020,7 +4020,7 @@ def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_
 
     with pytest.raises(RuntimeError):
         with atomic(db):
-            flows_mod._advance_province_fiscal_substrate(db, state)
+            flows_mod._advance_province_fiscal_substrate(db)
             in_transaction = _read_settle(db, "shaanxi")["st"]
             assert in_transaction["民欠旧赋"] != pytest.approx(before["民欠旧赋"])
             raise RuntimeError("rollback probe")

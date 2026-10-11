@@ -392,7 +392,7 @@ def test_gatekeeper_successor_removes_donglin_block_posture(game):
     assert seeded["power_id"] == "ming"
     assert seeded["faction"] != "东林"
 
-    _mutate_gatekeeper_replace(db, state)
+    _mutate_gatekeeper_replace(db)
     context = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )
@@ -514,7 +514,7 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
         "SELECT status, office FROM characters WHERE name='钱谦益'"
     ).fetchone()
 
-    _mutate_leader_only(db, state)
+    _mutate_leader_only(db)
     after = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )

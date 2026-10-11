@@ -474,7 +474,7 @@ def test_ac3_regret_then_resolve_no_breach_verdict_hammer(game):
         reason="反悔·结清", target_dossier_id=did, commit=True,
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
-    result = finalize_regret(db, state, todo, commit=True)
+    result = finalize_regret(db, todo, commit=True)
     assert result["decision"] == "regret"
     assert result["commitment_continues"] is True
     stamped = next(
@@ -535,7 +535,7 @@ def test_ac3_regret_then_expire_dropped_no_hammer(game):
         reason="反悔·到期", target_dossier_id=did, commit=True,
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
-    finalize_regret(db, state, todo, commit=True)
+    finalize_regret(db, todo, commit=True)
 
     row = db.conn.execute("SELECT * FROM issues WHERE id=?", (cid,)).fetchone()
     bar_before = int(row["bar_value"])

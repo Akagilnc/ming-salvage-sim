@@ -119,12 +119,11 @@ def _cli_web_game(web_game, monkeypatch, *, backend: str = "claude"):
 
     model = cb.CliChat(id="cli-model-test", backend=backend)
     agent = Agent(model=model, markdown=False)
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
     web_game.session.llm_config = SimpleNamespace(
         channel="cli", cli_runner=backend, cli_model="cli-model-test",
         cli_timeout_seconds=None, reasoning_strength="",
     )
-    return web_game, minister
 
 
 def test_cli_chat_stream_two_transient_then_success_three_attempts(monkeypatch, web_game, tmp_path):
@@ -138,9 +137,9 @@ def test_cli_chat_stream_two_transient_then_success_three_attempts(monkeypatch, 
         {"stdout": (), "returncode": 0},
         {"stdout": (_OK_REPLY,), "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(web_game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert "done" in [e[0] for e in events], events
@@ -166,7 +165,7 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (), "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(web_game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
     db = web_game.db
     night_closed = {"n": 0}
     real_close = web_game.session.close_night_after_chat_if_needed
@@ -177,7 +176,7 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
 
     web_game.session.close_night_after_chat_if_needed = close
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
@@ -199,7 +198,7 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     ok_script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (_OK_REPLY,), "returncode": 0},
     ])
-    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
+    response2 = _post_chat_stream(monkeypatch, web_game, message="再问边饷。")
     events2 = _parse_sse(response2.text)
     assert "done" in [e[0] for e in events2], events2
     done2 = next(e[1] for e in events2 if e[0] == "done")
@@ -214,9 +213,9 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, web_game, 
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (), "stderr": ("error: unknown model\n",), "returncode": 1},
     ])
-    web_game, minister = _cli_web_game(web_game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
@@ -248,9 +247,9 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
         "stdout": stdout, "returncode": 0,
         "stdin_error": BrokenPipeError("stdin 已关闭"),
     }])
-    web_game, minister = _cli_web_game(web_game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
@@ -283,9 +282,9 @@ def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, web_game, t
         "stdout": tuple(chunks),
         "returncode": 0,
     }])
-    web_game, minister = _cli_web_game(web_game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert "done" in [e[0] for e in events], events
@@ -332,9 +331,9 @@ def test_cli_process_idle_over_budget_dies_then_retry_succeeds(monkeypatch, web_
         {"stdout": (SilentUntilKilled(on_tick=_advance_while_silent),), "returncode": 0},
         {"stdout": no_nl_chunks, "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(web_game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert "done" in [e[0] for e in events], events

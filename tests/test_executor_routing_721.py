@@ -310,8 +310,8 @@ def test_pending_routing_rejection_lands_on_ensure_batch_seam(
         dossier_payload=_directive_payload("清丈"),
     )
 
-    db.confirm_directive(bad, state)
-    db.confirm_directive(good, state)
+    db.confirm_directive(bad)
+    db.confirm_directive(good)
     # confirm 只翻状态，不成案、不标 rejected
     assert db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (bad,),

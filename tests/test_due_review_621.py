@@ -181,7 +181,7 @@ def test_due_review_scene_has_no_internal_payload(game):
     _insert_staged_commitment(db, state, content, stages=stages)
     write_due_staged_commitment_todos(db, state)
 
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert len(scenes) == 1
     scene = scenes[0]
     assert "payload_json" not in scene
@@ -217,7 +217,7 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     # 过月写 todo（中段到期）→ 次回合落格
     _settle_empty_month(db, state, content, monkeypatch)
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert scenes
 
     _settle_empty_month(db, state, content, monkeypatch)
@@ -290,7 +290,7 @@ def test_no_dossier_branch_only_scene_no_forged_dossier(game):
         (state.turn - 1,),
     )
     db.conn.commit()
-    scenes_before = list_due_review_scenes(db, state)
+    scenes_before = list_due_review_scenes(db)
     assert scenes_before
 
     results = apply_pending_due_reviews(db, state, commit=True)
@@ -466,7 +466,7 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     # beat0: 未到期
     _settle_empty_month(db, state, content, monkeypatch)
     assert db.list_next_audience_todos() == []
-    assert not list_due_review_scenes(db, state)
+    assert not list_due_review_scenes(db)
 
     # beat1: 过月写 todo
     _settle_empty_month(db, state, content, monkeypatch)
@@ -475,7 +475,7 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     # 落格尚未发生
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] in ("", None)
     # beat2: 召对场面可读
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert len(scenes) == 1
 
     # beat3: 下一过月落格 + 消费

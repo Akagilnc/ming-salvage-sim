@@ -1908,7 +1908,7 @@ def scene_materials_root(db: Any, state: Any) -> Path:
     return _materials_campaign_dir(db) / key / "scene"
 
 
-def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
+def _scene_present_rows(db: Any) -> list[tuple[str, str]]:
     """在场诸人（含常在员额）→ (name, office) 列表，按姓名排序。"""
     from ming_sim.audience_night import get_open_night, present_names_at, resolve_standing_roster
 
@@ -2052,7 +2052,7 @@ def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
     from ming_sim.urge_lever import list_urge_audience_scenes
 
     lines: list[str] = []
-    for scene in list(list_due_review_scenes(db, state)) + list(
+    for scene in list(list_due_review_scenes(db)) + list(
         list_urge_audience_scenes(db, state)
     ):
         if not isinstance(scene, dict):
@@ -2115,7 +2115,6 @@ def _write_one_present_person(
     character: Any,
     knowledge: dict,
     matter_lines: list[tuple[str, str, str, str, bool]],
-    night_id: int = 0,
 ) -> list[str]:
     """把一人的可读材料全部写在 人物/<名>/ 之下，不与他人共享路径。
 
@@ -2218,9 +2217,7 @@ def _write_scene_tree(
     tmp: Path,
     db: Any,
     state: Any,
-    present_rows: Sequence[tuple[str, str]],
     person_payloads: Sequence[tuple[Any, dict, list]],
-    night_id: int = 0,
 ) -> list[str]:
     """为每位在场人物写入互不覆盖的私有材料子树，合并 INDEX。"""
     index: list[str] = []
@@ -2234,7 +2231,6 @@ def _write_scene_tree(
     for character, knowledge, matter_lines in person_payloads:
         for rel in _write_one_present_person(
             tmp, db, state, character, knowledge, matter_lines,
-            night_id,
         ):
             _add(rel)
 
@@ -2255,11 +2251,7 @@ def prepare_scene_materials(
     开场最小集 = 在场身份职位、日期、各人正经手事务一句、本场已说的话。
     CLI cwd / API list-read 同树。
     """
-    from ming_sim.audience_night import get_open_night
-
-    present_rows = _scene_present_rows(db, state)
-    night = get_open_night(db)
-    night_id = int(night["id"]) if night is not None else 0
+    present_rows = _scene_present_rows(db)
     spoken = _scene_spoken_text(db)
     characters = dict(getattr(db.content, "characters", None) or {})
 
@@ -2278,7 +2270,7 @@ def prepare_scene_materials(
     dest, index = _publish_material_tree(
         dest_root,
         scene_materials_root(db, state),
-        lambda tmp: _write_scene_tree(tmp, db, state, present_rows, person_payloads, night_id),
+        lambda tmp: _write_scene_tree(tmp, db, state, person_payloads),
     )
     pending_facts = _scene_pending_audience_facts(db, state)
     opening = _scene_opening_text(

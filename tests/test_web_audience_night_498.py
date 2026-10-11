@@ -369,7 +369,7 @@ async def _wait_for(pred) -> None:
         await asyncio.sleep(0)
 
 
-async def _start_hanging_chat(game, client, minister, monkeypatch):
+async def _start_hanging_chat(client, monkeypatch):
     """经真实 /chat/stream ASGI 请求起一轮回话并卡在生成中（在飞）。
     返回 (chat_task, allow)：chat_task 是仍在跑的 SSE 请求；置位 allow 后回话收尾。
 
@@ -508,7 +508,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
             # 取得 chat 所有权后即进入释放责任区间——观察/断言/写入均在 try 内。
-            chat_task, allow = await _start_hanging_chat(game, chat_client, minister, monkeypatch)
+            chat_task, allow = await _start_hanging_chat(chat_client, monkeypatch)
             issue_task = None
             try:
                 night = an.get_open_night(game.db)
@@ -666,7 +666,7 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
             # 取得 chat 所有权后即进入释放责任区间——观察/断言均在 try 内。
-            chat_task, allow = await _start_hanging_chat(game, chat_client, minister, monkeypatch)
+            chat_task, allow = await _start_hanging_chat(chat_client, monkeypatch)
             issue_task = None
             try:
                 night = an.get_open_night(game.db)
@@ -729,7 +729,7 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
 
         async with _client() as chat_client, _client() as adv_client:
             # 取得 chat 所有权后即进入释放责任区间；sibling 尚未创建时按实际存在收尾。
-            chat_task, allow = await _start_hanging_chat(game, chat_client, minister, monkeypatch)
+            chat_task, allow = await _start_hanging_chat(chat_client, monkeypatch)
             t = None
             adv_task = None
             try:

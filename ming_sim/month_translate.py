@@ -21,9 +21,8 @@ from ming_sim.declaration_dispatch import (
 )
 
 
-def _visible_effect_refs(db: Any, turn: int, decree_payload: Mapping[str, object]) -> dict[str, list[int]]:
+def _visible_effect_refs(db: Any, turn: int) -> dict[str, list[int]]:
     """Freeze the same reference rosters supplied to this segment's translation."""
-    del decree_payload  # 密令案卷写权改由案卷自身 secret_order_id 判定（#1862 reopen）
     from ming_sim.materials import secret_order_dossier_ids
 
     return {
@@ -34,7 +33,7 @@ def _visible_effect_refs(db: Any, turn: int, decree_payload: Mapping[str, object
     }
 
 
-def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
+def petition_verdict_grounding(db: Any) -> list[dict[str, object]]:
     """已呈皇帝、待亲裁落定结局的三饷事项及其封闭标签集（#1892 / ADR 0143 输入侧）。
 
     只列事件账里已有请旨答复、终态仍空的事项。到期但尚未上疏的事项不在此列，
@@ -47,7 +46,7 @@ def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
         event_id = str(row.get("event_id") or "")
         if not event_id or any(item["event_id"] == event_id for item in out):
             continue
-        if not petition_outcome_is_admissible(state, db, event_id, None):
+        if not petition_outcome_is_admissible(db, event_id, None):
             continue
         ev = _fiscal_levy_event_by_id(event_id)
         if ev is None:
@@ -61,12 +60,11 @@ def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
 
 
 def _petition_verdict_block(
-    db: Any, state: Any, decree_payload: Mapping[str, object],
+    db: Any, state: Any,
 ) -> str:
-    del decree_payload
     if state is None:
         return ""
-    items = petition_verdict_grounding(db, state)
+    items = petition_verdict_grounding(db)
     if not items:
         return ""
     return (
@@ -220,13 +218,13 @@ def _translate_month_segment_front(
     candidates: Optional[Mapping[str, object]] = None,
 ) -> tuple[dict[str, object], dict[str, list[int]]]:
     """过月段转译前半：冻结可见引用、拼 grounding、一次转出 C0 声明。"""
-    refs = _visible_effect_refs(db, turn, decree_payload)
+    refs = _visible_effect_refs(db, turn)
     declaration = translate_month_segment(
         segment=segment,
         target_grounding=(
             build_translation_target_grounding(db, state)
             + _effect_ref_grounding(refs)
-            + _petition_verdict_block(db, state, decree_payload)
+            + _petition_verdict_block(db, state)
         ),
         decree_payload=decree_payload,
         llm_config=llm_config,

@@ -449,10 +449,9 @@ def create_promulgation_judge_agent(
     )
 
 
-def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+def create_decree_writer_agent(llm_config: LLMConfig) -> Agent:
     # 一次性 agent：add_history_to_context=False，无需持久化 → 不传 db，免得每次往
-    # <db>.emperor.db 的 agno_sessions 累积 runs 撑爆存档。agno_db 仅保留以兼容调用方。
-    del agno_db
+    # <db>.emperor.db 的 agno_sessions 累积 runs 撑爆存档。
     return Agent(
         name="诏书润色官",
         id="decree-writer",
@@ -618,9 +617,8 @@ def create_rescript_draft_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     )
 
 
-def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+def create_ending_summary_agent(llm_config: LLMConfig) -> Agent:
     """国史编纂官：读所给历月邸报，生成史评式结局总结（纯文本）。一次性，不持久化。"""
-    del agno_db
     ctx = _ctx()
     return Agent(
         name="国史编纂官",
@@ -637,12 +635,11 @@ def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
-def create_faction_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+def create_faction_brew_agent(llm_config: LLMConfig) -> Agent:
     """派系态势酿制裁判（#637 S6）：派系级定性聚合摘要，输出 {stance_segment} JSON。
     一次性，不持久化；与关系酿制同一受管批次、每条工作项一个实例（批内并行各自
     独享，不共享运行态）。三不碰（ADR 0084）：不写派系真源、不动满意度/影响力、
     不建认同度。"""
-    del agno_db
     ctx = _ctx()
     return Agent(
         name="派系态势酿制裁判",
@@ -660,10 +657,9 @@ def create_faction_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent
     )
 
 
-def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+def create_relation_brew_agent(llm_config: LLMConfig) -> Agent:
     """关系酿制裁判（#636 S5）：两段式摘要增量重酿，输出 {new_foundings, recent_segment} JSON。
     一次性，不持久化；每条关系一个实例（批内并行各自独享，不共享运行态）。"""
-    del agno_db
     ctx = _ctx()
     return Agent(
         name="关系酿制裁判",

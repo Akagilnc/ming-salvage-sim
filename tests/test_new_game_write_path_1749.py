@@ -18,7 +18,6 @@ from ming_sim.session import GameSession
 from tests.test_month_loop_tracer_1468 import (
     _assert_not_bare_500,
     _parse_sse,
-    _pick_active_minister,
     tracer_client,
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
@@ -153,7 +152,7 @@ def _empty_translate_fn(prompt, cfg):
     }
 
 
-def _install_canned_scene_double(game, monkeypatch) -> None:
+def _install_canned_scene_double(monkeypatch) -> None:
     """#1842：殿上 stream 走 scene_chat；经 create_scene_agent / translate runner 缝注入。"""
     stub_scene_agent(monkeypatch, _canned_scene_agent())
     stub_audience_translate(monkeypatch, _empty_translate_fn)
@@ -196,7 +195,7 @@ def _rewrite_draft_via_http(client: TestClient, seed_text: str, *, marker: str) 
     return marker
 
 
-def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
+def _chat_stream(client: TestClient, msg: str) -> dict:
     """真实 chat/stream：须 SSE accepted + done；done 带 typed minister_message_id。
 
     生成 answer 正文只观察（带回），不作非空/相等契约。
@@ -248,13 +247,11 @@ def _write_and_verify_live(
     client: TestClient, game, monkeypatch, *, label: str,
 ) -> dict:
     """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/回话终态。"""
-    _install_canned_scene_double(game, monkeypatch)
+    _install_canned_scene_double(monkeypatch)
     d_text = f"着户部清核辽饷（{label}）。"
     _directive(d_text)
     _wait_pending_writes(game)
-    st = client.get("/api/game/state")
-    minister = _pick_active_minister(st.json())
-    chat = _chat_stream(client, minister, f"边饷如何？{label}")
+    chat = _chat_stream(client, f"边饷如何？{label}")
     camp = _campaign(game)
     assert chat["campaign_id"] == camp
     _wait_pending_writes(game)

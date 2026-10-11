@@ -388,16 +388,15 @@ class _CountingFailAgent:
 
 
 
-def _transport_web_game(web_game, agent, monkeypatch):
+def _transport_web_game(agent, monkeypatch):
     """在既有 web_game 夹具上挂 scene agent / transport 边界（不开第二套 runtime）。"""
     from tests.conftest import stub_audience_translate, stub_scene_agent
 
     stub_scene_agent(monkeypatch, agent)
     stub_audience_translate(monkeypatch)
-    return web_game, "殿上"
 
 
-def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边饷如何？"):
+def _post_chat_stream(monkeypatch, web_game, message: str = "边饷如何？"):
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     return TestClient(web_app.app).post(
         "/api/audience/chat/stream", json={"message": message},
@@ -441,7 +440,7 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, web_
     """#1452 B / #1465：真实 web 流入口——无 typed status 的 RunErrorEvent
     → 一次不重试、系统层 typed 终失败、provider_message 保真。"""
     agent = _RunErrorAgent()
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
     calls = {"n": 0}
     real_run = agent.run
 
@@ -451,7 +450,7 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, web_
 
     agent.run = _count_run  # type: ignore[method-assign]
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("text/event-stream")
     events = _parse_sse(response.text)
@@ -494,7 +493,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     monkeypatch.setattr(transport_mod, "_sleep_retry_interval", _wait)
 
     agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
     db = web_game.db
     night_closed = {"n": 0}
 
@@ -507,7 +506,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     web_game.session.close_night_after_chat_if_needed = _close
 
     t0 = clock["t"]
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error"
@@ -539,7 +538,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
     stub_scene_agent(monkeypatch, ok_agent)
-    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
+    response2 = _post_chat_stream(monkeypatch, web_game, message="再问边饷。")
     events2 = _parse_sse(response2.text)
     assert "done" in [e[0] for e in events2], events2
     done2 = next(e[1] for e in events2 if e[0] == "done")
@@ -563,9 +562,9 @@ def test_chat_stream_provider_5xx_retries_status_preserved(monkeypatch, web_game
     agent = _provider_http_error_agent(
         500, "Internal server error", http_hits=http_hits,
     )
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error"
@@ -596,9 +595,9 @@ def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, web_game):
     agent = _provider_http_error_agent(
         400, "top_p not supported", http_hits=http_hits,
     )
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     events = _parse_sse(response.text)
     assert events[-1][0] == "error"
     detail = events[-1][1]
@@ -619,9 +618,9 @@ def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, w
     agent = _provider_http_error_agent(
         None, "connection refused", http_hits=http_hits,
     )
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error"
@@ -651,9 +650,9 @@ def test_chat_stream_typed_429_preserved(monkeypatch, web_game):
         )
 
     agent = _CountingFailAgent(fail_times=99, error_factory=_rate_limit)
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     events = _parse_sse(response.text)
     detail = events[-1][1]
     max_a = default_transport_policy().max_attempts
@@ -691,10 +690,10 @@ def test_chat_stream_config_max_attempts_override(monkeypatch, web_game, tmp_pat
         )
 
     agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
     web_game.session.llm_config = SimpleNamespace(channel="api")
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     events = _parse_sse(response.text)
     assert events[-1][0] == "error"
     detail = events[-1][1]
@@ -750,14 +749,14 @@ def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, web_game, 
             yield RunCompletedEvent()
 
     agent = _IdleThenNearFullOk()
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
     web_game.session.llm_config = SimpleNamespace(channel="api")
     # 只替换 transport 模块内的取时名，不改全局 time.monotonic（进程内 ASGI/线程共享时钟）
     monkeypatch.setattr(
         transport_mod, "time", SimpleNamespace(monotonic=lambda: clock["t"]),
     )
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert "done" in [e[0] for e in events], events
@@ -797,9 +796,9 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, we
             yield RunCompletedEvent()
 
     agent = _PartialThenOk()
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert "done" in [e[0] for e in events], events
@@ -855,9 +854,9 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp(monkeypatch, web_gam
             yield RunErrorEvent("Unknown model error")
 
     agent = _PartialThenTerminal()
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
@@ -905,9 +904,9 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
             yield ev
 
     agent = _ErrorStatusAgent()
-    web_game, minister = _transport_web_game(web_game, agent, monkeypatch)
+    _transport_web_game(agent, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events

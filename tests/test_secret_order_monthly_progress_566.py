@@ -269,7 +269,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     monkeypatch.setattr(decree, "apply_fixed_period_flows", fail_after_real_flows)
     monkeypatch.setattr(
         session_mod, "write_decree_with_agno",
-        lambda _config, _agno, _state, directives, db=None: "\n".join(
+        lambda _config, _state, directives, db=None: "\n".join(
             str(item["text"]) for item in directives
         ),
     )

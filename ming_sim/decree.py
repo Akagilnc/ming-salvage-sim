@@ -141,10 +141,9 @@ PROMULGATION_VERDICT_HEAL_RETRIES = 3
 
 
 def stub_promulgation_verdicts(
-    dossiers: Sequence[Dict[str, object]], state: GameState,
+    dossiers: Sequence[Dict[str, object]],
 ) -> List[Dict[str, object]]:
     """Deterministic auto-promulgation for exempt dossiers and explicit test fixtures."""
-    del state
     return [
         {"dossier_id": int(row["id"]), "decision": "promulgated"}
         for row in dossiers
@@ -591,7 +590,6 @@ def _rescript_decisions(
 
 def write_decree_with_agno(
     llm_config: LLMConfig,
-    agno_db: SqliteDb,
     state: GameState,
     directives: List[sqlite3.Row],
     db: Optional[GameDB] = None,
@@ -624,7 +622,7 @@ def write_decree_with_agno(
                        "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
     }
     try:
-        agent = create_decree_writer_agent(llm_config, agno_db)
+        agent = create_decree_writer_agent(llm_config)
         run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         _dump_llm_messages(run_output, "拟诏", agent=agent)
         text = extract_agent_text(run_output)
@@ -666,10 +664,7 @@ def resolve_directives(
     db: GameDB,
     agno_db: SqliteDb,
     llm_config: LLMConfig,
-    directives: List[sqlite3.Row],
     decree_text: str,
-    deaths_this_turn: Optional[List[Dict[str, str]]] = None,
-    debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     content=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
@@ -688,10 +683,6 @@ def resolve_directives(
     # 前括号之后按旨序核算，再跑世界段。批红、邸报与推进是后续阶段的交接，
     # 不在本入口用 extractor 落账。
 
-    before_turn = state.turn
-
-    # 草案内容已由拟诏合并进 decree_text；月链沿已保存的旨意继续。
-
     # 1) 前括号确定性结算：玩家月链的唯一准备入口。
     prepare_resolve_front_half(
         state, db,
@@ -704,7 +695,6 @@ def resolve_directives(
     return run_player_month_chain(
         state, db, agno_db, llm_config,
         decree_text=decree_text,
-        before_turn=before_turn,
         content=content,
         source=source,
         cheat_directive=cheat_directive,
@@ -1101,7 +1091,6 @@ def resolve_decisions_phase2(
     ctx = db.get_resolve_context(state.turn)
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
-    before_turn = state.turn
     from ming_sim.month_chain import run_player_month_chain
     result = run_player_month_chain(
         state, db, agno_db, llm_config,

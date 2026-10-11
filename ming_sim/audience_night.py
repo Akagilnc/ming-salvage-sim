@@ -976,8 +976,7 @@ def publish_night_directives(db: Any, night_id: int) -> None:
 
 
 def commit_late_night_approved(
-    db: Any, state: GameState, *, content: Any,
-    llm_config: Any = None, write_gate: Any = None,
+    db: Any, state: GameState, *, content: Any, write_gate: Any = None,
 ) -> None:
     """过月 join 后沿收夜提交、明发入口补完迟到应允（#1842：背书随载荷，不另补批）。"""
     nights = db.conn.execute(
@@ -1871,14 +1870,11 @@ def set_night_protagonist(
     night_id: int,
     person_name: str,
     *,
-    reason: str = "translation",
     commit: bool = True,
 ) -> str:
     """写下本夜御前主角（#1838 / ADR 0158 决定 4）。
 
-    ``reason`` 仅作调用语义标注（``xuan`` = 皇帝亲口宣 X 当场先切；
-    ``translation`` = 转译声明），不进库、不驱动规则。代码只存声明/口令给出
-    的人名，不从戏文散文解析（ADR 0142）。
+    代码只存声明/口令给出的人名，不从戏文散文解析（ADR 0142）。
     """
     owns = _should_commit(db) if commit else False
     name = str(person_name or "").strip()

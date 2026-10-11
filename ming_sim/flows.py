@@ -1085,7 +1085,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     try:
         remittance_total = _advance_province_fiscal_substrate(
             db,
-            state,
             hub_outbound.jingyun_paid_by_region,
         )
         try:
@@ -1183,7 +1182,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
 def _advance_province_fiscal_substrate(
     db: GameDB,
-    state: GameState,
     jingyun_paid_gross_by_region: Optional[Dict[str, float]] = None,
 ) -> float:
     """#66/#266：月末固定财政相位推进省级 settle_tick 基座。

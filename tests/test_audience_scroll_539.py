@@ -23,8 +23,8 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(web
             raise RuntimeError("reply failed")
             yield  # pragma: no cover - make this the agent's streaming generator
 
-    runtime, _ = _transport_web_game(web_game, _FailingAgent(), monkeypatch)
-    db, state = runtime.db, runtime.state
+    _transport_web_game(_FailingAgent(), monkeypatch)
+    db, state = web_game.db, web_game.state
     old_night_id = open_audience_night(db, state)
     db.conn.execute(
         "UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -62,9 +62,9 @@ def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(web_
             yield type("RC", (), {"event": "RunContent", "content": "臣领旨。"})()
             yield type("RO", (), {"content": "臣领旨。", "tools": [], "status": "COMPLETED"})()
 
-    runtime, _ = _transport_web_game(web_game, _OkAgent(), monkeypatch)
-    runtime.favorites = set()
-    content = runtime.content
+    _transport_web_game(_OkAgent(), monkeypatch)
+    web_game.favorites = set()
+    content = web_game.content
     client = TestClient(web_app.app)
 
     response = client.post(
@@ -151,9 +151,9 @@ def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(web_gam
         def run(self, *_a, **_k):
             yield type("RO", (), {"content": "", "tools": [], "status": "COMPLETED"})()
 
-    runtime, _ = _transport_web_game(web_game, _OkAgent(), monkeypatch)
-    runtime.favorites = set()
-    db, state, content = runtime.db, runtime.state, runtime.content
+    _transport_web_game(_OkAgent(), monkeypatch)
+    web_game.favorites = set()
+    db, state, content = web_game.db, web_game.state, web_game.content
     night_id = open_audience_night(db, state)
     an.append_ledger_entry(
         db, night_id, tags=["scroll_role:attendant"],

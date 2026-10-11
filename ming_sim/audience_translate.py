@@ -244,7 +244,7 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         )
     if state is not None:
         from ming_sim.due_review import list_due_review_scenes
-        for scene in list_due_review_scenes(db, state):
+        for scene in list_due_review_scenes(db):
             if scene.get("kind") == "covert_levy_exposure" and not scene.get("decision"):
                 lines.append("scene\t" + json.dumps(scene, ensure_ascii=False, sort_keys=True))
     candidate_block = _person_candidate_grounding(db, state)

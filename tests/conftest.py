@@ -353,8 +353,7 @@ def _isolated_user_data_dir(tmp_path):
 
 
 def open_hall_turn(
-    db, state, minister_name, *, agno_session_id="", agno_runs_before=0, route="",
-    **_ignored,
+    db, state, minister_name, *, agno_session_id="", agno_runs_before=0,
 ):
     """测试 setup（非生产 API）：开夜 + 建轮 + 具名大臣 ensure_summon_enter。
 

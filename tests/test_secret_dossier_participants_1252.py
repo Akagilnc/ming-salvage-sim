@@ -88,7 +88,7 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
         minister = str(d["executor_id"])
         db.append_decree_dossier_participants(did, [{
             "character_id": minister, "tier": "主办", "role": "承办",
-        }], state=state)
+        }])
     public_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="命修历。",
         target_kind="issue", target_id="pub-1252",
@@ -131,13 +131,13 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.append_decree_dossier_participants(dossier_id, [{
         "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
+    }])
     plain_id = executing_rostered_policy(
         db, state, token="plain-secret-auth-1252", decree_text="公开案", roster=[],
     )
     db.append_decree_dossier_participants(plain_id, [{
         "character_id": lead, "tier": "主办", "role": "承办",
-    }], state=state)
+    }])
 
     def translate(_request, _cfg):
         return {
@@ -196,7 +196,7 @@ def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority
     _o, dossier_id = _secret(db, state)[1:]
     db.append_decree_dossier_participants(dossier_id, [{
         "character_id": lead, "tier": "主办", "role": "密访",
-    }], state=state)
+    }])
     result = issue_engine.apply_score_extraction(db, state, {
         "secret_dossier_participants": [{
             "dossier_id": dossier_id, "character_id": worker,

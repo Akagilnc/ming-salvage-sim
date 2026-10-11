@@ -154,7 +154,6 @@ def test_chat_completion_via_attach(game):
     minister = _active_minister(db, content)
     night_id, chat_id = open_hall_turn(
         db, state, minister, agno_session_id="s1", agno_runs_before=0,
-        location="便殿", time_of_day="申时",
     )
     row = db.conn.execute("SELECT * FROM chat_turns WHERE id=?", (chat_id,)).fetchone()
     assert int(row["night_id"]) == night_id

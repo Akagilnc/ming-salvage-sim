@@ -936,7 +936,6 @@ def _run_claude(
 def _run_cursor(
     prompt: str,
     model: Optional[str] = None,
-    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；cursor 无 effort 档
     *,
     materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
@@ -947,7 +946,6 @@ def _run_cursor(
 def _run_kimi(
     prompt: str,
     model: Optional[str] = None,
-    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；kimi -p 无 effort 档
     *,
     materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
@@ -1003,11 +1001,9 @@ def _dispatch_cli_runner(
         return _run_claude(prompt, model=model,
                            reasoning_strength=reasoning_strength, **extra)
     if runner == "cursor":
-        return _run_cursor(prompt, model=model,
-                           reasoning_strength=reasoning_strength, **extra)
+        return _run_cursor(prompt, model=model, **extra)
     if runner == "kimi":
-        return _run_kimi(prompt, model=model,
-                         reasoning_strength=reasoning_strength, **extra)
+        return _run_kimi(prompt, model=model, **extra)
     if runner == "grok":
         return _run_grok(prompt, model=model,
                          reasoning_strength=reasoning_strength, **extra)

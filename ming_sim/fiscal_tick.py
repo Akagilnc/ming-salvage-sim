@@ -400,7 +400,7 @@ def settle_tick(
     # ── 守恒 oracle（4 类，独立重算，破即 raise）──
     _assert_conservation(
         st, p, actions, cash, claim, cash0, cash_in, cash_out, C0, claim0,
-        官民田, 隐田, 地0, 省内可支, fh, bf, g, zb, k, 正赋, r,
+        官民田, 隐田, 地0, 省内可支, fh, bf, g, zb,
     )
 
     new_st: Dict[str, float] = dict(cash)
@@ -419,7 +419,7 @@ def settle_tick(
 
 def _assert_conservation(
     st, p, actions, cash, claim, cash0, cash_in, cash_out, C0, claim0,
-    官民田, 隐田, 地0, 省内可支, fh, bf, g, zb, k, 正赋, r,
+    官民田, 隐田, 地0, 省内可支, fh, bf, g, zb,
 ) -> None:
     """4 类独立守恒 oracle：现金 / 债务 per-account / C 分账 per-account / 土地。
     每个都从 st+params+actions 独立重放（不读 settlement 中间量），破即 fail-loud raise。"""

@@ -168,7 +168,7 @@ def forecast_snapshot(
     dest_parent = Path(world_materials_root(db, state)).parent / "decree-forecast"
     prepared = prepare_world_materials(db, state, dest_root=dest_parent)
     try:
-        grounding, refs = _frozen_effect_refs(db, turn, payload)
+        grounding, refs = _frozen_effect_refs(db, turn)
         # 夜里拨银还没有案卷。目录与本旨身份用这道暂存自己的 decree_ref，
         # 不用 MAX(id)+1 猜号——两道同夜预推会猜到同一个未来号，落账时串路。
         # 猜号只留在判官候选的整数 id 上（批红契约要正整数），不进护送目录。
@@ -318,10 +318,10 @@ def _append_this_decree_escort_grounding(
 
 
 def _frozen_effect_refs(
-    db: Any, turn: int, payload: Dict[str, Any],
+    db: Any, turn: int,
 ) -> tuple[str, dict]:
     """#1840：转译输入与暂存落账共用这一份可见引用，不另建账。"""
-    refs = _visible_effect_refs(db, turn, payload)
+    refs = _visible_effect_refs(db, turn)
     return build_translation_target_grounding(db) + _effect_ref_grounding(refs), refs
 
 
@@ -374,7 +374,7 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
                 transport_policy=audience_transport_policy(),
             )
         else:
-            raw = decree.stub_promulgation_verdicts([candidate], session.state)
+            raw = decree.stub_promulgation_verdicts([candidate])
         verdicts = decree.validate_promulgation_verdicts(
             raw, [candidate], session.db, prepared_context=snapshot["context"],
         )

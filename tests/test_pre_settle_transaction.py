@@ -351,7 +351,7 @@ def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
     monkeypatch.setattr(type(db), "save_resolve_context", _boom)
 
     with pytest.raises(RuntimeError):
-        decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
+        decree_mod.resolve_directives(state, db, None, None, "减赋诏",
                                       content=content)
 
     monkeypatch.undo()

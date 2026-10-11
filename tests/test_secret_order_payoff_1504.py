@@ -139,7 +139,7 @@ def _run_supply_4a(db, state, selections):
                     "progress_band": "持平",
                     "memorial_text": "据实以奏",
                 }
-                for row in db.list_monthly_dossier_progress_nudges(turn)
+                for row in db.list_monthly_dossier_progress_nudges()
             ],
             "covert_exec_selections": list(selections),
         },
@@ -660,7 +660,7 @@ def test_submit_unlimited_keeps_frozen_target(game):
     pending = settle_due_secret_orders(db, state, commit=True)
     assert all(int(row.get("order_id") or 0) != oid for row in pending)
 
-    ok = db.submit_secret_order_for_review(oid, "臣已办结", state.year, state.period)
+    ok = db.submit_secret_order_for_review(oid, "臣已办结")
     assert ok is True
     live = db.get_secret_order(oid)
     assert int(live["due_turn"]) == int(state.turn)
@@ -718,7 +718,7 @@ def test_unlimited_investigation_due_now_reads_real_acquisitions(game, due_actio
 
     if due_action == "submit":
         assert db.submit_secret_order_for_review(
-            oid, "臣已办结", state.year, state.period,
+            oid, "臣已办结",
         ) is True
     else:
         db.rush_secret_order(oid, state, deadline_months=0, reason="即核")
@@ -2713,7 +2713,7 @@ def test_settle_due_close_follows_surviving_memorial_and_actual(game):
     oid = _issue(db, state, name, "空转密查", "查无实据之案", months=1, target=1)
     dossier = db.get_dossier_for_secret_order(oid)
     did = int(dossier["id"])
-    db.update_secret_order_progress(oid, "承办人已报进展时间线", year=state.year, period=state.period)
+    db.update_secret_order_progress(oid, "承办人已报进展时间线")
     assert str(db.get_secret_order(oid)["result"] or "") == ""
     db.record_dossier_progress(
         did, state.turn, "办成", "臣已查明全部", is_terminal=False,

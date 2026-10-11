@@ -575,7 +575,7 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
     ).fetchone()["id"])
     if entry == "confirm":
         # #1769：confirm 只翻 draft；executor 投影落 ensure 批缝
-        db.confirm_directive(directive_id, state)
+        db.confirm_directive(directive_id)
         assert db.ensure_dossiers_for_draft_directives(state) == []
 
     dossier = db.get_dossier_for_directive(directive_id)
@@ -1073,7 +1073,7 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
     assert dossier["status"] == "promulgated"
 
     db.update_secret_order_progress(
-        order_id, "已开始核账", state.year, state.period,
+        order_id, "已开始核账",
     )
     assert db.get_dossier_for_secret_order(order_id)["status"] == "executing"
     reopened = GameDB(db.path, content=content)
@@ -1101,7 +1101,7 @@ def test_secret_order_progress_undo_restores_order_and_dossier_axes(game):
     )
     before = db.capture_chat_rollback_snapshot()
     db.update_secret_order_progress(
-        order_id, "已开始核账", state.year, state.period,
+        order_id, "已开始核账",
     )
     db.record_chat_turn_rollback_diffs(
         chat_turn_id, before, db.capture_chat_rollback_snapshot(),
@@ -1153,7 +1153,7 @@ def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
     with pytest.raises(RuntimeError):
         with atomic(db):
             db.update_secret_order_sim_note(
-                order_id, "已惊动仓场", state.year, state.period,
+                order_id, "已惊动仓场",
             )
             raise RuntimeError("rollback")
 

@@ -574,7 +574,7 @@ def _office_rank_multiplier(office: str, already_normalized: bool = False) -> fl
 
     text = office or ""
     normalized = text if already_normalized else normalize_office(text)
-    return office_leverage_multiplier(normalized, already_normalized=True)
+    return office_leverage_multiplier(normalized)
 
 def _member_office_weight(office_type: str, office: str) -> float:
     """单个在朝成员的官职权重 = 域权重 × 品级档 multiplier。
@@ -2825,7 +2825,7 @@ class GameDB:
         for rid, level in self._CITY_LEVEL_TIERS.items():
             self.conn.execute("UPDATE regions SET city_level=? WHERE id=?", (int(level), rid))
 
-    def apply_region_cannon(self, state: "GameState", region_id: str, delta: int) -> int:
+    def apply_region_cannon(self, region_id: str, delta: int) -> int:
         """改某地城防大炮门数(城头红夷炮)。上限 = city_level×8；clamp [0, cap]。返回新值。
         全局严格：引用未入库地区抛错，不静默。"""
         row = self.conn.execute(
@@ -5994,7 +5994,7 @@ class GameDB:
                             changes.append({"region": row["name"], "field": field, **origin_error,
                                             "item": {"region_id": region_id, "field": field, "value": value}})
                             continue
-                    new_value = self.apply_region_cannon(state, region_id, cannon_delta)
+                    new_value = self.apply_region_cannon(region_id, cannon_delta)
                     actual_delta = new_value - old_value
                     if actual_delta == 0:
                         # 请求非 0 却被 clamp 成 no-op：不能静默 continue——邸报叙述了改炮、盘面无变化、
@@ -10105,13 +10105,12 @@ class GameDB:
             "fork": bool(fork),
         }
 
-    def list_monthly_dossier_progress_nudges(self, turn: int | None = None) -> List[Dict[str, object]]:
+    def list_monthly_dossier_progress_nudges(self) -> List[Dict[str, object]]:
         """#1504 / 0058：列出在办且关联密令 active 的案卷月报候选。
 
         在办状态为 promulgated/executing；不以 deadline/tag/发令月收缩候选，
         缺项由 record 侧完整覆盖失败。
         """
-        _ = turn  # 签名保留；0058 候选不按结算回合收缩
         rows = self.conn.execute(
             """
             SELECT d.*, s.title AS secret_title, s.content AS secret_content,
@@ -10141,12 +10140,12 @@ class GameDB:
         return out
 
     def _monthly_dossier_report_supply(
-        self, turn: int, generated: object,
+        self, generated: object,
     ) -> Optional[Dict[int, Dict[str, object]]]:
         """校验本月密奏覆盖。无合资格案卷且产物为空时返回 None；不写库。"""
         candidates = {
             int(item["dossier_id"]): item
-            for item in self.list_monthly_dossier_progress_nudges(int(turn))
+            for item in self.list_monthly_dossier_progress_nudges()
         }
         if not candidates:
             if generated is None or generated == []:
@@ -10181,16 +10180,16 @@ class GameDB:
         return supplied
 
     def validate_monthly_dossier_progress(
-        self, turn: int, generated: object = None,
+        self, generated: object = None,
     ) -> None:
         """只校验新产物覆盖，不写报告。已提交的合法报告不因重试再落一遍。"""
-        self._monthly_dossier_report_supply(int(turn), generated)
+        self._monthly_dossier_report_supply(generated)
 
     def record_monthly_dossier_progress(
         self, turn: int, generated: object = None,
     ) -> List[Dict[str, object]]:
         """Persist one valid extractor-authored brief for every eligible dossier."""
-        supplied = self._monthly_dossier_report_supply(int(turn), generated)
+        supplied = self._monthly_dossier_report_supply(generated)
         if not supplied:
             return []
 
@@ -12108,7 +12107,6 @@ class GameDB:
                     continue
                 key = self._office_archive_key(
                     lead["office"], lead["office_type"],
-                    location=lead["location"] if "location" in lead.keys() else "",
                     character_name=lead_name,
                 )
                 if key:
@@ -12383,8 +12381,7 @@ class GameDB:
 
 
     def append_decree_dossier_participants(
-        self, dossier_id: int, participants: Iterable[object], *,
-        state: Optional[GameState] = None, commit: bool = True,
+        self, dossier_id: int, participants: Iterable[object], *, commit: bool = True,
     ) -> List[Dict[str, object]]:
         """Append ADR 0053 roster entries without replacing durable members.
 
@@ -12462,7 +12459,6 @@ class GameDB:
                         continue
                     key = self._office_archive_key(
                         lead["office"], lead["office_type"],
-                        location=lead["location"] if "location" in lead.keys() else "",
                         character_name=lead_name,
                     )
                     if key:
@@ -12619,7 +12615,6 @@ class GameDB:
         office: object,
         office_type: object,
         *,
-        location: object = "",
         region_id: object = "",
         character_name: object = "",
     ) -> Dict[str, object]:
@@ -12629,10 +12624,8 @@ class GameDB:
         Local jurisdiction binds to one appointment/seat identity: prefer the
         caller's typed ``region_id``, else the holder's ``character_offices.region_id``.
         Never derive from Character.location, free-text titles, or office_slots
-        (same bare 巡抚 in two provinces must not collide). ``location`` remains
-        accepted for call-site stability and is ignored.
+        (same bare 巡抚 in two provinces must not collide).
         """
-        del location  # physical presence ≠ posting jurisdiction
         title = normalize_office(str(office or ""))
         kind = str(office_type or "").strip()
 
@@ -12657,7 +12650,6 @@ class GameDB:
         office: object,
         office_type: object,
         *,
-        location: object = "",
         region_id: object = "",
         character_name: object = "",
     ) -> str:
@@ -12665,7 +12657,6 @@ class GameDB:
         projected = self.project_office_identity(
             office,
             office_type,
-            location=location,
             region_id=region_id,
             character_name=character_name,
         )
@@ -12696,7 +12687,6 @@ class GameDB:
         reader_archive_key = (
             self._office_archive_key(
                 office_row["office"], office_row["office_type"],
-                location=office_row["location"] if "location" in office_row.keys() else "",
                 character_name=name,
             )
             if office_row is not None else ""
@@ -13567,7 +13557,7 @@ class GameDB:
             elif row["action_type"] == "revoke_authority":
                 # #523 / #611：收权只接 authority_changes 收回槽；判后物化。
                 self._apply_revoke_authority_verdict_effect(
-                    state, row, payload, dossier_id,
+                    state, payload, dossier_id,
                 )
             elif row["action_type"] == "revoke_decree":
                 # #523：撤回成命=breach 目标 + 停 initiative；捆带授权走 authority_changes。
@@ -14141,7 +14131,7 @@ class GameDB:
         return True
 
     def _apply_revoke_authority_verdict_effect(
-        self, state, row, payload, dossier_id,
+        self, state, payload, dossier_id,
     ) -> None:
         """#523：收权案卷顺颁后走 #611 authority_changes 收回槽。
 
@@ -14333,7 +14323,7 @@ class GameDB:
 
     @staticmethod
     def _initiative_title_and_body(
-        payload: Dict[str, object], row,
+        payload: Dict[str, object],
     ) -> tuple[str, str]:
         """#1565/0142：initiative 题名/正文单一规则（assignment/referral 共用）。
 
@@ -14343,7 +14333,6 @@ class GameDB:
         不得回填题名，不得以题名/target_id 冒充正文。
         真缺锚时 title 为空串——caller 复用既有 execution failed 接缝，保留案卷与正文。
         """
-        del row  # 读侧不再回落旧档 decree_text
         title = str(payload.get("title") or "")
         if not title:
             title = str(payload.get("target_id") or "").strip()
@@ -14394,7 +14383,7 @@ class GameDB:
             )
             return False
 
-        title, stage_text = self._initiative_title_and_body(payload, row)
+        title, stage_text = self._initiative_title_and_body(payload)
         if not title:
             # 保留案卷与正文；缺结构化锚走既有 execution failed（可见可恢复）。
             self.transition_decree_dossier(dossier_id, "executing", commit=False)
@@ -14464,7 +14453,7 @@ class GameDB:
         if not owner:
             raise ValueError("交办案卷缺少主办")
 
-        title, stage_text = self._initiative_title_and_body(payload, row)
+        title, stage_text = self._initiative_title_and_body(payload)
         if not title:
             # 保留案卷与正文；缺结构化锚走既有 execution failed（可见可恢复）。
             self.transition_decree_dossier(dossier_id, "executing", commit=False)
@@ -15322,8 +15311,7 @@ class GameDB:
             self.conn.execute(f"SAVEPOINT {savepoint}")
             try:
                 ok = self._apply_pending_action(
-                    state, pa, payload, content=content,
-                    rejection_collector=rejection_collector)
+                    state, pa, payload, content=content)
                 if ok:
                     self.conn.execute(
                         "UPDATE pending_actions SET status='committed' WHERE id=?",
@@ -15812,7 +15800,7 @@ class GameDB:
 
     def _apply_pending_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
-        *, content=None, rejection_collector=None,
+        *, content=None,
     ) -> bool:
         """把单条暂存动作落到真实表。
 
@@ -15948,7 +15936,7 @@ class GameDB:
                     payload.get("claim", ""), field="claim", required=False,
                 )
                 ok = self.submit_secret_order_for_review(
-                    int(oid), claim, state.year, state.period)
+                    int(oid), claim)
                 if ok and origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
@@ -15964,7 +15952,7 @@ class GameDB:
                     payload.get("note", ""), field="note", required=False,
                 )
                 ok = self.update_secret_order_progress(
-                    int(oid), note, state.year, state.period)
+                    int(oid), note)
                 if ok and origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
@@ -16197,9 +16185,7 @@ class GameDB:
                 name=name, office="待选", office_type="未仕",
                 aliases=[], personal_skills=[], power_id="ming",
                 status="offstage",
-                **canonical_new_appointment_person_fields(
-                    content, payload.get("faction"),
-                ),
+                **canonical_new_appointment_person_fields(payload.get("faction")),
             )
             content.characters[name] = character
             self.add_character(
@@ -16980,7 +16966,7 @@ class GameDB:
             row["dossier_payload_json"], directive_id=int(row["id"]),
         )
 
-    def confirm_directive(self, directive_id: int, state: GameState) -> None:
+    def confirm_directive(self, directive_id: int) -> None:
         """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。
 
         #1769：只翻状态。成案/补交/耗尽唯一批缝 =
@@ -19335,14 +19321,13 @@ class GameDB:
         )
         return True
 
-    def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
+    def submit_secret_order_for_review(self, order_id: int, claim: str) -> bool:
         """#1504：大臣自认办结 → 缩 due_turn 至当月，月末按实况对账。
 
         claim 是自由文本，原样进入奏报轨的核议 origin，不改实况、不改御限以外的世界。
-        空陈词只缩短到期回合。年月参数不参与条目身份。
+        空陈词只缩短到期回合。
         坏类型 schema 故障，不洗成空陈词（#1897 J820-E1）。
         """
-        _ = (year, period)
         row = self.conn.execute(
             "SELECT status, turn_issued FROM secret_orders WHERE id = ?", (int(order_id),)
         ).fetchone()
@@ -19372,8 +19357,6 @@ class GameDB:
         self,
         order_id: int,
         progress_note: str,
-        year: int = 0,
-        period: int = 0,
         *,
         commit: bool = True,
     ) -> bool:
@@ -19382,7 +19365,6 @@ class GameDB:
         同月再报替换同一条月度奏报。正文里的日期不另立月份。
         坏类型 schema 故障，不洗成空串领域拒收（#1897 J820-E1）。
         """
-        _ = (year, period)
         note = _require_durable_prose(progress_note, field="note", required=False)
         if commit:
             with atomic(self):
@@ -19406,17 +19388,14 @@ class GameDB:
         self,
         order_id: int,
         sim_note: str,
-        year: int = 0,
-        period: int = 0,
         *,
         commit: bool = True,
     ) -> None:
         """推演写本月推进实况。原文进入实况轨当月 note，不覆盖单位。
 
-        月份身份是当前 game_state.turn。年月参数不参与存储，正文日期不另立月份。
+        月份身份是当前 game_state.turn。正文日期不另立月份。
         不进奏报轨。
         """
-        _ = (year, period)
         if commit:
             with atomic(self):
                 self._update_secret_order_sim_note_in_transaction(order_id, sim_note)

@@ -79,9 +79,9 @@ def test_minister_chat_idle_death_time_follows_settings_threshold(
         return scripted_popen(cmd, **kwargs)
 
     monkeypatch.setattr(cb.subprocess, "Popen", _recording_popen)
-    web_game, minister = _cli_web_game(web_game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events

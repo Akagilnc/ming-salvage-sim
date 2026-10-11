@@ -165,7 +165,7 @@ def _handle_court_command(
     return None
 
 
-def _confirm_pending_directive(session: GameSession, draft, minister_name: str) -> None:
+def _confirm_pending_directive(draft, minister_name: str) -> None:
     """Legacy CLI display only; end-turn default approval owns submission."""
     print(f"\n{minister_name}拟旨如下：\n")
     print("─" * 50)
@@ -214,7 +214,6 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     try:
         result = session.scene_chat(
             question, chat_turn_id=chat_turn_id,
-            minister_name=minister_name,
         )
         answer = str(getattr(result, "answer", "") or "")
         db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
@@ -351,7 +350,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             # 殿上不派旧判官/尾随抽取——转译一次承接。
             result = session.scene_chat(
                 question, chat_turn_id=chat_turn_id,
-                minister_name="殿上",
             )
             if persistent_chat:
                 session.db.persist_minister_reply(
@@ -381,7 +379,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         print(wrap(result.answer))
         print()
         if result.proposed_directive is not None:
-            _confirm_pending_directive(session, result.proposed_directive, character.name)
+            _confirm_pending_directive(result.proposed_directive, character.name)
         if result.court_action == "dismiss":
             # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
             return "dismiss"

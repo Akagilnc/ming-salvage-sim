@@ -105,7 +105,7 @@ def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, m
     )
     mid = db.append_chat_message(minister_name, state.turn, "user", words)
     db.update_chat_turn_messages(ctid, user_message_id=mid)
-    reply = sess.scene_chat(words, chat_turn_id=ctid, minister_name=minister_name)
+    reply = sess.scene_chat(words, chat_turn_id=ctid)
     future = persist_and_schedule_scene(sess, db, reply, speaker=minister_name)
     assert future is not None
     return future.result()
@@ -152,7 +152,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     other_did, _ = _bound_exposure(db, state)
     from ming_sim.due_review import list_due_review_scenes
     exposed = {
-        int(str(scene["dossier_id"])) for scene in list_due_review_scenes(db, state)
+        int(str(scene["dossier_id"])) for scene in list_due_review_scenes(db)
         if scene.get("kind") == "covert_levy_exposure"
     }
     assert exposed == {did, other_did}
@@ -213,7 +213,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert int(state.turn) > before
     assert db.get_fiscal_config().get("禁后摊派_base") is None
     from ming_sim.due_review import list_due_review_scenes
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert any(s["decision"] == "禁摊派" and s["shortfall_reopened"] for s in scenes)
 
 

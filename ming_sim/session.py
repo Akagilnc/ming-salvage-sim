@@ -382,15 +382,12 @@ def _appointment_intent_is_current_office_noop(
 
 
 def canonical_new_appointment_person_fields(
-    content: GameContent,
     faction: object,
 ) -> Dict[str, object]:
     """Return the single canonical identity defaults for a newly appointed person.
 
     #1847 N10 同形：未知派系不得静默改写为「中立」；空缺才默认中立（只判空）。
-    ``content`` 保留调用方签名；不再经 content.factions 做词义归一。
     """
-    _ = content
     normalized_faction = str(faction or "").strip() or "中立"
     return {
         "faction": normalized_faction,
@@ -454,9 +451,7 @@ def apply_appointment(
             )
             displaced = replaces
 
-    person_fields = canonical_new_appointment_person_fields(
-        content, data.get("faction"),
-    )
+    person_fields = canonical_new_appointment_person_fields(data.get("faction"))
     character = Character(
         name=name,
         office=office,
@@ -1041,7 +1036,6 @@ class GameSession:
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,
         stream_emit: Any = None,
-        minister_name: str = "",
         on_protagonist_changed: Any = None,
     ) -> ChatTurnResult:
         """#1836 T1 / #1837 C1a / #1842 T2：一夜一场入口——一个场景 LLM 演整场。
@@ -1126,7 +1120,7 @@ class GameSession:
                     # ——与入殿账 origin_chat_turn_id==0 框架账不随轮撤同语义。
                     from ming_sim.audience_night import set_night_protagonist
                     set_night_protagonist(
-                        self.db, night_id, target.name, reason="xuan",
+                        self.db, night_id, target.name,
                     )
                     xuan_ctid = int(chat_turn_id or 0)
                     if xuan_ctid > 0:
@@ -1449,7 +1443,7 @@ class GameSession:
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
             raise ValueError("无草案不能拟诏（未表态拟旨须先准驳，或于颁诏时默认同意）。")
-        decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives, db=self.db)
+        decree = write_decree_with_agno(self.llm_config, self.state, directives, db=self.db)
         self.last_decree = decree
         # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
         # 草案），凭此判定 last_decree 已陈旧、强制重生成纳入新 draft，不许把新 draft 标记
@@ -1653,10 +1647,8 @@ class GameSession:
             # 屏障等完票后复查持久状态；非耗尽异常留下 pending 时不能过月。
             from ming_sim.mechanical_tail import _pending_mechanical_tails
             from ming_sim.mechanical_tail import failed_mechanical_tail
-            failure = failed_mechanical_tail(self.db, self.state)
-            pending_tails = _pending_mechanical_tails(
-                self.db, current_turn=int(self.state.turn),
-            )
+            failure = failed_mechanical_tail(self.db)
+            pending_tails = _pending_mechanical_tails(self.db)
             if failure or pending_tails:
                 exc = RuntimeError(
                     f"机械尾未终结，不能过月：{[turn for turn, _ in pending_tails]}"
@@ -1704,7 +1696,6 @@ class GameSession:
             commit_late_night_approved(
                 self.db, self.state,
                 content=getattr(self, "content", None),
-                llm_config=getattr(self, "llm_config", None),
                 write_gate=catch_gate,
             )
             if after_drain is not None:
@@ -1790,7 +1781,7 @@ class GameSession:
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
         # pre_settle owning transaction 与财政等副作用一起物化。
         for pending in self.db.list_directives(self.state, statuses=("pending",)):
-            self.db.confirm_directive(int(pending["id"]), self.state)
+            self.db.confirm_directive(int(pending["id"]))
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
         # #1769：产物错 → 告诉 LLM 失败事实与原产物后重交；耗尽保持 draft、月照过
@@ -1866,7 +1857,7 @@ class GameSession:
         decree_text = decree or self.last_decree
         if not decree_text and directives:
             decree_text = write_decree_with_agno(
-                self.llm_config, self.agno_db, self.state, directives, db=self.db
+                self.llm_config, self.state, directives, db=self.db
             )
         self.last_decree = decree_text
         # 恢复 fallthrough 把存档真源穿透传入（#146 cmr r2）；正常颁诏 recovered_source is None
@@ -1883,9 +1874,7 @@ class GameSession:
         ):
             resolve_kwargs["source"] = Provenance.system_simulation
         result = resolve_directives(
-            self.state, self.db, self.agno_db, self.llm_config,
-            directives, decree_text, deaths_this_turn=self.deaths_this_turn,
-            debuts_this_turn=self.debuts_this_turn,
+            self.state, self.db, self.agno_db, self.llm_config, decree_text,
             content=self.content,
             cheat_directive=cheat_directive,
             **resolve_kwargs,
@@ -1974,7 +1963,7 @@ class GameSession:
         )
 
     def victory(self) -> Dict[str, object]:
-        return victory_status(self.db, self.state)
+        return victory_status(self.db)
 
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。

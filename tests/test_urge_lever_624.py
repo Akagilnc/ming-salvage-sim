@@ -285,7 +285,7 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     scene = project_due_review_scene(db, staged_todo)
     assert "payload_json" not in scene
     # list_due_review_scenes also omits the structured payload.
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert all("payload_json" not in item for item in scenes)
 
 
@@ -395,7 +395,7 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
     )
 
     # 1) 不投影为 due-review 场面
-    assert list_due_review_scenes(db, state) == []
+    assert list_due_review_scenes(db) == []
 
     # 2) 不占接管窗
     owned = dossiers_with_pending_due_review(db, state)
@@ -517,7 +517,7 @@ def test_urge_audience_project_and_consume_path(game):
     for s in scenes:
         assert "payload_json" not in s
     # 不进 due-review、不占接管窗
-    assert list_due_review_scenes(db, state) == []
+    assert list_due_review_scenes(db) == []
     assert dossier_id not in dossiers_with_pending_due_review(db, state)
 
     # 消费路径：created_turn < 下回合 → consumed

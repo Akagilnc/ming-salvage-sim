@@ -138,7 +138,7 @@ def test_funding_cutoff_writes_plea_no_damage_same_turn(game):
     assert int(state.metrics.get("皇威", 0) or 0) == auth_before
 
     # 次回合场面
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     plea_scenes = [s for s in scenes if s.get("entry_kind") == ENTRY_KIND_BREACH_PLEA]
     assert plea_scenes
     assert plea_scenes[0]["kind"] == "breach_plea"
@@ -224,7 +224,7 @@ def test_policy_reversal_revoke_takes_effect_same_month(game):
     # 不写挽留 todo：没有「等下一次召对坚持撤」这道前置
     assert _pending_pleas(db) == []
     assert not any(
-        s.get("kind") == "breach_plea" for s in list_due_review_scenes(db, state)
+        s.get("kind") == "breach_plea" for s in list_due_review_scenes(db)
     )
 
 
@@ -778,7 +778,7 @@ def test_silence_keeps_pending_across_settle(game, monkeypatch):
     # 再过月一拍仍 pending 可顶出
     _settle_empty_month(db, state, content, monkeypatch)
     assert _pending_pleas(db)
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert any(s.get("kind") == "breach_plea" for s in scenes)
 
 
@@ -904,13 +904,13 @@ def test_breach_plea_survives_restore(game):
     db.conn.close()
     from ming_sim.db import GameDB
     db2 = GameDB(path)
-    state2 = db2.load_state()
+    db2.load_state()
     pleas = [
         t for t in db2.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
     ]
     assert len(pleas) == 1
-    scenes = list_due_review_scenes(db2, state2)
+    scenes = list_due_review_scenes(db2)
     assert any(s.get("kind") == "breach_plea" for s in scenes)
     db2.close()
 

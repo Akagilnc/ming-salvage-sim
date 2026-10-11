@@ -329,12 +329,12 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     retries = game.pending_translation_retries(chat_turn_id=chat_turn_id)
     assert [r["chat_turn_id"] for r in retries] == [chat_turn_id]
     assert retries[0]["error_pack_path"]
-    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection("殿上")] == [
+    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection()] == [
         ("user", chat_turn_id), ("minister", chat_turn_id)]
     stub_audience_translate(monkeypatch)
     game.retry_pending_translation(chat_turn_id)
     assert game.pending_translation_retries(chat_turn_id=chat_turn_id) == []
-    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection("殿上")] == [
+    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection()] == [
         ("user", chat_turn_id), ("minister", chat_turn_id)]
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

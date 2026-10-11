@@ -51,7 +51,7 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game, monkeypatc
     reports = [
         {"dossier_id": int(item["dossier_id"]), "progress_band": "持平",
          "memorial_text": "本月密奏已达"}
-        for item in db.list_monthly_dossier_progress_nudges(state.turn)
+        for item in db.list_monthly_dossier_progress_nudges()
     ]
     from ming_sim.models import LLMConfig
 

@@ -421,9 +421,7 @@ def write_breach_plea_todo(
     return int(todo_id or 0)
 
 
-def project_breach_plea_scene(
-    db: Any, todo: Dict[str, object],
-) -> Dict[str, object]:
+def project_breach_plea_scene(todo: Dict[str, object]) -> Dict[str, object]:
     meta = decode_plea_meta(todo.get("origin_context"))
     breach_kind = str(meta.get("breach_kind") or "")
     label = BREACH_KIND_LABELS.get(breach_kind, str(todo.get("criterion_text") or "松手"))
@@ -787,7 +785,6 @@ def finalize_persist(
 
 def finalize_regret(
     db: Any,
-    state: Any,
     todo: Dict[str, object],
     *,
     commit: bool = False,
@@ -1353,7 +1350,7 @@ def resolve_breach_pleas_from_extraction(
         if decision == "persist":
             results.append(finalize_persist(db, state, todo, commit=False))
         elif decision == "regret":
-            results.append(finalize_regret(db, state, todo, commit=False))
+            results.append(finalize_regret(db, todo, commit=False))
 
     if commit and results:
         db.conn.commit()

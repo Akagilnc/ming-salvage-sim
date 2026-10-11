@@ -39,11 +39,10 @@ def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: 
 
 
 def run_world_segment_text(
-    db: Any, state: Any, llm_config: Any, agno_db: Any = None,
+    db: Any, state: Any, llm_config: Any,
     cheat_directive: str = "",
 ) -> str:
     """落账后的盘面只推演一次；缺模型时停在本段，不伪造已完成。"""
-    del agno_db
     if llm_config is None:
         from ming_sim.exceptions import LLMUnavailable
         raise LLMUnavailable("世界段缺少模型配置", stage="world_text")
@@ -420,13 +419,11 @@ def run_player_month_chain(
     llm_config: Any,
     *,
     decree_text: str = "",
-    before_turn: int = 0,
     content: Any = None,
     source: Provenance = Provenance.system_simulation,
     cheat_directive: str = "",
 ) -> Any:
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
-    del before_turn
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
     from ming_sim.mechanical_tail import ensure_mechanical_tails
 
@@ -888,7 +885,7 @@ def _run_world_segment(
     if not chain.get("world_text_ready"):
         def _push() -> str:
             return run_world_segment_text(
-                db, state, session.llm_config, session.agno_db,
+                db, state, session.llm_config,
                 cheat_directive=str(chain.get("cheat_directive") or ""),
             )
 
@@ -1119,7 +1116,7 @@ def build_secret_orders_supply_feed(
     from ming_sim.materials import _world_board_text, actual_progress_notes
 
     turn = int(state.turn)
-    candidates = db.list_monthly_dossier_progress_nudges(turn)
+    candidates = db.list_monthly_dossier_progress_nudges()
     eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
     for row in eligible:
         dossier_id = int(row.get("dossier_id") or 0)
@@ -1205,7 +1202,7 @@ def _step_4a_secret_order_supply(
 
     from ming_sim.covert_progress import _is_issuance_turn
 
-    candidates = db.list_monthly_dossier_progress_nudges(turn)
+    candidates = db.list_monthly_dossier_progress_nudges()
     active_orders = [
         o for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
@@ -1237,7 +1234,7 @@ def _step_4a_secret_order_supply(
     reports = product.get("dossier_progress_reports") or []
     if chain.get("secret_orders_reports_done"):
         try:
-            db.validate_monthly_dossier_progress(int(turn), reports)
+            db.validate_monthly_dossier_progress(reports)
         except ValueError as exc:
             chain["secret_orders_supply_invalid"] = True
             _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -1823,7 +1820,7 @@ def _advance_after_gazette(
                 declaration_outcome, chain.get("declaration_outcome"),
             )
             if outcome is None:
-                outcome = victory_status(db, state)
+                outcome = victory_status(db)
             if (
                 outcome.get("status") == ENDING_ONGOING
                 and state.turn >= TIMEOUT_TURN

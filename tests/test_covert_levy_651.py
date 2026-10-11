@@ -49,7 +49,7 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game):
     assert write_exposure_todos(db, state) == 1
     todo = db.list_next_audience_todos(status="pending")[0]
     assert audience_todo_lane(ENTRY_KIND) == "covert_levy"
-    scene = list_due_review_scenes(db, state)[0]
+    scene = list_due_review_scenes(db)[0]
     assert scene["kind"] == ENTRY_KIND
     assert scene["dossier_id"] == did and scene["executor_id"] == executor
     assert scene["channels"] == ["稽核"]
@@ -228,7 +228,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     assert active_prohibition_dossier(db, did)["id"] == prohibition_id
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert settle_exposure_from_canonical_actions(db, state, {}) == 0
-    scene = list_due_review_scenes(db, state)[0]
+    scene = list_due_review_scenes(db)[0]
     assert scene["decision"] == "禁摊派" and scene["shortfall_reopened"] is True
     assert scene["available_dispositions"] == []
     assert scene["army_pay_fact"]["arrears"] == 10.0

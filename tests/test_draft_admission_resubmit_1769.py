@@ -647,8 +647,7 @@ def test_exhaust_zero_dossier_system_simulation_no_decree(
     def spy_resolve(*args, **kwargs):
         resolve_calls.append({
             "source": kwargs.get("source"),
-            "decree_text": args[5] if len(args) > 5 else kwargs.get("decree_text"),
-            "directives_len": len(args[4]) if len(args) > 4 else len(kwargs.get("directives") or ()),
+            "decree_text": args[4] if len(args) > 4 else kwargs.get("decree_text"),
         })
         return real_resolve(*args, **kwargs)
 
@@ -665,7 +664,6 @@ def test_exhaust_zero_dossier_system_simulation_no_decree(
     call = resolve_calls[0]
     from ming_sim.applier import Provenance
     assert call["source"] == Provenance.system_simulation
-    assert call["directives_len"] == 0
     assert not (call["decree_text"] or "").strip()
     # #1769 真实能力：邸报写成即过月（上文 turn+1），且不得留下陈旧拟诏稿当本月已颁。
     assert not (game.session.last_decree or "").strip()

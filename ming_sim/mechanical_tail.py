@@ -78,7 +78,6 @@ def generate_ending_summary_for_tail(
     outcome: Dict[str, object],
     *,
     llm_config: Any = None,
-    agno_db: Any = None,
     save_fn: Any = None,
     gate_run: Any = None,
 ) -> str:
@@ -114,7 +113,7 @@ def generate_ending_summary_for_tail(
         return loaded
 
     reports = under(_load_gazettes)
-    ending_agent = create_ending_summary_agent(llm_config, agno_db)
+    ending_agent = create_ending_summary_agent(llm_config)
     payload = {
         "ending": {
             "status": outcome.get("status"),
@@ -162,7 +161,6 @@ def generate_ending_summary_for_tail(
 def _brew_fn_for_session(session: Any):
     """生产路径注入真实 LLM；缺配置如实失败，不给测试开空串分支。"""
     llm_config = getattr(session, "llm_config", None)
-    agno_db = getattr(session, "agno_db", None)
     if llm_config is None:
         from ming_sim.exceptions import LLMUnavailable
 
@@ -184,9 +182,9 @@ def _brew_fn_for_session(session: Any):
     def _brew(payload_json: str) -> str:
         payload = json.loads(payload_json)
         agent = (
-            create_faction_brew_agent(llm_config, agno_db)
+            create_faction_brew_agent(llm_config)
             if payload.get("view") == VIEW_FACTION_STANCE
-            else create_relation_brew_agent(llm_config, agno_db)
+            else create_relation_brew_agent(llm_config)
         )
         try:
             return run_agent_text(agent, payload_json, tag="relation-brew")
@@ -250,7 +248,6 @@ def _run_tail_body(
         summary = generate_ending_summary_for_tail(
             db, closed_state, ending_outcome,
             llm_config=getattr(session, "llm_config", None),
-            agno_db=getattr(session, "agno_db", None),
             gate_run=lambda fn: queue.run(ticket, fn),
         )
         if not summary:
@@ -366,7 +363,7 @@ def schedule_mechanical_tail_after_advance(
     )
 
 
-def _resolve_context_turns(db: Any, current_turn: int) -> list[int]:
+def _resolve_context_turns(db: Any) -> list[int]:
     """有月链记录的回合（现役 GameDB.conn）。"""
     rows = db.conn.execute(
         "SELECT turn FROM pending_resolve_context ORDER BY turn"
@@ -375,13 +372,13 @@ def _resolve_context_turns(db: Any, current_turn: int) -> list[int]:
 
 
 def _pending_mechanical_tails(
-    db: Any, *, current_turn: int,
+    db: Any,
 ) -> list[tuple[int, Dict[str, Any]]]:
     """Still-running tails; code failures require an explicit retry."""
     from ming_sim import month_chain
 
     pending: list[tuple[int, Dict[str, Any]]] = []
-    for turn in _resolve_context_turns(db, current_turn):
+    for turn in _resolve_context_turns(db):
         chain = month_chain._load_chain(db, turn)
         tail = GameDB.optional_object(
             chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
@@ -391,11 +388,11 @@ def _pending_mechanical_tails(
     return pending
 
 
-def failed_mechanical_tail(db: Any, state: Any) -> Optional[tuple[int, Dict[str, Any]]]:
+def failed_mechanical_tail(db: Any) -> Optional[tuple[int, Dict[str, Any]]]:
     """Persisted failure, visible even when no next month exists."""
     from ming_sim import month_chain
 
-    for turn in _resolve_context_turns(db, int(getattr(state, "turn", 0) or 0)):
+    for turn in _resolve_context_turns(db):
         tail = GameDB.optional_object(
             month_chain._load_chain(db, turn).get("mechanical_tail"),
             surface="month_chain.mechanical_tail",
@@ -406,7 +403,7 @@ def failed_mechanical_tail(db: Any, state: Any) -> Optional[tuple[int, Dict[str,
 
 
 def retry_failed_mechanical_tail(session: Any) -> bool:
-    failure = failed_mechanical_tail(session.db, session.state)
+    failure = failed_mechanical_tail(session.db)
     if failure is None:
         return False
     turn, tail = failure
@@ -432,8 +429,7 @@ def ending_summary_pending(db: Any, state: Any) -> bool:
     """结局总评尾尚未终结。前台不等；完成前呈现层据此重取。"""
     if not bool(getattr(state, "ended", False)):
         return False
-    current = int(getattr(state, "turn", 0) or 0)
-    for _turn, tail in _pending_mechanical_tails(db, current_turn=current):
+    for _turn, tail in _pending_mechanical_tails(db):
         outcome = GameDB.optional_object(
             tail.get("ending_outcome"),
             surface="month_chain.mechanical_tail.ending_outcome",
@@ -447,8 +443,7 @@ def ensure_mechanical_tails(session: Any) -> None:
     """重开或下次过月前：按 DB pending 续接未完尾（claim_if_absent 防重复执行）。"""
     db = session.db
     get_session_write_queue(session)
-    current = int(getattr(session.state, "turn", 0) or 0)
-    pending_turns = _pending_mechanical_tails(db, current_turn=current)
+    pending_turns = _pending_mechanical_tails(db)
 
     source = Provenance.system_simulation
     for turn, tail in pending_turns:

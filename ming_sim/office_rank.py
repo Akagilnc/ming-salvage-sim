@@ -99,13 +99,12 @@ def office_rank_band(office: object, office_type: object = "") -> int:
     return int((table.get("fallback") or {}).get("rank_band", 9))
 
 
-def office_leverage_multiplier(office: object, already_normalized: bool = False) -> float:
+def office_leverage_multiplier(office: object) -> float:
     """Map an office title to the faction-leverage rank multiplier via offices.json.
 
     Comma-separated concurrent titles take the highest recognized multiplier. Titles with
     no leverage-bearing stem keep the historical conservative default 1.0.
     """
-    del already_normalized  # retained for the historical caller contract
     parts = concurrent_office_titles(office)
     if not parts:
         return DEFAULT_LEVERAGE_MULTIPLIER

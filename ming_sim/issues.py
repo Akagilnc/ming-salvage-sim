@@ -3931,7 +3931,7 @@ def preflight_declared_event_effects(
 
 
 def petition_outcome_is_admissible(
-    state: GameState, db: GameDB, event_id: str, content: Optional[GameContent],
+    db: GameDB, event_id: str, content: Optional[GameContent],
 ) -> bool:
     """该事件是否可由本回合的亲裁答复置定结局（#1892 亲裁语义落账）。
 
@@ -3971,7 +3971,7 @@ def _preflight_declared_event_groups(
         # （三饷的征收由饷率通道按终局标签核算），只要求标签落在事件自声明的封闭集内，
         # 且事件账里已有请旨答复、终态仍空。归一失败响亮失败（ADR 0014），不静默丢弃亲裁。
         if getattr(event, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
-            if not petition_outcome_is_admissible(state, db, event_id, content):
+            if not petition_outcome_is_admissible(db, event_id, content):
                 rejected[event_id] = f"三饷事项当前不能由亲裁置定结局：{event_id}"
                 continue
             outcome: Dict[str, object] = {}
@@ -6325,7 +6325,6 @@ def _apply_person_changes(
 
 def _apply_dossier_participant_items(
     db: GameDB,
-    state: GameState,
     extracted: Dict[str, object],
     *,
     items_key: str,
@@ -6385,7 +6384,7 @@ def _apply_dossier_participant_items(
             continue
         try:
             added = db.append_decree_dossier_participants(
-                dossier_id, [addition], state=state, commit=False,
+                dossier_id, [addition], commit=False,
             )
             if not added:
                 # Exact durable duplicate is the only no-write success case.
@@ -6971,8 +6970,6 @@ def apply_score_extraction(
             dossier_ids_at_input=dossier_ids_at_input,
             secret_dossier_ids_at_input=secret_dossier_ids_at_input,
             authorized_open_affairs=authorized_open_affairs,
-            frozen_open_affairs=frozen_open_affairs,
-            caller_transaction=caller_transaction,
             commit_now=commit_now,
             relation_pre_roster=_relation_pre_roster,
             validate_rejections=validate_rejections,
@@ -7078,8 +7075,6 @@ def _apply_score_extraction_body(
     dossier_ids_at_input: Optional[set[int]],
     secret_dossier_ids_at_input: Optional[set[int]],
     authorized_open_affairs: set[int],
-    frozen_open_affairs: set[int],
-    caller_transaction: bool,
     commit_now: bool,
     relation_pre_roster: set[str],
     validate_rejections: list,
@@ -7205,14 +7200,14 @@ def _apply_score_extraction_body(
     # Only the caller's frozen simulator input grants roster-write authority.
     # Public/secret field names and authority sets stay separate (no union).
     dossier_participant_results = _apply_dossier_participant_items(
-        db, state, extracted,
+        db, extracted,
         items_key="dossier_participants",
         authority_set=dossier_ids_at_input if isinstance(dossier_ids_at_input, set) else set(),
         not_in_batch_msg="案卷不在本批可见输入",
     )
     # #1252: independent secret-dossier roster field (field name = provenance).
     secret_dossier_participant_results = _apply_dossier_participant_items(
-        db, state, extracted,
+        db, extracted,
         items_key="secret_dossier_participants",
         authority_set=(
             secret_dossier_ids_at_input
@@ -8427,8 +8422,6 @@ def _apply_score_extraction_body(
         db.update_secret_order_sim_note(
             real_id,
             sim_note,
-            year=state.year,
-            period=state.period,
             commit=commit_now,
         )
         if disclosed and not defer_disclosure:
@@ -8574,7 +8567,7 @@ def _apply_score_extraction_body(
         "applied_person_changes": applied_person_changes,
         "secret_order_updates": applied_secret_orders,
     }
-    victory = _resolve_victory(db, state, extracted)
+    victory = _resolve_victory(db, extracted)
     if str(victory.get("status") or "") != "ongoing":
         report["victory_status"] = victory
     return report
@@ -8604,13 +8597,13 @@ def _declared_emperor_ending(fate: object) -> Optional[Dict[str, object]]:
     return {"status": token, "summary": ""}
 
 
-def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:
+def _resolve_victory(db: GameDB, extracted: Dict[str, object]) -> Dict[str, object]:
     """结局判定：模型声明的皇帝终态优先于数值型（京畿失守）。
     20 年到期（timeout）在 decree 结局收口判，不在此。"""
     declared = _declared_emperor_ending(extracted.get("emperor_fate"))
     if declared is not None:
         return declared
-    return victory_status(db, state)
+    return victory_status(db)
 
 
 # ── 开局负面帝国修正：不立 issue、不进推演，靠 clear_gate 程序判定消除 ──────────────

@@ -75,7 +75,7 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     db.conn.commit()
 
 
-def _make_transformed_no_fork(db, state, dossier_id: int):
+def _make_transformed_no_fork(db, dossier_id: int):
     """变形但无奏报分叉（无私货/无旨外）——fork 读端为假。"""
     db.conn.execute(
         "UPDATE decree_dossiers SET execution_outcome='transformed' WHERE id=?",
@@ -169,7 +169,7 @@ def test_ac3_veracity_true_and_false_from_fork(game):
     assert db.read_dossier_fork_state(did_true)["fork"] is True
 
     did_false = _subject_dossier(db, state, owner=subject_name, token="vf")
-    _make_transformed_no_fork(db, state, did_false)
+    _make_transformed_no_fork(db, did_false)
     assert db.read_dossier_fork_state(did_false)["fork"] is False
 
     hits = db.accept_faction_denunciations(

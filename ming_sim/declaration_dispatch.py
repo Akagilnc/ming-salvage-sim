@@ -327,7 +327,7 @@ def _dispatch_declaration_sections(
         ),
         travel_tones=_dispatch_travel_tones(
             db, declaration.get("travel_tones"), night_id=night_id, source=source,
-            chat_turn_id=origin_ctid, source_turn_error=source_turn_err, state=state,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err,
         ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
@@ -1865,7 +1865,7 @@ def _dispatch_commissions(
                     SimpleNamespace(db=db), hits[0],
                     extracted_mode=appointment_fields.get("mode"),
                     region_id=str(appointment_fields.get("region_id") or ""),
-                    minister_name=minister_name, turn=int(state.turn),
+                    minister_name=minister_name,
                     annotate=True,
                     recommendation_fields={
                         key: payload[key]
@@ -2199,7 +2199,7 @@ def _stage_prohibit_covert_levy(
         scene.get("kind") == "covert_levy_exposure"
         and not scene.get("decision")
         and int(scene.get("dossier_id") or 0) == dossier_id
-        for scene in list_due_review_scenes(db, state)
+        for scene in list_due_review_scenes(db)
     ):
         raise KeyError(f"当前无待裁的暗渠摊派暴露案卷：{dossier_id}")
     body = _declared_prose(item.get("text"))
@@ -2504,7 +2504,6 @@ def _dispatch_travel_tones(
     chat_turn_id: int,
     source: Provenance,
     source_turn_error: str,
-    state: Any,
 ) -> SectionResult:
     """传召行程语气声明 → 本轮传召账；已有口令账则更新它。"""
     from ming_sim.audience_night import record_summon_fresh, update_summon_travel_tone

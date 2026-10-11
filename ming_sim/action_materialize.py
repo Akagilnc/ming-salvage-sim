@@ -70,7 +70,6 @@ def _apply_existing_appointment_hit(
     tenure_mark: Optional[str] = None,
     region_id: str = "",
     minister_name: str = "",
-    turn: int = 0,
     origin_chat_turn_id: int = 0,
     annotate: bool = False,
     recommendation_fields: Optional[Dict[str, Any]] = None,
@@ -99,7 +98,6 @@ def _apply_existing_appointment_hit(
                 tenure_mark=tenure_mark,
                 region_id=region_id,
                 minister_name=minister_name,
-                turn=turn,
                 night_id=night_id,
                 source_chat_turn_id=int(origin_chat_turn_id or 0),
             )
@@ -848,7 +846,6 @@ def _annotate_office_pending_path(
     tenure_mark: Optional[str] = None,
     region_id: str = "",
     minister_name: str = "",
-    turn: int = 0,
     night_id: Optional[int] = None,
     source_chat_turn_id: int = 0,
 ) -> int:

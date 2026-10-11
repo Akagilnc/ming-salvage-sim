@@ -314,7 +314,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     from ming_sim.mechanical_tail import ensure_mechanical_tails, retry_failed_mechanical_tail, failed_mechanical_tail
     ensure_mechanical_tails(session)
     assert calls == [closed_turn]
-    assert failed_mechanical_tail(db, state)[0] == closed_turn
+    assert failed_mechanical_tail(db)[0] == closed_turn
     from web_app import WebGame
     from types import SimpleNamespace
     state.ended = True
@@ -484,7 +484,7 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     except Exception:
         pass
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
-    failure = failed_mechanical_tail(db, state)
+    failure = failed_mechanical_tail(db)
     assert failure is not None
     turn, tail = failure
     assert turn == closed_turn

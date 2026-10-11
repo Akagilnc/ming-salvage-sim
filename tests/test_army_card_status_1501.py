@@ -54,7 +54,7 @@ def _guanning_db_status(db) -> str:
     return status
 
 
-def _expected_army_card_from_row(db, row) -> dict:
+def _expected_army_card_from_row(row) -> dict:
     """Direct DB-field transport; derived situation fields are covered by #321."""
     from ming_sim.army_pay import army_needed
 
@@ -92,7 +92,7 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
 
     for army_id, row in rows_by_id.items():
         card = by_id[army_id]
-        expected = _expected_army_card_from_row(db, row)
+        expected = _expected_army_card_from_row(row)
 
         # 完整键集：恰好等于投影契约（无 status / 无 raw morale|loyalty|arrears）
         assert set(card.keys()) == _ARMY_PAYLOAD_KEYS, (
