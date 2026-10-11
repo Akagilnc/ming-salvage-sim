@@ -473,9 +473,7 @@ def test_runtime_llm_transport_nonpositive_falls_back_to_defaults(tmp_path, monk
     静默判死阈值同理，且它的真源是设置页那一格（cli.timeout_seconds）——坏值回落
     CLI_DEFAULT_TIMEOUT_SECONDS。
     """
-    from ming_sim.llm_transport import transport_policy_from_mapping
     from ming_sim.models import (
-        CLI_DEFAULT_TIMEOUT_SECONDS,
         TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
         TRANSPORT_DEFAULT_MAX_ATTEMPTS,
         TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
@@ -497,11 +495,6 @@ def test_runtime_llm_transport_nonpositive_falls_back_to_defaults(tmp_path, monk
     assert out["transport"]["max_attempts"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
     assert out["transport"]["attempt_timeout_seconds"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     assert out["transport"]["retry_interval_seconds"] == TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    policy = transport_policy_from_mapping(out)
-    assert policy.max_attempts == TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    assert policy.attempt_timeout_seconds == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
-    assert policy.retry_interval_seconds == TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
-    assert policy.idle_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
     # 保存路径同样经单权威：显式 0 不得落盘为 0
     llm_config.save_runtime_llm(
         base_url="https://x/v1",

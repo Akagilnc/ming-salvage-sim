@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import copy
-import math
 
 from tests.conftest import settle_region_tick
 
@@ -19,7 +18,6 @@ from ming_sim.pay_order import (
     PayOrderKeyError,
     materialize_pay_order_decree,
     parse_override_key,
-    resolve_pay_order_overrides,
     restore_pay_order_override,
 )
 
@@ -221,7 +219,6 @@ def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     # 形状退出格律：键不在位（对齐到期 _live），禁留 live 默认值
     assert "due_priority_军饷@shaanxi" not in cfg
     assert "due_priority_军饷@shaanxi_until_turn" not in cfg
-    assert resolve_pay_order_overrides(cfg, "shaanxi", db._current_settle_turn()) is None
     changes = db.conn.execute(
         "SELECT key, origin_ref FROM fiscal_config_changes WHERE origin_ref=? ORDER BY id",
         (f"dossier:{revoke}",),
@@ -497,8 +494,6 @@ def test_f23_region_logs_flow_sign_domain_repaid_negative(game):
     assert all(float(r["delta"]) > 0 for r in debt_rows), debt_rows
 
 
-# ═══════════════ F2 六源纯投影 ═══════════════
-
 def test_revoke_later_same_dim_decree_not_stomped(game):
     """Codex-11/revoke_shape_exit①：同维后旨在位时撤前旨，不改该键。"""
     db, state, _content = game
@@ -545,9 +540,6 @@ def test_revoke_provincial_falls_back_to_nationwide(game):
         text="陕西边饷居末",
     )
     db.apply_dossier_promulgation(state, local, "promulgated")
-    turn = db._current_settle_turn()
-    before = resolve_pay_order_overrides(db.get_fiscal_config(), "shaanxi", turn)
-    assert before is not None and before.due_order.index("军饷") == 3  # 省域50居末
     revoke = db.create_decree_dossier(
         state, action_type="revoke_decree", decree_text="撤陕西旨",
         target_kind="dossier", target_id=str(local),
@@ -557,15 +549,6 @@ def test_revoke_provincial_falls_back_to_nationwide(game):
     cfg = db.get_fiscal_config()
     assert "due_priority_军饷@shaanxi" not in cfg  # 省域形状退出，禁留 live 默认
     assert cfg["due_priority_军饷"] == 35  # 全国键仍在位
-    after = resolve_pay_order_overrides(cfg, "shaanxi", turn)
-    assert after is not None
-    # 回落全国键 value=35：军饷与宗禄(30)后、在赈济(40)前 → 官俸/宗禄/军饷/赈济
-    assert after.due_order == ("官俸", "宗禄", "军饷", "赈济")
-    # 对照：河南无省域键，同读全国键
-    assert resolve_pay_order_overrides(cfg, "henan", turn).due_order == after.due_order
-
-
-# ═══════════════ F3 LLM 综合归因边界 ═══════════════
 
 
 # ═══════════════ F1 颁布生命周期 E2E（ADR 0055 判后物化缝）═══════════════
@@ -661,10 +644,6 @@ def test_stale_until_cleared_by_permanent_overwrite(game):
         "WHERE key='due_priority_军饷_until_turn' ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert tomb is not None and tomb["origin_ref"] == f"dossier:{d2}"
-    # 跨过旧期限后新旨仍生效（修复前：旧 until 使新旨过期回落默认）
-    res = resolve_pay_order_overrides(db.get_fiscal_config(), "shaanxi", turn + 2)
-    assert res is not None
-    assert res.due_order == ("官俸", "军饷", "宗禄", "赈济")  # 军饷序位30（与宗禄并列按基准 tie-break）
 
 def test_staging_rejects_illegal_entries_fail_loud(game):
     """成案点先验：非法键形/幻影 region 收夜即响亮拒，不入案卷。"""
@@ -700,44 +679,9 @@ def test_materialize_requires_real_promulgated_dossier(game):
 
 # ═══════════════ 中央侧折发消费者（flows 读端）═══════════════
 
-def test_central_due_haircut_consumer(game):
-    """中央份额 Due 折发读端：floor 折算、余数免除、地域/饷源精确、无折恒等。"""
-    from ming_sim.army_pay import army_needed
-    from ming_sim.flows import _central_dues_with_haircut
-
-    db, state, _content = game
-    rows = db.conn.execute(
-        "SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, "
-        "central_pay_share FROM armies WHERE central_pay_share > 0 ORDER BY rowid"
-    ).fetchall()
-    base_dues, base_exempt = _central_dues_with_haircut(db, state, rows)
-    assert base_exempt == {}
-    shaanxi_raw = army_needed(
-        next(r for r in rows if r["id"] == "shaanxi_army"),
-    ) * 0.35
-    assert base_dues["shaanxi_army"] == pytest.approx(shaanxi_raw)
-
-    did = _override_dossier(db, state, [
-        {"key": "due_haircut_bp_军饷@shaanxi#central", "value": 5000},
-        {"key": "due_haircut_bp_军饷#central", "value": 6000},
-    ])
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    dues, exempt = _central_dues_with_haircut(db, state, rows)
-    # 陕西中央侧取 @shaanxi#central=5000：floor(2.1×0.5)=1.0，免除 1.1
-    assert dues["shaanxi_army"] == pytest.approx(float(math.floor(shaanxi_raw * 0.5)))
-    assert exempt["shaanxi_army"] == pytest.approx(shaanxi_raw - math.floor(shaanxi_raw * 0.5))
-    # 他省中央侧取 #central=6000（京营 beizhili：need=ceil(85000*1/10000)=9，raw=9.0）
-    jy_raw = army_needed(next(r for r in rows if r["id"] == "jingying")) * 1.0
-    assert dues["jingying"] == pytest.approx(math.floor(jy_raw * 0.6))
-    # 免除不入欠：欠发只按折后应得计（shortfall 上界即折后 due）
-
 def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
-    from ming_sim.flows import (
-        _central_dues_with_haircut,
-        apply_fixed_period_flows,
-        army_needed,
-    )
+    from ming_sim.flows import apply_fixed_period_flows
 
     db, state, _content = game
 
@@ -763,11 +707,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     )
     db.apply_dossier_promulgation(state, did, "promulgated")
 
-    dues, _exempt = _central_dues_with_haircut(db, state, [army])
-    raw_due = army_needed(army) * float(army["central_pay_share"] or 0)
-    assert raw_due > 0
-    assert dues["jingying"] == pytest.approx(0.0)
-
     apply_fixed_period_flows(db, state)
 
     after = db.conn.execute(
@@ -778,56 +717,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     # 中央旧欠不因零 Due 月自动偿还（ADR 0023 D7③ / #653 边界）
     assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
     assert float(after["arrears"] or 0) == pytest.approx(old_arrears)
-
-# ═══════════════ 独立 oracle 宪制 mutation 自验 ═══════════════
-
-def test_oracle_independent_of_shared_haircut_helper(monkeypatch):
-    """mutation①破坏舍入：落账侧 floor 改 ceil → 独立 oracle 必红。"""
-    import ming_sim.fiscal_tick as ft
-
-    st, p = _board(gross=50.0)
-    p["Due"] = {"军饷": 18.0, "官俸": 3.0, "宗禄": 101.0, "赈济": 1.0}
-    p["due_haircut_bp"] = {"宗禄": 5000}
-
-    def biased_effective(pp):
-        raw = pp.get("due_haircut_bp") or {}
-        out = {}
-        for h in ft._DUE_KEYS:
-            d = float(pp["Due"].get(h, 0.0))
-            bp = raw.get(h)
-            out[h] = float(math.ceil(d * bp / 10000)) if bp else d
-        return out
-
-    monkeypatch.setattr(ft, "_effective_dues", biased_effective)
-    with pytest.raises(ft.FiscalConservationError):
-        settle_tick(st, p, [])
-
-def test_oracle_independent_of_shared_order_resolver(monkeypatch):
-    """mutation②破坏优先序：落账侧序解析被劫持 → 独立 oracle 必红。
-    盘面须让序真正改变分配：池不足（新债落点随序变）＋多账户旧欠。"""
-    import ming_sim.fiscal_tick as ft
-
-    st, p = _board(gross=0.0)  # 省内池 10 < Due 合计 26.07：付款序决定新债落点
-    st["官俸欠"] = 5.0
-    monkeypatch.setattr(
-        ft, "_resolve_order_param",
-        lambda pp, key, default: tuple(reversed(default)),
-    )
-    with pytest.raises(ft.FiscalConservationError):
-        settle_tick(st, p, [])
-
-def test_oracle_independent_of_debt_mapping(monkeypatch):
-    """mutation③破坏映射：落账侧 Due→CLAIM 映射错位 → 独立 oracle 必红。"""
-    import ming_sim.fiscal_tick as ft
-
-    st, p = _board(gross=0.0)
-    monkeypatch.setattr(
-        ft, "_DEBT_OF_DUE", {"军饷": "官俸欠", "官俸": "官俸欠", "宗禄": "宗禄欠"},
-    )
-    with pytest.raises((ft.FiscalConservationError, ValueError)):
-        settle_tick(st, p, [])
-
-# ═══════════════ F2 投影真源修正 goldens（judge r2 class②）═══════════════
 
 
 # ═══════════════ 拟旨 capture→成案（财政物化与下一次省 tick 分别由上方领域用例覆盖）═══

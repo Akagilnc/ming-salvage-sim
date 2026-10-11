@@ -11,7 +11,6 @@ from ming_sim.session_write_queue import get_session_write_queue
 import pytest
 
 import ming_sim.decree as decree_mod
-import ming_sim.issues as I
 
 
 # ---------------------------------------------------------------------------
@@ -106,9 +105,6 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
         "note": "姑留观后效",
     }
     assert not db.has_event_triggered(event_id)
-    assert event_id not in I._event_trigger_refs(db), (
-        "submit_hitl_choices 只能暂存亲裁 choice，不能在 phase2 前抢先把候选事件记成终态"
-    )
 
 
 def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypatch):

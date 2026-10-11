@@ -608,9 +608,6 @@ def _apply_economy_list(
     """
     from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
     applied: List[Dict[str, object]] = []
-    # isinstance 守卫：issue-effect 的 economy（来自 enrich，未经 schema 清洗）可能被 LLM 给成真值
-    # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117
-    # 同 bug 类，与 _apply_issue_buildings 的 list 守卫一致）。此处是 economy 应用 choke，护全部调用点。
     # LLM 输入侧（issue 效果）：非数组／成员非对象不静默跳过，逐项拒收留痕（ADR 0008 决定1）。
     if economy is not None and not isinstance(economy, list):
         applied.append({"account": "", "rejected": True, "category": "invalid_shape",
@@ -1292,7 +1289,6 @@ def _apply_faction_dict(
     """
     cleaned: Dict[str, object] = {}
     rejected: List[Dict[str, object]] = []
-    faction_delta = faction_delta if isinstance(faction_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, val in faction_delta.items():
         if isinstance(val, dict):
             entry: Dict[str, int] = {}
@@ -1539,7 +1535,6 @@ def _apply_class_dict(
 
     cleaned: Dict[str, Dict[str, int]] = {}
     rejected: List[Dict[str, object]] = []
-    class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, fields in class_delta.items():
         if isinstance(fields, dict):
             fields = _canonical_item_fields(fields)

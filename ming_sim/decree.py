@@ -29,7 +29,6 @@ from ming_sim.error_pack import (
 )
 from ming_sim.exceptions import (
     LLMContractError,
-    LLMUnavailable,
 )
 from ming_sim.flows import (
     _SubstrateHubFixedFlowAbort,
@@ -53,15 +52,6 @@ from ming_sim.token_stats import tlog
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
-
-# 逐旨／世界段请旨解析工具位于 ming_sim.settlement_payload，不从邸报抽取。
-# 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
-from ming_sim.settlement_payload import (  # noqa: E402
-    _DECISION_RE,
-    bind_decision_options,
-    parse_decision_blocks,
-)
-
 
 @dataclass
 class ResolveResult:
@@ -649,15 +639,16 @@ def resolve_directives(
 
     # 草案内容已由拟诏合并进 decree_text；月链沿已保存的旨意继续。
 
-    # 1) 前括号确定性结算：玩家月链的唯一准备入口。
-    prepare_resolve_front_half(
-        state, db,
-        decree_text=decree_text,
-        content=content,
-        source=source,
+    # 前括号仍由同一事务准备；持久消费异常也交现役月链失败接缝。
+    from ming_sim.month_chain import _guard_month_call, _load_chain, run_player_month_chain
+    _guard_month_call(
+        db, state, _load_chain(db, int(state.turn)),
+        decree_text=decree_text, source=source, step="pre_settle",
+        operation=lambda: prepare_resolve_front_half(
+            state, db, decree_text=decree_text, content=content, source=source,
+        ),
     )
 
-    from ming_sim.month_chain import run_player_month_chain
     return run_player_month_chain(
         state, db, agno_db, llm_config,
         decree_text=decree_text,

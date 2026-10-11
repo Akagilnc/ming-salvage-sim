@@ -32,9 +32,8 @@ from ming_sim.content import GameContent
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
-from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
+from ming_sim.matching import match_region_id_from_text
 from ming_sim.exceptions import (
-    LLMContractError,
     OfficeAppointmentRejection,
     PendingActionRefusal,
     RevokeOriginUnresolved,
@@ -17437,7 +17436,7 @@ class GameDB:
         # 崩坏能力由 effect_on_fail 是否非空判定：有崩坏效果=会崩坏（bar 能到 0、failed 终结）；
         # 空=不会崩坏（天灾/正面机遇等不可控或无失败态局势，bar 下限钳到 1，永不 failed，
         # 只靠 ongoing_effects 每月持续流血）。
-        can_collapse = bool(loads_effect_dict(row["effect_on_fail"]))  # 非 dict→{}→False（#117 统一守门）
+        can_collapse = bool(loads_effect_dict(row["effect_on_fail"]))
         floor = 0 if can_collapse else 1
         # clamp single advance
         delta_bar = max(-50, min(50, int(delta_bar)))
@@ -17643,20 +17642,15 @@ class GameDB:
             )
             for acc in ("国库", "内库", "民心", "皇威"):
                 v = eff.get(acc)
-                if isinstance(v, (int, float)):
+                if v is not None:
                     agg[acc] = int(agg[acc]) + int(v)
             for scope in ("regions", "armies"):
-                block = eff.get(scope)
-                if not isinstance(block, dict):
-                    continue
+                block = loads_persistent_json_object(eff.get(scope), surface=f"legacies.modifiers.{scope}")
                 dst = agg[scope]  # type: ignore[assignment]
                 for entity_id, fields in block.items():
-                    if not isinstance(fields, dict):
-                        continue
                     bucket = dst.setdefault(str(entity_id), {})  # type: ignore[union-attr]
                     for field, pct in fields.items():
-                        if isinstance(pct, (int, float)):
-                            bucket[str(field)] = int(bucket.get(str(field), 0)) + int(pct)
+                        bucket[str(field)] = int(bucket.get(str(field), 0)) + int(pct)
         if cache_allowed:
             self._legacy_mod_cache = agg
         return agg

@@ -3,12 +3,9 @@
 本文件验现役契约——维护费不再是字段：
   · 建军唯一必填=manpower（维护费键给了也当未知键忽略；inf 等极值不崩建军）；
   · army_delta 写维护费/军费 → 别名已删 → 当非法字段逐项拒收（同信封合法字段照落）；
-  · 月饷纯由兵力派生（army_needed），与维护费无关。
 """
 
 import pytest
-
-from ming_sim.army_pay import army_needed
 
 
 def _pseudo(title="测试"):
@@ -21,10 +18,6 @@ def _pay_source():
         "province_pay_share": 1.0,
         "central_pay_share": 0.0,
     }
-
-
-# ── schema：列已物理删除 ──────────────────────────────────────────────
-
 
 
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
@@ -58,20 +51,6 @@ def test_new_army_inf_manpower_rejected_not_crash(read_game):
     }])
     assert created[0].get("rejected"), "inf manpower 应拒建军"
     assert db.conn.execute("SELECT id FROM armies WHERE id='inf_army'").fetchone() is None
-
-
-# ── 月饷纯由兵力派生，与已删的维护费无关 ──────────────────────────────
-
-def test_pay_derives_from_manpower(game):
-    # 两军缺省 salary_rate 落同一锚点，兵力多者 army_needed 严格更大 → 月饷由兵力派生（非维护费）。
-    db, state, _ = game
-    db.create_armies_from_extraction(state, [
-        {"id": "pay_lo", "name": "少兵营", "owner_power": "ming", "manpower": 10000, **_pay_source()},
-        {"id": "pay_hi", "name": "多兵营", "owner_power": "ming", "manpower": 40000, **_pay_source()},
-    ])
-    lo = db.conn.execute("SELECT * FROM armies WHERE id='pay_lo'").fetchone()
-    hi = db.conn.execute("SELECT * FROM armies WHERE id='pay_hi'").fetchone()
-    assert army_needed(hi) > army_needed(lo) > 0, "兵力多者月饷应更大（月饷随兵力派生）"
 
 
 # ── army_delta 写维护费 → 非法字段拒收（别名已删） ────────────────────

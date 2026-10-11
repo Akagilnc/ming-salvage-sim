@@ -241,9 +241,7 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
     if row.get("payload") is not None:
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            return None
+        payload = loads_persistent_json_object(row.get("payload"), surface="decree_dossiers.payload")
     else:
         payload = loads_persistent_json_object(
             row.get("payload_json"), surface="decree_dossiers.payload_json",
@@ -450,12 +448,8 @@ def _apply_issue_buildings(
     建筑的新建/变更唯一入口——不存在顶层 building_delta/new_buildings。
     """
     applied: List[Dict[str, object]] = []
-    if not isinstance(ops, list):
-        return applied
-    for op in ops:
-        if not isinstance(op, dict):
-            continue
-        action = str(op.get("action") or "").lower()
+    for op in loads_persistent_json_list(ops, surface="issue_effect.buildings"):
+        action = str(op["action"]).lower()
         try:
             if action == "create":
                 bid = db.add_building(
@@ -494,7 +488,7 @@ def _apply_issue_buildings(
                 )
                 applied.append({"action": "remove", "building_id": bid, "removed": ok})
             else:
-                print(f"[WARN] issue effect buildings: action 非法 '{action}'，跳过。")
+                raise ValueError(f"issue effect buildings: action 非法 {action!r}")
         except Exception as exc:
             print(f"[WARN] issue effect buildings 落库失败：{exc}；op={op}")
             raise
@@ -2522,7 +2516,7 @@ def _bar_ascii(value: int, width: int = 20) -> str:
 
 def _format_issue_ongoing(ongoing_raw: str) -> str:
     """简短描述每月固定影响。"""
-    eff = loads_effect_dict(ongoing_raw)  # 非 dict/解析失败→{}（#117 统一守）
+    eff = loads_effect_dict(ongoing_raw)
     parts: List[str] = []
     # isinstance 守卫：eff 读自已存 JSON（源自 enrich/extractor，未必清洗），metrics/economy 可能
     # 是真值非 dict/list（`or {}`/`or []` 兜不住）→ .items()/迭代 抛错。本函数是展示用 brief，守住免崩（#117 同类）。
@@ -2984,10 +2978,9 @@ _DIRECTION_NORMALIZE = {
 
 
 def _clamp_pct(v: object) -> Optional[int]:
-    try:
-        pct = int(v)
-    except (TypeError, ValueError):
+    if v is None:
         return None
+    pct = int(v)
     if pct == 0:
         return None
     return max(-_LEGACY_PCT_CAP, min(_LEGACY_PCT_CAP, pct))
@@ -3012,10 +3005,10 @@ def _spawn_legacy_from_effect(
        },
        "narrative_hint": str}
     各 pct 带符号整数；落账时同维度累加，base>=0 ×(1+net/100)、base<0 ×(1-net/100)。
-    缺字段/非法档/空 effect 一律跳过（不抛断）；地区/军队非法字段或不存在 id 由落账层忽略。
+    缺省/空 modifiers 不生效；持久容器或数值损坏上抛。地区/军队非法字段或不存在 id 由落账层忽略。
     """
-    legacy = effect.get("legacy")
-    if not isinstance(legacy, dict):
+    legacy = loads_persistent_json_object(effect.get("legacy"), surface="issue_effect.legacy")
+    if not legacy:
         return None
     name = str(legacy.get("name") or "")
     if not name.strip():
@@ -3025,37 +3018,32 @@ def _spawn_legacy_from_effect(
     if duration is None:
         print(f"[WARN] legacy 时长档非法 '{dur_key}'，按 2年 处理。")
         duration = 24
-    raw_eff = legacy.get("modifiers") or {}
+    raw_eff = loads_persistent_json_object(legacy.get("modifiers"), surface="issue_effect.legacy.modifiers")
     modifiers: Dict[str, object] = {}
-    if isinstance(raw_eff, dict):
-        for k in _LEGACY_ACCOUNT_KEYS:
-            pct = _clamp_pct(raw_eff.get(k))
-            if pct is not None:
-                modifiers[k] = pct
-        for scope, allowed, aliases in (
-            ("regions", REGION_SCORE_FIELDS + FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES),
-            ("armies", ARMY_SCORE_FIELDS, ARMY_FIELD_ALIASES),
-        ):
-            block = raw_eff.get(scope)
-            if not isinstance(block, dict):
-                continue
-            scope_out: Dict[str, Dict[str, int]] = {}
-            for entity_id, fields in block.items():
-                if not isinstance(fields, dict):
+    for k in _LEGACY_ACCOUNT_KEYS:
+        pct = _clamp_pct(raw_eff.get(k))
+        if pct is not None:
+            modifiers[k] = pct
+    for scope, allowed, aliases in (
+        ("regions", REGION_SCORE_FIELDS + FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES),
+        ("armies", ARMY_SCORE_FIELDS, ARMY_FIELD_ALIASES),
+    ):
+        block = loads_persistent_json_object(raw_eff.get(scope), surface=f"issue_effect.legacy.modifiers.{scope}")
+        scope_out: Dict[str, Dict[str, int]] = {}
+        for entity_id, fields in block.items():
+            fields_out: Dict[str, int] = {}
+            for raw_field, v in fields.items():
+                field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
+                if field not in allowed:
+                    print(f"[INFO] legacy '{name}' {scope} 字段 '{raw_field}' 非法/不可修正，跳过。")
                     continue
-                fields_out: Dict[str, int] = {}
-                for raw_field, v in fields.items():
-                    field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
-                    if field not in allowed:
-                        print(f"[INFO] legacy '{name}' {scope} 字段 '{raw_field}' 非法/不可修正，跳过。")
-                        continue
-                    pct = _clamp_pct(v)
-                    if pct is not None:
-                        fields_out[field] = pct
-                if fields_out:
-                    scope_out[str(entity_id)] = fields_out
-            if scope_out:
-                modifiers[scope] = scope_out
+                pct = _clamp_pct(v)
+                if pct is not None:
+                    fields_out[field] = pct
+            if fields_out:
+                scope_out[str(entity_id)] = fields_out
+        if scope_out:
+            modifiers[scope] = scope_out
     if not modifiers:
         print(f"[INFO] legacy '{name}' 无有效 modifiers，跳过。")
         return None
@@ -3119,21 +3107,21 @@ def _apply_issue_entities(
             if isinstance(r, dict) and r.get("rejected") and not r.get("issue_strict", True)
         )
 
-    region_delta = effect.get("region_delta")
-    if isinstance(region_delta, dict) and region_delta:
+    region_delta = loads_persistent_json_object(effect.get("region_delta"), surface="issue_effect.region_delta")
+    if region_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _raise_on_rejected(
             db.apply_region_deltas(state, pseudo, None, label, region_delta, commit=commit,
                                    origin_ref=origin_ref, require_origin=True), "地区变化"
         )
-    new_armies = effect.get("new_armies")
-    if isinstance(new_armies, list) and new_armies:
+    new_armies = loads_persistent_json_list(effect.get("new_armies"), surface="issue_effect.new_armies")
+    if new_armies:
         _raise_on_rejected(
             db.create_armies_from_extraction(state, new_armies, actor=label, commit=commit,
                                               origin_ref=origin_ref, require_origin=True), "建军"
         )
-    army_delta = effect.get("army_delta")
-    if isinstance(army_delta, dict) and army_delta:
+    army_delta = loads_persistent_json_object(effect.get("army_delta"), surface="issue_effect.army_delta")
+    if army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _raise_on_rejected(
             db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=commit,
@@ -4138,12 +4126,20 @@ def apply_issue_tracker_output(
         if new_row["status"] == "resolved":
             effect = loads_effect_dict(new_row["effect_on_resolve"])
             parent_origin_ref = _canonical_issue_origin(db, new_row)
-            _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
+            _apply_metric_dict(
+                state, loads_persistent_json_object(
+                    effect.get("metrics"), surface="issue_effect.metrics",
+                ), db=db,
+            )
             entity_rejections.extend(r for r in _apply_economy_list(
-                db, state, effect.get("economy") or [], commit=commit_now,
+                db, state, loads_persistent_json_list(effect.get("economy"), surface="issue_effect.economy"), commit=commit_now,
                 origin_ref=parent_origin_ref,
             ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+            entity_rejections.extend(_apply_faction_dict(
+                db, loads_persistent_json_object(
+                    effect.get("factions"), surface="issue_effect.factions",
+                ), commit=commit_now,
+            ).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案", commit=commit_now, origin_ref=parent_origin_ref)
             entity_rejections.extend(
                 _apply_issue_entities(
@@ -4161,12 +4157,20 @@ def apply_issue_tracker_output(
         elif new_row["status"] == "failed":
             effect = loads_effect_dict(new_row["effect_on_fail"])
             parent_origin_ref = _canonical_issue_origin(db, new_row)
-            _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
+            _apply_metric_dict(
+                state, loads_persistent_json_object(
+                    effect.get("metrics"), surface="issue_effect.metrics",
+                ), db=db,
+            )
             entity_rejections.extend(r for r in _apply_economy_list(
-                db, state, effect.get("economy") or [], commit=commit_now,
+                db, state, loads_persistent_json_list(effect.get("economy"), surface="issue_effect.economy"), commit=commit_now,
                 origin_ref=parent_origin_ref,
             ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+            entity_rejections.extend(_apply_faction_dict(
+                db, loads_persistent_json_object(
+                    effect.get("factions"), surface="issue_effect.factions",
+                ), commit=commit_now,
+            ).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败", commit=commit_now, origin_ref=parent_origin_ref)
             entity_rejections.extend(
                 _apply_issue_entities(
@@ -4893,12 +4897,20 @@ def apply_issue_tracker_output(
             # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设
             effect = {**effect, **cl_effect}
         parent_origin_ref = _canonical_issue_origin(db, new_row)
-        _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
+        _apply_metric_dict(
+            state, loads_persistent_json_object(
+                effect.get("metrics"), surface="issue_effect.metrics",
+            ), db=db,
+        )
         entity_rejections.extend(r for r in _apply_economy_list(
-            db, state, effect.get("economy") or [], commit=commit_now,
+            db, state, loads_persistent_json_list(effect.get("economy"), surface="issue_effect.economy"), commit=commit_now,
             origin_ref=parent_origin_ref,
         ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-        entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+        entity_rejections.extend(_apply_faction_dict(
+            db, loads_persistent_json_object(
+                effect.get("factions"), surface="issue_effect.factions",
+            ), commit=commit_now,
+        ).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         building_ops = _apply_issue_buildings(
             db, state, effect.get("buildings"),
             _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",

@@ -311,8 +311,8 @@ def _role_roster(db: Any, office_type: str, state: Any) -> str:
     return f"{office_type}本职在册：{roster}。"
 
 
-def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[Dict[str, object]]:
-    """Project durable source rows into this character's archive boundary.
+def _source_archive_rows(db: Any, upto_turn: int) -> list[Dict[str, object]]:
+    """Project durable source rows for the canonical archive visibility boundary.
 
     ``character_knowledge_sources`` is the write-side source of truth for
     restricted matters.  It must participate in archive projection even when
@@ -337,13 +337,11 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
         excluded = loads_persistent_name_list(
             row["excluded_names"], surface="character_knowledge_sources.excluded_names",
         )
-        # A participant-rostered source is private to its participants unless
-        # an explicit exclusion says otherwise.  Empty rosters are not added
-        # here: public events already have their own projection path.
+        # Visibility is decided by knowledge_row_visible_to against the source
+        # roster; do not synthesize reader names into the durable exclusion list.
+        # Empty rosters already have the public-event projection path.
         if not participants:
             continue
-        if character_name not in participants:
-            excluded.append(character_name)
         projected.append({
             "turn": int(row["turn"]), "year": int(row["year"]),
             "period": int(row["period"]), "kind": row["kind"],
@@ -534,7 +532,7 @@ def build_character_knowledge(
     world, scope = _world(db, state, character_name, office_name, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
-    public_events.extend(_source_archive_rows(db, character_name, int(state.turn)))
+    public_events.extend(_source_archive_rows(db, int(state.turn)))
     # Issued directives are public by their nature.  Read them here so old
     # saves and the normal decree path need no second write hook.
     for directive in db.list_issued_directives():

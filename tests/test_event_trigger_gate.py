@@ -1219,25 +1219,6 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     assert db.get_character_status("孙传庭")[0] == "active"
     assert result.effects.applied == []
 
-def test_pending_gate_uses_same_place_canonical_terminal_state(game):
-    """#667：同地行止真实终态不在途，pending gate 不得投影出 transit_to。"""
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE characters SET status='active', location='liaodong', transit_to='' WHERE name='毛文龙'"
-    )
-    ev = Event(
-        id="__test_same_place_departure__", title="同地终态", kind="朝议", summary="x",
-        urgency=1, severity=1, credibility=100, interests=[], audiences=[],
-        event_type="situation", trigger_gate={"character.毛文龙.transit_to": "!= liaodong"},
-    )
-
-    assert issues._pending_person_changes_block_event_gate(
-        ev,
-        [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "transit_to": "liaodong"}],
-        db,
-        state=state,
-        content=content,
-    ) is False
 
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
     """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""

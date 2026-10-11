@@ -47,7 +47,10 @@ from ming_sim.issues import (
     _spawn_legacy_from_effect,
     commitment_progress_payload,
 )
-from ming_sim.models import GameState, loads_effect_dict
+from ming_sim.models import (
+    GameState, loads_effect_dict,
+    loads_persistent_json_list, loads_persistent_json_object,
+)
 from ming_sim.token_stats import tlog
 
 
@@ -376,9 +379,21 @@ def apply_situation_monthly_drift(
                     continue
                 if new_row["status"] == "resolved":
                     effect = loads_effect_dict(new_row["effect_on_resolve"])
-                    _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], origin_ref=parent_origin_ref) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-                    inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+                    _apply_metric_dict(
+                        state, loads_persistent_json_object(
+                            effect.get("metrics"), surface="issue_effect.metrics",
+                        ), db=db,
+                    )
+                    inertia_rejections.extend(r for r in _apply_economy_list(
+                        db, state, loads_persistent_json_list(
+                            effect.get("economy"), surface="issue_effect.economy",
+                        ), origin_ref=parent_origin_ref,
+                    ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+                    inertia_rejections.extend(_apply_faction_dict(
+                        db, loads_persistent_json_object(
+                            effect.get("factions"), surface="issue_effect.factions",
+                        ),
+                    ).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
                     _apply_issue_buildings(
                         db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT,
                         f"局势#{issue_id}结案", origin_ref=parent_origin_ref,
@@ -399,9 +414,21 @@ def apply_situation_monthly_drift(
                     continue
                 elif new_row["status"] == "failed":
                     effect = loads_effect_dict(new_row["effect_on_fail"])
-                    _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], origin_ref=parent_origin_ref) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-                    inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+                    _apply_metric_dict(
+                        state, loads_persistent_json_object(
+                            effect.get("metrics"), surface="issue_effect.metrics",
+                        ), db=db,
+                    )
+                    inertia_rejections.extend(r for r in _apply_economy_list(
+                        db, state, loads_persistent_json_list(
+                            effect.get("economy"), surface="issue_effect.economy",
+                        ), origin_ref=parent_origin_ref,
+                    ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+                    inertia_rejections.extend(_apply_faction_dict(
+                        db, loads_persistent_json_object(
+                            effect.get("factions"), surface="issue_effect.factions",
+                        ),
+                    ).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
                     _apply_issue_buildings(
                         db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT,
                         f"局势#{issue_id}失败", origin_ref=parent_origin_ref,

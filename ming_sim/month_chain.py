@@ -762,13 +762,13 @@ def run_player_month_chain(
     ensure_mechanical_tails(_session_owner(db, state, llm_config, agno_db, content))
     # 请旨续推的故障先按既有 call_failure 登记（错误包 + 失败步骤），再原样上浮。
     # 问与 world_continued 都未消费；批红入口重试只续未成的续推。
-    _consume_rescript_answers(
-        SimpleNamespace(
-            db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
-        ),
-        chain, source=source,
-    )
     try:
+        _consume_rescript_answers(
+            SimpleNamespace(
+                db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
+            ),
+            chain, source=source,
+        )
         return _run_loaded_month_chain(
             state, db, agno_db, llm_config, chain,
             decree_text=decree_text, content=content,
@@ -1015,8 +1015,8 @@ def _guard_month_call(
 ) -> Any:
     """模型用尽 → 停住可重试；其它代码异常 → 错误包后停住；中断类原样上浮。
 
-    只有已经登记 call_failure 的 SettlementAbort 原样上浮；未登记的中止
-    仍属本次调用失败，必须接同一诊断与恢复通道。
+    已有错误包或 call_failure 的 SettlementAbort 原样上浮；尚无诊断的中止
+    接同一诊断与恢复通道。
     """
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 
@@ -1030,7 +1030,7 @@ def _guard_month_call(
     except (KeyboardInterrupt, SystemExit):
         raise
     except SettlementAbort as exc:
-        if _load_chain(db, int(state.turn)).get("call_failure"):
+        if exc.error_pack_path or _load_chain(db, int(state.turn)).get("call_failure"):
             raise
         _abort_month_call(
             db, state, chain, decree_text=decree_text, source=source,
@@ -1228,7 +1228,6 @@ def _run_world_segment(
     session: Any, chain: Dict[str, Any], *, source: Provenance,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.month_translate import dispatch_month_segment
-    from ming_sim.exceptions import SettlementAbort
 
     db, state = session.db, session.state
     turn = int(state.turn)

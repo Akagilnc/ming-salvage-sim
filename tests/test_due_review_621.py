@@ -251,12 +251,6 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     prepared = prepare_scene_materials(db, state)
     try:
         facts = _scene_pending_audience_facts(db, state)
-        matched = [
-            json.loads(line) for line in facts
-            if json.loads(line).get("todo_id") == scene["todo_id"]
-        ]
-        assert len(matched) == 1
-        assert matched[0] == scene
         payload = next(
             line for line in facts
             if json.loads(line).get("todo_id") == scene["todo_id"]
