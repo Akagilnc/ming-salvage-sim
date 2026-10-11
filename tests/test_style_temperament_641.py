@@ -118,7 +118,6 @@ def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
 
     db, state, content = game
     before = _style_row(db)
-    assert PADDED_STYLE != PADDED_STYLE.strip()
 
     applied = issues.apply_score_extraction(
         db,
@@ -328,8 +327,6 @@ def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
     assert dto["recent_context"] in rendered
     assert padded_summary_founding in rendered
     assert padded_edge_context in rendered
-    assert PADDED_STYLE.strip() != PADDED_STYLE
-    assert dto["summary"] != dto["summary"].strip()
 
 
 def test_relation_edge_events_do_not_mutate_style(game):

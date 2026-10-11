@@ -26,17 +26,29 @@ def _table() -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def normalize_office(office: str) -> str:
+    """官职多职统一为半角逗号分隔：旧「兼/兼掌/兼署」与全角「，」「、」一律归一逗号，
+    去空分项、去重、保序。是 office 字段落库的唯一规范化入口——所有写 characters.office
+    的路径都过它，保证去重/顶缺时能按逗号分项匹配。"""
+    s = (office or "").strip()
+    if not s:
+        return ""
+    s = s.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
+    s = s.replace("，", ",").replace("、", ",")
+    seen: set = set()
+    parts: list[str] = []
+    for p in (x.strip() for x in s.split(",")):
+        if p and p not in seen:
+            seen.add(p)
+            parts.append(p)
+    return ",".join(parts)
+
+
 def concurrent_office_titles(office: object) -> list[str]:
     """Canonical tokenizer shared by rank, leverage, and archive cleanup."""
-    text = str(office or "").strip()
-    if not text:
-        return []
-    text = re.sub(r"^(?:前|原任|原)", "", text).strip()
-    text = (text.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
-            .replace("，", ",").replace("、", ","))
+    text = re.sub(r"^(?:前|原任|原)", "", str(office or "").strip())
     titles: list[str] = []
-    for segment in text.split(","):
-        part = segment.strip()
+    for part in normalize_office(text).split(","):
         if not part:
             continue
         pollution_at = min(

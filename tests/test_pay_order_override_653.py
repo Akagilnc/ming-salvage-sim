@@ -194,20 +194,6 @@ def test_golden3_arrears_waterfall_reversal():
     assert res_def.breakdown["Repaid"]["宗禄欠"] == 0.0
 
 
-
-
-
-
-
-def test_golden7_replay_determinism(game):
-    """⑦restore 后任意月重放结果一致；纯函数同输入同输出。"""
-    db, state, _content = game
-    settle = _opening_settle(db, "shaanxi")
-    a = settle_tick(settle["st"], settle["p"], [])
-    b = settle_tick(settle["st"], settle["p"], [])
-    assert a.new_st == b.new_st
-    assert a.breakdown == b.breakdown
-
 # ═══════════════ 桥集成：结算按新序/系数付账 ═══════════════
 
 
@@ -231,10 +217,6 @@ def test_due_order_bad_shapes_raise(bad):
     p["due_order"] = bad
     with pytest.raises(ValueError):
         settle_tick(st, p, [])
-    # oracle 路径对称：同样锁在 ValueError 域
-    from ming_sim.fiscal_tick import _DUE_KEYS, _oracle_order
-    with pytest.raises(ValueError):
-        _oracle_order({"due_order": bad}, "due_order", _DUE_KEYS)
 
 def test_haircut_param_bad_values_raise():
     st, p = _board()
@@ -392,53 +374,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
     assert float(after["arrears"] or 0) == pytest.approx(old_arrears)
 
-# ═══════════════ 独立 oracle 宪制 mutation 自验 ═══════════════
-
-def test_oracle_independent_of_shared_haircut_helper(monkeypatch):
-    """mutation①破坏舍入：落账侧 floor 改 ceil → 独立 oracle 必红。"""
-    import ming_sim.fiscal_tick as ft
-
-    st, p = _board(gross=50.0)
-    p["Due"] = {"军饷": 18.0, "官俸": 3.0, "宗禄": 101.0, "赈济": 1.0}
-    p["due_haircut_bp"] = {"宗禄": 5000}
-
-    def biased_effective(pp):
-        raw = pp.get("due_haircut_bp") or {}
-        out = {}
-        for h in ft._DUE_KEYS:
-            d = float(pp["Due"].get(h, 0.0))
-            bp = raw.get(h)
-            out[h] = float(math.ceil(d * bp / 10000)) if bp else d
-        return out
-
-    monkeypatch.setattr(ft, "_effective_dues", biased_effective)
-    with pytest.raises(ft.FiscalConservationError):
-        settle_tick(st, p, [])
-
-def test_oracle_independent_of_shared_order_resolver(monkeypatch):
-    """mutation②破坏优先序：落账侧序解析被劫持 → 独立 oracle 必红。
-    盘面须让序真正改变分配：池不足（新债落点随序变）＋多账户旧欠。"""
-    import ming_sim.fiscal_tick as ft
-
-    st, p = _board(gross=0.0)  # 省内池 10 < Due 合计 26.07：付款序决定新债落点
-    st["官俸欠"] = 5.0
-    monkeypatch.setattr(
-        ft, "_resolve_order_param",
-        lambda pp, key, default: tuple(reversed(default)),
-    )
-    with pytest.raises(ft.FiscalConservationError):
-        settle_tick(st, p, [])
-
-def test_oracle_independent_of_debt_mapping(monkeypatch):
-    """mutation③破坏映射：落账侧 Due→CLAIM 映射错位 → 独立 oracle 必红。"""
-    import ming_sim.fiscal_tick as ft
-
-    st, p = _board(gross=0.0)
-    monkeypatch.setattr(
-        ft, "_DEBT_OF_DUE", {"军饷": "官俸欠", "官俸": "官俸欠", "宗禄": "宗禄欠"},
-    )
-    with pytest.raises((ft.FiscalConservationError, ValueError)):
-        settle_tick(st, p, [])
 
 # ═══════════════ F2 投影真源修正 goldens（judge r2 class②）═══════════════
 

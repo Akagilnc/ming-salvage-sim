@@ -2100,12 +2100,12 @@ class DossierStore:
 
         owns = self._owns()
         dossier = self.get(int(dossier_id))
-        band = str(progress_band or "").strip()
+        band = str(progress_band or "")
         text = str(memorial_text or "")
         if dossier is None:
             raise ValueError("案卷不存在")
         # 终值旁路行只载定性 band，引擎不自造密奏（decree_vocabulary.terminal_report_facade）。
-        if not band or (not text.strip() and not is_terminal):
+        if not band.strip() or (not text.strip() and not is_terminal):
             raise ValueError("进展档和密奏均不能为空")
         origin_norm = self.normalize_report_origin(
             origin, is_terminal=bool(is_terminal),

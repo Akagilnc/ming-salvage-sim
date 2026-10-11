@@ -85,6 +85,16 @@ PERSON_TITLE_KIND_TRANSITION_OVERRIDES = {
 }
 
 
+def identity_title_for_allegiance(item: dict[str, object], new_power: str) -> str:
+    title = str(item.get("new_title") or item.get("title") or "").strip()
+    if title:
+        return title if title in PERSON_IDENTITY_TITLES else ""
+    way = str(item.get("方式") or item.get("way") or "").strip()
+    if new_power == "ming" or way == "主动归附":
+        return "归附"
+    return "降臣"
+
+
 def normalize_reason_code(value: object) -> str:
     """Normalize ADR 0009 reason_code values.
 

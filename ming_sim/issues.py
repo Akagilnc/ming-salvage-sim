@@ -71,9 +71,9 @@ from ming_sim.models import Event, GameState, effect_dict_has_work, is_vassal_pr
 from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
-    PERSON_IDENTITY_TITLES,
     PERSON_STATUSES,
     current_title_kind,
+    identity_title_for_allegiance,
     normalize_reason_code,
     resolve_person_transition,
 )
@@ -2727,15 +2727,6 @@ def _pending_person_changes_block_event_gate(
         if agg is None:
             agg = "min"
         return int(_GATE_AGG_FUNCS[agg](values))
-
-    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
-        title = str(item.get("new_title") or item.get("title") or "").strip()
-        if title:
-            return title if title in PERSON_IDENTITY_TITLES else ""
-        way = str(item.get("方式") or item.get("way") or "").strip()
-        if new_power == "ming" or way == "主动归附":
-            return "归附"
-        return "降臣"
 
     for item in pending_person_changes:
         name = str(item.get("name") or "").strip()
@@ -5778,15 +5769,6 @@ def _apply_person_changes(
             origin_ref=origin_ref,
         )
 
-    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
-        title = str(item.get("new_title") or item.get("title") or "").strip()
-        if title:
-            return title if title in PERSON_IDENTITY_TITLES else ""
-        way = str(item.get("方式") or item.get("way") or "").strip()
-        if new_power == "ming" or way == "主动归附":
-            return "归附"
-        return "降臣"
-
     def displaced_talent_pool_results(displaced_parts: object) -> List[Dict[str, object]]:
         if not isinstance(displaced_parts, list):
             return []
@@ -7513,8 +7495,7 @@ def _apply_score_extraction_body(
             }
             if any(power_id != old_power for power_id in backlash_power_ids):
                 continue
-            explicit_title = str(item.get("new_title") or item.get("title") or "").strip()
-            if explicit_title and explicit_title not in PERSON_IDENTITY_TITLES:
+            if not identity_title_for_allegiance(item, "ming"):
                 continue
             # Same-period amnesty claims the old stock even if the LLM forgot to put
             # the weakening in 反噬; a top-level update would be suppression ledgering.

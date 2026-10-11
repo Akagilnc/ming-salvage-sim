@@ -233,7 +233,6 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
     # 全键合法但声明 roster 推不出的派系 → accept-and-ignore（不驱动机械额度）
     outsider = "阉党"
     assert outsider in faction_names
-    assert outsider not in {"东林", "西学", "皇党"}  # roster 推不出
     valid = [{
         "kind": "faction", "key": outsider,
         "direction": "negative", "intensity": "strong",

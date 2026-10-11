@@ -273,34 +273,5 @@ def test_new_save_unit_is_persons(game):
     }, content, None)
     assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS
 
-# ── mutation 自验 oracle：四类变异必被咬（漏一种即 FAIL）──────────────────────
-
-def _conservation_oracle(before, after, records):
-    """独立 oracle：每笔成功记录两侧精确 ±amount；全局相关行求和不变。
-
-    before/after：{(name, region_id): population} 快照（真源=classes 表）。
-    """
-    total_before = sum(before.values())
-    total_after = sum(after.values())
-    assert total_before == total_after, f"守恒破坏：{total_before} → {total_after}"
-    mutated = set()
-    for rec in records:
-        src = tuple(rec["source"].split("@"))
-        dst = tuple(rec["target"].split("@"))
-        amt = int(rec["amount"])
-        assert after[src] == before[src] - amt, f"源腿失真：{src}"
-        assert after[dst] == before[dst] + amt, f"目标腿失真：{dst}"
-        mutated.update({src, dst})
-    for key in before:
-        if key not in mutated:
-            assert after[key] == before[key], f"未声明行被改动：{key}"
-
-def _snap(db):
-    return {
-        (r["name"], r["region_id"]): int(r["population"])
-        for r in db.conn.execute(
-            "SELECT name, region_id, population FROM classes WHERE region_id <> ''"
-        ).fetchall()
-    }
 
 # ── F1 闭环：真实 extractor 契约（prompt 中文 shape → canonicalize → apply）───

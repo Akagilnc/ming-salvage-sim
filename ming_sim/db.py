@@ -47,6 +47,7 @@ from ming_sim.constants import (
     DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR,
 )
 from ming_sim.content import GameContent
+from ming_sim.office_rank import normalize_office
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
@@ -676,22 +677,6 @@ def _member_office_weight(office_type: str, office: str) -> float:
     # #9 R1 finding#5：office_n 已 normalize，直接复用、不让 _office_rank_multiplier 再 normalize 一次。
     return domain * _office_rank_multiplier(office_n, already_normalized=True)
 
-def normalize_office(office: str) -> str:
-    """官职多职统一为半角逗号分隔：旧「兼/兼掌/兼署」与全角「，」「、」一律归一逗号，
-    去空分项、去重、保序。是 office 字段落库的唯一规范化入口——所有写 characters.office
-    的路径都过它，保证去重/顶缺时能按逗号分项匹配。"""
-    s = (office or "").strip()
-    if not s:
-        return ""
-    s = s.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
-    s = s.replace("，", ",").replace("、", ",")
-    seen: set = set()
-    parts: List[str] = []
-    for p in (x.strip() for x in s.split(",")):
-        if p and p not in seen:
-            seen.add(p)
-            parts.append(p)
-    return ",".join(parts)
 
 COURT_OFFICE_TYPES = {"内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"}
 
@@ -6824,7 +6809,7 @@ class GameDB:
         target = self.dossiers.get(int(dossier_id))
         reports = self.dossiers.list_dossier_progress(int(dossier_id))
         reported_bands = [
-            str(item.get("progress_band") or "").strip()
+            str(item.get("progress_band") or "")
             for item in reports
             if str(item.get("progress_band") or "").strip()
         ]
@@ -6892,7 +6877,7 @@ class GameDB:
                 item.get("origin"), base=DOSSIER_REPORT_ORIGIN_MONTHLY,
             )
             self.dossiers.record_dossier_progress(
-                dossier_id, int(turn), str(item["progress_band"]).strip(),
+                dossier_id, int(turn), str(item["progress_band"]),
                 str(item["memorial_text"]),
                 origin=origin,
                 commit=False,

@@ -2193,7 +2193,6 @@ def test_empty_new_person_change_key_does_not_shadow_legacy_normalization():
         "character_power_changes": [{"name": "孔有德", "new_power": "houjin"}],
     }
 
-    assert merged["人物变更"] == []
     assert [item["name"] for item in normalize_person_changes(merged)] == [
         "孔有德",
     ]

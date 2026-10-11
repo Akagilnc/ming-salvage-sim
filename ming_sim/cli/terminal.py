@@ -178,7 +178,7 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     if not retries:
         return
     last = retries[-1]
-    question = str(last.get("question") or "").strip()
+    question = str(last.get("question") or "")
     print(
         "【回话中断】上回问话未得回话"
         f"{f'（「{question}」）' if question else ''}。"
