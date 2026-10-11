@@ -76,6 +76,12 @@ def decode_durable_participant_roster(
         if not isinstance(item, dict):
             raise ValueError("participant_roster 每项须为对象")
         entry = dict(item)
+        for field in ("role", "delegator_id"):
+            value = entry.get(field)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(
+                    f"参与人 {field} 须为字符串，得 {type(value).__name__}"
+                )
         # 人物主键：案卷/连坐必非空 str；knowledge 取名可回落 name 键。
         cid_raw = entry.get("character_id")
         if cid_raw is None and not require_tier:
@@ -177,11 +183,6 @@ def project_execution_liability_parties(
         delegator_raw = item.get("delegator_id")
         if delegator_raw is None:
             continue
-        if not isinstance(delegator_raw, str):
-            raise ValueError(
-                f"参与人 delegator_id 须为字符串，得 "
-                f"{type(delegator_raw).__name__}"
-            )
         delegator = delegator_raw.strip()
         if (
             delegator

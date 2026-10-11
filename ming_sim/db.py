@@ -15099,19 +15099,13 @@ class GameDB:
         """
         old = self._decode_directive_dossier_payload(existing_json)
         incoming = dict(new_payload or {})
-        # 先规范化新名单一次：规范化为空则 pop，不覆盖旧名册；否则与旧名册共同 merge。
-        # #1900 J19：改草写入的新名单亦走严格参与人语义，拒字符串/缺档猜「知情」。
-        new_roster = self._normalize_participant_roster(
-            list(incoming.get("participant_roster") or []),
-            strict_structured=True,
+        roster = self.merge_decode_durable_participant_roster(
+            old.get("participant_roster"), incoming.get("participant_roster"),
         )
-        if not new_roster:
+        if not roster:
             incoming.pop("participant_roster", None)
         else:
-            incoming["participant_roster"] = self.merge_decode_durable_participant_roster(
-                old.get("participant_roster") or [],
-                new_roster,
-            )
+            incoming["participant_roster"] = roster
 
         # 先对 incoming 互斥分类（并存即拒），再决定从 old 继承哪些字段
         incoming_kind = (
@@ -16452,21 +16446,10 @@ class GameDB:
         executor_kind = str(dossier.get("executor_kind") or "").strip()
         if executor_id and executor_kind in {"", "character"}:
             actors.add(executor_id)
-        roster = dossier.get("participant_roster") or []
-        if isinstance(roster, str):
-            roster = _load_durable_json_list(
-                roster, surface="participant_roster",
-            )
-        elif not isinstance(roster, list):
-            raise ValueError("participant_roster 须为列表")
-        for entry in roster:
-            if not isinstance(entry, dict):
-                raise ValueError("participant_roster 每项须为对象")
-            if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
+        for entry in decode_durable_participant_roster(dossier.get("participant_roster")):
+            if entry["tier"] not in {"主办", "协办"}:
                 continue
-            character_id = str(entry.get("character_id") or "").strip()
-            if character_id:
-                actors.add(character_id)
+            actors.add(entry["character_id"])
         target_kind = str(dossier.get("target_kind") or "").strip()
         target_id = str(dossier.get("target_id") or "").strip()
         domains: set[str] = set()
@@ -18196,6 +18179,9 @@ class GameDB:
         """
         from ming_sim.action_materialize import DecreeMaterializationValidationError
 
+        if as_durable:
+            participants = decode_durable_participant_roster(participants)
+
         def _schema_error(message: str):
             if as_durable:
                 return ValueError(f"已持久名册{message}")
@@ -18210,7 +18196,10 @@ class GameDB:
         for value in values:
             if isinstance(value, Mapping):
                 if strict_structured:
-                    character_id = str(value.get("character_id") or "").strip()
+                    character_raw = value.get("character_id")
+                    if not isinstance(character_raw, str):
+                        raise _schema_error("参与人物 character_id 须为字符串")
+                    character_id = character_raw.strip()
                     tier_value = value.get("tier")
                 else:
                     character_id = str(value.get("character_id") or value.get("name") or "").strip()
@@ -18237,7 +18226,14 @@ class GameDB:
                     role = str(role_raw)
                 else:
                     role = role_raw
-                delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
+                delegator_raw = value.get("delegator_id")
+                if delegator_raw is None:
+                    delegator_raw = value.get("delegator")
+                if delegator_raw is None:
+                    delegator_raw = ""
+                if strict_structured and not isinstance(delegator_raw, str):
+                    raise _schema_error("参与人 delegator_id 须为字符串")
+                delegator = str(delegator_raw).strip()
             else:
                 if strict_structured:
                     raise _schema_error("结构化参与人名单每项必须为对象")
@@ -18264,15 +18260,15 @@ class GameDB:
 
         与 ``_merge_directive_payload`` 名册分支同一条规则；不按 character_id
         静默丢后项。持久化案卷追加冲突（同人异档）仍走
-        ``append_decree_dossier_participants``。两侧均走 canonical 严格路径；
+        ``append_decree_dossier_participants``。既存损坏为内部故障，新声明为领域拒收；
         通用字符串规范化仍由 ``_normalize_participant_roster`` 服务 create_issue
         等合法接缝，本合并口不猜补历史裸名。
         """
         base = GameDB._normalize_participant_roster(
-            list(existing or []), strict_structured=True,
+            existing, strict_structured=True, as_durable=True,
         )
         add = GameDB._normalize_participant_roster(
-            list(incoming or []), strict_structured=True,
+            incoming, strict_structured=True,
         )
         return base + [item for item in add if item not in base]
 

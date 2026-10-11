@@ -533,22 +533,26 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     assert decree_ref_for_dossier(db, dossier) == held_ref
 
 def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
+    from ming_sim.exceptions import SettlementAbort
+
     db, state, content = game
     turn = int(state.turn)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
     db.save_turn_report(state, "邸报已成")
+    real_save = db.save_state
+    failure = RuntimeError("injected tail failure")
 
-    def fail_after_advance(*_args, **_kwargs):
-        raise RuntimeError("injected tail failure")
+    def fail_after_advance(current_state):
+        if int(current_state.turn) > turn:
+            raise failure
+        return real_save(current_state)
 
-    monkeypatch.setattr(
-        decree_mod, "_carry_pending_clarification_actions", fail_after_advance,
-    )
-    with pytest.raises(RuntimeError, match="injected tail failure"):
-        month_chain._advance_after_gazette(
-            db, state, {}, turn, "", month_chain.Provenance.system_simulation,
-            content=content,
-        )
+    monkeypatch.setattr(db, "save_state", fail_after_advance)
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
 
+    assert caught.value.__cause__ is failure
     assert int(state.turn) == turn
     assert db.load_state().turn == turn
 

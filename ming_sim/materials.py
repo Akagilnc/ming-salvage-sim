@@ -1200,8 +1200,11 @@ def _world_affair_lines(
         # Metadata follows durable dossier links, never the free-prose origin.
         # A public fact or ordinary dossier keeps a mixed affair available.
         if public_only and not facts:
-            dossier_refs = store.origin_refs(affair.id)[1:]
-            if dossier_refs and not any(origin_visible_to(db, ref) for ref in dossier_refs):
+            dossiers = store.dossiers(affair.id)
+            if dossiers and not any(
+                origin_visible_to(db, "", linked_dossier_id=dossier["id"])
+                for dossier in dossiers
+            ):
                 continue
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         directory_text = "\n".join([
