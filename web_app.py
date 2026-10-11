@@ -1902,7 +1902,7 @@ class WebGame:
         # lengthens append_chat_message; background stream + early assert flaked
         # and tore down the shared DB under the worker → SIGSEGV).
         # #1902 F2／T4：落回话经会话层共核；retry 共核已落库时传 persisted_message_id，
-        # 本入口只做呈现投影。转译由调用方在闸外安排（schedule_translation=False）。
+        # 本入口只做呈现投影。转译由调用方在闸外安排。
         turn = int(self.state.turn if accepted_turn is None else accepted_turn)
         if persisted_message_id is not None:
             minister_message_id = int(persisted_message_id or 0)
@@ -1918,8 +1918,6 @@ class WebGame:
                 ),
                 minister_name,
                 answer,
-                None,
-                schedule_translation=False,
             )
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         from ming_sim.audience_night import get_open_night
@@ -2021,7 +2019,7 @@ class WebGame:
         # 票可能已 complete 后的失败收口必须走裸 runtime gate（与旧 cleanup_gate 同缝）。
         cleanup_gate = self._runtime_write_gate()
         # #1902 T4：reopen→快照→生成→落回话／失败收口走会话共核；此处只做票据、写闸、投影。
-        # 收夜须在放行 pending write 之后，故 schedule_close_night=False，成功后再调共核调度。
+        # 收夜须在放行 pending write 之后，成功后再调共核调度。
         # #1902：相位／收夜／在飞业务资格在 execute_interrupted_reply_retry 共核，入口不持副本。
         from ming_sim.session import AudienceChatAdmissionError
         turn = None
@@ -2035,10 +2033,7 @@ class WebGame:
                     message_speaker=minister_name,
                     accepted_turn=accepted_turn,
                     user_message_id=int(target.get("user_message_id") or 0),
-                    scene_minister_name=minister_name,
                     stream_emit=lambda _delta, **_kwargs: None,
-                    schedule_translation=False,
-                    schedule_close_night=False,
                     write_gate=gate,
                 )
             except AudienceChatAdmissionError as exc:

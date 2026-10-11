@@ -531,7 +531,7 @@ def _submit_hitl(monkeypatch, db, state, content, choices, *, deliberate_by_key=
     """#1902 S2：复用 _real_submit_session 真编排；可选注入廷议 prewrite 结果。"""
     from contextlib import nullcontext
     from ming_sim import rescript_actions as ra
-    from tests.test_cli_entry_1902 import _real_submit_session
+    from tests.rescript_test_helpers import _real_submit_session
 
     if deliberate_by_key is not None:
         def _fake_prewrite(batch, **kwargs):
@@ -545,11 +545,11 @@ def _submit_hitl(monkeypatch, db, state, content, choices, *, deliberate_by_key=
 def test_657_c1_validate_rejects_stale_capability_and_desk_outsider(game, monkeypatch):
     """C1.5 stale capability；desk 外键整批拒。
 
-    #1902 R3：复用 CLI 既有 _real_submit_session 真编排夹具承载拒收，
+    #1902 R3：复用既有 _real_submit_session 真编排夹具承载拒收，
     不绕道 helper-only validate_all。
     """
     from contextlib import nullcontext
-    from tests.test_cli_entry_1902 import _real_submit_session
+    from tests.rescript_test_helpers import _real_submit_session
 
     db, state, content = game
     urgent, opts = _plant_urgent_desk(db, state)
@@ -575,7 +575,7 @@ def test_657_c1_decided_mismatch_rejects_and_cas0(game, monkeypatch):
     #1902 R3：复用 _real_submit_session 先落 decided，再真 submit 拒二次异票。
     """
     from contextlib import nullcontext
-    from tests.test_cli_entry_1902 import _real_submit_session
+    from tests.rescript_test_helpers import _real_submit_session
 
     db, state, content = game
     urgent, opts = _plant_urgent_desk(db, state)
@@ -683,7 +683,7 @@ def test_657_default_hold_missing_and_empty_action(game, monkeypatch):
     test_657_http_default_hold_keyed_empty_action_and_betray（不平行删）。
     """
     from contextlib import nullcontext
-    from tests.test_cli_entry_1902 import _real_submit_session
+    from tests.rescript_test_helpers import _real_submit_session
 
     db, state, content = game
     urgent, _ = _plant_urgent_desk(db, state, actor_name='杨嗣昌')
@@ -1826,7 +1826,7 @@ def test_657_default_hold_preserves_red_pen_note(game, monkeypatch):
     #1902 S2：复用 _real_submit_session 真编排；不锁 validate_all 内部 batch 形状。
     """
     from contextlib import nullcontext
-    from tests.test_cli_entry_1902 import _real_submit_session
+    from tests.rescript_test_helpers import _real_submit_session
 
     db, state, content = game
     urgent, _ = _plant_urgent_desk(db, state)

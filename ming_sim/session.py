@@ -1,8 +1,8 @@
-"""GameSession：CLI 与 Web 共用的统一回合流转层。L8。
+"""GameSession：统一回合流转层。L8。
 
 不含 input()/print()——只持有状态、跑底层逻辑、返回 dataclass。
 召见对话的 tool 截获、拟旨 draft 流转、诏书结算都收在这里，
-CLI 和 Web 各自只做 I/O 包装。
+Web 只做 I/O 包装。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -218,9 +218,6 @@ class TurnSnapshot:
     period: int
     turn: int
     phase: str
-    metrics: Dict[str, int]
-    deaths_this_turn: List[Dict[str, str]] = field(default_factory=list)
-    previous_summary: str = ""
 
 
 def _is_ming_court_minister_character(
@@ -632,7 +629,7 @@ def _bind_all_content(content: GameContent) -> None:
 
 
 class GameSession:
-    """一局游戏的核心状态机。CLI / Web 都通过它驱动回合。"""
+    """一局游戏的核心状态机。Web 与探针通过它驱动回合。"""
 
     def __init__(
         self,
@@ -778,9 +775,6 @@ class GameSession:
             period=self.state.period,
             turn=self.state.turn,
             phase=self.state.turn_phase,
-            metrics=dict(self.state.metrics),
-            deaths_this_turn=list(self.deaths_this_turn),
-            previous_summary=self.previous_summary,
         )
 
     def end_turn(self) -> None:
@@ -1185,18 +1179,10 @@ class GameSession:
                 code="in_flight",
             )
 
-    def begin_audience_chat_turn(
-        self, message: str, *, message_speaker: str = "",
-    ) -> AudienceChatTurn:
+    def begin_audience_chat_turn(self, message: str) -> AudienceChatTurn:
         """建一轮召对：业务资格 → 确保开夜 → 建 chat_turn → 落问话。返回句柄供收口/回滚。
 
-        **两个身份不是一回事，禁再压成一个参数**（#1902 T1）：
-        - 建轮归属恒为 ``SCENE_CHAT_SPEAKER``「殿上」——Web 与 CLI 都写「殿上」。
-          读取侧 ``list_hall_chat_turns`` 只按「殿上」取本夜轮，写成大臣名会让
-          该轮对殿上历史投影、撤回与 ``can_undo_last_chat`` 全部不可见（同库换
-          Web 打开即丢出殿上历史），两端事实也就不一致了。
-        - ``message_speaker`` 是 chat_messages 的归属（CLI 挂被召大臣名，与
-          修前语义同）；Web 留空 = 与建轮同为「殿上」。
+        建轮与问话归属均为 ``SCENE_CHAT_SPEAKER``「殿上」，与本夜历史读取一致。
 
         模型会话身份与前像水位由 ``scene_model_session_anchor`` 在真实夜确定后
         提供，入口不再传入。召见入殿由 ``scene_chat`` 认原口令落地，建轮不另
@@ -1216,7 +1202,6 @@ class GameSession:
         # #1902：相位／收夜／在飞资格在共核；入口不得再持业务权威副本。
         GameSession.assert_audience_chat_admission(self, what="召对")
         owner = SCENE_CHAT_SPEAKER
-        speaker = str(message_speaker or "").strip() or owner
         accepted_turn = int(self.state.turn)
         before_snapshot = self.db.capture_chat_rollback_snapshot()
         night_was_open = get_open_night(self.db) is not None
@@ -1240,7 +1225,7 @@ class GameSession:
                 status="generating",
             )
             user_message_id = self.db.append_chat_message(
-                speaker, accepted_turn, "user", message,
+                owner, accepted_turn, "user", message,
             )
             if chat_turn_id:
                 self.db.update_chat_turn_messages(
@@ -1256,20 +1241,16 @@ class GameSession:
 
     def complete_audience_chat_turn(
         self, turn: AudienceChatTurn, message_speaker: str, reply: str,
-        result: Optional["ChatTurnResult"] = None,
-        *, schedule_translation: bool = True,
     ) -> int:
-        """回话落定：persist 回话与回滚差异同一事务 → 冲刷后台转译。回传回话消息 id。
+        """回话落定：persist 回话与回滚差异同一事务。回传回话消息 id。
 
-        ``message_speaker`` 是 chat_messages 的归属（与建轮的「殿上」身份分开，
-        见 begin_audience_chat_turn 的 T1 说明）；chat_turn 本身靠 turn 句柄定位，
-        不按名字反查。
+        ``message_speaker`` 是 chat_messages 的归属；chat_turn 靠 turn 句柄定位，
+        不按名字反查，恢复时保留原回话归属。
 
         落回话与记回滚差异在同一个 ``atomic`` 里提交。差异写失败则回话一并回滚，
         轮仍停在 generating、没有 minister_message_id，既有 ``fail_audience_chat_turn``
         才能标 interrupted。已提交的回话不在失败收口里删。
-        ``schedule_translation=False`` 给在闸内、须自行安排转译时机的调用方
-        （Web 流式/重试：转译要挂在闸外），落库与回滚差异仍同一条路。
+        转译由 Web 在闸外、挂票后安排，落库与回滚差异只走这一条路。
         Web 外层若已持有 ``atomic``，这里的内层是扁平嵌套，由外层提交。
 
         生产消费者均持真实持久轮；未建轮取消的合法 no-op 属于
@@ -1285,8 +1266,6 @@ class GameSession:
                 turn.chat_turn_id, turn.before_snapshot,
                 self.db.capture_chat_rollback_snapshot(),
             )
-        if result is not None and schedule_translation:
-            self.schedule_pending_scene_translation(result)
         return minister_message_id
 
     def _hall_turn_ids_for_night(self, night_id: Optional[int] = None) -> "set[int]":
@@ -1687,38 +1666,26 @@ class GameSession:
         message_speaker: str,
         accepted_turn: int,
         user_message_id: int = 0,
-        scene_minister_name: str = "",
         stream_emit: Optional[Callable[..., None]] = None,
-        schedule_translation: bool = True,
-        schedule_close_night: bool = True,
         write_gate: Any = None,
-        close_night_write_gate: Any = None,
     ) -> Optional[Tuple[AudienceChatTurn, "ChatTurnResult", int]]:
-        """中断回话恢复共核：reopen CAS → 快照 → scene_chat → 落回话／失败收口／收夜。
+        """中断回话恢复共核：reopen CAS → 快照 → scene_chat → 落回话／失败收口。
 
-        #1902 T4：Web／CLI 入口只做输入、呈现与宿主资源适配，生命周期编排只此一处。
+        #1902 T4：Web 入口只做输入、呈现与宿主资源适配，生命周期编排只此一处。
         reopen CAS 未赢 → 返回 ``None``（沿用 ``reopen_interrupted_chat_turn_for_retry``
         的 False 语义；入口译成 409／提示；未进 generating）。不借用 LookupError——
         KeyError／IndexError 亦为其子类，scene／snapshot／落库可抛，不得当 CAS 未赢。
         reopen 已赢后的任何失败（含快照）→ ``fail_audience_chat_turn`` 后原错上抛，
         不遗留 generating。
-        成功返回 ``(turn, result, minister_message_id)``；``schedule_translation=False``
-        时转译由入口在闸外自行安排（Web 票据挂票后再派）。
-        ``schedule_close_night=False`` 时收夜由入口在宿主票／屏障交接后再调
-        （Web：须先放行 pending write）；共核仍是 ``schedule_close_night_after_chat_if_needed``。
+        成功返回 ``(turn, result, minister_message_id)``；转译由入口在闸外挂票后安排，
+        收夜须先放行 pending write，再调 ``schedule_close_night_after_chat_if_needed``。
         ``write_gate`` 可选：宿主短写闸（reopen／落库／失败收口）；LLM 生成在闸外。
-        ``close_night_write_gate`` 可选：收夜专用闸（默认同 ``write_gate``）。
         """
         import contextlib
 
         gate_cm = write_gate if write_gate is not None else contextlib.nullcontext()
-        close_gate = (
-            close_night_write_gate if close_night_write_gate is not None else write_gate
-        )
-        scene_name = str(scene_minister_name or message_speaker or "")
         turn: Optional[AudienceChatTurn] = None
         result: Optional[ChatTurnResult] = None
-        translation_dispatched = False
         with gate_cm:
             # #1902：与建轮同核资格（相位／收夜／在飞）；CAS 前拒绝，不留 generating。
             GameSession.assert_audience_chat_admission(self, what="召对")
@@ -1738,7 +1705,7 @@ class GameSession:
             result = self.scene_chat(
                 question,
                 chat_turn_id=chat_turn_id,
-                minister_name=scene_name,
+                minister_name=message_speaker,
                 stream_emit=stream_emit,
             )
             with gate_cm:
@@ -1746,14 +1713,6 @@ class GameSession:
                     turn,
                     message_speaker,
                     str(getattr(result, "answer", "") or ""),
-                    result if schedule_translation else None,
-                    schedule_translation=schedule_translation,
-                )
-            translation_dispatched = bool(schedule_translation and result is not None)
-            if schedule_close_night:
-                self.schedule_close_night_after_chat_if_needed(
-                    str(getattr(result, "court_action", "") or ""),
-                    write_gate=close_gate,
                 )
             return turn, result, int(minister_message_id or 0)
         except Exception as exc:
@@ -1764,7 +1723,6 @@ class GameSession:
                             turn,
                             replied=result is not None,
                             error=exc,
-                            translation_dispatched=translation_dispatched,
                             court_action=str(getattr(result, "court_action", "") or ""),
                         )
                 except Exception:

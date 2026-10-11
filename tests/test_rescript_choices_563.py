@@ -206,7 +206,7 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount, game, 
     """目录选项权威：坏 amount 在 parse 拒；合法 amount 经真 submit 落库用目录非客户端 overlay。"""
     from contextlib import nullcontext
     from ming_sim.settlement_payload import parse_decision_blocks
-    from tests.test_cli_entry_1902 import _real_submit_session
+    from tests.rescript_test_helpers import _real_submit_session
 
     blocks = [
         {
@@ -395,7 +395,7 @@ def test_657_capability_revalidate_on_follow(game, monkeypatch):
     from contextlib import nullcontext
     from ming_sim.decree_vocabulary import derive_draft_capability
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    from tests.test_cli_entry_1902 import _real_submit_session
+    from tests.rescript_test_helpers import _real_submit_session
 
     db, state, content = game
     opt = normalize_rescript_layer_a_option({

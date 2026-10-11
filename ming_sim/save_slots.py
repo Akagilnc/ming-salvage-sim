@@ -1,10 +1,4 @@
-"""存读档热替换核心（#1902 F2）——Web 与 CLI 共用的唯一实现。
-
-此前备份、热替换、失败恢复、候选会话重建与「可否恢复为活局」判定全在
-``web_app.WebGame`` 私有方法里（``_replace_database`` / ``_rebuild_session`` /
-``_dispose_rebuild_residual``）加模块级 ``_runtime_restorable``：CLI 入口因此
-**根本无法读档**——它连主库文件在哪、换库要过哪几道闸都不知道，两端的存读档事实
-天然不一致。#1902 票面要求两端共用 #1813 存读档核心，故把机制搬到这里。
+"""存读档热替换核心（#1902 F2）——Web 使用的唯一实现。
 
 本模块**实际导出**（本文件不再另留同构副本）：
 
@@ -14,16 +8,16 @@
   且未进入 close 半态。探测异常必 log（ADR 0005），不得宽 catch 静默 False。
 - ``delete_sqlite_db_files_or_raise`` / ``SaveSlotCleanupError``：删主库及 WAL/SHM
   的唯一实现；核只判定并归类失败原因，对玩家说什么由入口翻。
-- ``copy_sqlite_file``：「用存档覆盖主库」那一步的唯一实现，两端共用。
+- ``copy_sqlite_file``：「用存档覆盖主库」那一步的唯一实现。
 
 **共同候选生命周期**（``open_candidate_session``）：GameSession 构造、自有队列归属、
-begin_turn、崩溃对账、宿主 ``prepare``（呈现/同步补跑等发布前准备）、失败时在**候选
-自有队列**上关闭并把活残留挂到**实际传出的异常**——Web/CLI 共用。禁入口再各写一份
+begin_turn、崩溃对账、宿主 ``prepare``（呈现等发布前准备）、失败时在**候选
+自有队列**上关闭并把活残留挂到**实际传出的异常**。禁入口另写一份
 关闭逻辑，或把候选挂回正持 barrier 的旧队列（父子屏障自等待）。
 
 **各端自有**（经 ``prepare`` / ``SaveSlotHost.rebuild`` 发布 / ``dispose_residual``）：
 
-- 发布前准备回调：Web 聊天缓存与收藏、CLI 启动转译补跑；
+- 发布前准备回调：Web 聊天缓存与收藏；
 - 发布赋值与失败候选宿主残留登记。
 
 换库的时序与失败恢复顺序只有 ``replace_database`` 一份；本模块不认识任何入口类型，
@@ -141,7 +135,6 @@ def open_candidate_session(
     db_path: str,
     llm_config: Any,
     *,
-    content: Any = None,
     prepare: Callable[[Any], Any] | None = None,
 ) -> Any:
     """换库候选共同生命周期：构造 → 自有队列 → begin_turn → 对账 → 可选 prepare。
@@ -159,10 +152,7 @@ def open_candidate_session(
 
     candidate = None
     try:
-        if content is not None:
-            candidate = GameSession(db_path, llm_config, content=content)
-        else:
-            candidate = GameSession(db_path, llm_config)
+        candidate = GameSession(db_path, llm_config)
         # GameSession 构造已装自有队列；此处只解析，禁改挂到父 runtime 队列。
         get_session_write_queue(candidate)
         candidate.begin_turn()

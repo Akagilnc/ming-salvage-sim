@@ -72,21 +72,15 @@ def _stable_json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def project_hitl_option(
-    decision: Mapping[str, object], index: int = 0,
-) -> Dict[str, object]:
-    """案头行 → 所选 option 的 choice 投影唯一真源（CLI 入口与探针共用）。
+def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, object]:
+    """非玩家探针的首选项投影；Web 批红不得用它代皇帝作选择。
 
-    - 急务 ``rescript_draft``：所选 option → ``follow_draft`` + ``draft_capability``
-    - 普通 decision：所选 option 原样（补 decision_key）
-    index 越界／案上无选项时回首 option（空案卷回空 label），不抛。
+    - 急务 ``rescript_draft``：首选 option → ``follow_draft`` + ``draft_capability``
+    - 普通 decision：首选 option 原样（补 decision_key）
     """
     raw_options = decision.get("options")
     options = list(raw_options) if isinstance(raw_options, (list, tuple)) else []
-    if 0 <= index < len(options):
-        picked = options[index]
-    else:
-        picked = options[0] if options else {}
+    picked = options[0] if options else {}
     if not isinstance(picked, dict):
         picked = {"label": str(picked or "")}
     item = dict(picked)
@@ -110,15 +104,6 @@ def project_hitl_option(
         if not str(item.get("label") or "").strip():
             item["label"] = "依拟"
     return item
-
-
-def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, object]:
-    """探针/闸脚本沿用的首选项投影 = ``project_hitl_option`` 取 index 0。
-
-    生产玩家入口（Web 批红案头、CLI 亲裁）禁再用本函数代皇帝选第一项
-    （#1812 待拍第 9 项）；此处只服务非玩家探针。
-    """
-    return project_hitl_option(decision, 0)
 
 
 def canonical_choice(raw: object) -> Dict[str, object]:

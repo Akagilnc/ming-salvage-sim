@@ -31,7 +31,7 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite(game, mon
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     from ming_sim.structured_decree import StructuredDecreeCombinationError
-    from tests.test_cli_entry_1902 import _real_submit_session
+    from tests.rescript_test_helpers import _real_submit_session
 
     db, state, content = game
     holder = "毕自严"
