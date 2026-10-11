@@ -79,7 +79,7 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
     assert _cost_events(db, dossier_id) == []
     assert _sat(db, "东林") == before_donglin
     assert _sat(db, "西学") == before_xixue
-    assert db.get_relation_edge_events(event_kind="连坐") == []
+    assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []
 
 
 
@@ -115,7 +115,7 @@ def test_adapter_replay_is_idempotent_on_joint_liability_rows(
     }
     first = _cost_events(db, dossier_id)
     first_edges = [
-        e for e in db.get_relation_edge_events(event_kind="连坐")
+        e for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     ]
     assert {e["target"] for e in first_edges} == {
@@ -131,7 +131,7 @@ def test_adapter_replay_is_idempotent_on_joint_liability_rows(
 
     assert _cost_events(db, dossier_id) == first
     second_edges = [
-        e for e in db.get_relation_edge_events(event_kind="连坐")
+        e for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     ]
     assert second_edges == first_edges
@@ -159,7 +159,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] == "failed"
     assert _cost_events(db, dossier_id) == []
-    assert db.get_relation_edge_events(event_kind="连坐") == []
+    assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []
 
 
 

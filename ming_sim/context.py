@@ -4,9 +4,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.faction.store import FactionStore
-from ming_sim.entities.power.store import PowerStore
-from ming_sim.entities.region.store import RegionStore
 
 from typing import Dict, List, Optional
 
@@ -103,12 +100,10 @@ def victory_status(db: GameDB) -> Dict[str, object]:
     20 年到期走 decree 结局收口（turn>=240），均不在此判。未声明终态则 ongoing。
     京畿 = beizhili，控制权字段 controlled_by（FK powers）；非 'ming' 即京师失守。
     """
-    beizhili = db.conn.execute("SELECT * FROM regions WHERE id = 'beizhili'").fetchone()
+    beizhili = db.regions.row("beizhili")
     if beizhili is not None and str(beizhili["controlled_by"]) != "ming":
         holder_id = str(beizhili["controlled_by"])
-        holder = db.conn.execute(
-            "SELECT name FROM powers WHERE id = ?", (holder_id,)
-        ).fetchone()
+        holder = db.powers.field_row('name', holder_id)
         holder_name = str(holder["name"]) if holder else holder_id
         return {
             "status": ENDING_CAPITAL_FALLEN,
@@ -249,7 +244,7 @@ def character_context_with_db(
 
 def faction_context_with_db(character: Character, db: GameDB) -> str:
     """只组装当前人物认同度允许知道的本派档料；不提供全局派系表。"""
-    faction = FactionStore(db.conn).read_faction_context_with_db((character.faction,))
+    faction = db.factions.read_faction_context_with_db((character.faction,))
     bucket = _identity_bucket(character.identity)
     dossier = _FACTION_DOSSIERS.get(character.faction)
     if bucket == "low":

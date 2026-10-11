@@ -11,8 +11,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.region.store import RegionStore
 
 from ming_sim.applier import RejectedItem, Provenance
 
@@ -743,11 +741,8 @@ def player_facing_secret_order_close_text(
 
 
 def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
-    row = CharacterStore(db.conn).read_minister_eligible_for_monthly_covert((str(minister_name or "").strip(),))
+    row = db.characters.read_minister_eligible_for_monthly_covert((str(minister_name or "").strip(),))
     return row is not None
-
-
-
 
 
 def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
@@ -791,7 +786,7 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
 
 
 def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
-    """案卷 payload 读口：复用 get_decree_dossier，腐坏响亮（#1897 E1/K2）。"""
+    """案卷 payload 读口：复用 DossierStore.get，腐坏响亮（#1897 E1/K2）。"""
     dossier = db.dossiers.get(int(dossier_id))
     if dossier is None:
         return {}
@@ -808,7 +803,7 @@ def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
     if not name:
         return []
     keys: List[str] = []
-    row = CharacterStore(db.conn).read_live_investigation_fact_keys((name,))
+    row = db.characters.field_row('seed_guilt', name)
     if row is not None and seed_guilt_counts_as_debt(row["seed_guilt"]):
         keys.append(name)
     for edge in db.person_logs.get_relation_edge_events(person=name, evidence=True):
@@ -824,10 +819,7 @@ def _is_seed_guilt_fact_key(target: str, fact_key: str) -> bool:
 def _seed_guilt_severity(db: Any, target: str) -> str:
     from ming_sim.db import _load_durable_json
 
-    row = db.conn.execute(
-        "SELECT seed_guilt FROM characters WHERE name=?",
-        (str(target),),
-    ).fetchone()
+    row = db.characters.field_row('seed_guilt', str(target))
     if row is None:
         return ""
     return str(_parse_seed_guilt(row["seed_guilt"]).get("severity") or "").strip()
@@ -923,10 +915,10 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     """已被别的案查获过的事实键（#1896 同一事实不重复查获）。
 
     键取"已掌握（mastered）"：掌握证据不再置 used，故去重也只看掌握。
-    复用 get_decree_dossier，腐坏 payload 不上扫跳过（#1897 E1/K2）。
+    复用 DossierStore.get，腐坏 payload 不上扫跳过（#1897 E1/K2）。
     """
     used: set[str] = set()
-    rows = db.conn.execute("SELECT id FROM decree_dossiers").fetchall()
+    rows = db.dossiers.read_globally_used_fact_keys()
     skip = int(except_dossier_id or 0)
     for row in rows:
         did = int(row["id"] or 0)
@@ -1044,7 +1036,7 @@ def investigation_fact_difficulty(
     # （ADR 0108 per-character 阴谋能力，#1896 一并交付该列）——见下。
     edges = 0
     seen_others: set[str] = set()
-    for edge in db.get_relation_edge_events(person=name, evidence=True):
+    for edge in db.person_logs.get_relation_edge_events(person=name, evidence=True):
         other = str(edge["target"]) if str(edge["source"]) == name else str(edge["source"])
         other = str(other or "").strip()
         if not other or other == name or other in seen_others:
@@ -1062,18 +1054,14 @@ def investigation_fact_difficulty(
     # 该列 NOT NULL INTEGER（content 侧 0–100 校验），故 int 直取、不设解析兜底；
     # 0 是合法值（0–100 闭集下端）且**必须**走 clamp——早前的 `if intrigue > 0`
     # 守卫会让最不会遮掩的人跳过乘子、落回参考值同难度，凭空造出一道非单调的台阶。
-    target_row = db.conn.execute(
-        "SELECT intrigue FROM characters WHERE name=?", (name,),
-    ).fetchone()
+    target_row = db.characters.field_row('intrigue', name)
     if target_row is not None:
         difficulty *= max(int(target_row["intrigue"]), _INTRIGUE_MIN) / _INTRIGUE_REFERENCE
 
     # 办案人能力（ADR 0092 带宽①同源）：能力强 → 同难度所需投入更少。
     worker = str(investigator or "").strip()
     if worker:
-        ability_row = db.conn.execute(
-            "SELECT ability FROM characters WHERE name=?", (worker,),
-        ).fetchone()
+        ability_row = db.characters.field_row('ability', worker)
         if ability_row is not None:
             ability = float(ability_row["ability"])
             # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零，
@@ -1142,10 +1130,7 @@ def investigation_monthly_capacity(
     worker = str(investigator or "").strip()
     if not worker:
         return _CAPACITY_MIN
-    row = db.conn.execute(
-        "SELECT ability, location, transit_to FROM characters WHERE name=?",
-        (worker,),
-    ).fetchone()
+    row = db.characters.read_investigation_monthly_capacity((worker,))
     if row is not None and not _investigator_on_site(db, row, target):
         return _CAPACITY_MIN  # 未到差：无差可查，投入为零
     capacity = 1.0
@@ -1156,12 +1141,9 @@ def investigation_monthly_capacity(
             capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
                 (ability - _ABILITY_CAPACITY_REFERENCE) / _ABILITY_CAPACITY_REFERENCE
             )
-    open_errands = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM decree_dossiers "
-        "WHERE executor_kind='character' AND executor_id=? "
-        "AND status IN ('promulgated','executing') AND id<>?",
-        (worker, int(dossier_id or 0)),
-    ).fetchone()
+    open_errands = db.dossiers.read_investigation_monthly_capacity(
+        (worker, int(dossier_id or 0))
+    )
     capacity *= 1.0 - _BANDWIDTH_PER_ERRAND * min(
         int(open_errands["n"] or 0), _BANDWIDTH_ERRAND_CAP,
     )
@@ -1237,9 +1219,6 @@ def seed_investigation_fact_lanes(
         seen.add(key)
     _write_fact_lanes(db, dossier_id, lanes)
     return lanes
-
-
-
 
 
 def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:
@@ -1697,7 +1676,7 @@ def originated_quantity_this_turn(
     fields = canonical_fields_for_delivery(unit=unit)
     qty = 0.0
     if "economy_moves" in fields:
-        for item in db.reign.list_economy_moves_for_dossier(did):
+        for item in db.reign.list_economy_moves_for_origin(f"dossier:{int(did)}"):
             if int(item.get("turn") or 0) != current:
                 continue
             if not _delivery_matches_economy(item, delivery):
@@ -1705,17 +1684,14 @@ def originated_quantity_this_turn(
             qty += abs(float(item.get("delta") or 0))
     if "人物变更" in fields:
         action = str(delivery.get("person_action") or "").strip()
-        rows = db.conn.execute(
-            "SELECT id FROM person_logs WHERE origin_ref=? AND turn=? AND action=?",
-            (origin, current, action),
-        ).fetchall()
+        rows = db.person_logs.read_originated_quantity_this_turn(
+            (origin, current, action)
+        )
         qty += float(len(rows))
     if "region_delta" in fields:
-        rows = db.conn.execute(
-            "SELECT region_id, field, new_value, delta FROM region_logs "
-            "WHERE origin_ref=? AND turn=?",
-            (origin, current),
-        ).fetchall()
+        rows = db.regions.read_originated_quantity_this_turn(
+            (origin, current)
+        )
         for row in rows:
             if _delivery_matches_region(row, delivery):
                 qty += abs(float(row["delta"] or 0))
@@ -1953,11 +1929,9 @@ def _apply_investigation_selection(
     reaction_rejections: List[RejectedItem] = []
     # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
     # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
-    existing = db.conn.execute(
-        "SELECT id, units FROM dossier_actual_progress "
-        "WHERE dossier_id=? AND turn=? LIMIT 1",
-        (did, int(turn)),
-    ).fetchone()
+    existing = db.dossiers.read_apply_investigation_selection(
+        (did, int(turn))
+    )
     declaration = _investigation_declaration(sel)
     invalid = str(declaration.get("invalid") or "")
     if invalid.strip():

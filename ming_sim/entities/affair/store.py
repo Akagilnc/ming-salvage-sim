@@ -11,13 +11,11 @@ from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from ming_sim.applier import (
-    connection_owns_transaction, load_stored_list,
-)
-from ming_sim.entities.character import CharacterStore
+from ming_sim.applier import connection_owns_transaction
 from ming_sim.entities.dossier import DossierStore
 from ming_sim.entities.issue import IssueStore
-from ming_sim.strict_types import strict_int
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.person_log.store import PersonLogStore
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
@@ -26,16 +24,10 @@ ATTACH_EXPERIENCE = frozenset({_ATTACH_EXISTING})
 _ORIGIN_AFFAIR = "affair"
 _ORIGIN_DOSSIER = "dossier"
 _POINTER_TABLES = {
-    "decree_dossiers": "案卷",
-    "issues": "局势",
-    "relation_edge_events": "边事件",
-    "characters": "人物",
-}
-# 各表指针绑定用的主键列；未列出的默认整数 `id`。`characters` 主键是 name
-# （非整数 id），指针语义（未绑可绑一次/同值幂等/异值拒绝）与其它表完全一致，
-# 只是主键列不同，故此处配置而非另实现一份（#1812/#1831）。
-_POINTER_KEY_COLUMNS = {
-    "characters": "name",
+    "decree_dossiers": ("案卷", DossierStore),
+    "issues": ("局势", IssueStore),
+    "relation_edge_events": ("边事件", PersonLogStore),
+    "characters": ("人物", CharacterStore),
 }
 _UNAUTHORIZED_AFFAIR_ORIGIN = "事务不在本批可见输入"
 
@@ -220,7 +212,7 @@ class AffairStore:
         if current:
             if peeked != current:
                 raise ValueError(
-                    f"{_POINTER_TABLES[table]}已指向事务 {current}，"
+                    f"{_POINTER_TABLES[table][0]}已指向事务 {current}，"
                     f"不能改指 {peeked or '新事务'}"
                 )
             return current
@@ -236,64 +228,29 @@ class AffairStore:
     def attach_pointer(self, table: str, row_id: int | str, affair_id: int) -> None:
         """Unbound may bind once; same id is idempotent; a different id fails loud."""
         self.get(affair_id)
-        key_column = _POINTER_KEY_COLUMNS.get(table, "id")
+
         current = self._current_pointer(table, row_id)
         want = int(affair_id)
         if current == want:
             return
         if current != 0:
             raise DeclarationDataError(
-                f"{_POINTER_TABLES[table]}已指向事务 {current}，不能改指 {want}"
+                f"{_POINTER_TABLES[table][0]}已指向事务 {current}，不能改指 {want}"
             )
-        owns = connection_owns_transaction(self._conn)
-        cur = self._conn.execute(
-            f"UPDATE {table} SET affair_id=? WHERE {key_column}=? AND affair_id=0",
-            (want, row_id),
-        )
-        if int(cur.rowcount or 0) != 1:
-            raise ValueError(
-                f"{_POINTER_TABLES[table]}已指向其它事务，不能改指 {want}"
-            )
-        if owns:
-            self._conn.commit()
-
-    def _dossiers(self) -> DossierStore:
-        """#1889 / ADR 0151：案卷表的读写一律经案卷 store，本模块只编排指针语义。"""
-        return DossierStore(self._conn)
-
-
-    def point_character(self, name: str, affair_id: int) -> None:
-        self.get(affair_id)
-        CharacterStore(self._conn).set_affair_id_if_unbound(str(name), int(affair_id))
-
-    def point_issue_row(self, issue_id: int, affair_id: int) -> None:
-        self.get(affair_id)
-        IssueStore(self._conn).set_affair_id_if_unbound(int(issue_id), int(affair_id))
+        store = _POINTER_TABLES[table][1](self._conn)
+        store.set_affair_id_if_unbound(row_id, want)
 
     def _current_pointer(self, table: str, row_id: int | str) -> int:
-        label = _POINTER_TABLES.get(table)
-        if label is None:
+        pointer = _POINTER_TABLES.get(table)
+        if pointer is None:
             raise DeclarationDataError(f"事务指针表非法：{table}")
-        key_column = _POINTER_KEY_COLUMNS.get(table, "id")
-        row = self._conn.execute(
-            f"SELECT affair_id FROM {table} WHERE {key_column}=?",
-            (row_id if key_column != "id" else int(row_id),),
-        ).fetchone()
-        if row is None:
-            raise DeclarationReferenceError(f"{label}不存在：{row_id}")
-        return int(row["affair_id"] or 0)
+        label, store_type = pointer
+        store = store_type(self._conn)
+        try:
+            return store.affair_id_of(row_id)
+        except KeyError as exc:
+            raise DeclarationReferenceError(f"{label}不存在：{row_id}") from exc
 
-    def dossiers(self, affair_id: int) -> tuple[dict[str, object], ...]:
-        self.get(affair_id)
-        rows = self._dossiers().rows_for_affair(int(affair_id))
-        return tuple(
-            {
-                "id": int(row["id"]),
-                "action_type": str(row["action_type"]),
-                "affair_id": int(row["affair_id"] or 0),
-            }
-            for row in rows
-        )
 
     def assert_origin_matches_declaration(
         self, origin_ref: str, declaration: Mapping[str, object]
@@ -318,7 +275,7 @@ class AffairStore:
         if kind != _ORIGIN_DOSSIER:
             return
         try:
-            current = self._dossiers().affair_id_of(int(target))
+            current = DossierStore(self._conn).affair_id_of(int(target))
         except KeyError:
             return
         if current:

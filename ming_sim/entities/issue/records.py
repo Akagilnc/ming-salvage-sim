@@ -1,6 +1,7 @@
 """issue 立项/推进/承诺结算的写侧实现：由 issues.py 清算迁入（ADR 0150 决定 8）。"""
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 from ming_sim.models import _load_durable_json_list
 
@@ -148,13 +149,10 @@ def _commitment_remaining_from_gate(
 
 
 def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
-    rows = db.conn.execute(
-        "SELECT metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC",
-        (issue_id,),
-    ).fetchall()
+    rows = db.issues.read_latest_commitment_paid_total((issue_id,))
     from ming_sim.models import _load_durable_json_object
     for row in rows:
-        payload = GameDB.parse_engine_payload_json(
+        payload = parse_engine_payload_json(
             row["metric_delta"],
         )
         # No progress field on this advance → keep scanning (legal absence → final 0).
@@ -278,25 +276,31 @@ def _ack_due_commitment_issue(
     issue_id = int(row["id"])
     from_value = int(row["bar_value"])
     summary = narrative or "到期待裁承诺已由皇帝裁决确认。"
-    db.conn.execute(
-        """
-        UPDATE issues SET status='dropped', resolution_summary=?,
-                          closed_turn=?, last_advance_turn=?,
-                          updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (summary, state.turn, state.turn, issue_id),
+    db.issues.update(
+        issue_id,
+        {
+            "status": "dropped",
+            "resolution_summary": summary,
+            "closed_turn": state.turn,
+            "last_advance_turn": state.turn,
+        },
     )
-    db.conn.execute(
-        """
-        INSERT INTO issue_advances (
-            issue_id, turn, trigger_kind, delta_bar,
-            from_value, to_value, narrative, metric_delta
-        ) VALUES (?, ?, 'commitment_ack', 0, ?, ?, ?, '{}')
-        """,
-        (issue_id, state.turn, from_value, from_value, summary),
+    db.issues.insert_advance(
+        (
+            issue_id,
+            state.turn,
+            "commitment_ack",
+            "",
+            0,
+            from_value,
+            from_value,
+            "",
+            "",
+            summary,
+            "{}",
+        )
     )
-    return db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+    return db.issues.row(issue_id)
 
 
 def event_to_issue(

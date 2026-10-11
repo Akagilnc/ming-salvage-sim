@@ -10,7 +10,7 @@ def _write_fiscal_config_change(
     """Canonical fiscal change writer shared by extraction and prohibition rollback."""
     db.validate_fiscal_config_value(key, new_value)
     db.set_fiscal_config(key, new_value, commit=False)
-    db.conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin_ref, key))
+    db.fiscal_config.set_origin(key, origin_ref)
     db.fiscal_config.record_change(
         turn=turn, key=key, old_value=old_value, new_value=new_value,
         origin_ref=origin_ref, reason=reason, beyond_intent=beyond_intent,

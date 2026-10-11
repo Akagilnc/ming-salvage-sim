@@ -4,16 +4,26 @@ from __future__ import annotations
 from ming_sim.exceptions import DeclarationDataError
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from ming_sim.applier import connection_owns_transaction
 from ming_sim.entities.column_write import upsert_by_pk
 from ming_sim.models import reign_period_label
 
-TEXTUAL_FACT_COLUMNS = frozenset({
-    "id", "subject_kind", "subject_id", "year", "period", "turn",
-    "body", "origin_ref", "created_at",
-})
+TEXTUAL_FACT_COLUMNS = frozenset(
+    {
+        "id",
+        "subject_kind",
+        "subject_id",
+        "year",
+        "period",
+        "turn",
+        "body",
+        "origin_ref",
+        "affair_id",
+        "created_at",
+    }
+)
 
 TEXTUAL_FACT_SUBJECT_KINDS = frozenset({"character", "army", "region", "affair"})
 
@@ -58,9 +68,6 @@ class TextualFact:
 
 class TextualFactStore:
     """World-record home for textual facts. Live writes append; undo restores a row."""
-
-    def snapshot_rows(self) -> Any:
-        return self._conn.execute("SELECT * FROM textual_facts").fetchall()
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
@@ -134,8 +141,15 @@ class TextualFactStore:
         ).fetchall()
         return tuple(_row_to_fact(row) for row in rows)
 
-    def read_write_world_textual_fact_files(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT DISTINCT subject_kind, subject_id FROM textual_facts WHERE subject_kind IN ('character', 'army', 'region') ORDER BY subject_kind, subject_id", params).fetchall()
+    def snapshot_rows(self) -> Any:
+        return self._conn.execute("SELECT * FROM textual_facts").fetchall()
+
+    def subject_ids(self, table: str, subject_kind: str) -> Any:
+        return self._conn.execute(
+            f"SELECT id FROM {table} UNION "
+            "SELECT subject_id AS id FROM textual_facts WHERE subject_kind=? ORDER BY id",
+            (subject_kind,),
+        ).fetchall()
 
 
 def _row_to_fact(row: Any) -> TextualFact:

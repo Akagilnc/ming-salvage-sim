@@ -8,8 +8,6 @@ live agent session.
 """
 
 from __future__ import annotations
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.textual_fact.store import TextualFactStore
 
 
 import hashlib
@@ -79,9 +77,11 @@ def write_identity_materials(
     written: List[str] = []
     for raw in names:
         name = str(raw or "").strip()
-        row = db.conn.execute(
-            "SELECT name,office,office_type FROM characters WHERE name=?", (name,),
-        ).fetchone() if name else None
+        row = (
+            db.characters.read_knowledge_row_visible_to((name,))
+            if name
+            else None
+        )
         if row is None:
             continue  # 不是真人物（如「某类人」式题名）：没有身份材料，不编
         character = SimpleNamespace(**dict(row))
@@ -335,10 +335,7 @@ def _own_affair_lines(
     store = db.affairs
 
     dossier_participant_ids: set[int] = set()
-    for row in db.conn.execute(
-        "SELECT id, affair_id, secret_order_id, participant_roster "
-        "FROM decree_dossiers WHERE affair_id != 0",
-    ).fetchall():
+    for row in db.dossiers.read_own_affair_lines():
         if (
             row["secret_order_id"] is not None
             and origin_visible_to(db, f"dossier:{row['id']}", character_name)
@@ -556,10 +553,10 @@ def _opening_affair_lines(
             continue  # represented via its affair's own entry, if any.
         dir_key = f"issue-{issue_id}"
         if dir_key not in visible or dir_key in seen:
-            continue
+            continue  # represented via its affair's own entry, if any.
         roster = participant_roster_names(issue["participant_roster"])
         if character_name not in roster and not _reader_in_issue_audience(db, issue, character_name):
-            continue
+            continue  # represented via its affair's own entry, if any.
         seen.add(dir_key)
         handled.append(visible[dir_key][:2])
     # Unfiled drafts are by construction things this character is handling.
@@ -568,7 +565,7 @@ def _opening_affair_lines(
     # gate pass) — a merely-visible affair stays directory-only.
     for dir_key, (title, situation, is_handling) in visible.items():
         if dir_key in seen:
-            continue
+            continue  # represented via its affair's own entry, if any.
         if dir_key.startswith("draft-") or (dir_key.startswith("affair-") and is_handling):
             seen.add(dir_key)
             handled.append((title, situation))
@@ -882,7 +879,7 @@ def _person_audience_experience(db: Any, name: str) -> list[dict]:
     """Surviving audience nights, projected through the existing audibility rule."""
     from ming_sim.audience_night import person_night_experience
 
-    nights = db.conn.execute("SELECT id FROM audience_nights ORDER BY id").fetchall()
+    nights = db.reign.list_night_ids()
     return [entry for night in nights
             for entry in person_night_experience(db, int(night["id"]), name)]
 
@@ -893,14 +890,7 @@ def _secret_order_chat_turn_ids(db: Any) -> set[int]:
     if not message_ids:
         return set()
     placeholders = ",".join("?" for _ in message_ids)
-    return {
-        int(row["id"])
-        for row in db.conn.execute(
-            f"SELECT id FROM chat_turns WHERE user_message_id IN ({placeholders}) "
-            f"OR minister_message_id IN ({placeholders})",
-            [*message_ids, *message_ids],
-        )
-    }
+    return {int(row["id"]) for row in db.reign.chat_turns_for_messages(message_ids)}
 
 
 def _omit_secret_order_audience(entries: Sequence[dict], secret_turn_ids: set[int]) -> list[dict]:
@@ -1029,7 +1019,6 @@ SECRET_ORDER_ORIGIN_PREFIX = "secret_order:"
 def is_secret_order_origin(origin: object) -> bool:
     """是否密令来源：origin/source_id 以 SECRET_ORDER_ORIGIN_PREFIX 开头。"""
     return str(origin or "").startswith(SECRET_ORDER_ORIGIN_PREFIX)
-
 
 
 def _candidate_event_fact(ev: Any) -> dict[str, object]:
@@ -1170,7 +1159,7 @@ def _world_affair_lines(
         # Metadata follows durable dossier links, never the free-prose origin.
         # A public fact or ordinary dossier keeps a mixed affair available.
         if public_only and not facts:
-            dossiers = store.dossiers(affair.id)
+            dossiers = db.dossiers.rows_for_affair(affair.id)
             if dossiers and not any(
                 origin_visible_to(db, "", linked_dossier_id=dossier["id"])
                 for dossier in dossiers
@@ -1198,11 +1187,7 @@ def _world_roster_names(db: Any) -> list[str]:
     处经历目录的人物枚举各司其职，互不作为对方的过滤条件。"""
     return [
         str(row["name"] or "").strip()
-        for row in db.conn.execute(
-            "SELECT name FROM characters UNION "
-            "SELECT subject_id AS name FROM textual_facts WHERE subject_kind='character' "
-            "ORDER BY name"
-        ).fetchall()
+        for row in db.characters.read_world_roster_names()
         if str(row["name"] or "").strip()
     ]
 
@@ -1211,11 +1196,7 @@ def _world_subject_ids(db: Any, table: str, subject_kind: str) -> list[str]:
     """实体及历史文字事实对象的全量 id，不以现存实体过滤历史材料。"""
     return [
         str(row["id"] or "").strip()
-        for row in db.conn.execute(
-            f"SELECT id FROM {table} UNION "
-            "SELECT subject_id AS id FROM textual_facts WHERE subject_kind=? ORDER BY id",
-            (subject_kind,),
-        ).fetchall()
+        for row in db.textual_facts.subject_ids(table, subject_kind)
         if str(row["id"] or "").strip()
     ]
 
@@ -1473,7 +1454,7 @@ def _world_effect_materials(
     return history
 
 
-# Decoded machine loads from _dossier_row; raw *_json already skipped. Do not
+# Decoded machine loads from hydrate_dossier_row; raw *_json already skipped. Do not
 # re-emit payload/stigma/execution_signal into player-facing material input (P4).
 _DOSSIER_MATERIAL_SKIP = frozenset({
     "office_archive_keys", "payload", "stigma", "execution_signal",
@@ -1591,27 +1572,45 @@ def _write_world_tree(
         materials = {
             "案卷": {
                 "案卷": {
-                    field: value for field, value in dossier.items()
-                    if not field.endswith("_json") and field not in _DOSSIER_MATERIAL_SKIP
+                    field: value
+                    for field, value in dossier.items()
+                    if not field.endswith("_json")
+                    and field not in _DOSSIER_MATERIAL_SKIP
                 },
                 "判决历史": visible_history(db.dossiers.decisions(dossier_id)),
                 "背书": visible_history(db.dossiers.endorsements(dossier_id)),
                 "关联": visible_history(db.dossiers.links(dossier_id)),
             },
             "奏报": {
-                "月度进度": visible_history(db.dossiers.list_dossier_progress(dossier_id)),
+                "月度进度": visible_history(
+                    db.dossiers.list_dossier_progress(dossier_id)
+                ),
                 "检举": [
-                    {field: row[field] for field in (
-                        "id", "turn", "accuser_name", "accuser_faction",
-                        "subject_name", "subject_faction", "target_dossier_id", "memorial_text",
-                    )}
-                    for row in visible_history(db.list_faction_denunciations(target_dossier_id=dossier_id))
+                    {
+                        field: row[field]
+                        for field in (
+                            "id",
+                            "turn",
+                            "accuser_name",
+                            "accuser_faction",
+                            "subject_name",
+                            "subject_faction",
+                            "target_dossier_id",
+                            "memorial_text",
+                        )
+                    }
+                    for row in visible_history(
+                        db.dossiers.denunciations(target_dossier_id=dossier_id)
+                    )
                 ],
                 "密令陈词": secret_order["result"] if secret_order else "",
             },
             "实况": {
                 "已落效果": _world_effect_materials(
-                    db, f"dossier:{dossier_id}", secret_turn_ids or set(), public_only,
+                    db,
+                    f"dossier:{dossier_id}",
+                    secret_turn_ids or set(),
+                    public_only,
                 ),
                 "对账": visible_history(db.dossiers.reconciliations(dossier_id)),
             },
@@ -1650,7 +1649,7 @@ def dossier_paid_amount(db: Any, dossier_id: object) -> int:
         return 0
     return sum(
         max(0, -int(move.get("delta") or 0))
-        for move in db.reign.list_economy_moves_for_dossier(oid)
+        for move in db.reign.list_economy_moves_for_origin(f"dossier:{int(oid)}")
     )
 
 
@@ -1723,7 +1722,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         if status != "executing":
             continue
         dossier_id = int(row["id"])
-        # list_decree_dossiers_for_simulation → _dossier_row 已保证 payload 为对象。
+        # list_decree_dossiers_for_simulation → hydrate_dossier_row 已保证 payload 为对象。
         payload = row["payload"]
         facts.append({
             "id": dossier_id,
@@ -1799,9 +1798,7 @@ def _scene_present_rows(db: Any) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for name in names:
         office = ""
-        row = db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (name,),
-        ).fetchone()
+        row = db.characters.field_row('office', name)
         if row is not None:
             office = str(row["office"] or "")
         rows.append((name, office))
@@ -1859,7 +1856,7 @@ def _resolve_present_character(
     hit = characters.get(name)
     if hit is not None:
         return hit
-    row = CharacterStore(db.conn).read_resolve_present_character((name,))
+    row = db.characters.read_resolve_present_character((name,))
     if row is not None:
         return _character_projection_from_db_row(row)
     from ming_sim.models import Character
@@ -2336,7 +2333,6 @@ def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, obj
             "body": body,
         })
     return rows
-
 
 
 def _with_archived_gazette_titles(

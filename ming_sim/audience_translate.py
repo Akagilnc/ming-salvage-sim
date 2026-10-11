@@ -14,11 +14,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.army.store import ArmyStore
-from ming_sim.entities.character_knowledge.store import CharacterKnowledgeStore
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.issue.store import IssueStore
-from ming_sim.entities.region.store import RegionStore
 
 import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
@@ -64,16 +59,7 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     直接读表：``list_pending_actions`` 投影不含 night_id / night_approved，
     转译必须看见本夜归属与应允态，不能靠那条呈现投影。
     """
-    params: list[Any] = [int(turn)]
-    sql = (
-        "SELECT id, kind, action, payload_json, night_id, night_approved "
-        "FROM pending_actions WHERE turn=? AND status='pending'"
-    )
-    if int(night_id or 0) > 0:
-        sql += " AND night_id=?"
-        params.append(int(night_id))
-    sql += " ORDER BY id"
-    rows = db.conn.execute(sql, tuple(params)).fetchall()
+    rows = db.dossiers.pending_summary_rows(turn, night_id)
     out: List[str] = []
     from ming_sim.db import _load_durable_json
 
@@ -109,9 +95,7 @@ def build_night_said_so_far(
     cutoff_id = int(until_chat_turn_id or 0)
     cutoff_seq: Optional[int] = None
     if cutoff_id > 0:
-        crow = db.conn.execute(
-            "SELECT night_seq FROM chat_turns WHERE id=?", (cutoff_id,),
-        ).fetchone()
+        crow = db.reign.read_chat_turn_night_seq((cutoff_id,))
         if crow is not None:
             cutoff_seq = int(crow["night_seq"] or 0)
 
@@ -142,9 +126,7 @@ def build_night_said_so_far(
         ):
             if not mid:
                 continue
-            row = db.conn.execute(
-                "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
-            ).fetchone()
+            row = db.chat_messages.read_build_night_said_so_far((int(mid),))
             if row is None:
                 continue
             body = str(row["content"] or "")
@@ -207,41 +189,28 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     不猜、不从正文匹配改写模型输出。
     """
     lines: List[str] = []
-    for row in db.conn.execute(
-        "SELECT id, name FROM regions ORDER BY id"
-    ).fetchall():
+    for row in db.regions.read_build_translation_target_grounding(()):
         lines.append(f"region\t{row['id']}\t{row['name']}")
-    for row in db.conn.execute(
-        "SELECT id, name FROM armies ORDER BY id"
-    ).fetchall():
+    for row in db.armies.read_build_translation_target_grounding(()):
         lines.append(f"army\t{row['id']}\t{row['name']}")
-    for row in db.conn.execute(
-        "SELECT name, office FROM characters WHERE status='active' "
-        "ORDER BY name"
-    ).fetchall():
+    for row in db.characters.read_build_translation_target_grounding(()):
         lines.append(
             f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
         )
     from ming_sim.staged_commitment import normalize_commitment_stages
-    for row in db.conn.execute(
-        "SELECT id, title, stages_json FROM issues WHERE status='active' ORDER BY id"
-    ).fetchall():
+
+    for row in db.issues.read_build_translation_target_grounding(()):
         stages = normalize_commitment_stages(row['stages_json'])
         lines.append(f"issue\t{int(row['id'])}\t{str(row['title'] or '')}")
         for stage in stages:
             lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")
-    for row in db.conn.execute(
-        "SELECT id, title, status FROM secret_orders ORDER BY id"
-    ).fetchall():
+    for row in db.character_knowledge.read_build_translation_target_grounding():
         lines.append(
             f"secret_order\t{int(row['id'])}\t{str(row['status'] or '')}\t"
             f"{str(row['title'] or '')}"
         )
     # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
-    for row in db.conn.execute(
-        "SELECT id, action_type, target_kind, target_id FROM decree_dossiers "
-        "WHERE status='executing' AND action_type='grant_allocation' ORDER BY id"
-    ).fetchall():
+    for row in db.dossiers.read_build_translation_target_grounding():
         declared = db.dossier_declares_escort(int(row["id"]))
         lines.append(
             f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"

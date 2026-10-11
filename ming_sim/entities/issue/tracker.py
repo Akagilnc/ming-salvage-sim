@@ -95,7 +95,7 @@ def apply_issue_tracker_output(
         # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
         # state.metrics）后判 None，会让拒收项的 metric_delta 副作用已落 state、与「未落地」矛盾且结算
         # commit 无 rollback（cmr advances r1 codex high + claude concur）。
-        _chk = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+        _chk = db.issues.read_apply_issue_tracker_output((issue_id,))
         if _chk is None or _chk["status"] != "active":
             entity_rejections.append(RejectedItem(item=adv, reason=f"advances 引用未找到或已非 active 的 issue {issue_id}", category="missing_ref", source=source))
             continue
@@ -675,9 +675,7 @@ def apply_issue_tracker_output(
             entity_rejections.append(RejectedItem(item=cl, reason=f"close_issues reason 非法 '{reason}'（须 resolved/failed/acknowledged），issue {issue_id}", category="invalid_enum", source=source))
             continue
         narrative = str(cl.get("narrative") or "")
-        chk = db.conn.execute(
-            "SELECT * FROM issues WHERE id=?", (issue_id,)
-        ).fetchone()
+        chk = db.issues.row(issue_id)
         if reason == "acknowledged":
             from ming_sim.staged_commitment import is_stage_derived_end_turn
             if chk is None:
@@ -726,7 +724,7 @@ def apply_issue_tracker_output(
             #   ① 未找到 / ② 已非 active → 陈旧/幻觉引用（missing_ref）；
             #   ③ 找到且仍 active 却被拒 → close_issue 唯一剩余 None 路径＝reason=failed 用于
             #      不可崩坏局势（无 effect_on_fail，保持 active）＝LLM 语义误判（invalid_enum），非「未找到」。
-            chk = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+            chk = db.issues.read_apply_issue_tracker_output((issue_id,))
             if chk is None:
                 category, why = "missing_ref", f"close_issues 引用未找到的 issue {issue_id}"
             elif chk["status"] != "active":
@@ -789,7 +787,7 @@ def apply_issue_tracker_output(
     # 4) cancels
     for cn in tracker_output.get("cancels", []) or []:
         issue_id = int(cn.get("issue_id"))
-        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        row = db.issues.row(issue_id)
         if row is None or row["status"] != "active":
             continue
         if row["cancellable"] != "decree":

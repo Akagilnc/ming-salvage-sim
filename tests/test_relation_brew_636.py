@@ -127,10 +127,10 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game, first_
     run_month_end_relation_brew(db, state, brew_fn)
     # 同批新事实：杨嗣昌党籍投影皇党（factions 表现存）→ 关系对＋皇党两个工作项。
     assert len(calls) == 2
-    assert db.get_relation_brew_pending() == []
-    assert db.get_faction_brew_pending() == []
+    assert db.person_logs.get_relation_brew_pending() == []
+    assert db.person_logs.get_faction_brew_pending() == []
 
-    first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
+    first = db.person_logs.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     assert first["dimension"] == "君臣"
     assert first["founding_segment"] == first_text
 
@@ -143,7 +143,7 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game, first_
     brew_fn.outputs = [_script(foundings=[next_text], recent="杨嗣昌所托办结，恩遇正浓。")]
     run_month_end_relation_brew(db, state, brew_fn)
 
-    second = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
+    second = db.person_logs.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     assert second["founding_segment"] == expected
     assert second["recent_segment"] == "杨嗣昌所托办结，恩遇正浓。"
 
@@ -154,7 +154,7 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game, first_
               context="杨嗣昌所请被驳。", origin="audience:turn-3")
     brew_fn.outputs = [_script(foundings=[expected, expected], recent="杨嗣昌所请被驳，渐生离心。")]
     run_month_end_relation_brew(db, state, brew_fn)
-    third = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
+    third = db.person_logs.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     assert third["founding_segment"] == second["founding_segment"]
 
 
@@ -168,7 +168,7 @@ def test_no_new_events_and_no_pending_month_bytes_unchanged_zero_brews(game):
     brew_fn = _brew_fn_factory(calls)
     brew_fn.outputs = [_script(recent="毕王有站台之谊。")]
     run_month_end_relation_brew(db, state, brew_fn)
-    before = db.get_relation_summary("毕自严", "王绍徽")
+    before = db.person_logs.get_relation_summary("毕自严", "王绍徽")
 
     # 成功月重跑结算（跨月推进、无新事件、无 pending）：字节不变、零重酿调用。
     calls.clear()
@@ -177,7 +177,7 @@ def test_no_new_events_and_no_pending_month_bytes_unchanged_zero_brews(game):
     run_month_end_relation_brew(db, state, brew_fn)
 
     assert calls == []
-    after = db.get_relation_summary("毕自严", "王绍徽")
+    after = db.person_logs.get_relation_summary("毕自严", "王绍徽")
     assert after["recent_segment"] == before["recent_segment"]
     assert after["founding_segment"] == before["founding_segment"]
 
@@ -194,8 +194,8 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
     run_month_end_relation_brew(db, state, brew_fn)
     # 同批新事实：钱谦益党籍投影东林 → 关系对＋东林。
     assert len(calls) == 2
-    assert db.get_relation_summary(EMPEROR_NODE, "钱谦益") is not None
-    assert any(row["faction"] == "东林" for row in db.get_faction_stance_summaries())
+    assert db.person_logs.get_relation_summary(EMPEROR_NODE, "钱谦益") is not None
+    assert any(row["faction"] == "东林" for row in db.factions.get_faction_stance_summaries())
 
     # 语义翻转月：新辜负事件入账后重酿，酿制输入必含该新事件。
     flip_id = _add_edge(db, state, source=EMPEROR_NODE, target="钱谦益", kind="辜负",
@@ -211,7 +211,7 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
     assert payload["new_events"] and payload["new_events"][0]["context"] == "钱谦益哭谏被拒，圣眷转衰。"
     assert payload["new_events"][0]["event_kind"] == "辜负"
     assert payload["recent_segment"] == "钱谦益蒙知遇。"
-    summary = db.get_relation_summary(EMPEROR_NODE, "钱谦益")
+    summary = db.person_logs.get_relation_summary(EMPEROR_NODE, "钱谦益")
     assert summary["last_event_id"] >= flip_id
 
 
@@ -232,11 +232,11 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     with pytest.raises(LLMUnavailable):
         run_month_end_relation_brew(db, state, failing_brew)
     # 同批新事实：温/周均皇党 → 关系对＋皇党，双双降级留痕。
-    assert db.get_relation_summary("温体仁", "周延儒") is None
-    assert db.get_relation_edge_events(source="温体仁", target="周延儒")
-    pending = db.get_relation_brew_pending()
+    assert db.person_logs.get_relation_summary("温体仁", "周延儒") is None
+    assert db.person_logs.get_relation_edge_events(source="温体仁", target="周延儒")
+    pending = db.person_logs.get_relation_brew_pending()
     assert [(row["source"], row["target"]) for row in pending] == [("温体仁", "周延儒")]
-    assert [row["faction"] for row in db.get_faction_brew_pending()] == ["皇党"]
+    assert [row["faction"] for row in db.person_logs.get_faction_brew_pending()] == ["皇党"]
 
     # 次月无新事件，仍因 pending 被选中；成功后 pending 清除、摘要落定。
     # #642：失败月事件在次月 payload 双桶并集中恰一次，且落 new 不落 prior。
@@ -255,9 +255,9 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     prior_hits = [e for e in payload["prior_events"] if e["origin"] == "audience:turn-1"]
     assert len(new_hits) + len(prior_hits) == 1
     assert len(new_hits) == 1 and prior_hits == []
-    assert db.get_relation_brew_pending() == []
-    assert db.get_faction_brew_pending() == []
-    summary = db.get_relation_summary("温体仁", "周延儒")
+    assert db.person_logs.get_relation_brew_pending() == []
+    assert db.person_logs.get_faction_brew_pending() == []
+    summary = db.person_logs.get_relation_summary("温体仁", "周延儒")
     assert summary["recent_segment"] == "温周结怨，朝堂侧目。"
     assert summary["dimension"] == "大臣"
     assert int(summary["last_event_id"]) >= int(failed_id)
@@ -339,7 +339,7 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
     # 写入→读回：字节原样，全链无截断无删改。
     run_month_end_relation_brew(db, state, fixture_brew)
 
-    stored = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")["recent_segment"]
+    stored = db.person_logs.get_relation_summary(EMPEROR_NODE, "杨嗣昌")["recent_segment"]
     assert stored.encode("utf-8") == fixture
 
 
@@ -361,7 +361,7 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
     run_month_end_relation_brew(db, state, brew_fn)
 
     assert calls == []
-    assert db.get_relation_summary("毕自严", "王绍徽") is None
+    assert db.person_logs.get_relation_summary("毕自严", "王绍徽") is None
 
 
 # ------- 判词类③ fail-loud 异常边界：DB/schema/程序错误响亮，仅 LLM 单条降级

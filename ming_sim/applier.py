@@ -100,7 +100,7 @@ def coerce_beyond_intent_flag(value: object) -> int:
 def load_stored_json(raw: object, *, label: str, blank: object = None) -> object:
     """Read one durable JSON document.
 
-    Blank or missing text is the absent document (`blank`). A present value
+    SQL NULL is the absent document (`blank`). A present value
     that is not JSON raises StoredDocumentError; it is not rewritten empty.
     """
     if isinstance(raw, (dict, list)):
@@ -114,8 +114,6 @@ def load_stored_json(raw: object, *, label: str, blank: object = None) -> object
             raise StoredDocumentError(f"{label} 损坏") from exc
     if not isinstance(raw, str):
         raise StoredDocumentError(f"{label} 损坏")
-    if not raw.strip():
-        return blank
     try:
         return json.loads(raw)
     except (TypeError, ValueError) as exc:
@@ -123,7 +121,7 @@ def load_stored_json(raw: object, *, label: str, blank: object = None) -> object
 
 
 def load_stored_object(raw: object, *, label: str) -> dict:
-    """Durable JSON object. Blank is {}. A present non-object raises."""
+    """Durable JSON object. SQL NULL is {}. A present non-object raises."""
     value = load_stored_json(raw, label=label, blank={})
     if not isinstance(value, dict):
         raise StoredDocumentError(f"{label} 必须为对象")
@@ -135,7 +133,7 @@ def parse_engine_payload_json(
 ) -> dict:
     """#624 / ADR 0005：引擎侧 payload 读路单一助手。
 
-    真空/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + StoredDocumentError。
+    SQL NULL/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + StoredDocumentError。
     """
     from ming_sim.token_stats import tlog
 
@@ -147,7 +145,7 @@ def parse_engine_payload_json(
 
 
 def load_stored_list(raw: object, *, label: str) -> list:
-    """Durable JSON list. Blank is []. A present non-list raises."""
+    """Durable JSON list. SQL NULL is []. A present non-list raises."""
     value = load_stored_json(raw, label=label, blank=[])
     if not isinstance(value, list):
         raise StoredDocumentError(f"{label} 必须为名单")

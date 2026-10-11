@@ -23,12 +23,6 @@ _LOG_COLUMNS = (
     "delta", "reason", "origin_ref",
 )
 
-_NAME_LOG_COLUMNS = (
-    "turn", "year", "period", "power_id", "old_name", "new_name",
-    "old_aliases", "new_aliases", "reason",
-)
-
-
 def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
     return checked_columns(values, allowed, what="powers")
 
@@ -83,39 +77,34 @@ class PowerStore:
             tuple(row.get(column) for column in _LOG_COLUMNS),
         )
 
-    def append_name_log(self, row: Mapping[str, object]) -> None:
-        checked_columns(row, set(_NAME_LOG_COLUMNS), what="power_name_logs")
-        self._conn.execute(
-            "INSERT INTO power_name_logs "
-            "(turn, year, period, power_id, old_name, new_name, old_aliases, "
-            "new_aliases, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            tuple(row.get(column) for column in _NAME_LOG_COLUMNS),
-        )
-
-    def read_load_pending_gate_power_shadow_rows(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, leverage, military_strength, supply FROM powers', params).fetchall()
-
-    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id FROM powers WHERE id=?', params).fetchone()
-
-    def read_apply_issue_entities(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT 1 FROM powers WHERE id=?', params).fetchone()
-
-    def read_strategic_event_result_preflight_error(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT 1 FROM powers WHERE id = ? LIMIT 1', params).fetchone()
-
-    def read_apply_power_rename(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM powers WHERE id = ?', params).fetchone()
-
     def display_name(self, power_id: str) -> str:
-        row = self.read_power_display_name((str(power_id),))
+        row = self.field_row('name', str(power_id))
         return str(row["name"]) if row else str(power_id)
 
-    def read_power_display_name(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name FROM powers WHERE id = ?', params).fetchone()
+
+    def read_apply_issue_entities(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT 1 FROM powers WHERE id=?", params).fetchone()
+
+    def read_apply_power_rename(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM powers WHERE id = ?", params
+        ).fetchone()
 
     def read_find_pacification_target(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT kind, leader, stance FROM powers WHERE id=?', params).fetchone()
+        return self._conn.execute(
+            "SELECT kind, leader, stance FROM powers WHERE id=?", params
+        ).fetchone()
 
     def read_apply_character_power_changes(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id FROM powers', params).fetchall()
+        return self._conn.execute("SELECT id FROM powers", params).fetchall()
+
+
+    def write_apply_power_rename(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                INSERT INTO power_name_logs
+                (turn, year, period, power_id, old_name, new_name, old_aliases, new_aliases, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+            params,
+        )

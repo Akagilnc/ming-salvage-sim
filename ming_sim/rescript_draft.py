@@ -18,13 +18,10 @@ _TRIAGE_OFFICE_TITLES = frozenset({"内阁首辅", "司礼监掌印太监"})
 
 def triage_officers(db) -> list[dict]:
     """Admit triage officers by exact roster office identity only."""
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM characters WHERE status='active' AND power_id='ming' "
-        "AND office IN ({placeholders}) ORDER BY name".format(
-            placeholders=",".join("?" for _ in _TRIAGE_OFFICE_TITLES),
-        ),
-        tuple(sorted(_TRIAGE_OFFICE_TITLES)),
-    )]
+    return [
+        dict(row)
+        for row in db.characters.gatekeeper_rows(sorted(_TRIAGE_OFFICE_TITLES))
+    ]
 
 
 def run_rescript_text(session, *, officers: list, backlog: list, answer: dict | None = None) -> str:
@@ -96,7 +93,7 @@ def produce_memorials(session, chain: dict, *, source) -> None:
     else:
         items, revisions, originals = [], [], {}
     with atomic(db):
-        db.append_rescript_drafts(int(state.turn), items, revisions=[
+        db.issues.append_rescript_drafts(int(state.turn), items, revisions=[
             {**item, "turn": originals[item["decision_key"]]["turn"],
              "idx": originals[item["decision_key"]]["idx"]} for item in revisions
         ])
@@ -162,10 +159,7 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
                         decision_key=key, source_chat_turn_id=0, commit=False,
                     )
             if disposition == "revise":
-                db.conn.execute(
-                    "UPDATE pending_decisions SET status='revision_pending' WHERE turn=? AND idx=?",
-                    (row["turn"], row["idx"]),
-                )
+                db.issues.write_consume((row["turn"], row["idx"]))
             outcome = _ending_from_dispatch_result(result)
             if outcome is not None:
                 chain["declaration_outcome"] = outcome

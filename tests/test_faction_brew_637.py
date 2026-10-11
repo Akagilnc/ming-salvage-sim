@@ -100,10 +100,10 @@ def test_any_endpoint_hit_selects_and_same_faction_dedups(game):
     run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
     # 同批：1 条关系工作项＋1 条派系工作项 → 外部 DB 可见落定。
     assert len(calls) == 2
-    assert db.get_relation_summary("温体仁", "周延儒") is not None
+    assert db.person_logs.get_relation_summary("温体仁", "周延儒") is not None
     assert _faction_stance(db, "皇党") is not None
-    assert db.get_relation_brew_pending() == []
-    assert db.get_faction_brew_pending() == []
+    assert db.person_logs.get_relation_brew_pending() == []
+    assert db.person_logs.get_faction_brew_pending() == []
 
 
 def test_out_of_table_faction_and_unknown_person_never_projected(game):
@@ -123,7 +123,7 @@ def test_out_of_table_faction_and_unknown_person_never_projected(game):
     # 只剩两条关系工作项；零派系工作项。
     assert len(calls) == 2
     assert all(c.get("view") != VIEW_FACTION_STANCE for c in calls)
-    assert db.get_faction_stance_summaries() == []
+    assert db.factions.get_faction_stance_summaries() == []
 
 
 # ------------------------------------- 验收：事件月更新／无事月字节不变
@@ -179,7 +179,7 @@ def test_relation_and_faction_items_share_single_batch_in_parallel(game):
 
     run_month_end_relation_brew(db, state, parallel_brew)
     assert len(set(threads)) == 3
-    assert db.get_relation_summary("毕自严", "王绍徽") is not None
+    assert db.person_logs.get_relation_summary("毕自严", "王绍徽") is not None
     assert _faction_stance(db, "皇党") is not None
     assert _faction_stance(db, "阉党") is not None
 
@@ -217,13 +217,13 @@ def test_zero_writes_to_factions_numeric_columns_across_all_seams(game):
 
     with pytest.raises(LLMUnavailable):
         run_month_end_relation_brew(db, state, failing_then_ok)
-    assert [row["faction"] for row in db.get_faction_brew_pending()] == ["皇党"]
+    assert [row["faction"] for row in db.person_logs.get_faction_brew_pending()] == ["皇党"]
     assert _faction_rows(db) == before
 
     state.turn += 1
     state.period += 1
     run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
-    assert db.get_faction_brew_pending() == []
+    assert db.person_logs.get_faction_brew_pending() == []
     assert _faction_rows(db) == before
 
 
@@ -298,7 +298,7 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls(game)
 
 def _faction_stance(db, faction: str):
     """Read one faction stance via live plural API (#1847 N11: no singular TEST_ONLY reader)."""
-    for row in db.get_faction_stance_summaries():
+    for row in db.factions.get_faction_stance_summaries():
         if str(row.get("faction") or "") == faction:
             return row
     return None

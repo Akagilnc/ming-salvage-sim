@@ -10,15 +10,14 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.reign_state.store import ReignStateStore
-from ming_sim.entities.staged_declaration.store import StagedDeclarationStore
+from ming_sim.applier import parse_engine_payload_json
+from ming_sim.applier import list_rejection_reports_for_turn
 
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdict_metadata
 import re
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
-from ming_sim.db import GameDB
 from ming_sim.applier import Provenance, atomic
 from ming_sim.models import _load_durable_json_list, _load_durable_json_object
 
@@ -250,18 +249,13 @@ def _month_fact_materials(
     turn = int(state.turn)
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
-    rows = db.conn.execute(
-        "SELECT decree_ref, declaration_json, forecast_text "
-        "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
-        (turn,),
-    ).fetchall()
+    rows = db.staged_declarations.read_month_fact_materials((turn,))
     for row in rows:
         decree_ref = str(row["decree_ref"] or "")
         # 已结算声明是内部机械事实；与 parse_engine_payload_json 同权威，
         # 空串/腐坏响亮，不得洗成空声明供料（#1897 E1/K2）。
-        from ming_sim.db import GameDB
         try:
-            declaration = GameDB.parse_engine_payload_json(row["declaration_json"])
+            declaration = parse_engine_payload_json(row["declaration_json"])
         except ValueError as exc:
             raise ValueError(
                 f"settled declaration_json 无效：{decree_ref}"
@@ -271,11 +265,7 @@ def _month_fact_materials(
         if isinstance(forecast, str) and forecast.strip():
             forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
-    for row in db.conn.execute(
-        "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
-        "WHERE turn=? ORDER BY id",
-        (turn,),
-    ):
+    for row in db.reign.read_month_ledger((turn,)):
         origin = str(row["origin_ref"] or "")
         landed.append({
             "account": row["account"],
@@ -285,25 +275,20 @@ def _month_fact_materials(
             "origin_ref": origin,
         })
     rejections: List[Dict[str, Any]] = []
-    exists = db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-    ).fetchone()
-    if exists is not None:
-        for row in db.conn.execute(
-            "SELECT section, item_json, reason, category FROM rejection_reports "
-            "WHERE turn=? ORDER BY id",
-            (turn,),
-        ):
-            from ming_sim.db import GameDB
-            item = GameDB.parse_engine_payload_json(
-                row["item_json"],
-            )
-            rejections.append({
+
+    for row in list_rejection_reports_for_turn(db.conn, turn):
+
+        item = parse_engine_payload_json(
+            row["item_json"],
+        )
+        rejections.append(
+            {
                 "section": row["section"],
                 "item": item,
                 "reason": row["reason"],
                 "category": row["category"],
-            })
+            }
+        )
     answers: List[Dict[str, Any]] = []
     answer_rows = db.issues.list_pending_decisions(turn) + [
         r for r in db.issues.list_rescript_drafts() if r["answered_turn"] == turn
@@ -1182,7 +1167,7 @@ def _apply_deferred_disclosures(
 def _enrich_eligible_dossiers_for_supply(
     db: Any, candidates: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。
+    """合资格案卷供料：复用 DossierStore.get／typed contract 读口补齐正文与执行契约。
 
     密令关联案卷的现行要旨与期限只读 secret_orders（#1897 S2）；案卷 decree_text
     是发令历史原诏，不作现行正文真源。
@@ -1916,7 +1901,6 @@ def _advance_after_gazette(
 ) -> bool:
     if chain.get("advanced"):
         return True
-    from ming_sim.db import GameDB
     from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
     from ming_sim.decree import (
         TIMEOUT_TURN, atomic_and_reload,

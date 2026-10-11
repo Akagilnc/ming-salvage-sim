@@ -1,10 +1,11 @@
 """Building rows and the building change log.
 
-#1889: one write port. Id generation, clamps and field legality stay with the caller.
+#1889: one write port. Clamps and field legality stay with the caller.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from ming_sim.entities.column_write import checked_columns
@@ -37,19 +38,9 @@ class BuildingStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
-    def count_in_region(self, region_id: str) -> int:
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM buildings WHERE region_id = ?", (region_id,),
-        ).fetchone()
-        return int(row[0])
-
     def has_any(self) -> bool:
         return self._conn.execute("SELECT 1 FROM buildings LIMIT 1").fetchone() is not None
 
-    def exists(self, building_id: str) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM buildings WHERE id = ?", (building_id,),
-        ).fetchone() is not None
 
     def get(self, building_id: str) -> Any:
         return self._conn.execute(
@@ -65,6 +56,20 @@ class BuildingStore:
             f"INSERT INTO buildings ({', '.join(columns)}) VALUES ({placeholders})",
             [row[column] for column in columns],
         )
+
+    def insert_new(self, row: Mapping[str, object]) -> str:
+        """Allocate a free regional identity and insert the validated building."""
+        region_id = row["region_id"]
+        base = re.sub(r"[^a-z0-9]+", "", (region_id or "rgn").lower()) or "rgn"
+        seq = int(self._conn.execute(
+            "SELECT COUNT(*) FROM buildings WHERE region_id = ?", (region_id,),
+        ).fetchone()[0])
+        building_id = f"{base}_b{seq + 1}"
+        while self.get(building_id) is not None:
+            seq += 1
+            building_id = f"{base}_b{seq + 1}"
+        self.insert({**row, "id": building_id})
+        return building_id
 
     def update(self, building_id: str, values: Mapping[str, object]) -> int:
         columns = _checked(values, allowed=_MUTABLE_COLUMNS)
@@ -91,15 +96,25 @@ class BuildingStore:
             tuple(row.get(column) for column in _LOG_COLUMNS),
         )
 
-
     def read_buildings_report(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM buildings WHERE region_id = ? ORDER BY category, name', params).fetchall()
+        return self._conn.execute(
+            "SELECT * FROM buildings WHERE region_id = ? ORDER BY category, name",
+            params,
+        ).fetchall()
 
     def read_buildings_report_(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM buildings ORDER BY region_id, category, name', params).fetchall()
+        return self._conn.execute(
+            "SELECT * FROM buildings ORDER BY region_id, category, name", params
+        ).fetchall()
 
     def read_compute_budget_lines(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT category, condition, maintenance, output_metric, output_amount FROM buildings', params).fetchall()
+        return self._conn.execute(
+            "SELECT category, condition, maintenance, output_metric, output_amount FROM buildings",
+            params,
+        ).fetchall()
 
     def read_apply_fixed_period_flows(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings', params).fetchall()
+        return self._conn.execute(
+            "SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings",
+            params,
+        ).fetchall()

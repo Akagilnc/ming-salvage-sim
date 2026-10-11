@@ -312,7 +312,7 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     key = next(iter(db.fiscal_config.values()))
     setup = settle_delta(state, db, {'fiscal_creates': [{'key': '待禁裁项', 'account': '国库', 'direction': 'income', 'init_value': 2, 'origin_ref': origin, 'beyond_intent': True}, {'key': '普通裁项', 'account': '国库', 'direction': 'income', 'init_value': 2, 'origin_ref': origin}], 'fiscal_changes': [{'key': key, 'delta': 1, 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content, dossier_ids_at_input={did}))
     assert not section(setup, "fiscal_creates").rejected
-    historical_rows = list(db.fiscal_config.effects_for_dossier(did))
+    historical_rows = list(db.fiscal_config.effects_for_origin(f"dossier:{int(did)}"))
     # 现役唯一补饷路按分源欠销账：固定饷源份额并同步两源欠，不走已退役的标量直写分支。
     db.conn.execute(
         "\n        UPDATE armies\n        SET owner_power='ming', is_tusi=0, self_funded_pay=0,\n            province_pay_share=0, central_pay_share=1.0,\n             province_pay_arrears=0, central_pay_arrears=8\n        WHERE id=?\n        ",
@@ -336,7 +336,7 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     assert db.fiscal_config.values().get("待禁新项_base") is None
     current_rows = {
         (row["effect_kind"], row["id"]): row
-        for row in db.fiscal_config.effects_for_dossier(did)
+        for row in db.fiscal_config.effects_for_origin(f"dossier:{int(did)}")
     }
     assert all(current_rows[(row["effect_kind"], row["id"])] == row for row in historical_rows)
     assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 6
@@ -399,12 +399,12 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
     _exposed_todo(db, state, monkeypatch, did)
     origin = f"dossier:{did}"
     settle_delta(state, db, {'fiscal_creates': [{'key': '暗渠新项_rate', 'account': '国库', 'direction': 'income', 'init_value': 6, 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content, dossier_ids_at_input={did}))
-    before = list(db.fiscal_config.effects_for_dossier(did))
+    before = list(db.fiscal_config.effects_for_origin(f"dossier:{int(did)}"))
     prohibition = _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert "暗渠新项_base" not in db.fiscal_config.values()
-    assert db.fiscal_config.effects_for_dossier(did) == before
+    assert db.fiscal_config.effects_for_origin(f"dossier:{int(did)}") == before
     tombstones = db.conn.execute(
         "SELECT key FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",
         (f"dossier:{prohibition}",),

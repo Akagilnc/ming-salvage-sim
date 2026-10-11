@@ -114,7 +114,7 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     assert record["revoked_turn"] == final_state.turn
 
     # #1895 / J19: first revoke records only the revoke fact — no automatic 结怨.
-    assert final.get_relation_edge_events(
+    assert final.person_logs.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     ) == []
 
@@ -137,7 +137,7 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     again = settle_delta(final_state, final, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': revoke_dossier['id']}]}, SettlementContext(content=content))
     assert view(again, "authority_changes")[0]["reason"] == "already_revoked"
     assert final.characters.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
-    assert final.get_relation_edge_events(
+    assert final.person_logs.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     ) == []
 

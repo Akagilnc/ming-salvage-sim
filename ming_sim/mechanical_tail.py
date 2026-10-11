@@ -362,10 +362,7 @@ def schedule_mechanical_tail_after_advance(
 
 def _resolve_context_turns(db: Any) -> list[int]:
     """有月链记录的回合（现役 GameDB.conn）。"""
-    rows = db.conn.execute(
-        "SELECT turn FROM pending_resolve_context ORDER BY turn"
-    ).fetchall()
-    return [int(row["turn"]) for row in rows]
+    return db.resolve_contexts.turns()
 
 
 def _pending_mechanical_tails(

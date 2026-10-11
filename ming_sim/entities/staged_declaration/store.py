@@ -8,6 +8,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 import json
 from dataclasses import dataclass
@@ -15,10 +16,6 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 
 from ming_sim.applier import atomic, connection_owns_transaction
-from ming_sim.applier import (
-    atomic, connection_owns_transaction,
-    load_stored_object, load_stored_list,
-)
 
 
 _TABLE_SQL = """
@@ -131,12 +128,7 @@ class StagedDeclarationStore:
         def write() -> int:
             if self.is_settled(ref):
                 return 0
-            cur = self._conn.execute(
-                "UPDATE staged_declarations SET status='discarded' "
-                "WHERE decree_ref=? AND status='staged'",
-                (ref,),
-            )
-            n = int(cur.rowcount or 0)
+            n = self.mark_terminal(ref, status="discarded")
             if n == 0 and not self._is_closed(ref):
                 # Tombstone: decree lifecycle is independent of product rows.
                 self._conn.execute(
@@ -246,39 +238,34 @@ class StagedDeclarationStore:
             self._conn.commit()
         return int(cur.rowcount or 0)
 
-    def mark_settled(self, decree_ref: str) -> int:
+    def mark_terminal(self, decree_ref: str, *, status: str = "settled") -> int:
         ref = str(decree_ref or "").strip()
         owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
-            "UPDATE staged_declarations SET status='settled' "
+            "UPDATE staged_declarations SET status=? "
             "WHERE decree_ref=? AND status='staged'",
-            (ref,),
+            (status, ref),
         )
         if owns:
             self._conn.commit()
         return int(cur.rowcount or 0)
 
     def read_month_fact_materials(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT decree_ref, declaration_json, forecast_text, visible_refs_json FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id", params).fetchall()
-
-
-def _load_questions(raw: object) -> list[dict]:
-    questions = load_stored_list(raw, label="questions_json")
-    if any(not isinstance(question, dict) for question in questions):
-        raise ValueError("questions_json 成员须为对象")
-    return questions
-
-
+        return self._conn.execute(
+            "SELECT decree_ref, declaration_json, forecast_text "
+            "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
+            params,
+        ).fetchall()
 
 
 def _row_to_staged(row: Any) -> StagedDeclaration:
-    from ming_sim.db import GameDB, _load_durable_json
+    from ming_sim.db import _load_durable_json
     # SQL NULL 是缺省；其它值原样解码，留给真实消费，不洗成缺席。
     decree_ref = str(row["decree_ref"])
     if "verdict_json" not in row.keys() or row["verdict_json"] is None:
         verdict = None
     else:
-        verdict = GameDB.parse_engine_payload_json(row["verdict_json"])
+        verdict = parse_engine_payload_json(row["verdict_json"])
     if "questions_json" not in row.keys() or row["questions_json"] is None:
         questions = None
     else:
@@ -288,9 +275,9 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=decree_ref,
-        declaration=GameDB.parse_engine_payload_json(row["declaration_json"]),
+        declaration=parse_engine_payload_json(row["declaration_json"]),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
-        visible_refs=GameDB.parse_engine_payload_json(row["visible_refs_json"]),
+        visible_refs=parse_engine_payload_json(row["visible_refs_json"]),
         verdict=verdict,
         questions=questions,
         forecast_text=None if forecast_text is None else (

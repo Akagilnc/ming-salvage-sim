@@ -293,9 +293,8 @@ def apply_changes(run) -> SectionResult:
             continue
         run.db.set_fiscal_config_batch(final_values, commit=False)
         for change in pair_changes:
-            run.db.conn.execute(
-                "UPDATE fiscal_config SET origin_ref=? WHERE key=?",
-                (change["origin_ref"], change["key"]),
+            run.db.fiscal_config.set_origin(
+                change["key"], change["origin_ref"]
             )
             run.db.fiscal_config.record_change(
                 turn=run.state.turn, key=str(change["key"]),

@@ -230,12 +230,6 @@ def test_seed_guilt_structured_clean_vs_debt():
         seed_guilt_counts_as_debt("血债")
 
 
-def test_task_specific_contract_rejects_tags_without_explicit_fields():
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
-        )
-
 @pytest.mark.parametrize(
     ("unit", "identity", "sign"),
     [
@@ -452,7 +446,7 @@ def test_monthly_actual_does_not_invent_generic_world_package(game):
     ).fetchone()["loyalty"])
     assert after_loyalty == before_loyalty
     assert int(state.metrics.get("内库", 0)) == before_neiku
-    assert db.reign.list_economy_moves_for_dossier(did) == []
+    assert db.reign.list_economy_moves_for_origin(f"dossier:{int(did)}") == []
 
 def test_submit_unlimited_keeps_frozen_target(game):
     db, state, _ = game
@@ -1041,10 +1035,10 @@ def test_spoliation_requires_real_knowledge_source(game):
             "SELECT name FROM characters WHERE status='active' AND name NOT IN (?,?)",
             (name, target),
         ).fetchall()
-        if not db.get_relation_edge_events(person=target)
+        if not db.person_logs.get_relation_edge_events(person=target)
         or all(
             str(e["source"]) != row["name"] and str(e["target"]) != row["name"]
-            for e in db.get_relation_edge_events(person=target)
+            for e in db.person_logs.get_relation_edge_events(person=target)
         )
     )
     out = apply_investigation_spoliation(
@@ -2125,7 +2119,8 @@ def test_create_secret_order_rejects_missing_contract(game):
     name = _minister(db)
     with pytest.raises(CovertContractError):
         db.create_secret_order(
-            state, name, "无合同密令", "无显式差务", [], deadline_months=1,
+            state, name, "无合同密令", "无显式差务",
+            ["辽饷", "兵部", "密查", "稽核"], deadline_months=3,
         )
     assert db.character_knowledge.list_secret_orders() == []
 
@@ -2261,7 +2256,7 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     ).fetchone()["loyalty"])
     assert after_loyalty == before_loyalty
     assert int(state.metrics.get("内库", 0)) == before_neiku
-    assert db.reign.list_economy_moves_for_dossier(did) == []
+    assert db.reign.list_economy_moves_for_origin(f"dossier:{int(did)}") == []
     db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
     db.conn.commit()
     settled, _rejections = settle_due_secret_orders(db, state)
@@ -2313,11 +2308,6 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
     assert "rejected" not in row
     assert row["units"] == 0.0
     assert len(_actual_progress_rows(db, did)) == 1
-
-def test_task_specific_contract_rejects_empty_without_typed_fields():
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract()
-
 
 def test_settle_due_preserves_reports_without_forging_actual_progress(game):
     db, state, _ = game

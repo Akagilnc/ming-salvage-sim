@@ -35,7 +35,6 @@ from ming_sim.entities.character.transit import (  # noqa: E402
 )
 
 
-
 # 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
 # 它们 bar 能跌到 0、status 转 failed 终结，落 effect_on_fail 一锤子永久重创。
 # 不在此集合的（天灾/饥荒等不可控天象、正面机遇）无失败态：bar 下限 1、永不 failed、
@@ -175,7 +174,6 @@ def _effect_event_ids(
     declared = (ordered_effect_event_ids or {}).get(field, [])
     event_id = declared[index] if index < len(declared) else ""
     return {event_id} & event_ids if event_id else set()
-
 
 
 def _split_strategic_person_result_changes(
@@ -332,13 +330,13 @@ def _strategic_event_result_preflight_error(
     )
 
     def _region_world_value(region_id: str, field: str) -> object:
-        row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
+        row = db.regions.row(region_id)
         if field in FISCAL_SCORE_FIELDS:
             return json.loads(str(row["fiscal"] or "{}")).get(field, 50)
         return row[field]
 
     def _army_world_value(army_id: str, field: str) -> object:
-        row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+        row = db.armies.row(army_id)
         return row[field]
 
     def _reject_landed_or_unchanged(
@@ -379,9 +377,7 @@ def _strategic_event_result_preflight_error(
             # #1835 S2：领域字段/整数/势力准入交写核；此处只组 noop 快照并消费写核拒收。
             snapshots: List[tuple[object, str, str, object, object]] = []
             seen_fields: set[str] = set()
-            region_row = db.conn.execute(
-                "SELECT 1 FROM regions WHERE id = ? LIMIT 1", (region_id,),
-            ).fetchone()
+            region_row = db.regions.read_assert_commission_grant_target_exists((region_id,))
             if region_row is not None:
                 for raw_field, value in raw_changes.items():
                     field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
@@ -417,18 +413,16 @@ def _strategic_event_result_preflight_error(
             # #1835 S2：炮转移/字段/整数准入复用 apply_army_delta_with_cannon_transfer。
             snapshots = []
             seen_fields = set()
-            army_row = db.conn.execute(
-                "SELECT 1 FROM armies WHERE id = ? LIMIT 1", (army_id,),
-            ).fetchone()
+            army_row = db.armies.read_assert_commission_grant_target_exists(
+                (army_id,)
+            )
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
                     continue
                 if field == "cannon_transfer_to":
                     transfer_target = str(value)
-                    target_row = db.conn.execute(
-                        "SELECT 1 FROM armies WHERE id = ? LIMIT 1", (transfer_target,),
-                    ).fetchone()
+                    target_row = db.armies.read_assert_commission_grant_target_exists((transfer_target,))
                     if target_row is not None:
                         snapshots.append(
                             (
@@ -508,10 +502,7 @@ def _strategic_event_result_preflight_error(
             name = character_names._person_change_name(item)
             if action in {"处置", "罢黜"}:
                 target_status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
-                row = db.conn.execute(
-                    "SELECT status FROM characters WHERE name = ?",
-                    (name,),
-                ).fetchone()
+                row = db.characters.field_row('status', name)
                 if row is not None and str(row["status"] or "") == target_status:
                     return _noop_error(
                         "person",
@@ -522,13 +513,9 @@ def _strategic_event_result_preflight_error(
             if action in {"任命", "调任"}:
                 target_office = normalize_office(str(item.get("office") or item.get("new_office") or ""))
                 if target_office:
-                    row = db.conn.execute(
-                        "SELECT c.office, c.office_type, "
-                        "COALESCE(co.appointment_tenure, '真除') AS appointment_tenure "
-                        "FROM characters c LEFT JOIN character_offices co "
-                        "ON co.character_name = c.name WHERE c.name = ?",
-                        (name,),
-                    ).fetchone()
+                    row = db.characters.read_strategic_event_result_preflight_error_c_office_c_office_type_COALESCE_co_appointment_tenure_真除_AS_appoi(
+                        (name,)
+                    )
                     if row is not None:
                         current_office = normalize_office(str(row["office"] or ""))
                         current_type = str(row["office_type"] or "")
@@ -563,10 +550,9 @@ def _strategic_event_result_preflight_error(
                             )
             if action != "行止":
                 continue
-            row = db.conn.execute(
-                "SELECT status, location, transit_to FROM characters WHERE name = ?",
-                (name,),
-            ).fetchone()
+            row = db.characters.read_strategic_event_result_preflight_error(
+                (name,)
+            )
             if row is not None:
                 departure, departure_error = admit_transit_departure(
                     item,
@@ -834,7 +820,6 @@ def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> 
     return False
 
 
-
 _NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta", "power_updates"})
 
 
@@ -915,7 +900,6 @@ def sanitize_delta_shape(
                     section_clean.append(item)
             cleaned[key] = section_clean
     return cleaned, rejections
-
 
 
 def _declared_levy_outcome_attribution_error(item: dict, event_id: str) -> str:

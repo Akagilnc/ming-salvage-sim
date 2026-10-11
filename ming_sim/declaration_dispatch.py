@@ -52,7 +52,6 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 """
 
 from __future__ import annotations
-from ming_sim.entities.character.store import CharacterStore
 from ming_sim.db import GameDB
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
@@ -252,10 +251,10 @@ def _dispatch_declaration_sections(
         source_turn_error=source_turn_err,
     )
     preexisting_pending_ids = {
-        int(row["id"]) for row in db.conn.execute(
-            "SELECT id FROM pending_actions WHERE turn=? AND status='pending'",
-            (int(state.turn),),
-        ).fetchall()
+        int(row["id"])
+        for row in db.dossiers.read_dispatch_declaration_sections(
+            (int(state.turn),)
+        )
     }
     commissions = _dispatch_commissions(
         db, state, declaration.get("commissions"),
@@ -509,7 +508,6 @@ def _dispatch_effects(
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
     accepted_event_ids: list[str] = []
-    from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
     from ming_sim.issues import (
         FISCAL_LEVY_EVENT_CATEGORY,
         _event_outcome_label,
@@ -751,7 +749,7 @@ def settle_staged_declarations_in_decree_order(
                             visible_refs=item.visible_refs,
                             defer_disclosure=True,
                         ))
-                    db.staged_declarations.mark_settled(decree_ref)
+                    db.staged_declarations.mark_terminal(decree_ref)
                     collector.flush_to_db(db)
                     if alongside is not None:
                         alongside(decree_ref, merged)
@@ -873,7 +871,7 @@ def _assert_commission_grant_target_exists(
     kind = str(target_kind or "").strip()
     tid = str(target_id or "").strip()
     if kind == "region":
-        row = db.conn.execute("SELECT 1 FROM regions WHERE id=?", (tid,)).fetchone()
+        row = db.regions.read_assert_commission_grant_target_exists((tid,))
         if row is None:
             raise DeclarationReferenceError(f"地区不存在：{tid}")
         return
@@ -881,7 +879,7 @@ def _assert_commission_grant_target_exists(
         _assert_characters_exist(db, [tid])
         return
     if kind == "army":
-        row = db.conn.execute("SELECT 1 FROM armies WHERE id=?", (tid,)).fetchone()
+        row = db.armies.read_assert_commission_grant_target_exists((tid,))
         if row is None:
             raise DeclarationReferenceError(f"军队不存在：{tid}")
         return
@@ -892,7 +890,7 @@ def _assert_commission_grant_target_exists(
             iid = strict_sqlite_id(tid)
         except (TypeError, ValueError) as exc:
             raise DeclarationReferenceError(f"事项不存在：{tid}") from exc
-        row = db.conn.execute("SELECT 1 FROM issues WHERE id=?", (iid,)).fetchone()
+        row = db.issues.read_assert_commission_grant_target_exists((iid,))
         if row is None:
             raise DeclarationReferenceError(f"事项不存在：{tid}")
         return
@@ -982,9 +980,6 @@ def _commission_grant_payload(
         payload["purpose"] = purpose
     _attach_commission_escort(db, grant, payload)
     return payload
-
-
-
 
 
 def _attach_commission_staging_fields(
@@ -1121,8 +1116,6 @@ def _attach_commission_affair(
     return True
 
 
-
-
 def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
     source_chat_turn_id: int = 0,
@@ -1185,16 +1178,9 @@ def _dispatch_commissions(
             if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 0:
                 _reject(rejected, item, "点策交办须有正文、目标和陈策源轮", "invalid_shape", source)
                 continue
-            origin = db.conn.execute(
-                "SELECT 1 FROM chat_turns earlier JOIN chat_turns current "
-                "ON earlier.night_id=current.night_id AND earlier.turn=current.turn "
-                "WHERE earlier.id=? AND current.id=? AND earlier.id<current.id "
-                "AND earlier.minister_name=? AND current.minister_name=? "
-                "AND earlier.minister_message_id IS NOT NULL "
-                "AND earlier.status='active' AND current.status='active' "
-                "AND earlier.undone_at IS NULL AND current.undone_at IS NULL",
-                (origin_id, int(source_chat_turn_id or 0), actor, actor),
-            ).fetchone()
+            origin = db.reign.read_dispatch_commissions(
+                (origin_id, int(source_chat_turn_id or 0), actor, actor)
+            )
             if origin is None:
                 _reject(rejected, item, "点策陈策轮不属本夜前序有效召对", "missing_ref", source)
                 continue
@@ -1356,11 +1342,9 @@ def _dispatch_commissions(
             ):
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
                 continue
-            source_turn = db.conn.execute(
-                "SELECT minister_name, user_message_id FROM chat_turns "
-                "WHERE id=? AND turn=? AND status='active'",
-                (int(source_chat_turn_id), int(state.turn)),
-            ).fetchone()
+            source_turn = db.reign.active_chat_turn_actor_and_user_message(
+                chat_turn_id=int(source_chat_turn_id), turn=int(state.turn)
+            )
             if source_turn is None or source_turn["user_message_id"] is None:
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
@@ -1885,11 +1869,9 @@ def _source_user_message_id(db: Any, source_chat_turn_id: int, turn: int) -> Opt
     """本轮口谕。源轮身份是 chat_turn id，不要求说话人等于承办人。"""
     if int(source_chat_turn_id or 0) <= 0:
         return None
-    row = db.conn.execute(
-        "SELECT user_message_id FROM chat_turns "
-        "WHERE id=? AND turn=? AND status='active' AND user_message_id IS NOT NULL",
-        (int(source_chat_turn_id), int(turn)),
-    ).fetchone()
+    row = db.reign.read_source_user_message_id(
+        (int(source_chat_turn_id), int(turn))
+    )
     if row is None or row["user_message_id"] is None:
         return None
     return int(row["user_message_id"])
@@ -1900,9 +1882,7 @@ def _is_roster_character(db: Any, name: str) -> bool:
     text = str(name or "").strip()
     if not text:
         return False
-    row = db.conn.execute(
-        "SELECT 1 FROM characters WHERE name=? LIMIT 1", (text,),
-    ).fetchone()
+    row = db.characters.read_assert_characters_exist((text,))
     return row is not None
 
 
@@ -1953,10 +1933,10 @@ def _declared_dossier_links(raw: object) -> Optional[List[Dict[str, object]]]:
 def _commission_fallback_actor(db: Any) -> str:
     """场景整场入口无单人大臣锚时，directive.actor 回落殿前常在（王承恩优先）。"""
     for name in ("王承恩", "曹化淳"):
-        row = CharacterStore(db.conn).read_commission_fallback_actor_name((name,))
+        row = db.characters.field_row('name', name)
         if row is not None:
             return str(row["name"])
-    row = CharacterStore(db.conn).read_commission_fallback_actor()
+    row = db.characters.read_commission_fallback_actor()
     return str(row["name"]) if row is not None else ""
 
 
@@ -1997,11 +1977,9 @@ def _dispatch_endorsements(
         endorser_id = item.get("endorser_id", "")
         # The declaration has a form, not a separate imperial flag.
         imperial = isinstance(form, str) and form.strip() == "御笔手敕"
-        row = db.conn.execute(
-            "SELECT id, night_id, status, payload_json FROM pending_actions "
-            "WHERE id=? AND turn=?",
-            (action_id, int(state.turn)),
-        ).fetchone()
+        row = db.dossiers.read_dispatch_endorsements(
+            (action_id, int(state.turn))
+        )
         if row is None or int(row["night_id"] or 0) != int(night_id):
             _reject(
                 rejected, item, f"暂存动作不属本夜暂存清单：{action_id}",
@@ -2026,10 +2004,9 @@ def _dispatch_endorsements(
                 _reject(rejected, item, str(exc), "invalid_item", source)
                 continue
         elif status == "committed":
-            drow = db.conn.execute(
-                "SELECT id FROM decree_dossiers WHERE pending_action_id=? "
-                "ORDER BY id", (action_id,),
-            ).fetchall()
+            drow = db.dossiers.read_dispatch_endorsements_decree_dossiers(
+                (action_id,)
+            )
             if not drow:
                 _reject(
                     rejected, item,
@@ -2210,9 +2187,8 @@ def _dispatch_inquiries(
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         from ming_sim.audience_night import is_inner_court_attendant
-        character = db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (attendant,)
-        ).fetchone()
+
+        character = db.characters.field_row('office', attendant)
         if not is_inner_court_attendant(character):
             _reject(rejected, item, "受命者不是近侍", "invalid_state", source)
             continue
@@ -2319,10 +2295,7 @@ def _dispatch_rushes(
         reason = str(item.get("reason") or "")
         actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
         if target_kind == "commitment":
-            row = db.conn.execute(
-                "SELECT id, status, stages_json FROM issues WHERE id=?",
-                (target_id,),
-            ).fetchone()
+            row = db.issues.read_dispatch_rushes((target_id,))
             if row is None:
                 _reject(rejected, item, f"催办目标承诺不存在：{target_id}", "hallucinated_id", source)
                 continue
@@ -2379,7 +2352,6 @@ def _dispatch_rushes(
             "payload": payload,
         })
     return SectionResult(applied=applied, rejected=rejected)
-
 
 
 def _dispatch_travel_tones(
@@ -2473,11 +2445,7 @@ def _dispatch_promises(
         # 只认本夜（或本次无夜上下文）暂存清单里的动作：id 真实存在但挂在
         # 另一夜，声明也不得应允/拒绝它——同样按「不存在实体」拒收（不静默
         # 误批，也不当真拒收物理删除他夜暂存）。
-        row = db.conn.execute(
-            "SELECT night_id, kind, action, minister_name, night_approved, payload_json FROM pending_actions "
-            "WHERE id=? AND turn=? AND status='pending'",
-            (action_id, int(state.turn)),
-        ).fetchone()
+        row = db.dossiers.read_dispatch_promises((action_id, int(state.turn)))
         if (
             row is None or action_id not in preexisting_pending_ids
             or int(row["night_id"] or 0) != int(night_id)
@@ -2518,9 +2486,8 @@ def _dispatch_promises(
             from ming_sim.db import _load_durable_json
             payload = _load_durable_json(row["payload_json"])
             payload["content"] = new_content
-            db.conn.execute(
-                "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
-                (json.dumps(payload, ensure_ascii=False), action_id),
+            db.dossiers.write_dispatch_promises(
+                (json.dumps(payload, ensure_ascii=False), action_id)
             )
         elif decision == "应允":
             # ADR 0038：密令应允即落地（夜内直写白名单）；任免/拟旨只标
@@ -2581,14 +2548,12 @@ def _dispatch_promises(
                         payload["mode"] = declared_mode
                         if int(row["night_approved"] or 0):
                             db._discard_pending_decree_forecast(action_id)
-                            db.conn.execute(
-                                "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
-                                (json.dumps(payload, ensure_ascii=False), action_id),
+                            db.dossiers.write_dispatch_promises_pending_actions(
+                                (json.dumps(payload, ensure_ascii=False), action_id)
                             )
                         else:
-                            db.conn.execute(
-                                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                                (json.dumps(payload, ensure_ascii=False), action_id),
+                            db.dossiers.set_pending_payload(
+                                action_id, json.dumps(payload, ensure_ascii=False)
                             )
                         changed = True
                 if int(row["night_approved"] or 0) and not changed:
@@ -2613,13 +2578,12 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
             raise DeclarationDataError("事务引用须为整数") from exc
         db.affairs.get(affair_id)
         return
-    table_column = _TEXTUAL_FACT_EXISTENCE_TABLES.get(subject_kind)
-    if table_column is None:
-        return  # 未知 kind 留给 TextualFactStore.append 自己的枚举校验拒收。
-    table, column = table_column
-    row = db.conn.execute(
-        f"SELECT 1 FROM {table} WHERE {column}=?", (subject_id,),
-    ).fetchone()
+    store = {"character": db.characters, "army": db.armies, "region": db.regions}.get(
+        subject_kind
+    )
+    if store is None:
+        return
+    row = store.row(subject_id)
     if row is None:
         raise DeclarationReferenceError(f"{subject_kind} 不存在：{subject_id}")
 
@@ -2730,7 +2694,7 @@ def _dispatch_textual_facts(
 
 def _assert_characters_exist(db: Any, names: Sequence[str]) -> None:
     for name in names:
-        row = db.conn.execute("SELECT 1 FROM characters WHERE name=?", (name,)).fetchone()
+        row = db.characters.read_assert_characters_exist((name,))
         if row is None:
             raise DeclarationReferenceError(f"人物不存在：{name}")
 

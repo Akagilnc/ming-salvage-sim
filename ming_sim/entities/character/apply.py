@@ -152,13 +152,7 @@ def apply_person_changes(
         return rejected(item, str(error["reason"]), str(error["category"])) if error else None
 
     def character_row(name: str):
-        return db.conn.execute(
-            "SELECT name, status, office, office_type, power_id, status_reason, "
-            "status_changed_turn, reason_code, transit_to, transit_distance_remaining, "
-            "transit_speed_factor, transit_start_turn "
-            "FROM characters WHERE name=?",
-            (name,),
-        ).fetchone()
+        return db.characters.read_character_row((name,))
 
     def log_applied(
         result: Dict[str, object],
@@ -170,7 +164,7 @@ def apply_person_changes(
         action = str(result.get("动作") or result.get("action") or "").strip()
         if not name or not action:
             return
-        if db.conn.execute("SELECT 1 FROM characters WHERE name=?", (name,)).fetchone() is None:
+        if db.characters.read_assert_characters_exist((name,)) is None:
             return
         summary = (
             str(result.get("reason") or item.get("reason") or "")
@@ -251,9 +245,7 @@ def apply_person_changes(
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = db.conn.execute(
-                "SELECT name, loyalty FROM characters WHERE name=?", (name,)
-            ).fetchone()
+            row = db.characters.read_apply_person_changes((name,))
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -267,10 +259,7 @@ def apply_person_changes(
             if origin_error:
                 rejections.append(origin_error)
                 continue
-            db.conn.execute(
-                "UPDATE characters SET loyalty=? WHERE name=?",
-                (new_loyalty, name),
-            )
+            db.characters.update(name, {"loyalty": new_loyalty})
             if content is not None and name in content.characters:
                 content.characters[name].loyalty = new_loyalty
             result = {
@@ -289,9 +278,7 @@ def apply_person_changes(
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = db.conn.execute(
-                "SELECT name, style FROM characters WHERE name=?", (name,)
-            ).fetchone()
+            row = db.characters.read_apply_person_changes_name_style((name,))
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -306,10 +293,7 @@ def apply_person_changes(
             if origin_error:
                 rejections.append(origin_error)
                 continue
-            db.conn.execute(
-                "UPDATE characters SET style=? WHERE name=?",
-                (new_style, name),
-            )
+            db.characters.update(name, {"style": new_style})
             if content is not None and name in content.characters:
                 content.characters[name].style = new_style
             result = {
@@ -343,7 +327,7 @@ def apply_person_changes(
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
-            row = db.conn.execute("SELECT name FROM characters WHERE name=?", (name,)).fetchone()
+            row = db.characters.field_row('name', name)
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
@@ -619,10 +603,16 @@ def apply_person_changes(
                 # 易主后人仍 active（在新主任事，持身名分=降臣/归附），不变式1 不破；清原 reason_code/
                 # status_reason（如陷虏「松山兵败被执」）——已投敌、不再是本朝在押，旧因不能滞留（决定3）；
                 # status_changed_turn 记本回合（易主即状态变更）。
-                db.conn.execute(
-                    "UPDATE characters SET office=?, office_type=?, status='active', "
-                    "reason_code='', status_reason=?, status_changed_turn=? WHERE name=?",
-                    (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
+                db.characters.update(
+                    name,
+                    {
+                        "office": new_title,
+                        "office_type": "身名分",
+                        "status": "active",
+                        "reason_code": "",
+                        "status_reason": str(item.get("reason") or ""),
+                        "status_changed_turn": state.turn,
+                    },
                 )
                 db.set_character_transit(name, content=content, commit=False)
                 wrapped = {"动作": action, "方式": way, "反噬": backlash, **result}
@@ -636,11 +626,9 @@ def apply_person_changes(
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = db.conn.execute(
-                "SELECT status, location, transit_to, transit_distance_remaining, "
-                "transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
-                (name,),
-            ).fetchone()
+            row = db.characters.read_apply_person_changes_status_location_transit_to_transit_distance_remaining_transit_spe(
+                (name,)
+            )
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue

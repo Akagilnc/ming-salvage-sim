@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-from ming_sim.entities.issue.effects import _monthly_economy_items, _apply_monthly_ongoing_entities
 
 import json
 import sqlite3
@@ -109,37 +108,33 @@ def _resolve_commitment_issue(
     from_value = int(row["bar_value"])
     progress = commitment_display.commitment_progress_payload(db, state, row) or {}
     metric_delta = {"commitment_progress": progress} if progress else {}
-    db.conn.execute(
-        """
-        UPDATE issues SET bar_value=100, phase=?, status='resolved',
-                          resolution_summary=?, closed_turn=?,
-                          last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (
-            db._derive_issue_phase(100),
-            "承诺停止条件已达成，自动结清。",
-            state.turn,
-            state.turn,
-            issue_id,
-        ),
+    db.issues.update(
+        issue_id,
+        {
+            "bar_value": 100,
+            "phase": db._derive_issue_phase(100),
+            "status": "resolved",
+            "resolution_summary": "承诺停止条件已达成，自动结清。",
+            "closed_turn": state.turn,
+            "last_advance_turn": state.turn,
+        },
     )
-    db.conn.execute(
-        """
-        INSERT INTO issue_advances (
-            issue_id, turn, trigger_kind, delta_bar,
-            from_value, to_value, narrative, metric_delta
-        ) VALUES (?, ?, 'commitment_resolve', ?, ?, 100, ?, ?)
-        """,
+    db.issues.insert_advance(
         (
             issue_id,
             state.turn,
+            'commitment_resolve',
+            '',
             100 - from_value,
             from_value,
-            "承诺停止条件已达成，自动结清。",
+            100,
+            '',
+            '',
+            '承诺停止条件已达成，自动结清。',
             json.dumps(metric_delta, ensure_ascii=False),
-        ),
+        )
     )
+
 
 def _expire_commitment_issue(
     db: GameDB,
@@ -150,36 +145,31 @@ def _expire_commitment_issue(
     from_value = int(row["bar_value"])
     progress = commitment_display.commitment_progress_payload(db, state, row) or {}
     metric_delta = {"commitment_progress": progress} if progress else {}
-    db.conn.execute(
-        """
-        UPDATE issues SET status='dropped', resolution_summary=?,
-                          closed_turn=?, last_advance_turn=?,
-                          updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (
-            "承诺期限已至，停账收尾。",
-            state.turn,
-            state.turn,
-            issue_id,
-        ),
+    db.issues.update(
+        issue_id,
+        {
+            "status": "dropped",
+            "resolution_summary": "承诺期限已至，停账收尾。",
+            "closed_turn": state.turn,
+            "last_advance_turn": state.turn,
+        },
     )
-    db.conn.execute(
-        """
-        INSERT INTO issue_advances (
-            issue_id, turn, trigger_kind, delta_bar,
-            from_value, to_value, narrative, metric_delta
-        ) VALUES (?, ?, 'expire', 0, ?, ?, ?, ?)
-        """,
+    db.issues.insert_advance(
         (
             issue_id,
             state.turn,
+            'expire',
+            '',
+            0,
             from_value,
             from_value,
-            "承诺期限已至，停账收尾。",
+            '',
+            '',
+            '承诺期限已至，停账收尾。',
             json.dumps(metric_delta, ensure_ascii=False),
-        ),
+        )
     )
+
 
 def apply_situation_monthly_drift(
     db: GameDB,
@@ -252,7 +242,7 @@ def apply_situation_monthly_drift(
                         tlog(f"[issue-entities] 容忍拒收：{_tr.reason}")
                         inertia_rejections.append(_tr)
                     continue
-                row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+                row = db.issues.row(issue_id)
                 if row is None:
                     continue
                 bar = int(row["bar_value"])
@@ -393,10 +383,13 @@ def apply_situation_monthly_drift(
             to_bar = commitment_bar if commitment_bar is not None else bar
             actual_bar = int(to_bar) - int(from_bar)
             if commitment_bar is not None and actual_bar != 0:
-                db.conn.execute(
-                    "UPDATE issues SET bar_value=?, phase=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP "
-                    "WHERE id=?",
-                    (int(commitment_bar), db._derive_issue_phase(int(commitment_bar)), state.turn, issue_id),
+                db.issues.update(
+                    issue_id,
+                    {
+                        "bar_value": int(commitment_bar),
+                        "phase": db._derive_issue_phase(int(commitment_bar)),
+                        "last_advance_turn": state.turn,
+                    },
                 )
                 bar = int(commitment_bar)
             metric_delta: Dict[str, object] = {"metrics": metric_part, "economy": economy_part}
@@ -412,21 +405,23 @@ def apply_situation_monthly_drift(
                     else f"持续效果落账 (折扣 {int(scale*100)}%)"
                 )
             )
-            db.conn.execute(
-                """
-                    INSERT INTO issue_advances (
-                        issue_id, turn, trigger_kind, delta_bar,
-                        from_value, to_value, narrative, metric_delta
-                    ) VALUES (?, ?, 'ongoing', ?, ?, ?, ?, ?)
-                """,
+            db.issues.insert_advance(
                 (
-                    issue_id, state.turn, actual_bar, from_bar, int(to_bar),
+                    issue_id,
+                    state.turn,
+                    'ongoing',
+                    '',
+                    actual_bar,
+                    from_bar,
+                    int(to_bar),
+                    '',
+                    '',
                     narrative,
                     json.dumps(metric_delta, ensure_ascii=False),
-                ),
+                )
             )
 
-        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        row = db.issues.row(issue_id)
         if row is None or row["status"] != "active":
             continue
         stop_gate = _commitment_stop_gate(row) if is_commitment else {}
