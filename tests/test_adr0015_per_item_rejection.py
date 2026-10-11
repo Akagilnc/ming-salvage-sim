@@ -1,6 +1,4 @@
-import json
 
-import pytest
 
 from tests.section_rejection_helpers import game
 

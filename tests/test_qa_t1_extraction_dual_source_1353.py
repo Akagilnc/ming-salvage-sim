@@ -248,7 +248,8 @@ def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypat
     assert q.inflight_count() == 0
     q.unseal()
 
-def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
+@pytest.mark.parametrize("start_failure", [False, True])
+def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch, start_failure):
     """startup catch-up 须经票据写缝：非阻塞 acquire 拒收（裸 Lock 会放行）。"""
     game = web_game
     seen = {}
@@ -263,6 +264,17 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
             seen["ticketed_contract"] = True
 
     monkeypatch.setattr(web_app, "catch_up_pending_translations", fake_catch_up)
+    if start_failure:
+        _open_night_with_persisted_reply(game.db, game.state, _minister(game.db, game.content))
+        fault = RuntimeError("thread start failed")
+        monkeypatch.setattr(web_app.threading.Thread, "start", lambda *_a, **_k: (_ for _ in ()).throw(fault))
+        with pytest.raises(RuntimeError) as exc:
+            game._spawn_startup_extraction_catch_up()
+        assert exc.value is fault
+        assert game._runtime_write_queue().wait_idle(timeout_s=1)
+        assert game.db.reign.list_unextracted_replies()
+        assert seen == {}
+        return
     ticket = game._mark_pending_write(key=("startup",))
     assert ticket is not None
     game._run_startup_extraction_catch_up(pending_ticket=ticket)
@@ -333,10 +345,3 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     assert game.pending_translation_retries(chat_turn_id=chat_turn_id) == []
     assert [(m["role"], m["content"]) for m in game.chat_projection("殿上")] == [
         ("user", "边饷如何？"), ("minister", "臣遵旨。")]
-
-
-def test_empty_startup_catchup_claims_zero_tickets(web_game):
-    queue = web_game._runtime_write_queue()
-    assert queue.inflight_count() == 0
-    web_game._spawn_startup_extraction_catch_up()
-    assert queue.inflight_count() == 0

@@ -233,27 +233,6 @@ def test_advance_without_edict_vacuum_no_decree_issued(
     assert not (game.session.last_decree or "").strip()
 
 
-@pytest.mark.parametrize("rewrite", [_BAD_PAY_ORDER, _NO_INTENT_REWRITE])
-@pytest.mark.parametrize("status", ["draft", "pending"])
-def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkeypatch, rewrite, status):
-    from ming_sim.cli_backend import project_draft_extract_to_directive_payload
-    game = admission_game
-    turn = int(game.state.turn)
-    payload = project_draft_extract_to_directive_payload({"draft_action": "拟旨", "dossier_action_type": "pay_order_override", "target_kind": "army", "target_id": "guanning", "mode": "ordinary", "entries": [{"key": "arrears_priority_军饷", "value": 1}], "assignee": "郭允厚"}, decree_text=_DECREE_TEXT)
-    did = game.db.issues.add_directive(turn, game.state.year, game.state.period, None, _DECREE_TEXT, "minister", actor="郭允厚", status=status, dossier_payload=payload)
-    game.session.last_decree = "陈旧拟诏稿"
-    _queue_backend(monkeypatch, [rewrite])
-    result = TestClient(web_app.app).post("/api/decree/issue", json={"expected_turn": turn})
-    assert result.status_code == 200, result.text
-    assert int(game.state.turn) == turn + 1
-    row = game.db.issues.directive(did)
-    assert row["status"] == "draft"
-    assert game.db.dossiers.get_for_directive(did) is None
-    assert json.loads(row["dossier_payload_json"])["dossier_action_type"] == "pay_order_override"
-    assert len(_rejection_rows(game, did)) == 1
-    assert game.session.last_decree == ""
-
-
 @pytest.mark.parametrize("seam,marker", [("ensure", _ENSURE_FAULT_MARK), ("resubmit", _RESUBMIT_FAULT_MARK)])
 def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monkeypatch, seam, marker):
     game = admission_game
@@ -273,18 +252,30 @@ def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monke
     _assert_error_pack_from(game, turn, marker)
 
 
-def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypatch):
+@pytest.mark.parametrize("rewrite,status", [
+    (_BAD_PAY_ORDER, "draft"), (_BAD_PAY_ORDER, "pending"),
+    (_NO_INTENT_REWRITE, "draft"), (_NO_INTENT_REWRITE, "pending"),
+    (_BAD_UNKNOWN_PARTICIPANT, "draft"),
+])
+def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypatch, rewrite, status):
+    from ming_sim.cli_backend import project_draft_extract_to_directive_payload
     game = admission_game
     turn = int(game.state.turn)
-    _queue_backend(monkeypatch, [_GOOD_XIEANG, _BAD_PAY_ORDER, _BAD_UNKNOWN_PARTICIPANT])
+    _queue_backend(monkeypatch, [_GOOD_XIEANG])
     good = _post_directive(game, "拨关宁军饷十五万两")
-    bad = _post_directive(game, _DECREE_TEXT)
+    payload = project_draft_extract_to_directive_payload({"draft_action": "拟旨", "dossier_action_type": "pay_order_override", "target_kind": "army", "target_id": "guanning", "mode": "ordinary", "entries": [{"key": "arrears_priority_军饷", "value": 1}], "assignee": "郭允厚"}, decree_text=_DECREE_TEXT)
+    bad = game.db.issues.add_directive(turn, game.state.year, game.state.period, None, _DECREE_TEXT, "minister", actor="郭允厚", status=status, dossier_payload=payload)
+    game.session.last_decree = "陈旧拟诏稿"
+    _queue_backend(monkeypatch, [rewrite])
     response = TestClient(web_app.app).post("/api/decree/issue", json={"expected_turn": turn})
     assert response.status_code == 200, response.text
     assert int(game.state.turn) == turn + 1
     assert game.db.issues.directive(good)["status"] == "issued"
     assert game.db.dossiers.get_for_directive(good) is not None
-    assert game.db.issues.directive(bad)["status"] == "draft"
+    row = game.db.issues.directive(bad)
+    assert row["status"] == "draft"
+    assert json.loads(row["dossier_payload_json"])["dossier_action_type"] == "pay_order_override"
     assert game.db.dossiers.get_for_directive(bad) is None
     assert len(_rejection_rows(game, bad)) == 1 and not _rejection_rows(game, good)
+    assert game.session.last_decree == ""
     assert not latest_error_pack_for_turn(game.db.path, turn)

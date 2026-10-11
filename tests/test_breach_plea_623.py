@@ -23,10 +23,6 @@ from ming_sim.breach_plea import (
     BREACH_KIND_POLICY_REVERSAL,
     BREACH_KIND_REMOVE_SPONSOR,
     ENTRY_KIND_BREACH_PLEA,
-    FOUNDATION_HALFWAY,
-    FOUNDATION_JUST_STARTED,
-    FOUNDATION_ROOTED,
-    assess_foundation_tier,
     decode_plea_meta,
     expire_breach_pleas_on_due,
     finalize_persist,
@@ -550,7 +546,6 @@ def test_kind_gate_apply_only_finalizes_staged(game):
         "stage_idx": 0, "due_turn": state.turn,
         "criterion_text": "火器", "origin_context": "三年火器",
     }]
-    from ming_sim.issues import apply_score_extraction as ase
     # 用 staged 写端
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     cid_staged, _ = _insert_commitment(
@@ -690,7 +685,6 @@ def test_same_turn_dual_breach_kinds_merge_not_swallowed(game):
     assert t2 == t1  # 并入同一条
     pleas = _pending_pleas(db)
     assert len(pleas) == 1
-    from ming_sim.breach_plea import decode_plea_meta
     meta = decode_plea_meta(pleas[0]["origin_context"])
     assert meta.get("breach_kind") == BREACH_KIND_FUNDING
     absorbed = meta.get("absorbed_breach_kinds") or []
@@ -1019,17 +1013,19 @@ def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
     assert len(edges) == 1, "同人辜负不重复"
 
 
-def test_policy_reversal_revoke_keeps_same_origin_world_situations(game):
+@pytest.mark.parametrize("stored_target", [False, True])
+def test_policy_reversal_revoke_keeps_same_origin_world_situations(game, stored_target):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
     did, holder = _executing_policy_dossier(db, state, token='revoke-keep-world')
     cid, _ = _insert_commitment(db, state, title='撤令停诺之诺', origin_ref=f'dossier:{did}', bar_value=20, end_turn=state.turn + 30, participants=[{'character_id': holder, 'tier': '主办', 'role': '承办'}])
     unrest_id = db.insert_issue(state, kind='situation', title='流民聚众抗粮', origin_kind='dossier', origin_ref=f'dossier:{did}')
-    revoke_id = db.create_decree_dossier(state, action_type='revoke_decree', decree_text='前旨作废', target_kind='dossier', target_id=str(did), payload={'revoke_target_dossier_id': did, 'text': '前旨作废'})
+    revoke_id = db.create_decree_dossier(state, action_type='revoke_decree', decree_text='前旨作废', target_kind='issue' if stored_target else 'dossier', target_id=str(cid if stored_target else did), payload={'text': '前旨作废'} if stored_target else {'revoke_target_dossier_id': did, 'text': '前旨作废'})
     db.apply_dossier_verdicts(state, [{'dossier_id': revoke_id, 'decision': 'promulgated'}], content=content)
     statuses = {int(row['id']): str(row['status']) for row in db.conn.execute('SELECT id, status FROM issues WHERE id IN (?, ?)', (cid, unrest_id)).fetchall()}
     assert statuses[int(cid)] == 'dropped'
+    assert db.dossiers.get(did)['status'] == 'executing'
     assert statuses[int(unrest_id)] == 'active', '撤令不得无差别终结同源世界局势'
 
 
@@ -1059,21 +1055,3 @@ def test_policy_reversal_revoke_rejected_leaves_everything_untouched(game):
     assert db.conn.execute('SELECT status FROM issues WHERE id=?', (cid,)).fetchone()['status'] == 'active'
     assert _cost_events(db, did) == []
     assert _pending_pleas(db) == []
-
-
-def test_revoke_target_identity_falls_back_to_dossier_row(game):
-    db, state, content = game
-    did, holder = _executing_policy_dossier(db, state, token="row-fallback")
-    cid, _ = _insert_commitment(
-        db, state, origin_ref=f"dossier:{did}", end_turn=state.turn + 30,
-        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
-    )
-    revoke_id = db.create_decree_dossier(
-        state, action_type="revoke_decree", decree_text="撤回前旨",
-        target_kind="issue", target_id=str(cid), payload={"text": "撤回前旨"},
-    )
-    db.apply_dossier_verdicts(
-        state, [{"dossier_id": revoke_id, "decision": "promulgated"}], content=content,
-    )
-    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (cid,)).fetchone()[0] == "dropped"
-    assert db.dossiers.get(did)["status"] == "executing"

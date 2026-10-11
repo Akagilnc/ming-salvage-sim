@@ -12,9 +12,6 @@ Seams:
 
 from __future__ import annotations
 
-import sqlite3
-
-import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle

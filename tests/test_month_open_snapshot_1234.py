@@ -23,7 +23,6 @@ from types import SimpleNamespace
 
 import web_app
 from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
-from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
 
 
 def _runtime(db, state, *, pending_decisions=None) -> web_app.WebGame:
@@ -59,47 +58,45 @@ def _null_cm(*_a, **_k):
     yield None
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def test_player_month_advance_expires_snapshot(game, monkeypatch):
-    """邸报完成后的真实月推进清除本月快照。"""
+@pytest.mark.parametrize("phase", [TurnPhase.SUMMONING.value, TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value])
+def test_player_month_advance_expires_snapshot(game, monkeypatch, phase):
     from tests.test_due_review_621 import _settle_empty_month
-
-    db, state, content = game
+    db, state, _content = game
     turn = int(state.turn)
+    before = {k: int(state.metrics[k]) for k in ("国库", "内库", "民心", "皇威")}
     db.capture_month_open_snapshot(state)
-    _settle_empty_month(db, state, content, monkeypatch)
-    assert db.month_open_snapshots.get(turn) is None
-    assert state.turn == turn + 1
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is False
-    assert payload["metrics"]["国库"] == state.metrics["国库"]
-
-
-
-
-
-
+    live_balance = before["国库"] + 123
+    state.metrics["国库"] = live_balance
+    state.turn_phase = phase
+    db.reign.save_game_state(state)
+    if phase == TurnPhase.AWAITING_DECISION.value:
+        db.issues.save_pending_decisions(turn, [{"event_id": "awaiting-test", "title": "待裁", "options": [{"label": "准"}]}])
+    pending = db.issues.list_pending_decisions(turn)
+    path = db.path
+    db.close()
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    reopened = web_app.WebGame(fresh=False, db_path=path)
+    try:
+        assert reopened._runtime_write_queue().wait_idle(timeout_s=5)
+        reloaded = reopened.db.load_state()
+        assert reloaded.metrics["国库"] == live_balance
+        assert reloaded.turn == turn and reloaded.turn_phase == phase
+        recovering = phase in FRONT_HALF_DONE_PHASES
+        assert reopened.db.month_open_snapshots.get(turn) == (before if recovering else None)
+        payload = reopened.state_payload()
+        assert payload["turn"]["settlement_display"] is recovering
+        assert payload["metrics"]["国库"] == (before["国库"] if recovering else live_balance)
+        assert reopened.db.issues.list_pending_decisions(turn) == pending
+        if phase == TurnPhase.AWAITING_DECISION.value:
+            assert payload["pending_decisions"] == reopened.session.pending_decisions()
+        if not recovering:
+            _settle_empty_month(reopened.db, reopened.state, reopened.content, monkeypatch)
+            assert reopened.db.month_open_snapshots.get(turn) is None
+            assert reopened.state.turn == turn + 1
+            assert reopened.state_payload()["metrics"]["国库"] == reopened.db.load_state().metrics["国库"]
+    finally:
+        reopened.session.close()
 
 
 def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch):
@@ -170,50 +167,6 @@ def test_cross_month_snapshot_does_not_bleed(game):
     payload = _runtime(db, state).state_payload()
     assert payload['turn']['settlement_display'] is False
     assert payload['metrics']['国库'] == before['国库'] + 5
-
-
-def test_oracle_normal_phase_clears_via_startup_hook(game):
-    db, state, _content = game
-    before = {k: int(state.metrics[k]) for k in ("国库", "内库", "民心", "皇威")}
-    db.capture_month_open_snapshot(state)
-    state.metrics['国库'] = before['国库'] + 123
-    state.turn_phase = TurnPhase.SUMMONING.value
-    db.reign.save_game_state(state)
-    assert state.turn_phase not in FRONT_HALF_DONE_PHASES
-    assert _runtime(db, state).state_payload()["turn"]["settlement_display"] is True
-    assert db.month_open_snapshots.get(int(state.turn)) == before
-    cleared = clear_orphan_month_open_snapshot(db, state)
-    assert cleared is True
-    assert db.month_open_snapshots.get(int(state.turn)) is None
-    for k, v in before.items():
-        state.metrics[k] = v
-    db.reign.save_game_state(state)
-    payload = _runtime(db, state).state_payload()
-    assert payload['turn']['settlement_display'] is False
-    for k in before:
-        assert payload['metrics'][k] == before[k]
-
-
-@pytest.mark.parametrize("phase", [TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value])
-def test_oracle_settling_phase_keeps_display_for_recovery(game, phase):
-    db, state, _content = game
-    before = {k: int(state.metrics[k]) for k in ("国库", "内库", "民心", "皇威")}
-    db.capture_month_open_snapshot(state)
-    state.metrics['国库'] = before['国库'] + 50
-    state.turn_phase = phase
-    db.reign.save_game_state(state)
-    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
-    assert exit_settlement_display_on_failure(db, state) is False
-    cleared = clear_orphan_month_open_snapshot(db, state)
-    assert cleared is False
-    assert db.month_open_snapshots.get(int(state.turn)) == before
-    db.issues.save_pending_decisions(state.turn, [{"event_id": "awaiting-test", "title": "待裁", "options": [{"label": "准"}]}])
-    pending = db.issues.list_pending_decisions(state.turn) if phase == TurnPhase.AWAITING_DECISION.value else []
-    payload = _runtime(db, state, pending_decisions=pending).state_payload()
-    if phase == TurnPhase.AWAITING_DECISION.value:
-        assert payload["pending_decisions"] == pending
-    assert payload['turn']['settlement_display'] is True
-    assert payload['metrics']['国库'] == before['国库']
 
 
 @pytest.mark.parametrize("method", ["resolve_turn", "advance_without_decree"])

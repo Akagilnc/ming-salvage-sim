@@ -160,37 +160,26 @@ def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crash
     assert sorted(found) == sorted(paths)
 
 
-
-
-
-
-def test_commitment_monthly_ongoing_respects_outer_transaction_rollback(game):
+@pytest.mark.parametrize("trigger", ["ongoing", "commitment_resolve", "expire"])
+def test_commitment_monthly_ongoing_respects_outer_transaction_rollback(game, trigger):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     issue_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="事务内月度兑现承诺",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:ongoing-rollback",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={"metrics": {"皇威": 1}},
-        end_turn=state.turn + 2,
-        commitment_kind="until_stop",
+        state, kind="initiative", title="事务内承诺", origin_kind="decree",
+        origin_ref="decree:turn-1:rollback", bar_value=0, inertia=0,
+        ongoing_effects={"metrics": {"皇威": 1}}, commitment_kind="until_stop",
+        end_turn=state.turn if trigger == "expire" else state.turn + 2,
+        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}) if trigger == "commitment_resolve" else "",
     )
     db.conn.commit()
-
     db.conn.execute("BEGIN")
     apply_situation_monthly_drift(db, state)
+    assert db.conn.execute("SELECT trigger_kind FROM issue_advances WHERE issue_id=?", (issue_id,)).fetchone()[0] == trigger
     db.conn.rollback()
-
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='ongoing'",
-        (issue_id,),
-    ).fetchone()[0] == 0
-
-
+    assert _issue_row(db, issue_id)["status"] == "active"
+    assert db.conn.execute("SELECT COUNT(*) FROM issue_advances WHERE issue_id=?", (issue_id,)).fetchone()[0] == 0
 
 
 def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
@@ -595,35 +584,6 @@ def test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies(game):
     ).fetchone()[0] == -50
 
 
-def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
-    db, state, _content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
-    issue_id = db.insert_issue(state, kind='initiative', title='事务内自动结清承诺', origin_kind='decree', origin_ref='decree:turn-1:resolve-rollback', bar_value=0, inertia=0, ongoing_effects={'economy': []}, stop_condition=json.dumps({'army.guanning.arrears': '<=0'}, ensure_ascii=False), commitment_kind='until_stop')
-    db.conn.commit()
-    db.conn.execute('BEGIN')
-    apply_situation_monthly_drift(db, state)
-    db.conn.rollback()
-    row = _issue_row(db, issue_id)
-    assert row['status'] == 'active'
-    assert db.conn.execute("SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='commitment_resolve'", (issue_id,)).fetchone()[0] == 0
-
-
-def test_commitment_expiry_respects_outer_transaction_rollback(game):
-    db, state, _content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    issue_id = db.insert_issue(state, kind='initiative', title='事务内到期停账承诺', origin_kind='decree', origin_ref='decree:turn-1:expire-rollback', bar_value=0, inertia=0, ongoing_effects={'metrics': {'皇威': -1}}, end_turn=state.turn, commitment_kind='until_stop')
-    db.conn.commit()
-    db.conn.execute('BEGIN')
-    apply_situation_monthly_drift(db, state)
-    db.conn.rollback()
-    row = _issue_row(db, issue_id)
-    assert row['status'] == 'active'
-    assert db.conn.execute("SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'", (issue_id,)).fetchone()[0] == 0
-
-
 @pytest.mark.parametrize("ongoing", [{}, {"economy": []}, {"economy": [{"account": "国库", "delta": 0, "reason": "占位"}]}])
 def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game, ongoing):
     db, state, _ = game
@@ -651,21 +611,6 @@ def test_until_stop_condition_beats_later_end_turn_for_stacked_commitment(game):
     assert _army_arrears(db, 'guanning') == 0
     advances = db.conn.execute('SELECT trigger_kind FROM issue_advances WHERE issue_id=? ORDER BY id', (issue_id,)).fetchall()
     assert [row['trigger_kind'] for row in advances] == ['ongoing', 'commitment_resolve']
-
-
-def test_cancelled_commitment_is_distinct_from_expired_commitment(game):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.commit()
-    cancelled_id = db.insert_issue(state, kind='initiative', title='撤销的时限承诺', origin_kind='decree', origin_ref='decree:turn-1:cancel-limited', bar_value=15, inertia=0, ongoing_effects={'metrics': {'民心': 1}}, end_turn=state.turn, commitment_kind='until_stop', cancellable='decree')
-    expired_id = db.insert_issue(state, kind='initiative', title='到期的时限承诺', origin_kind='decree', origin_ref='decree:turn-1:expire-limited', bar_value=15, inertia=0, ongoing_effects={'metrics': {'民心': 1}}, end_turn=state.turn, commitment_kind='until_stop', cancellable='decree')
-    db.cancel_issue(state, cancelled_id, narrative='奉旨撤回', commit=False)
-    _advance_player_month(db, state, content)
-    assert _issue_row(db, cancelled_id)['status'] == 'dropped'
-    assert _issue_row(db, expired_id)['status'] == 'dropped'
-    rows = db.conn.execute('SELECT issue_id, trigger_kind FROM issue_advances WHERE issue_id IN (?, ?) ORDER BY id', (cancelled_id, expired_id)).fetchall()
-    assert [(row['issue_id'], row['trigger_kind']) for row in rows] == [(cancelled_id, 'cancel'), (expired_id, 'expire')]
 
 
 def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
@@ -701,6 +646,8 @@ def test_commitment_end_turn_expires_without_resolve_effects(game):
     state.metrics['国库'] = 500
     db.reign.save_game_state(state)
     issue_id = db.insert_issue(state, kind='initiative', title='到期停账承诺', origin_kind='decree', origin_ref='decree:turn-1:expire-pay', bar_value=20, inertia=0, ongoing_effects={'economy': [{'account': '国库', 'delta': -50, 'reason': '到期前最后一月补饷', 'purpose': '补饷'}]}, effect_on_resolve={'metrics': {'民心': 9}}, stop_condition='', end_turn=state.turn, commitment_kind='until_stop')
+    cancelled_id = db.insert_issue(state, kind='initiative', title='撤销承诺', origin_kind='decree', origin_ref='decree:cancel', ongoing_effects={'metrics': {'民心': 1}}, end_turn=state.turn, commitment_kind='until_stop', cancellable='decree')
+    db.cancel_issue(state, cancelled_id, narrative='奉旨撤回', commit=False)
     _advance_player_month(db, state, content)
     row = _issue_row(db, issue_id)
     assert row['status'] == 'dropped'
@@ -708,6 +655,8 @@ def test_commitment_end_turn_expires_without_resolve_effects(game):
     assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE purpose='补饷' AND target_kind='army'").fetchone()[0] == 0
     advances = db.conn.execute('SELECT trigger_kind FROM issue_advances WHERE issue_id=? ORDER BY id', (issue_id,)).fetchall()
     assert [row['trigger_kind'] for row in advances] == ['expire']
+    assert _issue_row(db, cancelled_id)['status'] == 'dropped'
+    assert [row[0] for row in db.conn.execute('SELECT trigger_kind FROM issue_advances WHERE issue_id=?', (cancelled_id,))] == ['cancel']
 
 
 def test_open_commitment_without_stop_gate_is_not_auto_resolved(game):

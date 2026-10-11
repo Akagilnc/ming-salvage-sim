@@ -199,19 +199,18 @@ def test_capture_manual_directive_drops_collective_and_institution_names(
     assert ids == ["毕自严"]
 
 
-def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
-    """禁放松主键校验：纠错耗尽后真正不存在的人名仍在 capture seam 拒收。"""
+@pytest.mark.parametrize("bad", ["unknown_person", "mixed_target"])
+def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch, bad):
     import ming_sim.cli_backend as cli_backend
-
-    db, _state, content = game
-    text = "着不存在之人核太仓"
-    prompts = _mock_draft_intent(
-        monkeypatch, text=text,
-        roster=[{"character_id": "不存在之人甲", "tier": "主办"}],
-    )
-
+    db, state, _ = game
+    text = "着核办太仓"
+    if bad == "unknown_person":
+        _mock_draft_intent(monkeypatch, text=text, roster=[{"character_id": "不存在之人甲", "tier": "主办"}])
+    else:
+        monkeypatch.setattr(cli_backend, "_run_backend_for_config", lambda *_a, **_k: (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "river", "目标案卷ID": 1}), 1))
+    before = db.issues.list_directives(state.turn)
+    dossiers = db.dossiers.list_dossiers()
     with pytest.raises(ValueError):
-        cli_backend.capture_manual_directive_payload(
-            text, None, db=db, content=content,
-        )
-    _assert_decree_reached_backend(prompts, text)
+        _seed_draft(game, text)
+    assert db.issues.list_directives(state.turn) == before
+    assert db.dossiers.list_dossiers() == dossiers

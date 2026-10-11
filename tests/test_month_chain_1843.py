@@ -497,7 +497,6 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     from types import SimpleNamespace
     from ming_sim.decree_forecast import decree_ref_for_dossier
     from ming_sim.month_chain import _settle_edicts
-    import ming_sim.month_chain as mc
 
     minister = next(iter(content.characters.values()))
     pending_id = db.stage_pending_action(

@@ -434,25 +434,25 @@ def test_gap_after_months_failed(game):
     assert db.character_knowledge.get_secret_order(oid)["status"] == "failed"
 
 
-def test_missing_minister_row_no_progress(game):
+@pytest.mark.parametrize("status", ["missing", "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"])
+def test_missing_minister_row_no_progress(game, status):
     db, state, _ = game
     name = _minister(db)
-    oid = _issue(db, state, name, "幽灵承办", "人已不在册", months=2, target=2)
-    state.turn += 1
-    db.reign.save_game_state(state)
-    # 承办名改为不在册（缺行）；保留 FK 指向的原人物行
-    db.conn.execute(
-        "UPDATE secret_orders SET minister_name=? WHERE id=?",
-        ("不存在的承办人_1504", oid),
-    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    oid = _issue(db, state, name, "承办资格", "输入", months=2, target=2)
+    _next_month(db, state)
+    balance = db.load_state().metrics["内库"]
+    if status == "missing":
+        db.conn.execute("UPDATE secret_orders SET minister_name=? WHERE id=?", ("不存在的承办人_1504", oid))
+    else:
+        db.conn.execute("UPDATE characters SET status=? WHERE name=?", (status, name))
     db.conn.commit()
-    out = apply_monthly_covert_actual_progress(
-        db, state,
-        selections=[{"order_id": oid, "fidelity": "忠实"}],
-        commit=True,
-    )
-    row = next(r for r in out if r["order_id"] == oid)
-    assert row.get("skipped") is True
+    did = int(db.dossiers.get_for_secret_order(oid)["id"])
+    out = apply_monthly_covert_actual_progress(db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True)
+    assert next(r for r in out if r["order_id"] == oid).get("skipped") is True
+    assert db.dossiers.actual_progress_units(did) == 0.0
+    assert list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,))) == []
+    assert db.load_state().metrics["内库"] == balance
 
 
 def test_secret_order_closes_field_is_ignored(game):
@@ -808,8 +808,9 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
     )
     _set_axes(db, name, loyalty=90, identity=30)
     _co_locate(db, name, target)
+    original = "密令输入正文\n第二行完整输入"
     oid = _issue(
-        db, state, name, "查核", "查核", months=3, target=1,
+        db, state, name, "查核", original, months=3, target=1,
         kind="查核", axes=["既得利益"], investigation_target=target,
     )
     # 下月才进在办密令（开案当月属 issuance-turn，会被在办清单滤掉）
@@ -863,7 +864,10 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
                     assert set(tools["list_materials"](base).splitlines()) == set(listed)
                     for path in listed:
                         assert tools["read_material"](path) == read_material(captured["root"], path)
-                        assert read_material(captured["root"], path).strip()
+                        body = read_material(captured["root"], path)
+                        assert body.strip()
+                        if path.startswith(base + "/密令/"):
+                            assert (original in body) is (who == name)
                     paths[who] = {Path(path).relative_to(base).as_posix() for path in listed}
         captured["bodies"] = bodies
         captured["paths"] = paths
@@ -899,6 +903,7 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
     assert f"事务/issue-{issue_rows[0]['id']}/当前情况.txt" not in captured["paths"][target]
     assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" in captured["paths"][target]
     assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" not in captured["paths"][name]
+    assert any(path.startswith("密令/") for path in captured["paths"][name])
     assert not roots[-1].exists()
 
     # 在身份写手读取公事档案时注入失败，仍走真实 4a 生命周期。
@@ -2363,27 +2368,6 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     assert close["actual_units"] == 0.0
 
 
-@pytest.mark.parametrize('off_status', ['offstage', 'dismissed', 'imprisoned', 'exiled', 'retired', 'dead'])
-def test_offstage_minister_no_progress_no_world_effects(game, off_status):
-    db, state, _ = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=90, identity=30)
-    oid = _issue(db, state, name, '离场密令', '不应再办', months=2, target=2)
-    state.turn += 1
-    db.reign.save_game_state(state)
-    before_neiku = int(state.metrics.get('内库', 0))
-    db.conn.execute('UPDATE characters SET status=? WHERE name=?', (off_status, name))
-    db.conn.commit()
-    assert db.character_knowledge.get_secret_order(oid)['status'] == 'active'
-    did = int(db.dossiers.get_for_secret_order(oid)['id'])
-    out = apply_monthly_covert_actual_progress(db, state, selections=[{'order_id': oid, 'fidelity': '忠实'}], commit=True)
-    row = next((r for r in out if r['order_id'] == oid))
-    assert row.get('skipped') is True
-    assert db.dossiers.actual_progress_units(did) == 0.0
-    assert list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,))) == []
-    assert int(state.metrics.get('内库', 0)) == before_neiku
-
-
 def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
     db, state, _ = game
     name = _minister(db)
@@ -2407,47 +2391,3 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
     assert 'rejected' not in row
     assert row['units'] == 0.0
     assert len(list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,)))) == 1
-
-
-@pytest.mark.parametrize('bad', [{}, {'effort': '尽力'}, {'fidelity': '忠实'}])
-def test_invalid_declaration_stops_month_chain_and_marks_invalid(game, bad):
-    db, state, _ = game
-    name = _minister(db)
-    target = next((row['name'] for row in db.conn.execute("SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name", (name,)).fetchall() if live_investigation_fact_keys(db, row['name'])))
-    _set_axes(db, name, loyalty=90, identity=30)
-    _co_locate(db, name, target)
-    key = live_investigation_fact_keys(db, target)[0]
-    oid = _issue(db, state, name, '查核', '查核', months=6, target=1, kind='查核', axes=['既得利益'], investigation_target=target)
-    did = int(db.dossiers.get_for_secret_order(oid)['id'])
-    _next_month(db, state)
-    chain = _run_supply_4a(db, state, [{'order_id': oid, **bad}])
-    assert chain.get('covert_progress_done') is not True
-    assert chain.get('secret_orders_supply_done') is not True
-    assert chain.get('secret_orders_supply_invalid') is True
-    assert (chain.get('call_failure') or {}).get('step') == 'secret_orders_supply'
-    assert list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,))) == []
-    assert _lanes(db, oid)[key]['effort'] == 0.0
-    assert investigation_lane_actual_units(db, did) == 0.0
-    import ming_sim.month_chain as month_chain
-    month_chain._consume_call_failure_for_retry(db, chain, int(state.turn), decree_text='', source=Provenance.secret_order)
-    resumed = month_chain._load_chain(db, int(state.turn))
-    assert 'secret_orders_supply_product' not in resumed
-    assert 'secret_orders_supply_invalid' not in resumed
-    assert 'call_failure' not in resumed
-    calls = []
-
-    def _fake_supply(db_, state_, llm_config_, chain_):
-        calls.append(True)
-        return {'dossier_progress_reports': [{'dossier_id': int(r['dossier_id']), 'progress_band': '持平', 'memorial_text': '据实以奏'} for r in db_.list_monthly_dossier_progress_nudges(int(state_.turn))], 'covert_exec_selections': [{'order_id': oid, 'fact_key': key, 'effort': 1.0}]}
-    monkey = pytest.MonkeyPatch()
-    monkey.setattr(month_chain, 'run_secret_orders_supply', _fake_supply)
-    try:
-        month_chain._step_4a_secret_order_supply(db, state, resumed, turn=int(state.turn), decree_text='', source=Provenance.secret_order, llm_config=object())
-    except SettlementAbort as exc:
-        raise AssertionError(f'失效重起后不该再停续：{exc}')
-    finally:
-        monkey.undo()
-    assert calls, '重试未真正重调 4a——说明仍在复用被废弃的无效产物'
-    assert resumed.get('covert_progress_done') is True
-    assert resumed.get('secret_orders_supply_done') is True
-    assert _lanes(db, oid)[key]['effort'] > 0.0

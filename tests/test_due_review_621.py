@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as issue_engine
-from ming_sim.audience_night import list_ledger, open_night
+from ming_sim.audience_night import open_night
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,

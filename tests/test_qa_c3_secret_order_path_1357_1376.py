@@ -7,17 +7,11 @@
 
 from __future__ import annotations
 
-import asyncio
-import threading
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 
-import pytest
 
 import web_app
-from ming_sim.models import TurnPhase
-from ming_sim.session import ChatTurnResult, GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
-from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
+from ming_sim.session import GameSession
 
 
 def _active_minister_name(db, content) -> str:

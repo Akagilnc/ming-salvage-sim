@@ -605,7 +605,6 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
     """issue 结案路的容忍拒收项不得蒸发——经 issue_summary.entity_rejections 落
     rejection_reports(改前是 print,改后曾比 print 更静默=违「容忍+留痕」,
     cmr S2 r2,2/2)。"""
-    import json as _json
 
     db, state, content = game
     turn = state.turn

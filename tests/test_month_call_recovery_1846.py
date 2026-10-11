@@ -598,8 +598,9 @@ def _month_chain_of(db, turn):
     )
 
 
+@pytest.mark.parametrize("bad_supply", [None, {}, {"effort": "尽力"}, {"fidelity": "忠实"}])
 def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
-    game, monkeypatch, tmp_path,
+    game, monkeypatch, tmp_path, bad_supply,
 ):
     """步骤 2 落账代码异常从过月入口停住：错误包与失败标记在，重试只落一次。"""
     import ming_sim.declaration_dispatch as declaration_dispatch
@@ -611,6 +612,18 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
     db.reign.save_game_state(state)
+    oid = key = did = None
+    if bad_supply is not None:
+        from tests.test_secret_order_payoff_1504 import _minister, _issue, _set_axes, _co_locate, _lanes, live_investigation_fact_keys
+        minister = _minister(db)
+        target = next(r["name"] for r in db.conn.execute("SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name", (minister,)) if live_investigation_fact_keys(db, r["name"]))
+        _set_axes(db, minister, loyalty=90, identity=30)
+        _co_locate(db, minister, target)
+        key = live_investigation_fact_keys(db, target)[0]
+        oid = _issue(db, state, minister, "查核", "输入", months=6, target=1, kind="查核", axes=["既得利益"], investigation_target=target)
+        did = int(db.dossiers.get_for_secret_order(oid)["id"])
+        state.turn += 1
+        db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-6)
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
@@ -623,13 +636,18 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
 
     def settle_once(*args, **kwargs):
         calls["n"] += 1
-        if calls["n"] == 1:
+        if calls["n"] == 1 and bad_supply is None:
             raise RuntimeError("edict settle crashed")
         return real_settle(*args, **kwargs)
 
-    monkeypatch.setattr(
-        declaration_dispatch, "settle_staged_declarations_in_decree_order", settle_once,
-    )
+    if bad_supply is None:
+        monkeypatch.setattr(declaration_dispatch, "settle_staged_declarations_in_decree_order", settle_once)
+    else:
+        def supply(db_, state_, *_a, **_k):
+            calls["n"] += 1
+            selection = {"order_id": oid, **bad_supply} if calls["n"] == 1 else {"order_id": oid, "fact_key": key, "effort": 1.0}
+            return {"dossier_progress_reports": [{"dossier_id": int(r["dossier_id"]), "progress_band": "持平", "memorial_text": "输入奏报"} for r in db_.list_monthly_dossier_progress_nudges(int(state_.turn))], "covert_exec_selections": [selection]}
+        monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply)
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
 
@@ -638,19 +656,28 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
 
     assert int(state.turn) == turn
     assert state.turn_phase == TurnPhase.SETTLING.value
-    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert isinstance(caught.value.__cause__, RuntimeError if bad_supply is None else ValueError)
     assert caught.value.error_pack_path
-    assert not db.staged_declarations.is_settled(ref)
-    assert _ningyuan_ledger_rows(db) == []
+    assert db.staged_declarations.is_settled(ref) is (bad_supply is not None)
+    if bad_supply is None:
+        assert _ningyuan_ledger_rows(db) == []
+    else:
+        assert _month_chain_of(db, turn).get("secret_orders_supply_invalid") is True
+        assert list(db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=?", (did,))) == []
+        assert _lanes(db, oid)[key]["effort"] == 0.0
     failure = _month_chain_of(db, turn).get("call_failure") or {}
     assert failure.get("kind") == "code_exception"
     assert failure.get("error_pack_path") == caught.value.error_pack_path
+    assert failure.get("step") == ("month_chain" if bad_supply is None else "secret_orders_supply")
 
     session.resolve_turn(allow_empty_decree=True)
     assert db.staged_declarations.is_settled(ref)
     rows = _ningyuan_ledger_rows(db)
     assert len(rows) == 1 and int(rows[0]["delta"]) == -6
     assert calls["n"] == 2
+    if bad_supply is not None:
+        assert _lanes(db, oid)[key]["effort"] > 0.0
+        assert not _month_chain_of(db, turn).get("secret_orders_supply_invalid")
 
 
 def test_error_pack_failure_keeps_original_fault_and_retry_phase(

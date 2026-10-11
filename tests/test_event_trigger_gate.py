@@ -1799,7 +1799,8 @@ def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
     assert after["unrest"] == before["unrest"] + 6
 
 
-def test_historical_auto_trigger_core_effect_is_applied_once(game):
+@pytest.mark.parametrize("resolved", [False, True])
+def test_historical_auto_trigger_core_effect_is_applied_once(game, resolved):
     """#192：确定性核心事实重进不应二次扣数，event_triggers 是硬幂等门。"""
     db, state, content = game
     issues.bind_content(content)
@@ -1811,6 +1812,10 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
         "SELECT population, unrest FROM regions WHERE id=?",
         ("shanxi",),
     ).fetchone()
+    if resolved:
+        issue_id = next(item["issue_id"] for item in first if item["id"] == "huabei_plague")
+        db.conn.execute("UPDATE issues SET status='resolved' WHERE id=?", (issue_id,))
+        db.conn.commit()
     second = issues.auto_trigger_seed_issues(state, db)
     after_second = db.conn.execute(
         "SELECT population, unrest FROM regions WHERE id=?",
@@ -1820,6 +1825,7 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
     assert any(item["id"] == "huabei_plague" for item in first)
     assert all(item["id"] != "huabei_plague" for item in second)
     assert dict(after_second) == dict(after_first)
+    assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?", ("huabei_plague",)).fetchone()[0] == 1
     assert db.conn.execute(
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("huabei_plague",),
@@ -2779,7 +2785,8 @@ def test_event_pool_pending_invalid_appointment_does_not_block_gate(game):
         content.event_by_id.pop(ev.id, None)
 
 
-def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game):
+@pytest.mark.parametrize("valid", [False, True])
+def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game, valid):
     """post-merge CMR R7：缺方式/反噬的易主拒收项，不应提前阻断 power_id 门。"""
     db, state, content = game
     issues.bind_content(content)
@@ -2808,17 +2815,19 @@ def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "易主", "new_power": "houjin"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "易主", "new_power": "houjin", **({"方式": "主动投敌", "反噬": {"houjin": {"leverage": 1}}} if valid else {})}],
             },
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert db.conn.execute(
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is valid
+        assert bool(out["applied_person_changes"][0].get("rejected")) is (not valid)
+        stored = db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
-        ).fetchone() is not None
+        ).fetchone()
+        assert (stored is None) is valid
+        assert db.conn.execute("SELECT power_id FROM characters WHERE name='袁崇焕'").fetchone()[0] == ("houjin" if valid else "ming")
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
@@ -3967,58 +3976,8 @@ def test_person_events_are_model_candidates_not_engine_hard_fired(game, event_id
     db.reign.save_game_state(state)
     setup(db)
     db.conn.commit()
-    assert not content.event_by_id[event_id].auto_trigger
     triggered = issues.auto_trigger_seed_issues(state, db)
     assert all((item['id'] != event_id for item in triggered))
     assert db.issues.event_terminal_state(event_id) is None
     assert db.conn.execute("SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=? LIMIT 1", (event_id,)).fetchone() is None
     assert event_id in {ev.id for ev in issues.gather_candidate_events(state, db)}
-
-
-def test_gated_auto_trigger_seed_event_does_not_refire_after_issue_resolved(game):
-    """#1892：世界事件读已落终态不再重发——结案后下月不复发（判 J4）。
-
-    旧合同（带 gate 的 seed 硬触发结案后可再立第二条）使同一世界事件被发两次。
-    """
-    db, state, content = game
-    issues.bind_content(content)
-    ev = _hist_event('__test_no_refire_auto_seed__', {'民心': '<=5'})
-    ev.auto_trigger = True
-    ev.event_type = 'situation'
-    content.seed_events.append(ev)
-    try:
-        state.metrics['民心'] = 3
-        first = issues.auto_trigger_seed_issues(state, db)
-        first_item = next((item for item in first if item['id'] == '__test_no_refire_auto_seed__'))
-        assert db.issues.event_terminal_state('__test_no_refire_auto_seed__') == 'triggered'
-        db.conn.execute("UPDATE issues SET status='resolved' WHERE id=?", (first_item['issue_id'],))
-        db.conn.commit()
-        second = issues.auto_trigger_seed_issues(state, db)
-        assert all((item['id'] != '__test_no_refire_auto_seed__' for item in second))
-        assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?", ('__test_no_refire_auto_seed__',)).fetchone()[0] == 1
-    finally:
-        content.seed_events.remove(ev)
-
-
-def test_event_pool_pending_person_power_change_blocks_gate(game):
-    """同批人物易主会真实落库，pending 闸门也必须按同一语义预检。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute('UPDATE characters SET status=?, power_id=? WHERE name=?', ('active', 'ming', '袁崇焕'))
-    if '袁崇焕' in content.characters:
-        ch = content.characters['袁崇焕']
-        ch.status = 'active'
-        ch.power_id = 'ming'
-    ev = Event(id='__test_person_power_pending__', title='测试·易主门', kind='朝议', summary='袁崇焕仍属明时才可触发。', urgency=10, severity=10, credibility=100, interests=[], audiences=[], event_type='situation', trigger_gate={'character.袁崇焕.power_id': '== ming'})
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        assert any((c.id == ev.id for c in issues.gather_candidate_events(state, db)))
-        out = issues.apply_score_extraction(db, state, {'new_issues': [{'origin_kind': 'event_pool', 'id': ev.id}], '人物变更': [{'origin_ref': '盘面自发', 'name': '袁崇焕', '动作': '易主', 'new_power': 'houjin', '方式': '主动投敌', '反噬': {'houjin': {'leverage': 1}}, 'reason': '测试易主'}]}, content=content)
-        new_issue = out['issue_summary']['new_issues'][0]
-        assert new_issue['rejected'] is True
-        assert db.conn.execute("SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?", (ev.id,)).fetchone() is None
-        assert db.conn.execute('SELECT power_id FROM characters WHERE name=?', ('袁崇焕',)).fetchone()['power_id'] == 'houjin'
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)

@@ -18,11 +18,9 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-import ming_sim.agents as agents_mod
-import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_scene_agent
 
 
 class _StreamFarewellAgent:

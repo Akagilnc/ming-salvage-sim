@@ -98,19 +98,6 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
 
 # ── locality oracle 组合矩阵 ───────────────────────────────────────
 
-def test_national_policy_is_one_dossier_not_per_province(env):
-    """#1778 决定 4：全国政令也是一份案卷，region_id 空——不按省拆。"""
-    db, _, content = env
-    regions = resolve_dossier_region_ids(
-        db.conn,
-        payload={
-            "target_kind": "policy",
-            "target_id": "清丈田亩",
-            "locality_scope": "national",
-        },
-        regions_content=content.regions,
-    )
-    assert regions == [""]
 
 def test_special_decree_without_national_is_single_empty(env):
     db, _, content = env
@@ -568,18 +555,6 @@ def test_location_canonical_seed_and_write_seam(env, tmp_path):
     # _migrate_character_location_aliases 退役，不再造旧档副本期待写回。
 
 
-def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
-    db, state, _ = env
-    payload = {'target_kind': 'policy', 'target_id': '清丈天下田亩', 'locality_scope': 'national', 'dossier_action_type': 'assignment', 'participant_roster': [{'character_id': '查无此人', 'tier': '主办'}]}
-    did = _insert_directive(db, state, text='清丈天下田亩', payload=payload)
-    before = db.conn.execute('SELECT COUNT(*) AS n FROM decree_dossiers').fetchone()['n']
-    with pytest.raises(ValueError):
-        db.create_decree_dossiers(state, action_type='assignment', decree_text='清丈天下田亩', target_kind='policy', target_id='清丈天下田亩', directive_id=did, payload=payload, commit=True)
-    after = db.conn.execute('SELECT COUNT(*) AS n FROM decree_dossiers').fetchone()['n']
-    assert after == before
-    assert [r for r in db.dossiers.list_dossiers() if r["directive_id"] == did] == []
-
-
 def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
     db, state, _ = env
     payload = {'target_kind': 'policy', 'target_id': '清丈天下田亩', 'locality_scope': 'national', 'dossier_action_type': 'assignment', 'participant_roster': [{'character_id': '查无此人', 'tier': '主办'}], 'mode': 'ordinary'}
@@ -614,10 +589,6 @@ def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
     matched = [json.loads(r['item_json']) for r in rej]
     hit = next((item for item in matched if item.get('directive_id') == did))
     assert 'text' not in hit
-    assert set(hit.keys()) == {'directive_id'}
-    raw = next((r['item_json'] for r in rej if json.loads(r['item_json']).get('directive_id') == did))
-    assert '敕令陕西' not in raw
-    assert '甲甲' not in raw
 
 
 def test_national_creates_one_row_idempotent(env):

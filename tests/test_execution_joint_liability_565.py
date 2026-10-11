@@ -11,7 +11,7 @@ def _roster():
     """主办倪元璐←委派徐光启（协办位，仅次责）；另有协办黄道周、知情王承恩。
 
     委派人须同案主办/协办（db._validate_dossier_delegations）。徐光启占协办位，
-    专测次责降档路径；双角色（委派人兼主办）见 test_dual_role_*。
+    专测次责降档路径；双角色变体并入责任结算案。
     """
     return [
         {
@@ -78,6 +78,7 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
     assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []
 
 
+@pytest.mark.parametrize("dual_role", [False, True])
 @pytest.mark.parametrize(
     ("outcome", "lead_delta", "delegator_delta"),
     [
@@ -87,10 +88,13 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
     ],
 )
 def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
-    game, outcome, lead_delta, delegator_delta,
+    game, outcome, lead_delta, delegator_delta, dual_role,
 ):
     db, state, content = game
-    dossier_id = _executing_dossier(db, state)
+    roster = [{"character_id": "倪元璐", "tier": "主办", "role": "清丈", "delegator_id": "徐光启"}, {"character_id": "徐光启", "tier": "主办", "role": "总理"}] if dual_role else None
+    dossier_id = _executing_dossier(db, state, roster=roster)
+    if dual_role:
+        delegator_delta = lead_delta
     before_donglin = _sat(db, "东林")
     before_xixue = _sat(db, "西学")
     before_huang = _sat(db, "皇党")
@@ -283,19 +287,3 @@ def test_direct_record_dossier_execution_does_not_trigger_joint_liability(game):
     )
     assert _cost_events(db, dossier_id) == []
     assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []
-
-
-def test_dual_role_lead_and_delegator_primary_wins(game):
-    """合法「主办兼他人委派人」先定档后去重：primary 胜 secondary。"""
-    db, state, content = game
-    roster = [{'character_id': '倪元璐', 'tier': '主办', 'role': '清丈', 'delegator_id': '徐光启'}, {'character_id': '徐光启', 'tier': '主办', 'role': '总理'}]
-    dossier_id = _executing_dossier(db, state, roster=roster)
-    before_donglin = _sat(db, '东林')
-    before_xixue = _sat(db, '西学')
-    _close_via_adapter(db, state, content, dossier_id, 'failed', note='双角色主责')
-    assert _sat(db, '东林') == max(0, before_donglin - 8)
-    assert _sat(db, '西学') == max(0, before_xixue - 8)
-    sat = {(row['target_kind'], row['target_id'], row['delta']) for row in _sat_events(db, dossier_id)}
-    assert sat == {('faction', '东林', -8), ('faction', '西学', -8)}
-    edges = {e['target'] for e in db.person_logs.get_relation_edge_events(event_kind='连坐') if e['origin'].startswith(f'dossier:{dossier_id}:')}
-    assert edges == {'倪元璐', '徐光启'}

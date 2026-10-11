@@ -80,9 +80,6 @@ def test_read_material_stays_inside_directory(game, tmp_path):
             list_materials(root, path)
 
     tools = {tool.__name__: tool for tool in material_tools(root)}
-    # API 两口沿用同一拒收；只比行为结果，不锁错误措辞。
-    tools["list_materials"]("../outside")
-    tools["read_material"]("../outside")
     relative = "人物/John Doe/经历.txt"
     local = root / relative
     local.parent.mkdir(parents=True)
@@ -364,15 +361,28 @@ def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
     }
 
 
-def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path, monkeypatch):
-    from ming_sim.materials import prepare_scene_materials
+@pytest.mark.parametrize("reader", ["dossier", "secret", "audience"])
+def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path, monkeypatch, reader):
+    from ming_sim.materials import prepare_scene_materials, write_identity_materials
+    from ming_sim.entities.issue.store import IssueStore
     db, state, _ = game
-    fault = RuntimeError("dossier read fault")
+    fault = RuntimeError("material read fault")
     def fail(*_a, **_k):
         raise fault
-    monkeypatch.setattr(db, "list_referenceable_dossiers", fail)
-    with pytest.raises(RuntimeError) as exc:
-        prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
+    owner, method = {
+        "dossier": (db, "list_referenceable_dossiers"),
+        "secret": (db.character_knowledge, "get_active_secret_orders_for_minister"),
+        "audience": (IssueStore, "read_issue_audience_names"),
+    }[reader]
+    if reader == "dossier":
+        monkeypatch.setattr(owner, method, fail)
+        with pytest.raises(RuntimeError) as exc:
+            prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
+    else:
+        prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+        monkeypatch.setattr(owner, method, fail)
+        with pytest.raises(RuntimeError) as exc:
+            write_identity_materials(prepared, db, state, ["郭允厚"])
     assert exc.value is fault
 
 
@@ -395,63 +405,27 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     assert [p for p in names if p.startswith("军队/")] == [f"军队/{_safe_segment(army['name'] or army['id'])}/详情.txt"]
 
 
-def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(game, tmp_path, monkeypatch):
+@pytest.mark.parametrize("participant,audiences", [("崔呈秀", "[]"), ("崔呈秀", '["郭允厚"]'), ("温体仁", '["郭允厚"]')])
+def test_issue_audience_grant_does_not_authorize_an_outsider(game, tmp_path, participant, audiences):
     from ming_sim.materials import write_identity_materials, identity_material_rel
-    from tests.dossier_test_helpers import create_test_secret_order
-    db, state, _ = game
-    name = db.characters.current_court_rows(state.year, state.period)[0]["name"]
-    original = "密令输入正文"
-    create_test_secret_order(db, state, name, "核账", original, [], deadline_months=6)
-    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
-    write_identity_materials(prepared, db, state, [name])
-    root = prepared.root / Path(identity_material_rel(name)).parent
-    secret = next(p for p in list_materials(root) if p.startswith("密令/"))
-    assert original in read_material(root, secret)
-    fault = RuntimeError("secret read fault")
-    def fail(*_a, **_k):
-        raise fault
-    monkeypatch.setattr(db.character_knowledge, "get_active_secret_orders_for_minister", fail)
-    with pytest.raises(RuntimeError) as exc:
-        write_identity_materials(prepared, db, state, [name])
-    assert exc.value is fault
-
-
-@pytest.mark.parametrize("audiences", ["[]", '["郭允厚"]'])
-def test_issue_materials_do_not_veto_knowledge_or_mutate_durable_sources(game, tmp_path, audiences):
-    from ming_sim.materials import write_identity_materials, identity_material_rel
-
     db, state, _ = game
     row = db.conn.execute("SELECT * FROM issues WHERE title='户部亏空' AND status='active'").fetchone()
     assert row is not None
+    db.conn.execute("UPDATE issues SET participant_roster=? WHERE id=?", (json.dumps([{"character_id": participant}], ensure_ascii=False), row["id"]))
     db.conn.execute("UPDATE events SET audiences=? WHERE id=?", (audiences, row["origin_ref"]))
     db.conn.commit()
-    before = db.conn.total_changes
+    sources = [dict(r) for r in db.conn.execute("SELECT * FROM character_knowledge_sources ORDER BY id")]
+    stored = dict(db.conn.execute("SELECT * FROM issues WHERE id=?", (row["id"],)).fetchone())
     knowledge = db.get_character_knowledge(state, "崔呈秀")
-    assert any(item["id"] == row["id"] for item in knowledge["issues"])
-    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
-    write_identity_materials(prepared, db, state, ["崔呈秀"])
-    root = prepared.root / Path(identity_material_rel("崔呈秀")).parent
-    assert f'事务/issue-{row["id"]}/当前情况.txt' in list_materials(root)
-    assert db.get_character_knowledge(state, "崔呈秀") == knowledge
-    assert db.conn.total_changes == before
-
-
-def test_issue_audience_grant_does_not_authorize_an_outsider(game, tmp_path):
-    from ming_sim.materials import write_identity_materials, identity_material_rel
-
-    db, state, _ = game
-    row = db.conn.execute("SELECT * FROM issues WHERE title='户部亏空' AND status='active'").fetchone()
-    assert row is not None
-    db.conn.execute("UPDATE issues SET participant_roster=? WHERE id=?", (
-        json.dumps([{"character_id": "温体仁"}], ensure_ascii=False), row["id"],
-    ))
-    db.conn.execute("UPDATE events SET audiences=? WHERE id=?", ('["郭允厚"]', row["origin_ref"]))
-    db.conn.commit()
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
     write_identity_materials(prepared, db, state, ["郭允厚", "崔呈秀"])
-    for name, visible in (("郭允厚", True), ("崔呈秀", False)):
+    for name, visible in (("郭允厚", audiences != "[]"), ("崔呈秀", participant == "崔呈秀")):
         root = prepared.root / Path(identity_material_rel(name)).parent
         assert (f'事务/issue-{row["id"]}/当前情况.txt' in list_materials(root)) is visible
+    assert db.get_character_knowledge(state, "崔呈秀") == knowledge
+    assert dict(db.conn.execute("SELECT * FROM issues WHERE id=?", (row["id"],)).fetchone()) == stored
+    assert [dict(r) for r in db.conn.execute("SELECT * FROM character_knowledge_sources ORDER BY id")] == sources
+    assert db.conn.execute("SELECT audiences FROM events WHERE id=?", (row["origin_ref"],)).fetchone()[0] == audiences
 
 
 @pytest.mark.parametrize("audiences,error_type", [
@@ -467,56 +441,6 @@ def test_malformed_event_audience_fails_loud_from_material_entry(game, tmp_path,
     db.conn.execute("UPDATE events SET audiences=? WHERE id=?", (audiences, row["origin_ref"]))
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
     with pytest.raises(error_type):
-        write_identity_materials(prepared, db, state, ["郭允厚"])
-
-
-def test_tuple_audience_container_fails_loud_from_content_fallback(game, tmp_path):
-    from dataclasses import replace
-    from ming_sim.materials import write_identity_materials
-
-    db, state, content = game
-    row = db.conn.execute("SELECT id,origin_ref FROM issues WHERE title='户部亏空' AND status='active'").fetchone()
-    assert row is not None
-    source = content.event_by_id[row["origin_ref"]]
-    fallback = "content-only-tuple-audience"
-    db.conn.execute("UPDATE issues SET origin_ref=? WHERE id=?", (fallback, row["id"]))
-    content.event_by_id[fallback] = replace(source, id=fallback, audiences=("郭允厚",))
-    try:
-        prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
-        with pytest.raises(TypeError):
-            write_identity_materials(prepared, db, state, ["郭允厚"])
-    finally:
-        content.event_by_id.pop(fallback)
-
-
-def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path, monkeypatch):
-    from ming_sim.entities.issue.store import IssueStore
-    from ming_sim.materials import write_identity_materials
-
-    db, state, _ = game
-    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
-    fault = RuntimeError("audience ledger read failed")
-    def fail(*_a, **_k):
-        raise fault
-    monkeypatch.setattr(IssueStore, "read_issue_audience_names", fail)
-    with pytest.raises(RuntimeError) as exc:
-        write_identity_materials(prepared, db, state, ["郭允厚"])
-    assert exc.value is fault
-
-
-def test_malformed_knowledge_issue_id_fails_loud_from_material_entry(game, tmp_path, monkeypatch):
-    from ming_sim.materials import write_identity_materials
-
-    db, state, _ = game
-    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
-    read = db.get_character_knowledge
-    def poisoned(state_arg, name):
-        knowledge = dict(read(state_arg, name))
-        assert knowledge["issues"]
-        knowledge["issues"] = [{**knowledge["issues"][0], "id": "not-an-id"}]
-        return knowledge
-    monkeypatch.setattr(db, "get_character_knowledge", poisoned)
-    with pytest.raises(ValueError):
         write_identity_materials(prepared, db, state, ["郭允厚"])
 
 

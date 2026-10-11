@@ -1163,40 +1163,31 @@ def _stage_new_secret(db, state, minister_name: str, marker: str) -> tuple[int, 
     return mid, pid
 
 
-
-
-def test_976_rejected_secret_pin_stays_withheld_during_other_commit(game):
-    """A rejected secret intent must not leak when another intent commits."""
+@pytest.mark.parametrize("failed", [False, True])
+def test_976_rejected_secret_pin_stays_withheld_during_other_commit(game, failed):
     db, state, content = game
     assignee = _active_ministers(db, content)[0]
-    failed_marker = "失败可重试甲密：暗查不存在案卷-A976"
-    committed_marker = "已确认乙密：密访仓场亏空-B976"
-
-    mid_failed = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=failed_marker)
-    db.conn.commit()
-    failed_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="更新",
-        minister_name=assignee.name, target_id=999999,
-        payload={
-            "title": "暗查不存在案卷", "content": failed_marker,
-            "origin_chat_message_id": mid_failed,
-        },
-    )
-    assert db.commit_pending_actions(
-        state, minister_name=assignee.name, action_ids={failed_id}, content=content,
-    ) == []
-    assert db.dossiers.list_failed_secret_order_actions(assignee.name)[0]["id"] == failed_id
-
-    mid_committed, committed_id = _stage_new_secret(
-        db, state, assignee.name, committed_marker,
-    )
-    assert db.commit_pending_actions(
-        state, minister_name=assignee.name, action_ids={committed_id}, content=content,
-    )
-
-    assert _ks(db, mid_committed) == "withheld"
-    assert _ks(db, mid_failed) in ("held", "withheld")
-    assert _shared_source_count(db, mid_failed) == 0
+    mid, pending_id = _stage_new_secret(db, state, assignee.name, "待确认密令输入")
+    reply = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content="受令应答输入")
+    chat_turn = db.create_chat_turn(state, assignee.name, "pending-secret", 0)
+    db.reign.update_chat_turn_messages(chat_turn, user_message_id=mid, minister_message_id=reply)
+    if failed:
+        db.conn.execute("UPDATE pending_actions SET action='更新', target_id=999999 WHERE id=?", (pending_id,))
+        db.conn.commit()
+        assert db.commit_pending_actions(state, minister_name=assignee.name, action_ids={pending_id}, content=content) == []
+        assert db.dossiers.list_failed_secret_order_actions(assignee.name)[0]["id"] == pending_id
+    committed_mid, committed_id = _stage_new_secret(db, state, assignee.name, "另件已确认密令输入")
+    assert [item["id"] for item in db.commit_pending_actions(state, minister_name=assignee.name, action_ids={committed_id}, content=content)] == [committed_id]
+    assert _ks(db, committed_mid) == "withheld"
+    for message_id in (mid, reply):
+        assert _ks(db, message_id) in ("held", "withheld")
+        assert _shared_source_count(db, message_id) == 0
+    if not failed:
+        assert db.withdraw_pending_action(pending_id, state.turn) == 1
+        db.release_held_audience_knowledge()
+        for message_id in (mid, reply):
+            assert _ks(db, message_id) == "released"
+            assert _shared_source_count(db, message_id) == 1
 
 
 def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
@@ -1581,29 +1572,3 @@ def test_976_message_level_origin_persisted_on_brief(game):
     db.release_held_audience_knowledge()
     assert _ks(db, mid) == "withheld"
     assert _shared_source_count(db, mid) == 0
-
-
-def test_976_pending_secret_pin_survives_partial_commit_same_minister(game):
-    db, state, content = game
-    assignee = _active_ministers(db, content)[0]
-    marker_a = '待确认甲密：暗查内库亏空-A976'
-    marker_b = '已确认乙密：密访京营虚额-B976'
-    mid_a, pending_a = _stage_new_secret(db, state, assignee.name, marker_a)
-    reply_a = '臣已领会甲密，容臣拟妥章程再请圣裁。'
-    mid_a_reply = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role='minister', content=reply_a)
-    chat_turn_a = db.create_chat_turn(state, assignee.name, 'pending-secret-a', 0)
-    db.reign.update_chat_turn_messages(chat_turn_a, user_message_id=mid_a, minister_message_id=mid_a_reply)
-    mid_b, pending_b = _stage_new_secret(db, state, assignee.name, marker_b)
-    applied = db.commit_pending_actions(state, minister_name=assignee.name, action_ids={pending_b}, content=content)
-    assert [item['id'] for item in applied] == [pending_b]
-    assert _ks(db, mid_b) == 'withheld'
-    assert _ks(db, mid_a) in ('held', 'withheld')
-    assert _ks(db, mid_a_reply) in ('held', 'withheld')
-    assert _shared_source_count(db, mid_a) == 0
-    assert _shared_source_count(db, mid_a_reply) == 0
-    assert db.withdraw_pending_action(pending_a, state.turn) == 1
-    db.release_held_audience_knowledge()
-    assert _ks(db, mid_a) == 'released'
-    assert _ks(db, mid_a_reply) == 'released'
-    assert _shared_source_count(db, mid_a) == 1
-    assert _shared_source_count(db, mid_a_reply) == 1

@@ -10,7 +10,6 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双�
 
 from __future__ import annotations
 
-import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.issues import (

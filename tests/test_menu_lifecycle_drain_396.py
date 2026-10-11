@@ -47,7 +47,8 @@ def test_get_main_db_path_prefers_active_db_over_launch_env(monkeypatch, tmp_pat
     assert web_app._get_main_db_path() == active_db_path
 
 
-def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_path):
+@pytest.mark.parametrize("config_remove_fault", [False, True])
+def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_path, config_remove_fault):
     """#402 R1（Codex/CodeRabbit）：新局初始化失败时，不退休旧局、不丢旧主库指针。"""
     old_db_path = str(tmp_path / "old_main.db")
     os.makedirs(tmp_path, exist_ok=True)
@@ -55,8 +56,11 @@ def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_pa
         f.write("old")
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setenv("MING_SIM_DB", old_db_path)
-    with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
-        f.write(old_db_path)
+    if config_remove_fault:
+        monkeypatch.delenv("MING_SIM_DB")
+    else:
+        with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
+            f.write(old_db_path)
 
     queue = SessionWriteQueue()
     old_game = SimpleNamespace(
@@ -83,6 +87,17 @@ def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_pa
 
     monkeypatch.setattr(web_app, "WebGame", fail_new_game)
 
+    fault = PermissionError("locked")
+    if config_remove_fault:
+        monkeypatch.setattr(web_app.os, "remove", lambda *_a, **_k: (_ for _ in ()).throw(fault))
+        with pytest.raises(PermissionError) as exc:
+            asyncio.run(web_app.api_menu_new_game())
+        assert exc.value is fault
+        assert web_app.web_game is old_game
+        assert "MING_SIM_DB" not in os.environ
+        assert os.path.exists(web_app._active_db_path_file())
+        assert drain_spawns == []
+        return
     try:
         asyncio.run(web_app.api_menu_new_game())
     except web_app.HTTPException as exc:
@@ -136,11 +151,13 @@ def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
     assert not os.path.exists(shm_path)
 
 
-def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_path):
+@pytest.mark.parametrize("failed_suffix", ["", "-wal"])
+def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_path, failed_suffix):
     """#402 R3（CodeRabbit）：WAL 归档失败时，主库也要回滚回旧路径，避免存档缺 WAL。"""
     db_path = str(tmp_path / "ming_sim.db")
     wal_path = db_path + "-wal"
-    for path, content in ((db_path, "db"), (wal_path, "wal")):
+    shm_path = db_path + "-shm"
+    for path, content in ((db_path, "db"), (wal_path, "wal"), (shm_path, "shm")):
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
@@ -155,7 +172,7 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
     real_move = web_app.shutil.move
 
     def fail_wal_move(src, dst):
-        if src == wal_path:
+        if src == db_path + failed_suffix:
             raise OSError("wal locked")
         return real_move(src, dst)
 
@@ -168,6 +185,7 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
     assert closed == [1]
     assert os.path.exists(db_path)
     assert os.path.exists(wal_path)
+    assert os.path.exists(shm_path)
     assert list((tmp_path / "saves").glob("*.db")) == []
 
 
@@ -505,67 +523,3 @@ def test_new_game_switches_db_path_when_web_game_none_and_no_env(monkeypatch, tm
     assert new_path != str(tmp_path / "ming_sim.db")  # 不是默认路径
     with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
         assert f.read().strip() == new_path
-
-
-def test_restore_main_db_path_config_remove_failure_is_loud(monkeypatch, tmp_path):
-    monkeypatch.setattr(web_app, 'user_data_path', lambda *parts: str(tmp_path.joinpath(*parts)))
-    active_file = web_app._active_db_path_file()
-    with open(active_file, 'w', encoding='utf-8') as f:
-        f.write(str(tmp_path / 'new.db'))
-    monkeypatch.setenv('MING_SIM_DB', str(tmp_path / 'new.db'))
-    monkeypatch.setattr(web_app.os, 'remove', lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError('locked')))
-    with pytest.raises(PermissionError):
-        web_app._restore_main_db_path_config((False, '', False, ''))
-    with open(active_file, 'r', encoding='utf-8') as f:
-        assert f.read().strip() == str(tmp_path / 'new.db')
-
-
-def test_spawn_pending_write_thread_start_failure_releases_ownership():
-    runtime = object.__new__(web_app.WebGame)
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ('pending',))
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)
-
-    class _FailingThread:
-
-        def __init__(self, *a, **k):
-            pass
-
-        def start(self):
-            raise RuntimeError('线程池耗尽（模拟 start 失败）')
-    orig_thread = web_app.threading.Thread
-    web_app.threading.Thread = _FailingThread
-    try:
-        raised = False
-        try:
-            runtime._spawn_pending_write_thread(lambda **_k: None, (), 't')
-        except RuntimeError:
-            raised = True
-        assert raised, 'start() 抛异常须上抛，不静默吞掉'
-    finally:
-        web_app.threading.Thread = orig_thread
-    assert runtime._write_queue.inflight_count() == 0
-
-
-def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
-    """#402 R1（Gemini）：主库 move 失败时不得删除仍属旧库的 WAL/SHM。"""
-    db_path = str(tmp_path / 'ming_sim.db')
-    wal_path = db_path + '-wal'
-    shm_path = db_path + '-shm'
-    for path, content in ((db_path, 'db'), (wal_path, 'wal'), (shm_path, 'shm')):
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(content)
-    queue = SessionWriteQueue()
-    gate = queue.write_gate
-    closed: list[int] = []
-    game = SimpleNamespace(_write_queue=queue, _write_gate=gate, db_path=db_path, session=SimpleNamespace(close=lambda: closed.append(1)))
-    monkeypatch.setattr(web_app, 'user_data_path', lambda *parts: str(tmp_path.joinpath(*parts)))
-    monkeypatch.setattr(web_app.shutil, 'move', lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError('locked')))
-    _reset_path_leases()
-    _drain_then_archive(game, db_path)
-    assert closed == [1]
-    assert os.path.exists(db_path)
-    assert os.path.exists(wal_path)
-    assert os.path.exists(shm_path)

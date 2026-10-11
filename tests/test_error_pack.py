@@ -70,7 +70,6 @@ def test_attempt_never_overwrites_existing_pack(game, tmp_path, monkeypatch):
 
 def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""
-    import asyncio
     from fastapi import HTTPException
     import web_app
     from ming_sim.exceptions import SettlementAbort

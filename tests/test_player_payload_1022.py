@@ -6,7 +6,6 @@ from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import asyncio
 import json
-import threading
 from types import SimpleNamespace
 
 import pytest
@@ -14,30 +13,13 @@ import pytest
 import web_app
 
 
-class _HistoryDB:
-    def __init__(self) -> None:
-        self.turn_reports = SimpleNamespace(archive=self._archive)
-        self.resolve_contexts = SimpleNamespace(get=self._resolve)
-
-    def _archive(self, turn: int):
-        return {
-            "year": 0,
-            "period": 0,
-            "report": "邸报：国丈家赀约数十万两。",
-            "attendant_message": "",
-        }
-
-    def _resolve(self, turn: int):
-        return {
-            "decree_text": "诏曰：赈济辽东。",
-        }
-
-    def list_directives_by_turn(self, turn: int):
-        return [{"id": 7, "year": 2, "period": 3, "text": "命户部发帑", "notes": "家赀约十万两"}]
-
-
-def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch):
-    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=_HistoryDB()))
+def test_history_payload_preserves_narrative_without_machine_ledger(game, monkeypatch):
+    db, state, _ = game
+    state.turn, state.year, state.period = 9, 2, 3
+    db.save_turn_report(state, "邸报：国丈家赀约数十万两。")
+    db.resolve_contexts.save(9, "诏曰：赈济辽东。", {})
+    directive_id = db.issues.add_directive(9, 2, 3, None, "命户部发帑", "manual", notes="家赀约十万两", status="issued")
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
 
     payload = asyncio.run(web_app.api_history_turn(9))
 
@@ -49,8 +31,12 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
         "report": "邸报：国丈家赀约数十万两。",
         "attendant_message": "",
         "decree_text": "诏曰：赈济辽东。",
-        "directives": [{"id": 7, "year": 2, "period": 3, "text": "命户部发帑", "notes": "家赀约十万两"}],
+        "directives": db.issues.list_directives_by_turn(9),
     }
+
+    assert payload["directives"][0]["id"] == directive_id
+    assert payload["directives"][0]["text"] == "命户部发帑"
+    assert payload["directives"][0]["notes"] == "家赀约十万两"
 
 
 class _SettlementSession:

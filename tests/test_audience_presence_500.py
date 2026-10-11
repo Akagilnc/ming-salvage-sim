@@ -9,7 +9,6 @@ summon_enter 落入殿账；断言推导器读账的机器承重态（在场/不
 """
 
 from __future__ import annotations
-from tests.conftest import open_hall_turn
 
 import pytest
 

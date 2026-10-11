@@ -3552,11 +3552,13 @@ def test_pre_settle_cutover_substrate_bad_state_uses_settlement_abort_error_pack
     assert _read_settle(db)["p"] == []
 
 
+@pytest.mark.parametrize("non_dict", [False, True])
 def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pack(
-    fresh_game, monkeypatch, tmp_path
+    fresh_game, monkeypatch, tmp_path, non_dict
 ):
     """#1274：无旨完整结算 pre_settle 遇坏 fiscal 态 → SettlementAbort 错误包。"""
     import ming_sim.error_pack as error_pack_mod
+    from ming_sim.applier import StoredDocumentError
     from ming_sim.models import TurnPhase
     from ming_sim.session import GameSession
 
@@ -3568,7 +3570,7 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     fiscal["settle"]["p"] = []
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
-        (json.dumps(fiscal, ensure_ascii=False),),
+        ("[]" if non_dict else json.dumps(fiscal, ensure_ascii=False),),
     )
     db.conn.commit()
     before_turn = state.turn
@@ -3584,16 +3586,18 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     sess._scene_registry = sess._beat_generator = None
     sess.auto_save = lambda *a, **k: None
 
-    with pytest.raises(SettlementAbort) as exc_info:
+    with pytest.raises(StoredDocumentError if non_dict else SettlementAbort) as exc_info:
         sess.advance_without_decree()
 
-    abort = exc_info.value
-    assert abort.stage == "fixed_fiscal"
-    assert abort.error_pack_path
-    pack = Path(abort.error_pack_path)
-    assert pack.exists()
-    assert (pack / "traceback.txt").read_text(encoding="utf-8")
-    assert _read_settle(db)["p"] == []
+    if not non_dict:
+        abort = exc_info.value
+        assert abort.stage == "fixed_fiscal"
+        assert abort.error_pack_path
+        pack = Path(abort.error_pack_path)
+        assert pack.exists()
+        assert (pack / "traceback.txt").read_text(encoding="utf-8")
+    stored = json.loads(db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()[0])
+    assert stored == [] if non_dict else stored["settle"]["p"] == []
     reloaded = db.load_state()
     assert reloaded.turn == before_turn
     assert reloaded.turn_phase == before_phase == TurnPhase.SUMMONING.value
@@ -3886,13 +3890,3 @@ def test_zero_due_province_army_morale_short_circuits(fresh_db, exempt):
     assert all(o.error is None for o in outcomes)
     row = db.conn.execute("SELECT morale,arrears FROM armies WHERE id=?", (army_id,)).fetchone()
     assert row["arrears"] == 0 and row["morale"] == 80
-
-
-def test_settle_province_tick_nondict_fiscal_raises(fresh_db):
-    from ming_sim.applier import StoredDocumentError
-    fresh_db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
-    fresh_db.conn.commit()
-    with pytest.raises(StoredDocumentError):
-        fresh_db.settle_ming_province_substrate_ticks()
-    after = [dict(r) for r in fresh_db.conn.execute("SELECT id,fiscal FROM regions ORDER BY id")]
-    assert next(r for r in after if r["id"] == "shaanxi")["fiscal"] == "[]"

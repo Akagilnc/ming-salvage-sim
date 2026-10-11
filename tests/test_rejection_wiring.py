@@ -74,22 +74,31 @@ def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_pa
     assert attempt == 1
 
 
-def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp_path):
+@pytest.mark.parametrize("inner_failure", [False, True])
+def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp_path, inner_failure):
     """嵌套 atomic 内跑 settle:mirror 必须等最外层 commit——否则外层回滚后
     DB 行消失而 jsonl 已写=孤立镜像行(违决定 5「commit 成功后才 append」;
     异常路有对称守门,成功路同样要有)(cmr S0 r1,2/2)。"""
-    from ming_sim.applier import atomic
+    from ming_sim.applier import atomic, RejectionCollector
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
 
-    with pytest.raises(RuntimeError):
+    fault = RuntimeError("crash after flush" if inner_failure else "outer rollback")
+    if inner_failure:
+        flush = RejectionCollector.flush_to_db
+        def fail(self, db_):
+            flush(self, db_)
+            raise fault
+        monkeypatch.setattr(RejectionCollector, "flush_to_db", fail)
+    with pytest.raises(RuntimeError) as exc:
         with atomic(db):
             run_settle(db, state, content, {
                 "人物状态变化": [{"name": "查无此人戊", "动作": "处置", "status": "dead", "reason": "测试"}],
             }, narrative="x", decree_text="y")
-            raise RuntimeError("outer rollback")
+            raise fault
+    assert exc.value is fault
 
     assert _rejection_rows(db, turn) == []  # DB 行随外层回滚消失
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()  # 镜像未先写
@@ -480,21 +489,3 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type
-
-
-def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
-    from ming_sim.applier import RejectionCollector
-    db, state, content = game
-    monkeypatch.setenv('MING_SIM_USER_DATA_DIR', str(tmp_path))
-    turn = state.turn
-    real_flush = RejectionCollector.flush_to_db
-
-    def _boom(self, db_):
-        real_flush(self, db_)
-        raise RuntimeError('crash after flush')
-    monkeypatch.setattr(RejectionCollector, 'flush_to_db', _boom)
-    with pytest.raises(RuntimeError):
-        run_settle(db, state, content, {'character_status_changes': [{'name': '查无此人乙', 'status': 'dead', 'reason': '测试'}]}, narrative='x', decree_text='y')
-    monkeypatch.setattr(RejectionCollector, 'flush_to_db', real_flush)
-    assert _rejection_rows(db, turn) == []
-    assert not (tmp_path / 'error_packs' / 'rejections.jsonl').exists()

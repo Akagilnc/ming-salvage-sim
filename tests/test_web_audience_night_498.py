@@ -35,12 +35,10 @@ _POLICY_FIELDS = {
 }
 
 import web_app
-import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
-from ming_sim.session import ChatTurnResult
 
 
 # ── canned LLM 边界（唯一 fake）────────────────────────────────────────

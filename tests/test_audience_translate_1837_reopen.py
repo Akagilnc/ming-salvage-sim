@@ -7,7 +7,6 @@ Seams:
 
 from __future__ import annotations
 
-from ming_sim.entities.character.store import CharacterStore
 
 import json
 from types import SimpleNamespace
@@ -22,7 +21,6 @@ from ming_sim.audience_night import (
 from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.session import GameSession
 from tests.month_chain_helpers import make_light_session
 
 

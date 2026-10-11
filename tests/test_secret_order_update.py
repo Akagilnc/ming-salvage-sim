@@ -4,7 +4,7 @@
 """
 
 from __future__ import annotations
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from tests.dossier_test_helpers import create_test_secret_order
 
 def test_update_by_id_targets_exact_order_not_newest(game):
     db, state, _ = game

@@ -1,13 +1,9 @@
 """#493 大臣荐人：网络/见闻裁切与采纳后的可恢复荐人事件。"""
 
-import json
 
 import pytest
 
-from ming_sim.models import Character
-from ming_sim.entities.character.store import CharacterStore
 from ming_sim.recommendations import validate_recommendation_snapshot
-from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
 def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge(game):

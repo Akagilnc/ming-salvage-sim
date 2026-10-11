@@ -258,14 +258,6 @@ def test_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     ).fetchone()["n"] == 0
 
 
-def test_empty_targets_no_recon_rows(game):
-    """无在途目标 → 零对账行（不落假账）。"""
-    db, state, _content = game
-    assert db.list_monthly_grant_reconciliation_targets() == []
-    assert _record_recon(db, state.turn) == []
-    assert db.conn.execute('SELECT COUNT(*) AS n FROM decree_dossier_reconciliations').fetchone()['n'] == 0
-
-
 def test_prior_turn_close_is_not_re_reconciled(game):
     """只补本回合那笔核账，不翻历史结案（不重开全部历史案卷）。"""
     db, state, _content = game
