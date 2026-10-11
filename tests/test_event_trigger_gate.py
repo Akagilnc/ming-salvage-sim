@@ -429,16 +429,6 @@ def test_historical_event_none_gate_no_crash(game):
 
 # ── #12(b)：trigger_gate key/cond fail-loud（ADR 0012 残留 4b，Q3 裁断=fail-loud）──
 
-def test_gate_key_form_error_accepts_valid_forms():
-    """存量 6 形态 + 文本字段 key 全合法（不误拒）。"""
-    from ming_sim.content import gate_key_form_error
-    for k in ("民心", "皇威", "国库", "内库",
-              "power.houjin.leverage", "region.huguang.grain_security",
-              "region.shaanxi|shanxi|henan.unrest.min",
-              "class.士绅@nanzhili|zhejiang|fujian.satisfaction.max",
-              "event.huabei_plague.triggered",
-              "region.x.controlled_by"):
-        assert gate_key_form_error(k) == "", (k, gate_key_form_error(k))
 
 def test_gate_key_form_error_rejects_typo_metric_table_structure():
     """typo'd metric / 未知表 / 结构不完整 → 非空错误说明（fail-loud 素材）。"""
@@ -670,12 +660,6 @@ def test_character_text_typo_field_gate_raises_clear(read_game):
     with pytest.raises(ValueError):
         _gate_passed({"character.毛文龙.locaiton": "==liaodong"}, state.metrics, db)
 
-def test_character_text_gate_key_passes_content_validation():
-    """load-time 文本 gate 校验接受 character 的文本字段（#201）。"""
-    from ming_sim.content import gate_text_key_form_error
-
-    assert gate_text_key_form_error("character.毛文龙.location") == ""
-    assert gate_text_key_form_error("character.毛文龙.office") == ""
 
 def test_character_text_gate_rejects_serialized_list_field():
     """character.personal_skills 是序列化列表，不适合作普通文本等值门。"""

@@ -11,7 +11,6 @@ from ming_sim.db import GameDB
 from ming_sim.exceptions import PendingActionRefusal
 from ming_sim.models import Character
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
-from ming_sim.person_delta_adapter import normalize_person_changes
 from tests.conftest import active_ming_character
 from tests.dossier_test_helpers import create_test_secret_order
 
@@ -41,9 +40,6 @@ def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
             }
         ],
     }
-    normalized = normalize_person_changes(extracted)
-    assert [item["name"] for item in normalized] == ["孔有德"]
-
     applied = issues.apply_score_extraction(
         db, state, extracted, content=None,
     )

@@ -190,10 +190,12 @@ def _pin_world_question_identities(
     """
     from ming_sim.exceptions import SettlementAbort
 
-    roster = [
-        item for item in levy_petitions
-        if isinstance(item, dict) and str(item.get("event_id") or "")
-    ]
+    roster = levy_petitions
+    mandatory = []
+    for item in roster:
+        event_id = item["event_id"]
+        if item["presentation_due"]:
+            mandatory.append(event_id)
     # 世界段 questions 是请旨数组，成员坏即整段载荷坏：显式响亮失败，不静默丢请旨。
     for index, question in enumerate(questions):
         if not isinstance(question, dict):
@@ -206,10 +208,9 @@ def _pin_world_question_identities(
     blocks = _levy_handoff_blocks(world_text, turn)
     if not roster:
         return ordinary
-    mandatory = [item for item in roster if item.get("presentation_due")]
     if not blocks:
         if mandatory:
-            missing = "、".join(str(item.get("event_id")) for item in mandatory)
+            missing = "、".join(mandatory)
             raise SettlementAbort(
                 f"本月到点应呈的请饷事件没有按交接顺序形成请旨：{missing}",
                 turn=int(turn), stage="world_bind",
@@ -222,9 +223,9 @@ def _pin_world_question_identities(
         )
     pinned: List[Dict[str, Any]] = []
     for item, block in zip(roster, blocks):
-        event_id = str(item.get("event_id"))
+        event_id = item["event_id"]
         if block.get("present") is False:
-            if item.get("presentation_due"):
+            if item["presentation_due"]:
                 raise SettlementAbort(
                     f"本月到点应呈的请饷事件没有形成请旨：{event_id}",
                     turn=int(turn), stage="world_bind",
@@ -989,7 +990,8 @@ def _abort_month_call(
             original, turn=turn, stage=step, error_pack_path=None,
         ) from pack_exc
     abort_message = (
-        settlement_abort_message(pack_path) if kind == "code_exception" else original
+        f"{original}\n{settlement_abort_message(pack_path)}"
+        if kind == "code_exception" else original
     )
     raise SettlementAbort(
         abort_message,
@@ -1261,13 +1263,10 @@ def _run_world_segment(
             world_text=str(chain.get("world_text") or ""),
         )
 
-    try:
-        chain["world_questions"] = _bind()
-    except SettlementAbort as exc:
-        _abort_month_call(
-            db, state, chain, decree_text="", source=source,
-            step="world_bind", exc=exc, kind="code_exception",
-        )
+    chain["world_questions"] = _guard_month_call(
+        db, state, chain, decree_text="", source=source,
+        step="world_bind", operation=_bind,
+    )
 
     def mark(result: Any) -> None:
         # 完成标记与世界效果同一事务；调用方链要等提交成功后再采纳。
@@ -1838,8 +1837,6 @@ def _materialize_rescript_desk(
             _remember(decision)
     for ref, questions in open_items["decree_questions"]:
         for idx, question in enumerate(questions):
-            if not isinstance(question, dict):
-                continue
             _remember(_question_as_decision(
                 question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{question.get('idx', idx)}",
             ))

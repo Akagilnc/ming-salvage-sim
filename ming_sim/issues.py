@@ -74,12 +74,11 @@ from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
-    PERSON_STATUSES,
     current_title_kind,
     normalize_reason_code,
     resolve_person_transition,
 )
-from ming_sim.person_delta_adapter import PERSON_CHANGE_KEY, normalize_person_changes
+from ming_sim.person_delta_adapter import normalize_person_changes
 
 _content: Optional[GameContent] = None
 
@@ -693,8 +692,8 @@ def _merged_mapping_effect(effect: Dict[str, object], *keys: str) -> Dict[str, o
     merged: Dict[str, object] = {}
     for key in keys:
         raw = effect.get(key)
-        if isinstance(raw, dict):
-            merged.update(raw)
+        if raw is not None:
+            merged.update(raw.items())
     return merged
 
 
@@ -702,21 +701,21 @@ def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]
     return [
         item
         for key in ("economy", "economy_moves")
-        for item in (effect.get(key) or [])
+        for item in loads_persistent_json_list(
+            effect.get(key), surface=f"ongoing_effects.{key}",
+        )
     ]
 
 
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
     """Only the canonical 人物变更 stream; retired person_changes/character aliases stay closed."""
-    return [
+    return normalize_person_changes({"人物变更": [
         item
-        for item in normalize_person_changes(effect)
-        if isinstance(item, dict)
-        and str(item.get("动作") or "").strip() == "评定"
-        and not isinstance(item.get("loyalty"), bool)
-        and isinstance(item.get("loyalty"), int)
-        and int(item.get("loyalty") or 0) != 0
-    ]
+        for item in loads_persistent_json_list(
+            effect.get("人物变更"), surface="ongoing_effects.人物变更",
+        )
+        if str(item["动作"] if "动作" in item else item["action"]).strip() == "评定"
+    ]})
 
 
 def _invalid_monthly_person_rating_reason(effect: Dict[str, object]) -> str:
@@ -788,12 +787,12 @@ def _monthly_ongoing_effects_has_work(raw: object) -> bool:
         effect_dict_has_work({"metrics": effect.get("metrics")}),
         effect_dict_has_work({"economy": effect.get("economy")}),
         effect_dict_has_work({"economy_moves": effect.get("economy_moves")}),
-        effect_dict_has_work({"factions": _merged_mapping_effect(effect, "factions", "faction_delta")}),
-        effect_dict_has_work({"class_delta": _merged_mapping_effect(effect, "classes", "class_delta")}),
-        effect_dict_has_work({"region_delta": _merged_mapping_effect(effect, "region_delta", "regions")}),
-        effect_dict_has_work({"army_delta": _merged_mapping_effect(effect, "army_delta", "armies")}),
+        effect_dict_has_work({"factions": effect.get("factions"), "faction_delta": effect.get("faction_delta")}),
+        effect_dict_has_work({"classes": effect.get("classes"), "class_delta": effect.get("class_delta")}),
+        effect_dict_has_work({"region_delta": effect.get("region_delta"), "regions": effect.get("regions")}),
+        effect_dict_has_work({"army_delta": effect.get("army_delta"), "armies": effect.get("armies")}),
         effect_dict_has_work({"power_updates": effect.get("power_updates")}),
-        bool(_monthly_person_rating_changes(effect)),
+        effect_dict_has_work({"人物变更": effect.get("人物变更")}),
     )
     return any(checks)
 

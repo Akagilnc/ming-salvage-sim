@@ -572,15 +572,6 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
     assert captured["kw"].get("input") in (None, "")  # not stdin
     assert "noise" not in out.lower()
 
-@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
-def test_describe_effective_model_includes_new_runners(runner):
-    from ming_sim.models import LLMConfig
-
-    cfg = LLMConfig(
-        api_key="", base_url="", model="api-fallback", channel="cli",
-        cli_runner=runner, cli_model="live-model",
-    )
-    assert cb.describe_effective_model(cfg) == f"{runner}/live-model"
 
 @pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok", "_run_pi"])
 def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):

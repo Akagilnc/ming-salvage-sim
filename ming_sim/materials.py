@@ -1328,10 +1328,8 @@ def _world_fiscal_levy_petitions(db: Any, state: Any) -> list:
 
     presented = {}
     for row in db.list_event_petition_records():
-        event_id = str(row.get("event_id") or "")
-        record = row.get("petition")
-        if not event_id or not isinstance(record, dict):
-            continue
+        event_id = row["event_id"]
+        record = row["petition"]
         # 答案字段（label/hint/note）与呈疏字段同在 choice_json 顶层，petition 段
         # 只放「何时呈、呈的什么」——两处都读，别只读一层。
         presented[event_id] = {

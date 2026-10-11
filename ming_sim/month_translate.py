@@ -133,17 +133,14 @@ def _build_levy_verdict_rule(request: MonthTranslationInput) -> str:
     转译把同一 id 写在效果项顶层，并按闭集写入 ``事件结局``。代码不解析批语、
     不要求续推复述原话（ADR 0142 / P6）。
     """
-    verdicts = [
-        answer for answer in (request.answered_verdicts or ())
-        if isinstance(answer, dict) and str(answer.get("event_id") or "").strip()
-    ]
+    verdicts = request.answered_verdicts
     if not verdicts:
         return ""
     roster = [
         {
-            "event_id": str(answer.get("event_id") or ""),
+            "event_id": answer["event_id"],
             "terminal_reason_labels": list(answer.get("terminal_reason_labels") or []),
-            "rescript": answer.get("rescript") if isinstance(answer.get("rescript"), dict) else {},
+            "rescript": dict(answer["rescript"].items()),
         }
         for answer in verdicts
     ]
