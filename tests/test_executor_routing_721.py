@@ -10,7 +10,6 @@ from ming_sim.action_materialize import (
     stage_assignment_candidate,
     stage_punishment_candidate)
 from ming_sim.db import atomic
-from ming_sim.decree import pre_settle
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -223,7 +222,8 @@ def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env
     ).fetchone()["payload_json"])
     assert "assignee" not in bare_payload
     assert bare_payload.get("actor") == "陈新甲"
-    db.commit_pending_actions(state, content=content, action_ids=[bare_id])
+    with pytest.raises(ValueError):
+        db.commit_pending_actions(state, content=content, action_ids=[bare_id])
     assert db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (bare_id,),
     ).fetchone() is None

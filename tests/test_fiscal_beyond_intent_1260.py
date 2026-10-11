@@ -7,7 +7,6 @@ S3 嵌套通道「旨外恶果」别名 → ledger=1
 
 from __future__ import annotations
 
-import json
 
 from ming_sim.commitment_backlash import (
     BACKLASH_ORIGIN_KIND,
@@ -352,7 +351,7 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     # Fork predicate expands to fiscal
     db.record_dossier_progress(
         did, state.turn, "在办", "新税已立、岁入可期",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     fork_state = db.read_dossier_fork_state(did)
     assert fork_state["beyond_intent"] is True

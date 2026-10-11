@@ -1,4 +1,3 @@
-import React from "react";
 import { audienceStreamPath } from "./audienceScene";
 import type { ApiErrorDetail, ChatResponse } from "./types";
 

@@ -32,7 +32,6 @@ from ming_sim.applier import Provenance
 from ming_sim.month_chain import build_secret_orders_supply_feed
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_score_extraction
-from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent  # noqa: F401 pytest fixture import
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
     if investigation_target:
@@ -272,7 +271,7 @@ def test_actual_progress_container_separate_from_reported_rail(game):
     )
     # 奏报轨另写
     db.record_dossier_progress(
-        did, state.turn, "在办", "臣称已有端绪", is_terminal=False,
+        did, state.turn, "在办", "臣称已有端绪",
     )
 
     actual = db.list_dossier_actual_progress(did)
@@ -283,7 +282,6 @@ def test_actual_progress_container_separate_from_reported_rail(game):
     assert db.sum_dossier_actual_progress_units(did) == 1.0
     # 两轨分立
     assert reported[0]["progress_band"] == "在办"
-    assert not reported[0]["is_terminal"]
     assert "dossier_progress_json" not in actual[0]
     # list_dossier_durable_effects 仍只 economy+fiscal；实进度走并列读口
     durable = db.list_dossier_durable_effects(did)
@@ -302,7 +300,7 @@ def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     did = int(dossier["id"])
     # 只写奏报，不写实况
     db.record_dossier_progress(
-        did, state.turn, "办成", "臣已查明全部", is_terminal=False,
+        did, state.turn, "办成", "臣已查明全部",
     )
     # 推 due 到当月
     db.conn.execute(
@@ -329,7 +327,7 @@ def test_settle_due_keeps_existing_progress_result_over_memorial(game):
     before = str(db.get_secret_order(oid)["result"] or "")
     assert before.strip()
     db.record_dossier_progress(
-        did, state.turn, "办成", "臣已查明全部", is_terminal=False,
+        did, state.turn, "办成", "臣已查明全部",
     )
     memorial = str(db.list_dossier_progress(did)[-1]["memorial_text"] or "")
     db.conn.execute(
@@ -1363,7 +1361,7 @@ def test_false_memorial_does_not_create_or_erase_evidence(game):
     db.save_state(state)
     # 奏报自称"已查明全部" + 零投入
     db.record_dossier_progress(
-        did, state.turn, "办成", "臣已查明全部罪状", is_terminal=False,
+        did, state.turn, "办成", "臣已查明全部罪状",
     )
     apply_monthly_covert_actual_progress(
         db, state, selections=[{"order_id": oid, "effort": 0.0}], commit=True,

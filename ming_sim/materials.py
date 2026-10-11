@@ -11,14 +11,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
-import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, Optional, Sequence
+from typing import Any, List, Mapping, Optional, Sequence
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
@@ -1756,7 +1754,6 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
             "turn": int(row.get("turn") or 0),
             "progress_band": str(row.get("progress_band") or ""),
             "narrative": str(row.get("narrative") or ""),
-            "is_terminal": bool(row.get("is_terminal")),
         }
         for row in db.list_dossier_progress(int(target_dossier_id))
     ]

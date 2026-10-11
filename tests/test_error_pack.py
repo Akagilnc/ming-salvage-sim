@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 
 import json
-import threading
 from pathlib import Path
 
 import pytest
@@ -107,50 +106,39 @@ def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
     lines = open(path, encoding="utf-8").readlines()
     assert len(lines) == 1
 
-def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
-    """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""
+def test_web_issue_endpoint_returns_structured_abort(monkeypatch, tmp_path):
+    """现役 SSE 入口原样保留 SettlementAbort 的结构化字段。"""
     import web_app
-
-    class _StubSession:
-        def await_translations_before_month(self, after_drain=None):
-            if after_drain is not None:
-                after_drain()
-
-        def resolve_turn(
-            self, cheat_directive="", write_gate_already_held=False,
-        ):
-            raise SettlementAbort(
-                "本月结算失败，进度已保存，可重试。\n错误包已生成：/tmp/x\n请把该文件夹发给作者，以便排查。",
-                turn=3, stage="extract", error_pack_path="/tmp/x")
-
-    class _StubGame:
-        _write_gate = threading.Lock()
-        session = _StubSession()
-        class state:
-            ended = False
-            turn = 3
-            turn_phase = "summoning"
-
-    monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
-
-    # #1902：非流式颁诏入口退役，唯一入口流式；SettlementAbort 的可重试文案与错误包
-    # 路径仍由终态 error 载荷原样下发（禁 str() 化丢结构）。
     from tests.issue_stream_helpers import IssueStreamError, consume_issue_stream_response
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    runtime = web_app.WebGame(fresh=True, db_path=str(tmp_path / "game.db"))
+    abort = SettlementAbort("fixture abort", turn=runtime.state.turn,
+                            stage="extract", error_pack_path="/tmp/x")
+
+    def _abort(cheat_directive="", write_gate_already_held=False):
+        assert write_gate_already_held is True
+        raise abort
+
+    monkeypatch.setattr(runtime.session, "resolve_turn", _abort)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
     async def _run():
         response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
+        assert response.status_code == 200
         return await consume_issue_stream_response(response, step="error_pack issue/stream")
 
-    with pytest.raises(IssueStreamError) as ei:
-        asyncio.run(_run())
-
-    # #1902 N6：SSE 中止载荷须保留 stage / error_pack_path / turn（禁只查非 500）。
-    assert ei.value.status_code != 500
-    payload = ei.value.payload
-    assert isinstance(payload, dict), payload
-    assert payload.get("stage") == "extract"
-    assert payload.get("error_pack_path") == "/tmp/x"
-    assert payload.get("turn") == 3
+    try:
+        with pytest.raises(IssueStreamError) as ei:
+            asyncio.run(_run())
+        payload = ei.value.payload
+        assert payload.get("stage") == abort.stage
+        assert payload.get("error_pack_path") == abort.error_pack_path
+        assert payload.get("turn") == abort.turn
+    finally:
+        runtime.session.close()
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1

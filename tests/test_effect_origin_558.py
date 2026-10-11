@@ -1,8 +1,5 @@
-import shutil
-import sqlite3
 
 from ming_sim import issues as issue_engine
-from ming_sim.db import GameDB
 
 
 SPONTANEOUS = "盘面自发"

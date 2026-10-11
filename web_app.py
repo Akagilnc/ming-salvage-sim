@@ -90,8 +90,9 @@ from ming_sim.session_write_queue import (
 )
 from ming_sim.token_stats import tlog
 from ming_sim.flows import compute_budget_lines
-from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import (
+    API_DEFAULT_BASE_URL,
+    API_DEFAULT_MODEL,
     API_DEFAULT_TIMEOUT_SECONDS,
     Character,
     FRONT_HALF_DONE_PHASES,
@@ -683,8 +684,8 @@ class WebGame:
             db_path = _normalize_db_path(db_path)
         else:
             db_path = _get_main_db_path()
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        base_url = os.environ.get("OPENAI_BASE_URL", API_DEFAULT_BASE_URL)
+        model = os.environ.get("OPENAI_MODEL", API_DEFAULT_MODEL)
         api_key = os.environ.get("OPENAI_API_KEY", "")
         advanced_model = os.environ.get("OPENAI_ADVANCED_MODEL", "")
         advanced_base_url = os.environ.get("OPENAI_ADVANCED_BASE_URL", "")
@@ -1056,9 +1057,6 @@ class WebGame:
             advanced_api_key="",
             advanced_thinking_level="",
         )
-        # 编辑显式空思考档不得被共核 env 回落改写（编辑优先级边界）。
-        if thinking_level is not None and not new_thinking_level:
-            cfg.thinking_level = ""
         return cfg
 
     def commit_llm_config(self, new_config: LLMConfig) -> LLMConfig:
@@ -5353,7 +5351,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "advanced_base_url": saved_api.get("advanced_base_url", ""),
             "has_advanced_api_key": _has_real_api_key(saved_api.get("advanced_api_key", "")),
             "advanced_thinking_level": "",
-            "cli_runner": str(saved_cli.get("runner") or ""),
+            "cli_runner": str(saved_cli.get("runner") or cfg.cli_runner),
             "cli_model": str(saved_cli.get("model") or ""),
             "cli_timeout_seconds": _slot_number(
                 saved_cli.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS,

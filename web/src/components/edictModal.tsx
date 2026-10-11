@@ -1,6 +1,6 @@
 import React from "react";
 import { Loader2, Trash2, X } from "lucide-react";
-import type { CasedDirective, Directive, GameState, LocalDirectiveItem } from "../types";
+import type { CasedDirective, GameState, LocalDirectiveItem } from "../types";
 
 /** #1764：source/actor 结构化字段直接并列（P7/0142；非角色台词模板）。 */
 function sourceLabel(source: string, actor: string): string {
@@ -60,8 +60,6 @@ function cardStateA11y(
 
 export function EdictModal({
   state,
-  decree,
-  report,
   busy,
   error,
   localDirectives = [],
@@ -69,8 +67,6 @@ export function EdictModal({
   onIssueDecree,
 }: {
   state: GameState;
-  decree: string;
-  report: string;
   busy: string;
   error: string;
   /** #1764：本地在飞/失败项（会话态）。 */

@@ -115,7 +115,7 @@ def _seed_halfway(db, state, *, did: int, bar: int = 45):
         origin_ref=origin, commit=True,
     )
     db.record_dossier_progress(
-        did, state.turn, "在办", "过半", is_terminal=False, commit=True,
+        did, state.turn, "在办", "过半", commit=True,
     )
     return bar
 
@@ -257,7 +257,7 @@ def test_ac1_deformation_exposure_triggers_commitment_backlash(game):
     # #622 分叉读端：奏报假象 + 旨外实况
     db.record_dossier_progress(
         did, state.turn, "在办", "田亩清丈已十之八九",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     applied = apply_score_extraction(
         db, state,
@@ -451,7 +451,7 @@ def test_ac3_just_started_and_rooted_do_not_trigger(game):
         origin_ref=f"dossier:{did_r}", commit=True,
     )
     db.record_dossier_progress(
-        did_r, state.turn, "告成", "已生根", is_terminal=False, commit=True,
+        did_r, state.turn, "告成", "已生根", commit=True,
     )
     cid_r = _insert_commitment(
         db, state, title="根基已成之诺", origin_ref=f"dossier:{did_r}",
@@ -750,7 +750,7 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
 
     did, holder = _executing_policy_dossier(db, state, token="idemp")
     bar = _seed_halfway(db, state, did=did)
-    cid = _insert_commitment(
+    _insert_commitment(
         db, state, title="幂等之诺", origin_ref=f"dossier:{did}",
         bar_value=bar,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],

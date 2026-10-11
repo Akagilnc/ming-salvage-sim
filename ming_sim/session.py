@@ -15,10 +15,7 @@ import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
-
-if TYPE_CHECKING:
-    pass
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
@@ -2547,11 +2544,7 @@ class GameSession:
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
                     and (self.last_decree or "").strip()):
                 directives = [{"text": self.last_decree}]
-            elif allow_empty_decree or recovered_source is not None or product_exhaust:
-                # #1274：无旨月 / 结算中恢复 — decrees=[] 走完整链，不拒。
-                # #1769：补交耗尽仍无成案旨 — 月照过，draft 跨月保留。
-                pass
-            else:
+            elif not (allow_empty_decree or recovered_source is not None or product_exhaust):
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
         # P1-1（不变式：不许颁发早于尚未纳入草案的生成稿）：玩家拟诏后又回对话新建草案时，
         # last_decree 只覆盖旧 draft 集，会把新 draft 标记为已颁却不进诏书正文。此处比对

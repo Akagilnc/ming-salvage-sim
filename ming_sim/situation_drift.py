@@ -40,8 +40,6 @@ from ming_sim.issues import (
     _commitment_stop_gate,
     _ctx,
     _gate_passed,
-    _invalid_monthly_mapping_shape,
-    _merged_mapping_effect,
     _monthly_economy_items,
     _monthly_mapping_effect,
     _monthly_ongoing_effects_has_work,
@@ -50,7 +48,6 @@ from ming_sim.issues import (
     commitment_progress_payload,
 )
 from ming_sim.models import GameState, loads_effect_dict
-from ming_sim.staged_commitment import is_stage_derived_end_turn
 from ming_sim.token_stats import tlog
 
 

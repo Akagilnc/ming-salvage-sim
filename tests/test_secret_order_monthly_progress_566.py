@@ -154,7 +154,6 @@ def test_only_an_existing_monthly_chain_closes_without_fabricated_report(game):
     db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
 
     # 结案不由代码替承办人编造奏报：终奏只来自模型月报
-    assert not any(r["is_terminal"] for r in db.list_dossier_progress(eligible))
     assert db.list_dossier_progress(ordinary)
 
 
@@ -195,7 +194,6 @@ def test_character_terminal_status_closes_secret_orders_without_fabricated_repor
     assert "途中病故" in orders[chained_id]["result"]
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
-    assert not any(r["is_terminal"] for r in db.list_dossier_progress(chained_dossier))
     assert db.list_dossier_progress(unchained_dossier)
 
 

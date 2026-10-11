@@ -323,6 +323,8 @@ CLI_DEFAULT_RUNNER = "agy"
 # TransportPolicy.idle_timeout_seconds 由它兜底），默认 60 秒。
 CLI_DEFAULT_TIMEOUT_SECONDS = 60.0
 VALID_CHANNELS = frozenset({"api", "cli"})  # 合法执行通道集合，新增通道只改这里
+API_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+API_DEFAULT_MODEL = "gpt-4o-mini"
 API_DEFAULT_TIMEOUT_SECONDS = 180.0  # API 请求默认超时（秒）单一真源（#58）
 # #1465 transport 统一策略默认值（单真源；次数/超时/空转进 runtime 可覆盖，代码零硬编码）
 TRANSPORT_DEFAULT_MAX_ATTEMPTS = 3  # 总计 3 attempts（初试 1 + 重试 2；第一次不叫重试）

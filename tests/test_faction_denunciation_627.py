@@ -12,8 +12,6 @@ Seams:
 
 from __future__ import annotations
 
-import json
-
 from ming_sim.db import GameDB
 from ming_sim.supervision import (
     ORIGIN_MARK_DENUNCIATION_FALSE,
@@ -78,7 +76,7 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     """奏报 + 旨外实况 → fork 单源读端为真。"""
     db.record_dossier_progress(
         dossier_id, state.turn, "已竣", f"奏称{token}已完",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     db.record_issue_economy_move(
         state, "国库", 5, "浮收", "借旨行私",
@@ -101,7 +99,7 @@ def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
     def _report(dossier_id: int, token: str) -> None:
         db.record_dossier_progress(
             dossier_id, state.turn, "已竣", f"奏称{token}已完",
-            is_terminal=False, commit=True,
+            commit=True,
         )
 
     def _beyond(dossier_id: int, token: str) -> None:

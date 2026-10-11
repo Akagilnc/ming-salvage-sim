@@ -719,15 +719,8 @@ def test_t11_rebuild_clears_dirty_and_write_path_rolls_back(game, monkeypatch):
 
     # rebuild 中途失败亦整原子回滚
     real_execute2 = db.conn.execute
-    calls = {"n": 0}
-
     def boom_on_rebuild(sql, parameters=()):
         text = sql if isinstance(sql, str) else str(sql)
-        if "DELETE FROM faction_axis_debt" in text:
-            calls["n"] += 1
-            if calls["n"] >= 1:
-                # let delete happen then fail on next write
-                pass
         if "UPDATE factions SET edict_overdraw" in text.replace("\n", " "):
             raise sqlite3.OperationalError("simulated rebuild failure")
         return real_execute2(sql, parameters)

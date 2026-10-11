@@ -1,4 +1,3 @@
-import React from "react";
 
 /** #1794：设置页附加请求头表（名/值）。不做校验/白名单/默认行；空名行保存时跳过。 */
 export type HeaderRow = { id: string; name: string; value: string };

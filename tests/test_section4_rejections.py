@@ -605,7 +605,6 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
     """issue 结案路的容忍拒收项不得蒸发——经 issue_summary.entity_rejections 落
     rejection_reports(改前是 print,改后曾比 print 更静默=违「容忍+留痕」,
     cmr S2 r2,2/2)。"""
-    import json as _json
 
     db, state, content = game
     turn = state.turn
@@ -635,7 +634,6 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     """inertia 自然推到 100 结案的 issue,其 effect 含容忍类脏项(army 非法字段)
     → 不得崩(tlog 留痕路在 issues.py 没 import 即 NameError 崩月,
     cmr S2 r3 claude P1)。好字段照落。"""
-    import ming_sim.issues as I
 
     db, state, content = game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]

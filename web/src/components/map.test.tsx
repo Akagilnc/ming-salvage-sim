@@ -1,4 +1,4 @@
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { GrandMap, NodeIntel } from "./map";
@@ -71,13 +71,6 @@ function makeNode(region: Region): MapNode {
     armies: [],
   };
 }
-
-describe("NodeIntel #648 population (P7: LLM 长文，无 UI 模板)", () => {
-  it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
-    const host = renderNodeIntel(makeNode(makeRegion({ population: 7200000 })));
-    expect(host.textContent).toContain("辽东");
-  });
-});
 
 it("preserves the supplied per-turn tax", () => {
   const region = makeRegion({ tax_per_turn: 1 });

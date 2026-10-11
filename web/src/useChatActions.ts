@@ -46,7 +46,6 @@ export function useChatActions({
   loadHistoryProjection,
   runAudienceTurn,
   invalidateAudienceScroll,
-  currentNightId,
 }: {
   state: GameState | null;
   setState: React.Dispatch<React.SetStateAction<GameState | null>>;
@@ -68,7 +67,6 @@ export function useChatActions({
   loadHistoryProjection: (minister: string) => Promise<AudienceHistoryData | null>;
   runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks) => Promise<void>;
   invalidateAudienceScroll: () => void;
-  currentNightId: number;
 }) {
   const [chatNotice, setChatNotice] = React.useState("");
   const [retryReadFailure, setRetryReadFailure] = React.useState<RetryReadFailure | null>(null);
@@ -263,7 +261,7 @@ export function useChatActions({
     if (!switchingToScene) void sendChat(AUDIENCE_SCENE_SPEAKER, `宣${ministerName}`);
   };
 
-  const undoLastChat = async (targetMinisterName: string) => {
+  const undoLastChat = async () => {
     if (busy || !canUndoLastChat) return;
     // #1732 B：确认门控移到 ChatModal 就地条；此处直接执行。
     const initiatingPanelName = selectedMinisterRef.current;
@@ -312,7 +310,6 @@ export function useChatActions({
   };
 
   const retryInterruptedReply = async (
-    targetMinisterName: string,
     chatTurnId: number,
     recoveryPhase?: ReplyRetry["recovery_phase"],
   ) => {

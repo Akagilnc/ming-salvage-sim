@@ -282,7 +282,7 @@ def test_policy_reversal_revoke_model_verdict_lands_same_month(game):
         state, "国库", -12, "投入", "已投入", origin_ref=f"dossier:{did}", commit=True,
     )
     db.record_dossier_progress(
-        did, state.turn, "在办", "过半", is_terminal=False, commit=True,
+        did, state.turn, "在办", "过半", commit=True,
     )
     revoke_id = db.create_decree_dossier(
         state,
@@ -923,7 +923,6 @@ def test_kind_gate_apply_only_finalizes_staged(game):
         "stage_idx": 0, "due_turn": state.turn,
         "criterion_text": "火器", "origin_context": "三年火器",
     }]
-    from ming_sim.issues import apply_score_extraction as ase
     # 用 staged 写端
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     cid_staged, _ = _insert_commitment(

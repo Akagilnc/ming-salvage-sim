@@ -12,9 +12,7 @@ Seams:
 
 from __future__ import annotations
 
-import sqlite3
 
-import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
@@ -402,7 +400,7 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
     db.record_monthly_supervision_presence(state.turn, commit=True)
     db.record_dossier_progress(
         subject_id, state.turn, "在办", "表报已陈，实绩未充",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     _insert_staged(db, state, content, dossier_id=subject_id, due_turn=state.turn)
     write_due_staged_commitment_todos(db, state)

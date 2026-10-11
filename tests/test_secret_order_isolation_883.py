@@ -171,10 +171,6 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     extracted_title = "密查国丈"
     extracted_body = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
 
-    assert extracted_body not in chat_origin
-    assert chat_origin not in extracted_body
-    assert extracted_title not in chat_origin
-
     mid_origin = db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
     db.append_chat_message(
         assignee.name, state.turn, "minister", "臣领密旨，即暗中查办，不敢外泄。"
@@ -293,8 +289,6 @@ def test_883_post_brief_public_audience_enters_shared_sources(game):
     assert oid > 0
 
     paraphrase = "臣已暗中查访阉党旧部在京活动，尚未惊动外廷。"
-    assert marker_body not in paraphrase
-    assert "密查阉党" not in paraphrase
 
     mid = db.append_chat_message(assignee.name, state.turn, "minister", paraphrase)
     # 分类后仍 hold，直至 release 单点投轨。

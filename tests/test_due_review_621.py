@@ -453,10 +453,6 @@ def test_mid_stage_no_close_no_joint_liability(game):
     assert dossier["execution_outcome"] == "executing"
     assert dossier["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
-    # 过程奏报 is_terminal=False
-    progress = db.list_dossier_progress(dossier_id)
-    assert progress
-    assert all(not p.get("is_terminal") for p in progress)
 
 
 def test_final_stage_terminal_close_joint_liability_at_most_once(game):
@@ -798,7 +794,7 @@ def test_p6_gap_visible_cause_not_auto(game):
     dossier_id = _executing_policy_dossier(db, state, token="gap")
     db.record_dossier_progress(
         dossier_id, state.turn, "在办", "臣工奏称已办十之七八",
-        is_terminal=False, commit=True,
+        commit=True,
     )
     stages = [{
         "stage_idx": 0,

@@ -88,7 +88,7 @@ export function MenuPage({
   const llmReady = !!(status?.llm_ready ?? status?.has_api_key);
   const isCli = status?.llm?.channel === "cli";
   const currentBackend = isCli
-    ? `CLI · ${status?.llm?.cli_runner || "codex"}${status?.llm?.cli_model ? ` · ${status.llm.cli_model}` : ""}`
+    ? `CLI · ${status?.llm?.cli_runner || ""}${status?.llm?.cli_model ? ` · ${status.llm.cli_model}` : ""}`
     : `${status?.llm?.base_url || ""} · ${status?.llm?.model || ""}`;
   const hasMainDb = !!status?.has_main_db;
   const saves = status?.saves || [];
@@ -215,40 +215,29 @@ export function ApiSettingsModal({
   onSaved: () => Promise<void>;
 }) {
   const [channel, setChannel] = React.useState<"api" | "cli">(initial?.channel === "cli" ? "cli" : "api");
-  const [cliRunner, setCliRunner] = React.useState(initial?.cli_runner || "codex");
+  const [cliRunner, setCliRunner] = React.useState(initial?.cli_runner ?? "");
   // 用 raw cli_model_saved（空=默认档），不用 resolved cli_model——后者把默认兜底成
   // 模型名会让下拉误判「其他(手填)」并在空保存时钉死字面量（CMR R1）。
   const [cliModel, setCliModel] = React.useState(initial?.cli_model_saved ?? "");
   // 静默判死阈值（秒）：距上次新内容这么久没动静就判该次调用已死并重试。
-  const [cliTimeout, setCliTimeout] = React.useState(String(initial?.cli_timeout_seconds || 60));
-  const [baseUrl, setBaseUrl] = React.useState(initial?.base_url || "https://api.deepseek.com");
-  const [model, setModel] = React.useState(initial?.model || "deepseek-chat");
+  const [cliTimeout, setCliTimeout] = React.useState(String(initial?.cli_timeout_seconds ?? ""));
+  const [baseUrl, setBaseUrl] = React.useState(initial?.base_url ?? "");
+  const [model, setModel] = React.useState(initial?.model ?? "");
   const [advancedModel, setAdvancedModel] = React.useState(initial?.advanced_model || "");
   const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState(initial?.advanced_base_url || "");
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
-  const normalizeStrength = (value?: string) => {
-    const v = (value || "").trim().toLowerCase();
-    if (v === "minimal" || v === "disabled" || v === "none") return "off";
-    return ["", "off", "low", "medium", "high"].includes(v) ? v : "";
-  };
   const [apiReasoningStrength, setApiReasoningStrength] = React.useState(
-    normalizeStrength(initial?.api_reasoning_strength || (initial?.channel === "api" ? initial?.reasoning_strength : "") || initial?.thinking_level)
+    initial?.api_reasoning_strength ?? (initial?.channel === "api" ? initial?.reasoning_strength ?? "" : "")
   );
   const [cliReasoningStrength, setCliReasoningStrength] = React.useState(
-    normalizeStrength(initial?.cli_reasoning_strength || (initial?.channel === "cli" ? initial?.reasoning_strength : ""))
+    initial?.cli_reasoning_strength ?? (initial?.channel === "cli" ? initial?.reasoning_strength ?? "" : "")
   );
   const [apiKey, setApiKey] = React.useState("");
-  const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds || 180));
+  const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds ?? ""));
   const [headerRows, setHeaderRows] = React.useState<HeaderRow[]>(() => headersToRows(initial?.default_headers));
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
-  const reasoningChoices = initial?.reasoning_strengths || [
-    { value: "", label: "默认" },
-    { value: "off", label: "关" },
-    { value: "low", label: "低" },
-    { value: "medium", label: "中" },
-    { value: "high", label: "高" },
-  ];
+  const reasoningChoices = initial?.reasoning_strengths ?? [];
   const backendChannel = initial?.channel === "cli" ? "cli" : "api";
   const normalizedBaseUrl = baseUrl.trim();
   const normalizedModel = model.trim();
@@ -256,7 +245,7 @@ export function ApiSettingsModal({
   const normalizedAdvancedModel = advancedModel.trim();
   const backendReasoningSupportCurrent = channel === backendChannel && (
     channel === "cli"
-      ? cliRunner === (initial?.cli_runner || "codex")
+      ? cliRunner === initial?.cli_runner
       : normalizedBaseUrl === (initial?.base_url || "").trim() &&
         normalizedModel === (initial?.model || "").trim() &&
         normalizedAdvancedBaseUrl === (initial?.advanced_base_url || "").trim() &&
@@ -266,10 +255,6 @@ export function ApiSettingsModal({
     backendSupported: initial?.reasoning_supported,
     backendCurrent: backendReasoningSupportCurrent,
     currentChannel: channel,
-    baseUrl,
-    model,
-    advancedBaseUrl,
-    advancedModel,
     cliRunner,
     cliReasoningRunners: initial?.cli_reasoning_runners,
   });
@@ -290,11 +275,11 @@ export function ApiSettingsModal({
           channel,
           cli_runner: cliRunner.trim(),
           cli_model: cliModel.trim(),
-          cli_timeout_seconds: slotNumber(cliTimeout, 60),
+          cli_timeout_seconds: slotNumber(cliTimeout, initial?.cli_timeout_seconds ?? 0),
           base_url: baseUrl.trim(),
           model: model.trim(),
           api_key: apiKey.trim(),
-          timeout_seconds: slotNumber(timeoutSeconds, 180),
+          timeout_seconds: slotNumber(timeoutSeconds, initial?.timeout_seconds ?? 0),
           // 统一选择器已在初始化时把旧 thinking_level 迁进 reasoningStrength；保存清掉旧字段，
           // 否则它仍作隐藏旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
           thinking_level: "",
@@ -324,7 +309,7 @@ export function ApiSettingsModal({
     <div className="menu-modal-bg" onClick={onClose}>
       <div className="menu-modal" onClick={(e) => e.stopPropagation()}>
         <h2>LLM 后端</h2>
-        <p className="menu-hint">API 通道用商业模型；CLI 通道用本机 agent（agy/codex/claude/cursor/kimi/grok/pi），可脱 key。配置写入本地，不上传。</p>
+        <p className="menu-hint">API 通道用商业模型；CLI 通道用本机 agent，无需 API key。配置写入本地，不上传。</p>
         <label>
           通道
           <select value={channel} onChange={(e) => setChannel(e.target.value === "cli" ? "cli" : "api")}>
@@ -378,7 +363,7 @@ export function ApiSettingsModal({
             </div>
             <label>
               静默判死（秒）<small className="menu-hint">（距上次新内容这么久没有动静，就判这次调用已死，自动重试）</small>
-              <input type="number" min={30} max={1800} value={cliTimeout} onChange={(e) => setCliTimeout(e.target.value)} placeholder="60" />
+              <input type="number" step="any" value={cliTimeout} onChange={(e) => setCliTimeout(e.target.value)} placeholder={String(initial?.cli_timeout_seconds ?? "")} />
             </label>
           </>
         )}
@@ -423,7 +408,7 @@ export function ApiSettingsModal({
         </label>
         <label>
           Timeout Seconds
-          <input type="number" min={10} max={900} value={timeoutSeconds} onChange={(e) => setTimeoutSeconds(e.target.value)} placeholder="180" />
+          <input type="number" step="any" value={timeoutSeconds} onChange={(e) => setTimeoutSeconds(e.target.value)} placeholder={String(initial?.timeout_seconds ?? "")} />
         </label>
         <label>
           API Key

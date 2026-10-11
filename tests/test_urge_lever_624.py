@@ -25,7 +25,6 @@ from ming_sim.due_review import (
     project_due_review_scene,
 )
 from ming_sim.exceptions import PendingActionRefusal
-from ming_sim.issues import apply_score_extraction
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -191,7 +190,7 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     # 有表报无实账 → 基线 degraded
     db.record_dossier_progress(
         dossier_id, state.turn, "在办", "表报已陈，实绩未充",
-        is_terminal=False, commit=True,
+        commit=True,
     )
 
     tid = db.insert_next_audience_todo(

@@ -1677,7 +1677,6 @@ class GameDB:
                 turn INTEGER NOT NULL,
                 progress_band TEXT NOT NULL,
                 memorial_text TEXT NOT NULL,
-                is_terminal INTEGER NOT NULL DEFAULT 0 CHECK(is_terminal IN (0,1)),
                 origin TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
@@ -7691,24 +7690,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
         )
         return nxt
 
-    def complete_rescript_summon_scaffold_turn(self, chat_turn_id: int) -> None:
-        """#657：空问话召见 scaffold 消费成功 → status=consumed（非在飞终态唯一写点）。
-
-        list_in_flight 不含 consumed；与 failed（真失败）分立。body 已非空时
-        再入走 consumed 短路，不走 ensure CAS。
-        """
-        ctid = int(chat_turn_id or 0)
-        if ctid <= 0:
-            return
-        owns = self.owns_transaction()
-        self.conn.execute(
-            "UPDATE chat_turns SET status='consumed' "
-            "WHERE id=? AND status='generating' AND user_message_id IS NULL",
-            (ctid,),
-        )
-        if owns:
-            self.conn.commit()
-
     def list_in_flight_chat_turns(
         self,
         *,
@@ -10060,19 +10041,14 @@ CREATE TABLE IF NOT EXISTS authority_records (
     # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
     DOSSIER_REPORT_ORIGIN_NS = "dossier-report:"
     DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
-    DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
 
     @classmethod
     def _normalize_dossier_report_origin(
-        cls, origin: object, *, is_terminal: bool = False,
+        cls, origin: object,
     ) -> str:
         raw = str(origin or "").strip()
         if not raw:
-            return (
-                cls.DOSSIER_REPORT_ORIGIN_VERDICT
-                if is_terminal
-                else cls.DOSSIER_REPORT_ORIGIN_MONTHLY
-            )
+            return cls.DOSSIER_REPORT_ORIGIN_MONTHLY
         prefix = cls.DOSSIER_REPORT_ORIGIN_NS
         if not raw.startswith(prefix) or not raw[len(prefix):].strip():
             raise ValueError("奏报 origin 须带 dossier-report 命名空间前缀")
@@ -10082,18 +10058,13 @@ CREATE TABLE IF NOT EXISTS authority_records (
     def _coerce_dossier_progress_row(
         cls, item: Mapping[str, object], *, dossier_id: int,
     ) -> Dict[str, object]:
-        is_terminal = bool(item.get("is_terminal"))
-        # Empty origin defaults live only in _normalize_dossier_report_origin.
-        origin = cls._normalize_dossier_report_origin(
-            item.get("origin"), is_terminal=is_terminal,
-        )
+        origin = cls._normalize_dossier_report_origin(item.get("origin"))
         return {
             "id": int(item["id"]),
             "dossier_id": int(item.get("dossier_id") or dossier_id),
             "turn": int(item["turn"]),
             "progress_band": str(item["progress_band"]),
             "memorial_text": str(item["memorial_text"]),
-            "is_terminal": is_terminal,
             "origin": origin,
         }
 
@@ -10105,7 +10076,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
         band: str,
         text: str,
         *,
-        is_terminal: bool,
         origin: str,
         commit: bool,
     ) -> int:
@@ -10116,14 +10086,14 @@ CREATE TABLE IF NOT EXISTS authority_records (
         if row is None:
             raise ValueError("密令不存在")
         reports = json.loads(row["dossier_progress_json"] or "[]")
-        existing = next((item for item in reports if not item.get("is_terminal")
-                         and int(item.get("turn", 0)) == int(turn)), None)
-        if existing is None or is_terminal:
+        existing = next((item for item in reports
+                         if int(item.get("turn", 0)) == int(turn)), None)
+        if existing is None:
             report_id = max((int(item.get("id", 0)) for item in reports), default=0) + 1
             existing = {
                 "id": report_id, "dossier_id": int(dossier_id), "turn": int(turn),
                 "progress_band": band, "memorial_text": text,
-                "is_terminal": bool(is_terminal), "origin": origin,
+                "origin": origin,
             }
             reports.append(existing)
         else:
@@ -10147,21 +10117,18 @@ CREATE TABLE IF NOT EXISTS authority_records (
         band: str,
         text: str,
         *,
-        is_terminal: bool,
         origin: str,
         commit: bool,
     ) -> int:
         owns_transaction = self.owns_transaction() if commit else False
-        existing = None
-        if not is_terminal:
-            existing = self.conn.execute(
-                """
-                SELECT id FROM dossier_reported_progress
-                WHERE dossier_id=? AND turn=? AND is_terminal=0
-                ORDER BY id DESC LIMIT 1
-                """,
-                (int(dossier_id), int(turn)),
-            ).fetchone()
+        existing = self.conn.execute(
+            """
+            SELECT id FROM dossier_reported_progress
+            WHERE dossier_id=? AND turn=?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (int(dossier_id), int(turn)),
+        ).fetchone()
         if existing is not None:
             report_id = int(existing["id"])
             self.conn.execute(
@@ -10176,12 +10143,11 @@ CREATE TABLE IF NOT EXISTS authority_records (
             cur = self.conn.execute(
                 """
                 INSERT INTO dossier_reported_progress
-                    (dossier_id, turn, progress_band, memorial_text, is_terminal, origin)
-                VALUES (?,?,?,?,?,?)
+                    (dossier_id, turn, progress_band, memorial_text, origin)
+                VALUES (?,?,?,?,?)
                 """,
                 (
-                    int(dossier_id), int(turn), band, text,
-                    1 if is_terminal else 0, origin,
+                    int(dossier_id), int(turn), band, text, origin,
                 ),
             )
             report_id = int(cur.lastrowid)
@@ -10196,7 +10162,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
         progress_band: str,
         memorial_text: str,
         *,
-        is_terminal: bool = False,
         origin: str = "",
         commit: bool = True,
     ) -> int:
@@ -10213,14 +10178,12 @@ CREATE TABLE IF NOT EXISTS authority_records (
             raise ValueError("案卷不存在")
         if not band or not text.strip():
             raise ValueError("进展档和密奏均不能为空")
-        origin_norm = self._normalize_dossier_report_origin(
-            origin, is_terminal=bool(is_terminal),
-        )
+        origin_norm = self._normalize_dossier_report_origin(origin)
         secret_order_id = dossier.get("secret_order_id")
         if secret_order_id:
             return self._record_secret_dossier_progress(
                 int(dossier_id), int(secret_order_id), int(turn), band, text,
-                is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
+                origin=origin_norm, commit=commit,
             )
         payload = {}
         try:
@@ -10233,7 +10196,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             raise ValueError("非执行面案卷不可挂奏报")
         return self._record_general_dossier_progress(
             int(dossier_id), int(turn), band, text,
-            is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
+            origin=origin_norm, commit=commit,
         )
 
     def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
@@ -10254,8 +10217,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             ]
         rows = self.conn.execute(
             """
-            SELECT id, dossier_id, turn, progress_band, memorial_text,
-                   is_terminal, origin
+            SELECT id, dossier_id, turn, progress_band, memorial_text, origin
             FROM dossier_reported_progress
             WHERE dossier_id=?
             ORDER BY turn, id
@@ -10642,10 +10604,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
         在场与派系关系是事实。月报 origin 不从这里派生人物行动。
         """
-        from ming_sim.supervision import (
-            SUPERVISION_RELATION,
-            resolve_dossier_owner_name,
-        )
+        from ming_sim.supervision import SUPERVISION_RELATION
+        from ming_sim.participant_roster import resolve_dossier_owner_name
 
         turn_i = int(turn)
         presence_written = 0
@@ -10857,8 +10817,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
             derive_consecutive_months,
             faction_relation,
             integrity_band,
-            resolve_dossier_owner_name,
         )
+        from ming_sim.participant_roster import resolve_dossier_owner_name
 
         presence = self.list_supervision_presence(
             int(dossier_id), as_of_turn=as_of_turn,
@@ -13756,9 +13716,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     state, row, payload, dossier_id,
                 ):
                     return
-            elif row["action_type"] == "secret_authorization":
-                # 密授不归本片（#528）；#611 privileges 仍只经 authority_changes 生产。
-                pass
             elif row["action_type"] == "revoke_authority":
                 # #523 / #611：收权只接 authority_changes 收回槽；判后物化。
                 self._apply_revoke_authority_verdict_effect(
@@ -15466,8 +15423,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
         未持源夜时与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清
         night_approved，使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入
         源夜则盖源夜。返回该行 id（不存在/非 pending 则 0）。
-        **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
-        静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
+        合并保留下划线控制键（如 _directive_status），不抹掉提交态。
         #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
         声明路径传入源夜则盖源夜，不把既有候选迁到落账当下的开放夜。"""
         stamp = self._night_id_for_staged_write(night_id, what="改草")
@@ -15730,62 +15686,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             raise ValueError("旨稿机械载荷不完整或非法，拒绝改草")
         return normalized
 
-    def clear_directive_needs_clarification(self, candidate_id: int) -> int:
-        """清某道 pending directive 的「待澄清」标（#502 L4）：皇帝下一句指明并准驳后，
-        含糊 episode 了结——被点名与其兄弟一并复位为普通 pending（未点名者重回「不回→默认同意」
-        通道）。返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(candidate_id),),
-        ).fetchone()
-        if row is None:
-            return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict) or "_needs_clarification" not in payload:
-            return int(candidate_id)
-        payload.pop("_needs_clarification", None)
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
-        )
-        self.conn.commit()
-        return int(candidate_id)
-
-    def flag_directive_needs_clarification(self, candidate_id: int) -> int:
-        """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
-        「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
-        返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(candidate_id),),
-        ).fetchone()
-        if row is None:
-            return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        payload["_needs_clarification"] = True
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
-        )
-        self.conn.commit()
-        return int(candidate_id)
-
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
@@ -15823,7 +15723,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
 
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
-        allow_clarification: bool = False,
     ) -> Dict[str, object]:
         """Classify and, only when valid, project one staged directive."""
         if (
@@ -15836,8 +15735,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             payload = json.loads(str(pa.get("payload_json") or "{}"))
             if not isinstance(payload, dict):
                 return {"classification": "invalid"}
-            if payload.get("_needs_clarification") and not allow_clarification:
-                return {"classification": "needs_clarification"}
             payload = self._normalize_directive_dossier_payload(
                 payload, content=content, current_turn=int(state.turn),
             )
@@ -15919,11 +15816,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
                 prepared = self._prepare_pending_directive(
                     state, pa, content=content,
-                    allow_clarification=action_ids is not None,
                 )
                 classification = prepared["classification"]
-                if classification == "needs_clarification":
-                    continue
                 if classification == "invalid":
                     cm = atomic(self) if owns_transaction else contextlib.nullcontext()
                     with cm:

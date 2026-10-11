@@ -149,7 +149,7 @@ function SecretOrderDetailDialog({
           {(order.dossier_progress || []).map((report, index) => (
             <SecretOrderDetailBlock
               key={report.id}
-              title={`${report.is_terminal ? "结案密奏" : `第 ${index + 1} 月密奏`} · ${report.progress_band}`}
+              title={`第 ${index + 1} 月密奏 · ${report.progress_band}`}
               text={report.memorial_text}
               tone="green"
             />

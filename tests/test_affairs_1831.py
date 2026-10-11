@@ -5,12 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-import ming_sim.audience_night as audience_night
-import ming_sim.simulation as simulation
-from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
-from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from tests.test_declaration_dispatch_1835 import _minister
 
 
@@ -190,7 +186,7 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
     issues_mod.bind_content(content)
     state.year = 1638
     state.period = 9
-    authorized = db.affairs.open(
+    db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
     )

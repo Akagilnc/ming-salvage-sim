@@ -1,10 +1,7 @@
 
 import pytest
 
-from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
-from tests.web_audience_test_doubles import HallAdmissionSessionMixin
-from web_app import WebGame
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.dossier_test_helpers import create_test_secret_order
 
 

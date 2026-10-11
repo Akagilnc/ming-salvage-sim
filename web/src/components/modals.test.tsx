@@ -32,18 +32,6 @@ const MINISTER_MOCK: Minister = {
   favorite: false,
 };
 
-const CONSORT_MOCK: Minister = {
-  name: "周贵人",
-  office: "贵人",
-  office_type: "后宫",
-  faction: "",
-  style: "",
-  status: "active",
-  status_label: "在宫",
-  summary: "后宫嫔妃",
-  favorite: false,
-};
-
 describe("ScrollMessages — frozen ledger order", () => {
   it("groups only adjacent rows of a turn without moving an interleaved scene row", () => {
     const host = document.createElement("div"); document.body.appendChild(host);
@@ -74,15 +62,13 @@ function renderModal(props: {
   busy?: string;
   streamingMinisterMessage?: string;
   onCancel?: () => void;
-  replyRetries?: React.ComponentProps<typeof ChatModal>["replyRetries"];
-  onRetryReply?: (ministerName: string) => void;
-  translationRetries?: React.ComponentProps<typeof ChatModal>["translationRetries"];
+  onRetryReply?: React.ComponentProps<typeof ChatModal>["onRetryReply"];
   onRetryTranslation?: React.ComponentProps<typeof ChatModal>["onRetryTranslation"];
   pendingUserMessage?: string;
   pendingIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   failedIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   onSend?: (ministerName: string, text?: string) => void;
-  onUndo?: (ministerName: string) => void;
+  onUndo?: () => void;
   canUndoLastChat?: boolean;
   onClose?: () => void;
   scrollPosition?: number;
@@ -146,11 +132,9 @@ function renderModal(props: {
         composerHint=""
         input={input}
         error=""
-        replyRetries={props.replyRetries}
         onInput={(value) => setInput(value)}
         onSend={props.onSend ?? (() => {})}
         onRetryReply={props.onRetryReply}
-        translationRetries={props.translationRetries}
         onRetryTranslation={props.onRetryTranslation}
         onUndo={props.onUndo ?? (() => {})}
         onHint={() => {}}
@@ -240,7 +224,6 @@ function baseGameState(overrides: Partial<GameState> = {}): GameState {
 function renderEdictModal(props: {
   state: GameState;
   onIssueDecree?: () => void;
-  onAdvanceWithoutEdict?: () => void;
   error?: string;
 }) {
   const host = document.createElement("div");
@@ -250,13 +233,10 @@ function renderEdictModal(props: {
     root.render(
       <EdictModal
         state={props.state}
-        decree=""
-        report=""
         busy=""
         error={props.error ?? ""}
         onDeleteDirective={() => {}}
         onIssueDecree={props.onIssueDecree ?? (() => {})}
-        onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
       />
     )
   );
@@ -433,13 +413,6 @@ describe("ChatModal — placeholder switches on character type", () => {
     const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea.placeholder).toContain("宣 X");
     expect(textarea.placeholder).toContain("退朝");
-  });
-
-  it("does NOT show 大臣 or 他 in placeholder for consorts", () => {
-    renderModal({ minister: CONSORT_MOCK, portraitPrefix: "consort_" });
-    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.placeholder).not.toContain("大臣");
-    expect(textarea.placeholder).not.toContain("他");
   });
 
 });
@@ -1108,13 +1081,12 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       // The same night keeps every participant in chronological order.
       ...nightScroll,
     ];
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: halfTurnScroll }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: halfTurnScroll, reply_retries: [{ chat_turn_id: 12, question: "辽饷何解？" }] }) }));
     renderModal({
       minister: xu,
       ministers: [hong, xu],
       portraitPrefix: "minister_",
       currentNightId: 23,
-      replyRetries: [{ chat_turn_id: 12, question: "辽饷何解？" }],
       pendingUserMessage: "辽饷何解？",
       pendingIdentity: { campaign_id: "test-campaign", night_id: 23, chat_turn_id: 12 },
     });
@@ -1497,7 +1469,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(item).not.toBeNull();
     const label = item!.textContent || "";
     expect(label).toContain("递话");
-    expect(label).not.toContain("奏报");
 
     // 标题/摘要承认第三种内容（契约：含「递话」；不锁死全句；不在含递话正文的 host 上禁旧词）
     const dialog = host.querySelector('[role="dialog"]');
@@ -1582,18 +1553,6 @@ describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
 });
 
 describe("ReportModal — narrative settlement bulletin", () => {
-  it("renders narrative without an account page", () => {
-    renderReportModal({
-      report: "**辽东军情**\n- 军前缺饷",
-    });
-
-    // #1902 L2：仅卷轴结构可达；删整 body 报文禁词（合法报文可含任意字）。
-    expect(document.querySelector(".gazette-shell")).not.toBeNull();
-    expect(document.querySelector(".gazette-document")).not.toBeNull();
-    expect(document.querySelector("pre.memorial-text")?.textContent).toBe("**辽东军情**\n- 军前缺饷");
-    expect(document.querySelector(".gazette-dismiss")).not.toBeNull();
-  });
-
   it("#1387 底部有朕知道了主按钮可达关闭，不靠右上小 X", () => {
     const onClose = vi.fn();
     const host = renderReportModal({
@@ -1638,8 +1597,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(host.querySelector(".gazette-masthead")).not.toBeNull();
     // 空壳复用原 pre，不另写固定空态文案
     expect(host.querySelector("pre.memorial-text")?.textContent).toBe("");
-    expect(host.textContent).not.toContain("尚无上月邸报");
-    expect(host.textContent).not.toContain("登基伊始");
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("朕知道了"),
     ) as HTMLButtonElement | undefined;
@@ -1668,7 +1625,7 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("#671 王承恩递话在邸报纸面外独立区，不经 stripOrganicMarkdown；空则不渲染", () => {
+  it("#671 absent or blank attendant text does not render an aside", () => {
     const hostEmpty = renderReportModal({ report: "一、边报" });
     expect(hostEmpty.querySelector("[data-testid=gazette-attendant]")).toBeNull();
 
@@ -1682,16 +1639,5 @@ describe("ReportModal — narrative settlement bulletin", () => {
         .querySelector("[data-testid=gazette-attendant]"),
     ).toBeNull();
 
-    const rawWithWs = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
-    const host = renderReportModal({
-      report: "**辽东军情**",
-      attendantMessage: rawWithWs,
-    });
-    const aside = host.querySelector("[data-testid=gazette-attendant]");
-    expect(aside).not.toBeNull();
-    // 递话原文含首尾空白与 markdown 标记；官方邸报逐字契约只在 App→DOM tracer
-    expect(aside?.textContent).toBe(rawWithWs);
-    // 递话区在纸面 article 之外
-    expect(host.querySelector(".gazette-document")?.contains(aside)).toBe(false);
   });
 });

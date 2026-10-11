@@ -55,7 +55,6 @@ from ming_sim.token_stats import tlog
 TIMEOUT_TURN = 240
 
 # 逐旨／世界段请旨解析工具位于 ming_sim.settlement_payload，不从邸报抽取。
-# 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
 
 
 @dataclass
@@ -657,20 +656,6 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
         row.get("kind") == "directive"
         for row in db.list_pending_actions(state.turn)
     )
-
-
-def _carry_pending_clarification_actions(
-    db: GameDB, state: GameState, before_turn: int, *, content=None,
-) -> None:
-    """Keep unresolved pre-edict drafts discoverable in the new month."""
-    for pending_action in db.list_pending_actions(before_turn):
-        prepared = db._prepare_pending_directive(state, pending_action, content=content)
-        if prepared["classification"] == "needs_clarification":
-            db.conn.execute(
-                "UPDATE pending_actions "
-                "SET turn=?, night_id=0, night_approved=0 WHERE id=?",
-                (int(state.turn), int(pending_action["id"])),
-            )
 
 
 def resolve_directives(

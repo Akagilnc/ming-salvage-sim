@@ -601,7 +601,6 @@ export type DossierProgressReport = {
   turn: number;
   progress_band: string;
   memorial_text: string;
-  is_terminal: boolean;
 };
 
 export type SecretOrder = {

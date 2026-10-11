@@ -17,7 +17,6 @@ import sqlite3
 
 import pytest
 
-import ming_sim.decree as decree_mod
 from ming_sim.decree import pre_settle
 from tests.dossier_test_helpers import create_test_secret_order
 
@@ -110,7 +109,7 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
     finally:
         other.close()
     assert row[0] == "active"
-    assert "[期限届满]" not in (row[1] or "")
+    assert row[1] == ""
 
 
 def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
@@ -200,7 +199,7 @@ def test_enter_review_does_not_clobber_settling(game):
 
     抹成 reviewing 后 pre_settle 守门失效=同回合二次财政 tick。
     """
-    from ming_sim.session import GameSession, TurnPhase
+    from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "settling"
     db.save_state(state)

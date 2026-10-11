@@ -5,7 +5,6 @@ import ming_sim.cli_backend as cli_backend
 import ming_sim.draft_intent as draft_intent
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
-from tests.conftest import covering_monthly_extract  # noqa: F401 pytest fixture import
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 
 def _active_people(db, count):

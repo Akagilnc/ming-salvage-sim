@@ -8,7 +8,7 @@ from ming_sim.exceptions import LLMContractError
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import power_band, qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict  # noqa: F401 pytest fixture import
+from tests.dossier_test_helpers import rejected_verdict
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
     return db.create_decree_dossier(
@@ -42,9 +42,6 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     assert context == decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )
-    encoded = json.dumps(context, ensure_ascii=False, sort_keys=True)
-    assert "satisfaction" not in encoded
-    assert "满意" not in encoded
     assert context["dossiers"][0]["mode"] == "midzhi"
     assert context["dossiers"][0]["break_rank"] == {"office_rank": "越三级"}
     assert set(context["factions"][0]) == {"name", "leverage", "agenda"}

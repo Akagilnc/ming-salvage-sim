@@ -145,14 +145,11 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     cli_raw = data.get("cli")
     api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else {})
     cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
-    # #1902：transport 段退役——策略不再从 runtime 档读（旧档里的该段被忽略）。
-    # 槽内 thinking_level → reasoning_strength 仍可归一（提供方思考参数，非扁平迁移）。
-    api_strength = (
-        normalize_reasoning_strength(api.get("reasoning_strength"))
-        or legacy_reasoning_strength(api)
+    api_strength = normalize_reasoning_strength(
+        api_raw.get("reasoning_strength", legacy_reasoning_strength(api_raw))
+        if isinstance(api_raw, dict) else ""
     )
-    if api_strength:
-        api["reasoning_strength"] = api_strength
+    api["reasoning_strength"] = api_strength
     cli_strength = normalize_reasoning_strength(cli.get("reasoning_strength"))
     active_strength = cli_strength if channel == "cli" else api_strength
     return {
@@ -297,7 +294,7 @@ def _api_runtime_value(runtime: Dict[str, object], key: str, fallback: str) -> s
     if value is None:
         return fallback
     text = str(value)
-    if not text:
+    if not text and key not in {"thinking_level", "advanced_thinking_level"}:
         return fallback
     # 占位符 / 保留 sentinel 不当真实 key：stale cli-backend 或 __keep__ 不得
     # 覆盖入口带来的真实 env key（否则 api 通道启动被清空报「未配 API key」）。
@@ -338,7 +335,7 @@ def llm_config_from_runtime(
         ).strip() else "api"
     api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
-    cli_runner = str(cli_slot.get("runner") or (CLI_DEFAULT_RUNNER if channel == "cli" else "")).strip().lower()
+    cli_runner = str(cli_slot.get("runner") or CLI_DEFAULT_RUNNER).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
     base_url = _api_runtime_value(runtime, "base_url", base_url)
     model = _api_runtime_value(runtime, "model", model)
@@ -350,17 +347,13 @@ def llm_config_from_runtime(
         float,
         _slot_number(timeout_seconds, float, API_DEFAULT_TIMEOUT_SECONDS),
     )
-    # 思考档的 env 回落也归本函数一处（#1902 J3）：此前只有 Web 入口自己读
-    # OPENAI_THINKING_LEVEL，CLI 入口传空串 → 同一份空运行档 + 同一个环境值经两端
-    # 建局得到不同执行事实（CLI thinking_level/reasoning_strength 空，Web high）。
-    # 与 ``load_llm_config`` 同一口径：入参空才回落 env。
-    thinking_level = (
-        _api_runtime_value(runtime, "thinking_level", thinking_level)
-        or os.environ.get("OPENAI_THINKING_LEVEL", "")
+    # A present empty slot is an explicit default, not an environment fallback.
+    thinking_level = _api_runtime_value(
+        runtime, "thinking_level", thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", ""),
     )
-    advanced_thinking_level = (
-        _api_runtime_value(runtime, "advanced_thinking_level", advanced_thinking_level)
-        or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
+    advanced_thinking_level = _api_runtime_value(
+        runtime, "advanced_thinking_level",
+        advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
     )
     advanced_model = _api_runtime_value(runtime, "advanced_model", advanced_model)
     advanced_base_url = _api_runtime_value(runtime, "advanced_base_url", advanced_base_url)
@@ -374,10 +367,14 @@ def llm_config_from_runtime(
         if channel != "cli"
         else ""
     )
+    strength_slot = cli_slot if channel == "cli" else api_slot
     reasoning_strength = normalize_reasoning_strength(
-        cli_slot.get("reasoning_strength") if channel == "cli" else api_slot.get("reasoning_strength")
-    ) or legacy_reasoning
-    # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
+        strength_slot.get("reasoning_strength", legacy_reasoning)
+    )
+    if "reasoning_strength" in strength_slot:
+        # The unified selector owns both tiers, including the explicit default.
+        thinking_level = advanced_thinking_level = ""
+    # 无 saved CLI timeout 时回落 CLI 默认，不回落 API request timeout。
     cli_timeout = _slot_number(cli_slot.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS)
     if channel == "cli":
         api_key = ""  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
@@ -450,10 +447,11 @@ def load_llm_config(
         "advanced_thinking_level": advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
         "thinking_level": normalized_thinking,
     })
-    reasoning_strength = (
-        normalize_reasoning_strength(os.environ.get("MING_SIM_REASONING_STRENGTH", ""))
-        or legacy_reasoning
+    reasoning_strength = normalize_reasoning_strength(
+        os.environ.get("MING_SIM_REASONING_STRENGTH", legacy_reasoning)
     )
+    if "MING_SIM_REASONING_STRENGTH" in os.environ:
+        normalized_thinking = ""
     return LLMConfig(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),

@@ -433,9 +433,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     public_ids = {
         str(item.get("source_id") or "") for item in knowledge.get("public_events") or []
     }
-    {
-        str(item.get("source_id") or "") for item in knowledge.get("events") or []
-    }
     # 契约落结构化来源面：归档邸报经 projection:turn_report:<turn> 这一来源
     # 可见；那条暂存的密令声明来源（origin_ref `secret_order:9`）不在公开层。
     # 旧账拿 `_REPORT in bodies`／`_SECRET_DECL not in bodies` 判——正文子串不是

@@ -11,7 +11,7 @@ import argparse
 import os
 
 from ming_sim.cli.terminal import run_cli
-from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS
+from ming_sim.models import API_DEFAULT_BASE_URL, API_DEFAULT_MODEL, API_DEFAULT_TIMEOUT_SECONDS
 
 
 def main() -> None:
@@ -20,12 +20,12 @@ def main() -> None:
                         help="random seed（影响事件抽样）")
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        default=os.environ.get("OPENAI_BASE_URL", API_DEFAULT_BASE_URL),
         help="OpenAI-compatible base URL（读 OPENAI_BASE_URL）",
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        default=os.environ.get("OPENAI_MODEL", API_DEFAULT_MODEL),
         help="OpenAI-compatible model name（读 OPENAI_MODEL）",
     )
     parser.add_argument(

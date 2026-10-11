@@ -3,14 +3,9 @@
 from __future__ import annotations
 
 from __future__ import annotations
-from contextlib import contextmanager
-import pytest
-import ming_sim.decree as decree
 from ming_sim.decree import pre_settle
 from ming_sim.models import Event
 from ming_sim import issues
-from tests.conftest import active_ming_character, covering_monthly_extract, with_monthly_reports
-from tests.dossier_test_helpers import create_test_secret_order
 
 def test_pre_settle_runs_fixed_fiscal_tick(game):
     """pre_settle 跑固定月度财政 tick（落 economy_ledger 行）+ 返回 auto_triggered 清单。"""

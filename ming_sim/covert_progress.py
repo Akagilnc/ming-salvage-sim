@@ -599,10 +599,6 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
         "status": status,
         "outcome": outcome,
         "note": note,
-        "close": True,
-        "is_terminal": True,
-        "actual_units": actual,
-        "target_units": target,
         "delivered": delivered,
     }
 
@@ -2000,7 +1996,6 @@ def settle_due_secret_orders(
         verdict = decide_secret_order_settlement({
             "actual_units": actual,
             "target_units": target,
-            "criterion_text": str(order.get("title") or order.get("content") or "密令"),
             "has_reports": bool(reports),
             "origin_context": secret_order_origin(oid),
         })

@@ -469,12 +469,6 @@ def _apply_dossier_verdict(
         int(dossier_id), outcome, note, int(state.turn),
         close=close, commit=False,
     )
-    if not is_terminal:
-        # 中段过程奏报：非终值
-        db.record_dossier_progress(
-            int(dossier_id), int(state.turn), "在办", note,
-            is_terminal=False, commit=False,
-        )
     if is_terminal and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
         db.apply_execution_joint_liability(
             state, int(dossier_id), outcome, reason=note, commit=False,

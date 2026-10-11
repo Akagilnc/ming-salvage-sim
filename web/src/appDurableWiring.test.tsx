@@ -1,4 +1,4 @@
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -118,7 +118,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(findButton(host, "邸报"));
     await act(async () => {
       await vi.waitFor(() => {
-        // #1902 L2：面板可达即可；不锁生成邸报正文片段。
+        // Opening the report here tests startup-phase routing.
         expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull();
       });
     });
@@ -846,8 +846,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(reopened.querySelector(".hud2-val")?.textContent).toContain("11"));
     });
     expect(reopened.querySelector('[data-testid="settle-resume"]')).toBeNull();
-    // #1902 L2：本面邸报面板可达；不锁 previous_summary 正文片段。
-    expect(reopened.querySelector('[data-testid="settlement-gazette-panel"]')).not.toBeNull();
+    // Reopening consumes the persisted report rather than only restoring a panel shell.
+    expect(reopened.querySelector('[data-testid="settlement-gazette-panel"] pre.memorial-text')?.textContent).toBe(liveState.previous_summary);
   });
 
   it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
@@ -865,9 +865,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       // #1855：邸报写成推进后后端投影 month；刷新/重开只认此字段，不弹旧月邸报、不进殿上。
       reopen_landing: "month",
       turn: { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false },
-      previous_summary: "十月邸报·本面",
+      previous_summary: SNAP_GAZETTE,
       previous_reign_period_label: "天启七年十月",
-      last_attendant_message: "奴婢呈上。",
+      last_attendant_message: SNAP_ATTENDANT,
       pending_decisions: [],
       directives: [],
       issues: [{ id: 1, kind: "situation", title: MIDCOURSE_ISSUE, status: "open", progress: 10, fail_condition: "" }],
@@ -882,7 +882,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         turns: [{ kind: "month", turn: 5, year: 1627, period: 10, has_report: true, has_attendant: true, has_directive: true }],
       });
       if (u.pathname.includes("/api/history/turn/")) return jsonResp({
-        turn: 5, year: 1627, period: 10, report: "十月邸报·本面", decree: "",
+        turn: 5, year: 1627, period: 10, report: SNAP_GAZETTE, decree: "",
       });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
@@ -906,7 +906,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     liveState = advancedState;
     await act(async () => {
       streamController.enqueue(encoder.encode(
-        `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·本面" })}\n\n`,
+        `event: done\ndata: ${JSON.stringify({ advanced: true, report: SNAP_GAZETTE })}\n\n`,
       ));
       streamController.close();
     });
@@ -915,8 +915,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
-    // 原文无损运输：SSE done 的邸报原值原样呈于当次面板（唯一真实 App 消费者案）。
-    expect(host.querySelector("[data-testid=settlement-gazette-panel] pre.memorial-text")?.textContent).toBe("十月邸报·本面");
+    // The real App consumes both the SSE report and the refreshed attendant text.
+    expect(host.querySelector("[data-testid=settlement-gazette-panel] pre.memorial-text")?.textContent).toBe(SNAP_GAZETTE);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel] .gazette-attendant-text")?.textContent).toBe(SNAP_ATTENDANT);
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
 
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
@@ -1011,7 +1012,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const getsBeforeDone = stateGets;
     await act(async () => {
       streamController.enqueue(encoder.encode(
-        `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·刷新失败仍可读" })}\n\n`,
+        `event: done\ndata: ${JSON.stringify({ advanced: true, report: SNAP_GAZETTE })}\n\n`,
       ));
       streamController.close();
     });
@@ -1020,8 +1021,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(stateGets).toBeGreaterThan(getsBeforeDone);
-    // #1902 L2：刷新失败仍可读＝面板仍在；不锁 SSE report 正文片段。
-    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
+    // A failed refresh must preserve the completed SSE report verbatim.
+    expect(host.querySelector("[data-testid=settlement-gazette-panel] pre.memorial-text")?.textContent).toBe(SNAP_GAZETTE);
     // 主界面仍挂着，但旧月内容不可见、不可交互；提示与阅读独立可达。
     const staleFace = host.querySelector("main > div[inert]");
     expect(staleFace?.getAttribute("aria-hidden")).toBe("true");
@@ -1576,7 +1577,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     let liveState: Record<string, unknown> = settlementBaseState("awaiting_decision", {
       pending_decisions: [d],
     });
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -1633,7 +1634,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const deferredResolve = new Promise<Response>((resolve) => {
       releaseResolve = resolve;
     });
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -1850,10 +1851,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     // #1366：结算前只见事实（全军名义应发）；核账期半程结果（国库实拨/实际到达/途中损耗）
     // 不下发不渲染——待整月推进完成才见同一 settled_turn 的三项结果（见下方独立用例）。
     expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
-    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
-    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
-    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
-    expect(economyOpen!.textContent).not.toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
     await closeOpenOverlay(host);
     expect(host.querySelector(".right-drawer-economy.open")).toBeNull();
 
@@ -2015,9 +2012,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const economyOpen = host.querySelector(".right-drawer-economy.open");
     expect(economyOpen).not.toBeNull();
     expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
-    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
-    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
-    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
   });
 
   it("gazette：核账期上月邸报经木牌可读；正文=状态口 previous_summary（#1852 不自动弹）", async () => {

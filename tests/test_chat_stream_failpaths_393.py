@@ -26,7 +26,7 @@ from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import (
     install_hall_admission, minister_double, open_audience_night_conn,
 )
-from tests.conftest import stub_audience_translate, stub_scene_agent  # noqa: F401 pytest fixture import
+from tests.conftest import stub_scene_agent
 from tests.sse_helpers import parse_sse_event_pairs
 
 
@@ -197,7 +197,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
         try:
             with web_app._serialized_web_write(runtime):
                 other_entered.set()
-                allow_other_exit.wait()
+                allow_other_exit.wait(timeout=5)
             other_completed_ok.append(True)
         except Exception:
             other_completed_ok.append(False)
@@ -210,7 +210,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
-        other_entered.wait()
+        assert other_entered.wait(timeout=5)
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 

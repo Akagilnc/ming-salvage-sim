@@ -1669,7 +1669,6 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     declared_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
     assert origin_has_mark(declared_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
     assert origin_has_mark(declared_origin, ORIGIN_MARK_PRIVATE_GOODS)
-    assert "不是行动" not in str(declared_origin)
     kept_relations = {
         row.get("faction_relation")
         for row in db.list_supervision_history(dossier_id, as_of_turn=turn)

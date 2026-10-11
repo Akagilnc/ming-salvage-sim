@@ -1191,7 +1191,6 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     expected_commerce = 4    # round(4 * 0.88)
 
     # 公开预算名（起运/盐税/商税/太仓亏空），不锁 internal 实现标记。
-    hub_income_names = {"起运", "盐税", "商税"}
     pre_budget = flows_mod.compute_budget_lines(db, state)
     pre_income = {
         row["name"]: row["amount"]
@@ -4007,7 +4006,6 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     fresh_game, monkeypatch, tmp_path
 ):
     """#1274：无旨完整结算 pre_settle 遇坏 fiscal 态 → SettlementAbort 错误包。"""
-    import ming_sim.decree as decree_mod
     import ming_sim.error_pack as error_pack_mod
     from ming_sim.models import TurnPhase
     from ming_sim.session import GameSession
@@ -4342,9 +4340,6 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     assert morale_log["new_value"] == "72"
     assert morale_log["delta"] == -8
     assert isinstance(morale_log["reason"], str) and morale_log["reason"].strip()
-    army_name = fresh_db.conn.execute(
-        "SELECT name FROM armies WHERE id = 'fujian_navy'"
-    ).fetchone()["name"]
     arrears_log = fresh_db.conn.execute(
         """
         SELECT delta
@@ -4354,7 +4349,7 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
         """
     ).fetchone()
     assert arrears_log is not None and arrears_log["delta"] == pytest.approx(10)
-    state = fresh_db.load_state()
+    fresh_db.load_state()
     army = fresh_db.conn.execute(
         "SELECT province_pay_arrears, morale FROM armies WHERE id = 'fujian_navy'"
     ).fetchone()

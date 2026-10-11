@@ -10,13 +10,11 @@ import json
 
 import pytest
 
-import ming_sim.issues as issue_engine
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
 
 
 DOSSIER_REPORT_MONTHLY = "dossier-report:monthly_errand"
-DOSSIER_REPORT_VERDICT = "dossier-report:execution_verdict"
 
 
 def _executing_assignment(db, state, *, text="清丈畿辅田亩", target="land-survey-619"):
@@ -97,7 +95,6 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
     ]
     assert all(row["origin"] == DOSSIER_REPORT_MONTHLY for row in rows)
     assert all(row["dossier_id"] == dossier_id for row in rows)
-    assert all(row["is_terminal"] is False for row in rows)
 
     # Physical general track only — never the secret_orders private JSON rail.
     general_count = db.conn.execute(
@@ -172,10 +169,6 @@ def test_origin_namespace_minimum_closed_set_and_open_append(game):
         dossier_id, state.turn, "月报", "本月无异",
         origin=DOSSIER_REPORT_MONTHLY,
     )
-    db.record_dossier_progress(
-        dossier_id, state.turn, "变形陈词", "实未办成而报已成",
-        is_terminal=True, origin=DOSSIER_REPORT_VERDICT,
-    )
     # ID-11 open append: a future origin under the same namespace is accepted.
     extra = db.record_dossier_progress(
         dossier_id, state.turn + 1, "垂问答", "奉问补陈",
@@ -184,7 +177,6 @@ def test_origin_namespace_minimum_closed_set_and_open_append(game):
     assert extra > 0
     origins = {row["origin"] for row in db.list_dossier_progress(dossier_id)}
     assert DOSSIER_REPORT_MONTHLY in origins
-    assert DOSSIER_REPORT_VERDICT in origins
     assert "dossier-report:inquiry_reply" in origins
 
     with pytest.raises(ValueError):
@@ -199,38 +191,6 @@ def test_origin_namespace_minimum_closed_set_and_open_append(game):
         )
 
 
-def test_terminal_verdict_records_execution_cell_without_fabricated_report(game):
-    db, state, content = game
-    degraded_id = _executing_assignment(db, state, target="deg-619")
-    transformed_id = _executing_assignment(db, state, text="变形案", target="xf-619")
-    fulfilled_id = _executing_assignment(db, state, text="办妥案", target="ok-619")
-    failed_id = _executing_assignment(db, state, text="失败案", target="fail-619")
-
-    issue_engine.apply_score_extraction(
-        db, state,
-        {"dossier_executions": [
-            {"dossier_id": degraded_id, "outcome": "degraded", "note": "只得半成"},
-            {"dossier_id": transformed_id, "outcome": "transformed", "note": "名实已乖"},
-            {"dossier_id": fulfilled_id, "outcome": "fulfilled", "note": "如期办妥"},
-            {"dossier_id": failed_id, "outcome": "failed", "note": "事败不成"},
-        ]},
-        content=content,
-    )
-
-    # 终值只落执行格，不由代码替承办人编造奏报（P6/P7）。
-    assert db.get_decree_dossier(degraded_id)["execution_outcome"] == "degraded"
-    assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
-    for dossier_id in (degraded_id, transformed_id, fulfilled_id, failed_id):
-        assert db.list_dossier_progress(dossier_id) == []
-
-    # Execution-slot / joint-liability semantics untouched: outcomes still land.
-    assert db.get_decree_dossier(degraded_id)["execution_outcome"] == "degraded"
-    assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
-    assert db.get_decree_dossier(fulfilled_id)["execution_outcome"] == "fulfilled"
-    assert db.get_decree_dossier(failed_id)["execution_outcome"] == "failed"
-    # 判官真值只在执行格 note，不进奏报轨。
-
-
 def test_fake_progress_report_does_not_change_world_state(game):
     """0073 negative: 假进度奏报 → 国库/区域/军队零变化。"""
     db, state, content = game
@@ -241,15 +201,9 @@ def test_fake_progress_report_does_not_change_world_state(game):
         dossier_id, state.turn, "已全完", "田亩尽数清丈、国库应增百万",
         origin=DOSSIER_REPORT_MONTHLY,
     )
-    # Also exercise the production terminal sidepath text surface.
-    db.record_dossier_progress(
-        dossier_id, state.turn, "变形", "奏称完结而实未动库",
-        is_terminal=True, origin=DOSSIER_REPORT_VERDICT,
-    )
-
     after = _world_fingerprint(db)
     assert after == before
-    assert len(db.list_dossier_progress(dossier_id)) == 2
+    assert len(db.list_dossier_progress(dossier_id)) == 1
 
 
 def test_restore_preserves_report_history(game, tmp_path, content):

@@ -424,7 +424,6 @@ def _auto_pay_arrears_by_priority(
     for row in ordered:
         if remaining <= 0:
             break
-        army_id = str(row["id"])
         name = str(row["name"])
         payable_arrears = _payable_army_arrears_cap(row)
         if payable_arrears <= 0:

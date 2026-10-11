@@ -10,7 +10,6 @@ from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
     assemble_structured_decree,
 )
-from tests.directive_entry_helpers import stage_draft_directive  # noqa: F401  # 播种夹具（#1902）
 from tests.rescript_test_helpers import sql_rescript_draft
 
 from tests.test_month_loop_tracer_1468 import (  # noqa: F401

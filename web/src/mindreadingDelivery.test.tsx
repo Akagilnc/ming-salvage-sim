@@ -131,7 +131,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
         [{ event: "done", data: { history: [], suggestions: [], directives: [] } }, { event: "end", data: {} }],
       );
     }));
-    const { hookRef, rows } = mount(true);
+    const { hookRef } = mount(true);
     await tick();
     expect(scrollCalls).toBe(1);
 

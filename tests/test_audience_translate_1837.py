@@ -28,7 +28,6 @@ from tests.conftest import (
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
-    stub_scene_agent,  # noqa: F401 pytest fixture import
 )
 
 

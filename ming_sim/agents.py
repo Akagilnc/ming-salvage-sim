@@ -19,7 +19,7 @@ from agno.db.sqlite import SqliteDb
 
 from ming_sim.assets import strip_json_fence
 from ming_sim.content import GameContent
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMContractError
 from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract
@@ -34,7 +34,7 @@ from ming_sim.llm_transport import (
     run_with_transport,
     transport_failure_unavailable,
 )
-from ming_sim.models import GameState, LLMConfig
+from ming_sim.models import LLMConfig
 from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None

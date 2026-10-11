@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ming_sim.applier import atomic, safe_json_dumps
+from ming_sim.applier import safe_json_dumps
 from ming_sim.paths import bundled_path, user_data_dir
 
 logger = logging.getLogger(__name__)

@@ -433,20 +433,13 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     )
     night_id = int(an.open_night(db, state)["id"])
     origin = "command:arrived-1"
-    entry_id = an.record_summon_in_transit(
+    an.record_summon_in_transit(
         db, night_id, person.name, origin_id=origin,
     )
 
     assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
-    {
-        "person_name": person.name,
-        "original_destination": "henan",
-        "origin_id": origin,
-        "source_entry_id": entry_id,
-        "required_fact": "抵原地后续赴京",
-    }
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
