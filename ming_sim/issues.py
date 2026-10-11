@@ -907,7 +907,7 @@ def show_active_issues(db: GameDB) -> None:
         print(f"{label} #{row['id']} {row['title']}")
         print(f"  {row['bar_bad_meaning']:6s} {bar} {row['bar_good_meaning']:6s}  bar={int(row['bar_value']):3d}  {row['stage_text']}")
         inertia = int(row["inertia"])
-        ongoing_txt = issue_effects._format_issue_ongoing(row["ongoing_effects"] or "{}")
+        ongoing_txt = issue_effects.format_issue_ongoing(row["ongoing_effects"] or "{}")
         line_parts = [_format_inertia(inertia)]
         progress = commitment_display.commitment_progress_payload(db, state, row)
         if progress is not None:

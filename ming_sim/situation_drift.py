@@ -105,8 +105,6 @@ def _resolve_commitment_issue(
     db: GameDB,
     state: GameState,
     row: sqlite3.Row,
-    *,
-    commit: bool = True,
 ) -> None:
     issue_id = int(row["id"])
     from_value = int(row["bar_value"])
@@ -143,15 +141,11 @@ def _resolve_commitment_issue(
             json.dumps(metric_delta, ensure_ascii=False),
         ),
     )
-    if commit:
-        db.conn.commit()
 
 def _expire_commitment_issue(
     db: GameDB,
     state: GameState,
     row: sqlite3.Row,
-    *,
-    commit: bool = True,
 ) -> None:
     issue_id = int(row["id"])
     from_value = int(row["bar_value"])
@@ -187,8 +181,6 @@ def _expire_commitment_issue(
             json.dumps(metric_delta, ensure_ascii=False),
         ),
     )
-    if commit:
-        db.conn.commit()
 
 def apply_situation_monthly_drift(
     db: GameDB,
@@ -202,7 +194,6 @@ def apply_situation_monthly_drift(
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     inertia_rejections: List[RejectedItem] = []
     active = db.list_active_issues()
-    commit_local = db.owns_transaction()
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
 
@@ -229,6 +220,7 @@ def apply_situation_monthly_drift(
                     stage_text=row["stage_text"],
                     narrative="局势自有其势，本月按其本然推移。",
                     metric_delta={},
+                    commit=False,
                 )
                 if new_row is None:
                     continue
@@ -247,8 +239,6 @@ def apply_situation_monthly_drift(
                     source=source):
                         tlog(f"[issue-entities] 容忍拒收：{_tr.reason}")
                         inertia_rejections.append(_tr)
-                    if commit_local:
-                        db.conn.commit()
                     continue
                 elif new_row["status"] == "failed":
                     effect = loads_effect_dict(new_row["effect_on_fail"])
@@ -262,8 +252,6 @@ def apply_situation_monthly_drift(
                     source=source):
                         tlog(f"[issue-entities] 容忍拒收：{_tr.reason}")
                         inertia_rejections.append(_tr)
-                    if commit_local:
-                        db.conn.commit()
                     continue
                 row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
                 if row is None:
@@ -275,14 +263,14 @@ def apply_situation_monthly_drift(
         if is_commitment:
             stop_gate = _commitment_stop_gate(row)
             if stop_gate and _gate_passed(stop_gate, state.metrics, db):
-                _resolve_commitment_issue(db, state, row, commit=commit_local)
+                _resolve_commitment_issue(db, state, row)
                 continue
             end_turn = int(row["end_turn"] or 0)
             if ongoing_has_work and end_turn > 0 and end_turn <= state.turn:
                 # 段派生展示 end_turn 不得驱动机械停账；独立 end_turn 仍 expire。
                 from ming_sim.staged_commitment import is_stage_derived_end_turn
                 if not is_stage_derived_end_turn(row["stages_json"], end_turn):
-                    _expire_commitment_issue(db, state, row, commit=commit_local)
+                    _expire_commitment_issue(db, state, row)
                     continue
 
         # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（非 dict→{}，#117）。
@@ -438,15 +426,13 @@ def apply_situation_monthly_drift(
                     json.dumps(metric_delta, ensure_ascii=False),
                 ),
             )
-            if commit_local:
-                db.conn.commit()
 
         row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
             continue
         stop_gate = _commitment_stop_gate(row) if is_commitment else {}
         if stop_gate and _gate_passed(stop_gate, state.metrics, db):
-            _resolve_commitment_issue(db, state, row, commit=commit_local)
+            _resolve_commitment_issue(db, state, row)
             continue
 
     state.clamp()

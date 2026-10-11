@@ -1173,7 +1173,6 @@ def apply_imperial_deliberation_push(
     directive_identity: str,
     decree_text: str = "",
     mode: str | None = None,
-    commit: bool = False,
 ) -> int:
     """自由下旨御笔强推 stalled 廷议：复用案卷 + 御笔手敕 + stalled→backed。
 
@@ -1228,8 +1227,6 @@ def apply_imperial_deliberation_push(
         narrative=str(decree_text or new_payload.get("title") or "御笔强推"),
         commit=False,
     )
-    if commit:
-        db.conn.commit()
     return did
 
 

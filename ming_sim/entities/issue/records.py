@@ -279,7 +279,6 @@ def _ack_due_commitment_issue(
     row: sqlite3.Row,
     *,
     narrative: str = "",
-    commit: bool = True,
 ) -> sqlite3.Row:
     issue_id = int(row["id"])
     from_value = int(row["bar_value"])
@@ -302,13 +301,11 @@ def _ack_due_commitment_issue(
         """,
         (issue_id, state.turn, from_value, from_value, summary),
     )
-    if commit:
-        db.conn.commit()
     return db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
 
 
 def event_to_issue(
-    db: GameDB, state: GameState, ev: Event, *, commit: bool = True
+    db: GameDB, state: GameState, ev: Event
 ) -> Optional[int]:
     """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。供推演判定触发后调用。
 
@@ -418,9 +415,7 @@ def event_to_issue(
         commit=False,
     )
     db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
-    event_terminal.apply_event_cascading_invalidations(state, db, commit=False)
-    if commit:
-        db.conn.commit()
+    event_terminal.apply_event_cascading_invalidations(state, db)
     return issue_id
 
 
@@ -498,10 +493,10 @@ def auto_trigger_seed_issues_in_atomic(
         if ev.event_type != "situation":
             # 非 situation（node/ending）不转 issue，仅记触发避免重复
             if apply_trigger_effect:
-                db.mark_event_triggered(state, ev.id)
+                db.mark_event_triggered(state, ev.id, commit=False)
                 triggered.append({"id": ev.id, "title": ev.title, "kind": ev.event_type})
             continue
-        issue_id = event_to_issue(db, state, ev, commit=False)
+        issue_id = event_to_issue(db, state, ev)
         created_issue = issue_id is not None
         if historical_event and issue_id is None:
             # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
@@ -533,5 +528,5 @@ def auto_trigger_seed_issues_in_atomic(
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
             action = "硬立项" if created_issue else "补记"
             print(f"[AUTO-TRIGGER] gate 达标{action} #{issue_id} {ev.title}（{ev.trigger_gate}）")
-    event_terminal.apply_event_cascading_invalidations(state, db, commit=False)
+    event_terminal.apply_event_cascading_invalidations(state, db)
     return triggered

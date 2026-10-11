@@ -14115,7 +14115,6 @@ class GameDB:
                 stage_idx=stage_idx,
                 deadline_months=deadline,
                 reason=str(payload.get("reason") or ""),
-                commit=False,
                 record_history=False,  # 本 pending 行标 committed 即史源，禁双插
             )
             # 史源字段写回本行 payload（commit_pending_actions 随后标 committed）
@@ -14804,7 +14803,6 @@ class GameDB:
                 directive_identity=f"directive:{int(directive_id)}",
                 decree_text=str(text or ""),
                 mode=push_mode,
-                commit=False,
             )
             # 绑 directive_id 到既有案卷，供 restore/幂等
             self.conn.execute(
@@ -17198,7 +17196,6 @@ class GameDB:
                     pending_action_id=int(pending_action_id or 0),
                     origin_chat_message_ids=provenance_message_ids,
                     fact_key=_investigation_fact_of(covert_contract or {}),
-                    commit=True,
                 )
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
@@ -17330,7 +17327,7 @@ class GameDB:
 
                 seed_investigation_fact_lanes(
                     self, int(dossier_id), inv_target,
-                    investigator=str(minister_name), commit=False,
+                    investigator=str(minister_name),
                 )
                 record_investigation_source_clue(
                     self, int(dossier_id),

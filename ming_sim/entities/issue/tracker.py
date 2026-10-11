@@ -318,13 +318,13 @@ def apply_issue_tracker_output(
                         source=source)
                     )
                 db.mark_event_triggered(state, ev.id, commit=False)
-                event_terminal.apply_event_cascading_invalidations(state, db, commit=False)
+                event_terminal.apply_event_cascading_invalidations(state, db)
                 consumed_event_ids.add(ev.id)
                 candidates_dirty = True
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
                 applied_new.append({"id": ev.id, "title": ev.title, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
-            issue_id = issue_records.event_to_issue(db, state, ev, commit=False)
+            issue_id = issue_records.event_to_issue(db, state, ev)
             if issue_id is not None and ev.effect_on_trigger:
                 # #1893：模型选中即触发——事件自带的核心后果（如 huangtaiji_chengdi 的
                 # 改国号）随这一次写口落定，不另按日期旁路补。situation 类事件的
@@ -683,7 +683,6 @@ def apply_issue_tracker_output(
                     state,
                     chk,
                     narrative=narrative,
-                    commit=False,
                 )
                 applied_closes.append({"issue_id": issue_id, "title": new_row["title"], "reason": reason, "narrative": narrative})
                 continue
@@ -805,7 +804,7 @@ def apply_issue_tracker_output(
                 db, issue_id, breach_kind=BREACH_KIND_POLICY_REVERSAL,
             )
             if plea_todo is not None:
-                finalize_persist(db, state, plea_todo, commit=False)
+                finalize_persist(db, state, plea_todo)
                 applied_cancels.append({"issue_id": issue_id, "title": row["title"], "breach_plea_decision": "persist"})
                 continue
         # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨拥有撤旨后果，

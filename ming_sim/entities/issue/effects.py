@@ -125,7 +125,7 @@ def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]
     return items
 
 
-def _format_issue_ongoing(ongoing_raw: str) -> str:
+def format_issue_ongoing(ongoing_raw: str) -> str:
     """简短描述每月固定影响。"""
     from ming_sim.models import loads_effect_dict
     eff = loads_effect_dict(ongoing_raw)  # 非 dict/解析失败→{}（#117 统一守）

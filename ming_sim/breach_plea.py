@@ -303,7 +303,6 @@ def write_breach_plea_todo(
     reason: str = "",
     target_dossier_id: int = 0,
     extra: Optional[Dict[str, object]] = None,
-    commit: bool = False,
 ) -> int:
     """松手当回合写挽留 todo。stage_idx=触发 turn。
 
@@ -382,8 +381,6 @@ def write_breach_plea_todo(
             commitment_ref, kind,
         )
         return 0
-    if commit:
-        db.conn.commit()
     return int(todo_id or 0)
 
 
@@ -592,8 +589,6 @@ def finalize_persist(
     db: Any,
     state: Any,
     todo: Dict[str, object],
-    *,
-    commit: bool = False,
 ) -> Dict[str, object]:
     """坚持撤：只落代码该落的账——0056 名声、捆带授权收回、同源承诺停 tick、消费 todo。
 
@@ -660,8 +655,6 @@ def finalize_persist(
         payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_PERSIST},
         commit=False,
     )
-    if commit:
-        db.conn.commit()
     return {
         "decision": "persist",
         "todo_id": int(todo["id"]),
@@ -674,7 +667,7 @@ def finalize_persist(
 
 
 def expire_breach_pleas_on_due(
-    db: Any, state: Any, *, commit: bool = False,
+    db: Any, state: Any,
 ) -> List[Dict[str, object]]:
     """承诺 due 到 → 挽留条目 consumed/失效；不走坚持撤分档、不补 0056/事轴倒退。"""
     turn = int(getattr(state, "turn", 0) or 0)
@@ -709,8 +702,6 @@ def expire_breach_pleas_on_due(
                 "reason": "commitment_due",
                 "due_turn": natural_due,
             })
-    if commit and results:
-        db.conn.commit()
     return results
 
 
@@ -1031,7 +1022,7 @@ def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
 
 
 def scan_and_write_breach_pleas(
-    db: Any, state: Any, *, commit: bool = False,
+    db: Any, state: Any,
 ) -> List[int]:
     """结算内扫描断供/挪用/撤人。
 
@@ -1042,8 +1033,6 @@ def scan_and_write_breach_pleas(
     written.extend(_scan_funding_cutoff(db, state))
     written.extend(_scan_misappropriation(db, state))
     written.extend(_scan_remove_sponsor(db, state))
-    if commit and written:
-        db.conn.commit()
     return written
 
 

@@ -601,6 +601,8 @@ class GameSession:
                         opening_year=int(self.state.year),
                         opening_period=int(self.state.period),
                     )
+                # 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
+                sync_opening_legacies(self.db, self.state)
             _t, _e = time.monotonic(), time.monotonic() - _t
             tlog(f"[载入] 3/4 状态载入 {_e:.1f}s")
             if seed_report:
@@ -609,8 +611,6 @@ class GameSession:
                     f"{seed_report['events_imported']}/{seed_report['events_total']} 笔奠基边事件，"
                     f"{seed_report['summaries_written']} 份初始摘要"
                 )
-            # 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
-            sync_opening_legacies(self.db, self.state)
             tlog(f"[载入] 4/4 开局修正 {time.monotonic() - _t:.1f}s")
             self.deaths_this_turn: List[Dict[str, str]] = []
             self.debuts_this_turn: List[Dict[str, str]] = []

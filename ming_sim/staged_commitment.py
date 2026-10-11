@@ -242,7 +242,7 @@ def list_due_grant_report_dossiers_for_scan(
     return due
 
 
-def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = True) -> int:
+def write_due_staged_commitment_todos(db: Any, state: Any) -> int:
     """结算内确定性写入次回合召对待办。返回新写入条数。
 
     待裁载体改道 next_audience_todos；不置 TurnPhase.AWAITING_DECISION，
@@ -270,6 +270,4 @@ def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = Tru
         )
         if created:
             written += 1
-    if commit and written:
-        db.conn.commit()
     return written

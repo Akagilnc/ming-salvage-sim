@@ -393,7 +393,6 @@ def _auto_pay_arrears_by_priority(
     category: str,
     reason: str,
     *,
-    commit: bool = True,
     allowed_army_ids: Optional[List[str]] = None,
     origin_ref: str = "",
     beyond_intent: object = 0,
@@ -445,8 +444,6 @@ def _auto_pay_arrears_by_priority(
         for region_id in sorted(touched_regions):
             db._reconcile_army_pay_source_region_container(region_id)
         db._reconcile_central_army_pay_arrears_container()
-    if spent and commit:
-        db.conn.commit()
     return spent
 
 def _payable_army_arrears_cap(row) -> int:

@@ -207,7 +207,7 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
         run.db.mark_event_triggered(
             run.state, event_id, terminal_reason=outcome_label, commit=False,
         )
-        apply_event_cascading_invalidations(run.state, run.db, commit=False)
+        apply_event_cascading_invalidations(run.state, run.db)
         new_issue["reason"] = "事件已记为触发，软判结果已落主账"
     return {
         name: SectionResult(applied=rows, rejected=reject_bucket[name])

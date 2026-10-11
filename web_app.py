@@ -69,7 +69,7 @@ from ming_sim.entities.issue.commitment_display import (
     commitment_progress_payload,
     commitment_timed_bar_value,
 )
-from ming_sim.entities.issue.effects import _format_issue_ongoing
+from ming_sim.entities.issue.effects import format_issue_ongoing
 from ming_sim.session import GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
@@ -1520,7 +1520,7 @@ class WebGame:
                 "inertia": int(row["inertia"] or 0),
                 "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
                 "fail_condition": _humanize_condition(row["fail_condition"] or ""),
-                "ongoing_text": _format_issue_ongoing(str(row["ongoing_effects"] or "{}")),
+                "ongoing_text": format_issue_ongoing(str(row["ongoing_effects"] or "{}")),
                 "effect_on_resolve": loads_effect_dict(row["effect_on_resolve"]),
                 "effect_on_fail": loads_effect_dict(row["effect_on_fail"]),
             }

@@ -284,7 +284,7 @@ def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     )
     db.conn.commit()
 
-    out, _rejections = settle_due_secret_orders(db, state, commit=True)
+    out, _rejections = settle_due_secret_orders(db, state)
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "failed"
     assert row["actual_units"] == 0.0
@@ -311,7 +311,7 @@ def test_settle_due_keeps_existing_progress_result_over_memorial(game):
     )
     db.conn.commit()
 
-    out, _rejections = settle_due_secret_orders(db, state, commit=True)
+    out, _rejections = settle_due_secret_orders(db, state)
     row = next(r for r in out if r["order_id"] == oid)
     closed = db.get_secret_order(oid)
     assert str(closed["result"] or "") == before
@@ -333,7 +333,6 @@ def test_monthly_actual_then_delivered_done(game):
         apply_monthly_covert_actual_progress(
             db, state,
             selections=[{"order_id": oid, "fidelity": "忠实"}],
-            commit=True,
         )
 
     order = db.conn.execute(
@@ -341,7 +340,7 @@ def test_monthly_actual_then_delivered_done(game):
     ).fetchone()
     assert state.turn == int(order["due_turn"])
 
-    out, _rejections = settle_due_secret_orders(db, state, commit=True)
+    out, _rejections = settle_due_secret_orders(db, state)
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "done", row
     assert row["delivered"] is True
@@ -362,7 +361,7 @@ def test_gap_after_months_failed(game):
         db.save_state(state)
         _originate_work(db, state, content, did)
         apply_monthly_covert_actual_progress(
-            db, state, selections=[{"order_id": oid, "fidelity": "反噬"}], commit=True,
+            db, state, selections=[{"order_id": oid, "fidelity": "反噬"}],
         )
     assert db.sum_dossier_actual_progress_units(did) == 0.0
     due = db.conn.execute(
@@ -370,7 +369,7 @@ def test_gap_after_months_failed(game):
     ).fetchone()["due_turn"]
     assert state.turn == int(due)
 
-    out, _rejections = settle_due_secret_orders(db, state, commit=True)
+    out, _rejections = settle_due_secret_orders(db, state)
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "failed"
     assert row["actual_units"] < row["target_units"]
@@ -401,7 +400,6 @@ def test_offstage_minister_no_progress_no_world_effects(game, off_status):
     out, _rejections = apply_monthly_covert_actual_progress(
         db, state,
         selections=[{"order_id": oid, "fidelity": "忠实"}],
-        commit=True,
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row.get("skipped") is True
@@ -424,7 +422,6 @@ def test_missing_minister_row_no_progress(game):
     out, _rejections = apply_monthly_covert_actual_progress(
         db, state,
         selections=[{"order_id": oid, "fidelity": "忠实"}],
-        commit=True,
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row.get("skipped") is True
@@ -481,7 +478,6 @@ def test_monthly_actual_does_not_invent_generic_world_package(game):
     out, _rejections = apply_monthly_covert_actual_progress(
         db, state,
         selections=[{"order_id": oid, "fidelity": "忠实"}],
-        commit=True,
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row["units"] == 0.0
@@ -504,7 +500,7 @@ def test_submit_unlimited_keeps_frozen_target(game):
     contract0 = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
     assert contract0["delivery"]["target_units"] == 3.0
     assert int(db.get_secret_order(oid)["due_turn"] or 0) == 0
-    pending, _rejections = settle_due_secret_orders(db, state, commit=True)
+    pending, _rejections = settle_due_secret_orders(db, state)
     assert all(int(row.get("order_id") or 0) != oid for row in pending)
 
     ok = db.submit_secret_order_for_review(oid, "臣已办结", state.year, state.period)
@@ -516,7 +512,7 @@ def test_submit_unlimited_keeps_frozen_target(game):
     assert contract["kind"] == "补发饷银"
     assert contract["delivery"]["unit"] == "万两"
 
-    out, _rejections = settle_due_secret_orders(db, state, commit=True)
+    out, _rejections = settle_due_secret_orders(db, state)
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "failed"
     assert row["actual_units"] == 0.0
@@ -576,7 +572,7 @@ def test_unlimited_investigation_due_now_reads_real_acquisitions(game, due_actio
         "SELECT deadline_span FROM secret_orders WHERE id=?", (oid,),
     ).fetchone()["deadline_span"]
     assert int(span) == 0
-    out, _rejections = settle_due_secret_orders(db, state, commit=True)
+    out, _rejections = settle_due_secret_orders(db, state)
     row = next(item for item in out if item["order_id"] == oid)
     assert row["status"] == "done"
     assert row["actual_units"] == 1.0        # 已掌握 1 条罪证
@@ -1027,13 +1023,13 @@ def test_no_evidence_case_opens_and_stays_empty(game):
     state.turn += 1
     db.save_state(state)
     out, _rejections = apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "effort": 1.0}], commit=True,
+        db, state, selections=[{"order_id": oid, "effort": 1.0}],
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row["effort_applied"] == 0.0  # 空 lane 集：投入无处可施，no-op 不抛
     assert row["units"] == 0.0
     assert investigation_lane_actual_units(db, did) == 0.0
-    settled, _rejections = settle_due_secret_orders(db, state, commit=True)
+    settled, _rejections = settle_due_secret_orders(db, state)
     close = next(r for r in settled if r["order_id"] == oid)
     assert close["status"] == "failed"
     assert close["actual_units"] == 0.0
@@ -1066,7 +1062,7 @@ def test_spoliation_requires_real_knowledge_source(game):
 
     # 无来源 → 不毁
     out = apply_investigation_spoliation(
-        db, target=target, fact_key=key, effect="gone", commit=True,
+        db, target=target, fact_key=key, effect="gone",
     )
     # 断言行为（未毁、实证不动），不锁诊断散文的措辞
     assert out["applied"] is False
@@ -1087,7 +1083,7 @@ def test_spoliation_requires_real_knowledge_source(game):
     )
     out = apply_investigation_spoliation(
         db, target=target, fact_key=key, effect="gone",
-        knowledge_source=stranger, commit=True,
+        knowledge_source=stranger,
     )
     assert out["applied"] is False
     assert db.list_investigation_spoiled_facts(target) == []
@@ -1096,7 +1092,7 @@ def test_spoliation_requires_real_knowledge_source(game):
     informer = _relation_informer(db, name, target)
     out = apply_investigation_spoliation(
         db, target=target, fact_key=key, effect="gone",
-        knowledge_source=informer, commit=True,
+        knowledge_source=informer,
     )
     assert out["applied"] is False
     assert db.list_investigation_spoiled_facts(target) == []
@@ -1111,7 +1107,7 @@ def test_spoliation_requires_real_knowledge_source(game):
     _declare_tip(db, state, oid, informer)
     out = apply_investigation_spoliation(
         db, target=target, fact_key=key, effect="gone",
-        knowledge_source=informer, dossier_id=did, commit=True,
+        knowledge_source=informer, dossier_id=did,
     )
     assert out["applied"] is True
     assert out["knowledge_source"] == informer
@@ -1148,7 +1144,6 @@ def test_4a_unknown_target_declaring_spoliation_is_rejected(game):
             # 无知情来源的毁证声明
             "spoliation": {"effect": "gone", "fact_key": key},
         }],
-        commit=True,
     )
     assert db.list_investigation_spoiled_facts(target) == []
     assert key in live_investigation_fact_keys(db, target)
@@ -1267,7 +1262,7 @@ def test_false_memorial_does_not_create_or_erase_evidence(game):
         state.turn += 1
         db.save_state(state)
         apply_monthly_covert_actual_progress(
-            db, state, selections=[{"order_id": oid, "effort": 0.0}], commit=True,
+            db, state, selections=[{"order_id": oid, "effort": 0.0}],
         )
         payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
         keys = {row["fact_key"] for row in payload.get(FACT_LANES_KEY) or []}
@@ -1282,11 +1277,11 @@ def test_false_memorial_does_not_create_or_erase_evidence(game):
         did, state.turn, "办成", "臣已查明全部罪状", is_terminal=False,
     )
     apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "effort": 0.0}], commit=True,
+        db, state, selections=[{"order_id": oid, "effort": 0.0}],
     )
     state.turn = int(db.get_secret_order(oid)["due_turn"])
     db.save_state(state)
-    settled, _rejections = settle_due_secret_orders(db, state, commit=True)
+    settled, _rejections = settle_due_secret_orders(db, state)
     close = next(r for r in settled if r["order_id"] == oid)
     assert close["status"] == "failed"
     assert close["actual_units"] == 0.0
@@ -1301,7 +1296,6 @@ def _dig_months(db, state, oid, fact_key, intensity=1.0, months=1):
         apply_monthly_covert_actual_progress(
             db, state,
             selections=[{"order_id": oid, "fact_key": fact_key, "effort": intensity}],
-            commit=True,
         )
 
 def _actual_progress_rows(db, did):
@@ -1681,7 +1675,7 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
 
     for bad in ({}, {"effort": "尽力"}, {"fidelity": "忠实", "fact_key": key}):
         out, rejections = apply_monthly_covert_actual_progress(
-            db, state, selections=[{"order_id": oid, **bad}], commit=True,
+            db, state, selections=[{"order_id": oid, **bad}],
         )
         assert not any(isinstance(r, dict) and r.get("order_id") == oid for r in out)
         item = next(r for r in rejections if getattr(r, "category", None) == "invalid_enum")
@@ -1692,7 +1686,7 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
 
     # 合法零投入：显式 0 → 正常落账、无查获
     out, _rejections = apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "effort": 0.0}], commit=True,
+        db, state, selections=[{"order_id": oid, "effort": 0.0}],
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert "rejected" not in row
@@ -2092,7 +2086,7 @@ def test_spoliated_fact_reported_as_unreachable_in_feed(game):
     _declare_tip(db, state, spoiler, informer)
     apply_investigation_spoliation(
         db, target=target, fact_key=key, effect="gone",
-        knowledge_source=informer, dossier_id=spoiler_did, commit=True,
+        knowledge_source=informer, dossier_id=spoiler_did,
     )
     untouched = next(
         row["name"] for row in db.conn.execute(
@@ -2159,7 +2153,7 @@ def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
     assert investigation_lane_actual_units(
         db, int(db.get_dossier_for_secret_order(oid)["id"])
     ) == 1.0
-    first, _rejections = settle_due_secret_orders(db, state, commit=True)
+    first, _rejections = settle_due_secret_orders(db, state)
     assert first and first[0]["status"] == "done"
     assert first[0]["target_units"] == 1.0
     assert db.get_secret_order(oid)["status"] == "done"
@@ -2192,14 +2186,13 @@ def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
             {"order_id": oid2, "fact_key": target, "effort": 1.0},
             {"order_id": oid_other, "fact_key": other, "effort": 0.2},
         ],
-        commit=True,
     )
     # 同一事实已被前案查获 → 本案投入确定性丢弃，不重复查获
     assert investigation_lane_actual_units(db, did2) == 0.0
     # 另一对象：实投 0.2，低于这条罪的难度，未查获
     assert investigation_lane_actual_units(db, did_other) == 0.0
 
-    out, _rejections = settle_due_secret_orders(db, state, commit=True)
+    out, _rejections = settle_due_secret_orders(db, state)
     by_id = {r["order_id"]: r for r in out}
     assert by_id[oid2]["status"] == "failed"
     assert by_id[oid2]["actual_units"] == 0.0
@@ -2232,9 +2225,9 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
     )
     _originate_work(db, state, content, did, delta=-20)
     apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}],
     )
-    settle_due_secret_orders(db, state, commit=True)
+    settle_due_secret_orders(db, state)
     assert db.sum_dossier_actual_progress_units(did) == 20.0
     assert db.get_secret_order(oid)["status"] == "done"
 
@@ -2247,9 +2240,9 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
     db.save_state(state)
     _originate_work(db, state, content, did2, delta=-4)
     apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid2, "fidelity": "忠实"}], commit=True,
+        db, state, selections=[{"order_id": oid2, "fidelity": "忠实"}],
     )
-    settle_due_secret_orders(db, state, commit=True)
+    settle_due_secret_orders(db, state)
     assert db.sum_dossier_actual_progress_units(did2) == 4.0
     assert db.get_secret_order(oid2)["status"] == "failed"
 
@@ -2273,7 +2266,7 @@ def test_region_quantity_ignores_same_origin_turn_with_mismatched_identity(game,
         (state.turn, state.year, state.period, *wrong, f"dossier:{did}"),
     )
     apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}],
     )
     assert db.sum_dossier_actual_progress_units(did) == 0.0
 
@@ -2297,10 +2290,10 @@ def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
     )
     _originate_catches(db, state, content, did, targets)
     apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}],
     )
     assert db.sum_dossier_actual_progress_units(did) == 3.0
-    out, _rejections = settle_due_secret_orders(db, state, commit=True)
+    out, _rejections = settle_due_secret_orders(db, state)
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "done"
     assert row["actual_units"] == 3.0
@@ -2340,9 +2333,9 @@ def test_purpose_liaoxiang_canonicalizes_to_other_and_counts(game):
     db.save_state(state)
     _originate_work(db, state, content, did, delta=-3)
     apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}],
     )
-    settle_due_secret_orders(db, state, commit=True)
+    settle_due_secret_orders(db, state)
     assert db.sum_dossier_actual_progress_units(did) == 3.0
     assert db.get_secret_order(oid)["status"] == "done"
 
@@ -2361,7 +2354,7 @@ def test_region_monthly_progress_sums_increments_without_final_value_gate(game):
         (state.turn, state.year, state.period, f"dossier:{did}"),
     )
     apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}],
     )
     assert db.sum_dossier_actual_progress_units(did) == 2.0
     state.turn += 1
@@ -2373,10 +2366,10 @@ def test_region_monthly_progress_sums_increments_without_final_value_gate(game):
         (state.turn, state.year, state.period, f"dossier:{did}"),
     )
     apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}],
     )
     assert db.sum_dossier_actual_progress_units(did) == 5.0
-    out, _rejections = settle_due_secret_orders(db, state, commit=True)
+    out, _rejections = settle_due_secret_orders(db, state)
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "done"
 
@@ -2410,12 +2403,12 @@ def test_positive_inflow_does_not_freeze_purpose_and_counts(game):
     assert int(row["delta"]) == 1
     assert row["purpose"] in (None, "")
     out, _rejections = apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}],
     )
     applied = next(r for r in out if r.get("order_id") == oid)
     assert applied.get("originated_quantity") == 1.0
     assert db.sum_dossier_actual_progress_units(did) == 1.0
-    settled, _rejections = settle_due_secret_orders(db, state, commit=True)
+    settled, _rejections = settle_due_secret_orders(db, state)
     row_s = next(r for r in settled if r["order_id"] == oid)
     assert row_s["status"] == "done"
 
@@ -2437,7 +2430,7 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     state.turn += 1
     db.save_state(state)
     out, _rejections = apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "effort": 1.0}], commit=True,
+        db, state, selections=[{"order_id": oid, "effort": 1.0}],
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row["units"] == 0.0
@@ -2450,7 +2443,7 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     assert db.list_economy_moves_for_dossier(did) == []
     db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
     db.conn.commit()
-    settled, _rejections = settle_due_secret_orders(db, state, commit=True)
+    settled, _rejections = settle_due_secret_orders(db, state)
     close = next(r for r in settled if r["order_id"] == oid)
     assert close["status"] == "failed"
     assert close["actual_units"] == 0.0

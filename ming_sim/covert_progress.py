@@ -795,7 +795,7 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
 
 
 def _write_fact_lanes(
-    db: Any, dossier_id: int, lanes: Sequence[Mapping[str, object]], *, commit: bool = False,
+    db: Any, dossier_id: int, lanes: Sequence[Mapping[str, object]],
 ) -> None:
     payload = _dossier_payload_map(db, dossier_id)
     payload[FACT_LANES_KEY] = [
@@ -808,7 +808,7 @@ def _write_fact_lanes(
         }
         for lane in lanes
     ]
-    db.update_decree_dossier_payload(int(dossier_id), payload, commit=commit)
+    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
 
 
 def _append_investigation_log(
@@ -825,7 +825,7 @@ def _append_investigation_log(
     items = list(raw) if isinstance(raw, list) else []
     items.append(dict(entry))
     payload[key] = items
-    db.update_decree_dossier_payload(int(dossier_id), payload)
+    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
 
 
 def investigation_fact_is_gone(db: Any, target: str, fact_key: str) -> bool:
@@ -1071,7 +1071,6 @@ def seed_investigation_fact_lanes(
     target: str,
     *,
     investigator: str = "",
-    commit: bool = False,
 ) -> List[Dict[str, object]]:
     """开案铺 lane 集：目标当前全部可坐实事实逐条开 lane，并冻结各自难度。
 
@@ -1095,7 +1094,7 @@ def seed_investigation_fact_lanes(
             "mastered": False,
         })
         seen.add(key)
-    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+    _write_fact_lanes(db, dossier_id, lanes)
     return lanes
 
 
@@ -1196,7 +1195,7 @@ def _consume_monthly_clues(
             lane["mastered"] = True
     payload = _dossier_payload_map(db, dossier_id)
     payload[INVESTIGATION_CLUES_KEY] = clues
-    db.update_decree_dossier_payload(int(dossier_id), payload)
+    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
     return credited
 
 
@@ -1208,7 +1207,6 @@ def apply_investigation_monthly_effort(
     *,
     fact_key: str = "",
     intensity: float = 0.0,
-    commit: bool = False,
 ) -> Dict[str, object]:
     """#1896 逐证核算：人物声明"下了多大劲"，引擎核出本月实投再记到该条事实上。
 
@@ -1225,7 +1223,7 @@ def apply_investigation_monthly_effort(
     - 奏报自称成功不入本函数（P6：呈现层与实况分轨，谎奏不造罪不抹证）。
     """
     lanes = seed_investigation_fact_lanes(
-        db, dossier_id, target, investigator=investigator, commit=False,
+        db, dossier_id, target, investigator=investigator,
     )
     declared = _declared_intensity(intensity)
     if declared is None:
@@ -1246,7 +1244,7 @@ def apply_investigation_monthly_effort(
             db, dossier_id, target, investigator, lanes,
             live=live, blocked=blocked, capacity=capacity,
         )
-        _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+        _write_fact_lanes(db, dossier_id, lanes)
         return {
             "bound_fact_key": "", "effort_applied": 0.0, "mastered": [],
             "units": 0.0, "dropped_fact_key": bound,
@@ -1263,7 +1261,7 @@ def apply_investigation_monthly_effort(
                 db, dossier_id, target, investigator, lanes,
                 live=live, blocked=blocked, capacity=capacity,
             )
-            _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+            _write_fact_lanes(db, dossier_id, lanes)
             return {
                 "bound_fact_key": bound, "effort_applied": 0.0,
                 "clue_credited": credited, "mastered": [],
@@ -1276,7 +1274,7 @@ def apply_investigation_monthly_effort(
             db, dossier_id, target, investigator, lanes,
             live=live, blocked=blocked, capacity=capacity,
         )
-        _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+        _write_fact_lanes(db, dossier_id, lanes)
         return {
             "bound_fact_key": bound, "effort_applied": 0.0,
             "declared_intensity": declared, "capacity": capacity,
@@ -1310,7 +1308,7 @@ def apply_investigation_monthly_effort(
         db, dossier_id, target, investigator, lanes,
         live=live, blocked=blocked, capacity=capacity,
     )
-    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+    _write_fact_lanes(db, dossier_id, lanes)
     return {
         "bound_fact_key": bound,
         "effort_applied": applied_amount,
@@ -1422,7 +1420,6 @@ def apply_investigation_spoliation(
     dossier_id: int = 0,
     origin_ref: str = "",
     turn: Optional[int] = None,
-    commit: bool = False,
 ) -> Dict[str, object]:
     """毁证落账口：按对应事实改可查性，不团灭、不改真相底。
 
@@ -1430,7 +1427,6 @@ def apply_investigation_spoliation(
     经真实传话声明知情（knowledge_source）——未知情不替其毁证，知情也不强制毁证。
     'gone' 之后该事实永不可查——关案重开、另起新案都不恢复（真源在 (target, fact_key)）。
     """
-    owns = db.owns_transaction() if commit else False
     name = str(target or "").strip()
     key = str(fact_key or "").strip()
     if not name or not key:
@@ -1449,8 +1445,6 @@ def apply_investigation_spoliation(
         target_name=name, fact_key=key, turn=turn, effect=effect,
         origin_ref=origin_ref, commit=False,
     )
-    if owns:
-        db.conn.commit()
     return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
             "knowledge_source": str(knowledge_source or "").strip(),
             "row_id": row.get("id")}
@@ -1495,7 +1489,6 @@ def merge_investigation_confirmation(
     pending_action_id: int = 0,
     origin_chat_message_ids: Sequence[int] = (),
     fact_key: str = "",
-    commit: bool = False,
 ) -> int:
     """同目标汇案：并案卷。只有带事实指针的来源才留下待消费线索。
 
@@ -1530,7 +1523,7 @@ def merge_investigation_confirmation(
             "credited": False,
         })
         payload[INVESTIGATION_CLUES_KEY] = clues
-    db.update_decree_dossier_payload(did, payload, commit=commit)
+    db.update_decree_dossier_payload(did, payload, commit=False)
     return int(order_id)
 
 
@@ -1687,11 +1680,9 @@ def apply_monthly_covert_actual_progress(
     state: Any,
     *,
     selections: object = None,
-    commit: bool = False,
     only_supplied: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
-    owns = db.owns_transaction() if commit else False
     """当月实况轨落笔：推演者声明的真实投入/效果 → dossier_actual_progress。
 
     不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
@@ -1782,8 +1773,6 @@ def apply_monthly_covert_actual_progress(
             "contract_kind": contract.get("kind"),
             "contract_axes": list(contract.get("axes") or []),
         })
-    if owns:
-        db.conn.commit()
     return applied, rejections
 
 
@@ -1893,7 +1882,6 @@ def _apply_investigation_selection(
         db, did, target, investigator,
         fact_key=str(declaration.get("fact_key") or ""),
         intensity=float(declaration.get("intensity") or 0.0),
-        commit=False,
     )
     spoliation = declaration.get("spoliation")
     spoiled_result: Dict[str, object] = {}
@@ -1907,7 +1895,7 @@ def _apply_investigation_selection(
                 effect=str(spoliation.get("effect") or "harder"),
                 knowledge_source=knowledge_source,
                 dossier_id=did,
-                origin_ref=f"dossier:{did}", turn=turn, commit=False,
+                origin_ref=f"dossier:{did}", turn=turn,
             )
     units = float(result.get("units") or 0.0)
     sel_map = sel if isinstance(sel, Mapping) else {}
@@ -1958,10 +1946,8 @@ def settle_due_secret_orders(
     db: Any,
     state: Any,
     *,
-    commit: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> tuple[List[Dict[str, object]], List[RejectedItem]]:
-    owns = db.owns_transaction() if commit else False
     results: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
     for order in list_due_secret_orders_for_settlement(db, state):
@@ -2010,8 +1996,6 @@ def settle_due_secret_orders(
             "target_units": target,
             "delivered": bool(verdict["delivered"]),
         })
-    if owns:
-        db.conn.commit()
     return results, rejections
 
 

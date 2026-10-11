@@ -604,7 +604,7 @@ def _resolve_one_urge_todo(
 
 
 def resolve_urge_credit_from_extraction(
-    db: Any, state: Any, extracted: Dict[str, object], *, commit: bool = False,
+    db: Any, state: Any, extracted: Dict[str, object],
 ) -> List[Dict[str, object]]:
     """谏处置：cancels 显式拒宽限/斥退→辜负并消费待办。散文不代判准宽限。"""
     if not isinstance(extracted, dict):
@@ -623,8 +623,6 @@ def resolve_urge_credit_from_extraction(
         )
         if row is not None:
             out.append(row)
-    if commit and out:
-        db.conn.commit()
     return out
 
 
@@ -667,7 +665,6 @@ def resolve_credit_events_from_extraction(
     state: Any,
     extracted: Dict[str, object],
     *,
-    commit: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> Dict[str, List[Dict[str, object]]]:
     """召对/结算 extraction 真入口同缝（与既有 credit 写口同批）。
@@ -684,10 +681,8 @@ def resolve_credit_events_from_extraction(
     fulfillment = resolve_fulfillment_credit_from_extraction(db, state, extracted)
     dispositions = resolve_disposition_credit_from_extraction(db, state, extracted)
     urge = resolve_urge_credit_from_extraction(
-        db, state, extracted, commit=False,
+        db, state, extracted,
     )
-    if commit and (fulfillment or dispositions or urge):
-        db.conn.commit()
     return {
         "fulfillment": fulfillment,
         "dispositions": dispositions,

@@ -9,9 +9,6 @@ import math
 import re
 from typing import Dict, List, Optional
 
-from ming_sim.applier import (
-    atomic,
-)
 from ming_sim.constants import (
     _SETTLE_META_JIAPIAI_KEY,
     TURN_UNIT,
@@ -464,52 +461,38 @@ def _apply_fiscal_levy_targets(
 def apply_historical_fiscal_rates(
     state: GameState,
     db: GameDB,
-    *,
-    commit: bool = True,
 ) -> List[Dict[str, object]]:
-    """饷率 effect 通道：同 tick 前置结局 stub + settle.p set-to-target。
-
-    #259 shadow 阶段只处理 category=fiscal_levy 的历史事件；结局值必须经事件自身
-    terminal_reason_labels 白名单归一。随后按事件账重算在征饷集并持久化省级
-    settle.p，保证后续 settle_tick 当月读到目标值且重复运行不叠加。
-    """
+    """在外层事务内校准已落终态、处理过期并按 settle.p 落征收目标。"""
     c = issues._ctx()
-    should_commit = commit and db.owns_transaction()
     applied: List[Dict[str, object]] = []
 
-    def run_fiscal_levy_pass() -> None:
-        terminal_records = issues._event_terminal_records(db)
-        for ev in c.events:
-            if getattr(ev, "category", "") != issues.FISCAL_LEVY_EVENT_CATEGORY:
-                continue
-            if ev.id in terminal_records:
-                _canonicalize_existing_fiscal_levy_terminal_reason(
-                    ev,
-                    terminal_records[ev.id],
-                    state,
-                    db,
-                )
-            # #1892：三饷是皇帝亲裁，结局**不经本通道**从原始选项标签旁路代批。
-            # 终态只由 apply_petition_event_outcome（#1815 单一语义写口）置定；本通道
-            # 只做三件事：归一已落终态的标签、按 settle.p 落征收、过窗口者落过期。
-            # 「留中」不写终态，因此不进 terminal_records，本循环自然不动它——事件
-            # 仍在请旨候选里等下次呈报。
-            if ev.id not in terminal_records and issues._event_window_expired(
-                ev, state
-            ):
-                db.mark_event_expired(state, ev.id, commit=False)
-                terminal_records[ev.id] = {
-                    "terminal_state": "expired",
-                    "terminal_reason": "过最晚触发时点仍未达成触发门",
-                }
-                applied.append(
-                    {"id": ev.id, "title": ev.title, "terminal_state": "expired"}
-                )
-        _apply_fiscal_levy_targets(db, state, terminal_records)
+    terminal_records = issues._event_terminal_records(db)
+    for ev in c.events:
+        if getattr(ev, "category", "") != issues.FISCAL_LEVY_EVENT_CATEGORY:
+            continue
+        if ev.id in terminal_records:
+            _canonicalize_existing_fiscal_levy_terminal_reason(
+                ev,
+                terminal_records[ev.id],
+                state,
+                db,
+            )
+        # #1892：三饷是皇帝亲裁，结局**不经本通道**从原始选项标签旁路代批。
+        # 终态只由 apply_petition_event_outcome（#1815 单一语义写口）置定；本通道
+        # 只做三件事：归一已落终态的标签、按 settle.p 落征收、过窗口者落过期。
+        # 「留中」不写终态，因此不进 terminal_records，本循环自然不动它——事件
+        # 仍在请旨候选里等下次呈报。
+        if ev.id not in terminal_records and issues._event_window_expired(
+            ev, state
+        ):
+            db.mark_event_expired(state, ev.id, commit=False)
+            terminal_records[ev.id] = {
+                "terminal_state": "expired",
+                "terminal_reason": "过最晚触发时点仍未达成触发门",
+            }
+            applied.append(
+                {"id": ev.id, "title": ev.title, "terminal_state": "expired"}
+            )
+    _apply_fiscal_levy_targets(db, state, terminal_records)
 
-    if should_commit:
-        with atomic(db):
-            run_fiscal_levy_pass()
-    else:
-        run_fiscal_levy_pass()
     return applied

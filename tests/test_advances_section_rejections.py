@@ -12,7 +12,6 @@ from ming_sim.applier import Provenance
 import pytest
 
 
-
 def _adv(result):
     return result.advances
 
@@ -29,24 +28,31 @@ def _make_active_issue(db, state):
     )
 
 
-@pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
-def test_advance_non_dict_item_rejected_not_crash(read_game, bad_item):
+@pytest.mark.parametrize("section,item,category", [
+    *[(section, item, "invalid_enum")
+      for section in ("advances", "close_issues", "new_issues")
+      for item in (None, 42, "字符串", ["列表"])],
+    *[(section, {"issue_id": bad_id, **fields}, "invalid_enum")
+      for section, fields in (("advances", {"delta_bar": 5}), ("close_issues", {"reason": "resolved"}))
+      for bad_id in ("abc", None, True, 1.5, -10 ** 100, 10 ** 100)],
+    ("close_issues", {"issue_id": 123, "reason": "bogus"}, "invalid_enum"),
+    ("close_issues", {"issue_id": 999999, "reason": "resolved"}, "missing_ref"),
+    ("advances", {"issue_id": 999999, "delta_bar": 5}, "missing_ref"),
+    *[("new_issues", {"origin_kind": "decree", "kind": "situation", "title": "脏字段", field: bad}, "invalid_enum")
+      for field, bad in (
+          ("bar_value", "abc"), ("severity", "高"), ("tags", 5), ("inertia", "abc"),
+          ("bar_value", 1e309), ("expected_months", 1e309), ("severity", []),
+          ("bar_value", 3.7), ("severity", True), ("severity", 2.5), ("inertia", True),
+          ("expected_months", 1.5), ("tags", "募营"), ("tags", "单串标量"), ("tags", [5, "正常"]),
+      )],
+    *[("new_issues", {"origin_kind": "decree", "kind": kind, "title": "脏kind"}, "invalid_enum")
+      for kind in ("reform", "policy", "局势", False, 0, [])],
+])
+def test_tracker_item_refusal(read_game, section, item, category):
     db, state, _ = read_game
-    # 非 dict adv 项（advances:[null]/标量）：adv.get 会抛 AttributeError 崩整月——逐项拒收守门。
-    out = apply_issue_tracker_output(db, state, {"advances": [bad_item]}, source=Provenance.system_simulation)
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0].category == "invalid_enum"
-
-
-@pytest.mark.parametrize("bad_id", ["abc", None, True, 1.5, -10 ** 100])
-def test_advance_bad_issue_id_rejected(read_game, bad_id):
-    db, state, _ = read_game
-    # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 逐项拒收留痕，不裸 continue 静默丢、不逃逸。
-    out = apply_issue_tracker_output(db, state, {"advances": [{"issue_id": bad_id, "delta_bar": 5}]}, source=Provenance.system_simulation)
-    rej = _rejected(out)
-    assert len(rej) == 1, out
-    assert rej[0].category == "invalid_enum"
+    out = apply_issue_tracker_output(db, state, {section: [item]}, source=Provenance.system_simulation)
+    assert len(out.rejected) == 1
+    assert out.rejected[0].category == category
 
 
 @pytest.mark.parametrize("field,bad", [
@@ -66,15 +72,6 @@ def test_advance_dirty_int_field_rejected(game, field, bad):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0].category == "invalid_enum"
-
-
-def test_advance_missing_issue_rejected(read_game):
-    db, state, _ = read_game
-    # advance_issue 回 None（issue 不存在）→ missing_ref 逐项拒收留痕，不裸 continue 静默丢。
-    out = apply_issue_tracker_output(db, state, {"advances": [{"issue_id": 999999, "delta_bar": 5}]}, source=Provenance.system_simulation)
-    rej = _rejected(out)
-    assert len(rej) == 1, out
-    assert rej[0].category == "missing_ref"
 
 
 def test_advance_non_active_issue_rejected(game):

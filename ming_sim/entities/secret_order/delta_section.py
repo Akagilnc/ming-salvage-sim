@@ -52,7 +52,7 @@ def apply(run):
         )
         if disclosed and not run.ctx.defer_disclosure:
             record_secret_order_disclosure(
-                run.db, run.state, real_id, sim_note, commit=False,
+                run.db, run.state, real_id, sim_note
             )
         print(f"[secret_order] 推演副作用 id={real_id} note={sim_note!r}")
         applied.append({

@@ -10,7 +10,6 @@ from typing import Dict, List
 
 import ming_sim.issues as issues
 import ming_sim.entities.fiscal.levy as fiscal_levy
-from ming_sim.applier import atomic, connection_owns_transaction
 from ming_sim.db import GameDB
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import GameState
@@ -19,8 +18,6 @@ from ming_sim.models import GameState
 def apply_event_cascading_invalidations(
     state: GameState,
     db: GameDB,
-    *,
-    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """Invalidate downstream historical events whose event-chain gates are now impossible.
 
@@ -30,43 +27,36 @@ def apply_event_cascading_invalidations(
     """
     content = issues._ctx()
     issues._validate_event_dependency_graph_acyclic(content, state)
-    should_commit = commit and db.owns_transaction()
     terminalized: List[Dict[str, object]] = []
     terminal_records = issues._event_terminal_records(db)
 
-    def run_cascade() -> None:
-        while True:
-            changed = False
-            for ev in [*content.events, *content.seed_events]:
-                if not getattr(ev, "id", "") or ev.id in terminal_records:
-                    continue
-                if not issues._event_dependency_ids(ev):
-                    continue
-                reason = issues._event_chain_impossible_reason(ev, terminal_records, state)
-                if not reason:
-                    continue
-                db.mark_event_obsolete(
-                    state,
-                    ev.id,
-                    reason=reason,
-                    source="event_chain_invalidated",
-                    commit=False,
-                )
-                row = db.find_active_issue_by_origin("event_pool", ev.id)
-                if row is not None:
-                    db.cancel_issue(state, int(row["id"]), narrative=f"事件链作废：{reason}", commit=False)
-                item: Dict[str, object] = {"id": ev.id, "title": ev.title, "terminal_state": "obsolete", "reason": reason}
-                terminalized.append(item)
-                terminal_records[ev.id] = {"terminal_state": "obsolete", "terminal_reason": reason}
-                changed = True
-            if not changed:
-                break
+    while True:
+        changed = False
+        for ev in [*content.events, *content.seed_events]:
+            if not getattr(ev, "id", "") or ev.id in terminal_records:
+                continue
+            if not issues._event_dependency_ids(ev):
+                continue
+            reason = issues._event_chain_impossible_reason(ev, terminal_records, state)
+            if not reason:
+                continue
+            db.mark_event_obsolete(
+                state,
+                ev.id,
+                reason=reason,
+                source="event_chain_invalidated",
+                commit=False,
+            )
+            row = db.find_active_issue_by_origin("event_pool", ev.id)
+            if row is not None:
+                db.cancel_issue(state, int(row["id"]), narrative=f"事件链作废：{reason}", commit=False)
+            item: Dict[str, object] = {"id": ev.id, "title": ev.title, "terminal_state": "obsolete", "reason": reason}
+            terminalized.append(item)
+            terminal_records[ev.id] = {"terminal_state": "obsolete", "terminal_reason": reason}
+            changed = True
+        if not changed:
+            break
 
-    if should_commit:
-        with atomic(db):
-            run_cascade()
-    else:
-        run_cascade()
     return terminalized
 
 
@@ -75,8 +65,6 @@ def apply_petition_event_outcome(
     db: GameDB,
     event_id: str,
     raw_label: object,
-    *,
-    commit: bool = True,
 ) -> Dict[str, object]:
     """亲裁语义落账的**单一写口**：把转译出的结局标签置成事件终态（#1892 / ADR 0153:5）。
 
@@ -121,15 +109,10 @@ def apply_petition_event_outcome(
             "terminal_reason": issues._event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
         }
     label = fiscal_levy._fiscal_levy_normalized_terminal_reason_or_abort(event, raw, state)
-    # 所有权必须在写入前看。sqlite 对 DML 隐式 BEGIN，写完后再看 in_transaction
-    # 永远为真，默认 commit=True 的独立调用就会报成功却不落盘。
-    owns_transaction = commit and connection_owns_transaction(db.conn)
     db.mark_event_triggered(
         state, eid, source="petition_verdict", terminal_reason=label, commit=False,
     )
-    apply_event_cascading_invalidations(state, db, commit=False)
-    if owns_transaction:
-        db.conn.commit()
+    apply_event_cascading_invalidations(state, db)
     return {
         "id": eid, "settled": True, "terminal_state": "triggered", "terminal_reason": label,
     }
@@ -138,53 +121,44 @@ def apply_petition_event_outcome(
 def apply_event_terminal_states(
     state: GameState,
     db: GameDB,
-    *,
-    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """Persist deterministic event terminal states from the current board position."""
     c = issues._ctx()
-    should_commit = commit and db.owns_transaction()
     terminal_refs = issues._event_trigger_refs(db)
     terminalized: List[Dict[str, object]] = []
 
-    def run_terminal_state_pass() -> None:
-        for ev in c.events:
-            if ev.id in terminal_refs or ev.trigger_year <= 0:
-                continue
-            if issues._event_window_expired(ev, state):
-                db.mark_event_expired(state, ev.id, commit=False)
+    for ev in c.events:
+        if ev.id in terminal_refs or ev.trigger_year <= 0:
+            continue
+        if issues._event_window_expired(ev, state):
+            db.mark_event_expired(state, ev.id, commit=False)
+            terminal_refs.add(ev.id)
+            terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
+            continue
+        dead_subjects = issues._dead_person_core_subjects(ev, db)
+        if dead_subjects:
+            reason = f"人物核心主体永久死亡：{', '.join(dead_subjects)}"
+            db.mark_event_obsolete(state, ev.id, reason=reason, commit=False)
+            terminal_refs.add(ev.id)
+            terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "obsolete"})
+            continue
+        if not issues._event_window_open(ev, state):
+            continue
+        if not issues._gate_passed(ev.trigger_gate, state.metrics, db):
+            avoided_reason = issues._person_core_avoided_reason(ev, state, db)
+            if avoided_reason:
+                db.mark_event_avoided(state, ev.id, reason=avoided_reason, commit=False)
                 terminal_refs.add(ev.id)
-                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
-                continue
-            dead_subjects = issues._dead_person_core_subjects(ev, db)
-            if dead_subjects:
-                reason = f"人物核心主体永久死亡：{', '.join(dead_subjects)}"
-                db.mark_event_obsolete(state, ev.id, reason=reason, commit=False)
-                terminal_refs.add(ev.id)
-                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "obsolete"})
-                continue
-            if not issues._event_window_open(ev, state):
-                continue
-            if not issues._gate_passed(ev.trigger_gate, state.metrics, db):
-                avoided_reason = issues._person_core_avoided_reason(ev, state, db)
-                if avoided_reason:
-                    db.mark_event_avoided(state, ev.id, reason=avoided_reason, commit=False)
-                    terminal_refs.add(ev.id)
-                    terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "avoided"})
+                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "avoided"})
 
-        for ev in c.seed_events:
-            if ev.id in terminal_refs:
-                continue
-            if issues._event_window_expired(ev, state):
-                db.mark_event_expired(state, ev.id, commit=False)
-                terminal_refs.add(ev.id)
-                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
+    for ev in c.seed_events:
+        if ev.id in terminal_refs:
+            continue
+        if issues._event_window_expired(ev, state):
+            db.mark_event_expired(state, ev.id, commit=False)
+            terminal_refs.add(ev.id)
+            terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
 
-        terminalized.extend(apply_event_cascading_invalidations(state, db, commit=False))
+    terminalized.extend(apply_event_cascading_invalidations(state, db))
 
-    if should_commit:
-        with atomic(db):
-            run_terminal_state_pass()
-    else:
-        run_terminal_state_pass()
     return terminalized

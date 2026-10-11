@@ -621,7 +621,7 @@ def _run_opening_levy(
 
     collector = RejectionCollector()
     with atomic(db):
-        _applied, rejected = apply_levy_driven_transfers(db, commit=False, source=source)
+        _applied, rejected = apply_levy_driven_transfers(db,  source=source)
         if rejected:
             for item in rejected:
                 collector.record("population_transfers", item, turn)
@@ -932,7 +932,7 @@ def _consume_event_gates_after_edicts(
     if chain.get("event_gates_after_edicts_done"):
         return
     with atomic(db):
-        terminalized = apply_event_terminal_states(state, db, commit=False)
+        terminalized = apply_event_terminal_states(state, db)
         triggered = auto_trigger_seed_issues(state, db)
     if terminalized:
         tlog(
@@ -1015,7 +1015,7 @@ def _apply_deferred_disclosures(
         for item in pending:
             order_id = int(item["order_id"])
             sim_note = str(item.get("sim_note") or "")
-            record_secret_order_disclosure(db, state, order_id, sim_note, commit=False)
+            record_secret_order_disclosure(db, state, order_id, sim_note)
         chain["secret_orders_disclosures_done"] = True
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
@@ -1347,7 +1347,7 @@ def _step_4a_secret_order_supply(
         try:
             with atomic(db):
                 rows, rows_rejections = apply_monthly_covert_actual_progress(
-                    db, state, selections=selections, only_supplied=False, commit=False,
+                    db, state, selections=selections, only_supplied=False,
                     source=source)
                 # #1835 S1：只消费 canonical RejectedItem；保留 invalid_enum 停续语义。
                 rejections = list(rows_rejections)
@@ -1376,7 +1376,7 @@ def _step_4a_secret_order_supply(
         from ming_sim.covert_progress import settle_due_secret_orders
         try:
             with atomic(db):
-                settle_due_secret_orders(db, state, commit=False)
+                settle_due_secret_orders(db, state)
                 chain["due_secret_orders_settled"] = True
                 chain["secret_orders_supply_done"] = True
                 _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -1420,14 +1420,14 @@ def _run_month_drift(
         collector.flush_to_db(db)
         db.recompute_all_faction_leverage()
         clear_gated_legacies(db, state)
-        apply_pending_due_reviews(db, state, commit=False)
-        settle_due_secret_orders(db, state, commit=False)
+        apply_pending_due_reviews(db, state)
+        settle_due_secret_orders(db, state)
         # 密令分类与到期结算已完成；全局放行须在邸报供料之前，withheld 密源钉不放。
         db.release_held_audience_knowledge(commit=False)
-        expire_breach_pleas_on_due(db, state, commit=False)
-        consume_pending_urge_audience_todos(db, state, commit=False)
-        write_due_staged_commitment_todos(db, state, commit=False)
-        scan_and_write_breach_pleas(db, state, commit=False)
+        expire_breach_pleas_on_due(db, state)
+        consume_pending_urge_audience_todos(db, state)
+        write_due_staged_commitment_todos(db, state)
+        scan_and_write_breach_pleas(db, state)
         chain["inertia_done"] = True
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)

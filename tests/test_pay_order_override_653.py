@@ -103,7 +103,7 @@ def test_origin_ref_must_be_dossier_provenance(game):
         materialize_pay_order_decree(
             db, turn=1,
             entries=[{"key": "due_priority_军饷", "value": 40}],
-            origin_ref="随手写的", commit=True,
+            origin_ref="随手写的",
         )
 
 # ═══════════════ r3/r4 读取优先级全序 goldens ═══════════════
@@ -611,7 +611,7 @@ def test_materialize_requires_real_promulgated_dossier(game):
         materialize_pay_order_decree(
             db, turn=1,
             entries=[{"key": "due_priority_军饷", "value": 40}],
-            origin_ref="dossier:99999", commit=True,      # 案卷不存在
+            origin_ref="dossier:99999",       # 案卷不存在
         )
     # 未过颁布门（proposed）的案卷禁物化
     did = _override_dossier(db, state, [{"key": "due_priority_军饷", "value": 40}])
@@ -619,7 +619,7 @@ def test_materialize_requires_real_promulgated_dossier(game):
         materialize_pay_order_decree(
             db, turn=state.turn,
             entries=[{"key": "due_priority_军饷", "value": 40}],
-            origin_ref=f"dossier:{did}", commit=True,
+            origin_ref=f"dossier:{did}",
         )
 
 # ═══════════════ 中央侧折发消费者（flows 读端）═══════════════

@@ -1149,7 +1149,6 @@ def _apply_pay_order_override_effect(
         entries=entries,
         origin_ref=f"dossier:{int(dossier_id)}",
         reason=str(row["decree_text"] or ""),
-        commit=False,
     )
 
 

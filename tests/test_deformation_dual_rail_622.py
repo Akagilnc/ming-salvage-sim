@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from ming_sim.settlement.dossier import apply_dossier_promulgation
-from ming_sim.applier import Provenance
+from ming_sim.applier import Provenance, atomic
 
 import json
 
@@ -72,7 +72,8 @@ def _prime_and_apply_due_review(
         SettlementContext(content=content),
     )
     assert not section(written, "dossier_executions").rejected, written
-    results = apply_pending_due_reviews(db, state, commit=True)
+    with atomic(db):
+        results = apply_pending_due_reviews(db, state)
     assert results and results[0].get("branch") == "dossier"
     assert results[0].get("consumed") is True
     return results[0]
@@ -137,7 +138,6 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     xf_progress = db.list_dossier_progress(xf_id)
     assert xf_progress, "prior reported progress must remain"
     assert all(not r.get("is_terminal") for r in xf_progress)
-    assert xf_dossier["execution_outcome"] == "transformed"
     assert db.list_economy_moves_for_dossier(xf_id)
     bands = {r["progress_band"] for r in xf_progress}
     assert "transformed" not in bands

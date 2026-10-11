@@ -424,7 +424,7 @@ def _persist_specialized_extraction(
             from ming_sim.covert_progress import apply_monthly_covert_actual_progress
 
             rows, rows_rejections = apply_monthly_covert_actual_progress(
-                db, state, selections=selections, only_supplied=True, commit=False,
+                db, state, selections=selections, only_supplied=True,
                 source=source,
             )
             for item in rows_rejections:
@@ -566,7 +566,7 @@ def _dispatch_effects(
         raw_label = _event_outcome_label(outcomes, event_id)
         if not raw_label:
             continue
-        apply_petition_event_outcome(state, db, event_id, raw_label, commit=False)
+        apply_petition_event_outcome(state, db, event_id, raw_label)
     # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。
     from ming_sim.audience_night import settle_applied_arrived_summons
     settle_applied_arrived_summons(db, outcome)

@@ -38,7 +38,9 @@ def _seed_opening_db(path: str, content) -> None:
     try:
         db.seed_static_data()
         state = db.load_state()
-        issue_legacy.sync_opening_legacies(db, state)
+        from ming_sim.applier import atomic
+        with atomic(db):
+            issue_legacy.sync_opening_legacies(db, state)
     finally:
         db.close()
 

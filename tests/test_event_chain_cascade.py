@@ -217,7 +217,7 @@ def test_contradictory_positive_terminal_state_gate_fails_loud(game):
             event_terminal.apply_event_cascading_invalidations(state, db)
 
 
-def test_cascade_rolls_back_owned_transaction_on_later_write_failure(game, monkeypatch):
+def test_cascade_rolls_back_outer_transaction_on_later_write_failure(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)
     upstream = _hist_event("__chain_upstream_atomic_expired__")
@@ -239,7 +239,8 @@ def test_cascade_rolls_back_owned_transaction_on_later_write_failure(game, monke
 
         monkeypatch.setattr(db, "cancel_issue", fail_cancel)
 
-        with pytest.raises(RuntimeError):
+        from ming_sim.applier import atomic
+        with pytest.raises(RuntimeError), atomic(db):
             event_terminal.apply_event_cascading_invalidations(state, db)
 
         db.conn.commit()

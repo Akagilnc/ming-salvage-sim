@@ -133,7 +133,6 @@ def _apply_economy_list(
                     budget,
                     category,
                     reason,
-                    commit=False,
                     allowed_army_ids=allowed_pool_ids,
                     origin_ref=effective_origin_ref,
                     beyond_intent=beyond_raw,

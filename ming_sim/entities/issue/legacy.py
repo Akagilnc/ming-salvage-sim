@@ -33,7 +33,6 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
             )
             cleared.append(str(row["name"]))
     if cleared:
-        db.conn.commit()
         db._legacy_mod_cache = None  # active 集变了，修正符缓存失效
     return cleared
 
@@ -62,7 +61,6 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
                     leg.key,
                 ),
             )
-            db.conn.commit()
             db._legacy_mod_cache = None
         if passed:
             if existing is not None:
@@ -70,7 +68,6 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
                     "UPDATE legacies SET status='cleared' WHERE legacy_key=? AND status='active'",
                     (leg.key,),
                 )
-                db.conn.commit()
                 db._legacy_mod_cache = None
             continue
         # 未达标且无 active 行 → 补上
@@ -83,4 +80,5 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
                 duration_months=-1,
                 clear_gate=leg.clear_gate,
                 legacy_key=leg.key,
+                commit=False,
             )

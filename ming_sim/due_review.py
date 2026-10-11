@@ -319,8 +319,6 @@ def apply_due_review_for_todo(
     db: Any,
     state: Any,
     todo: Dict[str, object],
-    *,
-    commit: bool = False,
 ) -> Dict[str, object]:
     """单条正式复核生命周期：供料/场面已另口；本函数只衔接模型已写终值后的 todo 消费。
 
@@ -392,8 +390,6 @@ def apply_due_review_for_todo(
             int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
         ))
 
-    if commit:
-        db.conn.commit()
     return {
         "todo_id": int(todo["id"]),
         "entry_kind": kind,
@@ -406,7 +402,7 @@ def apply_due_review_for_todo(
 
 
 def apply_pending_due_reviews(
-    db: Any, state: Any, *, commit: bool = False,
+    db: Any, state: Any,
 ) -> List[Dict[str, object]]:
     """处理 created_turn < 当前 turn 的 pending todo（召对窗后的生命周期衔接）。
 
@@ -426,8 +422,6 @@ def apply_pending_due_reviews(
             continue
         # staged / breach_plea / unknown → apply_due_review_for_todo 内分派
         results.append(
-            apply_due_review_for_todo(db, state, todo, commit=False)
+            apply_due_review_for_todo(db, state, todo)
         )
-    if commit and results:
-        db.conn.commit()
     return results

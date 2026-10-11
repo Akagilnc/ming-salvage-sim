@@ -67,7 +67,7 @@ def _prime_and_apply_due_review(
         SettlementContext(content=content),
     )
     assert not section(written, "dossier_executions").rejected, written
-    results = apply_pending_due_reviews(db, state, commit=True)
+    results = apply_pending_due_reviews(db, state)
     assert results and results[0].get("branch") == "dossier"
     assert results[0].get("consumed") is True
     return results[0]

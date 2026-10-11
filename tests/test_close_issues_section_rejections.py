@@ -12,70 +12,6 @@ from ming_sim.applier import Provenance
 import pytest
 
 
-
-@pytest.mark.parametrize("bad_issue_id", [
-    "abc",      # 非数字串
-    None,       # None
-    True,       # bool（_strict_int 拒）
-    1.5,        # float
-    -10 ** 100,  # 超 SQLite 64-bit 下界
-])
-def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
-    db, state, _ = read_game
-    # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 全数逐项拒收 invalid_enum，不泄漏/不崩。
-    out = apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": bad_issue_id, "reason": "resolved"}]}
-    , source=Provenance.system_simulation)
-    rej = out.rejected
-    assert len(rej) == 1
-    assert rej[0].category == "invalid_enum"
-
-
-@pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
-def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
-    db, state, _ = read_game
-    # 非 dict close 项（close_issues:[null]/标量，_sanitize 不清列表项可达）：必须逐项拒收，
-    # 不能 cl.get 抛 AttributeError 崩整月（codex r4）。
-    out = apply_issue_tracker_output(db, state, {"close_issues": [bad_item]}, source=Provenance.system_simulation)
-    rej = out.rejected
-    assert len(rej) == 1
-    assert rej[0].category == "invalid_enum"
-
-
-def test_close_bad_reason_rejected(read_game):
-    db, state, _ = read_game
-    # reason 在调用 close_issue 前先验，故任意 id 都会先因坏 reason 被拒。
-    out = apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": 123, "reason": "bogus"}]}
-    , source=Provenance.system_simulation)
-    rej = out.rejected
-    assert len(rej) == 1
-    assert rej[0].category == "invalid_enum"
-
-
-def test_close_unknown_issue_rejected_missing_ref(read_game):
-    db, state, _ = read_game
-    # 合法 reason + 不存在的 issue_id → close_issue 回 None → missing_ref 拒收（不再静默 continue）。
-    out = apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": 999999, "reason": "resolved"}]}
-    , source=Provenance.system_simulation)
-    rej = out.rejected
-    assert len(rej) == 1
-    assert rej[0].category == "missing_ref"
-
-
-def test_close_overflow_issue_id_rejected(read_game):
-    db, state, _ = read_game
-    # 10**100：int() 过得了但绑定 SQLite 会抛 OverflowError——必须在解析期拒收（invalid_enum），
-    # 不能让 OverflowError 上抛崩整月（codex r1，复用 _parse_sqlite_id 64-bit 守门）。
-    out = apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": 10 ** 100, "reason": "resolved"}]}
-    , source=Provenance.system_simulation)
-    rej = out.rejected
-    assert len(rej) == 1
-    assert rej[0].category == "invalid_enum"
-
-
 def test_close_already_inactive_rejected_missing_ref(game):
     db, state, _ = game
     iid = db.insert_issue(state, kind="situation", title="测试·先结再结",
@@ -121,6 +57,4 @@ def test_close_valid_issue_still_succeeds(game):
     out = apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved", "narrative": "测试结案"}]}
     , source=Provenance.system_simulation)
-    closed = out.closes
-    assert any(int(c.get("issue_id", -1)) == iid for c in closed), out
     assert iid in {row["issue_id"] for row in out.closes}

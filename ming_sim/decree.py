@@ -830,8 +830,6 @@ def tick_transit_arrivals(
     db: GameDB,
     state: GameState,
     content=None,
-    *,
-    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """0095/#668 确定性在途倒数：active 在途者 remaining -= 1.0 * speed_factor；≤0 当月抵达。
 
@@ -839,7 +837,7 @@ def tick_transit_arrivals(
     抵达经唯一写缝 set_character_transit 整账清零；返回本 tick 抵达列表
     （[{"name", "location"}, ...]，按 name 稳定序）。
 
-    commit=False 时不提交——由外层事务（如 pre_settle 的 atomic_and_reload）统一提交。
+    由外层事务（如 pre_settle 的 atomic_and_reload）统一提交。
     """
     current_turn = int(state.turn)
     rows = db.conn.execute(
@@ -876,8 +874,6 @@ def tick_transit_arrivals(
                 content=content,
                 commit=False,
             )
-    if commit:
-        db.conn.commit()
     return arrivals
 
 
@@ -1013,7 +1009,7 @@ def pre_settle(
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
             in_fixed_fiscal = True
-            fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            fiscal_levies = apply_historical_fiscal_rates(state, db)
             if fiscal_levies:
                 tlog(
                     f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
@@ -1026,7 +1022,7 @@ def pre_settle(
             # 0095/#668 在途倒数 tick：remaining -= 1.0*factor，≤0 引擎抵达。
             # 须在月链逐旨后的事件判门之前完成（门控读 location）；消费点见
             # month_chain._consume_event_gates_after_edicts，不在 pre_settle 双跑。
-            arrivals = tick_transit_arrivals(db, state, content, commit=False)
+            arrivals = tick_transit_arrivals(db, state, content)
             if transit_arrivals_out is not None:
                 transit_arrivals_out.clear()
                 transit_arrivals_out.extend(arrivals)

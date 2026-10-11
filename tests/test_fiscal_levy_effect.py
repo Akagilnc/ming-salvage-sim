@@ -1646,8 +1646,8 @@ def test_later_illegal_outcome_does_not_discard_the_first_ruling(game):
     assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
 
 
-def test_independent_petition_outcome_commits_for_another_connection(game):
-    """独立调用默认提交；第二条连接读得到终态。commit=False 则不落盘。"""
+def test_petition_outcome_durability_belongs_to_outer_transaction(game):
+    """写口不提交；外层统一事务提交后第二条连接才读得到终态。"""
     import sqlite3
 
     db, state, content = game
@@ -1657,7 +1657,7 @@ def test_independent_petition_outcome_commits_for_another_connection(game):
     db.save_state(state)
 
     held = event_terminal.apply_petition_event_outcome(
-        state, db, "liao_levy_rise_1631", "已准", commit=False,
+        state, db, "liao_levy_rise_1631", "已准",
     )
     assert held["settled"] is True
     other = sqlite3.connect(db.path)
@@ -1671,7 +1671,9 @@ def test_independent_petition_outcome_commits_for_another_connection(game):
     assert absent is None or not str(absent[0] or "").strip()
     db.conn.rollback()
 
-    settled = event_terminal.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "已准")
+    from ming_sim.applier import atomic
+    with atomic(db):
+        settled = event_terminal.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "已准")
     assert settled["settled"] is True
     assert settled["terminal_reason"] == "已准"
     other = sqlite3.connect(db.path)

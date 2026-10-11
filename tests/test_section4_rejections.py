@@ -52,79 +52,55 @@ def _pay_source():
     }
 
 
-# ---- region_delta：查无此地 ----
+# ---- 实体逐项拒收公共主干 ----
 
-def test_unknown_region_rejected_good_item_lands(game):
-    """region_delta 引用未入库地区 → 该项逐项拒收留痕(不再 print 静默跳),
-    同信封里合法地区的改动照常落库——坏一项不带走整批(ADR 决定 1)。"""
+@pytest.mark.parametrize("delta_key,section,table,key_expr,where,good_field,bad_field,bad_target,bad_value,category", [
+    (*entity, target, value, category)
+    for entity in (
+        ("region_delta", "region_changes", "regions", "id", "1", "public_support", "unrest"),
+        ("army_delta", "army_changes", "armies", "id", "1", "morale", "training"),
+        ("power_updates", "power_changes", "powers", "id", "id != 'ming'", "leverage", "military_strength"),
+        ("faction_delta", "faction_delta", "factions", "name", "1", "satisfaction", "leverage"),
+        ("class_delta", "class_delta", "classes", "name || '@' || region_id", "1", "satisfaction", "leverage"),
+    )
+    for target, value, category in (
+        ("missing", 3, "missing_ref"), ("field", 3, "invalid_enum"),
+        ("value", None, "invalid_enum"), ("value", "三成", "invalid_enum"),
+        ("value", 3.7, "invalid_enum"), ("value", True, "invalid_enum"),
+    )
+    if target == "missing" or entity[0] in ("region_delta", "army_delta")
+    or (entity[0] == "power_updates" and (target == "field" or value in (None, "三成")))
+])
+def test_entity_delta_rejection_keeps_valid_sibling(
+    game, delta_key, section, table, key_expr, where, good_field, bad_field,
+    bad_target, bad_value, category,
+):
+    """Mixed entity deltas share one dispatch and persisted-refusal contract."""
     db, state, content = game
-    turn = state.turn
-    good = _a_region(db)
-    before = db.conn.execute(
-        "SELECT public_support FROM regions WHERE id=?", (good,)).fetchone()[0]
-
-    run_settle(db, state, content, {
-        "region_delta": {
-            "查无此地郡": {"public_support": 3},
-            good: {"public_support": 2},
-        },
-    }, narrative="x", decree_text="y")
-
-    rows = _rejection_rows(db, turn, "region_changes")
+    from ming_sim.decree import pre_settle
+    pre_settle(state, db, content=content)
+    if bad_target == "value":
+        good_field, bad_field = bad_field, good_field
+    key, before, bad_before = db.conn.execute(
+        f"SELECT {key_expr}, {good_field}, {bad_field} FROM {table} WHERE {where} LIMIT 1"
+    ).fetchone()
+    origin = {} if delta_key in ("faction_delta", "class_delta") else {"origin_ref": "盘面自发"}
+    good = {good_field: 2, **origin}
+    if bad_target == "missing":
+        delta = {"查无此实体": {bad_field: bad_value, **origin}, key: good}
+        category = "hallucinated_id" if delta_key == "power_updates" else category
+    else:
+        delta = {key: {**good, "查无此字段" if bad_target == "field" else bad_field: bad_value}}
+    run_declaration(db, state, content, {delta_key: delta})
+    rows = _rejection_rows(db, state.turn, section)
     assert len(rows) == 1
-    _, reason, category, _ = rows[0]
-    assert reason  # 人读原因非空
-    assert category == "missing_ref"
-    after = db.conn.execute(
-        "SELECT public_support FROM regions WHERE id=?", (good,)).fetchone()[0]
-    assert after != before  # 好项照落
-
-
-def test_illegal_region_field_rejected_sibling_lands(game):
-    """region_delta 字段超出白名单 → 原 raise LLMContractError 崩整月,改为逐项
-    拒收留痕(invalid_enum),同地区的合法字段照落(ADR 决定 1)。"""
-    db, state, content = game
-    turn = state.turn
-    good = _a_region(db)
-    before = db.conn.execute(
-        "SELECT public_support FROM regions WHERE id=?", (good,)).fetchone()[0]
-
-    run_settle(db, state, content, {
-        "region_delta": {good: {"public_support": 2, "查无此字段": 9}},
-    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
-
-    rows = _rejection_rows(db, turn, "region_changes")
-    assert len(rows) == 1
-    assert rows[0][2] == "invalid_enum"
-    assert rows[0][1]  # reason 非空
-    after = db.conn.execute(
-        "SELECT public_support FROM regions WHERE id=?", (good,)).fetchone()[0]
-    assert after != before  # 兄弟好字段照落
-
-
-@pytest.mark.parametrize("bad_value", [None, "三成", 3.7, True])
-def test_dirty_region_value_rejected_sibling_lands(game, bad_value):
-    """region_delta 白名单字段的脏叶子值(null/字符串/float/bool)= LLM 脏数据,
-    裸 int(value) 会让一个脏值崩整月——改为逐项拒收(invalid_enum)。bool 是 int
-    子类、float 静默截断,都不是 prompt 要的整数 delta,显式拒(对称 S1)。
-    兄弟好字段照落。"""
-    db, state, content = game
-    turn = state.turn
-    good = _a_region(db)
-    before = db.conn.execute(
-        "SELECT unrest FROM regions WHERE id=?", (good,)).fetchone()[0]
-
-    run_settle(db, state, content, {
-        "region_delta": {good: {"public_support": bad_value, "unrest": 2}},
-    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
-
-    rows = _rejection_rows(db, turn, "region_changes")
-    assert len(rows) == 1
-    assert rows[0][2] == "invalid_enum"
-    assert rows[0][1]
-    after = db.conn.execute(
-        "SELECT unrest FROM regions WHERE id=?", (good,)).fetchone()[0]
-    assert after != before  # 兄弟好字段照落
+    assert rows[0]["category"] == category
+    assert rows[0]["reason"]
+    after, bad_after = db.conn.execute(
+        f"SELECT {good_field}, {bad_field} FROM {table} WHERE {key_expr}=?", (key,)
+    ).fetchone()
+    assert after == min(100, before + 2)
+    assert bad_after == bad_before
 
 
 @pytest.mark.parametrize("bad_controller", [None, "", "   ", "null", " NULL ", "not_a_real_power"])
@@ -216,76 +192,6 @@ def test_region_controlled_by_mixed_invalid_and_valid_siblings_apply(game):
 
 # ---- army_delta：查无此军 ----
 
-def test_unknown_army_rejected_good_item_lands(game):
-    """army_delta 引用未入库军队 → 原 raise ValueError 崩整月,改为逐项拒收留痕
-    (missing_ref),同信封里合法军队的改动照落——坏一项不带走整批(ADR 决定 1)。"""
-    db, state, content = game
-    turn = state.turn
-    good = _an_army(db)
-    before = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (good,)).fetchone()[0]
-
-    run_settle(db, state, content, {
-        "army_delta": {
-            "查无此军营": {"morale": 3},
-            good: {"morale": 2},
-        },
-    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
-
-    rows = _rejection_rows(db, turn, "army_changes")
-    assert len(rows) == 1
-    _, reason, category, _ = rows[0]
-    assert reason
-    assert category == "missing_ref"
-    after = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (good,)).fetchone()[0]
-    assert after != before  # 好项照落
-
-
-def test_illegal_army_field_rejected_sibling_lands(game):
-    """army_delta 引用非法字段 → 原 print 静默跳,改为逐项拒收留痕(invalid_enum),
-    同军队的合法字段照落(ADR 决定 1)。"""
-    db, state, content = game
-    turn = state.turn
-    good = _an_army(db)
-    before = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (good,)).fetchone()[0]
-
-    run_settle(db, state, content, {
-        "army_delta": {good: {"morale": 2, "查无此字段": 9}},
-    }, narrative="x", decree_text="y")
-
-    rows = _rejection_rows(db, turn, "army_changes")
-    assert len(rows) == 1
-    assert rows[0][2] == "invalid_enum"
-    assert rows[0][1]
-    after = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (good,)).fetchone()[0]
-    assert after != before  # 兄弟好字段照落
-
-
-@pytest.mark.parametrize("bad_value", [None, "几成", 3.7, True])
-def test_dirty_army_value_rejected_sibling_lands(game, bad_value):
-    """army_delta 数值字段的脏叶子值(null/字符串/float/bool)→ 逐项拒收(invalid_enum),
-    不让裸 int(value) 崩整月;兄弟好字段照落(对称 S1/region)。"""
-    db, state, content = game
-    turn = state.turn
-    good = _an_army(db)
-    before = db.conn.execute(
-        "SELECT training FROM armies WHERE id=?", (good,)).fetchone()[0]
-
-    run_settle(db, state, content, {
-        "army_delta": {good: {"morale": bad_value, "training": 2}},
-    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
-
-    rows = _rejection_rows(db, turn, "army_changes")
-    assert len(rows) == 1
-    assert rows[0][2] == "invalid_enum"
-    assert rows[0][1]
-    after = db.conn.execute(
-        "SELECT training FROM armies WHERE id=?", (good,)).fetchone()[0]
-    assert after != before  # 兄弟好字段照落
-
 
 # ---- new_armies：建军脏项 ----
 
@@ -372,50 +278,28 @@ def test_duplicate_army_without_manpower_rejected(game):
 
 # ---- 代码异常(bug 类,非脏数据)→ 原样上抛，原子分派回滚整批 ----
 
-def test_region_deltas_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_region_deltas 内代码异常原样上抛，原子分派回滚整批。"""
+@pytest.mark.parametrize("method,section,table,field,error", [
+    ("apply_region_deltas", "region_delta", "regions", "public_support", AttributeError),
+    ("apply_army_deltas", "army_delta", "armies", "morale", KeyError),
+    ("apply_power_deltas", "power_updates", "powers", "leverage", AttributeError),
+    ("create_armies_from_extraction", "new_armies", "powers", None, AttributeError),
+])
+def test_entity_write_exception_aborts_dispatch(game, monkeypatch, method, section, table, field, error):
     db, state, content = game
-    good = _a_region(db)
+    key = db.conn.execute(f"SELECT id FROM {table} WHERE id != 'ming' LIMIT 1").fetchone()[0]
+    fault = error("entity write fault")
 
-    def _boom(self, *a, **k):
-        raise AttributeError("code bug in apply_region_deltas")
-    monkeypatch.setattr(type(db), "apply_region_deltas", _boom)
+    def _boom(self, *args, **kwargs):
+        raise fault
 
-    with pytest.raises(AttributeError):
-        run_settle(db, state, content, {
-            "region_delta": {good: {"public_support": 2}},
-        }, narrative="x", decree_text="y")
-
-
-def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_army_deltas 内代码异常原样上抛，原子分派回滚整批。"""
-    db, state, content = game
-    good = _an_army(db)
-
-    def _boom(self, *a, **k):
-        raise KeyError("code bug in apply_army_deltas")
-    monkeypatch.setattr(type(db), "apply_army_deltas", _boom)
-
-    with pytest.raises(KeyError):
-        run_settle(db, state, content, {
-            "army_delta": {good: {"morale": 2}},
-        }, narrative="x", decree_text="y")
-
-
-def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
-    """create_armies_from_extraction 内代码异常原样上抛，原子分派回滚整批。"""
-    db, state, content = game
-    good_owner = _valid_power_id(db)
-
-    def _boom(self, *a, **k):
-        raise AttributeError("code bug in create_armies_from_extraction")
-    monkeypatch.setattr(type(db), "create_armies_from_extraction", _boom)
-
-    with pytest.raises(AttributeError):
-        run_settle(db, state, content, {
-            "new_armies": [{"id": "x_corps", "owner_power": good_owner,
-                            "manpower": 1000, "maintenance_per_turn": 1}],
-        }, narrative="x", decree_text="y")
+    monkeypatch.setattr(type(db), method, _boom)
+    item = {key: {field: 2, "origin_ref": "盘面自发"}} if field else [
+        {"id": "x_corps", "owner_power": key, "manpower": 1000,
+         "maintenance_per_turn": 1, "origin_ref": "盘面自发"},
+    ]
+    with pytest.raises(error) as raised:
+        run_declaration(db, state, content, {section: item})
+    assert raised.value is fault
 
 
 # ---- clamp 语义(P2 铁律):clamp 不是拒收,clamp 后照落 ----
@@ -677,7 +561,3 @@ def test_issue_path_tolerates_previously_skipped_cases(game):
     after = db.conn.execute(
         "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
     assert after == min(100, before + 2)  # 好字段照落
-
-
-
-

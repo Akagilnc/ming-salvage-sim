@@ -15,8 +15,6 @@ def record_secret_order_disclosure(
     state: Any,
     order_id: int,
     sim_note: str,
-    *,
-    commit: bool = True,
 ) -> bool:
     """Record public knowledge event for secret order disclosure if not already disclosed (#883, ADR 0157).
 
@@ -55,6 +53,6 @@ def record_secret_order_disclosure(
         str(order["title"]),
         public_body,
         source_id=f"{disclosure_prefix}{state.turn}",
-        commit=commit,
+        commit=False,
     )
     return True

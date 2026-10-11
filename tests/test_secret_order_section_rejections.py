@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from functools import partial
 
+import pytest
+
 from tests.section_rejection_helpers import run_declaration as run_settle
 from ming_sim import issues
 from tests.section_rejection_helpers import game, rejection_rows
@@ -21,37 +23,13 @@ from ming_sim.settlement.views import view
 _rejection_rows = partial(rejection_rows, columns="section, reason, category")
 
 
-def test_update_nonint_order_id_invalid_enum(game):
-    """secret_order_updates order_id 非整数 → invalid_enum 拒收达 rejection_reports。"""
+@pytest.mark.parametrize("order_id,category", [("乙", "invalid_enum"), (999999, "missing_ref"), (10 ** 100, "invalid_enum")])
+def test_invalid_secret_order_reference_rejected(game, order_id, category):
     db, state, content = game
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "secret_order_updates": [
-            {"order_id": "乙", "sim_note": "坏 id 副作用"},
-        ],
-    }, narrative="x", decree_text="y")
-
-    rows = [r for r in _rejection_rows(db, turn, "secret_order_updates")
-            if r[2] == "invalid_enum"]
-    assert len(rows) == 1, rows
-
-
-def test_update_unknown_order_id_missing_ref(game):
-    """secret_order_updates 引用不存在的整数 order_id → missing_ref 拒收达 rejection_reports
-    （此前静默报「已应用」无留痕，cmr r1 codex，#14 silent-success）。"""
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "secret_order_updates": [
-            {"order_id": 999999, "sim_note": "查无此密令的副作用"},
-        ],
-    }, narrative="x", decree_text="y")
-
-    rows = _rejection_rows(db, turn, "secret_order_updates")
-    assert len(rows) == 1, rows
-    assert rows[0][2] == "missing_ref", rows
+    run_settle(db, state, content, {"secret_order_updates": [{"order_id": order_id, "sim_note": "坏引用"}]})
+    rows = _rejection_rows(db, state.turn, "secret_order_updates")
+    assert len(rows) == 1
+    assert rows[0]["category"] == category
 
 
 def test_update_valid_active_order_applies_no_reject(game):
@@ -93,18 +71,3 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
     row = db.get_secret_order(oid)
     assert row is not None
     assert "测试密令副作用R8" not in (row["sim_note"] or "")
-
-
-def test_oversized_order_id_rejected_not_crash(game):
-    """超 SQLite 64-bit 范围的 order_id（int() 不抛但 get_secret_order 绑定会 OverflowError）
-    → invalid_enum 逐项拒收，不崩整月结算（#63.5；cmr r2 codex）。"""
-    db, state, content = game
-    turn = state.turn
-    huge = 10 ** 100
-
-    run_settle(db, state, content, {
-        "secret_order_updates": [{"order_id": huge, "sim_note": "超界 id"}],
-    }, narrative="x", decree_text="y")
-
-    up = [r for r in _rejection_rows(db, turn, "secret_order_updates") if r[2] == "invalid_enum"]
-    assert len(up) == 1, up

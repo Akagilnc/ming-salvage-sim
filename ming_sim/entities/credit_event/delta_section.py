@@ -59,6 +59,6 @@ def apply(run):
         "cancels": list(issue.cancels) if issue is not None else [],
     }
     resolutions, rejections = resolve_credit_events_from_extraction(
-        run.db, run.state, credit_applied, source=run.ctx.source, commit=False,
+        run.db, run.state, credit_applied, source=run.ctx.source,
     )
     return SectionResult(applied=_resolution_rows(resolutions), rejected=rejections)

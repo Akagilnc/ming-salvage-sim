@@ -42,7 +42,6 @@ def surcharge_population_pool_members(db: GameDB, region_id: str) -> set[str]:
 def apply_levy_driven_transfers(
     db: GameDB,
     *,
-    commit: bool = True,
     source: Provenance = Provenance.system_simulation,
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     """#650/0089 环后半段：结算按账机械驱动农民→流民入池（0087「applier 机械转移」，
@@ -113,6 +112,4 @@ def apply_levy_driven_transfers(
     if not records:
         return [], []
     applied, rejected = _apply_population_transfers(db, records, source=source)
-    if commit:
-        db.conn.commit()
     return applied, rejected

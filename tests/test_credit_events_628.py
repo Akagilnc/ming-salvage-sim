@@ -146,20 +146,20 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
         breach_kind=BREACH_KIND_REMOVE_SPONSOR,
-        reason="罢主办试既有", target_dossier_id=did, commit=True,
+        reason="罢主办试既有", target_dossier_id=did,
     )
     todo = next(
         t for t in db.list_next_audience_todos(status="pending")
         if int(t["id"]) == todo_id
     )
     before = len(_credit_edges(db, event_kind="辜负", target=holder))
-    result = finalize_persist(db, state, todo, commit=True)
+    result = finalize_persist(db, state, todo)
     assert result["decision"] == "persist"
     edges = _credit_edges(db, event_kind="辜负", target=holder)
     assert len(edges) == before + 1
     assert any("breach_plea" in str(e["origin"]) for e in edges)
     # 本片 resolve 不吞、不重写该 origin
-    resolve_credit_events_from_extraction(db, state, {}, commit=True, source=Provenance.system_simulation)
+    resolve_credit_events_from_extraction(db, state, {},  source=Provenance.system_simulation)
     edges2 = _credit_edges(db, event_kind="辜负", target=holder)
     assert len(edges2) == len(edges)
 

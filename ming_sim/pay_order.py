@@ -290,7 +290,6 @@ def materialize_pay_order_decree(
     entries: List[Dict[str, Any]],
     origin_ref: str,
     reason: str = "",
-    commit: bool = True,
 ) -> List[Dict[str, Any]]:
     """一道 override 旨的唯一次物化入口（F1.2/F1.3，ADR 0055 判后物化缝）。
 
@@ -328,7 +327,6 @@ def materialize_pay_order_decree(
 
     written: List[Dict[str, Any]] = []
     current = db.get_fiscal_config()
-    owns = db.owns_transaction() if commit else False
     for key, value, until in prepared:
         old = int(current.get(key, _default_of(key)))
         db.conn.execute(
@@ -375,8 +373,6 @@ def materialize_pay_order_decree(
                 origin_ref=origin, reason="永久旨覆写清旧期限（stale until 清除）",
             )
             written[-1]["cleared_until_key"] = until_key
-    if commit and owns:
-        db.conn.commit()
     return written
 
 

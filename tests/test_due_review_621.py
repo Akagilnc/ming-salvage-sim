@@ -309,7 +309,7 @@ def test_dossier_branch_negative_does_not_open_parallel_slot(game):
         (state.turn - 1,),
     )
     db.conn.commit()
-    apply_pending_due_reviews(db, state, commit=True)
+    apply_pending_due_reviews(db, state)
     after_count = db.conn.execute("SELECT COUNT(*) AS c FROM decree_dossiers").fetchone()["c"]
     assert after_count == before_count
     assert db.get_decree_dossier(dossier_id)["id"] == dossier_id
@@ -348,7 +348,7 @@ def test_no_dossier_branch_only_scene_no_forged_dossier(game):
     scenes_before = list_due_review_scenes(db, state)
     assert scenes_before
 
-    results = apply_pending_due_reviews(db, state, commit=True)
+    results = apply_pending_due_reviews(db, state)
     assert results
     # 已有终值：只 noop 消费，不另写执行格、不伪造新案卷
     assert all((r.get("execution") or {}).get("is_terminal") for r in results)
@@ -393,7 +393,7 @@ def test_no_dossier_branch_negative_does_not_create_dossier(game):
         (state.turn - 1,),
     )
     db.conn.commit()
-    apply_pending_due_reviews(db, state, commit=True)
+    apply_pending_due_reviews(db, state)
     after_ids = {
         int(r["id"])
         for r in db.conn.execute("SELECT id FROM decree_dossiers").fetchall()
@@ -430,7 +430,7 @@ def test_mid_stage_no_close_no_joint_liability(game):
         (state.turn - 1,),
     )
     db.conn.commit()
-    first = apply_pending_due_reviews(db, state, commit=True)
+    first = apply_pending_due_reviews(db, state)
     assert first and first[0].get("consumed") is True
     assert first[0].get("mid_stage") is True
 
@@ -462,7 +462,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     )
     db.conn.commit()
     # 无模型终值：保留 pending，不机械替判
-    waiting = apply_pending_due_reviews(db, state, commit=True)
+    waiting = apply_pending_due_reviews(db, state)
     assert waiting and waiting[0].get("consumed") is False
     assert (waiting[0].get("execution") or {}).get("waiting_model") is True
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
@@ -471,7 +471,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     _model_write_execution(
         db, state, content, dossier_id, "failed", "届期无实绩",
     )
-    first = apply_pending_due_reviews(db, state, commit=True)
+    first = apply_pending_due_reviews(db, state)
     assert first and first[0].get("consumed") is True
 
     dossier = db.get_decree_dossier(dossier_id)
@@ -487,7 +487,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
         (TODO_STATUS_PENDING, state.turn - 1),
     )
     db.conn.commit()
-    second = apply_pending_due_reviews(db, state, commit=True)
+    second = apply_pending_due_reviews(db, state)
     assert second, "幂等腿须真正再入正式复核"
     assert second[0].get("branch") == "dossier", second
     assert (second[0].get("execution") or {}).get("rejected") is not True, second
@@ -615,7 +615,7 @@ def test_formal_review_blocks_extractor_second_terminal(game):
     _model_write_execution(
         db, state, content, dossier_id, "failed", "届期无实绩",
     )
-    apply_pending_due_reviews(db, state, commit=True)
+    apply_pending_due_reviews(db, state)
     first = db.get_decree_dossier(dossier_id)
     assert first["execution_outcome"] == "failed"
     assert first["status"] == "closed"
@@ -687,7 +687,7 @@ def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
     _model_write_execution(
         db, state, content, dossier_id, "fulfilled", "已见实绩生根",
     )
-    apply_pending_due_reviews(db, state, commit=True)
+    apply_pending_due_reviews(db, state)
 
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["execution_outcome"] == "fulfilled"

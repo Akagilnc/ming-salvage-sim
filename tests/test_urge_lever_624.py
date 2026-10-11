@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.exceptions import PendingActionRefusal
+from ming_sim.applier import atomic
 
 from functools import partial
 
@@ -216,7 +217,7 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     assert len(rushed_inp["urge_history"]) > len(base_inp["urge_history"])
 
     # 无模型终值：不机械替判，保留 pending。
-    applied = apply_due_review_for_todo(db, state, todo, commit=True)
+    applied = apply_due_review_for_todo(db, state, todo)
     assert applied.get("consumed") is False
     assert (applied.get("execution") or {}).get("waiting_model") is True
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
@@ -336,10 +337,11 @@ def test_urge_history_restore_from_committed_pending_ac7(game):
     db.conn.commit()
     stages = _seed_stages(state)
     issue_id, _ = _insert_staged_commitment(db, state, content, stages=stages)
-    rush_staged_commitment_stage(
-        db, state, commitment_ref=issue_id, stage_idx=0,
-        deadline_months=3, reason="restore-probe",
-    )
+    with atomic(db):
+        rush_staged_commitment_stage(
+            db, state, commitment_ref=issue_id, stage_idx=0,
+            deadline_months=3, reason="restore-probe",
+        )
     path = db.path
     db.conn.close()
     from ming_sim.db import GameDB
@@ -410,7 +412,7 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
 
     # 2) apply 不消费、不落格、不连坐（催办 lane 不走 due-review）
     before_outcome = db.get_decree_dossier(dossier_id)["execution_outcome"]
-    results = apply_pending_due_reviews(db, state, commit=True)
+    results = apply_pending_due_reviews(db, state)
     assert results == []
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == before_outcome
     still = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
@@ -420,7 +422,7 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
 
     # 4) apply_due_review_for_todo 单条亦拒
     rem = [t for t in still if t["entry_kind"] == ENTRY_KIND_RUSH_REMONSTRANCE][0]
-    one = apply_due_review_for_todo(db, state, rem, commit=True)
+    one = apply_due_review_for_todo(db, state, rem)
     assert one.get("rejected") is True
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     # 仍 pending，未被 failed/连坐吞
@@ -528,7 +530,7 @@ def test_urge_audience_project_and_consume_path(game):
 
     # 消费路径：created_turn < 下回合 → consumed
     state.turn = int(state.turn) + 1
-    consumed = consume_pending_urge_audience_todos(db, state, commit=True)
+    consumed = consume_pending_urge_audience_todos(db, state)
     assert consumed
     assert all(c.get("consumed") for c in consumed)
     still = [

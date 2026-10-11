@@ -15,7 +15,7 @@ from __future__ import annotations
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 
-from ming_sim.applier import Provenance
+from ming_sim.applier import Provenance, atomic
 
 import json
 
@@ -151,7 +151,7 @@ def test_funding_cutoff_writes_plea_no_damage_same_turn(game):
     auth_before = int(state.metrics.get("皇威", 0) or 0)
     costs_before = _cost_events(db, did)
 
-    written = scan_and_write_breach_pleas(db, state, commit=True)
+    written = scan_and_write_breach_pleas(db, state)
     assert written
     pleas = _pending_pleas(db)
     assert len(pleas) == 1
@@ -194,7 +194,7 @@ def test_misappropriation_writes_plea(game):
         state, "国库", -8, "他用", "挪作赏功",
         origin_ref="dossier:99999", commit=True,
     )
-    written = scan_and_write_breach_pleas(db, state, commit=True)
+    written = scan_and_write_breach_pleas(db, state)
     assert written
     pleas = _pending_pleas(db)
     assert any(p["criterion_text"] == "挪用" for p in pleas)
@@ -219,7 +219,7 @@ def test_remove_sponsor_writes_plea(game):
         "UPDATE characters SET status='dismissed' WHERE name=?", (holder,),
     )
     db.conn.commit()
-    written = scan_and_write_breach_pleas(db, state, commit=True)
+    written = scan_and_write_breach_pleas(db, state)
     assert written
     pleas = _pending_pleas(db)
     assert any(p["criterion_text"] == "撤人" for p in pleas)
@@ -247,7 +247,7 @@ def test_two_successive_loosenings_get_independent_pleas(game):
     # 第一次：断供
     t1 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
-        reason="断供", target_dossier_id=did, commit=True,
+        reason="断供", target_dossier_id=did,
     )
     assert t1 > 0
     # 推进一回合后第二次：改弦
@@ -255,7 +255,7 @@ def test_two_successive_loosenings_get_independent_pleas(game):
     db.save_state(state)
     t2 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_POLICY_REVERSAL,
-        reason="改弦", target_dossier_id=did, commit=True,
+        reason="改弦", target_dossier_id=did,
     )
     assert t2 > 0
     assert t2 != t1
@@ -281,7 +281,7 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
     )
     write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_POLICY_REVERSAL,
-        reason="欲撤", target_dossier_id=did, commit=True,
+        reason="欲撤", target_dossier_id=did,
     )
     auth_before = int(state.metrics.get("皇威", 0) or 0)
 
@@ -327,11 +327,11 @@ def test_persist_does_not_auto_write_execution_or_setback(game):
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
         breach_kind=BREACH_KIND_POLICY_REVERSAL,
-        reason="坚持撤", target_dossier_id=did, commit=True,
+        reason="坚持撤", target_dossier_id=did,
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
     minxin_before = int(state.metrics.get("民心", 0) or 0)
-    result = finalize_persist(db, state, todo, commit=True)
+    result = finalize_persist(db, state, todo)
     assert "foundation_tier" not in result
     assert "outcome" not in result
     assert "setback" not in result
@@ -360,10 +360,10 @@ def test_persist_remove_sponsor_no_0056(game):
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
         breach_kind=BREACH_KIND_REMOVE_SPONSOR,
-        reason="罢主办", target_dossier_id=did, commit=True,
+        reason="罢主办", target_dossier_id=did,
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
-    result = finalize_persist(db, state, todo, commit=True)
+    result = finalize_persist(db, state, todo)
     assert result["breach_0056"] is False
     assert _cost_events(db, did, identity="breach") == []
     assert "outcome" not in result
@@ -386,7 +386,7 @@ def test_persist_via_extraction_cancels_true_entry(game):
     write_breach_plea_todo(
         db, state, commitment_ref=cid,
         breach_kind=BREACH_KIND_POLICY_REVERSAL,
-        reason="仍撤", target_dossier_id=did, commit=True,
+        reason="仍撤", target_dossier_id=did,
     )
     out = settle_delta(state, db, {'cancels': [{'issue_id': cid, 'narrative': '朕意已决，仍撤此诺'}]}, SettlementContext(content=content))
     # 坚持撤由 issue tracker 在已校验 cancel 实入后调 finalize_persist，不经 extraction 抢先消费
@@ -413,7 +413,7 @@ def test_silence_keeps_pending_across_settle(game, monkeypatch):
     write_breach_plea_todo(
         db, state, commitment_ref=cid,
         breach_kind=BREACH_KIND_FUNDING, reason="断供",
-        target_dossier_id=did, commit=True,
+        target_dossier_id=did,
     )
     # 把 created_turn 调旧，使 apply 会扫到
     db.conn.execute(
@@ -421,7 +421,7 @@ def test_silence_keeps_pending_across_settle(game, monkeypatch):
         (state.turn - 1, ENTRY_KIND_BREACH_PLEA),
     )
     db.conn.commit()
-    results = apply_pending_due_reviews(db, state, commit=True)
+    results = apply_pending_due_reviews(db, state)
     # 哭谏被 skip 保留
     skipped = [r for r in results if r.get("skipped") and r.get("entry_kind") == ENTRY_KIND_BREACH_PLEA]
     assert skipped
@@ -448,10 +448,10 @@ def test_commitment_due_expires_plea_without_persist_damage(game):
     write_breach_plea_todo(
         db, state, commitment_ref=cid,
         breach_kind=BREACH_KIND_POLICY_REVERSAL, reason="欲撤",
-        target_dossier_id=did, commit=True,
+        target_dossier_id=did,
     )
     auth_before = int(state.metrics.get("皇威", 0) or 0)
-    expired = expire_breach_pleas_on_due(db, state, commit=True)
+    expired = expire_breach_pleas_on_due(db, state)
     assert expired
     assert expired[0]["reason"] == "commitment_due"
     assert _pending_pleas(db) == []
@@ -483,7 +483,7 @@ def test_kind_gate_apply_only_finalizes_staged(game):
         db, state, title="分段闸测", origin_ref=f"dossier:{did}",
         stages=stages, bar_value=20,
     )
-    write_due_staged_commitment_todos(db, state, commit=True)
+    write_due_staged_commitment_todos(db, state)
     # breach plea
     cid_plea, _ = _insert_commitment(
         db, state, title="哭谏闸测", origin_ref=f"dossier:{did}",
@@ -496,7 +496,6 @@ def test_kind_gate_apply_only_finalizes_staged(game):
     write_breach_plea_todo(
         db, state, commitment_ref=cid_plea,
         breach_kind=BREACH_KIND_FUNDING, reason="断", target_dossier_id=did2,
-        commit=True,
     )
     db.conn.execute(
         "UPDATE next_audience_todos SET created_turn=?",
@@ -506,7 +505,7 @@ def test_kind_gate_apply_only_finalizes_staged(game):
 
     before_plea = _pending_pleas(db)
     assert before_plea
-    results = apply_pending_due_reviews(db, state, commit=True)
+    results = apply_pending_due_reviews(db, state)
     # staged 由本函数处理（有终值则消费，无则 waiting_model）；哭谏 skip 保留
     staged_handled = [r for r in results if r.get("entry_kind") == ENTRY_KIND_STAGED]
     plea_skip = [r for r in results if r.get("entry_kind") == ENTRY_KIND_BREACH_PLEA and r.get("skipped")]
@@ -527,11 +526,12 @@ def test_breach_plea_survives_restore(game):
         db, state, title="restore挽留", origin_ref=f"dossier:{did}",
         bar_value=20, end_turn=state.turn + 20,
     )
-    write_breach_plea_todo(
-        db, state, commitment_ref=cid,
-        breach_kind=BREACH_KIND_MISAPPROPRIATION, reason="挪",
-        target_dossier_id=did, commit=True,
-    )
+    with atomic(db):
+        write_breach_plea_todo(
+            db, state, commitment_ref=cid,
+            breach_kind=BREACH_KIND_MISAPPROPRIATION, reason="挪",
+            target_dossier_id=did,
+        )
     path = db.path
     db.conn.close()
     from ming_sim.db import GameDB
@@ -581,13 +581,13 @@ def test_same_turn_dual_breach_kinds_merge_not_swallowed(game):
     )
     t1 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
-        reason="断供", target_dossier_id=did, commit=True,
+        reason="断供", target_dossier_id=did,
     )
     assert t1 > 0
     # 同回合第二类：改弦（不推进 turn）
     t2 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_POLICY_REVERSAL,
-        reason="改弦", target_dossier_id=did, commit=True,
+        reason="改弦", target_dossier_id=did,
     )
     assert t2 == t1  # 并入同一条
     pleas = _pending_pleas(db)
@@ -634,10 +634,10 @@ def test_persist_reclaims_bundled_authority(game):
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
         breach_kind=BREACH_KIND_POLICY_REVERSAL,
-        reason="坚持撤·捆带", target_dossier_id=did, commit=True,
+        reason="坚持撤·捆带", target_dossier_id=did,
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
-    result = finalize_persist(db, state, todo, commit=True)
+    result = finalize_persist(db, state, todo)
     assert result["breach_0056"] is True
     row = db.conn.execute(
         "SELECT revoked FROM authority_records WHERE id=?", (auth_id,),
@@ -661,10 +661,10 @@ def test_remove_sponsor_persist_writes_credit_edge(game):
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
         breach_kind=BREACH_KIND_REMOVE_SPONSOR,
-        reason="罢主办", target_dossier_id=did, commit=True,
+        reason="罢主办", target_dossier_id=did,
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
-    result = finalize_persist(db, state, todo, commit=True)
+    result = finalize_persist(db, state, todo)
     assert result["breach_0056"] is False
     edges = list(db.conn.execute(
         "SELECT event_kind, target, origin FROM relation_edge_events "
@@ -700,17 +700,17 @@ def test_same_sponsor_two_commitments_both_remove_edges(game):
     todo_a = write_breach_plea_todo(
         db, state, commitment_ref=cid_a,
         breach_kind=BREACH_KIND_REMOVE_SPONSOR,
-        reason="罢甲案主办", target_dossier_id=did_a, commit=True,
+        reason="罢甲案主办", target_dossier_id=did_a,
     )
     todo_b = write_breach_plea_todo(
         db, state, commitment_ref=cid_b,
         breach_kind=BREACH_KIND_REMOVE_SPONSOR,
-        reason="罢乙案主办", target_dossier_id=did_b, commit=True,
+        reason="罢乙案主办", target_dossier_id=did_b,
     )
     ta = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_a)
     tb = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_b)
-    ra = finalize_persist(db, state, ta, commit=True)
-    rb = finalize_persist(db, state, tb, commit=True)
+    ra = finalize_persist(db, state, ta)
+    rb = finalize_persist(db, state, tb)
     assert ra["breach_0056"] is False
     assert rb["breach_0056"] is False
     edges = list(db.conn.execute(
@@ -755,7 +755,7 @@ def test_misappropriation_via_tags_producer_pipeline(game):
         state, "国库", -6, "他用", "挪作赏功",
         origin_ref="盘面自发", commit=True,
     )
-    written = scan_and_write_breach_pleas(db, state, commit=True)
+    written = scan_and_write_breach_pleas(db, state)
     assert written
     assert any(p["criterion_text"] == "挪用" for p in _pending_pleas(db))
 
@@ -775,11 +775,11 @@ def _merge_funding_then_reversal(db, state, *, token: str):
     )
     t1 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
-        reason="断供", target_dossier_id=did, commit=True,
+        reason="断供", target_dossier_id=did,
     )
     t2 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_POLICY_REVERSAL,
-        reason="改弦", target_dossier_id=did, commit=True,
+        reason="改弦", target_dossier_id=did,
     )
     assert t2 == t1
     pleas = _pending_pleas(db)
@@ -863,11 +863,11 @@ def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
     )
     t1 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
-        reason="断供", target_dossier_id=did, commit=True,
+        reason="断供", target_dossier_id=did,
     )
     t2 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR,
-        reason="撤人", target_dossier_id=did, commit=True,
+        reason="撤人", target_dossier_id=did,
     )
     assert t2 == t1
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == t1)
@@ -875,7 +875,7 @@ def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
     assert meta.get("breach_kind") == BREACH_KIND_FUNDING
     assert BREACH_KIND_REMOVE_SPONSOR in (meta.get("absorbed_breach_kinds") or [])
 
-    result = finalize_persist(db, state, todo, commit=True)
+    result = finalize_persist(db, state, todo)
     assert result["breach_0056"] is True
     assert _cost_events(db, did, identity="breach")
     edges = list(db.conn.execute(
@@ -902,11 +902,11 @@ def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
     )
     t1 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR,
-        reason="撤人", target_dossier_id=did, commit=True,
+        reason="撤人", target_dossier_id=did,
     )
     t2 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
-        reason="断供", target_dossier_id=did, commit=True,
+        reason="断供", target_dossier_id=did,
     )
     assert t2 == t1
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == t1)
@@ -914,7 +914,7 @@ def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
     assert meta.get("breach_kind") == BREACH_KIND_REMOVE_SPONSOR
     assert BREACH_KIND_FUNDING in (meta.get("absorbed_breach_kinds") or [])
 
-    result = finalize_persist(db, state, todo, commit=True)
+    result = finalize_persist(db, state, todo)
     assert result["breach_0056"] is True, "absorbed funding 须触发 0056"
     assert _cost_events(db, did, identity="breach")
     edges = list(db.conn.execute(

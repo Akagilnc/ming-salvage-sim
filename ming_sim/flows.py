@@ -900,8 +900,6 @@ def _advance_province_fiscal_substrate(
     推进基座末态并落库；返回本 tick 起运到京合计供 hub/国库入账。
     契约失败 fail-loud 中止固定月链（FAIL tick 不落库）。
     """
-    owns_transaction = db.owns_transaction()
-    advanced = False
     p_overrides_by_region = {
         region_id: {"拨付gross": paid}
         for region_id, paid in (jingyun_paid_gross_by_region or {}).items()
@@ -925,7 +923,6 @@ def _advance_province_fiscal_substrate(
                 f"{outcome.region_id} 省级财政基座结算失败：{type(exc).__name__}: {exc}"
             ) from exc
         res = outcome.result
-        advanced = True
         b = res.breakdown
         tlog(
             f"[fiscal-substrate] {outcome.region_id} 推进：实征{b.get('实征', 0):.1f}/起运{b.get('起运到京', 0):.1f}/"
@@ -934,8 +931,6 @@ def _advance_province_fiscal_substrate(
             f"宗禄欠{res.new_st.get('宗禄欠', 0):.0f}/民欠{res.new_st.get('民欠旧赋', 0):.0f}"
             f"（hub，待入国库）"
         )
-    if advanced and owns_transaction:
-        db.conn.commit()
     return sum(
         float((outcome.result.breakdown or {}).get("起运到京", 0.0) or 0.0)
         for outcome in outcomes
