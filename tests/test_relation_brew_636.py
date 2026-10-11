@@ -77,11 +77,17 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game):
     db, state, _ = game
     source, target = EMPEROR_NODE, "杨嗣昌"
     prior_context = "越次一召原句。"
-    # 严格早于开局年月（1627/10）的奠基原句，水位推进后才能进 prior_events。
+    # Unbrewed history from the same year, previous month.
     prior_id = db.record_relation_edge_event(
         source=source, target=target, event_kind="知遇",
         context=prior_context, origin="seed:founding:yueci",
-        turn=0, year=1626, period=6,
+        turn=0, year=int(state.year), period=int(state.period) - 1,
+    )
+    # Unbrewed history from the previous year, same month.
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="知遇",
+        context="前岁同月旧事。", origin="seed:founding:previous-year",
+        turn=0, year=int(state.year) - 1, period=int(state.period),
     )
     prior_origin = db.conn.execute(
         "SELECT origin FROM relation_edge_events WHERE id=?", (prior_id,),
