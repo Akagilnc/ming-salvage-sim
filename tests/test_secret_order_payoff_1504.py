@@ -230,12 +230,6 @@ def test_seed_guilt_structured_clean_vs_debt():
         seed_guilt_counts_as_debt("血债")
 
 
-def test_task_specific_contract_rejects_tags_without_explicit_fields():
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
-        )
-
 @pytest.mark.parametrize(
     ("unit", "identity", "sign"),
     [
@@ -2125,7 +2119,8 @@ def test_create_secret_order_rejects_missing_contract(game):
     name = _minister(db)
     with pytest.raises(CovertContractError):
         db.create_secret_order(
-            state, name, "无合同密令", "无显式差务", [], deadline_months=1,
+            state, name, "无合同密令", "无显式差务",
+            ["辽饷", "兵部", "密查", "稽核"], deadline_months=3,
         )
     assert db.character_knowledge.list_secret_orders() == []
 
