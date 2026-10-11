@@ -92,7 +92,7 @@ def main() -> int:
         session.state.year = target_year
         session.state.period = target_month
         session.state.turn = session.state.turn + months_diff
-        session.db.save_state(session.state)
+        session.db.reign.save_game_state(session.state)
         print(f"[jump] {cur_y}.{cur_m:02d} → {target_year}.{target_month:02d} (turn={session.state.turn})")
 
     snap = session.begin_turn()
@@ -103,7 +103,7 @@ def main() -> int:
             key, val = spec.split("=", 1)
             key = key.strip()
             session.state.metrics[key] = int(val)
-            session.db.save_state(session.state)
+            session.db.reign.save_game_state(session.state)
             print(f"[set-metric] OK: {key}={int(val)}")
         except Exception as e:
             print(f"[set-metric] FAIL: {spec} → {e}", file=sys.stderr)

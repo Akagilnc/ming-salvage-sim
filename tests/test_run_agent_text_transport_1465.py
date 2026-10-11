@@ -1,10 +1,10 @@
+from __future__ import annotations
 """#1465 ② 缝级：run_agent_text 终文取 SDK 终包，非 chunk 拼接。
 
 结算入口空转/跨墙/自愈/耗尽见 test_settlement_extractor_transport_1750（可观察流替身）。
 本文件：chunk 畸形 vs 终包；history-backed 空终包重试截 run。
 """
 
-from __future__ import annotations
 
 import json
 import ming_sim.agents as agents_mod
@@ -86,7 +86,7 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
 
     真实入口 = run_agent_text；命中面 = 颁布判官同款 flags（db+cache_session+
     add_history_to_context）。替身 run 模拟 agno cleanup_and_store 落空 run。
-    截缝 = GameDB.truncate_agno_session_runs（与召对同 _truncate_agno_runs_in_tx）。
+    截缝 = ReignStateStore.truncate_agno_session_runs（与召对同 _truncate_agno_runs_in_tx）。
     GameDB 经 run_agent_text(game_db=) 入参交来（同生产调用契约），不挂 agent 属性。
     """
     monkeypatch.setattr(agents_mod, "_dump_llm_messages", lambda *_a, **_k: None)
@@ -109,7 +109,7 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
     _insert_completed_run(
         game_db, session_id, prior_id, run_index=0, content='{"verdicts": [1]}',
     )
-    assert game_db.agno_runs_length(session_id) == 1
+    assert game_db.reign.agno_runs_length(session_id) == 1
 
     class _HistoryBackedEmptyThenGood:
         """颁布判官同 flags；首 attempt 落空 completed run 再吐空终包。"""
@@ -131,14 +131,14 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
                 _insert_completed_run(
                     game_db, session_id, empty_id, run_index=1, content="",
                 )
-                assert game_db.agno_runs_length(session_id) == 2
+                assert game_db.reign.agno_runs_length(session_id) == 2
                 yield RunContent("…")
                 yield RunOutput("")
                 return
             # 再试前须已截回 keep_count=1（外部可见：agno_runs_length / run_id）
-            assert game_db.agno_runs_length(session_id) == 1, (
+            assert game_db.reign.agno_runs_length(session_id) == 1, (
                 f"empty completed run must be truncated before retry; "
-                f"len={game_db.agno_runs_length(session_id)}"
+                f"len={game_db.reign.agno_runs_length(session_id)}"
             )
             ok_id = "run-ok"
             _insert_completed_run(
@@ -154,7 +154,7 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
     assert text == good
     assert agent.calls >= 2
     # 终态：prior + 成功 = 2；空 completed 不得残留
-    assert game_db.agno_runs_length(session_id) == 2
+    assert game_db.reign.agno_runs_length(session_id) == 2
     rows = game_db.conn.execute(
         "SELECT run_id FROM agno_runs WHERE session_id = ? ORDER BY run_index",
         (session_id,),

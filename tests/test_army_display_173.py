@@ -1,15 +1,31 @@
+from __future__ import annotations
 """#173 显示口径：军饷呈现端从退役的 maintenance_per_turn 迁到引擎实扣的 army_needed。
 
-#44 后引擎按 army_needed=ceil(manpower×salary_rate/10000) 扣应发；呈现端（army_payload/
-army_report/欠饷月数/simulator TSV）统一到 army_needed，玩家与审计大臣 LLM 看到的月饷=实扣。
-#173 删列 PR 已物理移除 maintenance_per_turn 列，army_needed 是月饷唯一真源。
-
-#1185：不锁中文奏报措辞；真实出口差分/可数域值 tracer。
+#44 后引擎按 army_needed=ceil(manpower×salary_rate/10000) 扣应发；army_payload 与欠饷月数排序统一到 army_needed。
+#173 删列后 army_needed 是月饷唯一真源。分源裸键排除见 test_player_army_projection_321 结构 tracer。
 """
 
-from __future__ import annotations
 
 import pytest
+
+from ming_sim.army_pay import army_needed
+
+
+def test_army_payload_exposes_army_needed(read_game):
+    """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 army_pay.army_needed 一致。"""
+    db, _state, _ = read_game
+    payload = db.army_payload()
+    assert payload, "应有军队"
+    by_id = {p["id"]: p for p in payload}
+    for row in db.conn.execute("SELECT * FROM armies").fetchall():
+        p = by_id[row["id"]]
+        assert "army_needed" in p, "army_payload 须含 army_needed（实扣应发）"
+        assert p["army_needed"] == army_needed(row), (
+            f"{row['id']} army_payload.army_needed={p['army_needed']} 应=引擎 {army_needed(row)}"
+        )
+
+
+
 
 def test_danger_order_uses_army_needed_for_arrears_months(game):
     """army_rows(danger_order=True) 欠饷月数归一须按 army_needed。"""
@@ -23,7 +39,7 @@ def test_danger_order_uses_army_needed_for_arrears_months(game):
     for aid in (a["id"], b["id"]):
         db.conn.execute(
             "UPDATE armies SET supply=80,morale=80,loyalty=80,training=80,"
-            "arrears=50,manpower=20000 WHERE id=?",
+            "province_pay_arrears=0,central_pay_arrears=50,manpower=20000 WHERE id=?",
             (aid,),
         )
     db.conn.execute("UPDATE armies SET salary_rate=5.0 WHERE id=?", (a["id"],))
@@ -51,10 +67,10 @@ def test_danger_order_preserves_fractional_arrears(game):
             (aid,),
         )
     db.conn.execute(
-        "UPDATE armies SET name='A低欠饷军', arrears=12.1 WHERE id=?", (low["id"],)
+        "UPDATE armies SET name='A低欠饷军', province_pay_arrears=0, central_pay_arrears=12.1 WHERE id=?", (low["id"],)
     )
     db.conn.execute(
-        "UPDATE armies SET name='Z高欠饷军', arrears=12.9 WHERE id=?", (high["id"],)
+        "UPDATE armies SET name='Z高欠饷军', province_pay_arrears=0, central_pay_arrears=12.9 WHERE id=?", (high["id"],)
     )
     db.conn.commit()
 

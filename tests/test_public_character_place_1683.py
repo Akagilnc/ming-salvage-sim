@@ -1,10 +1,10 @@
+from __future__ import annotations
 """#1683：public_character 官印态 ⊥ 物理去向；袁可立新档 location=henan。
 
 active+空 transit+在事/非在朝 由 test_yuan_keli_appointment_no_summon_stays_henan
 （原票 tracer）承接；本文件只留种子与 transit 投影主干。
 """
 
-from __future__ import annotations
 
 from types import SimpleNamespace
 

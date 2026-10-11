@@ -1,13 +1,13 @@
+from __future__ import annotations
+from types import SimpleNamespace
+import web_app
+from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 """Structured budget identity and non-duplication contracts (#1366/#1471).
 
 Numeric truth is asserted on budget rows and ledgers, never parsed from prose.
 """
-from __future__ import annotations
 
-from types import SimpleNamespace
 
-import web_app
-from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 
 def _army_pay_budget_lines(budget):
     return [row for row in budget["国库"]["expense"] if row.get("budget_key") == "army_pay"]
@@ -17,7 +17,7 @@ def test_substrate_budget_splits_proposals_without_treasury_cap(game):
     db.conn.execute(
         "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
         "central_pay_share=0, pay_source_region='', province_pay_arrears=0, "
-        "central_pay_arrears=0, arrears=0"
+        "central_pay_arrears=0"
     )
     db.conn.execute(
         "UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', "
@@ -90,8 +90,8 @@ def test_army_payload_arrears_text_is_approximate_not_raw(game):
     ).fetchone()["id"]
     raw = 1.2000000000000002
     db.conn.execute(
-        "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
-        (raw, raw, army_id),
+        'UPDATE armies SET  province_pay_arrears=?, central_pay_arrears=0 WHERE id=?',
+        (raw, army_id,),
     )
     db.conn.commit()
     card = {army["id"]: army for army in db.army_payload()}[army_id]

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """s2 (#4) — 城防炮 region.cannon 的 delta 落库路径。
 
 城防炮（城头红夷炮）此前无 delta 写入路径：apply_region_cannon 已存在且带
@@ -5,7 +6,6 @@ city_level×8 clamp，但零调用方；region_delta 带「城防炮」会被当
 本组验证：经声明落账喂中文 schema delta，城防炮按 clamp 落库。
 """
 
-from __future__ import annotations
 
 from tests.section_rejection_helpers import run_declaration as run_settle
 from ming_sim.constants import REGION_FIELD_LABELS

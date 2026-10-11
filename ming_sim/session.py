@@ -6,6 +6,7 @@ Web 只做 I/O 包装。
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
 from ming_sim.exceptions import DeclarationDataError
 
 import logging
@@ -38,6 +39,8 @@ from ming_sim.applier import (
     Provenance,
     atomic,
     connection_owns_transaction,
+    load_stored_list,
+    load_stored_object,
     register_runtime_outcome_callbacks,
 )
 from ming_sim.decree import (
@@ -631,7 +634,7 @@ class GameSession:
             self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
             # #638 S7：新开档判据必须在 load_state 建 game_state 行之前取（行在＝旧档，
             # 关系 seed 导入一律不触；验收条「只对新开档生效，旧档不受影响」的机械口径）。
-            fresh_save = not self.db.has_state()
+            fresh_save = not self.db.reign.exists()
             # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
             # 自部署者在 server 控制台看得见进度、定位慢阶段。
             from ming_sim.token_stats import tlog
@@ -738,7 +741,7 @@ class GameSession:
             TurnPhase.AWAITING_DECISION.value, TurnPhase.SETTLING.value,
         ):
             self.state.turn_phase = TurnPhase.SUMMONING.value
-            self.db.save_state(self.state)
+            self.db.reign.save_game_state(self.state)
         return self.turn_snapshot()
 
     def current_phase(self) -> TurnPhase:
@@ -746,7 +749,7 @@ class GameSession:
 
     def _set_phase(self, phase: TurnPhase) -> None:
         self.state.turn_phase = phase.value
-        self.db.save_state(self.state)
+        self.db.reign.save_game_state(self.state)
 
     def turn_snapshot(self) -> TurnSnapshot:
         return TurnSnapshot(
@@ -759,7 +762,7 @@ class GameSession:
     def end_turn(self) -> None:
         """新回合建立（resolve 已推进 state.turn）；阶段回 summoning 并留月初档。"""
         self.state.turn_phase = TurnPhase.SUMMONING.value
-        self.db.save_state(self.state)
+        self.db.reign.save_game_state(self.state)
         self.auto_save("begin")
 
     def note_chat_rollback(self, deleted_committed_draft_ids: Optional[List[int]] = None) -> None:
@@ -806,7 +809,7 @@ class GameSession:
         power_id = self.db.resolve_power_id(character)
         if power_id != "ming":
             return (False, f"{character.name}不属大明朝廷，无法召见。")
-        status, reason = self.db.get_character_status(character.name)
+        status, reason = self.db.characters.get_character_status(character.name)
         if status != "active":
             label = {
                 "offstage": "尚未登场",
@@ -833,10 +836,7 @@ class GameSession:
         eligible, reason = self.can_summon(character)
         if not eligible:
             return AudienceAdmissionDecision(None, reason=reason)
-        row = self.db.conn.execute(
-            "SELECT location, transit_to FROM characters WHERE name=?",
-            (character.name,),
-        ).fetchone()
+        row = CharacterStore(self.db.conn).read_admit_audience((character.name,))
         # #670：无 DB 行不得 blank fail-open 入殿；在册空 location 仍 fail-open 在京。
         if row is None:
             return AudienceAdmissionDecision(
@@ -1046,14 +1046,14 @@ class GameSession:
         GameSession 恒持真实 GameDB；无 conn 壳旁路已清退。
         """
         self.db.reconcile_interrupted_chat_turns()
-        self.db.reconcile_post_reply_recovery()
+        self.db.reign.reconcile_post_reply_recovery()
 
     def list_startup_translation_catch_up(self) -> List[Any]:
         """启动恢复：是否仍有未承接转译的已持久回话（#1902 T4 共核取数）。
 
         无待补 → 正常空列表；直接走持久库契约，不经可选方法／缺 conn 壳。
         """
-        return list(self.db.list_unextracted_replies() or [])
+        return list(self.db.reign.list_unextracted_replies() or [])
 
     def run_startup_translation_catch_up(
         self, *,
@@ -1085,7 +1085,7 @@ class GameSession:
         真实夜确定后只由此核提供，与 ``_resolve_scene_agent`` 共用同一公式。
         """
         session_id = f"scene-night-{int(night_id)}"
-        return session_id, int(self.db.agno_runs_length(session_id))
+        return session_id, int(self.db.reign.agno_runs_length(session_id))
 
     def assert_audience_chat_admission(self, *, what: str = "召对") -> None:
         """召对开轮/重试已有业务资格：月末相位、收夜冻结、本夜在飞未落。
@@ -1114,7 +1114,7 @@ class GameSession:
         night = get_open_night(self.db)
         if night is None:
             return
-        if self.db.list_in_flight_chat_turns(night_id=int(night["id"])):
+        if self.db.reign.list_in_flight_chat_turns(night_id=int(night["id"])):
             raise AudienceChatAdmissionError(
                 "本夜上一轮回奏仍在进行，请稍候再问。",
                 code="in_flight",
@@ -1165,11 +1165,9 @@ class GameSession:
                 night_id=night_id,
                 status="generating",
             )
-            user_message_id = self.db.append_chat_message(
-                owner, accepted_turn, "user", message,
-            )
+            user_message_id = self.db.chat_messages.insert(minister_name=owner, turn=accepted_turn, role='user', content=message)
             if chat_turn_id:
-                self.db.update_chat_turn_messages(
+                self.db.reign.update_chat_turn_messages(
                     chat_turn_id, user_message_id=user_message_id,
                 )
         return AudienceChatTurn(
@@ -1224,7 +1222,7 @@ class GameSession:
                 return set()
             nid = int(night["id"])
         return {
-            int(row["id"]) for row in self.db.list_hall_chat_turns(nid)
+            int(row["id"]) for row in self.db.reign.list_hall_chat_turns(nid)
         }
 
     def pending_audience_reply_retries(
@@ -1246,7 +1244,7 @@ class GameSession:
         if not hall_ids:
             return []
         retries = [
-            row for row in self.db.get_interrupted_reply_retries(SCENE_CHAT_SPEAKER)
+            row for row in self.db.reign.get_interrupted_reply_retries(SCENE_CHAT_SPEAKER)
             if int(row["chat_turn_id"]) in hall_ids
         ]
         out: List[Dict[str, Any]] = []
@@ -1274,7 +1272,7 @@ class GameSession:
         return sorted(
             [
                 dict(row)
-                for row in self.db.get_post_reply_retries(SCENE_CHAT_SPEAKER)
+                for row in self.db.reign.get_post_reply_retries(SCENE_CHAT_SPEAKER)
                 if int(row["chat_turn_id"]) in hall_ids
             ],
             key=lambda item: int(item["chat_turn_id"]),
@@ -1351,7 +1349,7 @@ class GameSession:
         still = self.list_pending_translation_retries(
             chat_turn_id=ctid, write_queue=write_queue,
         )
-        status = self.db.get_story_extract_status(ctid)
+        status = self.db.reign.get_story_extract_status(ctid)
         return {
             "chat_turn_id": ctid,
             "extract_status": status,
@@ -1380,7 +1378,7 @@ class GameSession:
         phase = str(target.get("recovery_phase") or "")
         gate_cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with gate_cm:
-            if not self.db.claim_post_reply_recovery(chat_turn_id, phase):
+            if not self.db.reign.claim_post_reply_recovery(chat_turn_id, phase):
                 raise PostReplyRecoveryError(
                     "本轮后续处理已在恢复，请稍候。", code="conflict",
                 )
@@ -1392,10 +1390,10 @@ class GameSession:
             elif after_reply is not None:
                 after_reply(target)
             with gate_cm:
-                self.db.clear_post_reply_failure(chat_turn_id)
+                self.db.reign.clear_post_reply_failure(chat_turn_id)
         except BaseException:
             with gate_cm:
-                self.db.release_post_reply_recovery(chat_turn_id, phase)
+                self.db.reign.release_post_reply_recovery(chat_turn_id, phase)
             raise
         return {
             "answer": str(target.get("answer") or ""),
@@ -1471,7 +1469,7 @@ class GameSession:
                     kind="reply", message=str(error),
                     detail={"chat_turn_id": turn.chat_turn_id}, db=self.db, exc=error,
                 )
-                self.db.set_chat_turn_error_pack(turn.chat_turn_id, pack)
+                self.db.reign.set_chat_turn_error_pack(turn.chat_turn_id, pack)
         else:
             restored_ids = self.db.fail_chat_turn(turn.chat_turn_id)
             schedule_restored_decree_forecasts(self, restored_ids)
@@ -1490,13 +1488,13 @@ class GameSession:
         )
         detail = {"chat_turn_id": turn.chat_turn_id, "phase": "post_reply"}
         if translation_pending:
-            self.db.mark_story_extraction_pending(turn.chat_turn_id)
+            self.db.reign.mark_story_extraction_pending(turn.chat_turn_id)
             if error is not None:
                 pack = write_audience_error_pack(
                     kind="translation", message=str(error), detail=detail,
                     db=self.db, exc=error,
                 )
-                self.db.set_chat_turn_error_pack(turn.chat_turn_id, pack)
+                self.db.reign.set_chat_turn_error_pack(turn.chat_turn_id, pack)
             return True
         pack = ""
         if error is not None:
@@ -1505,7 +1503,7 @@ class GameSession:
                 db=self.db, exc=error,
             )
         phase = "court_break" if court_action == "court_break" else "after_reply"
-        self.db.mark_post_reply_failure(turn.chat_turn_id, phase, pack)
+        self.db.reign.mark_post_reply_failure(turn.chat_turn_id, phase, pack)
         return True
 
     def can_undo_last_audience_chat(self, minister_name: str) -> bool:
@@ -1546,12 +1544,12 @@ class GameSession:
             raise AudienceChatUndoError(
                 "本回合已经进入颁诏结算，不能撤回召对。", code="conflict",
             )
-        row = self.db.get_last_active_chat_turn(target, self.state.turn)
+        row = self.db.reign.get_last_active_chat_turn(target, self.state.turn)
         if row is None:
             raise AudienceChatUndoError(
                 "本回合没有可撤回的召对。", code="not_found",
             )
-        if not self.db.is_global_last_active_chat_turn(int(row["id"])):
+        if not self.db.reign.is_global_last_active_chat_turn(int(row["id"])):
             raise AudienceChatUndoError(
                 "只能撤回全局最后一轮召对。", code="conflict",
             )
@@ -1591,7 +1589,7 @@ class GameSession:
                         self, pending_id, night_id=int(open_night_row["id"]),
                     )
         self.refresh_runtime_after_chat_rollback()
-        campaign_id = str(self.db.kv_get("campaign_id") or "")
+        campaign_id = str(self.db.reign.kv_get("campaign_id") or "")
         return AudienceChatUndoResult(
             minister_name=target,
             night_id=int(row.get("night_id") or 0),
@@ -1630,7 +1628,7 @@ class GameSession:
         with gate_cm:
             # #1902：与建轮同核资格（相位／收夜／在飞）；CAS 前拒绝，不留 generating。
             GameSession.assert_audience_chat_admission(self, what="召对")
-            if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+            if not self.db.reign.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
                 return None
             # reopen 已赢即建 turn 句柄，保证后续任意失败（含快照）能走 fail 收口。
             turn = AudienceChatTurn(
@@ -1903,7 +1901,7 @@ class GameSession:
             if stream_attempt_n["n"] > 0:
                 stream_emit("", replace=True)
                 if int(chat_turn_id or 0) > 0:
-                    self.db.truncate_chat_turn_agno_runs(int(chat_turn_id))
+                    self.db.reign.truncate_chat_turn_agno_runs(int(chat_turn_id))
             stream_attempt_n["n"] += 1
             return agent.run(
                 agent_prompt, stream=True, stream_events=True, yield_run_output=True,
@@ -1989,7 +1987,7 @@ class GameSession:
 
     def list_directives(self, include_pending: bool = True) -> List[DirectiveView]:
         statuses = ("pending", "draft") if include_pending else ("draft",)
-        rows = self.db.list_directives(self.state, statuses=statuses)
+        rows = self.db.issues.list_directives(self.state.turn, statuses=statuses)
         return [
             DirectiveView(
                 id=int(r["id"]), text=str(r["text"]), status=str(r["status"]),
@@ -1997,7 +1995,7 @@ class GameSession:
                 actor=str(r["actor"] or ""),
             )
             for r in rows
-            if self.db.get_dossier_for_directive(int(r["id"])) is None
+            if self.db.dossiers.get_for_directive(int(r["id"])) is None
         ]
 
     @staticmethod
@@ -2014,7 +2012,7 @@ class GameSession:
 
     # #1902：add_directive / update_directive 随拟诏台手写入口（CLI add/edit、
     # Web POST|PATCH /api/directives）一并退役——旨意只从召对来（#1772）。
-    # 落库与改稿的引擎面仍是 db.add_directive / db.update_directive_text；
+    # 落库与改稿的引擎面仍是 db.issues.add_directive / db.update_directive_text；
     # 共享抽取核（成案准入补交）未动。
 
     def delete_directive(self, directive_id: int) -> None:
@@ -2027,8 +2025,8 @@ class GameSession:
         计入 pending_actions 中 directive/office/secret_order（#1380 语义洞：
         拟旨/任免 staged 时不得假 0）。确认闸门/落库时序不动。
         """
-        n = self.db.count_pending_directives(self.state)
-        pending_actions = self.db.list_pending_actions(self.state.turn)
+        n = self.db.issues.count_pending_directives_for_turn(self.state.turn)
+        pending_actions = self.db.dossiers.list_pending_actions(self.state.turn)
         n += sum(
             1 for a in pending_actions
             if a["kind"] in {"secret_order", "directive", "office"}
@@ -2078,12 +2076,12 @@ class GameSession:
         jobs: List[Dict[str, object]] = []
         for item in rejections or []:
             did = int(item.get("directive_id"))
-            if self.db.get_dossier_for_directive(did) is not None:
+            if self.db.dossiers.get_for_directive(did) is not None:
                 continue
-            row = self.db.get_directive(did)
+            row = self.db.issues.directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
-            bad_payload = self.db.read_directive_dossier_payload(row)
+            bad_payload = self.db.issues.read_directive_dossier_payload(row)
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:
@@ -2308,10 +2306,10 @@ class GameSession:
         if not write_gate_already_held:
             self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
-            self.db.list_directives(self.state, statuses=("pending",))
+            self.db.issues.list_directives(self.state.turn, statuses=('pending',))
             or any(
                 row.get("kind") == "directive"
-                for row in self.db.list_pending_actions(self.state.turn)
+                for row in self.db.dossiers.list_pending_actions(self.state.turn)
             )
         ):
             raise ValueError("月末结算恢复期新增拟旨须先核定，不能并入已冻结的结算")
@@ -2328,7 +2326,7 @@ class GameSession:
         # 从 context 恢复来源和原诏后续跑月链，财政不二落。
         recovered_source = None
         if self.state.turn_phase == TurnPhase.SETTLING.value:
-            ctx = self.db.get_resolve_context(self.state.turn)
+            ctx = self.db.resolve_contexts.get(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
                 # Free decree body on settle recovery: carry stored 旨文 as-is (P6).
@@ -2367,7 +2365,7 @@ class GameSession:
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
         # pre_settle owning transaction 与财政等副作用一起物化。
-        for pending in self.db.list_directives(self.state, statuses=("pending",)):
+        for pending in self.db.issues.list_directives(self.state.turn, statuses=('pending',)):
             self.db.confirm_directive(int(pending["id"]))
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
@@ -2389,7 +2387,7 @@ class GameSession:
             dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
                 self.state, record_rejections=is_last,
             )
-        dossiered_directives = self.db.list_dossiered_draft_directives(self.state)
+        dossiered_directives = self.db.issues.list_dossiered_draft_directives(self.state.turn)
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids stay distinct from durable turn_directives ids.
         pending_directives = self.db.preview_pending_directives(
@@ -2404,7 +2402,7 @@ class GameSession:
         settlement_due = _requires_full_settlement(self.state, self.db)
         # Pending non-directive actions (secret orders etc.) enter resolve_directives
         # so pre_settle owns materialization with the rest of the settlement spine.
-        pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
+        pending_action_due = bool(self.db.dossiers.list_pending_actions(self.state.turn))
         # #1769 耗尽：产物错 draft 留到下月；不得把引擎拒因串透传给皇帝，不得挡月份。
         product_exhaust = bool(dossier_rejections)
         # #1769 零成案耗尽与退朝无旨同形：不把 last_decree/显式 decree 当本月已颁。
@@ -2452,19 +2450,19 @@ class GameSession:
         # 机械尾已在推进后占用同一条连接。这次落相位走写队列那把闸
         # （与尾部读写票同一对象）；调用方已持闸时不再重入。
         if write_gate_already_held:
-            self.db.save_state(self.state)
+            self.db.reign.save_game_state(self.state)
         else:
             from ming_sim.session_write_queue import get_session_write_queue
             with get_session_write_queue(self).write_gate:
-                self.db.save_state(self.state)
+                self.db.reign.save_game_state(self.state)
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
-        return self.db.list_rescript_desk(int(self.state.turn))
+        return self.db.issues.list_rescript_desk(int(self.state.turn))
 
     def deferred_rescripts(self) -> List[Dict[str, object]]:
         """Original returned memorials, including months with vacant offices."""
-        return self.db.list_rescript_drafts(status="revision_pending")
+        return self.db.issues.list_rescript_drafts(status="revision_pending")
 
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
@@ -2494,7 +2492,7 @@ class GameSession:
                 else TurnPhase.AWAITING_DECISION.value
             )
             with write_gate:
-                self.db.save_state(self.state)
+                self.db.reign.save_game_state(self.state)
             raise
         self.state.turn_phase = (
             TurnPhase.ISSUED.value
@@ -2503,7 +2501,7 @@ class GameSession:
             else TurnPhase.SETTLING.value
         )
         with write_gate:
-            self.db.save_state(self.state)
+            self.db.reign.save_game_state(self.state)
         return report
 
     def advance_without_decree(
@@ -2515,7 +2513,7 @@ class GameSession:
         无草案 → allow_empty_decree，source=system_simulation，仍走玩家月链
         （邸报/种子局势/议题惯性/结局判定）；16ms 快路已废。
         """
-        if self.db.list_directives(self.state, statuses=("pending", "draft")):
+        if self.db.issues.list_directives(self.state.turn, statuses=("pending", "draft")):
             return self.resolve_turn(
                 write_gate_already_held=write_gate_already_held,
             )
@@ -2534,10 +2532,10 @@ class GameSession:
         import os as _os
         saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
         saves_dir = _os.path.dirname(saves_dir)
-        campaign_id = (self.db.kv_get("campaign_id") or "").strip()
+        campaign_id = (self.db.reign.kv_get("campaign_id") or "").strip()
         if not campaign_id:
             campaign_id = uuid.uuid4().hex[:12]
-            self.db.kv_set("campaign_id", campaign_id)
+            self.db.reign.kv_set("campaign_id", campaign_id)
         fname = (
             f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
             f"{self.state.period:02d}_t{self.state.turn:04d}_{tag}.db"

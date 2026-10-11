@@ -39,7 +39,7 @@
 | `salt_tax` | 万两/月 | 盐税月基数，hub 旁路汇总 |
 | `commerce_tax` | 万两/月 | 商税月基数，hub 旁路汇总 |
 | `corruption` | 0-100 | 腐败度；region_delta 可写，材料可读；**不**自动映射进 settle tick |
-| `settle` | object | 省级财政基座 `st`/`p`；`settle_province_tick` 只读这里（及现役覆盖参数），与顶层士绅/民变/corruption 无自动耦合 |
+| `settle` | object | 省级财政基座 `st`/`p`；`settle_ming_province_substrate_ticks` 只读这里（及现役覆盖参数），与顶层士绅/民变/corruption 无自动耦合 |
 
 ---
 

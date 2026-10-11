@@ -1,6 +1,8 @@
 """Consume dossier effect intents above the persistence layer."""
 
 from __future__ import annotations
+from ming_sim.entities.dossier import PROMULGATION_BLOCKED_LAYERS
+from ming_sim.entities.dossier.store import has_execution_surface
 
 import json
 from typing import Dict, Iterable, List, Optional
@@ -54,7 +56,7 @@ def apply_dossier_promulgation(
         ):
             # Durable vacancy signal starts an executing dossier, but may
             # not pre-materialize work or invent a terminal outcome.
-            db.transition_decree_dossier(
+            db.dossiers.transition(
                 dossier_id, "executing", commit=False,
             )
             return
@@ -63,7 +65,7 @@ def apply_dossier_promulgation(
         # consume their intent here, not while storage creates their dossier.
         if policy["effect_owner"] != "payload":
             if policy["effect_owner"] == "narrative":
-                db.transition_decree_dossier(
+                db.dossiers.transition(
                     dossier_id, "executing", commit=False,
                 )
             elif row["action_type"] == "grant_allocation":
@@ -71,47 +73,47 @@ def apply_dossier_promulgation(
                 if db._is_army_pay_grant_payload(payload):
                     _apply_army_pay_grant_effect(db, state, row, payload, dossier_id)
                 if db._grant_allocation_is_monthly(payload):
-                    fiscal = db.list_fiscal_effects_for_dossier(dossier_id)
+                    fiscal = db.fiscal_config.effects_for_dossier(dossier_id)
                     landed = any(
                         str(item.get("key") or "").endswith("_base")
                         and int(item.get("value") or 0) == amount
                         for item in fiscal
                     )
                     if not landed:
-                        db.record_dossier_execution(
+                        db.dossiers.record_execution(
                             dossier_id, "failed",
                             "拨帑常项未建项",
                             state.turn, close=True, commit=False,
                         )
                     else:
-                        db.record_dossier_execution(
+                        db.dossiers.record_execution(
                             dossier_id, "fulfilled", "成案时建月度科目",
                             state.turn, close=True, commit=False,
                         )
                 else:
-                    moves = db.list_economy_moves_for_dossier(dossier_id)
+                    moves = db.reign.list_economy_moves_for_dossier(dossier_id)
                     actual = int(moves[0]["delta"]) if moves else 0
                     if actual != -amount:
                         if policy["execution_surface"] == "in_transit":
-                            db.transition_decree_dossier(
+                            db.dossiers.transition(
                                 dossier_id, "executing", commit=False,
                             )
-                        db.record_dossier_execution(
+                        db.dossiers.record_execution(
                             dossier_id, "failed",
                             f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
                             state.turn, close=True, commit=False,
                         )
                     elif policy["execution_surface"] == "in_transit":
-                        db.transition_decree_dossier(
+                        db.dossiers.transition(
                             dossier_id, "executing", commit=False,
                         )
                     else:
-                        db.record_dossier_execution(
+                        db.dossiers.record_execution(
                             dossier_id, "fulfilled", "成案时足额拨付",
                             state.turn, close=True, commit=False,
                         )
             else:
-                db.record_dossier_execution(
+                db.dossiers.record_execution(
                     dossier_id, "fulfilled", "成案时即生效",
                     state.turn, close=True, commit=False,
                 )
@@ -179,7 +181,7 @@ def apply_dossier_promulgation(
                             float(army["arrears"] or 0) if army is not None else 0.0
                         )
                         if still_owed > 0:
-                            db.record_dossier_execution(
+                            db.dossiers.record_execution(
                                 dossier_id, "failed",
                                 f"拨饷不足额：应拨{amount}两，实拨{spent}两",
                                 state.turn, close=True, commit=False,
@@ -199,13 +201,13 @@ def apply_dossier_promulgation(
                         commit=False,
                     )
                     if actual != -amount:
-                        if db._dossier_has_execution_surface(
+                        if has_execution_surface(
                             row["action_type"], payload,
                         ):
-                            db.transition_decree_dossier(
+                            db.dossiers.transition(
                                 dossier_id, "executing", commit=False,
                             )
-                        db.record_dossier_execution(
+                        db.dossiers.record_execution(
                             dossier_id, "failed",
                             f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
                             state.turn, close=True, commit=False,
@@ -325,17 +327,17 @@ def apply_dossier_promulgation(
             if due_turn <= 0:
                 due_turn = int(payload.get("due_turn") or 0)
             if due_turn > int(state.turn):
-                db.transition_decree_dossier(
+                db.dossiers.transition(
                     dossier_id, "executing", commit=False,
                 )
                 return
         if policy["execution_surface"] in {"terminal", "immediate"}:
-            db.record_dossier_execution(
+            db.dossiers.record_execution(
                 dossier_id, "fulfilled", "颁布即终局", state.turn,
                 close=True, commit=False,
             )
         else:
-            db.transition_decree_dossier(
+            db.dossiers.transition(
                 dossier_id, "executing", commit=False,
             )
     return
@@ -363,7 +365,7 @@ def _apply_army_pay_grant_effect(
     origin_ref = f"dossier:{int(dossier_id)}"
     # 幂等：同案已有补饷流水则不二扣（ready 重放 / 重复 settle 护栏）。
     existing = [
-        m for m in db.list_economy_moves_for_dossier(int(dossier_id))
+        m for m in db.reign.list_economy_moves_for_dossier(int(dossier_id))
         if str(m.get("purpose") or "") == "补饷"
     ]
     if existing:
@@ -594,10 +596,10 @@ def _apply_authorization_verdict_effect(
     if reason:
         # #1628 / 0150-D5-a：跨案 duplicate 接到 assignment 软通道，不得升格整批。
         if reason == "duplicate_active_authority":
-            db.transition_decree_dossier(
+            db.dossiers.transition(
                 dossier_id, "executing", commit=False,
             )
-            db.record_dossier_execution(
+            db.dossiers.record_execution(
                 dossier_id, "failed", reason, state.turn,
                 close=True, commit=False,
             )
@@ -755,8 +757,8 @@ def _apply_referral_verdict_effect(
     # 与暂存/admission 同一解析；个人名不得落 participants。
     bodies = parse_responsible_bodies(payload.get("responsible_bodies"))
     if not bodies:
-        db.transition_decree_dossier(dossier_id, "executing", commit=False)
-        db.record_dossier_execution(
+        db.dossiers.transition(dossier_id, "executing", commit=False)
+        db.dossiers.record_execution(
             dossier_id, "failed", "下议缺少 responsible_bodies",
             state.turn, close=True, commit=False,
         )
@@ -774,8 +776,8 @@ def _apply_referral_verdict_effect(
             ),
         )
     except DeclarationDataError as exc:
-        db.transition_decree_dossier(dossier_id, "executing", commit=False)
-        db.record_dossier_execution(
+        db.dossiers.transition(dossier_id, "executing", commit=False)
+        db.dossiers.record_execution(
             dossier_id, "failed", str(exc) or "responsible_bodies 禁个人名",
             state.turn, close=True, commit=False,
         )
@@ -784,8 +786,8 @@ def _apply_referral_verdict_effect(
     title, stage_text = _initiative_title_and_body(payload, row)
     if not title:
         # 保留案卷与正文；缺结构化锚走既有 execution failed（可见可恢复）。
-        db.transition_decree_dossier(dossier_id, "executing", commit=False)
-        db.record_dossier_execution(
+        db.dossiers.transition(dossier_id, "executing", commit=False)
+        db.dossiers.record_execution(
             dossier_id, "failed", "下议缺少结构化题名（title 或 target_id）",
             state.turn, close=True, commit=False,
         )
@@ -793,8 +795,8 @@ def _apply_referral_verdict_effect(
 
     end_turn = int(payload.get("end_turn") or 0)
     if end_turn <= 0:
-        db.transition_decree_dossier(dossier_id, "executing", commit=False)
-        db.record_dossier_execution(
+        db.dossiers.transition(dossier_id, "executing", commit=False)
+        db.dossiers.record_execution(
             dossier_id, "failed", "下议缺少 end_turn",
             state.turn, close=True, commit=False,
         )
@@ -821,8 +823,8 @@ def _apply_referral_verdict_effect(
     rejected = outcome.issue.rejected if outcome.issue is not None else []
     if rejected or not created:
         reason = (rejected[0].reason if rejected else "") or "下议 initiative 被拒"
-        db.transition_decree_dossier(dossier_id, "executing", commit=False)
-        db.record_dossier_execution(
+        db.dossiers.transition(dossier_id, "executing", commit=False)
+        db.dossiers.record_execution(
             dossier_id, "failed", reason, state.turn, close=True, commit=False,
         )
         return False
@@ -850,8 +852,8 @@ def _apply_assignment_verdict_effect(
     title, stage_text = _initiative_title_and_body(payload, row)
     if not title:
         # 保留案卷与正文；缺结构化锚走既有 execution failed（可见可恢复）。
-        db.transition_decree_dossier(dossier_id, "executing", commit=False)
-        db.record_dossier_execution(
+        db.dossiers.transition(dossier_id, "executing", commit=False)
+        db.dossiers.record_execution(
             dossier_id, "failed", "交办缺少结构化题名（title 或 target_id）",
             state.turn, close=True, commit=False,
         )
@@ -914,8 +916,8 @@ def _apply_assignment_verdict_effect(
     if rejected or not created:
         reason = (rejected[0].reason if rejected else "") or "交办 initiative 被拒"
         # 校验失败逐项软拒，不掀整批。
-        db.transition_decree_dossier(dossier_id, "executing", commit=False)
-        db.record_dossier_execution(
+        db.dossiers.transition(dossier_id, "executing", commit=False)
+        db.dossiers.record_execution(
             dossier_id, "failed", reason, state.turn, close=True, commit=False,
         )
         return False
@@ -951,7 +953,7 @@ def _apply_punishment_verdict_effect(
                 raise ValueError("办人目标不在弹劾潮 target_roster")
     if issue_disposition == "压下" and issue is not None:
         faction = str(issue["faction_hint"] or "").strip()
-        if db._record_decree_cost(
+        if db.dossiers.record_cost_event(
             dossier_id, state.turn, "authority", "metric", "皇威", -1,
             "压下弹劾", cost_identity="impeachment_suppression",
         ):
@@ -961,7 +963,7 @@ def _apply_punishment_verdict_effect(
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (state.metrics["皇威"],),
             )
-        if faction and db._record_decree_cost(
+        if faction and db.dossiers.record_cost_event(
             dossier_id, state.turn, "satisfaction", "faction", faction, -1,
             "压下弹劾", cost_identity="impeachment_suppression",
         ):
@@ -1017,7 +1019,7 @@ def _apply_punishment_verdict_effect(
         return
     if punish_action in {"放归", "昭雪"}:
         # #517：宥赦只回迁在世处置态；dead 等终态响亮拒绝，不得复活。
-        current_status, _ = db.get_character_status(target)
+        current_status, _ = db.characters.get_character_status(target)
         if current_status not in {"imprisoned", "dismissed", "exiled"}:
             raise ValueError(
                 f"宥赦不可回迁：{target} 当前状态={current_status or '(空)'}"
@@ -1085,7 +1087,7 @@ def _maybe_write_backing_betray_credit(
     person = str(target or "").strip()
     if not person:
         return
-    endorsements = db.list_dossier_endorsements(int(backing_id))
+    endorsements = db.dossiers.endorsements(int(backing_id))
     hit = False
     for item in endorsements:
         if bool(item.get("imperial")):
@@ -1227,7 +1229,7 @@ def _commit_office_action(
         # 外藩(power_id≠ming)/后宫/不在册不接(无字面 fallback,免误黜皇太极,CMR R2);
         # 再校 active,免把已故/已黜/致仕者的终态改写成 dismissed(CMR R3 codex R2)。
         key = _find_existing_minister(content, name, db)
-        if key is None or db.get_character_status(key)[0] != "active":
+        if key is None or db.characters.get_character_status(key)[0] != "active":
             return set()
         # 宗藩（就藩宗室）非朝堂命官，不可作朝臣罢免——_find_existing_minister 仍会解析到宗藩名
         # （任命核需解到名才能显式拒），故罢免侧单独守（cmr R6 cross-section）。
@@ -1256,7 +1258,7 @@ def apply_dossier_verdicts(
         if not isinstance(verdict, dict):
             raise ValueError("案卷 verdict 须为对象")
         dossier_id = strict_int(verdict.get("dossier_id"))
-        dossier = db.get_decree_dossier(dossier_id)
+        dossier = db.dossiers.get(dossier_id)
         if dossier is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         decision = str(verdict.get("decision") or "")
@@ -1266,7 +1268,7 @@ def apply_dossier_verdicts(
         )
         if decision == "rejected":
             validate_rejection_verdict(
-                verdict, db._PROMULGATION_BLOCKED_LAYERS - {""},
+                verdict, PROMULGATION_BLOCKED_LAYERS - {""},
                 faction_names=faction_names, class_names=class_names,
                 character_ids=character_ids,
             )
@@ -1278,7 +1280,7 @@ def apply_dossier_verdicts(
         decision = str(verdict.get("decision") or "")
         if decision not in {"promulgated", "force_promulgated"}:
             continue
-        dossier = db.get_decree_dossier(strict_int(verdict.get("dossier_id")))
+        dossier = db.dossiers.get(strict_int(verdict.get("dossier_id")))
         if dossier is not None:
             prevalidate_rows.append(dossier)
     db._prevalidate_office_recommendation_snapshots(state, prevalidate_rows)
@@ -1318,7 +1320,7 @@ def apply_dossier_verdicts(
 def apply_dossier_verdict_metadata(db, state, dossier_id, verdict) -> None:
     """Record verdict metadata and settle predeclared override costs."""
     db._record_dossier_verdict_metadata(state, dossier_id, verdict)
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     if (dossier and dossier.get("mode") == "midzhi"
             and verdict.get("decision") == "promulgated"):
         db._apply_override_costs(

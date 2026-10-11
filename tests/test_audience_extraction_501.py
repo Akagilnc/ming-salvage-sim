@@ -1,6 +1,6 @@
+from __future__ import annotations
 """#501 仍现役的召对转译补跑边界。"""
 
-from __future__ import annotations
 
 from ming_sim import audience_night as an
 
@@ -27,7 +27,7 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
     minister = _minister(db, content)
     nid, ctid = _open_night_with_persisted_reply(db, state, minister, reply="臣作保。")
 
-    assert len(db.list_unextracted_replies(night_id=nid)) == 1
+    assert len(db.reign.list_unextracted_replies(night_id=nid)) == 1
 
 
     def translate_fn(prompt, llm_config):
@@ -50,7 +50,7 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
     )
     assert result["closed"] is True
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
-    assert db.get_story_extract_status(ctid) == "done"
+    assert db.reign.get_story_extract_status(ctid) == "done"
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM story_ledger_entries "
         "WHERE night_id=? AND source_chat_turn_id=?",
@@ -68,6 +68,6 @@ def test_engine_close_night_without_deps_keeps_pending_no_fail_closed(
     nid, ctid = _open_night_with_persisted_reply(db, state, minister)
     an.close_night(db, state, night_id=nid)
 
-    assert len(db.list_unextracted_replies(night_id=nid)) >= 1
+    assert len(db.reign.list_unextracted_replies(night_id=nid)) >= 1
 
-    assert str(db.get_story_extract_status(ctid) or "") in ("", "pending")
+    assert str(db.reign.get_story_extract_status(ctid) or "") in ("", "pending")

@@ -1,15 +1,22 @@
+from __future__ import annotations
+import pytest
+from ming_sim.flows import apply_fixed_period_flows
 """#314 — 确定性军心月度 tick（欠饷月数分档 +5/0/-5，ADR 0025 D2）。
 
 seam = 月末确定性结算 tick（apply_fixed_period_flows，现役 substrate_hub）。
-真实 hub 路落库接线覆盖分档与豁免。
+oracle：army_loyalty_tick_delta 分档 + hub 路真实落库接线。
+
+票面验收覆盖：
+① 满饷月 +5 回血（oracle 单元）
+② 欠饷第 1-2 月不掉（dead-band，oracle 单元）
+③ 第 3 月起每月 -5（oracle + hub 落库）
+④ clamp 触底/触顶（oracle 单元；落库侧 clamp 由 hub tick）
+⑤ 土司 / 非明 / 自养 / 零兵不被 tick 动（hub 路）
 """
 
-from __future__ import annotations
 
 
-import pytest
 
-from ming_sim.flows import apply_fixed_period_flows
 
 KEG = "guanning"    # 火药桶/主测军（content 军，needed 可控）
 ELITE = "jingying"  # 精锐对照军
@@ -29,7 +36,7 @@ def _setup_army(db, aid, *, loyalty=50, arrears=0.0, manpower=10000,
         """
         UPDATE armies
         SET owner_power=?, is_tusi=?, self_funded_pay=0,
-            manpower=?, salary_rate=?, loyalty=?, arrears=?, morale=50
+            manpower=?, salary_rate=?, loyalty=?, province_pay_arrears=0, central_pay_arrears=?, morale=50
         WHERE id=?
         """,
         (owner_power, is_tusi, manpower, salary_rate, loyalty, arrears, aid),
@@ -65,22 +72,21 @@ def test_substrate_hub_path_loyalty_tier(game):
     assert log is not None and int(log["delta"]) == -5, "hub 路同事务写 loyalty 日志"
 
 
-def test_substrate_hub_pure_province_source_loyalty_regression(game):
-    """纯省源 1.0/0.0 — hub 路仍按合计欠饷分档动 loyalty。"""
+@pytest.mark.parametrize('aid, region, province_share, central_share', [("fujian_navy", "fujian", 1.0, 0.0), ("xuan_da", "shanxi", 0.55, 0.45)])
+def test_substrate_hub_pure_province_source_loyalty_regression(game, aid, region, province_share, central_share):
     db, state, _ = game
-    aid = "fujian_navy"  # 种子纯省源 fujian 1.0/0.0
     _silence_other_armies(db, keep=(aid,))
     db.conn.execute(
         """
         UPDATE armies
         SET owner_power='ming', is_tusi=0, self_funded_pay=0,
             manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
-            province_pay_share=1.0, central_pay_share=0.0,
-            pay_source_region='fujian',
-            province_pay_arrears=3.0, central_pay_arrears=0, arrears=3.0
+            province_pay_share=?, central_pay_share=?,
+            pay_source_region=?,
+            province_pay_arrears=3.0, central_pay_arrears=0
         WHERE id=?
         """,
-        (aid,),
+        (province_share, central_share, region, aid),
     )
     db.conn.commit()
     db.conn.execute("DELETE FROM army_logs WHERE army_id=?", (aid,))
@@ -88,37 +94,6 @@ def test_substrate_hub_pure_province_source_loyalty_regression(game):
     state.metrics["国库"] = 10 ** 9
     apply_fixed_period_flows(db, state)
     assert _loyalty_of(db, aid) == 45, "纯省源欠 3 月结算后 loyalty 应 -5"
-    logs = db.conn.execute(
-        "SELECT delta, reason FROM army_logs WHERE army_id=? AND field='loyalty' ORDER BY id",
-        (aid,),
-    ).fetchall()
-    assert len(logs) == 1, f"忠诚日志应仅一条，实得 {len(logs)}"
-    assert int(logs[0]["delta"]) == -5
-
-
-def test_substrate_hub_hybrid_source_loyalty_regression(game):
-    """混合 0.55/0.45 — hub 路按合计欠饷分档。"""
-    db, state, _ = game
-    aid = "xuan_da"  # 种子混合 shanxi 0.55/0.45
-    _silence_other_armies(db, keep=(aid,))
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-            manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
-            province_pay_share=0.55, central_pay_share=0.45,
-            pay_source_region='shanxi',
-            province_pay_arrears=3.0, central_pay_arrears=0, arrears=3.0
-        WHERE id=?
-        """,
-        (aid,),
-    )
-    db.conn.commit()
-    db.conn.execute("DELETE FROM army_logs WHERE army_id=?", (aid,))
-    db.conn.commit()
-    state.metrics["国库"] = 10 ** 9
-    apply_fixed_period_flows(db, state)
-    assert _loyalty_of(db, aid) == 45, "混合省源欠 3 月结算后 loyalty 应 -5"
     logs = db.conn.execute(
         "SELECT delta, reason FROM army_logs WHERE army_id=? AND field='loyalty' ORDER BY id",
         (aid,),
@@ -135,8 +110,8 @@ def test_tusi_and_non_ming_untouched_on_hub(game):
     _setup_army(db, ELITE, owner_power="houjin", arrears=0.0, loyalty=66)
     db.conn.execute(
         "UPDATE armies SET province_pay_share=0, central_pay_share=0, "
-        "pay_source_region='', province_pay_arrears=0, central_pay_arrears=0, "
-        "arrears=0 WHERE id IN (?, ?)",
+        "pay_source_region='', province_pay_arrears=0, central_pay_arrears=0 "
+        "WHERE id IN (?, ?)",
         (KEG, ELITE),
     )
     db.conn.commit()
@@ -151,7 +126,7 @@ def test_self_funded_army_untouched_on_hub(game):
     _silence_other_armies(db, keep=(KEG,))
     db.conn.execute(
         "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=1, "
-        "manpower=10000, salary_rate=1.0, loyalty=50, arrears=0.0, "
+        "manpower=10000, salary_rate=1.0, loyalty=50, province_pay_arrears=0, central_pay_arrears=0, "
         "province_pay_share=0, central_pay_share=0, pay_source_region='', "
         "province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
         (KEG,),

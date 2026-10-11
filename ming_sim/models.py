@@ -348,6 +348,9 @@ class Character:
     portrait_id: str = ""  # 头像文件标识：空=无专属；"minister_pool_3"=用第3号预设头像
     seed_guilt: Dict[str, str] = field(default_factory=dict)  # 开局罪谱；引擎内部值，不进入人物呈现上下文
     identity: int = 50  # 党派认同度；引擎内部值，不进入人物呈现上下文
+    # #1889：最近**实职**备档。罢居/罢免者 characters.office 置空（无现任），历史实职在此，
+    # 供起复品级读取（office_rank._is_substantive_office）。这是历史事实，不是现任的第二个可写表示。
+    historical_office: str = ""
     # ADR 0108 阴谋能力：静态 seed 能力轴（第五轴），LLM 零权碰此 int。
     # 引擎内部值，不进入人物呈现上下文（只走定性投影，P4）。
     intrigue: int = 50

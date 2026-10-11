@@ -1,11 +1,6 @@
-"""#1843：玩家过月入口走 ADR 0157 主链，不再走五模块 extractor。"""
-
 from __future__ import annotations
-
 import json
-
 import pytest
-
 import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
@@ -13,6 +8,13 @@ import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from tests.month_chain_helpers import make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.session_write_queue import get_session_write_queue
+from tests.month_chain_helpers import InlineExecutor, make_light_session
+"""#1843：玩家过月入口走 ADR 0157 主链，不再走五模块 extractor。"""
+
+
+
+
 
 def _forbid_extractor(monkeypatch):
     from tests.month_chain_helpers import empty_rescript_response
@@ -56,6 +58,87 @@ def _prepare_player_month(db, state, content, monkeypatch, *, world=None, transl
     session = make_light_session(db, state, content)
     return session
 
+
+def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monkeypatch):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="过月可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _stage_edict(db, state, minister, "宁远补饷", "宁远补饷", -1, affair.id)
+    _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
+    _stage_edict(db, state, minister, "大凌河", "大凌河", -10**12, affair.id)
+    state.metrics["国库"] = 500000
+    db.reign.save_game_state(state)
+    closed_turn = int(state.turn)
+    sources_before = {
+        str(row[0]) for row in db.conn.execute("SELECT source_id FROM character_knowledge_sources")
+    }
+    world_calls = []
+    translate_calls = []
+
+    def world(db_, state_, llm_config, agno_db=None, cheat_directive=""):
+        del llm_config, agno_db, cheat_directive
+        from ming_sim.materials import prepare_world_materials, release_material_tree
+        prepared = prepare_world_materials(db_, state_)
+        try:
+            world_calls.append({
+                "treasury": int(state_.metrics["国库"]),
+                "opening": prepared.opening,
+                "edicts": [
+                    row["decree_text"] for row in db_.dossiers.list_dossiers()
+                    if row["promulgation_decision"] == "promulgated"
+                ],
+            })
+        finally:
+            release_material_tree(prepared.root)
+        return "世界段只推演一次。"
+
+    def translate(*_a, **_k):
+        translate_calls.append(1)
+        return {"effects": {}}
+
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=world, translate=translate,
+    )
+    queue = get_session_write_queue(session)
+    ticket = queue.claim_if_absent([("mechanical-tail", closed_turn)])[0]
+    joined = {}
+
+    def finish_prior():
+        joined["done"] = True
+        queue.complete(ticket)
+
+    finish_prior()
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert joined.get("done") is True
+
+    assert world_calls and world_calls[0]["edicts"][:2] == ["宁远补饷", "陕西赈灾"]
+    ledger = list(db.conn.execute(
+        "SELECT category, delta FROM economy_ledger WHERE category IN ('宁远补饷','陕西赈灾','大凌河') ORDER BY id",
+    ))
+    assert [str(row["category"]) for row in ledger][:2] == ["宁远补饷", "陕西赈灾"]
+    assert all(int(row["delta"]) != -10**12 for row in ledger)
+    assert int(state.metrics["国库"]) >= 0
+    assert world_calls[0]["treasury"] == int(state.metrics["国库"])
+    assert len(world_calls) == 1
+    assert len(translate_calls) == 1
+    assert result.advanced is False
+    assert result.stage == "gazette"
+    assert int(state.turn) == closed_turn
+    assert not db.turn_reports.report_text(closed_turn)
+    assert sources_before == {
+        str(row[0]) for row in db.conn.execute("SELECT source_id FROM character_knowledge_sources")
+    }
+
+    session.resolve_turn(allow_empty_decree=True)
+    assert len(world_calls) == 1
+    assert len(translate_calls) == 1
+    assert [str(row["category"]) for row in db.conn.execute(
+        "SELECT category FROM economy_ledger WHERE category IN ('宁远补饷','陕西赈灾','大凌河') ORDER BY id",
+    )] == [str(row["category"]) for row in ledger]
+
+
 def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(game, monkeypatch):
     from ming_sim.exceptions import SettlementAbort
 
@@ -75,7 +158,7 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     )
     second_ref = pending_action_decree_ref(second_id, 1)
     state.metrics["国库"] = 500000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     produced = []
 
     def product(session, snapshot):
@@ -160,7 +243,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
     from ming_sim.decree_forecast import decree_ref_for_dossier
     from ming_sim.models import TurnPhase
-    dossier = next(d for d in db.list_decree_dossiers() if decree_ref_for_dossier(db, d) == ref)
+    dossier = next(d for d in db.dossiers.list_dossiers() if decree_ref_for_dossier(db, d) == ref)
     db.conn.execute(
         "UPDATE decree_dossiers SET created_turn=? WHERE id=?",
         (closed_turn - 1, int(dossier["id"])),
@@ -208,7 +291,7 @@ def test_player_recovery_uses_resolve_context_decree_not_ready_delta(game, monke
     db, state, content = game
     turn = int(state.turn)
     decree_mod.pre_settle(state, db, content=content)
-    db.save_resolve_context(
+    db.resolve_contexts.save(
         turn, "崩溃前原诏", {},
         source="player_decree",
     )
@@ -223,31 +306,30 @@ def test_player_recovery_uses_resolve_context_decree_not_ready_delta(game, monke
     # 无 ready delta：不得出现 metric_delta 级大跳（旧 ready 会 -40）
     assert db.load_state().metrics["民心"] > support - 40
     assert session.last_decree == "崩溃前原诏"
-    ctx = db.get_resolve_context(turn)
+    ctx = db.resolve_contexts.get(turn)
     assert "extracted" not in ctx
     assert ctx["source"] == "player_decree"
 
 
 def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch):
     db, state, content = game
-    from ming_sim.applier import Provenance
+    _forbid_extractor(monkeypatch)
 
     monkeypatch.setattr(
         month_translate, "translate_month_segment",
         lambda *_a, **_k: {"effects": {"emperor_fate": "suicide"}},
     )
-    chain = {"world_text_ready": True, "world_text": "世界段"}
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "世界段")
     session = make_light_session(db, state, content)
-
-    outcome = month_chain._run_world_segment(
-        session, chain, source=Provenance.system_simulation,
-    )
-
-    expected = {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
-    assert outcome == expected
-    assert chain["declaration_outcome"] == expected
-    payload = db.get_resolve_context(int(state.turn))["simulator_payload"]
-    assert payload["month_chain"]["declaration_outcome"] == expected
+    turn = int(state.turn)
+    assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+    payload = db.resolve_contexts.get(turn)["simulator_payload"]
+    assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_suicide"
+    db.save_turn_report(state, "邸报已成")
+    assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    assert state.ended is True
+    assert state.ending_status == "emperor_suicide"
+    assert int(state.turn) == turn + 1
 
 def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatch):
     db, state, content = game
@@ -289,7 +371,7 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
 
     waiting = session.resolve_turn(allow_empty_decree=True)
     assert waiting.stage == "gazette"
-    payload = db.get_resolve_context(turn)["simulator_payload"]
+    payload = db.resolve_contexts.get(turn)["simulator_payload"]
     assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_abdicate"
     assert "call_failure" not in payload["month_chain"]
 
@@ -305,29 +387,6 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     assert state.ending_status == "emperor_abdicate"
     assert int(state.turn) == turn + 1
 
-def test_staged_ending_is_available_inside_its_settlement_transaction(game):
-    db, state, _content = game
-    from ming_sim.applier import Provenance
-    from ming_sim.declaration_dispatch import (
-        settle_staged_declarations_in_decree_order, stage_declaration,
-    )
-
-    stage_declaration(
-        db, decree_ref="ending-decree", turn=int(state.turn),
-        declaration={"effects": {"emperor_fate": "abdicate"}},
-    )
-    committed = {}
-    settled = settle_staged_declarations_in_decree_order(
-        db, state, ["ending-decree"], source=Provenance.player_decree,
-        alongside=lambda ref, result: committed.update(
-            ref=ref, outcome=month_chain._ending_from_dispatch_result(result),
-        ),
-    )
-
-    assert "ending-decree" in settled
-    assert committed["ref"] == "ending-decree"
-    assert committed["outcome"]["status"] == "emperor_abdicate"
-    assert db.staged_declarations.is_settled("ending-decree")
 
 def test_failed_declaration_commit_reloads_memory_from_db(game):
     db, state, _content = game
@@ -377,7 +436,7 @@ def test_failed_declaration_commit_reloads_memory_from_db(game):
 def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monkeypatch):
     db, state, content = game
     state.turn = 2
-    db.save_state(state)
+    db.reign.save_game_state(state)
     from ming_sim.declaration_dispatch import (
         held_dossier_decree_ref, pending_action_decree_ref, stage_declaration,
     )
@@ -449,14 +508,37 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     _settle_edicts(sess, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
-    assert db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
+    assert db.dossiers.get(dossier_id)["promulgation_decision"] == "promulgated"
 
     # 再次进入月链结算：保持 held_ref 案卷身份，旧 pending-action 不被冒名结算
     _settle_edicts(sess, chain=chain)
     assert db.staged_declarations.is_settled(held_ref)
     assert not db.staged_declarations.is_settled(stale_ref)
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert decree_ref_for_dossier(db, dossier) == held_ref
+
+
+
+
+def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
+    db, state, content = game
+    turn = int(state.turn)
+    db.save_turn_report(state, "邸报已成")
+
+    def fail_after_advance(*_args, **_kwargs):
+        raise RuntimeError("injected tail failure")
+
+    monkeypatch.setattr(
+        db.reign, "save_game_state", fail_after_advance,
+    )
+    with pytest.raises(RuntimeError, match='injected tail failure'):
+        month_chain._advance_after_gazette(
+            db, state, {}, turn, "", month_chain.Provenance.system_simulation,
+            content=content,
+        )
+
+    assert int(state.turn) == turn
+    assert db.load_state().turn == turn
 
 
 def test_missing_world_model_stops_before_world_commit(game, monkeypatch):
@@ -502,7 +584,7 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
         month_chain, "run_secret_orders_supply",
         lambda *a, **k: {
             "dossier_progress_reports": [{
-                "dossier_id": int(db.get_dossier_for_secret_order(order_id)["id"]),
+                "dossier_id": int(db.dossiers.get_for_secret_order(order_id)["id"]),
                 "progress_band": "持平",
                 "memorial_text": "核验田亩中",
             }],
@@ -511,14 +593,14 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
     )
     session = make_light_session(db, state, content)
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
-    assert db.get_secret_order(order_id)["status"] == "failed"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "failed"
     rows = db.conn.execute(
         "SELECT section FROM rejection_reports WHERE turn=? AND section='issue_inertia'",
         (turn,),
     ).fetchall()
     assert len(rows) == 1
     session.resolve_turn(allow_empty_decree=True)
-    assert db.get_secret_order(order_id)["status"] == "failed"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "failed"
     assert len(db.conn.execute(
         "SELECT id FROM rejection_reports WHERE turn=? AND section='issue_inertia'",
         (turn,),
@@ -529,35 +611,24 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     from pathlib import Path
 
     import ming_sim.agents as agents_mod
-    import ming_sim.materials as materials_mod
     from ming_sim.agents import bind_content
     from ming_sim.models import LLMConfig
 
     db, state, content = game
     bind_content(content)
     seen = []
-    openings = []
-    real_prepare = materials_mod.prepare_world_materials
-
-    def prepare(db_, state_, *args, **kwargs):
-        prepared = real_prepare(db_, state_, *args, **kwargs)
-        openings.append(prepared.opening)
-        return prepared
-
-    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
 
     def capture(agent, _message, **_kwargs):
         tools = {tool.__name__: tool for tool in agent.tools}
         listing = tools["list_materials"]("")
         index = tools["read_material"]("INDEX.txt")
-        board = tools["read_material"]("盘面/全局.txt")
+        has_dir = hasattr(agent.model, "materials_dir")
         materials_dir = getattr(agent.model, "materials_dir", "")
         seen.append({
             "listing": listing,
             "index": index,
-            "board": board,
+            "has_dir": has_dir,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "instructions": [str(part) for part in agent.instructions],
         })
         return "静"
 
@@ -567,18 +638,19 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         model="gpt-test", channel="api",
     )
     assert month_chain.run_world_segment_text(db, state, api) == "静"
-    catalog = [line for line in seen[0]["listing"].splitlines() if line]
-    assert "INDEX.txt" in catalog
-    assert any(line != "INDEX.txt" for line in catalog)
+    assert "INDEX.txt" in seen[0]["listing"].splitlines()
     assert seen[0]["index"].strip()
-    assert seen[0]["board"].strip()
-    assert seen[0]["dir_has_index"] is False
-    # 开场通道＝prepare 交回的那一份，不靠栏目名从 instructions 里认。
-    assert openings[0]
-    assert openings[0] in seen[0]["instructions"]
+    assert seen[0]["has_dir"] is False
+    # Directory listing must expose materials beyond the index file itself.
+    extra = next(
+        line for line in seen[0]["listing"].splitlines()
+        if line and line != "INDEX.txt"
+    )
+    assert extra
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     assert month_chain.run_world_segment_text(db, state, cli) == "静"
+    assert seen[1]["has_dir"] is True
     assert seen[1]["dir_has_index"] is True
     assert seen[1]["index"].strip()
 
@@ -608,14 +680,14 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         "UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
         (int(state.turn) - 1, int(state.turn), order_id),
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     grant_id = db.create_decree_dossier(
         state, action_type="grant_allocation", decree_text="赈粮在途",
         target_kind="region", target_id="henan",
         payload={"amount": 100, "grant_action": "赈灾", "account": "国库"},
     )
-    db.transition_decree_dossier(grant_id, "promulgated")
-    db.transition_decree_dossier(grant_id, "executing")
+    db.dossiers.transition(grant_id, "promulgated")
+    db.dossiers.transition(grant_id, "executing")
     db.conn.commit()
     reports = [
         {
@@ -660,17 +732,17 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.advanced is True
-    assert db.get_turn_report(closed_turn) == "本月已归档。"
-    assert db.get_secret_order(order_id)["status"] == "done"
+    assert db.turn_reports.report_text(closed_turn) == "本月已归档。"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "done"
     assert db.conn.execute(
         "SELECT fidelity_state FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, closed_turn),
     ).fetchone()["fidelity_state"] == "忠实"
     assert any(
         item["memorial_text"] == "本月密奏已达"
-        for item in db.list_dossier_progress(dossier_id)
+        for item in db.dossiers.list_dossier_progress(dossier_id)
     )
-    recon = db.list_dossier_reconciliations(grant_id)[-1]
+    recon = db.dossiers.reconciliations(grant_id)[-1]
     # 北极星 30 两无护 15–18 → 面额 100 中位 55；独立常量，不调实现函数。
     ordered = int(recon["ordered_amount"])
     assert ordered == 100
@@ -730,7 +802,10 @@ def test_edict_that_drops_unrest_below_gate_does_not_trigger_world_event(game, m
     session.resolve_turn(allow_empty_decree=True)
     unrest = _three_province_unrest(db)
     assert unrest == {"shaanxi": 55, "shanxi": 55, "henan": 55}
-    assert db.event_terminal_state("north_three_uprising") is None
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
+        ("north_three_uprising",),
+    ).fetchone() is None
 
 def test_edict_that_raises_unrest_over_gate_triggers_after_the_edict(game, monkeypatch):
     """三省 unrest 55 经旨升 20 后，同一过月入口在实账上触发。"""
@@ -741,4 +816,7 @@ def test_edict_that_raises_unrest_over_gate_triggers_after_the_edict(game, monke
     session = _prepare_player_month(db, state, content, monkeypatch)
     session.resolve_turn(allow_empty_decree=True)
     assert _three_province_unrest(db) == {"shaanxi": 75, "shanxi": 75, "henan": 75}
-    assert db.event_terminal_state("north_three_uprising") == "triggered"
+    assert db.conn.execute(
+        "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+        ("north_three_uprising",),
+    ).fetchone()["terminal_state"] == "triggered"

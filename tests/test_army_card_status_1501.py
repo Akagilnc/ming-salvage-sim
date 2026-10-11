@@ -1,22 +1,26 @@
-"""#1501 军牌欠饷呈现单源化：军牌专属投影停携 status；DB status 不被投影改写。
+from __future__ import annotations
+from types import SimpleNamespace
+import web_app
+"""#1501 军牌欠饷呈现单源化：军牌专属投影停携/停渲静态 status 句；共享读者保留。
 
-契约面（结构化）：
-- army_payload / state_payload.armies 无 status 键，无 raw arrears/morale/loyalty
-- 完整键集对照 + 逐字段 DB 直输字段
-- arrears_text / morale_text / mutiny_tier 为非空 str
-- 读 payload 后 DB armies.status 原样
-不锁 army_report／detail／roster／知识材料等生成正文中的 status 原句。
+刀口：
+- army_payload（web 军牌）停止携带 status；其余字段完整键集/逐字段机械对照
+- 军牌前端不渲染状态句（前端单测另钉）
+- 共享出口逐点真实调用：army_report / intelligence /
+  knowledge / state_payload.army_warning /
+  army_roster，仍含原 status（禁以直调 army_report 顶替消费点）
+  （#321 P7：print_header 已拆除 army_report 直显，不再作为 status 消费点）
+- DB armies.status 零改写；payload 用 arrears_text approximate，省略 raw arrears
 """
 
-from __future__ import annotations
 
-from types import SimpleNamespace
 
-import web_app
+
 
 
 _GUANNING_ID = "guanning"
 
+# army_payload 投影完整键集（#1501 删 status；#321 军心/士气/欠饷改三字符串键）。
 _ARMY_PAYLOAD_KEYS = frozenset(
     {
         "id",
@@ -40,6 +44,8 @@ _ARMY_PAYLOAD_KEYS = frozenset(
         "owner_power",
     }
 )
+
+
 
 
 def _expected_army_card_from_row(db, row) -> dict:
@@ -118,6 +124,8 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
 
     guanning = by_id[_GUANNING_ID]
     assert isinstance(guanning["arrears_text"], str) and guanning["arrears_text"]
+
+
 
 
 def test_db_status_field_untouched_after_payload_read(read_game):

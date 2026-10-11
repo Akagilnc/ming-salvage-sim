@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1465 切片③：CLI 子进程替身（禁起真 CLI 进程）。
 
 生产读法 = `Popen` + 增量读 stdout（新字节刷新活动时刻，不设总墙钟）。
@@ -6,7 +7,6 @@
 「静默超阈值判死」等契约用。
 """
 
-from __future__ import annotations
 
 import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union

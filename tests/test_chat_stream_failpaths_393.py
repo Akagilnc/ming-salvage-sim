@@ -1,3 +1,18 @@
+from __future__ import annotations
+from tests.sse_helpers import parse_sse_event_pairs as _parse_sse
+from ming_sim.session_write_queue import get_session_write_queue
+import json
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+import pytest
+from fastapi.testclient import TestClient
+import web_app
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.llm_transport import default_transport_policy
+from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.web_audience_test_doubles import install_hall_admission, minister_double
+from tests.conftest import stub_scene_agent
 """#393 / cmr Gate2 F-B：召对流式 prologue 在「已建 chat_turn」之后写途中崩溃，必须失败该轮
 （fail_chat_turn）并释放写路径——否则留下 active 且无大臣回复的孤儿轮，后续召对/drain 永久卡住。
 
@@ -8,24 +23,12 @@ _serialized_web_write), not private _write_gate.locked() / _pending_writes_count
 #1465: 召对 API transport 统一重试（attempt 预算/分类/系统层终失败/独立空转）。
 #1780: 提供方 HTTP 5xx 经 ModelProviderError 事件界保真 status，召对流总计 3 attempts。
 """
-from __future__ import annotations
 
-from tests.sse_helpers import parse_sse_event_pairs as _parse_sse
 
-from ming_sim.session_write_queue import get_session_write_queue
 
-import json
-import threading
-from pathlib import Path
-from types import SimpleNamespace
 
-import pytest
-from fastapi.testclient import TestClient
 
-import web_app
-from ming_sim.exceptions import LLMUnavailable
-from ming_sim.llm_transport import default_transport_policy
-from tests.conftest import stub_audience_translate, stub_scene_agent
+
 
 def _assert_write_path_free(runtime) -> None:
     """Drain admitted background writes before probing failpath gate cleanup."""
@@ -37,23 +40,28 @@ def _assert_write_path_free(runtime) -> None:
         pass
 
 
-def _inject_prologue_append_failure(runtime, monkeypatch) -> None:
-    """Real night/turn path first; fail only at append_chat_message (prologue write)."""
-
-    def _boom(*_a, **_k):
-        raise RuntimeError("DB 写盘失败（模拟 prologue 崩溃）")
-
-    monkeypatch.setattr(runtime.db, "append_chat_message", _boom)
+class _FailingPrologueDB:
 
 
 
 
-class _StreamCrashAgent:
-    """Agent whose generator raises on first iteration → triggers worker except path."""
 
-    def run(self, *_args, **_kwargs):
-        raise RuntimeError("LLM 流式调用崩溃。")
-        yield  # makes run() a generator function
+    @property
+    def chat_messages(self):
+        return self
+
+    def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+        return self.append_chat_message(minister_name, turn, role, content)
+
+
+
+
+    def history_by_minister(self):
+        return {}
+
+
+
+
 
 
 def test_prologue_failure_fails_orphan_turn_and_releases_gate(web_game, monkeypatch):
@@ -143,6 +151,29 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(web_game, monkeyp
     _assert_write_path_free(runtime)
 
 
+class _DoubleFailDB:
+    """prologue fails AND cleanup (fail_chat_turn) also fails — tests that
+    write path + pending ownership are still released (R3 self-check)."""
+
+
+
+
+
+
+    @property
+    def chat_messages(self):
+        return self
+
+    def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+        return self.append_chat_message(minister_name, turn, role, content)
+
+
+
+
+
+
+
+
 def test_prologue_cleanup_failure_still_releases_gate_and_counter(web_game, monkeypatch):
     """R3 self-check: prologue 崩 → _fail_chat_turn_and_reload 自身也崩（DB 已坏）→
     写路径与 pending ownership 仍须释放，否则 drain 永久挂起、所有写入被永久挡。"""
@@ -163,60 +194,61 @@ def test_prologue_cleanup_failure_still_releases_gate_and_counter(web_game, monk
     _assert_write_path_free(runtime)
 
 
+class _StreamCrashAgent:
+    """Agent whose generator raises on first iteration → triggers worker except path."""
+
+    def run(self, *_args, **_kwargs):
+        raise RuntimeError("LLM 流式调用崩溃。")
+        yield  # makes run() a generator function
+
+
+class _WorkerPathDB:
+    """Prologue succeeds (chat_messages.insert OK) but worker scene payload crashes
+    AND fail_chat_turn also crashes → worker double-failure path."""
+
+
+
+
+
+    @property
+    def chat_messages(self):
+        return self
+
+    def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+        return self.append_chat_message(minister_name, turn, role, content)
 
 
 
 
 
 
-def test_issue_stream_llm_unavailable_is_structured_not_500(
-    game, monkeypatch,
-):
-    """#1452 A：POST /api/decree/issue/stream 底层 LLMUnavailable → SSE 结构化非裸 500。"""
-    db, state, content = game
-    provider = "拟诏 upstream 503 connection refused"
 
-    def _boom_resolve(**_k):
-        raise LLMUnavailable(
-            "fixture unavailable",
-            code="llm_error",
-            provider_message=provider,
-        )
+    @property
+    def reign(self):
+        return self
 
-    session = SimpleNamespace(
-        resolve_turn=_boom_resolve,
-        last_decree="",
-        current_phase=lambda: state.turn_phase,
-        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
-    )
-    runtime = SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=session,
-        ended=False,
-        refresh_turn=lambda: None,
-        directive_rows=lambda: [],
-        state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-        _write_gate=get_session_write_queue(session).write_gate,
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        def _stub(*_a, **_k):
+            return None
+        return _stub
 
-    response = TestClient(web_app.app).post("/api/decree/issue/stream", json={})
-    assert response.status_code == 200, response.text
-    events = _parse_sse(response.text)
-    assert events, response.text
-    assert events[-1][0] == "error", events[-1]
-    detail = events[-1][1]
-    assert isinstance(detail, dict), detail
-    # 只钉 SSE 外层结构字段；不锁自由正文 / 玩家可见措辞。
-    assert detail.get("code") == "llm_error", detail
-    assert "provider_message" in detail, detail
-    assert detail.get("provider_message") == provider, detail
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ── #1452 B / #1465：召对流真实入口 transport 验收 ───────────────────────────
-# 复用真实 WebGame + conftest stub_scene_agent，不恢复已删假壳。
+# 复用 tests/test_audience_background 的真实 game + WebGame 装配，不平行造第二套夹具。
 
 
 class RunErrorEvent:
@@ -263,7 +295,6 @@ class _CountingFailAgent:
         yield RunContent("臣")
         yield RunContent("已核辽饷。")
         yield RunCompletedEvent()
-
 
 
 def _transport_web_game(agent, monkeypatch):
@@ -340,8 +371,6 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, web_
     assert detail.get("message")
     assert detail.get("reason") == "Unknown model error"
     assert calls["n"] == 1
-
-
 
 
 def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, web_game):
@@ -755,6 +784,60 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert detail.get("message"), detail
     assert detail.get("reason") == provider
     assert (Path(detail["error_pack_path"]) / "traceback.txt").is_file()
+
+def _inject_prologue_append_failure(runtime, monkeypatch) -> None:
+    """Real night/turn path first; fail only at append_chat_message (prologue write)."""
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("DB 写盘失败（模拟 prologue 崩溃）")
+
+    monkeypatch.setattr(runtime.db.chat_messages, 'insert', _boom)
+
+
+def test_issue_stream_llm_unavailable_is_structured_not_500(
+    game, monkeypatch,
+):
+    """#1452 A：POST /api/decree/issue/stream 底层 LLMUnavailable → SSE 结构化非裸 500。"""
+    db, state, content = game
+    provider = "拟诏 upstream 503 connection refused"
+
+    def _boom_resolve(**_k):
+        raise LLMUnavailable(
+            "fixture unavailable",
+            code="llm_error",
+            provider_message=provider,
+        )
+
+    session = SimpleNamespace(
+        resolve_turn=_boom_resolve,
+        last_decree="",
+        current_phase=lambda: state.turn_phase,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
+    )
+    runtime = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=session,
+        ended=False,
+        refresh_turn=lambda: None,
+        directive_rows=lambda: [],
+        state_payload=lambda: {"turn": {"turn": int(state.turn)}},
+        _write_gate=get_session_write_queue(session).write_gate,
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    response = TestClient(web_app.app).post("/api/decree/issue/stream", json={})
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events, response.text
+    assert events[-1][0] == "error", events[-1]
+    detail = events[-1][1]
+    assert isinstance(detail, dict), detail
+    # 只钉 SSE 外层结构字段；不锁自由正文 / 玩家可见措辞。
+    assert detail.get("code") == "llm_error", detail
+    assert "provider_message" in detail, detail
+    assert detail.get("provider_message") == provider, detail
 
 
 def test_chat_stream_policy_max_attempts_override(monkeypatch, tmp_path, web_game):

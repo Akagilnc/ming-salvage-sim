@@ -11,11 +11,20 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
 
 import json
 from typing import Any, Dict, List, Sequence
 
 from ming_sim.models import _load_durable_json_list, _load_durable_json_object
+from ming_sim.strict_types import strict_int
+
+from ming_sim.applier import (
+    StoredDocumentError,
+    load_stored_json,
+    load_stored_list,
+    load_stored_object,
+)
 from ming_sim.strict_types import strict_int
 
 ENTRY_KIND_STAGED = "staged_commitment"
@@ -127,6 +136,45 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     return _stages_for_write(data)
 
 
+def _commitment_stages_members(data: List[object]) -> List[Dict[str, object]]:
+    """Single member-shape authority for stages lists.
+
+    Raises ValueError on bad members/fields. Callers choose the seam:
+    durable load wraps as StoredDocumentError; product write keeps ValueError.
+    """
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("stages_json 成员必须为对象")
+        try:
+            due_turn = strict_int(item.get("due_turn"))
+            stage_idx = strict_int(item.get("stage_idx"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("stages_json due_turn/stage_idx 必须为整数") from exc
+        if due_turn <= 0:
+            raise ValueError("stages_json due_turn 必须为正整数")
+        if stage_idx < 0:
+            raise ValueError("stages_json stage_idx 必须为非负整数")
+        for field in ("criterion_text", "origin_context"):
+            if not isinstance(item.get(field), str) or not item[field].strip():
+                raise ValueError(f"stages_json {field} 必须为非空文字")
+    return sorted(
+        data,  # type: ignore[arg-type]
+        key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])),
+    )
+
+
+def load_commitment_stages(raw: object) -> List[Dict[str, object]]:
+    """Durable stages never discard a corrupt member as absent.
+
+    Top-level and member/shape faults are StoredDocumentError (read seam).
+    """
+    data = load_stored_list(raw, label="stages_json")
+    try:
+        return _commitment_stages_members(data)
+    except ValueError as exc:
+        raise StoredDocumentError(str(exc)) from exc
+
+
 def stages_to_json(stages: object) -> str:
     """Serialize stages for durable DB write.
 
@@ -143,6 +191,13 @@ def stages_to_json(stages: object) -> str:
 def stages_list_from_source(stages: object) -> List[Dict[str, object]]:
     """Strict serial capture: reuse ``stages_to_json``, never a parallel parser."""
     return json.loads(stages_to_json(stages))
+
+
+def capture_commitment_stages(
+    raw: object = None,
+) -> List[Dict[str, object]]:
+    """Only declared schema creates commitment facts; narrative is not input."""
+    return load_commitment_stages(stages_to_json(raw))
 
 
 def stages_source_from_issue_item(ni: Dict[str, object]) -> object:
@@ -194,21 +249,10 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
 
     去重键在写端用 (commitment_id, stage_idx)；此处返回全部到期段候选。
     """
-    rows = db.conn.execute(
-        """
-        SELECT id, title, stages_json, origin_ref, origin_turn, stage_text
-        FROM issues
-        WHERE status='active'
-          AND commitment_kind != ''
-          AND stages_json IS NOT NULL
-          AND stages_json != ''
-          AND stages_json != '[]'
-        ORDER BY id
-        """
-    ).fetchall()
+    rows = IssueStore(db.conn).read_list_due_stages_for_scan()
     due: List[Dict[str, object]] = []
     for row in rows:
-        stages = normalize_commitment_stages(row["stages_json"])
+        stages = load_commitment_stages(row["stages_json"])
         for stage in stages:
             if int(stage["due_turn"]) <= int(turn):
                 due.append({
@@ -249,7 +293,7 @@ def list_due_grant_report_dossiers_for_scan(
         if str(row["execution_outcome"] or "").strip():
             continue
         did = int(row["id"])
-        dossier = db.get_decree_dossier(did)
+        dossier = db.dossiers.get(did)
         if dossier is None:
             raise ValueError(f"案卷不存在：{did}")
         payload = dossier["payload"]  # get_decree_dossier 经权威解码，必为 dict
@@ -290,7 +334,7 @@ def write_due_staged_commitment_todos(db: Any, state: Any) -> int:
         return 0
     written = 0
     for item in due_stages:
-        created = db.insert_next_audience_todo(
+        created = db.dossiers.insert_next_audience_todo(
             commitment_ref=int(item["commitment_ref"]),
             stage_idx=int(item["stage_idx"]),
             due_turn=int(item["due_turn"]),

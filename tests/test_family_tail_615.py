@@ -1,19 +1,20 @@
-"""#615 473·S9 族尾收口：贯通 tracer + 密令 0055 豁免 + 接缝核对。"""
-
+from ming_sim.entities.dossier import PROMULGATION_BLOCKED_LAYERS
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
-
 import pytest
-
 import ming_sim.decree as decree_mod
 from ming_sim.db import GameDB
 from ming_sim.models import Character
 from tests.dossier_test_helpers import _cost_events, _sat
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
+from ming_sim import issues as issue_engine
+"""#615 473·S9 族尾收口：贯通 tracer + 密令 0055 豁免 + 接缝核对。"""
 
 
-BLOCKED_LAYERS = {"cabinet_drafting", "palace_rescript", "six_offices"}
+
+
+
 SNAPSHOT_KEYS = {
     "imperial_authority_band",
     "appointment_tenure",
@@ -47,7 +48,7 @@ def _stage_break_rank_acting(db, state, content, name):
     )
     db.commit_pending_actions(state, content=content)
     dossier = next(
-        row for row in db.list_decree_dossiers()
+        row for row in db.dossiers.list_dossiers()
         if row["pending_action_id"] == pending_id
     )
     payload = json.loads(str(dossier["payload_json"] or "{}"))
@@ -69,7 +70,7 @@ def _grant_self_scope_authority(db, state, content, holder):
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
         payload={"mode": "ordinary"},
     )
-    db.record_dossier_decision(grant_id, "promulgated")
+    db.dossiers.record_dossier_decision(grant_id, "promulgated")
     result = view(settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': f'character:{holder}', 'dossier_id': grant_id}]}, SettlementContext(content=content)), "authority_changes")[0]
     return int(result["authority_id"])
 
@@ -81,12 +82,12 @@ def _board_with_td4_three(db, state, content, *, appointee="越级署理甲"):
     authority_id = _grant_self_scope_authority(db, state, content, appointee)
     endorser = _minister(db)
     chat_turn_id = db.create_chat_turn(state, endorser, "family-tail-615", 0)
-    endorsement_id = db.add_dossier_endorsement(
+    endorsement_id = db.dossiers.add_endorsement(
         int(dossier["id"]), form="会签", endorser_id=endorser,
         source_chat_turn_id=chat_turn_id,
     )
     context = decree_mod.build_promulgation_judge_context(
-        db, state, [db.get_decree_dossier(dossier["id"])],
+        db, state, [db.dossiers.get(dossier["id"])],
     )
     row = context["dossiers"][0]
     assert row["appointment_tenure"] == "署理"
@@ -131,7 +132,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
     restored_state = restored.load_state()
     after = decree_mod.build_promulgation_judge_context(
         restored, restored_state,
-        [restored.get_decree_dossier(dossier_id)],
+        [restored.dossiers.get(dossier_id)],
     )["dossiers"][0]
     assert after["appointment_tenure"] == "署理"
     assert after["held_authorities"] == board["held_authorities"]
@@ -160,11 +161,11 @@ def test_break_rank_appointment_rescript_td4_tracer(
     apply_dossier_verdicts(restored,
         restored_state, [verdict], content=content,
     )
-    rejected = restored.get_decree_dossier(dossier_id)
+    rejected = restored.dossiers.get(dossier_id)
     assert rejected["status"] == "proposed"
     assert rejected["promulgation_decision"] == "rejected"
     assert rejected["rescript_pending"] is True
-    assert rejected["promulgation_blocked_layer"] in BLOCKED_LAYERS
+    assert rejected["promulgation_blocked_layer"] in PROMULGATION_BLOCKED_LAYERS
     assert rejected["promulgation_blocked_layer"] == "six_offices"
     opponents = rejected.get("primary_opponents") or json.loads(
         restored.conn.execute(
@@ -199,7 +200,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
         restored_state, dossier_id, decision, content=content,
     )
 
-    row = restored.get_decree_dossier(dossier_id)
+    row = restored.dossiers.get(dossier_id)
     assert row["status"] == expected_status
     authority_events = [
         x for x in _cost_events(restored, dossier_id)
@@ -228,8 +229,8 @@ def test_break_rank_appointment_rescript_td4_tracer(
         assert int(row["held_turn"] or 0) == settle_turn
         assert row["promulgation_decision"] == "rejected"
         # 再判入口可接：仍 proposed、同 id，不要求本片再跑真判官。
-        assert restored.get_decree_dossier(dossier_id)["id"] == dossier_id
-        assert restored.get_decree_dossier(dossier_id)["status"] == "proposed"
+        assert restored.dossiers.get(dossier_id)["id"] == dossier_id
+        assert restored.dossiers.get(dossier_id)["status"] == "proposed"
     if decision == "withdrawn":
         assert row["promulgation_decision"] == "rejected"
     restored.close()

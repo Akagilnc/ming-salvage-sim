@@ -52,6 +52,7 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
 from ming_sim.db import GameDB
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
@@ -88,6 +89,7 @@ from ming_sim.audience_night import (
     append_ledger_entry,
 )
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
+from ming_sim.entities.dossier import DOSSIER_MODES
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.relations import summon_edge_origin
 from ming_sim.settlement.run import apply_person_changes_only
@@ -420,7 +422,7 @@ def _persist_specialized_extraction(
     if not defer_monthly_secret_supply:
         reports = extraction.get("dossier_progress_reports") or []
         if isinstance(reports, list) and reports:
-            db.record_monthly_supervision_presence(int(turn), commit=False)
+            db.dossiers.record_monthly_supervision_presence(int(turn), commit=False)
             db.record_monthly_dossier_progress(int(turn), reports)
     denunciations = extraction.get("faction_denunciations") or []
     if isinstance(denunciations, list) and denunciations:
@@ -844,7 +846,7 @@ def _commission_appointment_fields(
     payload: Dict[str, Any] = {"name": name, "office": office, "appoint_action": action}
     mode = appointment.get("mode")
     if mode is not None:
-        if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
+        if not isinstance(mode, str) or mode not in DOSSIER_MODES:
             return None, RejectedItem(
                 item=dict(appointment), reason=f"任免模式非法：{mode}",
                 category="invalid_enum", source=source,
@@ -1406,7 +1408,7 @@ def _dispatch_commissions(
                 continue
             # ADR 0005 决定 2：可选集合字段坏类型只拒本项，不带走同批合法交办。
             tags = _declared_str_list(secret.get("tags"))
-            # dossier_links 不是字符串数组：现役消费者 db.add_dossier_links 收的是
+            # dossier_links 不是字符串数组：现役消费者 db.dossiers.add_links 收的是
             # 关联对象 {target_dossier_id, relation_type, note}（ADR 0054:5 案卷
             # 关联契约）。按既有字段契约校验形状，坏类型同样只拒本项。
             links = _declared_dossier_links(secret.get("dossier_links"))
@@ -1679,7 +1681,7 @@ def _dispatch_commissions(
             if grant_raw or appointment_fields:
                 _reject(rejected, item, "御笔强推不可与普通拨帑或任免交办并存", "invalid_shape", source)
                 continue
-            if db.get_decree_dossier(push_id) is None:
+            if db.dossiers.get(push_id) is None:
                 _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
                 continue
         text = item.get("text")
@@ -1849,9 +1851,9 @@ def _dispatch_commissions(
 
 def _active_secret_order(db: Any, order_id: int) -> Optional[Mapping[str, Any]]:
     """按密令 id 读仍在办的那一条。说话人不是查找键。"""
-    if int(order_id or 0) <= 0 or not hasattr(db, "get_secret_order"):
+    if int(order_id or 0) <= 0:
         return None
-    order = db.get_secret_order(int(order_id))
+    order = db.character_knowledge.get_secret_order(int(order_id))
     if not isinstance(order, Mapping):
         return None
     if str(order.get("status") or "") != "active":
@@ -1951,15 +1953,10 @@ def _declared_dossier_links(raw: object) -> Optional[List[Dict[str, object]]]:
 def _commission_fallback_actor(db: Any) -> str:
     """场景整场入口无单人大臣锚时，directive.actor 回落殿前常在（王承恩优先）。"""
     for name in ("王承恩", "曹化淳"):
-        row = db.conn.execute(
-            "SELECT name FROM characters WHERE name=? LIMIT 1", (name,),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_commission_fallback_actor_name((name,))
         if row is not None:
             return str(row["name"])
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' "
-        "AND power_id='ming' ORDER BY name LIMIT 1"
-    ).fetchone()
+    row = CharacterStore(db.conn).read_commission_fallback_actor()
     return str(row["name"]) if row is not None else ""
 
 
@@ -2022,7 +2019,7 @@ def _dispatch_endorsements(
             # The write boundary owns field/reference validation. Durable payload
             # faults still raise rather than becoming model rejections.
             try:
-                db.attach_pending_action_endorsement(
+                db.dossiers.attach_pending_action_endorsement(
                     action_id, entry, commit=False,
                 )
             except (DeclarationDataError, DeclarationReferenceError) as exc:
@@ -2042,7 +2039,7 @@ def _dispatch_endorsements(
                 continue
             try:
                 for d in drow:
-                    db.add_dossier_endorsement(
+                    db.dossiers.add_endorsement(
                         int(d["id"]),
                         form=form,
                         endorser_id=endorser_id,
@@ -2237,7 +2234,7 @@ def _dispatch_inquiries(
                     "invalid_shape", source,
                 )
                 continue
-            order = db.get_secret_order(order_id)
+            order = db.character_knowledge.get_secret_order(order_id)
             if order is None:
                 _reject(
                     rejected, item, f"密令不存在：{order_id}",
@@ -2361,7 +2358,7 @@ def _dispatch_rushes(
             })
             continue
         # secret_order
-        order = db.get_secret_order(target_id)
+        order = db.character_knowledge.get_secret_order(target_id)
         if order is None:
             _reject(rejected, item, f"催办目标密令不存在：{target_id}", "hallucinated_id", source)
             continue
@@ -2507,7 +2504,7 @@ def _dispatch_promises(
             if kind != "directive":
                 _reject(rejected, item, "仅拟旨候选可留中", "invalid_shape", source)
                 continue
-            db.hold_over_pending_actions(
+            db.dossiers.hold_over_pending_actions(
                 int(state.turn), str(row["minister_name"]), [action_id],
             )
         elif decision == "修改":
@@ -2866,9 +2863,7 @@ def _resolve_night_source_chat_turn(
         return ctid, None
     if ctid <= 0:
         return 0, "召对夜上下文的当场实况须带正源轮 chat_turn_id"
-    row = db.conn.execute(
-        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()
+    row = db.reign.chat_turn_night_id(ctid)
     if row is None or int(row["night_id"] or 0) != nid:
         return 0, f"源轮不属于本夜：chat_turn_id={ctid}"
     return ctid, None

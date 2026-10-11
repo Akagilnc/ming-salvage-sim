@@ -1,14 +1,16 @@
-"""#611 authority ledger: production slot, projection, restore, revoke facts."""
-
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 import pytest
-
 from ming_sim.db import GameDB
 import ming_sim.decree as decree_mod
 from ming_sim.relations import EMPEROR_NODE
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.settlement.views import section
+from ming_sim import issues as issue_engine
+"""#611 authority ledger: production slot, projection, restore, revoke facts."""
+
+
+
 
 def _minister(db):
     return str(db.conn.execute(
@@ -32,9 +34,9 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
         ],
         payload={"mode": "ordinary"},
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    assert db.dossier_authorizes_effects(dossier_id)
-    return db.get_decree_dossier(dossier_id)
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+    assert db.dossiers.authorizes_effects(dossier_id)
+    return db.dossiers.get(dossier_id)
 
 
 def _grant(db, state, content, holder, privilege, scope, dossier, **turns):
@@ -91,7 +93,7 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     restored = GameDB(db_path, content)
     restored_state = restored.load_state()
     after_restore = decree_mod.build_promulgation_judge_context(
-        restored, restored_state, [restored.get_decree_dossier(consumer["id"])],
+        restored, restored_state, [restored.dossiers.get(consumer["id"])],
     )
     assert after_restore["dossiers"][0]["held_authorities"] == expected_held
     assert after_restore["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
@@ -107,7 +109,7 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     restored.close()
     final = GameDB(db_path, content)
     final_state = final.load_state()
-    record = final.get_authority(authority_id)
+    record = final.characters.get_authority(authority_id)
     assert record["revoked"] is True
     assert record["revoked_turn"] == final_state.turn
 
@@ -125,7 +127,7 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     ] == factions_before
 
     gone = decree_mod.build_promulgation_judge_context(
-        final, final_state, [final.get_decree_dossier(consumer["id"])],
+        final, final_state, [final.dossiers.get(consumer["id"])],
     )
     assert gone["dossiers"][0]["held_authorities"] == []
     assert gone["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
@@ -134,7 +136,7 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     first_revoked_turn = record["revoked_turn"]
     again = settle_delta(final_state, final, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': revoke_dossier['id']}]}, SettlementContext(content=content))
     assert view(again, "authority_changes")[0]["reason"] == "already_revoked"
-    assert final.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
+    assert final.characters.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
     assert final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     ) == []
@@ -149,8 +151,8 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
         target_kind="issue", target_id="打回",
         executor_kind="character", executor_id=holder,
     )
-    db.record_dossier_decision(rejected_id, "rejected", reason="封驳")
-    assert not db.dossier_authorizes_effects(rejected_id)
+    db.dossiers.record_dossier_decision(rejected_id, "rejected", reason="封驳")
+    assert not db.dossiers.authorizes_effects(rejected_id)
 
     result = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '尚方剑密授', 'scope': 'issue:打回', 'dossier_id': rejected_id}, {'动作': '授予', 'holder_id': holder, 'privilege': '专差督办', 'scope': 'issue:无来源'}, {'动作': '授予', 'holder_id': holder, 'privilege': '新机构专办', 'scope': 'issue:合法授予', 'dossier_id': good['id']}]}, SettlementContext(content=content))
 
@@ -160,7 +162,7 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
     rows = view(result, "authority_changes")
     assert len(rows) == 1
     authority_id = int(rows[0]["authority_id"])
-    assert db.get_authority(authority_id)["privilege"] == "新机构专办"
+    assert db.characters.get_authority(authority_id)["privilege"] == "新机构专办"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
@@ -209,7 +211,7 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
             "character_id": other,
         },
     )
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     projected = db.project_applicable_authorities(state.turn, dossier)
     assert [row["id"] for row in projected] == [typed]
 
@@ -271,7 +273,7 @@ def test_same_dossier_grant_replay_returns_terminal_origin_without_regrant(
 
     assert view(replay, "authority_changes")[0]["authority_id"] == authority_id
     assert view(replay, "authority_changes")[0]["reason"] == "same_dossier_replay"
-    record = db.get_authority(authority_id)
+    record = db.characters.get_authority(authority_id)
     if terminal_state == "revoked":
         assert record["revoked"] is True
     else:
@@ -279,7 +281,6 @@ def test_same_dossier_grant_replay_returns_terminal_origin_without_regrant(
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
-
 
 def test_duplicate_active_authority_is_rejected_across_dossiers(game):
     """不同案卷对同一在持三元组重复授予 → duplicate_active_authority。"""

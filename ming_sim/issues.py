@@ -6,6 +6,14 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.social_class.store import ClassStore
+from ming_sim.entities.faction.store import FactionStore
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.power.store import PowerStore
+from ming_sim.entities.region.store import RegionStore
+from ming_sim.entities.reign_state.store import ReignStateStore
 
 import json
 import re
@@ -60,7 +68,7 @@ def _ctx() -> GameContent:
 
 def _event_issue_refs(db: GameDB) -> set:
     refs: set = set()
-    for r in db.conn.execute("SELECT origin_ref FROM issues WHERE origin_kind='event_pool'").fetchall():
+    for r in IssueStore(db.conn).read_event_issue_refs():
         if r["origin_ref"]:
             refs.add(r["origin_ref"])
     return refs
@@ -72,7 +80,7 @@ def _event_trigger_refs(db: GameDB) -> set:
 
 def _event_terminal_states(db: GameDB) -> Dict[str, str]:
     states: Dict[str, str] = {}
-    for r in db.conn.execute("SELECT event_id, terminal_state FROM event_triggers").fetchall():
+    for r in IssueStore(db.conn).read_event_terminal_states():
         terminal_state = str(r["terminal_state"] or "")
         if r["event_id"] and terminal_state:
             states[str(r["event_id"])] = terminal_state
@@ -92,6 +100,7 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
                 "terminal_reason": str(r["terminal_reason"] or ""),
             }
     return records
+
 
 
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
@@ -169,7 +178,7 @@ def _fiscal_levy_answered_petitions(db: GameDB) -> Dict[str, Dict[str, object]]:
             "context": str(row["petition"].get("context") or ""),
             "rescript": {key: value for key, value in row.items() if key not in metadata},
         }
-        for row in db.list_event_petition_records()
+        for row in db.issues.list_event_petition_records()
         if not row["terminal_state"]
     }
 
@@ -472,7 +481,7 @@ def petition_outcome_is_admissible(
     event = resolved.event_by_id.get(eid) if resolved is not None else None
     if event is None or getattr(event, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
         return False
-    if db.event_terminal_state(eid):
+    if db.issues.event_terminal_state(eid):
         return False
     return eid in _fiscal_levy_answered_event_ids(db, int(state.turn))
 
@@ -513,10 +522,7 @@ def _event_window_expired(ev: Event, state: GameState) -> bool:
 def _dead_person_core_subjects(ev: Event, db: GameDB) -> List[str]:
     dead: List[str] = []
     for name in getattr(ev, "person_core_subjects", []) or []:
-        row = db.conn.execute(
-            "SELECT status FROM characters WHERE name = ?",
-            (str(name),),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_dead_person_core_subjects((str(name),))
         if row is not None and str(row["status"] or "") == "dead":
             dead.append(str(name))
     return dead
@@ -647,7 +653,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
             if table == "event":
                 if cid not in db.content.event_by_id:
                     return None
-                values.append(1 if db.has_event_terminal_state(cid, "triggered") else 0)
+                values.append(1 if db.issues.has_event_terminal_state(cid, "triggered") else 0)
                 continue
             if table == "region":
                 row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()
@@ -698,16 +704,16 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
         return None
     table, cid, field = parts
     field = _gate_sql_field(table, field, key, kind="text")
-    sql = {
-        "region": f"SELECT {field} FROM regions WHERE id = ?",
-        "army": f"SELECT {field} FROM armies WHERE id = ?",
-        "power": f"SELECT {field} FROM powers WHERE id = ?",
-        "character": f"SELECT {field} FROM characters WHERE name = ?",
-        "event": f"SELECT {field} FROM event_triggers WHERE event_id = ?",
-    }.get(table)
-    if sql is None:
-        return None
-    row = db.conn.execute(sql, (cid,)).fetchone()
+    if table == "event":
+        row = IssueStore(db.conn).read_eval_gate_key_str_owned((cid,), field).fetchone()
+    else:
+        store = {
+            "region": db.regions, "army": db.armies,
+            "power": db.powers, "character": db.characters,
+        }.get(table)
+        if store is None:
+            return None
+        row = store.field_row(field, cid)
     if row is None:
         return None
     return str(row[0])
@@ -970,7 +976,7 @@ def _format_inertia(inertia: int) -> str:
 
 
 def show_active_issues(db: GameDB) -> None:
-    issues = db.list_active_issues()
+    issues = db.issues.active_rows()
     if not issues:
         return
     state = db.load_state()

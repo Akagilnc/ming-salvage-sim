@@ -169,7 +169,7 @@ def write_error_pack(
 
     内容：
       - traceback.txt        完整 traceback
-      - resolve_context.json db.get_resolve_context(turn)（无则 null）
+      - resolve_context.json db.resolve_contexts.get(turn)（无则 null）
       - save_backup.db       SQLite 热备（conn.backup() API）
       - manifest.json        db 路径 / turn / 年月 / 版本 / attempt / 异常类型+消息 / 时间戳
 
@@ -195,7 +195,7 @@ def write_error_pack(
 
     # resolve_context.json（无则 null）
     (pack_dir / "resolve_context.json").write_text(
-        safe_json_dumps(db.get_resolve_context(turn), ensure_ascii=False, indent=2), encoding="utf-8"
+        safe_json_dumps(db.resolve_contexts.get(turn), ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     # save_backup.db（仅 conn.backup() API；atomic 内会被 backup_to 拒绝）

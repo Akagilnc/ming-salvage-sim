@@ -82,7 +82,7 @@ def apply_removes(run) -> SectionResult:
         if run.db.is_structural_fiscal_config_key(key):
             rejections.append(RejectedItem(item=remove, reason=f"裁撤目标「{key}」是结构性财政地板，不可裁撤。", category="invalid_enum", source=run.ctx.source))
             continue
-        fiscal_config = run.db.get_fiscal_config()
+        fiscal_config = run.db.fiscal_config.values()
         stem = run.db._stem_of(key)
         if key not in fiscal_config and not any(
             candidate in fiscal_config for candidate in (f"{stem}_base", f"{stem}_rate")
@@ -199,7 +199,7 @@ def apply_changes(run) -> SectionResult:
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
-    fiscal_config_snapshot = run.db.get_fiscal_config()
+    fiscal_config_snapshot = run.db.fiscal_config.values()
     deferred_loss_pair_changes: List[Dict[str, object]] = []
     loss_pair_running: Dict[str, int] = {}
     loss_pair_final_by_pair: Dict[Tuple[str, str], Dict[str, int]] = {}
@@ -226,7 +226,7 @@ def apply_changes(run) -> SectionResult:
         if delta_raw == 0:
             continue
         delta = delta_raw
-        current = run.db.get_fiscal_config().get(key)
+        current = run.db.fiscal_config.values().get(key)
         if current is None:
             # 未知 key＝正常业务拒绝，逐项留痕。
             rejections.append(RejectedItem(item=change, reason=f"调率目标「{key}」不存在,跳过。", category="missing_ref", source=run.ctx.source))
@@ -297,7 +297,7 @@ def apply_changes(run) -> SectionResult:
                 "UPDATE fiscal_config SET origin_ref=? WHERE key=?",
                 (change["origin_ref"], change["key"]),
             )
-            run.db.record_fiscal_config_change(
+            run.db.fiscal_config.record_change(
                 turn=run.state.turn, key=str(change["key"]),
                 old_value=int(change["old"]), new_value=int(change["new"]),
                 origin_ref=str(change["origin_ref"]), reason=str(change["reason"]),

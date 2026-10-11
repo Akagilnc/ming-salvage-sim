@@ -1,3 +1,4 @@
+from __future__ import annotations
 """召对「等多久算死」= 设置页那一格（静默判死阈值）。#1465 切片③。
 
 owner 2026-09-07 拍：设置页 `cli_timeout_seconds` 从「总超时」改接空转轴——距上次
@@ -8,7 +9,6 @@ owner 2026-09-07 拍：设置页 `cli_timeout_seconds` 从「总超时」改接�
 受控推进时钟，不跑真墙钟、不起真 CLI 进程、不连真 LLM。
 """
 
-from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient

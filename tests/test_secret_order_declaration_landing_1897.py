@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1897 转译声明新建密令走现役分派入口（不导入已删函数），失败真实可重试。
 
 刀口：``declaration_dispatch._dispatch_commissions`` 的 ``secret_order`` 支路。
@@ -16,7 +17,6 @@
 - 成案真失败不当成功：源轮水位不标 done，原 action 仍 pending，补跑只做未完成的成案。
 """
 
-from __future__ import annotations
 
 from concurrent.futures import wait
 
@@ -154,8 +154,8 @@ def _emit_late_pair(db, state, content, monkeypatch, first, second, *, minister,
             ctid = db.create_chat_turn(
                 state, minister, "s", 0, night_id=night_id["v"], status="active",
             )
-            mid = db.append_chat_message(minister, state.turn, "user", text)
-            db.update_chat_turn_messages(ctid, user_message_id=mid)
+            mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role='user', content=text)
+            db.reign.update_chat_turn_messages(ctid, user_message_id=mid)
             reply = sess.scene_chat(text, chat_turn_id=int(ctid))
             fut = persist_and_schedule_scene(sess, db, reply, speaker=minister)
             assert fut is not None
@@ -232,10 +232,10 @@ def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_cas
     order_id = int(applied_row["secret_order_id"])
     assert order_id > 0
 
-    order = db.get_secret_order(order_id)
+    order = db.character_knowledge.get_secret_order(order_id)
     assert order is not None
     assert order["status"] == "active"
-    assert db.get_dossier_for_secret_order(order_id) is not None
+    assert db.dossiers.get_for_secret_order(order_id) is not None
     # 反向：名册里的具名承办人照常成案（身份闸不得把真承办人也拒掉）。
     assert order["minister_name"] == minister
 
@@ -254,7 +254,7 @@ def test_blank_secret_order_title_is_rejected_not_staged(game, monkeypatch):
     assert len(result.commissions.rejected) == 1
     assert _rejection_rows(db, state.turn)[0]["category"] == "invalid_shape"
     assert _staged_secret_order_rows(db, state.turn) == []
-    assert db.list_secret_orders() == []
+    assert db.character_knowledge.list_secret_orders() == []
 
 
 def test_bad_secret_order_is_rejected_without_staging_or_landing(game, monkeypatch):
@@ -277,7 +277,7 @@ def test_bad_secret_order_is_rejected_without_staging_or_landing(game, monkeypat
     # 断言分类而非诊断措辞：措辞是给人看的，行为才是契约。
     assert rejections[0]["category"] == "invalid_shape"
     assert _staged_secret_order_rows(db, state.turn) == []
-    assert db.list_secret_orders() == []
+    assert db.character_knowledge.list_secret_orders() == []
 
 
 @pytest.mark.parametrize("declared_assignee", ["", "殿上", "不存在的人1897"])
@@ -298,7 +298,7 @@ def test_non_roster_assignee_is_not_made_into_a_minister(game, monkeypatch, decl
     assert len(result.commissions.rejected) == 1
     assert _rejection_rows(db, state.turn)[0]["category"] == "hallucinated_id"
     assert _staged_secret_order_rows(db, state.turn) == []
-    assert db.list_secret_orders() == []
+    assert db.character_knowledge.list_secret_orders() == []
 
 
 def _late_revision_and_approval(
@@ -430,7 +430,7 @@ def test_late_translated_indirect_staging_keeps_its_source_night(game, monkeypat
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (staged_id,),
     ).fetchone()
     assert dossier is not None, label
-    case = db.get_decree_dossier(int(dossier["id"]))
+    case = db.dossiers.get(int(dossier["id"]))
     assert case is not None
     if label == "assignment":
         assert case["target_id"] == title.strip()
@@ -484,7 +484,7 @@ def test_late_translated_indirect_update_keeps_its_source_night(game, monkeypatc
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (staged_id,),
     ).fetchall()
     assert len(dossiers) == 1
-    case = db.get_decree_dossier(int(dossiers[0]["id"]))
+    case = db.dossiers.get(int(dossiers[0]["id"]))
     assert case is not None
 
 
@@ -506,7 +506,7 @@ def test_secret_order_link_note_is_stored_verbatim(game, monkeypatch):
             minister=minister,
         ).promises.applied[0]["secret_order_id"]
     )
-    old_dossier_id = int(db.get_dossier_for_secret_order(old_order_id)["id"])
+    old_dossier_id = int(db.dossiers.get_for_secret_order(old_order_id)["id"])
 
     result = _emit(
         db, state, content, monkeypatch,
@@ -526,8 +526,8 @@ def test_secret_order_link_note_is_stored_verbatim(game, monkeypatch):
             db, state, content, monkeypatch, staged_id, minister=minister,
         ).promises.applied[0]["secret_order_id"]
     )
-    new_dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    stored = db.list_dossier_links(new_dossier_id)
+    new_dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
+    stored = db.dossiers.links(new_dossier_id)
     assert [(int(link["target_dossier_id"]), link["relation_type"])
             for link in stored] == [(old_dossier_id, "稽核")]
 
@@ -576,7 +576,7 @@ def test_late_translation_staged_secret_order_still_lands_under_its_source_night
     assert int(rows[0]["night_id"]) == int(night_id)
     assert approved.promises.rejected == [], approved.promises.rejected
     order_id = int(approved.promises.applied[0]["secret_order_id"])
-    assert db.get_secret_order(order_id)["status"] == "active"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "active"
 
 
 @pytest.mark.parametrize("fault", ["sqlite", "missing_dossier"])
@@ -627,8 +627,8 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
     assert fut is not None
     with pytest.raises(sqlite3.DatabaseError if fault == "sqlite" else ValueError):
         fut.result(timeout=10)
-    assert db.get_story_extract_status(ctid) != "done"
-    assert db.list_secret_orders() == []
+    assert db.reign.get_story_extract_status(ctid) != "done"
+    assert db.character_knowledge.list_secret_orders() == []
     status = db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()["status"]
@@ -646,7 +646,7 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
 
     reopened = GameDB(db.path, content)
     try:
-        waiting = reopened.list_unextracted_replies(night_id=night_id)
+        waiting = reopened.reign.list_unextracted_replies(night_id=night_id)
         assert any(int(row["chat_turn_id"]) == ctid for row in waiting)
         caught = catch_up_pending_translations(
             reopened, state,
@@ -657,8 +657,8 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
         )
         assert caught["extracted"] == 1
         assert caught["pending"] == 0
-        assert reopened.get_story_extract_status(ctid) == "done"
-        landed = reopened.list_secret_orders(status="active", minister_name=minister)
+        assert reopened.reign.get_story_extract_status(ctid) == "done"
+        landed = reopened.character_knowledge.list_secret_orders(status="active", minister_name=minister)
         assert len(landed) == 1
         assert landed[0]["minister_name"] == minister
     finally:
@@ -691,7 +691,7 @@ def test_approved_rush_reports_success_and_is_not_repeated(game, monkeypatch):
     )
     assert rushed.rushes.rejected == [], rushed.rushes.rejected
     staged_id = int(rushed.rushes.applied[0]["id"])
-    before_due = int(db.get_secret_order(order_id)["due_turn"] or 0)
+    before_due = int(db.character_knowledge.get_secret_order(order_id)["due_turn"] or 0)
     approved = _approve(
         db, state, content, monkeypatch, staged_id, minister=minister,
     )
@@ -701,13 +701,13 @@ def test_approved_rush_reports_success_and_is_not_repeated(game, monkeypatch):
         "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()["status"]
     assert status == "committed", status
-    after = db.get_secret_order(order_id)
+    after = db.character_knowledge.get_secret_order(order_id)
     assert int(after["due_turn"] or 0) == int(state.turn) + 1
     assert int(after["due_turn"] or 0) < before_due
     assert str(after["result"] or "") == ""
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     rush_rows = [
-        row for row in db.list_dossier_progress(dossier_id)
+        row for row in db.dossiers.list_dossier_progress(dossier_id)
         if str(row["origin"]) == db.DOSSIER_REPORT_ORIGIN_RUSH
     ]
     assert len(rush_rows) == 1
@@ -745,7 +745,7 @@ def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_cas
                            _secret_order_declaration(assignee=minister), minister=minister)
             approved = _approve(db, state, content, monkeypatch,
                                 _staged_secret_order_rows(db, state.turn)[-1]["id"], minister=minister)
-            target = db.get_dossier_for_secret_order(
+            target = db.dossiers.get_for_secret_order(
                 approved.promises.applied[0]["secret_order_id"],
             )["id"]
         elif bad_case == "forward":
@@ -756,7 +756,7 @@ def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_cas
             "relation_type": "非法" if bad_case == "relation" else "稽核",
             "note": " " if bad_case == "note" else "查账",
         }]
-    before = len(db.list_secret_orders())
+    before = len(db.character_knowledge.list_secret_orders())
     result = _emit(
         db, state, content, monkeypatch,
         {"commissions": [
@@ -785,7 +785,7 @@ def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_cas
         "capacity": "active_cap", "vassal": "ineligible_vassal", "foreign": "ineligible_power",
     }.get(bad_case, "invalid_state")
     assert len(approved.promises.applied) == 1
-    assert len(db.list_secret_orders()) == before + 1
+    assert len(db.character_knowledge.list_secret_orders()) == before + 1
     statuses = [db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (aid,)).fetchone()[0]
                 for aid in ids]
     assert statuses == ["failed", "committed"]
@@ -793,7 +793,7 @@ def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_cas
     if "dossier_links" in bad:
         assert len(_link_rejections(db, ids[0])) == 1
     ctid = db.conn.execute("SELECT MAX(id) FROM chat_turns").fetchone()[0]
-    assert db.get_story_extract_status(ctid) == "done"
+    assert db.reign.get_story_extract_status(ctid) == "done"
 
 
 def test_late_translated_rush_lands_under_its_source_night(game, monkeypatch):
@@ -952,11 +952,11 @@ def test_secret_order_progress_is_stored_verbatim(game, monkeypatch):
             minister=minister,
         ).promises.applied[0]["secret_order_id"]
     )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     _close_offline(db, state, content, int(an.open_night(db, state)["id"]))
     state.turn = int(state.turn) + 1
     state.period = 4
-    db.save_state(state)
+    db.reign.save_game_state(state)
     raw_note = f"\n  已查得线索，仍须密访。  \n〔{int(state.year)}年1月〕旧报未结。\n"
     other = _summonable_name(db)
     progress = {
@@ -989,15 +989,15 @@ def test_secret_order_progress_is_stored_verbatim(game, monkeypatch):
 
     def _open_reports(conn_db):
         return [
-            row for row in conn_db.list_dossier_progress(dossier_id)
+            row for row in conn_db.dossiers.list_dossier_progress(dossier_id)
             if not row["is_terminal"]
         ]
 
     first = _open_reports(db)
     assert len(first) == 1, first
     assert int(first[0]["turn"]) == int(state.turn)
-    assert str(db.get_secret_order(order_id)["result"] or "") == ""
-    assert db.sum_dossier_actual_progress_units(dossier_id) == 0
+    assert str(db.character_knowledge.get_secret_order(order_id)["result"] or "") == ""
+    assert db.dossiers.actual_progress_units(dossier_id) == 0
 
     corrected = "\n  同月更正：线索有误，仍须密访。  \n"
     from tests.test_audience_translate_1837_reopen import _player_month
@@ -1012,15 +1012,15 @@ def test_secret_order_progress_is_stored_verbatim(game, monkeypatch):
     live = _open_reports(db)
     assert len(live) == 1, live
     assert int(live[0]["turn"]) == reported_turn
-    assert str(db.get_secret_order(order_id)["result"] or "") == ""
-    assert db.sum_dossier_actual_progress_units(dossier_id) == 0
+    assert str(db.character_knowledge.get_secret_order(order_id)["result"] or "") == ""
+    assert db.dossiers.actual_progress_units(dossier_id) == 0
 
     reopened = GameDB(db.path, content)
     try:
         reread = _open_reports(reopened)
         assert len(reread) == 1
         assert int(reread[0]["turn"]) == reported_turn
-        assert str(reopened.get_secret_order(order_id)["result"] or "") == ""
+        assert str(reopened.character_knowledge.get_secret_order(order_id)["result"] or "") == ""
     finally:
         reopened.close()
 
@@ -1062,14 +1062,14 @@ def test_scene_review_claim_lands_on_the_review_rail(game, monkeypatch):
         db, state, content, monkeypatch, action_id, minister=minister,
     )
     assert approved.promises.rejected == [], approved.promises.rejected
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     reviews = [
-        item for item in db.list_dossier_progress(dossier_id)
+        item for item in db.dossiers.list_dossier_progress(dossier_id)
         if str(item["origin"]) == db.DOSSIER_REPORT_ORIGIN_REVIEW
     ]
     assert len(reviews) == 1
     monthly = [
-        item for item in db.list_dossier_progress(dossier_id)
+        item for item in db.dossiers.list_dossier_progress(dossier_id)
         if not item["is_terminal"]
         and str(item["origin"]).startswith(db.DOSSIER_REPORT_ORIGIN_MONTHLY)
     ]

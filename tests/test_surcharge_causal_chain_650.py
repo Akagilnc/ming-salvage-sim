@@ -1,23 +1,8 @@
-"""#650（[#477 S3]）：明渠加派 e2e 因果链。
-
-canonical＝ADR 0089（明渠）＋0087（人口守恒转移）＋#650 票面（庭判 run
-01a02d46 通过）。因果五环：皇帝下旨加派 → 逐省累积账当回合落库（P1）→
-结算按账机械驱动农民→流民入池（量级 clamp，0087 applier 机械转移）→
-→ 停加派/蠲免后入池止（出口回流归 S5 #652）。
-
-主测缝：settle_delta / 玩家过月 /
-apply_historical_fiscal_rates（饷率 effect 通道）。
-"""
-
 from __future__ import annotations
-
 from tests.conftest import wait_for_background_jobs
-
 import json
 import math
-
 import pytest
-
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
 from tests.test_month_chain_1843 import _prepare_player_month
@@ -26,15 +11,30 @@ from ming_sim.entities.fiscal.levy import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
+from ming_sim.applier import StoredDocumentError
+"""#650（[#477 S3]）：明渠加派 e2e 因果链。
+
+canonical＝ADR 0089（明渠）＋0087（人口守恒转移）＋#650 票面（庭判 run
+01a02d46 通过）。因果五环：皇帝下旨加派 → 逐省累积账当回合落库（P1）→
+结算按账机械驱动农民→流民入池（量级 clamp，0087 applier 机械转移）→
+→ 停加派/蠲免后入池止（出口回流归 S5 #652）。
+
+主测缝：apply_score_extraction / 玩家过月 /
+apply_historical_fiscal_rates（饷率 effect 通道）。
+"""
+
+
+
+
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
-FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
 DISPLACED_SHAANXI = 150000    # 流民@shaanxi
 SHAANXI_SUPPORT = 32          # content/regions.json 陕西 public_support seed
 LIAO_SEED_SHAANXI = 2929.20151 * 0.009 / 12.0  # 辽饷九厘基线（万两/月）
 
 # 明渠折算口径（票面 AC2「确定性可断言」；常数真源=ming_sim/constants.py）：
 #   入池(人) = 加派基线(万两) × 折率 × (100 − 民心)/100
+
 
 def _pop(db: GameDB, name: str, region_id: str) -> int:
     row = db.conn.execute(
@@ -43,11 +43,13 @@ def _pop(db: GameDB, name: str, region_id: str) -> int:
     ).fetchone()
     return int(row[0]) if row else 0
 
+
 def _settle_payload(db: GameDB, region_id: str) -> dict:
     row = db.conn.execute(
         "SELECT fiscal FROM regions WHERE id=?", (region_id,)
     ).fetchone()
     return json.loads(str(row["fiscal"] or "{}"))["settle"]
+
 
 def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):
     if "origin_ref" not in kw:
@@ -55,11 +57,12 @@ def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):
             state, action_type="policy", decree_text=f"{region_id}加派",
             target_kind="region", target_id=region_id,
         )
-        db.record_dossier_decision(dossier_id, "promulgated")
+        db.dossiers.record_dossier_decision(dossier_id, "promulgated")
         kw["origin_ref"] = f"dossier:{dossier_id}"
     item = {"region_id": region_id, "monthly_amount": monthly_amount}
     item.update(kw)
     return item
+
 
 def _settle_month(state, db, delta, *, before_turn, content, monkeypatch, narrative="邸报"):
     assert state.turn == before_turn
@@ -73,9 +76,11 @@ def _settle_month(state, db, delta, *, before_turn, content, monkeypatch, narrat
     session.resolve_turn(allow_empty_decree=True)
     wait_for_background_jobs(db)
 
+
 def _expected_inflow_persons(base_wan: float, support: int) -> int:
     from ming_sim.constants import LEVY_DISPLACEMENT_RATE
     return int(round(base_wan * LEVY_DISPLACEMENT_RATE * (100 - support) / 100.0))
+
 
 # ── AC1：加派旨当回合落逐省累积账；无旨不入账 ─────────────────────────────────
 
@@ -95,6 +100,7 @@ def test_decree_lands_accumulated_ledger_same_turn(game):
     assert meta["加派基线"] == pytest.approx(10.0)
     assert "加派基线源" not in meta
 
+
 def test_no_decree_no_ledger_entry(game):
     """无旨不入账：空段结算后加派基线不动（开局档无此键仍无此键）。"""
     db, state, content = game
@@ -102,6 +108,7 @@ def test_no_decree_no_ledger_entry(game):
     assert not section(applied, "surcharge_decrees").rejected
     meta = _settle_payload(db, "shaanxi").get("_meta") or {}
     assert meta.get("加派基线") is None
+
 
 def test_repeated_decrees_accumulate_and_negative_stops(game):
     """多道旨逐月累加；负额（停征/蠲免）减账且钳制 ≥0。"""
@@ -116,6 +123,7 @@ def test_repeated_decrees_accumulate_and_negative_stops(game):
     settle_delta(state, db, {'surcharge_decrees': [_decree(db, state, monthly_amount=-99.0)]}, SettlementContext(content=content))
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(0.0)
 
+
 def test_decree_bad_items_rejected_individually(game):
     """坏项逐项拒收留痕、好项照落（ADR 0015/0008 两轴分立）。"""
     db, state, content = game
@@ -123,6 +131,7 @@ def test_decree_bad_items_rejected_individually(game):
     assert len(view(applied, "surcharge_decrees")) == 1
     assert len(section(applied, "surcharge_decrees").rejected) == 4
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(10.0)
+
 
 def test_surcharge_origin_requires_effect_eligible_materialized_dossier(game):
     db, state, content = game
@@ -134,7 +143,7 @@ def test_surcharge_origin_requires_effect_eligible_materialized_dossier(game):
         state, action_type="policy", decree_text="准加派", target_kind="region",
         target_id="shaanxi",
     )
-    db.record_dossier_decision(promulgated, "promulgated")
+    db.dossiers.record_dossier_decision(promulgated, "promulgated")
     items = [
         _decree(db, state, monthly_amount=2.0, origin_ref=f"dossier:{promulgated}"),
         _decree(db, state, monthly_amount=7.0, origin_ref=f"dossier:{proposed}"),
@@ -148,6 +157,7 @@ def test_surcharge_origin_requires_effect_eligible_materialized_dossier(game):
     assert len(section(applied, "surcharge_decrees").rejected) == 5
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(2.0)
 
+
 def test_batch_rejects_duplicate_surcharge_and_matching_explicit_transfer(game):
     db, state, content = game
     decree = _decree(db, state, monthly_amount=3.0)
@@ -160,6 +170,7 @@ def test_batch_rejects_duplicate_surcharge_and_matching_explicit_transfer(game):
     assert len(section(applied, "surcharge_decrees").rejected) == 1
     assert not view(applied, "population_transfers")
     assert len(section(applied, "population_transfers").rejected) == 1
+
 
 def test_surcharge_filter_does_not_capture_other_transfer_origins(game):
     db, state, content = game
@@ -176,6 +187,7 @@ def test_surcharge_filter_does_not_capture_other_transfer_origins(game):
         "AND amount=1 AND origin_ref=?", (other["origin_ref"],),
     ).fetchone()[0] == 1
 
+
 def test_repeated_delta_apply_does_not_consume_levy_ledger(game):
     db, state, content = game
     settle_delta(state, db, {'surcharge_decrees': [_decree(db, state, monthly_amount=10.0)]}, SettlementContext(content=content))
@@ -185,6 +197,11 @@ def test_repeated_delta_apply_does_not_consume_levy_ledger(game):
         assert not [r for r in view(applied, "population_transfers") if r.get("reason") == "加派"]
     assert _pop(db, "流民", "shaanxi") == before
 
+
+
+
+
+
 # ── AC1 后半：明选有明账——加派基线折入三饷底座（钱真被征上来）───────────────
 
 def test_levy_pass_folds_jiapai_into_sanxiang_targets(game):
@@ -192,7 +209,7 @@ def test_levy_pass_folds_jiapai_into_sanxiang_targets(game):
     db, state, content = game
     issues.bind_content(content)
     state.year, state.period = 1627, 10
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     settle_delta(state, db, {'surcharge_decrees': [_decree(db, state, monthly_amount=10.0)]}, SettlementContext(content=content))
     apply_historical_fiscal_rates(state, db)
@@ -203,7 +220,10 @@ def test_levy_pass_folds_jiapai_into_sanxiang_targets(game):
     assert math.isclose(settle["p"]["起运定额"], settle["_meta"]["正赋起运基线"] + expected,
                         rel_tol=1e-9, abs_tol=1e-9)
 
+
 # ── AC2：结算按账入池，口径确定性可断言 ───────────────────────────────────────
+
+
 
 def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     """玩家月链消费月初旧加派账，邸报前重入不重复搬迁人口。"""
@@ -216,7 +236,7 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     turn = int(state.turn)
     before = _pop(db, "流民", "shaanxi")
     pre_settle(state, db, content=content)
-    db.save_resolve_context(turn, "测试诏", {})
+    db.resolve_contexts.save(turn, "测试诏", {})
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     from tests.month_chain_helpers import empty_rescript_response
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
@@ -229,6 +249,7 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     wait_for_background_jobs(db)
     assert _pop(db, "流民", "shaanxi") == before + want
     assert int(state.turn) == turn
+
 
 def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits(game, monkeypatch):
     """辽东无完整农民/流民加派池（#659 仅军户/流民）：新旨不落账，历史毒账也不得 soft-lock。"""
@@ -255,6 +276,7 @@ def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits
     assert _pop(db, "农民", "liaodong") == farmer_before
     assert _pop(db, "流民", "liaodong") == displaced_before
 
+
 def test_ming_province_without_fiscal_base_is_not_a_levy_member(game):
     """合法无 settle 基座的明省自然出列，不阻断空 delta；无账人口不动。"""
     db, state, content = game
@@ -270,6 +292,7 @@ def test_ming_province_without_fiscal_base_is_not_a_levy_member(game):
     assert not [r for r in view(applied, "population_transfers") if r.get("region_id") == "henan"]
     assert _pop(db, "流民", "henan") == before
 
+
 def test_zero_base_province_gets_no_transfer(game):
     """无账（基线 0）省份零入池——停征后入池止的机制面。"""
     db, state, content = game
@@ -278,6 +301,9 @@ def test_zero_base_province_gets_no_transfer(game):
     henan = [r for r in view(applied, "population_transfers") if r.get("region_id") == "henan"]
     assert henan == []
     assert _pop(db, "流民", "henan") == pool_before
+
+
+
 
 # ── 持久累积账损坏须 fail-loud，月效来源不得伪归最后一道旨 ───────────────────
 
@@ -303,27 +329,17 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
         _settle_month(state, db, {}, before_turn=before_turn, content=content, monkeypatch=monkeypatch)
     assert state.turn == before_turn
 
+
+
+
 # ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
 
 
-def test_surcharge_month_archives_model_report_without_parallel_projection(game, monkeypatch):
-    """真实月链逐月归档模型邸报原文，不维护退役知识镜像。"""
-    db, state, content = game
-    first_turn = state.turn
-    first_body = "陕西加派月报。"
-    _settle_month(
-        state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=10.0)]},
-        before_turn=first_turn, content=content, monkeypatch=monkeypatch, narrative=first_body,
-    )
-    assert db.get_turn_report(first_turn) == first_body
 
-    free_body = "陕西流民渐起，关中贼势暗流潜滋。"
-    second_turn = state.turn
-    _settle_month(
-        state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)]},
-        before_turn=second_turn, content=content, monkeypatch=monkeypatch, narrative=free_body,
-    )
-    assert db.get_turn_report(second_turn) == free_body
+
+
+
+# ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──
 
 def test_e2e_surcharge_and_stop_share_month_open_snapshot(game, monkeypatch):
     db, state, content = game
@@ -342,3 +358,22 @@ def test_e2e_surcharge_and_stop_share_month_open_snapshot(game, monkeypatch):
     turn = state.turn
     _settle_month(state, db, {}, before_turn=turn, content=content, monkeypatch=monkeypatch)
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want
+
+def test_surcharge_month_archives_model_report_without_parallel_projection(game, monkeypatch):
+    """真实月链逐月归档模型邸报原文，不维护退役知识镜像。"""
+    db, state, content = game
+    first_turn = state.turn
+    first_body = "陕西加派月报。"
+    _settle_month(
+        state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=10.0)]},
+        before_turn=first_turn, content=content, monkeypatch=monkeypatch, narrative=first_body,
+    )
+    assert db.turn_reports.report_text(first_turn) == first_body
+
+    free_body = "陕西流民渐起，关中贼势暗流潜滋。"
+    second_turn = state.turn
+    _settle_month(
+        state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)]},
+        before_turn=second_turn, content=content, monkeypatch=monkeypatch, narrative=free_body,
+    )
+    assert db.turn_reports.report_text(second_turn) == free_body

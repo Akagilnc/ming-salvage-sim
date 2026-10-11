@@ -1,5 +1,6 @@
 """明制品级带与任命破格标记的确定性领域函数。"""
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
 
 from typing import Any, Optional
 
@@ -19,6 +20,24 @@ _UNOFFICED_TYPES = frozenset({"", "未仕", "生员", "乡绅", "富商", "布�
 
 def _table() -> dict[str, Any]:
     return require_dict(load_json_asset("offices.json"), "offices.json")
+
+
+def normalize_office(office: str) -> str:
+    """官职多职统一为半角逗号分隔：旧「兼/兼掌/兼署」与全角「，」「、」一律归一逗号，
+    去空分项、去重、保序。是 office 字段落库的唯一规范化入口——所有写 characters.office
+    的路径都过它，保证去重/顶缺时能按逗号分项匹配。"""
+    s = (office or "").strip()
+    if not s:
+        return ""
+    s = s.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
+    s = s.replace("，", ",").replace("、", ",")
+    seen: set = set()
+    parts: list[str] = []
+    for p in (x.strip() for x in s.split(",")):
+        if p and p not in seen:
+            seen.add(p)
+            parts.append(p)
+    return ",".join(parts)
 
 
 def concurrent_office_titles(office: object) -> list[str]:
@@ -142,16 +161,13 @@ def office_leverage_multiplier(office: object) -> float:
 
 
 def _is_substantive_office(title: object, office_type: object = "") -> bool:
-    """Recognize a real title even when its archived type is blank or legacy state."""
+    """Identity kinds are not offices; rank vocabulary does not gate new office titles."""
     text = canonical_office_title(title)
-    if not text or any(label in text for label in _NON_OFFICES if label):
+    if str(office_type or "").strip() in {"身名分", "无名分"}:
         return False
-    title_is_real = any(
-        _match_rank_rule(part, _table(), "leverage_multiplier") is not None
-        for part in concurrent_office_titles(text)
-    )
-    declared_type_is_real = str(office_type or "").strip() not in _UNOFFICED_TYPES
-    return title_is_real or declared_type_is_real
+    if not text or any(label and label in text for label in _NON_OFFICES):
+        return False
+    return True
 
 
 def appointment_break_rank(
@@ -180,10 +196,7 @@ def appointment_break_rank(
             or (current_title == "听用候铨" and str(row["reason_code"] or "") == "被顶替")
         )
         if may_have_history:
-            archived = db.conn.execute(
-                "SELECT office_title,office_type FROM character_offices WHERE character_name=?",
-                (person,),
-            ).fetchone()
+            archived = CharacterStore(db.conn).read_appointment_break_rank_o_office_title_SELECT_c_office_type((person,))
             if archived is not None and _is_substantive_office(
                 archived["office_title"], archived["office_type"]
             ):

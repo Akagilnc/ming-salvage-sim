@@ -264,7 +264,7 @@ def apply_issue_tracker_output(
                     "reason": "饷率事件结局只经御批写口",
                 })
                 continue
-            if db.event_terminal_state(ev.id) == "expired":
+            if db.issues.event_terminal_state(ev.id) == "expired":
                 print(f"[INFO] new_issue 已拒：event {event_id} 已过期终态，不再从 event_pool 立项。")
                 entity_rejections.append(RejectedItem(item={"id": ev.id, "title": ev.title}, reason="事件已过期终态", category="issue", source=source))
                 continue
@@ -277,7 +277,7 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 entity_rejections.append(RejectedItem(item={"id": ev.id, "title": ev.title}, reason="事件当前未进候选池（窗口/前提门/已触发不满足）", category="issue", source=source))
                 continue
-            terminal_state = db.event_terminal_state(ev.id)
+            terminal_state = db.issues.event_terminal_state(ev.id)
             if terminal_state:
                 terminal_reason = {
                     "obsolete": "事件已作废终态",
@@ -827,7 +827,7 @@ def apply_issue_tracker_output(
         linked_dossier = None
         origin_ref = str(row["origin_ref"] or "").strip()
         if re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) and db.effect_origin_rejection(origin_ref) is None:
-            linked_dossier = db.get_decree_dossier(int(origin_ref.split(":", 1)[1]))
+            linked_dossier = db.dossiers.get(int(origin_ref.split(":", 1)[1]))
         deterministic_breach = bool(
             linked_dossier
             and (
@@ -835,7 +835,7 @@ def apply_issue_tracker_output(
                 or (
                     linked_dossier["status"] == "closed"
                     and bool(row["commitment_kind"])
-                    and db.dossier_authorizes_effects(int(linked_dossier["id"]))
+                    and db.dossiers.authorizes_effects(int(linked_dossier["id"]))
                 )
             )
         )

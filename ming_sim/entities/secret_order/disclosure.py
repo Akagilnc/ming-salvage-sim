@@ -20,7 +20,7 @@ def record_secret_order_disclosure(
 
     Returns True if a new public knowledge event was recorded, False otherwise.
     """
-    order = db.get_secret_order(order_id)
+    order = db.character_knowledge.get_secret_order(order_id)
     if order is None:
         return False
     # Disclosure is the only promotion from the assignee-only
@@ -40,9 +40,9 @@ def record_secret_order_disclosure(
     ).fetchone()
     if already_disclosed is not None:
         return False
-    dossier = db.get_dossier_for_secret_order(order_id)
+    dossier = db.dossiers.get_for_secret_order(order_id)
     progress = (
-        db.list_dossier_progress(int(dossier["id"])) if dossier is not None else []
+        db.dossiers.list_dossier_progress(int(dossier["id"])) if dossier is not None else []
     )
     progress_text = format_public_progress_disclosure(progress)
     public_body = sim_note

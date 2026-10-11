@@ -1,41 +1,38 @@
-"""#1353 单写者票据队列钉：序 / 屏障 / 失败空放行 / 撤回取消 / 生产 seam。
-
-法源 ADR 0149 + owner 无感宪法。确定性事件握手，不靠 sleep 判胜负。
-屏障只等工人终态（K10a：无 elapsed 熔断）。
-"""
-
 from __future__ import annotations
-
 import threading
 import time
 from types import SimpleNamespace
-
 import pytest
 from tests.wait_utils import wait_until
-
 from ming_sim.session_write_queue import (
     SessionWriteQueue,
     TicketCancelled,
     WriteTicket,
     get_session_write_queue,
 )
+"""#1353 单写者票据队列钉：序 / 屏障 / 失败空放行 / 撤回取消 / 生产 seam。
+
+法源 ADR 0149 + owner 无感宪法。确定性事件握手，不靠 sleep 判胜负。
+屏障只等工人终态（K10a：无 elapsed 熔断）。
+"""
 
 
-def wait_pending_writes(game, *, timeout_s: float | None = None) -> None:
+
+
+
+
+def wait_pending_writes(game, *, timeout_s: float = 1) -> None:
     """Fail-loud drain of SessionWriteQueue open tickets (teardown/body shared).
 
     真源＝wait_idle（Condition）；禁 sleep busy-poll。
-    默认无时限（CI job 终线承接挂死）；仅负向 stuck 探测传有限 timeout_s。
+    Test-only drain deadline; production barriers still await worker terminal state.
     """
     q = get_session_write_queue(game)
     ok = q.wait_idle(timeout_s=timeout_s)
-    if timeout_s is None:
-        return
     assert ok, (
         f"pending writes did not drain in {timeout_s}s; "
         f"count={q.inflight_count()}"
     )
-
 
 
 def test_queue_order_early_claim_late_finish_before_barrier():
@@ -103,7 +100,6 @@ def test_queue_order_early_claim_late_finish_before_barrier():
     assert q.inflight_count() == 0
 
 
-
 def test_barrier_waits_multiple_prior_tickets():
     """屏障钉：多张先领票全清后屏障才跑。"""
     q = SessionWriteQueue()
@@ -151,20 +147,6 @@ def test_barrier_waits_multiple_prior_tickets():
     assert done.is_set(), "worker exited without done"
     assert order[-1] == "barrier"
     assert set(order[:2]) == {"a", "b"}
-
-
-
-def test_fail_release_lets_barrier_through():
-    """失败钉：腿失败票据空放行，屏障不卡死。"""
-    q = SessionWriteQueue()
-    t = q.claim(key=("extract", 9))
-    assert t is not None
-    q.complete(t)
-    order: list[str] = []
-    q.barrier(lambda: order.append("barrier") or None)
-    assert order == ["barrier"]
-    assert q.inflight_count() == 0
-
 
 
 def test_post_barrier_claim_run_waits_for_barrier():
@@ -222,25 +204,6 @@ def test_post_barrier_claim_run_waits_for_barrier():
     assert q.inflight_count() == 0
 
 
-def test_cancel_key_releases_and_blocks_run():
-    """撤回钉：按 key 取消在飞票据；run 见取消不写库。"""
-    q = SessionWriteQueue()
-    t = q.claim(key=("turn", 42))
-    assert t is not None
-    n = q.cancel_key(("turn", 42))
-    assert n == 1
-    assert t.cancelled is True
-    assert q.inflight_count() == 0
-
-    wrote = {"n": 0}
-
-    def write() -> None:
-        wrote["n"] += 1
-
-    with pytest.raises(TicketCancelled):
-        q.run(t, write)
-    assert wrote["n"] == 0
-
 
 
 def test_ticketed_gate_cancel_blocks_write():
@@ -255,7 +218,6 @@ def test_ticketed_gate_cancel_blocks_write():
         with gate:
             wrote["n"] += 1
     assert wrote["n"] == 0
-
 
 
 def test_post_barrier_claim_cannot_cross_barrier_write():
@@ -364,36 +326,6 @@ def test_barrier_waits_healthy_slow_worker_terminal():
     assert barrier_done.is_set(), "worker exited without barrier_done"
     assert order == ["worker_terminal", "barrier"], order
     assert q.inflight_count() == 0
-
-
-
-def test_barrier_proceeds_after_worker_fail_release():
-    """可控失败终态：工人 vacate 后屏障放行（无 elapsed 伪失败）。"""
-    q = SessionWriteQueue()
-    t = q.claim(key=("turn", 2))
-    assert t is not None
-    order: list[str] = []
-
-    def failing_worker() -> None:
-        try:
-            order.append("fail_vacate")
-        finally:
-            q.complete(t)
-
-    def run_barrier() -> None:
-        q.barrier(lambda: order.append("barrier") or None)
-
-    worker = threading.Thread(target=failing_worker, daemon=True)
-    barrier_thread = None
-    try:
-        worker.start()
-        barrier_thread = threading.Thread(target=run_barrier, daemon=True)
-        barrier_thread.start()
-    finally:
-        worker.join()
-        if barrier_thread is not None:
-            barrier_thread.join()
-    assert order == ["fail_vacate", "barrier"], order
 
 
 def test_write_turn_orders_cs_not_whole_leg_llm():
@@ -506,7 +438,6 @@ def test_write_turn_still_blocks_on_open_barrier():
     assert order == ["barrier", "late"], order
 
 
-
 def test_no_elapsed_timeout_api_on_barrier():
     """The public queue API rejects the retired timeout option."""
     q = SessionWriteQueue()
@@ -522,7 +453,6 @@ def test_no_elapsed_timeout_api_on_barrier():
             q.ticketed_gate(ticket, timeout_s=0)
     finally:
         q.complete(ticket)
-
 
 
 def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
@@ -551,7 +481,6 @@ def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
     assert owner.session._write_gate is q1.write_gate
 
 
-
 def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
     """单一权威负向：wait_idle=False 与队列异常均须报红，不得被调用方洗白。"""
     stuck = SessionWriteQueue()
@@ -573,3 +502,65 @@ def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
     with pytest.raises(RuntimeError) as ei:
         wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)
     assert ei.value is fault
+
+
+
+def test_fail_release_lets_barrier_through():
+    """失败钉：腿失败票据空放行，屏障不卡死。"""
+    q = SessionWriteQueue()
+    t = q.claim(key=("extract", 9))
+    assert t is not None
+    q.complete(t)
+    order: list[str] = []
+    q.barrier(lambda: order.append("barrier") or None)
+    assert order == ["barrier"]
+    assert q.inflight_count() == 0
+
+
+def test_cancel_key_releases_and_blocks_run():
+    """撤回钉：按 key 取消在飞票据；run 见取消不写库。"""
+    q = SessionWriteQueue()
+    t = q.claim(key=("turn", 42))
+    assert t is not None
+    n = q.cancel_key(("turn", 42))
+    assert n == 1
+    assert t.cancelled is True
+    assert q.inflight_count() == 0
+
+    wrote = {"n": 0}
+
+    def write() -> None:
+        wrote["n"] += 1
+
+    with pytest.raises(TicketCancelled):
+        q.run(t, write)
+    assert wrote["n"] == 0
+
+
+def test_barrier_proceeds_after_worker_fail_release():
+    """可控失败终态：工人 vacate 后屏障放行（无 elapsed 伪失败）。"""
+    q = SessionWriteQueue()
+    t = q.claim(key=("turn", 2))
+    assert t is not None
+    order: list[str] = []
+
+    def failing_worker() -> None:
+        try:
+            order.append("fail_vacate")
+        finally:
+            q.complete(t)
+
+    def run_barrier() -> None:
+        q.barrier(lambda: order.append("barrier") or None)
+
+    worker = threading.Thread(target=failing_worker, daemon=True)
+    barrier_thread = None
+    try:
+        worker.start()
+        barrier_thread = threading.Thread(target=run_barrier, daemon=True)
+        barrier_thread.start()
+    finally:
+        worker.join()
+        if barrier_thread is not None:
+            barrier_thread.join()
+    assert order == ["fail_vacate", "barrier"], order

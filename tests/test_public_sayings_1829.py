@@ -1,19 +1,36 @@
-"""#1829 公开说法：独立记录入 0034 公开层，不冒充实况。"""
-
 from __future__ import annotations
-
 import shutil
 from ming_sim.db import GameDB
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
+import json
+import threading
+from ming_sim.audience_night import open_night
+from types import SimpleNamespace
+from ming_sim.session import GameSession
+from ming_sim.models import LLMConfig
+from tests.conftest import (
+    offline_empty_audience_translate,
+    persist_and_schedule_scene,
+    stub_audience_translate,
+    stub_scene_agent,
+)
+from tests.test_month_chain_1843 import _prepare_player_month
+"""#1829 公开说法：独立记录入 0034 公开层，不冒充实况。"""
+
+
+
+
 
 
 def _礼部大臣(content):
     return next(c for c in content.characters.values() if c.office_type == "礼部")
 
 
+
+
 def test_yuan_public_death_rumor_does_not_change_actual_life(game, tmp_path):
     db, state, content = game
-    status_before, _ = db.get_character_status("袁崇焕")
+    status_before, _ = db.characters.get_character_status("袁崇焕")
     assert status_before != "dead"
 
     saying_id = record_public_saying(
@@ -23,7 +40,7 @@ def test_yuan_public_death_rumor_does_not_change_actual_life(game, tmp_path):
         involved_characters=["袁崇焕"],
     )
 
-    status_after, _ = db.get_character_status("袁崇焕")
+    status_after, _ = db.characters.get_character_status("袁崇焕")
     assert status_after == status_before
     rows = list_public_sayings(db)
     assert len(rows) == 1
@@ -36,7 +53,7 @@ def test_yuan_public_death_rumor_does_not_change_actual_life(game, tmp_path):
     restored = GameDB(str(tmp_path / "save.db"), content)
     try:
         restored_state = restored.load_state()
-        restored_status, _ = restored.get_character_status("袁崇焕")
+        restored_status, _ = restored.characters.get_character_status("袁崇焕")
         assert restored_status == status_before
         restored_rows = list_public_sayings(restored)
         assert restored_rows[0]["body"] == "袁崇焕已死于宁远"
@@ -71,11 +88,17 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     assert saying["title"] == "有此说法"
     assert saying["body"] == "袁崇焕已死于宁远"
 
-    status, _ = db.get_character_status("袁崇焕")
+    status, _ = db.characters.get_character_status("袁崇焕")
     assert status != "dead"
     # 公开层是说法，不是把实况改成死讯。
     known_items = list(view.get("events") or []) + list(public)
     assert not any(item.get("kind") == "character_status" for item in known_items)
+
+
+
+
+
+
 
 
 def test_public_saying_may_annotate_person_affair_or_neither(game):

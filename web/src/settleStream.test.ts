@@ -21,44 +21,37 @@ function streamResponse(chunks: string[], ok = true): Response {
 const silent = {};
 
 describe("consumeSettleStream residual flush", () => {
-  it("parses a terminal done left in buffer without trailing blank line", async () => {
+  it.each([
+    { event: "done", data: { ok: true }, suffix: "" },
+    { event: "done", data: { ok: true }, suffix: "\n\n" },
+    { event: "decisions", data: { items: [1] }, suffix: "" },
+  ])("parses terminal $event with suffix '$suffix'", async ({ event, data, suffix }) => {
     const outcome = await consumeSettleStream(
-      streamResponse(['event: done\ndata: {"ok":true}']),
+      streamResponse([`event: ${event}\ndata: ${JSON.stringify(data)}${suffix}`]),
       silent,
     );
-    expect(outcome).toEqual({ kind: "done", data: { ok: true } });
+    expect(outcome).toEqual({ kind: event, data });
   });
 
-  it("parses a terminal decisions left in buffer without trailing blank line", async () => {
-    const outcome = await consumeSettleStream(
-      streamResponse(['event: decisions\ndata: {"items":[1]}']),
-      silent,
-    );
-    expect(outcome).toEqual({ kind: "decisions", data: { items: [1] } });
-  });
 
   it("still returns interrupted for empty/incomplete tails", async () => {
     const outcome = await consumeSettleStream(
       streamResponse(["event: done\ndata: {"]),
       silent,
     );
-    expect(outcome).toEqual({ kind: "error", data: "推演流意外中断。" });
+    // Structural interrupt channel; do not lock production chrome copy.
+    expect(outcome.kind).toBe("error");
+    expect(typeof outcome.data).toBe("string");
+    expect(outcome.data).not.toBe("");
   });
 
-  it("keeps normal \\n\\n terminated done path", async () => {
-    const outcome = await consumeSettleStream(
-      streamResponse(['event: done\ndata: {"ok":true}\n\n']),
-      silent,
-    );
-    expect(outcome).toEqual({ kind: "done", data: { ok: true } });
-  });
 });
 
 describe("consumeSettleStream HTTP errors", () => {
   it("uses custom httpErrorLabel on non-OK responses", async () => {
     await expect(
       consumeSettleStream(streamResponse([], false), silent, { httpErrorLabel: "继续失败" }),
-    ).rejects.toThrow("继续失败：HTTP 500");
+    ).rejects.toThrow("继续失败");
   });
 
   it("includes server JSON detail on non-OK responses", async () => {

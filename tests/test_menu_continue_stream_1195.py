@@ -1,5 +1,5 @@
-"""#1195: POST /api/menu/continue 分阶段 SSE 反馈（stage → done/error）。"""
 from __future__ import annotations
+"""#1195: POST /api/menu/continue 分阶段 SSE 反馈（stage → done/error）。"""
 
 import pytest
 
@@ -40,7 +40,7 @@ def test_menu_continue_streams_stage_labels_then_done_state(web_game, monkeypatc
     """继续路径：先推 stage 事件，再 done 带 state（结构化终态；不锁阶段措辞）。"""
     _reset_path_leases()
     turn = int(web_game.state.turn)
-    web_game.db.save_state(web_game.state)
+    web_game.db.reign.save_game_state(web_game.state)
     web_game.session.close()
     monkeypatch.setattr(web_app, "web_game", None)
 

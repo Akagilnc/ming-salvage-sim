@@ -1,7 +1,5 @@
-
 from ming_sim.applier import Provenance
 import json
-
 from ming_sim.covert_levy import (
     ENTRY_KIND, PROHIBITION_ACTION, active_prohibition_dossier,
     settle_exposure_from_canonical_actions,
@@ -12,6 +10,9 @@ from types import SimpleNamespace
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.settlement.views import section
+from ming_sim.covert_levy import ENTRY_KIND, PROHIBITION_ACTION, active_prohibition_dossier, settle_exposure_from_canonical_actions, write_exposure_todos
+
+
 
 def _bound_case(db, state):
     army = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
@@ -28,6 +29,8 @@ def _bound_case(db, state):
     return did, int(cur.lastrowid), str(army["id"]), str(executor)
 
 
+
+
 def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypatch):
     db, state, _ = game
     did, issue_id, _, executor = _bound_case(db, state)
@@ -40,7 +43,7 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
         (did, did),
     )
     assert write_exposure_todos(db, state) == 1
-    todo = db.list_next_audience_todos(status="pending")[0]
+    todo = db.dossiers.list_next_audience_todos(status="pending")[0]
     assert audience_todo_lane(ENTRY_KIND) == "covert_levy"
     scene = list_due_review_scenes(db)[0]
     assert scene["kind"] == ENTRY_KIND
@@ -71,8 +74,8 @@ def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did}},
     )
-    assert db.list_faction_denunciations(target_dossier_id=did)
-    todos = db.list_next_audience_todos(status="pending")
+    assert db.dossiers.denunciations(target_dossier_id=did)
+    todos = db.dossiers.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
 
 
@@ -91,8 +94,10 @@ def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
     )
     session = _prepare_player_month(db, state, content, monkeypatch)
     session.resolve_turn(allow_empty_decree=True)
-    todos = db.list_next_audience_todos(status="pending")
+    todos = db.dossiers.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
+
+
 
 
 def test_rejected_canonical_results_neither_consume_nor_create_channel(game, monkeypatch):
@@ -112,7 +117,7 @@ def test_rejected_canonical_results_neither_consume_nor_create_channel(game, mon
         "population_transfers": [{"rejected": True, "origin_ref": f"dossier:{did}", "reason": "摊派"}],
     }
     assert settle_exposure_from_canonical_actions(db, state, rejected) == 0
-    assert db.list_next_audience_todos(status="pending")
+    assert db.dossiers.list_next_audience_todos(status="pending")
     # With no audit/denunciation, a rejected transfer cannot manufacture unrest exposure.
     db.conn.execute("DELETE FROM next_audience_todos")
     db.conn.execute("DELETE FROM decree_dossier_links")
@@ -122,8 +127,8 @@ def test_rejected_canonical_results_neither_consume_nor_create_channel(game, mon
 def test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_generic_fork(game):
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
-    db.record_dossier_progress(did, state.turn, "有成", "饷事已有眉目", commit=False)
-    db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=False, commit=False)
+    db.dossiers.record_dossier_progress(did, state.turn, "有成", "饷事已有眉目", commit=False)
+    db.dossiers.record_execution(did, "transformed", "暗中摊派", state.turn, close=False, commit=False)
     assert db.read_dossier_fork_state(did)["fork"] is True  # shared #622/#627 contract
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
@@ -136,8 +141,8 @@ def _exposed_todo(db, state, monkeypatch, did):
     db.conn.execute(
         "UPDATE decree_dossiers SET promulgation_decision='promulgated' WHERE id=?", (did,)
     )
-    db.record_dossier_progress(did, state.turn, "有成", "军饷已有着落", commit=False)
-    db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=True, commit=False)
+    db.dossiers.record_dossier_progress(did, state.turn, "有成", "军饷已有着落", commit=False)
+    db.dossiers.record_execution(did, "transformed", "暗中摊派", state.turn, close=True, commit=False)
     monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
         "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
         "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
@@ -161,7 +166,7 @@ def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatc
     other = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND name<>? LIMIT 1", (executor,)
     ).fetchone()[0]
-    todo_id = int(db.list_next_audience_todos(status="pending")[0]["id"])
+    todo_id = int(db.dossiers.list_next_audience_todos(status="pending")[0]["id"])
 
     # 查办：关系代价单独成功仍不结算。
     dispatch_declaration(
@@ -173,7 +178,7 @@ def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatc
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did}},
     )
-    assert any(int(t["id"]) == todo_id for t in db.list_next_audience_todos(status="pending"))
+    assert any(int(t["id"]) == todo_id for t in db.dossiers.list_next_audience_todos(status="pending"))
 
     # 两腿同段齐备 → 经 dispatch 后待办 consumed。
     dispatch_declaration(
@@ -190,7 +195,7 @@ def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatc
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did}},
     )
-    pending_ids = {int(t["id"]) for t in db.list_next_audience_todos(status="pending")}
+    pending_ids = {int(t["id"]) for t in db.dossiers.list_next_audience_todos(status="pending")}
     assert todo_id not in pending_ids
     consumed = db.conn.execute(
         "SELECT status, payload_json FROM next_audience_todos WHERE id=?", (todo_id,),
@@ -218,8 +223,8 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
     origin = f"dossier:{did}"
-    key = next(iter(db.get_fiscal_config()))
-    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (army_id,))
+    key = next(iter(db.fiscal_config.values()))
+    db.conn.execute('UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=10 WHERE id=?', (army_id,))
 
     # An unrelated ordinary fiscal receipt must not impersonate the terminal order.
     unrelated = settle_delta(state, db, {'fiscal_changes': [{'key': key, 'delta': 1, 'origin_ref': origin, 'beyond_intent': False}]}, SettlementContext(content=content))
@@ -238,7 +243,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     did2, _, _, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did2)
     origin2 = f"dossier:{did2}"
-    todo2 = int(db.list_next_audience_todos(status="pending")[-1]["id"])
+    todo2 = int(db.dossiers.list_next_audience_todos(status="pending")[-1]["id"])
     from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import dispatch_declaration
 
@@ -258,7 +263,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did2}},
     )
-    assert any(int(t["id"]) == todo2 for t in db.list_next_audience_todos(status="pending"))
+    assert any(int(t["id"]) == todo2 for t in db.dossiers.list_next_audience_todos(status="pending"))
 
     db.conn.execute("UPDATE classes SET population=1 WHERE name='农民' AND region_id='shaanxi'")
     dispatch_declaration(
@@ -266,7 +271,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did2}},
     )
-    pending_ids = {int(t["id"]) for t in db.list_next_audience_todos(status="pending")}
+    pending_ids = {int(t["id"]) for t in db.dossiers.list_next_audience_todos(status="pending")}
     assert todo2 not in pending_ids
     row = db.conn.execute(
         "SELECT status, payload_json FROM next_audience_todos WHERE id=?", (todo2,),
@@ -279,24 +284,24 @@ def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, mo
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
     _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert db.list_next_audience_todos(status="pending") == []
+    assert db.dossiers.list_next_audience_todos(status="pending") == []
 
 
 def test_prohibition_reminder_is_consumed_after_later_payoff(game, monkeypatch):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
-    db.conn.execute("UPDATE armies SET arrears=6, province_pay_arrears=0, central_pay_arrears=6 WHERE id=?", (army_id,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=6 WHERE id=?", (army_id,))
     _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert db.list_next_audience_todos(status="pending") == []
+    assert db.dossiers.list_next_audience_todos(status="pending") == []
 
 
 def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game):
@@ -304,19 +309,13 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     did, _, army_id, _ = _bound_case(db, state)
     other_did, _, _, _ = _bound_case(db, state)
     origin, other_origin = f"dossier:{did}", f"dossier:{other_did}"
-    key = next(iter(db.get_fiscal_config()))
+    key = next(iter(db.fiscal_config.values()))
     setup = settle_delta(state, db, {'fiscal_creates': [{'key': '待禁裁项', 'account': '国库', 'direction': 'income', 'init_value': 2, 'origin_ref': origin, 'beyond_intent': True}, {'key': '普通裁项', 'account': '国库', 'direction': 'income', 'init_value': 2, 'origin_ref': origin}], 'fiscal_changes': [{'key': key, 'delta': 1, 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content, dossier_ids_at_input={did}))
     assert not section(setup, "fiscal_creates").rejected
-    historical_rows = list(db.list_fiscal_effects_for_dossier(did))
+    historical_rows = list(db.fiscal_config.effects_for_dossier(did))
     # 现役唯一补饷路按分源欠销账：固定饷源份额并同步两源欠，不走已退役的标量直写分支。
     db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-            province_pay_share=0, central_pay_share=1.0,
-            arrears=8, province_pay_arrears=0, central_pay_arrears=8
-        WHERE id=?
-        """,
+        "\n        UPDATE armies\n        SET owner_power='ming', is_tusi=0, self_funded_pay=0,\n            province_pay_share=0, central_pay_share=1.0,\n             province_pay_arrears=0, central_pay_arrears=8\n        WHERE id=?\n        ",
         (army_id,),
     )
     db.conn.commit()
@@ -333,11 +332,11 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     assert view(result, "fiscal_creates")
     assert section(result, "population_transfers").rejected[0].category == "forbidden_effect"
     assert len(view(result, "population_transfers")) == 1
-    assert db.get_fiscal_config().get("待禁裁项_base") == 2
-    assert db.get_fiscal_config().get("待禁新项_base") is None
+    assert db.fiscal_config.values().get("待禁裁项_base") == 2
+    assert db.fiscal_config.values().get("待禁新项_base") is None
     current_rows = {
         (row["effect_kind"], row["id"]): row
-        for row in db.list_fiscal_effects_for_dossier(did)
+        for row in db.fiscal_config.effects_for_dossier(did)
     }
     assert all(current_rows[(row["effect_kind"], row["id"])] == row for row in historical_rows)
     assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 6
@@ -354,7 +353,7 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
     prohibition = _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert db.get_fiscal_config()[key] == 0  # only one point remained, so rollback clamps
+    assert db.fiscal_config.values()[key] == 0  # only one point remained, so rollback clamps
     receipts = db.conn.execute(
         "SELECT * FROM fiscal_config_changes WHERE origin_ref=? AND key=?",
         (f"dossier:{prohibition}", key),
@@ -375,7 +374,7 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
     assert [(row["old_value"], row["new_value"]) for row in zero] == [(0, 0)]
     settle_delta(state, db, {'fiscal_changes': [{'key': key2, 'delta': 3, 'origin_ref': f'dossier:{other}'}]}, SettlementContext(content=content, dossier_ids_at_input={other}))
     assert settle_exposure_from_canonical_actions(db, state, {}) == 0
-    assert db.get_fiscal_config()[key2] == 3
+    assert db.fiscal_config.values()[key2] == 3
 
 
 def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
@@ -391,7 +390,7 @@ def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
     settle_delta(state, db, {'fiscal_removes': [{'key': key, 'origin_ref': other_origin}], 'fiscal_creates': [{'key': key, 'account': '国库', 'direction': 'income', 'init_value': 10, 'origin_ref': other_origin}], 'fiscal_changes': [{'key': key, 'delta': 2, 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content, dossier_ids_at_input={did, other}))
     _promulgated_prohibition(db, state, did)
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert db.get_fiscal_config()[key] == 10
+    assert db.fiscal_config.values()[key] == 10
 
 
 def test_prohibition_removes_live_covert_creation_without_rewriting_history(game, monkeypatch):
@@ -400,12 +399,12 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
     _exposed_todo(db, state, monkeypatch, did)
     origin = f"dossier:{did}"
     settle_delta(state, db, {'fiscal_creates': [{'key': '暗渠新项_rate', 'account': '国库', 'direction': 'income', 'init_value': 6, 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content, dossier_ids_at_input={did}))
-    before = list(db.list_fiscal_effects_for_dossier(did))
+    before = list(db.fiscal_config.effects_for_dossier(did))
     prohibition = _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert "暗渠新项_base" not in db.get_fiscal_config()
-    assert db.list_fiscal_effects_for_dossier(did) == before
+    assert "暗渠新项_base" not in db.fiscal_config.values()
+    assert db.fiscal_config.effects_for_dossier(did) == before
     tombstones = db.conn.execute(
         "SELECT key FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",
         (f"dossier:{prohibition}",),
@@ -419,7 +418,7 @@ def test_zero_pay_receipts_are_not_durable_tacit_effects(game, monkeypatch):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0")
+    db.conn.execute('UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=0')
     origin = f"dossier:{did}"
     directed, directed_rejections = _apply_economy_list(db, state, [{
         "account": "国库", "delta": -2, "purpose": "补饷",
@@ -455,7 +454,7 @@ def test_force_promulgated_history_is_the_canonical_prohibition_authority(game):
         "UPDATE decree_dossiers SET status='closed', promulgation_decision='rejected' WHERE id=?",
         (prohibition,),
     )
-    assert db.dossier_authorizes_effects(prohibition) is True
+    assert db.dossiers.authorizes_effects(prohibition) is True
     assert active_prohibition_dossier(db, exposed)["id"] == prohibition
 
 
@@ -483,6 +482,8 @@ def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game,
     assert write_exposure_todos(db, state) == 1
 
 
+
+
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
     db, state, content = game
     did, _, _, _ = _bound_case(db, state)
@@ -501,13 +502,12 @@ def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch)
     db.conn.execute("UPDATE classes SET population=1 WHERE name='农民' AND region_id='shaanxi'")
     real = settle_delta(state, db, extracted, SettlementContext(content=content, dossier_ids_at_input={did}))
     assert write_exposure_todos(db, state, real) == 1
-    todo = db.list_next_audience_todos(status="pending")[0]
+    todo = db.dossiers.list_next_audience_todos(status="pending")[0]
     assert todo["payload_json"]["channels"] == ["民变自长"]
-
 
 def _realize_fork(db, state, did):
     """经现役写口造真实分叉（不替换读端）：有奏报『有成』、执行格 transformed、旨外 durable 经济效果。"""
-    db.record_dossier_progress(int(did), int(state.turn), "有成", "奏报有成")
+    db.dossiers.record_dossier_progress(int(did), int(state.turn), "有成", "奏报有成")
     db.conn.execute("UPDATE decree_dossiers SET execution_outcome='transformed' WHERE id=?", (int(did),))
     db.record_issue_economy_move(
         state, "国库", -3, "旨外", "旨外测试", origin_ref=f"dossier:{int(did)}", beyond_intent=1,

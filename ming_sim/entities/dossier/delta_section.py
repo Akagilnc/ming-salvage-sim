@@ -77,7 +77,7 @@ def apply_executions(run):
         except (TypeError, ValueError, KeyError) as exc:
             _refuse(item, str(exc))
             continue
-        dossier = run.db.get_decree_dossier(dossier_id)
+        dossier = run.db.dossiers.get(dossier_id)
         if dossier is None or dossier["status"] != "executing":
             _refuse(item, "案卷不存在或不在 executing")
             continue
@@ -87,7 +87,7 @@ def apply_executions(run):
             except DeclarationDataError as exc:
                 _refuse(item, str(exc))
                 continue
-        run.db.record_dossier_execution(
+        run.db.dossiers.record_execution(
             dossier_id, outcome, note, run.state.turn, close=True, commit=False,
         )
         # #1900：对账金额落 reconciliations 结构化行；不向 execution_note 灌核账模板。

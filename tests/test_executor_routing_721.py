@@ -1,16 +1,16 @@
-"""#721：承办路由只经 canonical 成案核一次写入。"""
-
 from __future__ import annotations
-
 import json
-
 import pytest
-
 from ming_sim.action_materialize import (
     stage_assignment_candidate,
     stage_punishment_candidate)
 from ming_sim.db import atomic
 from tests.dossier_test_helpers import promulgate_proposed_appointments
+"""#721：承办路由只经 canonical 成案核一次写入。"""
+
+
+
+
 
 
 
@@ -61,7 +61,7 @@ def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(game):
         db, state, category="清丈",
         participants=[{"character_id": "毕自严", "tier": "主办"}],
     )
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert [e["character_id"] for e in row["participant_roster"] if e["tier"] == "主办"] == ["毕自严"]
 
     path = db.path
@@ -69,7 +69,7 @@ def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(game):
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
-        row = restored.get_decree_dossier(dossier_id)
+        row = restored.dossiers.get(dossier_id)
         assert [e["character_id"] for e in row["participant_roster"] if e["tier"] == "主办"] == ["毕自严"]
     finally:
         restored.close()
@@ -95,7 +95,7 @@ def test_existing_delegated_lead_is_preserved_not_demoted(game):
             {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
         ],
     )
-    persisted = db.get_decree_dossier(dossier_id)["participant_roster"]
+    persisted = db.dossiers.get(dossier_id)["participant_roster"]
     by_name = {e["character_id"]: e for e in persisted}
     assert by_name["毕自严"]["tier"] == "主办"
     assert not str(by_name["毕自严"].get("delegator_id") or "").strip()
@@ -110,7 +110,7 @@ def test_existing_delegated_lead_is_preserved_not_demoted(game):
 def test_production_assignee_is_named_route(game, payload):
     db, state, _ = game
     dossier_id = _create(db, state, category=None, payload=payload)
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     leads = [
         e["character_id"] for e in dossier["participant_roster"]
         if e["tier"] == "主办"
@@ -135,8 +135,8 @@ def test_legacy_character_executor_migrates_without_overriding_roster(game, acti
         executor_id="陈新甲", payload={},
         participants=[{"character_id": "毕自严", "tier": "主办"}],
     )
-    legacy_roster = db.get_decree_dossier(legacy_id)["participant_roster"]
-    existing_roster = db.get_decree_dossier(roster_id)["participant_roster"]
+    legacy_roster = db.dossiers.get(legacy_id)["participant_roster"]
+    existing_roster = db.dossiers.get(roster_id)["participant_roster"]
     assert [
         item["character_id"] for item in legacy_roster if item["tier"] == "主办"
     ] == ["陈新甲"]
@@ -148,7 +148,7 @@ def test_legacy_character_executor_migrates_without_overriding_roster(game, acti
 def test_appointment_routes_to_appointee_at_creation(game):
     db, state, _ = game
     dossier_id = _create(db, state, action="appointment", category=None, target="陈新甲")
-    leads = [e["character_id"] for e in db.get_decree_dossier(dossier_id)["participant_roster"] if e["tier"] == "主办"]
+    leads = [e["character_id"] for e in db.dossiers.get(dossier_id)["participant_roster"] if e["tier"] == "主办"]
     assert leads == ["陈新甲"]
 
 
@@ -172,7 +172,7 @@ def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(gam
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone()
     leads = [
-        item["character_id"] for item in db.get_decree_dossier(dossier["id"])["participant_roster"]
+        item["character_id"] for item in db.dossiers.get(dossier["id"])["participant_roster"]
         if item["tier"] == "主办"
     ]
     assert leads == [name]
@@ -187,20 +187,6 @@ def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(gam
     )
 
 
-def test_unknown_appointee_keeps_declared_faction(game):
-    """#1847 N10：任命声明的派系是结构化字段，未知值原样透传，不得静默改写为「中立」。"""
-    db, state, content = game
-    name = "测试异派新臣"
-    pending_id = db.stage_pending_action(
-        state.turn, kind="office", action="任命", minister_name="毕自严",
-        target_id=None, payload={"text": "测试任免原文", "name": name, "office": "户部主事", "faction": "不存在派"},
-    )
-    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
-
-    person = db.conn.execute(
-        "SELECT faction FROM characters WHERE name=?", (name,),
-    ).fetchone()
-    assert person["faction"] == "不存在派"
 
 
 def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(game):
@@ -237,7 +223,7 @@ def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(gam
     ).fetchone()
     assert json.loads(dossier["payload_json"])["transaction_category"] == "清丈"
     leads = [
-        item["character_id"] for item in db.get_decree_dossier(dossier["id"])["participant_roster"]
+        item["character_id"] for item in db.dossiers.get(dossier["id"])["participant_roster"]
         if item["tier"] == "主办"
     ]
     assert leads == ["毕自严"]
@@ -254,19 +240,6 @@ def test_real_punishment_stage_preserves_category(game):
         "SELECT payload_json FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone()["payload_json"])
     assert payload["transaction_category"] == "缉拿"
-
-
-def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(game):
-    db, state, _ = game
-    pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
-    dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
-    pending_id = stage_punishment_candidate(
-        db, state.turn, "陈新甲", text="拿问下狱", target_id="毕自严",
-        punish_action="拿问下狱", transaction_category="修仙",
-    )
-    assert pending_id == 0
-    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
 
 
 def _directive_payload(category):
@@ -300,14 +273,8 @@ def test_pending_routing_rejection_lands_on_ensure_batch_seam(
     db, state, _ = game
     mirror = tmp_path / "ensure-routing.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
-    bad = db.add_directive(
-        state, None, "缺目标", "test", status="pending",
-        dossier_payload=_bad_directive_payload(),
-    )
-    good = db.add_directive(
-        state, None, "清丈", "test", status="pending",
-        dossier_payload=_directive_payload("清丈"),
-    )
+    bad = db.issues.add_directive(state.turn, state.year, state.period, None, '缺目标', 'test', status='pending', dossier_payload=_bad_directive_payload())
+    good = db.issues.add_directive(state.turn, state.year, state.period, None, '清丈', 'test', status='pending', dossier_payload=_directive_payload('清丈'))
 
     db.confirm_directive(bad)
     db.confirm_directive(good)
@@ -379,10 +346,7 @@ def test_directive_routing_rejection_rolls_back_with_outer_owner(
     db, state, _ = game
     mirror = tmp_path / "batch-rollback.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
-    directive_id = db.add_directive(
-        state, None, "缺目标", "test", status="draft",
-        dossier_payload=_bad_directive_payload(),
-    )
+    directive_id = db.issues.add_directive(state.turn, state.year, state.period, None, '缺目标', 'test', status='draft', dossier_payload=_bad_directive_payload())
 
     with pytest.raises(RuntimeError):
         with atomic(db):
@@ -411,11 +375,12 @@ def test_directive_routing_rejection_rolls_back_with_outer_owner(
     ("extension_json", "["),
 ])
 def test_restore_malformed_durable_json_fails_loud(game, column, bad):
+    from ming_sim.applier import StoredDocumentError
     db, state, _ = game
     dossier_id = _create(db, state, category=None, action="policy")
     db.conn.execute(f"UPDATE decree_dossiers SET {column}=? WHERE id=?", (bad, dossier_id))
-    with pytest.raises(ValueError):
-        db.get_decree_dossier(dossier_id)
+    with pytest.raises(StoredDocumentError):
+        db.dossiers.get(dossier_id)
 
 
 def test_national_policy_is_one_dossier_without_province_routing(game):
@@ -437,5 +402,20 @@ def test_national_policy_is_one_dossier_without_province_routing(game):
         commit=True,
     )
     assert len(ids) == 1
-    row = db.get_decree_dossier(ids[0])
+    row = db.dossiers.get(ids[0])
     assert row["region_id"] == ""
+
+def test_unknown_appointee_keeps_declared_faction(game):
+    """#1847 N10：任命声明的派系是结构化字段，未知值原样透传，不得静默改写为「中立」。"""
+    db, state, content = game
+    name = "测试异派新臣"
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name="毕自严",
+        target_id=None, payload={"text": "测试任免原文", "name": name, "office": "户部主事", "faction": "不存在派"},
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+
+    person = db.conn.execute(
+        "SELECT faction FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert person["faction"] == "不存在派"

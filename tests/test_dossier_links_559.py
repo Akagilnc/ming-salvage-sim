@@ -1,23 +1,8 @@
-
-
-
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.settlement.dossier import apply_dossier_verdicts
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 
-
-def _list_dossier_link_rejections(db, source_dossier_id=None, *, pending_action_id=None):
-    """存储读面：已删 list_dossier_link_rejections 的现役替身（同表同过滤）。"""
-    if (source_dossier_id is None) == (pending_action_id is None):
-        raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
-    if pending_action_id is not None:
-        column, value = "pending_action_id", pending_action_id
-    else:
-        column, value = "source_dossier_id", source_dossier_id
-    rows = db.conn.execute(
-        f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
-        (int(value),),
-    ).fetchall()
-    return [dict(row) for row in rows]
 
 
 def _make_dossier(db, state, text):
@@ -35,16 +20,16 @@ def test_one_protection_dossier_links_three_older_allocations_both_directions(ga
     targets = [_make_dossier(db, state, name) for name in ("辽东补饷", "宣大补饷", "东江补饷")]
     protection = _make_dossier(db, state, "密令护行三路饷银")
 
-    db.add_dossier_links(
+    db.dossiers.add_links(
         protection,
         [{"target_dossier_id": target, "relation_type": "护卫", "note": "护送该路饷银"}
          for target in targets],
     )
 
-    assert [row["target_dossier_id"] for row in db.list_dossier_links(protection)] == targets
-    assert [db.list_dossier_links(target, direction="incoming")[0]["source_dossier_id"]
+    assert [row["target_dossier_id"] for row in db.dossiers.links(protection)] == targets
+    assert [db.dossiers.links(target, direction="incoming")[0]["source_dossier_id"]
             for target in targets] == [protection] * 3
-    assert all("status" not in row for row in db.list_dossier_links(protection))
+    assert all("status" not in row for row in db.dossiers.links(protection))
 
 
 def test_only_confirmed_narrowed_references_are_persisted(game):
@@ -53,22 +38,32 @@ def test_only_confirmed_narrowed_references_are_persisted(game):
     xuanda = _make_dossier(db, state, "宣大补饷")
     protection = _make_dossier(db, state, "只确认护卫辽东")
 
-    db.add_dossier_links(
+    db.dossiers.add_links(
         protection,
         [{"target_dossier_id": liaodong, "relation_type": "护卫", "note": "确认只护辽东"}],
     )
 
-    assert [row["target_dossier_id"] for row in db.list_dossier_links(protection)] == [liaodong]
-    assert db.list_dossier_links(xuanda, direction="incoming") == []
+    assert [row["target_dossier_id"] for row in db.dossiers.links(protection)] == [liaodong]
+    assert db.dossiers.links(xuanda, direction="incoming") == []
+
+
+
+
+
+
+
+
+
+
 
 
 def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     db, state, _ = game
     draft_id = _make_dossier(db, state, "尚未明发饷案")
     public_id = _make_dossier(db, state, "公开饷案")
-    db.record_dossier_decision(public_id, "promulgated")
+    db.dossiers.record_dossier_decision(public_id, "promulgated")
     other_order = create_test_secret_order(db, state, "卢象升", "密查", "不可外泄", [])
-    other_secret = db.get_dossier_for_secret_order(other_order)
+    other_secret = db.dossiers.get_for_secret_order(other_order)
 
     visible = db.list_referenceable_dossiers("孙承宗", state.turn)
 
@@ -81,23 +76,6 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     }
 
 
-def test_public_disclosure_does_not_grant_secret_dossier_access(game):
-    from ming_sim.knowledge import knowledge_row_visible_to
-
-    db, state, _ = game
-    order_id = create_test_secret_order(db, state, "卢象升", "密查辽饷", "不可外泄", [])
-    dossier = db.get_dossier_for_secret_order(order_id)
-    source_id = f"secret_order_disclosure:{order_id}:test"
-    db.record_public_knowledge_event(
-        state, "密查辽饷已披露", source_id=source_id)
-    event = db.conn.execute(
-        "SELECT * FROM character_knowledge_events WHERE source_id=?", (source_id,)
-    ).fetchone()
-
-    assert knowledge_row_visible_to(db, event, "孙承宗") is True
-    assert dossier["id"] not in {
-        row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
-    }
 
 
 def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
@@ -116,9 +94,15 @@ def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
     applied = db.commit_pending_actions(state, action_ids=[action_id])
 
     assert [row["id"] for row in applied] == [action_id]
-    order = db.list_secret_orders(minister_name="孙承宗")[0]
-    dossier = db.get_dossier_for_secret_order(order["id"])
-    assert [row["target_dossier_id"] for row in db.list_dossier_links(dossier["id"])] == targets
+    order = db.character_knowledge.list_secret_orders(minister_name="孙承宗")[0]
+    dossier = db.dossiers.get_for_secret_order(order["id"])
+    assert [row["target_dossier_id"] for row in db.dossiers.links(dossier["id"])] == targets
+
+
+
+
+
+
 
 
 def test_force_promulgated_rejected_dossier_is_referenceable(game):
@@ -128,7 +112,7 @@ def test_force_promulgated_rejected_dossier_is_referenceable(game):
     apply_dossier_verdicts(db, state, [_rejected_verdict(dossier_id)])
     apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["promulgation_decision"] == "rejected"
     assert dossier_id in {
         row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
@@ -138,10 +122,41 @@ def test_force_promulgated_rejected_dossier_is_referenceable(game):
 def test_withdrawn_rejected_dossier_is_not_referenceable(game):
     db, state, _ = game
     dossier_id = _make_dossier(db, state, "收回的旧旨")
-    db.record_dossier_decision(dossier_id, "rejected", reason="驳回")
-    db.record_dossier_decision(dossier_id, "withdrawn", reason="收回")
+    db.dossiers.record_dossier_decision(dossier_id, "rejected", reason="驳回")
+    db.dossiers.record_dossier_decision(dossier_id, "withdrawn", reason="收回")
     assert dossier_id not in {row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)}
 
-from ming_sim.settlement.dossier import apply_dossier_verdicts
 
-from ming_sim.settlement.dossier import apply_dossier_promulgation
+
+def _list_dossier_link_rejections(db, source_dossier_id=None, *, pending_action_id=None):
+    """存储读面：已删 list_dossier_link_rejections 的现役替身（同表同过滤）。"""
+    if (source_dossier_id is None) == (pending_action_id is None):
+        raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
+    if pending_action_id is not None:
+        column, value = "pending_action_id", pending_action_id
+    else:
+        column, value = "source_dossier_id", source_dossier_id
+    rows = db.conn.execute(
+        f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
+        (int(value),),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def test_public_disclosure_does_not_grant_secret_dossier_access(game):
+    from ming_sim.knowledge import knowledge_row_visible_to
+
+    db, state, _ = game
+    order_id = create_test_secret_order(db, state, "卢象升", "密查辽饷", "不可外泄", [])
+    dossier = db.dossiers.get_for_secret_order(order_id)
+    source_id = f"secret_order_disclosure:{order_id}:test"
+    db.record_public_knowledge_event(
+        state, "密查辽饷已披露", source_id=source_id)
+    event = db.conn.execute(
+        "SELECT * FROM character_knowledge_events WHERE source_id=?", (source_id,)
+    ).fetchone()
+
+    assert knowledge_row_visible_to(db, event, "孙承宗") is True
+    assert dossier["id"] not in {
+        row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
+    }

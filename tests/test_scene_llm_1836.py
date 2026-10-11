@@ -1,17 +1,6 @@
-"""#1836 T1：一个 LLM 演整场召对。
-
-Seams:
-- prepare_scene_materials（在场诸人各一棵私有子树 + 开场最小集）
-- GameSession.scene_chat（宣 X 落入殿账 → 场景调用；退朝收夜；一轮一次调用）
-- 关档重开：list_chat_turns_for_night 回到最后一条持久化对话轮
-"""
-
 from __future__ import annotations
-
 from types import SimpleNamespace
-
 import pytest
-
 from ming_sim.audience_night import (
     TAG_ENTER,
     get_night,
@@ -25,6 +14,18 @@ from ming_sim.audience_night import (
 from ming_sim.materials import _safe_segment, list_materials, prepare_scene_materials
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import SessionWriteQueue
+from ming_sim.materials import list_materials, prepare_scene_materials
+"""#1836 T1：一个 LLM 演整场召对。
+
+Seams:
+- prepare_scene_materials（在场诸人各一棵私有子树 + 开场最小集）
+- GameSession.scene_chat（宣 X 落入殿账 → 场景调用；退朝收夜；一轮一次调用）
+- 关档重开：list_chat_turns_for_night 回到最后一条持久化对话轮
+"""
+
+
+
+
 
 def _sess(db, state, content, *, llm_config=None):
     sess = GameSession.__new__(GameSession)
@@ -36,7 +37,6 @@ def _sess(db, state, content, *, llm_config=None):
     sess._write_queue = SessionWriteQueue()
     sess._write_gate = sess._write_queue.write_gate
     return sess
-
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
@@ -73,7 +73,6 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     assert calls[0] == emperor
     assert result.court_action == ""
 
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_path):
     """AC2：「宣 X」后入殿账落下，下一次场景材料准备他在场。"""
@@ -109,7 +108,6 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     assert result.court_action == ""
 
 
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatch):
     """AC3：scene_chat('退朝') 真入口收夜；同库重读最后一条持久化对话轮仍在。"""
@@ -128,12 +126,12 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
 
     result = sess.scene_chat("边饷如何？")
     assert result.court_action == ""
-    user_mid = db.append_chat_message("殿上", state.turn, "user", "边饷如何？")
-    minister_mid = db.append_chat_message("殿上", state.turn, "assistant", result.answer or "众臣叩首：臣等遵旨。")
+    user_mid = db.chat_messages.insert(minister_name='殿上', turn=state.turn, role='user', content='边饷如何？')
+    minister_mid = db.chat_messages.insert(minister_name='殿上', turn=state.turn, role='assistant', content=result.answer or '众臣叩首：臣等遵旨。')
     ctid = db.create_chat_turn(
         state, "殿上", "scene-sess", 0, night_id=night_id, status="generating",
     )
-    db.update_chat_turn_messages(ctid, user_message_id=user_mid, minister_message_id=minister_mid)
+    db.reign.update_chat_turn_messages(ctid, user_message_id=user_mid, minister_message_id=minister_mid)
     # 场景入口不跑故事抽取（转译 C1 接上）；标 done 以免收夜走旧抽取耗尽。
     db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' WHERE id=?", (ctid,),

@@ -1,5 +1,5 @@
-"""#1721: start.sh syncs Python deps before uvicorn; pip failure does not start the server."""
 from __future__ import annotations
+"""#1721: start.sh syncs Python deps before uvicorn; pip failure does not start the server."""
 
 import os
 import stat

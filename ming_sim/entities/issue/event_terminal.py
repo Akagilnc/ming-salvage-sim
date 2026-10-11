@@ -47,7 +47,7 @@ def apply_event_cascading_invalidations(
                 source="event_chain_invalidated",
                 commit=False,
             )
-            row = db.find_active_issue_by_origin("event_pool", ev.id)
+            row = db.issues.read_find_active_issue_by_origin(('event_pool', ev.id))
             if row is not None:
                 db.cancel_issue(state, int(row["id"]), narrative=f"事件链作废：{reason}", commit=False)
             item: Dict[str, object] = {"id": ev.id, "title": ev.title, "terminal_state": "obsolete", "reason": reason}
@@ -96,7 +96,7 @@ def apply_petition_event_outcome(
         # 留中：本疏已答，事件未终。不写终态，也不另开一条留中账。
         # 已呈原文与原批语在 record_event_petition_answer 的 choice_json 里。
         return {"id": eid, "settled": False, "terminal_state": "", "terminal_reason": ""}
-    existing = db.event_terminal_state(eid)
+    existing = db.issues.event_terminal_state(eid)
     if existing == "triggered":
         # 一事件一裁断（ADR 0115:3 first-wins）：结局已落定即不可翻。
         return {

@@ -1,20 +1,9 @@
-"""#1465 切片③：CLI runner 真实入口走统一 transport。
-
-真实缝 = HTTP `POST /api/audience/chat/stream`（channel="cli"，model 真是
-`CliChat`，只把子进程换成脚本替身）。断言只落结构化字段：transport_attempts /
-code / outcome / message_id / 夜未封 / 子进程调用次数。受控时钟，不跑真墙钟。
-"""
-
 from __future__ import annotations
-
 from pathlib import Path
-
 import threading
 from types import SimpleNamespace
 from typing import Callable, Dict, Optional
-
 import pytest
-
 import ming_sim.cli_backend as cb
 import ming_sim.llm_transport as transport_mod
 from tests.cli_process_doubles import SilentUntilKilled, install_fake_cli_runner
@@ -23,6 +12,16 @@ from tests.test_chat_stream_failpaths_393 import (
     _post_chat_stream,
     _transport_web_game,
 )
+"""#1465 切片③：CLI runner 真实入口走统一 transport。
+
+真实缝 = HTTP `POST /api/audience/chat/stream`（channel="cli"，model 真是
+`CliChat`，只把子进程换成脚本替身）。断言只落结构化字段：transport_attempts /
+code / outcome / message_id / 夜未封 / 子进程调用次数。受控时钟，不跑真墙钟。
+"""
+
+
+
+
 
 _OK_REPLY = "臣已核辽饷，谨复奏。\n"
 

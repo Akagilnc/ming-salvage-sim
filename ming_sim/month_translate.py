@@ -29,7 +29,7 @@ def _visible_effect_refs(
 
     return {
         "affairs": [int(row.id) for row in db.affairs.list_open()],
-        "dossiers": [int(row["id"]) for row in db.list_decree_dossiers_for_simulation(turn)],
+        "dossiers": [int(row["id"]) for row in db.dossiers.list_for_simulation(turn)],
         # 唯一判法：案卷.secret_order_id；供 declaration_dispatch → secret_dossier_participants
         "secret_dossiers": sorted(secret_order_dossier_ids(db)),
     }
@@ -45,7 +45,7 @@ def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
     from ming_sim.issues import petition_outcome_is_admissible
 
     out: list[dict[str, object]] = []
-    for row in db.list_event_petition_records():
+    for row in db.issues.list_event_petition_records():
         event_id = str(row.get("event_id") or "")
         if not event_id or any(item["event_id"] == event_id for item in out):
             continue

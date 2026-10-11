@@ -4,6 +4,9 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.social_class.store import ClassStore
+from ming_sim.entities.faction.store import FactionStore
 
 import json
 import sqlite3
@@ -154,7 +157,7 @@ def build_promulgation_judge_context(
     class_rows = db.conn.execute(
         "SELECT DISTINCT name FROM classes ORDER BY name"
     ).fetchall()
-    issue_rows = db.list_active_issues()
+    issue_rows = db.issues.active_rows()
     authority = int(state.metrics.get("皇威", 0))
     authority_band = imperial_authority_band(authority)
     assert authority_band in IMPERIAL_AUTHORITY_BANDS
@@ -164,7 +167,7 @@ def build_promulgation_judge_context(
         target_id = row.get("target_id")
         appointment_tenure = str(payload.get("任别") or "")
         # #612: endorsements are DB-backed spoken facts, not payload-only ids.
-        endorsements = db.list_dossier_endorsements(int(row["id"]))
+        endorsements = db.dossiers.endorsements(int(row["id"]))
         endorsement_ids = [int(item["id"]) for item in endorsements]
         # #611: authorization_ids come only from the unique applicability projection.
         # Never read payload authorization_id(s) as a parallel authority identity source.
@@ -367,15 +370,15 @@ def _validate_promulgation_verdict_item(
         }
     else:
         faction_names = {
-            str(item["name"]) for item in db.conn.execute("SELECT name FROM factions")
+            str(item["name"]) for item in FactionStore(db.conn).read_names()
         }
         class_names = {
             str(item["name"])
-            for item in db.conn.execute("SELECT DISTINCT name FROM classes")
+            for item in ClassStore(db.conn).read_names()
         }
         gatekeeper_ids = {
             str(item["name"])
-            for item in db.conn.execute("SELECT name FROM characters")
+            for item in CharacterStore(db.conn).read_names()
         }
         context_dossiers = {}
 
@@ -573,17 +576,17 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     (#1274 QA J-1 / owner B-2).
     """
     executing_work = False
-    for row in db.list_decree_dossiers(status="executing"):
+    for row in db.dossiers.list_dossiers(status="executing"):
         payload = row["payload"]
         # Non-terminal executing dossiers remain simulator continuation context.
         if dossier_action_policy(row.get("action_type"), payload)["execution_surface"] != "terminal":
             executing_work = True
             break
     return bool(db.list_monthly_dossier_progress_nudges()) or bool(
-        db.list_decree_dossiers(status="proposed")
+        db.dossiers.list_dossiers(status="proposed")
     ) or executing_work or any(
         row.get("kind") == "directive"
-        for row in db.list_pending_actions(state.turn)
+        for row in db.dossiers.list_pending_actions(state.turn)
     )
 
 
@@ -635,7 +638,7 @@ def _provenance_from_stored(value: object) -> Provenance:
 
     接受 Provenance 实例与已存的枚举值字符串；空/缺省回落 system_simulation。
     非空非法持久值保留真实解析失败，不冒称系统来源、不做历史误序列化适配。
-    写库侧见 db.save_resolve_context：一律落枚举值字符串，不落 str(member)。
+    写库侧见 db.resolve_contexts.save：一律落枚举值字符串，不落 str(member)。
     """
     if isinstance(value, Provenance):
         return value
@@ -792,7 +795,7 @@ def prepare_resolve_front_half(
     # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
     # 默认空字段会冲掉已有原诏/source。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
-        existing = db.get_resolve_context(int(state.turn))
+        existing = db.resolve_contexts.get(int(state.turn))
         if existing is not None:
             from ming_sim.month_chain import transit_arrivals_from_payload
             return transit_arrivals_from_payload(existing.get("simulator_payload"))
@@ -808,7 +811,7 @@ def prepare_resolve_front_half(
             )
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（同 turn 占位重入时尤甚）。
-            prior_placeholder = db.get_resolve_context(int(state.turn))
+            prior_placeholder = db.resolve_contexts.get(int(state.turn))
             placeholder_payload = dict(
                 prior_placeholder.get("simulator_payload") or {}
             ) if prior_placeholder is not None else {}
@@ -821,7 +824,7 @@ def prepare_resolve_front_half(
                 if isinstance(prior_placeholder, dict)
                 else ""
             )
-            db.save_resolve_context(
+            db.resolve_contexts.save(
                 state.turn, decree_text, placeholder_payload,
                 source=Provenance(source).value,  # #146 A：归一 enum/合法值串
                 attendant_message=preserved_attendant,
@@ -831,7 +834,7 @@ def prepare_resolve_front_half(
         raise
 
     from ming_sim.month_chain import transit_arrivals_from_payload
-    ctx = db.get_resolve_context(int(state.turn))
+    ctx = db.resolve_contexts.get(int(state.turn))
     payload = ctx["simulator_payload"] if ctx is not None else {}
     if "transit_arrivals" in payload and payload.get("transit_arrivals") is not None:
         return transit_arrivals_from_payload(payload)
@@ -890,7 +893,7 @@ def pre_settle(
             # 无聊天暂存时为空操作；committed 行不重跑。
             # #1560 / CONTEXT：过回合丢弃既有 failed secret-order intents，再 commit；
             # 顺序在 commit 前，避免误清同次 commit 新产生的 failure。
-            discarded_failed = db.discard_failed_secret_order_intents()
+            discarded_failed = db.dossiers.delete_failed_secret_order_intents()
             if discarded_failed:
                 tlog(f"[pending_actions] 过回合丢弃既有 failed 密令意图 {discarded_failed} 条")
             committed = db.commit_pending_actions(
@@ -937,7 +940,7 @@ def pre_settle(
                 tlog(f"[secret_order] 到期待对账 {due_orders}")
             # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
             state.turn_phase = TurnPhase.SETTLING.value
-            db.save_state(state)
+            db.reign.save_game_state(state)
             collector.flush_to_db(db)
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc, in_fixed_fiscal=in_fixed_fiscal)
@@ -958,7 +961,7 @@ def resolve_decisions_phase2(
 ) -> str:
     """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
     要求本回合处于 awaiting_decision（已有 resolve_context）。返回完整结算报告。"""
-    ctx = db.get_resolve_context(state.turn)
+    ctx = db.resolve_contexts.get(state.turn)
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
     from ming_sim.month_chain import run_player_month_chain

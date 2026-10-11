@@ -1,9 +1,9 @@
+from __future__ import annotations
 """#1274 QA A-3/A-3b：seed 数据残余（#1283/#1289 + #1284/#1308 史实尾单）。
 
 只钉 content 静态口径；seed 仅对新档生效，不碰 DB/引擎。
 """
 
-from __future__ import annotations
 
 from ming_sim.content import load_character_content
 from ming_sim.db import normalize_office
@@ -103,9 +103,13 @@ def test_zhang_fengyi_office_strips_future_title():
 
 
 def test_qian_qianyi_seed_office_records_bajiu_dismissal():
-    """#1308 / ADR 0009：钱谦益离事不持现职名分；罢居事由走 status_reason。"""
+    """#1308/#1889：钱谦益 seed 以结构化 status/reason_code 记削籍；office 空。
+
+#1812/#1889：不锁 status_reason 自由文案（罢居/礼部侍郎等散文）。
+禁为迁就本测改写真 content。
+"""
     _, characters = load_character_content()
     ch = characters["钱谦益"]
-    assert (ch.office or "") == ""
     assert ch.status == "dismissed"
-    assert (ch.status_reason or "").strip()
+    assert ch.reason_code == "获罪削籍"
+    assert not (ch.office or "").strip(), "归位后 office 须空；状态在 status/reason_code"

@@ -11,6 +11,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.region.store import RegionStore
 
 from ming_sim.applier import RejectedItem, Provenance
 
@@ -19,15 +21,48 @@ import json
 import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from ming_sim.applier import StoredDocumentError, durable_float, durable_int, load_stored_object, load_stored_object_list
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
-from ming_sim.centrifuge_ledger import CENTRIFUGE_AXES
-from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS
-from ming_sim.value_matrix import (
-    normalize_axis,
-    normalize_axes,
-    normalize_direction,
-)
+
+# Closed vocabulary for covert-task direction, independent of retired faction ledgers.
+_VALUE_AXES = frozenset({
+    "礼法名节", "既得利益", "实务事功", "皇权依附", "华夷战和", "民本恤民",
+})
+
+
+def normalize_axis(raw: object) -> str | None:
+    text = str(raw or "").strip()
+    return text if text in _VALUE_AXES else None
+
+
+def normalize_axes(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        items: list[object] = [raw]
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        axis = normalize_axis(item)
+        if axis is None or axis in seen:
+            continue
+        seen.add(axis)
+        out.append(axis)
+    return out
+
+
+def normalize_direction(raw: object, *, default: int = 1) -> int:
+    """动作方向：+1 顺轴护向，−1 逆轴护向。非法回 default。"""
+    try:
+        value = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return int(default)
+    return 1 if value >= 0 else -1
 
 FIDELITY_STATES: tuple[str, ...] = ("忠实", "打折", "阳奉阴违", "反噬")
 _FIDELITY_INDEX = {name: idx for idx, name in enumerate(FIDELITY_STATES)}
@@ -530,7 +565,7 @@ def describe_covert_task_contract() -> str:
     样例取自 ``_CONTRACT_EXAMPLES``——每份样例本身必须能被
     ``build_covert_task_contract`` 收下，免得说明与实现分叉。
     """
-    axes = "、".join(sorted(CENTRIFUGE_AXES))
+    axes = "、".join(sorted(_VALUE_AXES))
     units = "、".join(CANONICAL_UNITS)
     actions = "、".join(PERSON_ACTIONS)
     accounts = "、".join(ECONOMY_ACCOUNTS)
@@ -708,11 +743,11 @@ def player_facing_secret_order_close_text(
 
 
 def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
-    row = db.conn.execute(
-        "SELECT 1 FROM characters WHERE name=? AND status='active'",
-        (str(minister_name or "").strip(),),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_minister_eligible_for_monthly_covert((str(minister_name or "").strip(),))
     return row is not None
+
+
+
 
 
 def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
@@ -757,7 +792,7 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
 
 def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
     """案卷 payload 读口：复用 get_decree_dossier，腐坏响亮（#1897 E1/K2）。"""
-    dossier = db.get_decree_dossier(int(dossier_id))
+    dossier = db.dossiers.get(int(dossier_id))
     if dossier is None:
         return {}
     return dict(dossier["payload"])
@@ -773,13 +808,10 @@ def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
     if not name:
         return []
     keys: List[str] = []
-    row = db.conn.execute(
-        "SELECT seed_guilt FROM characters WHERE name=?",
-        (name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_live_investigation_fact_keys((name,))
     if row is not None and seed_guilt_counts_as_debt(row["seed_guilt"]):
         keys.append(name)
-    for edge in db.get_relation_edge_events(person=name, evidence=True):
+    for edge in db.person_logs.get_relation_edge_events(person=name, evidence=True):
         keys.append(str(int(edge["id"])))
     return keys
 
@@ -900,7 +932,7 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
         did = int(row["id"] or 0)
         if skip and did == skip:
             continue
-        payload = db.get_decree_dossier(did)["payload"]
+        payload = db.dossiers.get(did)["payload"]
         for lane in _lanes_from_payload(payload):
             if lane.get("mastered"):
                 used.add(str(lane["fact_key"]))
@@ -921,7 +953,7 @@ def _write_fact_lanes(
         }
         for lane in lanes
     ]
-    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
+    db.dossiers.update_payload(int(dossier_id), payload, commit=False)
 
 
 def _append_investigation_log(
@@ -940,7 +972,7 @@ def _append_investigation_log(
     items = list(raw or [])
     items.append(dict(entry))
     payload[key] = items
-    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
+    db.dossiers.update_payload(int(dossier_id), payload, commit=False)
 
 
 def investigation_fact_is_gone(db: Any, target: str, fact_key: str) -> bool:
@@ -955,7 +987,7 @@ def investigation_fact_is_gone(db: Any, target: str, fact_key: str) -> bool:
     return any(
         str(row.get("fact_key") or "") == key
         and str(row.get("effect") or "") == "gone"
-        for row in db.list_investigation_spoiled_facts(name)
+        for row in db.character_knowledge.list_investigation_spoiled_facts(name)
     )
 
 
@@ -1054,7 +1086,7 @@ def investigation_fact_difficulty(
 
     if investigation_fact_is_gone(db, name, key):
         return float("inf")
-    for spoiled in db.list_investigation_spoiled_facts(name):
+    for spoiled in db.character_knowledge.list_investigation_spoiled_facts(name):
         if str(spoiled.get("fact_key") or "") != key:
             continue
         if str(spoiled.get("effect") or "") == "gone":
@@ -1081,9 +1113,7 @@ def _investigator_on_site(db: Any, worker_row: Any, target: str) -> bool:
     if not who or not name:
         return True  # 该轴不参与（退化）
     # 查案对象不是真人物（如「某类人」式题名）时无当地可核，按退化放行。
-    target_row = db.conn.execute(
-        "SELECT location FROM characters WHERE name=?", (name,),
-    ).fetchone()
+    target_row = db.characters.field_row("location", name)
     if target_row is None:
         return True
     there = str(target_row["location"] or "").strip()
@@ -1173,7 +1203,7 @@ def record_investigation_source_clue(
         "origin": "case_opening",
     })
     payload[INVESTIGATION_CLUES_KEY] = clues
-    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
+    db.dossiers.update_payload(int(dossier_id), payload, commit=False)
 
 
 def seed_investigation_fact_lanes(
@@ -1207,6 +1237,9 @@ def seed_investigation_fact_lanes(
         seen.add(key)
     _write_fact_lanes(db, dossier_id, lanes)
     return lanes
+
+
+
 
 
 def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:
@@ -1305,7 +1338,7 @@ def _consume_monthly_clues(
             lane["mastered"] = True
     payload = _dossier_payload_map(db, dossier_id)
     payload[INVESTIGATION_CLUES_KEY] = clues
-    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
+    db.dossiers.update_payload(int(dossier_id), payload, commit=False)
     return credited
 
 
@@ -1472,9 +1505,7 @@ def _investigation_knowledge_known(
         return False
     if who == name:
         return False  # 不作自己的信息来源
-    if not db.conn.execute(
-        "SELECT 1 FROM characters WHERE name=?", (who,),
-    ).fetchone():
+    if db.characters.row(who) is None:
         return False
     # 传话记录与关系边必须是同一人。别人递过话，不能把未递话的关系人算成知情来源。
     if not any(
@@ -1484,7 +1515,7 @@ def _investigation_knowledge_known(
         return False
     return any(
         str(edge["source"]) == who or str(edge["target"]) == who
-        for edge in db.get_relation_edge_events(person=name)
+        for edge in db.person_logs.get_relation_edge_events(person=name)
     )
 
 
@@ -1559,9 +1590,11 @@ def apply_investigation_spoliation(
         # 只毁真实存在的事实；不得凭空毁一条不存在的罪（也无从"恢复"）。
         return {"target": name, "fact_key": key, "applied": False,
                 "reason": "该事实不在真相底 live 集内"}
-    row = db.record_investigation_spoiled_fact(
-        target_name=name, fact_key=key, turn=turn, effect=effect,
-        origin_ref=origin_ref, commit=False,
+    state = db.load_state()
+    row = db.character_knowledge.record_investigation_spoiled_fact(
+        target_name=name, fact_key=key, turn=int(state.turn if turn is None else turn),
+        year=int(state.year), period=int(state.period), effect=effect,
+        origin_ref=origin_ref,
     )
     return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
             "knowledge_source": str(knowledge_source or ""),
@@ -1587,8 +1620,8 @@ def find_active_investigation_order_id(db: Any, target: str) -> int:
     name = str(target or "").strip()
     if not name:
         return 0
-    for order in db.list_secret_orders(status="active"):
-        dossier = db.get_dossier_for_secret_order(int(order["id"]))
+    for order in db.character_knowledge.list_secret_orders(status="active"):
+        dossier = db.dossiers.get_for_secret_order(int(order["id"]))
         if dossier is None:
             continue
         contract = read_covert_task_contract(dossier)
@@ -1613,7 +1646,7 @@ def merge_investigation_confirmation(
     重复的无指针下令不是来源。pending_action_id 与聊天记录只是确认闸，
     不制造线索。已落库的空指针旧线索仍由月核算按 ADR 0098:11 消费。
     """
-    dossier = db.get_dossier_for_secret_order(int(order_id))
+    dossier = db.dossiers.get_for_secret_order(int(order_id))
     if dossier is None:
         raise CovertContractError("查案合流缺少案卷")
     did = int(dossier["id"])
@@ -1645,7 +1678,7 @@ def merge_investigation_confirmation(
             "credited": False,
         })
         payload[INVESTIGATION_CLUES_KEY] = clues
-    db.update_decree_dossier_payload(did, payload, commit=False)
+    db.dossiers.update_payload(did, payload, commit=False)
     return int(order_id)
 
 
@@ -1664,7 +1697,7 @@ def originated_quantity_this_turn(
     fields = canonical_fields_for_delivery(unit=unit)
     qty = 0.0
     if "economy_moves" in fields:
-        for item in db.list_economy_moves_for_dossier(did):
+        for item in db.reign.list_economy_moves_for_dossier(did):
             if int(item.get("turn") or 0) != current:
                 continue
             if not _delivery_matches_economy(item, delivery):
@@ -1810,7 +1843,7 @@ def apply_monthly_covert_actual_progress(
     返回 (applied, rejections)：拒收一律 canonical :class:`~ming_sim.applier.RejectedItem`。
     """
     rejections: List[RejectedItem] = []
-    orders = list(db.list_secret_orders(status="active"))
+    orders = list(db.character_knowledge.list_secret_orders(status="active"))
     by_sel = _selection_map(selections)
     applied: List[Dict[str, object]] = []
     turn = int(state.turn)
@@ -1828,7 +1861,7 @@ def apply_monthly_covert_actual_progress(
                 "reason": "承办人不在场或非 active",
             })
             continue
-        dossier = db.get_dossier_for_secret_order(oid)
+        dossier = db.dossiers.get_for_secret_order(oid)
         if dossier is None:
             rejections.append(RejectedItem(item={"order_id": oid}, reason="密令缺少案卷", category="missing_ref", source=source))
             continue
@@ -1868,7 +1901,7 @@ def apply_monthly_covert_actual_progress(
             )
         else:
             note = str(note_raw)
-        row = db.record_dossier_actual_progress(
+        row = db.dossiers.record_actual_progress(
             did,
             turn,
             units=units,
@@ -1877,7 +1910,7 @@ def apply_monthly_covert_actual_progress(
             note=note,
             commit=False,
         )
-        db.mark_secret_order_in_progress(oid, commit=False)
+        db.dossiers.mark_secret_order_in_progress(oid, commit=False)
         applied.append({
             "order_id": oid,
             "dossier_id": did,
@@ -2027,14 +2060,14 @@ def _apply_investigation_selection(
     if raw_note is not None:
 
         memorial_note = raw_note
-    row = db.record_dossier_actual_progress(
+    row = db.dossiers.record_actual_progress(
         did, turn, units=units, fidelity_state="", floor_state="",
         note=None, commit=False,
     )
     if memorial_note is not None:
         # 既有写口自带进展档；空/空白正文按其合同不落条，仍须标在办。
         db.update_secret_order_progress(oid, memorial_note, commit=False)
-    db.mark_secret_order_in_progress(oid, commit=False)
+    db.dossiers.mark_secret_order_in_progress(oid, commit=False)
     applied: Dict[str, object] = {
         "order_id": oid,
         "dossier_id": did,
@@ -2055,7 +2088,7 @@ def _apply_investigation_selection(
 def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str, object]]:
     turn = int(state.turn)
     due: List[Dict[str, object]] = []
-    for order in db.list_secret_orders(status="active"):
+    for order in db.character_knowledge.list_secret_orders(status="active"):
         due_turn = int(order.get("due_turn") or 0)
         if due_turn > 0 and due_turn <= turn:
             due.append(order)
@@ -2073,7 +2106,7 @@ def settle_due_secret_orders(
     rejections: List[RejectedItem] = []
     for order in list_due_secret_orders_for_settlement(db, state):
         oid = int(order["id"])
-        dossier = db.get_dossier_for_secret_order(oid)
+        dossier = db.dossiers.get_for_secret_order(oid)
         if dossier is None:
             # #1897 / ADR0005：到期结案缺案卷响亮传播；不得拒收跳过并标阶段完成。
             raise ValueError("密令进展缺少对应案卷")
@@ -2088,14 +2121,14 @@ def settle_due_secret_orders(
             actual = investigation_lane_actual_units(db, did)
             target = contract_target_units(contract)
         else:
-            actual = db.sum_dossier_actual_progress_units(did)
+            actual = db.dossiers.actual_progress_units(did)
             target = contract_target_units(contract)
-        reports = db.list_dossier_progress(did)
+        reports = db.dossiers.list_dossier_progress(did)
         verdict = decide_secret_order_settlement({
             "actual_units": actual,
             "target_units": target,
             "has_reports": bool(reports),
-            "origin_context": secret_order_origin(oid),
+            "origin_context": f"dossier:{did}",
         })
         player_text = player_facing_secret_order_close_text(order, reports)
         # 结案正文／执行注禁 str()/or 洗白；由 close 写口校验（#1897 J820-E1）。

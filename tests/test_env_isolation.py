@@ -1,3 +1,4 @@
+from __future__ import annotations
 """user-data 隔离兜底 pin(cmr S1 r2 P1)。
 
 实证:测试文件漏设 MING_SIM_USER_DATA_DIR 时,run_settle 的错误包/拒收镜像全写进
@@ -5,7 +6,6 @@
 conftest autouse 集中兜底——本 pin 钉住「任何测试里 user_data_dir 永不指向仓内 data/」。
 """
 
-from __future__ import annotations
 
 import os
 from pathlib import Path

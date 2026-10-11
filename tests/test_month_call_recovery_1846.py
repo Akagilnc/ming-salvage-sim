@@ -1,19 +1,8 @@
-"""#1846：过月模型调用统一重试、停住与恢复真源（ADR 0157）。
-
-接缝：audience_transport_policy + run_with_transport；run_player_month_chain /
-resolve_turn 停住与续跑；state_payload.settlement_recovery 投影。
-不覆盖 #1853/#1854 界面，不覆盖 #1847 批红续推，不另起并行恢复机制。
-"""
-
 from __future__ import annotations
-
 from tests.conftest import wait_for_background_jobs
-
 from types import SimpleNamespace
-
 import pytest
 from openai import APIStatusError, APITimeoutError
-
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.llm_transport import (
     TRANSPORT_DEFAULT_MAX_ATTEMPTS,
@@ -21,9 +10,20 @@ from ming_sim.llm_transport import (
 )
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
-
-
 from tests.test_month_chain_1843 import _forbid_extractor
+"""#1846：过月模型调用统一重试、停住、逃生口与恢复真源（ADR 0157）。
+
+接缝：audience_transport_policy + run_with_transport；run_player_month_chain /
+resolve_turn 停住与续跑；state_payload.settlement_recovery 投影。
+不覆盖 #1853/#1854 界面，不覆盖 #1847 批红续推，不另起并行恢复机制。
+"""
+
+
+
+
+
+
+
 
 def _stage_settled_ready_edict(db, state, minister, *, delta=-3):
     from ming_sim.declaration_dispatch import pending_action_decree_ref
@@ -53,15 +53,18 @@ def _stage_settled_ready_edict(db, state, minister, *, delta=-3):
     )
     return ref
 
+
 def _ningyuan_ledger_rows(db):
     return list(db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE category='宁远补饷' ORDER BY id",
     ))
 
+
 def _world_ledger_rows(db):
     return list(db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE category='世界段饷' ORDER BY id",
     ))
+
 
 def _http_status_error(status: int) -> APIStatusError:
     response = SimpleNamespace(status_code=status, headers={}, request=None)
@@ -70,6 +73,7 @@ def _http_status_error(status: int) -> APIStatusError:
         response=response,
         body={"error": {"message": f"http {status}"}},
     )
+
 
 @pytest.mark.parametrize("failure", ["429", "retryable"])
 def test_month_entry_world_push_follows_audience_transport_policy(
@@ -125,7 +129,7 @@ def test_month_entry_world_push_follows_audience_transport_policy(
     assert int(state.turn) == turn
     assert state.turn_phase == TurnPhase.SETTLING.value
     assert caught.value.stage == "world_text"
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure_row = chain.get("call_failure") or {}
@@ -133,6 +137,7 @@ def test_month_entry_world_push_follows_audience_transport_policy(
     assert failure_row.get("step") == "world_text"
     assert not chain.get("world_text_ready")
     assert not chain.get("world_committed")
+
 
 def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, tmp_path):
     """补跑用尽只写失败标记，不得覆盖先前已提交的结局事实。"""
@@ -181,13 +186,13 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
 
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert db.staged_declarations.is_settled(first_ref)
     assert (chain.get("declaration_outcome") or {}).get("status") == "emperor_abdicate"
     assert (chain.get("call_failure") or {}).get("kind") == "model_exhausted"
-    assert db.get_decree_dossier(second_id) is not None
+    assert db.dossiers.get(second_id) is not None
 
     db.save_turn_report(state, "邸报已成")
     result = session.resolve_turn(allow_empty_decree=True)
@@ -196,6 +201,7 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
     assert state.ended is True
     assert state.ending_status == "emperor_abdicate"
     assert db.staged_declarations.is_settled(first_ref)
+
 
 def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatch, tmp_path):
     """步骤 3 世界推演用尽：停住当前过月 run，已落旨不动，留错误包与可续相位。"""
@@ -206,7 +212,7 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-7)
     turn = int(state.turn)
 
@@ -231,7 +237,7 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     abort = caught.value
     assert abort.error_pack_path
     assert abort.stage == "world_text"
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure = chain.get("call_failure") or {}
@@ -240,6 +246,7 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     assert failure.get("step") == "world_text"
     assert not chain.get("world_text_ready")
     assert not chain.get("world_committed")
+
 
 def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     game, monkeypatch, tmp_path,
@@ -253,7 +260,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-5)
     turn = int(state.turn)
 
@@ -280,7 +287,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
             session.resolve_turn(allow_empty_decree=True)
         session.state = state = db.load_state()
 
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert chain.get("world_text") == "世界段已成文。"
@@ -312,6 +319,8 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -5
 
 
+
+
 def test_settlement_recovery_projects_month_call_failure(web_game, monkeypatch):
     """核账期投影交出错误原文、错误包路径与可重试（#1854 只承接呈现）。"""
     _forbid_extractor(monkeypatch)
@@ -338,7 +347,7 @@ def test_settlement_recovery_projects_month_call_failure(web_game, monkeypatch):
     assert recovery.get("retryable") is True
     assert recovery.get("error_pack_path")
     assert "核账期可见原文" in str(recovery.get("message") or "")
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     first_pack = (chain.get("call_failure") or {}).get("error_pack_path")
@@ -355,13 +364,14 @@ def test_settlement_recovery_projects_month_call_failure(web_game, monkeypatch):
 
     recovery_again = web_game.state_payload().get("settlement_recovery")
     assert recovery_again.get("error_pack_path") == ""
-    chain_again = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain_again = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert recovery_again.get("message") == (
         (chain_again.get("call_failure") or {}).get("message")
     )
     assert (chain_again.get("call_failure") or {}).get("kind") == "model_exhausted"
+
 
 def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     game, monkeypatch, tmp_path,
@@ -375,7 +385,7 @@ def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 300_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-4)
     turn = int(state.turn)
 
@@ -398,7 +408,7 @@ def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     assert int(state.turn) == turn
     assert db.staged_declarations.is_settled(ref)
     assert len(_ningyuan_ledger_rows(db)) == 1
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure = chain.get("call_failure") or {}
@@ -406,6 +416,7 @@ def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     assert chain.get("world_text_ready") is True
     assert chain.get("world_text") == "段文已存"
     assert not chain.get("world_committed")
+
 
 def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     game, monkeypatch, tmp_path,
@@ -420,7 +431,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-4)
     turn = int(state.turn)
 
@@ -469,7 +480,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     assert db.staged_declarations.is_settled(ref)
     assert len(_ningyuan_ledger_rows(db)) == 1
     assert _world_ledger_rows(db) == []
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert (chain.get("call_failure") or {}).get("kind") == "code_exception"
@@ -495,10 +506,12 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
         "SELECT balance FROM economy_accounts WHERE account='国库'",
     ).fetchone()["balance"])
 
+
 def _month_chain_of(db, turn):
-    return (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    return (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
+
 
 def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     game, monkeypatch, tmp_path,
@@ -513,7 +526,7 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-6)
     turn = int(state.turn)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
@@ -555,6 +568,7 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     assert len(rows) == 1 and int(rows[0]["delta"]) == -6
     assert calls["n"] == 2
 
+
 def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     game, monkeypatch, tmp_path,
 ):
@@ -569,7 +583,7 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-6)
     turn = int(state.turn)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")

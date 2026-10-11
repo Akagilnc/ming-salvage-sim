@@ -1,10 +1,10 @@
+from __future__ import annotations
 """#547 — P4 哨兵守门扩新面：卷轴 / 判官清单 / 批红页 / 起居注。
 
 0010/0011 先例：偏门哨兵值注入人物抽象轴后，确定性引擎产物面不得泄漏；
 世界事实数值（年月 / 银两 / 兵额）不在此限（0023 D10）。
 """
 
-from __future__ import annotations
 
 from types import SimpleNamespace
 
@@ -118,7 +118,7 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
         f"臣请据实核账，兵约{facts['manpower']}。",
         20,
     )
-    db.set_message_highlights(mid, ["辽饷", f"兵{facts['manpower']}"])
+    db.chat_messages.set_highlights(mid, ["辽饷", f"兵{facts['manpower']}"])
     from ming_sim.audience_translation import apply_audience_round_translation
     apply_audience_round_translation(db, state, {"scene_facts": [{
         "body": f"臣请据实核账，兵约{facts['manpower']}。",
@@ -162,7 +162,7 @@ def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
         payload={"mode": "ordinary"},
     )
     dossier = next(
-        row for row in db.list_decree_dossiers() if int(row["id"]) == dossier_id
+        row for row in db.dossiers.list_dossiers() if int(row["id"]) == dossier_id
     )
     verdict = {
         "dossier_id": dossier_id,
@@ -176,11 +176,11 @@ def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
     }
     decisions = _rescript_decisions([verdict], [dossier])
     assert decisions and decisions[0]["title"] == "批红待裁"
-    db.save_pending_decisions(state.turn, decisions)
-    stored = db.list_pending_decisions(state.turn)
+    db.issues.save_pending_decisions(state.turn, decisions)
+    stored = db.issues.list_pending_decisions(state.turn)
 
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     runtime = _state_payload_runtime(db, state, content, pending_decisions=stored)
     page = runtime.state_payload()
@@ -227,7 +227,7 @@ def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monk
         f"边军约{facts['manpower']}可支。",
         10,
     )
-    db.set_message_highlights(mid, [f"{facts['manpower']}可支"])
+    db.chat_messages.set_highlights(mid, [f"{facts['manpower']}可支"])
     db.conn.execute(
         "UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?",
         (night_id,),

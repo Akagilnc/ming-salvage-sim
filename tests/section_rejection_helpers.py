@@ -1,9 +1,9 @@
+from __future__ import annotations
 """拒收段集成测的薄夹具。
 
 #1843：只经现役声明分发入口及拒收账查询。
 """
 
-from __future__ import annotations
 
 
 # game：conftest 已改为方案 (c) session 模板 + 每案文件拷贝（#1233）。

@@ -16,6 +16,7 @@ ADR 0005 响亮失败）；语境/来源零改字存储（#633 F1 同一纪律�
 """
 
 from __future__ import annotations
+from ming_sim.entities.person_log.store import PersonLogStore
 
 import json
 from pathlib import Path
@@ -163,7 +164,7 @@ def import_relationship_seed(
         doc, opening_year=opening_year, opening_period=opening_period
     )
     count_before = int(
-        db.conn.execute("SELECT COUNT(*) AS c FROM relation_edge_events").fetchone()["c"]
+        PersonLogStore(db.conn).read_import_relationship_seed()["c"]
     )
     for event in validated["events"]:
         db.record_relation_edge_event(
@@ -178,13 +179,13 @@ def import_relationship_seed(
             period=event["period"],
         )
     count_after = int(
-        db.conn.execute("SELECT COUNT(*) AS c FROM relation_edge_events").fetchone()["c"]
+        PersonLogStore(db.conn).read_import_relationship_seed()["c"]
     )
     summaries_written = 0
     for summary in validated["summaries"]:
-        existing = db.get_relation_summary(summary["source"], summary["target"])
+        existing = db.person_logs.get_relation_summary(summary["source"], summary["target"])
         if existing is None:
-            db.apply_seed_founding_segment(
+            db.person_logs.apply_seed_founding_segment(
                 source=summary["source"],
                 target=summary["target"],
                 dimension=summary["dimension"],

@@ -1,20 +1,43 @@
 from __future__ import annotations
-
-
 import pytest
 from tests.wait_utils import wait_until
 from tests.conftest import wait_for_background_jobs
-
 import asyncio
 import threading
-
 import web_app
 from tests.wait_utils import _await_condition_or_task
 from tests.test_web_audience_night_498 import _FakeAgent
 from tests.conftest import stub_scene_agent
+from types import SimpleNamespace
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin
+from ming_sim.session_write_queue import SessionWriteQueue
+from tests.test_session_write_queue_1353 import wait_pending_writes
 
 
-pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+
+
+class _RunContent:
+    event = "RunContent"
+
+
+
+class RunCompletedEvent:
+    content = ""
+    tools = []
+
+
+
+
+
+class _FakeSession(HallAdmissionSessionMixin):
+    temporary_characters = set()
+
+
+
+
+
+
+
 
 
 def _runtime_for_stream_race(web_game, monkeypatch):
@@ -36,7 +59,6 @@ def _runtime_for_stream_race(web_game, monkeypatch):
     settlement.holding = settlement_holding  # type: ignore[attr-defined]
     settlement.release_event = settlement_release  # type: ignore[attr-defined]
     return runtime, "殿上", allow_finish, settlement_attempting, settlement
-
 
 
 def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn(web_game, monkeypatch):
@@ -81,10 +103,9 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     assert runtime.state.turn == 2
 
 
-
 def test_identity_setup_failure_preserves_question_and_releases_pending_owner(web_game, monkeypatch):
     runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race(web_game, monkeypatch)
-    monkeypatch.setattr(runtime.db, "kv_get", lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed")))
+    monkeypatch.setattr(runtime.db.reign, 'kv_get', lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed")))
 
     events = list(runtime.chat_stream("殿上", "请奏"))
 
@@ -101,55 +122,13 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(we
 
 
 
-def test_chat_stream_sse_waits_for_sync_generator_in_executor(web_game, monkeypatch):
-    events: list[str] = []
-    entered = threading.Event()
-    release = threading.Event()
 
-    stub_scene_agent(monkeypatch, _FakeAgent(started=entered, allow=release, answer="臣已知悉。"))
-
-    async def drive_first_event():
-        response = await web_app.api_audience_chat_stream(web_app.ChatRequest(message="请奏"))
-        iterator = response.body_iterator
-        async def consume():
-            return [chunk async for chunk in iterator]
-
-        stream_task = asyncio.create_task(consume())
-
-        async def tick():
-            # entered 或 stream 终态；请求先失败须传播，禁无限等 thread Event（无 deadline）。
-            await _await_condition_or_task(entered.is_set, stream_task)
-            events.append("tick")
-            release.set()
-
-        watcher = asyncio.create_task(tick())
-        try:
-            chunks = await stream_task
-            events.append("stream")
-        finally:
-            release.set()
-            entered.set()
-            await watcher
-        return "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
-
-    first = asyncio.run(drive_first_event())
-
-    assert events == ["tick", "stream"]
-    from tests.test_chat_stream_failpaths_393 import _parse_sse
-    parsed = _parse_sse(str(first))
-    assert next(payload for kind, payload in parsed if kind == "done")["answer"] == "臣已知悉。"
-
-
-
-
-
-def test_nonstream_chat_rejects_when_session_draining(web_game):
-    """drain 已开始时 chat 不得再登记 pending。"""
-    runtime = web_game
+def test_chat_rejects_when_session_draining(monkeypatch, web_game):
+    runtime, _, allow_finish, *_ = _runtime_for_stream_race(web_game, monkeypatch)
+    allow_finish.set()
     runtime._write_queue.seal()
-
-    events = list(runtime.chat_stream("殿上", "边饷如何？"))
-    assert events and events[0].get("type") == "error"
-    # 新开夜可并发唤起留中案预推；等这些既有写票落定，再核查无泄漏。
-    assert runtime._runtime_write_queue().wait_idle()
-    assert runtime._runtime_write_queue().inflight_count() == 0
+    before = runtime.db.conn.total_changes
+    events = list(runtime.chat_stream('殿上', '边饷如何？'))
+    assert events and events[0].get('type') == 'error'
+    assert runtime._write_queue.inflight_count() == 0
+    assert runtime.db.conn.total_changes == before

@@ -1,51 +1,36 @@
-"""#567 S12 按月对账与押解折损（#461 兑现）。
-
-Seams:
-- list_monthly_grant_reconciliation_targets / record_monthly_grant_reconciliations
-- grant_arrival_bounds（引擎既有押解折损范围；护行界严于无护行）
-- list_dossier_reconciliations（被护案卷×回合键控，restore 无损）
-- 玩家月链对账与案卷月度写口
-- dossier_executions 结案后核账事实留 list_dossier_reconciliations（不改 execution_note 原文）
-- 不改 economy_moves / 国库二次扣
-
-#1900：沿途损耗归引擎核算；本文件实抵取护行口径区间中位，不接提案入参。
-"""
-
 from __future__ import annotations
-
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
-
-
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
 from tests.readback_helpers import active_character_name as _actor
+import ming_sim.settlement.run as issue_engine
+"""#567 S12 按月对账与押解折损（#461 兑现；#1900 退役提案/clamp 口）。
+
+Seams:
+- list_monthly_grant_reconciliation_targets / record_monthly_grant_reconciliations
+- grant_arrival_bounds 中位（护行界严于无护行）
+- list_dossier_reconciliations（被护案卷×回合键控，restore 无损）
+- 玩家月链对账与案卷月度写口
+- 对账不增补 dossier_executions 的执行原文
+- 不改 economy_moves / 国库二次扣
+"""
+
+
+
+
 
 
 ORDERED = 30  # 北极星三路各三十万两量级（引擎以「两」为单位的整数面值）
 
 
 def _record_recon(db, turn):
-    """月度对账：实抵与损耗由引擎给出，本口不接提案。"""
-    reports = db.record_monthly_grant_reconciliations(turn)
-    db.conn.commit()
-    return reports
+    """直调引擎中位对账写口（#1900：不接提案）。"""
+    return db.record_monthly_grant_reconciliations(turn)
 
-
-
-def _recon_rejections(db):
-    """全体拒收查询（#1745：不得以 section 过滤掩盖第二 producer）。"""
-    if db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
-    ).fetchone() is None:
-        return []   # 尚无任何拒收落库，表未建
-    return db.conn.execute(
-        "SELECT section, category, source, reason, item_json "
-        "FROM rejection_reports ORDER BY id"
-    ).fetchall()
 
 
 
@@ -66,10 +51,9 @@ def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_
         payload=payload,
     )
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row["status"] == "executing"
     return dossier_id
-
 
 
 def _escort_order(db, state, grant_ids, *, tags=None):
@@ -78,7 +62,7 @@ def _escort_order(db, state, grant_ids, *, tags=None):
         state, _actor(db), "护行饷银", "沿途按月稽核",
         tags or ["护行"], deadline_months=4,
     )
-    escort_dossier = db.get_dossier_for_secret_order(order_id)
+    escort_dossier = db.dossiers.get_for_secret_order(order_id)
     escort_id = int(escort_dossier["id"])
     # 关联要求新→旧：密令案卷 id 须大于被护拨饷 id
     links = [
@@ -89,10 +73,8 @@ def _escort_order(db, state, grant_ids, *, tags=None):
         }
         for gid in grant_ids
     ]
-    db.add_dossier_links(escort_id, links)
-    # #1900 J18：专用逐路实况账本已退役；关联只答「谁护谁」，核账按无护口径。
+    db.dossiers.add_links(escort_id, links)
     return order_id, escort_id
-
 
 
 def _record_monthly(db, state, *, progress=None):
@@ -102,29 +84,45 @@ def _record_monthly(db, state, *, progress=None):
     db.conn.commit()
 
 
+def test_per_route_storage_restore_without_retired_escort_accounting(game):
+    """W4 核账恒为无护（接续 #1873）；密令进展独立落账并可恢复。"""
 
-def test_escort_progress_stays_on_the_secret_order_and_survives_restore(game):
-    """护行密奏挂密令案卷，不写到拨帑案卷上；重开后原文仍在。"""
     db, state, content = game
     bare = _in_transit_grant(db, state, text="无护行路", target_id="liaodong")
     escorted_grant = _in_transit_grant(db, state, text="有护行路", target_id="shaanxi")
     order_id, escort_dossier_id = _escort_order(db, state, [escorted_grant])
-    memorial = "护行路已核关防，实银可期"
+
+    turn = state.turn
     _record_monthly(db, state, progress=[{
         "dossier_id": escort_dossier_id,
         "progress_band": "在途核验",
-        "memorial_text": memorial,
+        "memorial_text": "护行路已核关防，实银可期",
     }])
 
-    assert db.list_dossier_progress(bare) == []
-    assert db.list_dossier_progress(escorted_grant) == []
-    progress = db.list_dossier_progress(escort_dossier_id)
-    assert [row["memorial_text"] for row in progress] == [memorial]
+    bare_rows = db.dossiers.reconciliations(bare)
+    escort_rows = db.dossiers.reconciliations(escorted_grant)
+    assert len(bare_rows) == 1 and bare_rows[0]["turn"] == turn
+    assert len(escort_rows) == 1 and escort_rows[0]["turn"] == turn
+    assert bare_rows[0]["arrived_amount"] == 16
+    assert escort_rows[0]["arrived_amount"] == 16
+    assert bare_rows[0]["escorted"] is False
+    assert escort_rows[0]["escorted"] is False
+    assert escort_rows[0]["escort_source_dossier_id"] is None
 
+    # 无护行：不对拨饷案卷写进展；有护行：进展挂密令案卷（#566 容器）
+    assert db.dossiers.list_dossier_progress(bare) == []
+    assert db.dossiers.list_dossier_progress(escorted_grant) == []
+    progress = db.dossiers.list_dossier_progress(escort_dossier_id)
+    assert len(progress) == 1
+    assert progress[0]["memorial_text"] == "护行路已核关防，实银可期"
+
+    # restore 逐路无损
     path = db.path
     db.close()
     reopened = GameDB(path, content=content)
-    assert reopened.list_dossier_progress(escort_dossier_id) == progress
+    assert reopened.dossiers.reconciliations(bare) == bare_rows
+    assert reopened.dossiers.reconciliations(escorted_grant) == escort_rows
+    assert reopened.dossiers.list_dossier_progress(escort_dossier_id) == progress
     stored = reopened.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
@@ -132,43 +130,43 @@ def test_escort_progress_stays_on_the_secret_order_and_survives_restore(game):
     reopened.close()
 
 
+def test_close_merges_recon_note_without_second_treasury_debit(game):
+    """S10 结案同源读对账；不二次扣库、不改原流水；执行说明原文原样。"""
 
-def test_close_keeps_recon_structured_without_second_treasury_debit(game):
-    """S10 结案后对账行在结构化账上；不二次扣库、不改原流水、不改 execution_note。"""
     db, state, content = game
     before_inner = int(state.metrics["内库"])
     gid = _in_transit_grant(db, state, amount=ORDERED)
     after_grant_inner = int(state.metrics["内库"])
     assert after_grant_inner == before_inner - ORDERED
-    moves_before = db.list_economy_moves_for_dossier(gid)
+    moves_before = db.reign.list_economy_moves_for_dossier(gid)
 
     _record_monthly(db, state)
     assert int(state.metrics["内库"]) == after_grant_inner
-    assert db.list_economy_moves_for_dossier(gid) == moves_before
+    assert db.reign.list_economy_moves_for_dossier(gid) == moves_before
 
-    note = "  赈银押解到达\n"
-    result = settle_delta(state, db, {"dossier_executions": [{
+    result = settle_delta(
+        state, db,
+        {"dossier_executions": [{
             "dossier_id": gid,
             "outcome": "fulfilled",
-            "note": note,
-        }]}, SettlementContext(content=content))
-    assert view(result, "dossier_executions") == [{
-        "dossier_id": gid, "outcome": "fulfilled",
-        "source_item": {"dossier_id": gid, "outcome": "fulfilled", "note": note},
-    }]
-    closed = db.get_decree_dossier(gid)
+            "note": "赈银押解到达",
+        }]},
+        SettlementContext(content=content),
+    )
+    assert view(result, "dossier_executions") == [{"dossier_id": gid, "outcome": "fulfilled", "source_item": {"dossier_id": gid, "outcome": "fulfilled", "note": "赈银押解到达"}}]
+    closed = db.dossiers.get(gid)
     assert closed["status"] == "closed"
-    assert closed["execution_note"] == note  # 原文零删改，无核账模板增补
-    row = db.list_dossier_reconciliations(gid)[-1]
-    assert row["ordered_amount"] == ORDERED
-    assert row["loss_amount"] == ORDERED - row["arrived_amount"]    # 仍无二次扣库
+    note = closed["execution_note"]
+    assert note == "赈银押解到达"
+    recon = db.dossiers.reconciliations(gid)[-1]
+    assert recon["arrived_amount"] == 16
+    # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
-    assert db.list_economy_moves_for_dossier(gid) == moves_before
+    assert db.reign.list_economy_moves_for_dossier(gid) == moves_before
 
 
-
-def test_failed_close_reconciles_only_when_the_silver_already_left(game):
-    """零出库的失败不核账；已经离开账本的银，不论足额与否，都按实付和逐路实况核。"""
+def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
+    """成案当回合不足额 failed+close 者不进月度对账扫描面。"""
     db, state, _content = game
     state.metrics["内库"] = 0
     db.conn.execute("UPDATE metrics SET value=0 WHERE key='内库'")
@@ -184,151 +182,14 @@ def test_failed_close_reconciles_only_when_the_silver_already_left(game):
         },
     )
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row["status"] == "closed"
-    assert row["execution_outcome"] == "failed"
-    assert db.list_economy_moves_for_dossier(dossier_id) == []
-    turn = int(state.turn)
-    assert dossier_id not in {
-        int(t["dossier_id"])
-        for t in db.list_monthly_grant_reconciliation_targets(turn)
-    }
-
-    paid = _in_transit_grant(db, state, text="已出库后办理失败", target_id="liaodong")
-    state.metrics["内库"] = 7
-    db.conn.execute("UPDATE metrics SET value=7 WHERE key='内库'")
-    partial = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="内帑只剩七两",
-        target_kind="region",
-        target_id="xuan_da",
-        payload={
-            "account": "内库", "amount": ORDERED,
-            "execution_surface": "in_transit",
-        },
-    )
-    assert [int(move["delta"]) for move in db.list_economy_moves_for_dossier(partial)] == [-7]
-    apply_dossier_promulgation(db, state, partial, "promulgated")
-    partial_closed = db.get_decree_dossier(partial)
-    assert partial_closed["status"] == "closed"
-    assert partial_closed["execution_outcome"] == "failed"
-    assert int(state.metrics["内库"]) == 0
-    _order_id, escort_id = _escort_order(db, state, [paid, partial])
-    debits = [int(move["delta"]) for move in db.list_economy_moves_for_dossier(paid)]
-    assert debits == [-ORDERED]
-    db.record_dossier_execution(
-        paid, "failed", "途中未能办结", turn, close=True,
-    )
-    closed = db.get_decree_dossier(paid)
-    assert closed["status"] == "closed"
-    assert closed["execution_outcome"] == "failed"
-    assert partial not in {
-        int(t["dossier_id"]) for t in db.list_monthly_grant_reconciliation_targets()
-    }
-    assert paid not in {
-        int(t["dossier_id"]) for t in db.list_monthly_grant_reconciliation_targets()
-    }
-    scanned = {
-        int(t["dossier_id"]): t
-        for t in db.list_monthly_grant_reconciliation_targets(turn)
-    }
-    assert dossier_id not in scanned
-    assert scanned[paid]["escorted"] is False
-    assert scanned[paid]["ordered_amount"] == ORDERED
-    assert scanned[partial]["escorted"] is False
-    assert scanned[partial]["ordered_amount"] == 7
-    assert scanned[partial]["escort_source_dossier_id"] is None
-    moves_before = db.list_economy_moves_for_dossier(partial)
-    reports = {
-        int(item["dossier_id"]): item for item in _record_recon(db, turn)
-    }
-    assert set(reports) == {paid, partial}
-    assert reports[paid]["loss_amount"] == ORDERED - reports[paid]["arrived_amount"]
-    partial_row = reports[partial]
-    assert partial_row["ordered_amount"] == 7
-    assert partial_row["loss_amount"] == 7 - partial_row["arrived_amount"]
-    assert db.get_decree_dossier(partial)["execution_outcome"] == "failed"
-    assert db.list_economy_moves_for_dossier(partial) == moves_before
-    assert int(state.metrics["内库"]) == 0
-    assert db.list_dossier_reconciliations(dossier_id) == []
+    targets = db.list_monthly_grant_reconciliation_targets()
+    assert dossier_id not in {int(t["dossier_id"]) for t in targets}
 
 
-
-def test_settle_entry_lands_engine_arrival_per_route(game, monkeypatch):
-    """settle 真入口：引擎逐路给实抵落账、月份推进、无假 awaiting、无拒收噪声。
-
-    #1900 后本口不接提案，断的是「引擎沿途损耗 → 逐路对账行」这条真链。
-    """
-    from tests.test_month_chain_1843 import _prepare_player_month
-
-    db, state, content = game
-    good = _in_transit_grant(db, state, text="陕西赈银", target_id="shaanxi")
-    turn_before = int(state.turn)
-    session = _prepare_player_month(
-        db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
-        translate=lambda *_a, **_k: {"effects": {}},
-    )
-    session.resolve_turn(allow_empty_decree=True)
-    db.save_turn_report(state, "邸报", public_body="邸报")
-    session.resolve_turn(allow_empty_decree=True)
-
-    assert int(state.turn) == turn_before + 1
-    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-    row = db.list_dossier_reconciliations(good)[-1]
-    assert row["ordered_amount"] == ORDERED
-    assert row["loss_amount"] == ORDERED - row["arrived_amount"]
-    assert _recon_rejections(db) == []
-
-
-
-def test_empty_targets_no_recon_rows(game):
-    """无在途目标 → 零对账行（不落假账）。"""
-    db, state, _content = game
-    assert db.list_monthly_grant_reconciliation_targets() == []
-    assert _record_recon(db, state.turn) == []
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
-    ).fetchone()["n"] == 0
-    assert _recon_rejections(db) == []
-
-
-
-def test_normal_close_same_turn_still_reconciles(game):
-    """拨帑正常结案不免除该次核账（#1900）：同回合结案仍按逐路实况落账。"""
-    db, state, _content = game
-    transit = _in_transit_grant(db, state, text="本回合押解到达", target_id="shaanxi")
-    db.record_dossier_execution(
-        transit, "fulfilled", "押解已达", int(state.turn), close=True,
-    )
-    assert db.get_decree_dossier(transit)["status"] == "closed"
-    assert [t["dossier_id"] for t in
-            db.list_monthly_grant_reconciliation_targets(int(state.turn))] == [transit]
-    rows = _record_recon(db, state.turn)
-    assert [r["dossier_id"] for r in rows] == [transit]
-    assert rows[0]["ordered_amount"] == ORDERED
-    assert rows[0]["loss_amount"] == ORDERED - rows[0]["arrived_amount"]
-
-
-
-def test_prior_turn_close_is_not_re_reconciled(game):
-    """只补本回合那笔核账，不翻历史结案（不重开全部历史案卷）。"""
-    db, state, _content = game
-    transit = _in_transit_grant(db, state, text="上月押解到达", target_id="shaanxi")
-    db.record_dossier_execution(
-        transit, "fulfilled", "押解已达", int(state.turn), close=True,
-    )
-    assert _record_recon(db, int(state.turn))          # 本回合该核的核了
-    state.turn = int(state.turn) + 1
-    assert _record_recon(db, int(state.turn)) == []      # 次月不回头重核
-    assert len(db.list_dossier_reconciliations(transit)) == 1
-    # 供料读侧（不带 turn）只看在途，不翻历史结案
-    assert db.list_monthly_grant_reconciliation_targets() == []
-
-
-
-def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
-    """#1745 C：全链 canned 结算入口——玩家态无假 awaiting、结构化拒收归属正确。"""
+def test_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
+    """全链 canned 结算入口——玩家态无假 awaiting。"""
     from tests.test_month_chain_1843 import _prepare_player_month
 
     db, state, content = game
@@ -343,38 +204,15 @@ def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
     ).fetchone()["n"] == 0
-    # 五模块 extractor 已退役： canned recon 不再从过月入口落拒收。
-    assert _recon_rejections(db) == []
 
 
-
-def test_web_state_payload_after_settle(web_game, content, monkeypatch):
-    """全链 canned 结算入口后的 WebGame.state_payload 结构化玩家态。
-
-    只咬 phase / pending_decisions / resume_phase2 / settlement_recovery。
-    """
-    db, state = web_game.db, web_game.state
-    from tests.test_month_chain_1843 import _prepare_player_month
-
-    turn_before = int(state.turn)
-    session = _prepare_player_month(
-        db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
-        translate=lambda *_a, **_k: {"effects": {}},
-    )
-    session.resolve_turn(allow_empty_decree=True)
-    db.save_turn_report(state, "邸报", public_body="邸报")
-    session.resolve_turn(allow_empty_decree=True)
-
-    payload = web_game.state_payload()
-    turn_blk = payload.get("turn") or {}
-    assert int(turn_blk.get("turn") or 0) == turn_before + 1
-    assert turn_blk.get("phase") != TurnPhase.AWAITING_DECISION.value
-    assert payload.get("pending_decisions") in (None, [])
-    assert payload.get("resume_phase2") in (False, None)
-    recovery = payload.get("settlement_recovery")
-    assert recovery in (None, {}) or isinstance(recovery, dict)
-    # 结构化投影：不把拒收明细键塞进 state_payload（P4）；只断键存在性
-    assert "rejection_reports" not in payload
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
-    ).fetchone()["n"] == 0
+def test_prior_turn_close_is_not_re_reconciled(game):
+    """只补本回合那笔核账，不翻历史结案（不重开全部历史案卷）。"""
+    db, state, _content = game
+    transit = _in_transit_grant(db, state, text='上月押解到达', target_id='shaanxi')
+    assert _record_recon(db, int(state.turn))
+    db.dossiers.record_execution(transit, 'fulfilled', '押解已达', int(state.turn), close=True)
+    state.turn = int(state.turn) + 1
+    assert _record_recon(db, int(state.turn)) == []
+    assert len(db.dossiers.reconciliations(transit)) == 1
+    assert db.list_monthly_grant_reconciliation_targets() == []

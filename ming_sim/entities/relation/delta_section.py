@@ -22,7 +22,7 @@ def apply(run):
         run.db, run.state, run.current_extracted, source=run.ctx.source,
         dossier_ids_at_input=run.ctx.dossier_ids_at_input,
         allowed_endpoint_names=run.relation_pre_roster | {
-            row["name"] for row in run.db.current_court_roster_rows(run.state)
+            row["name"] for row in run.db.characters.current_court_rows(run.state.year, run.state.period)
         },
     )
     return SectionResult(applied=resolutions, rejected=rejections)

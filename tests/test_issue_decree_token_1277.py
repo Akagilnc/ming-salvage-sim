@@ -1,3 +1,13 @@
+from __future__ import annotations
+from ming_sim.session_write_queue import ClassifiedWriteGate
+from types import SimpleNamespace
+import asyncio
+import pytest
+from fastapi import HTTPException
+import web_app
+from ming_sim.decree import ResolveResult
+from ming_sim.models import TurnPhase
+from ming_sim.session import GameSession
 """#1277 — issue/issue-stream 可选 expected_turn 防双发吃月（同 #1351 口径）。
 
 接缝：
@@ -6,20 +16,10 @@
 3. 同令牌连发两次 → 第二次 409，月份只进一格
 """
 
-from __future__ import annotations
 
-from ming_sim.session_write_queue import ClassifiedWriteGate
 
-from types import SimpleNamespace
 
-import asyncio
-import pytest
-from fastapi import HTTPException
 
-import web_app
-from ming_sim.decree import ResolveResult
-from ming_sim.models import TurnPhase
-from ming_sim.session import GameSession
 
 
 def _session(db, state, content):
@@ -93,7 +93,6 @@ def test_double_issue_same_token_second_is_409_turn_plus_one(web_game, monkeypat
     assert int(detail.get("status_code") or 0) == 409, detail
     assert int(detail["turn"]) == start + 1
     assert int(state.turn) == start + 1  # 未再推进
-
 
 async def _issue_stream_terminal(body: web_app.IssueDecreeRequest) -> tuple[str, dict]:
     from tests.test_chat_stream_failpaths_393 import _parse_sse

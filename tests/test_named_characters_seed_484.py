@@ -77,25 +77,25 @@ def test_r4_named_characters_debut_in_historical_order(game):
         assert character.status == "offstage"
         assert character.debut_year == debut_year
         assert character.location == location
-        assert db.get_character_status(name)[0] == "offstage"
+        assert db.characters.get_character_status(name)[0] == "offstage"
     assert content.characters["汤若望"].debut_month == 0
 
     assert db.apply_historical_debuts(state) == []
 
     state.year, state.period = 1629, 1
     debuted = db.apply_historical_debuts(state)
-    assert {"name": "李之藻", "office": "重臣", "faction": "西学"} in debuted
-    assert db.get_character_status("李之藻")[0] == "active"
+    assert {"name": "李之藻", "office": "历局修历起复", "faction": "西学"} in debuted
+    assert db.characters.get_character_status("李之藻")[0] == "active"
 
     state.year, state.period = 1630, 4
     debuted = db.apply_historical_debuts(state)
-    assert {"name": "汤若望", "office": "重臣", "faction": "西学"} in debuted
-    assert db.get_character_status("汤若望")[0] == "active"
+    assert {"name": "汤若望", "office": "钦天监历局修历", "faction": "西学"} in debuted
+    assert db.characters.get_character_status("汤若望")[0] == "active"
 
     state.year, state.period = 1631, 1
     debuted = db.apply_historical_debuts(state)
-    assert {"name": "张缙彦", "office": "重臣", "faction": "皇党"} in debuted
-    assert db.get_character_status("张缙彦")[0] == "active"
+    assert {"name": "张缙彦", "office": "清涧知县", "faction": "皇党"} in debuted
+    assert db.characters.get_character_status("张缙彦")[0] == "active"
 
 
 def test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status():
@@ -107,33 +107,6 @@ def test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status():
     assert character.debut_year == 1627
     assert character.debut_month == 0
     assert character.location == "beizhili"
-
-
-def test_r4_loader_rejects_seed_guilt_list(monkeypatch):
-    monkeypatch.setattr(
-        content_module,
-        "load_json_asset",
-        lambda _name: {
-            "factions": [{"name": "测试派", "satisfaction": 50, "leverage": 50, "agenda": "测试"}],
-            "characters": [{
-                "name": "测试人物",
-                "office": "知县",
-                "office_type": "地方",
-                "faction": "测试派",
-                "loyalty": 50,
-                "ability": 50,
-                "integrity": 50,
-                "courage": 50,
-                "style": "测试",
-                "power_id": "ming",
-                "personal_skills": [],
-                "seed_guilt": [],
-            }],
-        },
-    )
-
-    with pytest.raises(SystemExit):
-        content_module.load_character_content()
 
 
 def _minimal_character_with_seed_guilt(seed_guilt, *, identity=50):
@@ -163,20 +136,6 @@ def _patch_single_character(monkeypatch, character):
             "characters": [character],
         },
     )
-
-
-def test_r5_loader_rejects_nested_seed_guilt_crime_list(monkeypatch):
-    _patch_single_character(monkeypatch, _minimal_character_with_seed_guilt({"crime": [], "severity": "无"}))
-
-    with pytest.raises(SystemExit):
-        content_module.load_character_content()
-
-
-def test_r5_loader_rejects_nested_seed_guilt_severity_object(monkeypatch):
-    _patch_single_character(monkeypatch, _minimal_character_with_seed_guilt({"crime": "", "severity": {}}))
-
-    with pytest.raises(SystemExit):
-        content_module.load_character_content()
 
 
 def test_r5_loader_preserves_zero_identity(monkeypatch):

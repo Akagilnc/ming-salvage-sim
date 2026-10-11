@@ -10,6 +10,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.reign_state.store import ReignStateStore
+from ming_sim.entities.staged_declaration.store import StagedDeclarationStore
 
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdict_metadata
 import re
@@ -303,8 +305,8 @@ def _month_fact_materials(
                 "category": row["category"],
             })
     answers: List[Dict[str, Any]] = []
-    answer_rows = db.list_pending_decisions(turn) + [
-        r for r in db.list_rescript_drafts() if r["answered_turn"] == turn
+    answer_rows = db.issues.list_pending_decisions(turn) + [
+        r for r in db.issues.list_rescript_drafts() if r["answered_turn"] == turn
     ]
     for row in answer_rows:
         if str(row.get("status") or "") not in {"decided", "revision_pending"}:
@@ -317,7 +319,7 @@ def _month_fact_materials(
             "note": choice.get("note") or "",
             "event_id": row.get("event_id") or "",
         })
-    snapshot = db.get_month_open_snapshot(turn)
+    snapshot = db.month_open_snapshots.get(turn)
     return {
         "nominal": nominal,
         "landed": landed,
@@ -369,7 +371,7 @@ def transit_arrivals_from_payload(payload: object) -> list:
 
 def _persisted_transit_arrivals(db: Any, turn: int) -> list:
     """过月前半段已写入 resolve context 的本月抵达。"""
-    ctx = db.get_resolve_context(int(turn)) or {}
+    ctx = db.resolve_contexts.get(int(turn)) or {}
     payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
     return transit_arrivals_from_payload(payload)
 
@@ -722,7 +724,7 @@ def _run_loaded_month_chain(
     # 门控遗产读的是这些写入，须晚于它们；催办/待核只消费上月待办，并入这一次即可。
     # 到期密令结案已由步骤 4a 办理；drift 内再调为幂等兜底。
     _run_month_drift(db, state, chain, turn, decree_text, source)
-    archive = db.get_turn_report_archive(turn)
+    archive = db.turn_reports.archive(turn)
     if archive is None or not str(archive.get("report") or "").strip():
         from ming_sim.models import LLMConfig
 
@@ -738,7 +740,7 @@ def _run_loaded_month_chain(
             db, state, chain, decree_text=decree_text, source=source,
             step="gazette", operation=_write_gazette,
         )
-        archive = db.get_turn_report_archive(turn)
+        archive = db.turn_reports.archive(turn)
         if archive is None or not str(archive.get("report") or "").strip():
             return _pause(db, turn, chain, decree_text, source, "gazette")
     advanced = _advance_after_gazette(
@@ -924,7 +926,7 @@ def _settle_edicts(
     prevalidated = set(_load_durable_json_list(chain.get("recommendation_prevalidated_ids"), surface="month_chain.recommendation_prevalidated_ids"))
     invalid = set(_load_durable_json_list(chain.get("recommendation_invalid_ids"), surface="month_chain.recommendation_invalid_ids"))
     if "recommendation_prevalidated_ids" not in chain:
-        appointments = [row for row in db.list_decree_dossiers(status="proposed")
+        appointments = [row for row in db.dossiers.list_dossiers(status="proposed")
                         if row.get("action_type") == "appointment"
                         and not _is_stalled_deliberation(row)
                         and (not row.get("promulgation_decision")
@@ -935,7 +937,7 @@ def _settle_edicts(
             chain["recommendation_prevalidated_ids"] = sorted(prevalidated)
             chain["recommendation_invalid_ids"] = sorted(invalid)
             _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
-    for dossier in db.list_decree_dossiers():
+    for dossier in db.dossiers.list_dossiers():
         if _is_stalled_deliberation(dossier):
             continue
         status = str(dossier.get("status") or "")
@@ -979,7 +981,7 @@ def _settle_edicts(
                 )
                 verdict = product["verdict"]
             if isinstance(verdict, dict) and verdict.get("decision"):
-                current = db.get_decree_dossier(int(dossier["id"])) or dossier
+                current = db.dossiers.get(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":
                     # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
                     if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
@@ -1002,7 +1004,7 @@ def _settle_edicts(
                             apply_dossier_verdict_metadata(db, state, int(dossier["id"]), verdict)
                     finally:
                         db.conn._recommendation_snapshots_prevalidated = previous
-        current = db.get_decree_dossier(int(dossier["id"])) or dossier
+        current = db.dossiers.get(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_decree_ref: str, result: Any) -> None:
                 # 披露暂缓与旨意落账同事务：alongside 在 settle 的 atomic 内，
@@ -1191,14 +1193,14 @@ def _enrich_eligible_dossiers_for_supply(
     for item in candidates:
         row = dict(item)
         dossier_id = int(item.get("dossier_id") or 0)
-        dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
+        dossier = db.dossiers.get(dossier_id) if dossier_id else None
         if dossier is not None:
             secret_order_id = int(
                 dossier.get("secret_order_id") or item.get("secret_order_id") or 0
             )
             order = (
-                db.get_secret_order(secret_order_id)
-                if secret_order_id and hasattr(db, "get_secret_order")
+                db.character_knowledge.get_secret_order(secret_order_id)
+                if secret_order_id
                 else None
             )
             if order is not None:
@@ -1228,9 +1230,7 @@ def _identity_materials(db: Any, state: Any, name: str) -> Dict[str, Any]:
     who = str(name or "").strip()
     if not who:
         return {}
-    if not db.conn.execute(
-        "SELECT 1 FROM characters WHERE name=?", (who,),
-    ).fetchone():
+    if db.characters.row(who) is None:
         # 不是真人物（如「某类人」式题名）：没有身份材料，如实留空，不编。
         return {"name": who}
     from ming_sim.knowledge import build_character_knowledge
@@ -1272,7 +1272,7 @@ def _attach_investigation_facts(
     out: List[Dict[str, Any]] = []
     for raw in orders:
         order = dict(raw)
-        dossier = db.get_dossier_for_secret_order(int(order.get("id") or 0))
+        dossier = db.dossiers.get_for_secret_order(int(order.get("id") or 0))
         if dossier is None:
             out.append(order)
             continue
@@ -1354,15 +1354,12 @@ def build_secret_orders_supply_feed(
         dossier_id = int(row.get("dossier_id") or 0)
         row["actual_notes"] = actual_progress_notes(db, dossier_id) if dossier_id else []
     active_orders = _attach_investigation_facts(db, state, [
-        dict(o) for o in db.list_secret_orders(status="active")
+        dict(o) for o in db.character_knowledge.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ])
     # #1897：密令供料附实况轨原文（与案卷 eligible 同形）。
     for item in active_orders:
-        dossier = (
-            db.get_dossier_for_secret_order(int(item["id"]))
-            if hasattr(db, "get_dossier_for_secret_order") else None
-        )
+        dossier = db.dossiers.get_for_secret_order(int(item["id"]))
         item["actual_notes"] = (
             actual_progress_notes(db, int(dossier["id"])) if dossier is not None else []
         )
@@ -1435,7 +1432,7 @@ def _step_4a_secret_order_supply(
 
     candidates = db.list_monthly_dossier_progress_nudges()
     active_orders = [
-        o for o in db.list_secret_orders(status="active")
+        o for o in db.character_knowledge.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ]
     if not candidates and not active_orders:
@@ -1479,7 +1476,7 @@ def _step_4a_secret_order_supply(
         validation_failed = False
         try:
             with atomic(db):
-                db.record_monthly_supervision_presence(turn, commit=False)
+                db.dossiers.record_monthly_supervision_presence(turn, commit=False)
                 try:
                     db.record_monthly_dossier_progress(turn, reports)
                 except DeclarationDataError:
@@ -1584,9 +1581,9 @@ def _run_month_drift(
 
     collector = RejectionCollector()
     with atomic(db):
-        db.record_monthly_supervision_presence(turn, commit=False)
+        db.dossiers.record_monthly_supervision_presence(turn, commit=False)
         db.record_monthly_grant_reconciliations(turn)
-        db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
+        db.dossiers.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
         # #651：漂移只承接不依赖本段 applied 的持久态（已决「禁摊派」欠饷是否再开口）。
         # 默许/查办必须在逐段落账接缝带该段 report 结算，见 declaration_dispatch。
@@ -1623,7 +1620,7 @@ def _open_rescript_items(
     triad = _this_turn_rescript_dossiers(db, turn)
     decree_questions: List[tuple[str, list]] = []
     seen_refs: set[str] = set()
-    for dossier in db.list_decree_dossiers():
+    for dossier in db.dossiers.list_dossiers():
         ref = decree_ref_for_dossier(db, dossier)
         if ref in seen_refs:
             continue
@@ -1642,7 +1639,7 @@ def _open_rescript_items(
 
 def _this_turn_rescript_dossiers(db: Any, turn: int) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
-    for dossier in db.list_decree_dossiers():
+    for dossier in db.dossiers.list_dossiers():
         if not dossier.get("rescript_pending"):
             continue
         if not _dossier_rejection_is_this_turn(db, dossier, turn):
@@ -1655,17 +1652,14 @@ def _dossier_rejection_is_this_turn(db: Any, dossier: Dict[str, Any], turn: int)
     dossier_id = int(dossier["id"])
     if int(dossier.get("created_turn") or 0) == turn:
         return True
-    row = db.conn.execute(
-        "SELECT turn, rescript_action FROM decree_dossier_decisions "
-        "WHERE dossier_id=? AND decision='rejected' ORDER BY id DESC LIMIT 1",
-        (dossier_id,),
-    ).fetchone()
-    if row is None:
+    latest = db.dossiers.rejection_this_turn(dossier_id, turn)
+    if latest is None:
         return False
     # 上月已作三选（hold/withdrawn/force）的旧件即使残留 pending 也不再挡本月。
-    if str(row["rescript_action"] or "").strip():
+    rejected_turn, rescript_action = latest
+    if rescript_action.strip():
         return False
-    return int(row["turn"] or 0) == turn
+    return rejected_turn == turn
 
 
 def _materialize_rescript_desk(
@@ -1680,7 +1674,7 @@ def _materialize_rescript_desk(
     if open_items["triad"]:
         verdicts = []
         for dossier in open_items["triad"]:
-            hist = db.list_decree_dossier_decisions(int(dossier["id"]))
+            hist = db.dossiers.decisions(int(dossier["id"]))
             latest = hist[-1] if hist else {}
             verdicts.append({
                 "dossier_id": int(dossier["id"]),
@@ -1698,7 +1692,7 @@ def _materialize_rescript_desk(
                 ),
             })
         decisions.extend(_rescript_decisions(verdicts, open_items["triad"]))
-    for dossier in db.list_decree_dossiers(status="proposed"):
+    for dossier in db.dossiers.list_dossiers(status="proposed"):
         if (dossier["payload"] or {}).get("deliberation_state") != "stalled":
             continue
         decisions.append({
@@ -1723,8 +1717,8 @@ def _materialize_rescript_desk(
                                 else f"{_WORLD_QUESTION_PREFIX}{turn}:{offset + idx}"),
         ))
     if decisions:
-        db.save_pending_decisions(turn, decisions)
-    desk = db.list_rescript_desk(turn)
+        db.issues.save_pending_decisions(turn, decisions)
+    desk = db.issues.list_rescript_desk(turn)
     if not desk:
         return None
     chain["stage"] = "rescript"
@@ -1766,7 +1760,7 @@ def _consume_rescript_answers(
     turn = int(state.turn)
     from ming_sim.rescript_draft import consume_memorial_answers
     consume_memorial_answers(session, chain, source=source)
-    rows = db.list_pending_decisions(turn)
+    rows = db.issues.list_pending_decisions(turn)
     decided = [r for r in rows if str(r.get("status") or "") == "decided"]
     if not decided:
         return
@@ -1792,7 +1786,7 @@ def _consume_rescript_answers(
         event_id = str(row.get("event_id") or "")
         if event_id.startswith("deliberation:"):
             from ming_sim.rescript_actions import apply_imperial_deliberation_push
-            original = db.get_decree_dossier(int(event_id.partition(":")[2]))
+            original = db.dossiers.get(int(event_id.partition(":")[2]))
             if (row["choice"] or {}).get("action") == "imperial_push" and (original["payload"] or {}).get("deliberation_state") == "stalled":
                 with atomic(db):
                     apply_imperial_deliberation_push(
@@ -1862,7 +1856,7 @@ def _apply_decided_triad(
     if not raw_id.isdigit():
         return
     dossier_id = int(raw_id)
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     if dossier is None or not dossier.get("rescript_pending"):
         return
     decision = str(
@@ -1905,13 +1899,13 @@ def _run_world_continuation_text(
 def _dossier_for_decree_ref(db: Any, decree_ref: str) -> Optional[Dict[str, Any]]:
     from ming_sim.decree_forecast import decree_ref_for_dossier
 
-    for dossier in db.list_decree_dossiers():
+    for dossier in db.dossiers.list_dossiers():
         if decree_ref_for_dossier(db, dossier) == decree_ref:
             return dossier
     if decree_ref.startswith("dossier:"):
         raw = decree_ref.split(":", 1)[1]
         if raw.isdigit():
-            return db.get_decree_dossier(int(raw))
+            return db.dossiers.get(int(raw))
     return None
 
 
@@ -1977,8 +1971,8 @@ def _advance_after_gazette(
         _apply_recovery_driven_transfers(db, state)
         state.next_period()
         state.turn_phase = "issued"
-        db.save_state(state)
-        db.clear_month_open_snapshot(turn)
+        db.reign.save_game_state(state)
+        db.month_open_snapshots.delete(turn)
         chain["advanced"] = True
         chain["stage"] = "advanced"
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -2062,7 +2056,7 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
-    ctx = db.get_resolve_context(turn) or {}
+    ctx = db.resolve_contexts.get(turn) or {}
     payload = ctx.get("simulator_payload", {})
     chain = payload.get(_CHAIN_KEY)
     if chain is None:
@@ -2074,12 +2068,12 @@ def _save_chain(
     db: Any, turn: int, chain: Dict[str, Any], *,
     decree_text: str = "", source: Provenance = Provenance.system_simulation,
 ) -> None:
-    ctx = db.get_resolve_context(turn) or {}
+    ctx = db.resolve_contexts.get(turn) or {}
     payload = {**ctx.get("simulator_payload", {})}
     payload[_CHAIN_KEY] = chain
     stored_source = ctx.get("source") or source
     source_value = stored_source.value if isinstance(stored_source, Provenance) else str(stored_source)
-    db.save_resolve_context(
+    db.resolve_contexts.save(
         turn,
         decree_text or str(ctx.get("decree_text") or ""),
         payload,

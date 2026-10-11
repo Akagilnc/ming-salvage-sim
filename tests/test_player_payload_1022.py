@@ -1,24 +1,26 @@
-"""#1022 — 玩家历史、结算流与 CLI 只交付叙事形态。"""
-
 from __future__ import annotations
-
-
 import asyncio
 import json
-
 import pytest
-
 import web_app
 from tests.month_chain_helpers import canned_full_settlement, empty_rescript_response
 from tests.test_month_chain_1843 import _stage_edict, _forbid_extractor
+from ming_sim.session_write_queue import ClassifiedWriteGate
+from types import SimpleNamespace
+"""#1022 — 玩家历史、结算流与 CLI 只交付叙事形态。"""
+
+
+
+
+
 
 
 def test_history_payload_preserves_narrative_without_machine_ledger(web_game):
     db, state = web_game.db, web_game.state
     report, decree, text, notes = "邸报：国丈家赀约数十万两。", "诏曰：赈济辽东。", "命户部发帑", "家赀约十万两"
     db.save_turn_report(state, report)
-    db.save_resolve_context(state.turn, decree, {})
-    did = db.add_directive(state, None, text, "manual", notes=notes, status="issued")
+    db.resolve_contexts.save(state.turn, decree, {})
+    did = db.issues.add_directive(state.turn, state.year, state.period, None, text, 'manual', notes=notes, status='issued')
 
     payload = asyncio.run(web_app.api_history_turn(int(state.turn)))
 
@@ -30,6 +32,22 @@ def test_history_payload_preserves_narrative_without_machine_ledger(web_game):
         {"id": did, "year": state.year, "period": state.period, "text": text, "notes": notes},
     ]
     assert not {"extraction", "extractor_output", "loyalty", "ability", "integrity", "courage"} & set(payload)
+
+
+class _SettlementSession:
+    last_decree = "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
+
+
+
+
+
+
+
+
+class _SettlementGame:
+    pass
+
+
 
 
 async def _serialized_terminal_event(route_name: str, choices=None) -> tuple[str, dict]:
@@ -78,7 +96,7 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
 
     assert event == expected_event
     assert payload["decree"] == ""  # 不再有自动合成的整篇诏书。
-    assert any(row["decree_text"] == decree for row in db.list_decree_dossiers())
+    assert any(row["decree_text"] == decree for row in db.dossiers.list_dossiers())
     if expected_event == "decisions":
         assert payload["decisions"] == decisions
         assert payload["decisions"][0]["context"] == memorial["context"]

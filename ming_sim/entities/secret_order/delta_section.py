@@ -39,7 +39,7 @@ def apply(run):
         except (TypeError, ValueError) as exc:
             rejections.append(RejectedItem(item=item, reason=str(exc), category="invalid_enum", source=run.ctx.source))
             continue
-        order = run.db.get_secret_order(real_id)
+        order = run.db.character_knowledge.get_secret_order(real_id)
         if order is None:
             rejections.append(RejectedItem(item=item, reason="密令不存在", category="missing_ref", source=run.ctx.source))
             continue

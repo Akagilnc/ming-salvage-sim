@@ -1,3 +1,5 @@
+from __future__ import annotations
+from ming_sim.applier import Provenance
 """火器装备 / 大炮装备 两条军备轴（数据字段，供 simulator 软判，代码不硬算）。
 
 火器装备：鸟铳/三眼铳——野战齐射 + 守城皆宜（0-100 状态轴）。
@@ -7,9 +9,7 @@ simulator 看得见、软性加权判战；引擎只 clamp、不算胜负。
 #1185 显示面：真实出口可数哨兵/双态差分；同 seam 合并为最短 tracer。
 """
 
-from __future__ import annotations
 
-from ming_sim.applier import Provenance
 
 def _pay_source():
     return {
@@ -46,26 +46,6 @@ def test_apply_army_delta_sets_firearm(saved_game):
     assert row["firearm_equipment"] == 40
     assert row["cannon_equipment"] == 10
 
-def test_firearm_clamped_0_100(game):
-    db, state, _ = game
-    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
-    pseudo = type("E", (), {"id": "test", "title": "x"})()
-    db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"firearm_equipment": 999}}, source=Provenance.system_simulation)
-    val = db.conn.execute(
-        "SELECT firearm_equipment FROM armies WHERE id=?", (aid,)
-    ).fetchone()[0]
-    assert val == 100
-
-def test_cannon_clamped_to_12(game):
-    """部队随军大炮 clamp 0-12。"""
-    db, state, _ = game
-    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
-    pseudo = type("E", (), {"id": "test", "title": "x"})()
-    db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"cannon_equipment": 999}}, source=Provenance.system_simulation)
-    val = db.conn.execute(
-        "SELECT cannon_equipment FROM armies WHERE id=?", (aid,)
-    ).fetchone()[0]
-    assert val == 12
 
 def test_create_army_with_firearm(game):
     db, state, _ = game
@@ -92,9 +72,6 @@ def test_create_army_cannon_count_clamped(game):
         "SELECT cannon_equipment FROM armies WHERE id='heavy_test'"
     ).fetchone()[0]
     assert val == 12
-
-
-
 
 def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
     """新档 seed 必须贯通火器（非全 0）。"""

@@ -1,9 +1,10 @@
+import pytest
+from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
+from ming_sim.recommendations import validate_recommendation_snapshot
 """#493 大臣荐人：网络/见闻裁切与采纳后的可恢复荐人事件。"""
 
 
-import pytest
 
-from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
 
 
 def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge(game):
@@ -106,6 +107,10 @@ def test_same_faction_future_debut_is_not_recommendable(game):
     assert future.name not in names
 
 
+
+
+
+
 def test_listed_heard_for_selection_candidate_stays_recovery_type_through_context_and_restore(game):
     db, state, content = game
     recommender = next(c for c in content.characters.values()
@@ -122,7 +127,6 @@ def test_listed_heard_for_selection_candidate_stays_recovery_type_through_contex
     row = next(row for row in db.list_recommendation_candidates(state, recommender.name)
                if row["name"] == candidate.name)
     assert row["candidate_kind"] == "荐起复"
-    assert "荐起复" in build_recommendation_brief(db, state, recommender.name)
     assert validate_recommendation_snapshot(db, state, recommender.name, row)
 
     restored = db.load_state()

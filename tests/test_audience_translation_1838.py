@@ -1,20 +1,6 @@
-"""#1838 C1b 召对转译：分段 / 可闻性 / 在场进出 / 御前主角 / 边事件 / 公开说法。
-
-受控声明桩（模拟转译 LLM 一次产出）经真实 apply 入口落库，验收：
-- 一轮戏文三段说话人与可闻性；御前低语不进不在场者经历（AC1）
-- 入见 / 告退经转译记入在场进出（AC2）
-- 御前主角随转译声明变化并可按源轮读回（AC3）
-- 边事件、公开说法落对应记录并指向事务（AC4）
-
-不启动故事抽取 / 边事件判官 / 读心——转译声明本身即承接。
-"""
-
 from __future__ import annotations
-
 from ming_sim.session_write_queue import get_session_write_queue
-
 from types import SimpleNamespace
-
 from ming_sim.audience_night import (
     AUDIBILITY_PRIVATE,
     AUDIBILITY_PUBLIC,
@@ -29,23 +15,28 @@ from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relations import summon_edge_origin
 from ming_sim.session import GameSession
 from tests.conftest import note_queue_until_game_teardown
+from ming_sim.audience_night import AUDIBILITY_PRIVATE, AUDIBILITY_PUBLIC, list_ledger, open_night, person_night_experience, present_names_at
+"""#1838 C1b 召对转译：分段 / 可闻性 / 在场进出 / 御前主角 / 边事件 / 公开说法。
+
+受控声明桩（模拟转译 LLM 一次产出）经真实 apply 入口落库，验收：
+- 一轮戏文三段说话人与可闻性；御前低语不进不在场者经历（AC1）
+- 入见 / 告退经转译记入在场进出（AC2）
+- 御前主角随转译声明变化并可按源轮读回（AC3）
+- 边事件、公开说法落对应记录并指向事务（AC4）
+
+不启动故事抽取 / 边事件判官 / 读心——转译声明本身即承接。
+"""
 
 
-def _night_protagonist(db, night_id: int) -> str:
-    """读 audience_nights.protagonist_name 账本列（生产仍写此列；#1902 删无消费包装）。"""
-    row = db.conn.execute(
-        "SELECT protagonist_name FROM audience_nights WHERE id=?",
-        (int(night_id),),
-    ).fetchone()
-    if row is None:
-        return ""
-    return str(row["protagonist_name"] or "")
+
+
 
 
 def _activate(db, state, *names: str) -> None:
     for name in names:
-        if db.get_character_status(name)[0] != "active":
+        if db.characters.get_character_status(name)[0] != "active":
             db.set_character_status(state, name, "active", reason="1838 测试置在场")
+
 
 def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
     """AC1：三段说话人可闻性；低语只进王承恩经历。"""
@@ -209,11 +200,19 @@ def _scene_session(db, state, content, monkeypatch):
     return sess
 
 
+
+
 def _active_chat_turn(db, state, night_id: int) -> int:
     """建可撤回的存活轮（status=active；挂夜默认 generating 不可 undo）。"""
     return db.create_chat_turn(
         state, "殿上", "s", 0, night_id=int(night_id), status="active",
     )
+
+
+
+
+
+
 
 
 def test_edge_event_and_public_saying_attach_affair(game):
@@ -322,11 +321,25 @@ def test_on_scene_fact_undo_via_translation_entry(game):
     )
     assert len(result.on_scene_facts.applied) == 1
     assert result.on_scene_facts.rejected == []
-    assert db.get_character_status("王绍徽")[0] == "dead"
+    assert db.characters.get_character_status("王绍徽")[0] == "dead"
 
     db.undo_chat_turn(ctid)
-    assert db.get_character_status("王绍徽")[0] == "active"
+    assert db.characters.get_character_status("王绍徽")[0] == "active"
     turn_row = db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()
     assert turn_row["status"] == "undone"
+
+
+
+
+
+def _night_protagonist(db, night_id: int) -> str:
+    """读 audience_nights.protagonist_name 账本列（生产仍写此列；#1902 删无消费包装）。"""
+    row = db.conn.execute(
+        "SELECT protagonist_name FROM audience_nights WHERE id=?",
+        (int(night_id),),
+    ).fetchone()
+    if row is None:
+        return ""
+    return str(row["protagonist_name"] or "")

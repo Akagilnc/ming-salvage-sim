@@ -1,10 +1,10 @@
+from __future__ import annotations
 """pytest 基建：只读 opening 盘面 + 按用例隔离的临时库 fixture。
 
 纯读用例可共享一次真实 seed 的只读盘面；写库用例仍各拿一个全新临时 SQLite，
 互不污染。content 绑定到 context 和 issues 两个模块（各有自己的 _ctx）。
 """
 
-from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
@@ -319,7 +319,7 @@ def active_ming_character(db, content) -> str:
             continue
         if getattr(ch, "office_type", "") == "后宫":
             continue
-        if db.get_character_status(name)[0] == "active":
+        if db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("找不到 active 的大明大臣")
 
@@ -359,8 +359,10 @@ def append_night_chat(
     db, state, night_id: int, minister: str, user_text: str, answer: str, seq: int,
 ) -> tuple[int, int]:
     """写入一对 user/minister 消息 + chat_turns 行；返回 (turn_id, minister_message_id)。"""
-    uid = db.append_chat_message(minister, state.turn, "user", user_text)
-    mid = db.append_chat_message(minister, state.turn, "minister", answer)
+    uid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="user", content=user_text)
+    db.conn.commit()
+    mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="minister", content=answer)
+    db.conn.commit()
     cur = db.conn.execute(
         "INSERT INTO chat_turns "
         "(minister_name,turn,year,period,user_message_id,minister_message_id,night_id,night_seq) "

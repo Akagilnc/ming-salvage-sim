@@ -21,7 +21,7 @@
   （flows 读端按 r3 全序取胜出键、floor 折算，余数=免除不入欠），hub 恒先、合并 k
   公式与中央旧欠不自动偿还（0023 D7③）一律不动。
 
-持久化**只**经 fiscal_config 行＋``record_fiscal_config_change``（immutable
+持久化**只**经 fiscal_config 行＋``FiscalConfigStore.record_change``（immutable
 provenance、origin_ref=dossier:<id>），禁第二份旨意真源或新表（F1.2）。
 """
 from __future__ import annotations
@@ -311,14 +311,14 @@ def materialize_pay_order_decree(
     if not origin.startswith("dossier:") or not origin[len("dossier:"):]:
         raise PayOrderKeyError(f"override 旨 origin_ref 须形如 dossier:<id>：{origin_ref!r}")
     dossier_id = int(origin[len("dossier:"):])
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     if dossier is None:
         raise PayOrderKeyError(f"override 旨案卷不存在：{origin}")
     if str(dossier.get("action_type") or "") != "pay_order_override":
         raise PayOrderKeyError(
             f"override 旨案卷 action_type 非法：{dossier.get('action_type')!r}（须 pay_order_override）"
         )
-    if not db.dossier_authorizes_effects(dossier_id):
+    if not db.dossiers.authorizes_effects(dossier_id):
         raise PayOrderKeyError(
             f"override 旨案卷 {origin} 未过合法颁布门（顺颁/强颁），禁物化 config"
         )
@@ -326,7 +326,7 @@ def materialize_pay_order_decree(
     prepared = prepare_pay_order_entries(db, entries)
 
     written: List[Dict[str, Any]] = []
-    current = db.get_fiscal_config()
+    current = db.fiscal_config.values()
     for key, value, until in prepared:
         old = int(current.get(key, _default_of(key)))
         db.conn.execute(
@@ -335,7 +335,7 @@ def materialize_pay_order_decree(
             (key, value, "偿还序override/折发系数（#653 ADR 0090）"),
         )
         db.conn.execute("UPDATE fiscal_config SET origin_ref = ? WHERE key = ?", (origin, key))
-        db.record_fiscal_config_change(
+        db.fiscal_config.record_change(
             turn=turn, key=key, old_value=old, new_value=value,
             origin_ref=origin, reason=reason,
         )
@@ -351,7 +351,7 @@ def materialize_pay_order_decree(
             db.conn.execute(
                 "UPDATE fiscal_config SET origin_ref = ? WHERE key = ?", (origin, until_key)
             )
-            db.record_fiscal_config_change(
+            db.fiscal_config.record_change(
                 turn=turn, key=until_key, old_value=old_until, new_value=until,
                 origin_ref=origin, reason=reason,
             )
@@ -368,7 +368,7 @@ def materialize_pay_order_decree(
                  "永久旨覆写清旧期限（#653 F1.4 stale until）"),
             )
             db.conn.execute("DELETE FROM fiscal_config WHERE key = ?", (until_key,))
-            db.record_fiscal_config_change(
+            db.fiscal_config.record_change(
                 turn=turn, key=until_key, old_value=stale_until, new_value=0,
                 origin_ref=origin, reason="永久旨覆写清旧期限（stale until 清除）",
             )
@@ -391,13 +391,13 @@ def restore_pay_order_override(
     在位旨。禁反演上一道 override 值/前旨栈。期限伴随键一并退出。不经 materialize
     （后者只接受 pay_order_override origin），不提交事务。
     """
-    target = db.get_decree_dossier(int(target_dossier_id))
-    revoke = db.get_decree_dossier(int(revoke_dossier_id))
+    target = db.dossiers.get(int(target_dossier_id))
+    revoke = db.dossiers.get(int(revoke_dossier_id))
     if target is None or str(target.get("action_type") or "") != "pay_order_override":
         return []
     if revoke is None or str(revoke.get("action_type") or "") != "revoke_decree":
         raise PayOrderKeyError("恢复 override 须由真实 revoke_decree 案卷发起")
-    if not db.dossier_authorizes_effects(int(revoke_dossier_id)):
+    if not db.dossiers.authorizes_effects(int(revoke_dossier_id)):
         raise PayOrderKeyError(
             f"恢复 override 的 revoke 案卷 dossier:{int(revoke_dossier_id)} "
             f"未过合法颁布门（顺颁/强颁），禁删 config"
@@ -426,7 +426,7 @@ def restore_pay_order_override(
              reason if str(reason).strip() else "撤销 override 旨，形状退出格律"),
         )
         db.conn.execute("DELETE FROM fiscal_config WHERE key = ?", (key,))
-        db.record_fiscal_config_change(
+        db.fiscal_config.record_change(
             turn=int(turn), key=key, old_value=old, new_value=_default_of(key),
             origin_ref=origin,
             reason=reason or "撤销 override 旨，形状退出格律（回落次特定/祖制）",
@@ -445,7 +445,7 @@ def restore_pay_order_override(
                  "撤销 override 旨，清除期限伴随键"),
             )
             db.conn.execute("DELETE FROM fiscal_config WHERE key=?", (until_key,))
-            db.record_fiscal_config_change(
+            db.fiscal_config.record_change(
                 turn=int(turn), key=until_key, old_value=old_until, new_value=0,
                 origin_ref=origin, reason="撤销 override 旨，清除期限伴随键",
             )
@@ -460,12 +460,9 @@ def dossier_override_still_in_force(db: Any, dossier_id: int) -> bool:
     ``until_turn`` 时，祖制默认序/系数仍被压住，旨的实效仍在。判据只读既有
     账本（键 + 期限伴随键），不反演前旨值、不新增机制。
     """
-    turn = db._current_settle_turn()
+    turn = db.reign.current_settle_turn()
     origin = f"dossier:{int(dossier_id)}"
-    rows = db.conn.execute(
-        "SELECT key,value FROM fiscal_config WHERE origin_ref=? AND kind='override'",
-        (origin,),
-    ).fetchall()
+    rows = db.fiscal_config.override_rows_for_origin(origin)
     config = {str(row["key"]): int(row["value"]) for row in rows}
     return any(_is_override_key(key) and _live(config, key, turn) for key in config)
 

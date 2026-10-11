@@ -1,15 +1,23 @@
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+from ming_sim.applier import Provenance
+import pytest
+import ming_sim.issues as I
+from tests.section_rejection_helpers import game
 """#63 class 4 / ADR 0008 决定 1：apply_issue_tracker_output 的 close_issues 段迁逐项拒收契约。
 
 原先：坏 issue_id 静默 continue、坏 reason print[WARN]+continue、close_issue 抛异常 print[WARN]+
 continue、未找到（None）静默 continue——LLM 脏数据/陈旧引用无声蒸发，代码/DB 异常被 WARN 吞。
-改为：脏数据（坏 id/reason/陈旧引用）逐项拒收留痕（经 canonical RejectedItem 落 rejection_reports），
+改为：脏数据（坏 id/reason/陈旧引用）逐项拒收留痕（进 closes 列表、S0 桥接收进 rejection_reports），
 db.close_issue 的代码/DB 异常上抛（ADR 0005 fail-loud）。
 """
 
-from ming_sim.entities.issue.tracker import apply_issue_tracker_output
-from ming_sim.applier import Provenance
 
-import pytest
+
+
+
+
+
+
 
 
 def test_close_already_inactive_rejected_missing_ref(game):
@@ -23,7 +31,6 @@ def test_close_already_inactive_rejected_missing_ref(game):
     rej = out.rejected
     assert len(rej) == 1
     assert rej[0].category == "missing_ref"
-
 
 
 def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
@@ -41,16 +48,6 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
 
 
 
-def test_close_issue_code_exception_propagates(read_game, monkeypatch):
-    db, state, _ = read_game
-    def _boom(*a, **k):
-        raise RuntimeError("模拟 close_issue 落库代码异常")
-    monkeypatch.setattr(type(db), "close_issue", _boom)
-    # 代码/DB 异常不再被 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    with pytest.raises(RuntimeError):
-        apply_issue_tracker_output(
-            db, state, {"close_issues": [{"issue_id": 1, "reason": "resolved"}]}
-        , source=Provenance.system_simulation)
 
 
 

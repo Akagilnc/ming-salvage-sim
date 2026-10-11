@@ -5,6 +5,9 @@
 """
 from __future__ import annotations
 
+from ming_sim.applier import coerce_beyond_intent_flag
+from ming_sim.entities.issue.store import IssueStore
+
 from typing import Any, Dict, List, Mapping
 
 from ming_sim.population_pressure import is_actual_population_transfer
@@ -16,16 +19,10 @@ PROHIBITION_ACTION = "prohibit_covert_levy"
 
 def active_prohibition_dossier(db: Any, exposed_dossier_id: int) -> Dict[str, object] | None:
     """Return the first canonical dossier which authorizes this prohibition."""
-    rows = db.conn.execute(
-        """SELECT * FROM decree_dossiers
-           WHERE action_type=? AND target_kind='dossier' AND target_id=?
-             AND status IN ('promulgated','closed')
-           ORDER BY id""",
-        (PROHIBITION_ACTION, str(int(exposed_dossier_id))),
-    ).fetchall()
+    rows = db.dossiers.prohibition_dossiers(PROHIBITION_ACTION, int(exposed_dossier_id))
     for row in rows:
         item = dict(row)
-        if db.dossier_authorizes_effects(int(item["id"])):
+        if db.dossiers.authorizes_effects(int(item["id"])):
             return item
     return None
 
@@ -58,28 +55,20 @@ def stopped_covert_effect(
     if not raw_id.isdigit():
         return False
     from ming_sim.simulation import read_beyond_intent_raw
-    beyond = db.coerce_beyond_intent_flag(read_beyond_intent_raw({"beyond_intent": beyond_intent}))
+    beyond = coerce_beyond_intent_flag(read_beyond_intent_raw({"beyond_intent": beyond_intent}))
     if not beyond:
         return False
     return active_prohibition_dossier(db, int(raw_id)) is not None
 
 
 def _issue_for_dossier(db: Any, dossier_id: int) -> int:
-    row = db.conn.execute(
-        "SELECT id FROM issues WHERE origin_ref=? ORDER BY id LIMIT 1",
-        (f"dossier:{int(dossier_id)}",),
-    ).fetchone()
+    row = IssueStore(db.conn).read_issue_for_dossier((f"dossier:{int(dossier_id)}",))
     return int(row["id"]) if row is not None else 0
 
 
 def army_pay_fact_for_dossier(db: Any, dossier_id: int) -> Dict[str, object] | None:
     """把月结真值附在既有案卷判官输入，不另造 simulator payload。"""
-    row = db.conn.execute(
-        """SELECT d.target_id army_id,a.arrears,a.consecutive_pay_shortfall_months
-           FROM decree_dossiers d JOIN armies a ON a.id=d.target_id
-           WHERE d.id=? AND d.target_kind='army'""",
-        (int(dossier_id),),
-    ).fetchone()
+    row = db.dossiers.army_pay_row(int(dossier_id))
     if row is None:
         return None
     return {
@@ -92,7 +81,7 @@ def army_pay_fact_for_dossier(db: Any, dossier_id: int) -> Dict[str, object] | N
 def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Any) -> int:
     """只凭 canonical applier 已成功落库的结果消费待办。"""
     consumed = 0
-    for todo in db.list_next_audience_todos(status="pending"):
+    for todo in db.dossiers.list_next_audience_todos(status="pending"):
         if todo.get("entry_kind") != ENTRY_KIND:
             continue
         payload = todo["payload_json"]
@@ -101,7 +90,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Any) ->
         if payload.get("decision") == "禁摊派":
             pay_fact = army_pay_fact_for_dossier(db, did) or {}
             if float(pay_fact.get("arrears") or 0) <= 0:
-                db.mark_next_audience_todo_status(int(todo["id"]), "consumed", commit=False)
+                db.dossiers.mark_next_audience_todo_status(int(todo["id"]), "consumed", commit=False)
                 consumed += 1
             continue
         if payload.get("decision"):
@@ -109,7 +98,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Any) ->
         origin = f"dossier:{did}"
         from ming_sim.participant_roster import decode_durable_participant_roster
 
-        dossier = db.get_decree_dossier(did) or {}
+        dossier = db.dossiers.get(did) or {}
         actors = {str(dossier.get("executor_id") or "").strip()}
         for participant in decode_durable_participant_roster(
             dossier.get("participant_roster") or [],
@@ -166,7 +155,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Any) ->
             decision == "禁摊派" and float(pay_fact.get("arrears") or 0) > 0
         )
         status = "pending" if reopened else "consumed"
-        db.mark_next_audience_todo_status(
+        db.dossiers.mark_next_audience_todo_status(
             int(todo["id"]), status,
             payload_patch={"decision": decision, "decided_turn": int(state.turn),
                            "shortfall_reopened": reopened}, commit=False,
@@ -220,7 +209,7 @@ def write_exposure_todos(db: Any, state: Any, applied: Any = None) -> int:
         issue_id = _issue_for_dossier(db, did)
         if issue_id <= 0:
             continue
-        created = db.insert_next_audience_todo(
+        created = db.dossiers.insert_next_audience_todo(
             commitment_ref=issue_id, stage_idx=did, due_turn=int(state.turn),
             criterion_text="暗渠摊派揭破待裁", origin_context="案卷实况与奏报有异",
             entry_kind=ENTRY_KIND, created_turn=int(state.turn),

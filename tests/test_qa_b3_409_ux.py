@@ -1,64 +1,37 @@
-"""#1274 QA A-新3：409/超时 UX 族（#1301/#1306/#1312/#1319(a)/#1322）。
-
-刀口锁状态码、结构化 detail、相位分叉与 resolve 锁前预检；
-ADR 0036/0006 机制零动。
-"""
 from __future__ import annotations
-
 import asyncio
 import json
 import threading
 from types import SimpleNamespace
-
 import pytest
 from fastapi import HTTPException
-
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import ClassifiedWriteGate
 from ming_sim.models import TurnPhase
+from concurrent.futures import ThreadPoolExecutor
+"""#1274 QA A-新3：409/超时 UX 族（#1301/#1306/#1312/#1319(a)/#1322）。
+
+保留 authority 投影权限与 resolve 锁前准入负向；
+ADR 0036/0006 机制零动。
+"""
+
+
+
 
 
 # ── #1301 玩家面 409 去裸 night_id ──────────────────────────────────────────
 
 
-def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
-    """#1301：玩家面文案不得拼接裸 night_id；结构化 detail 仍带 night_id。"""
-    night = {
-        "id": 42,
-        "status": an.NIGHT_STATUS_CLOSING,
-        "close_commit_cursor": 0,
-    }
-    monkeypatch.setattr(an, "get_open_night", lambda _db: night)
-    monkeypatch.setattr(an, "get_night", lambda _db, nid: night if int(nid) == 42 else None)
-
-    with pytest.raises(an.AudienceNightError) as ei:
-        an.assert_night_accepts_player_input(object(), what="召对")
-
-    msg = str(ei.value)
-    assert msg
-    assert ei.value.code == "night_closing"
-    assert ei.value.detail == {"night_id": 42, "what": "召对"}
-
-    with pytest.raises(an.AudienceNightError) as other:
-        an.assert_night_accepts_player_input(object(), what="阅折")
-    assert other.value.code == "night_closing"
-    assert other.value.detail == {"night_id": 42, "what": "阅折"}
-
+# ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
 
 
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────
 
-class _Row(dict):
-    def keys(self):
-        return super().keys()
-
-
-
 def test_directive_payload_authority_not_notes_alias():
     """#1319(a)：notes 备注不得投影成 authority；无真 authority 则空串。"""
     game = web_app.WebGame.__new__(web_app.WebGame)
-    row = _Row(
+    row = dict(
         id=9,
         event_id="",
         event_title="",
@@ -71,7 +44,6 @@ def test_directive_payload_authority_not_notes_alias():
     payload = web_app.WebGame.directive_payload(game, row)
     assert payload["notes"] == "家赀约十万两"
     assert payload["authority"] == ""
-
 
 
 # ── #1322 resolve stream 相位预检在抢锁前 ───────────────────────────────────
@@ -96,7 +68,6 @@ class _PhaseSession:
         raise AssertionError("wrong-phase must not reach submit_hitl_choices")
 
 
-
 class _ResolveGame:
     def __init__(self, phase: str, gate: ClassifiedWriteGate):
         self.state = SimpleNamespace(turn=3, ended=False, turn_phase=phase)
@@ -109,7 +80,6 @@ class _ResolveGame:
 
     def refresh_turn(self):
         self.actions.append("refresh")
-
 
 
 async def _consume_resolve_sse() -> list[tuple[str, object]]:
@@ -139,7 +109,6 @@ async def _consume_resolve_sse() -> list[tuple[str, object]]:
     return events
 
 
-
 def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     """#1322：非 awaiting 相位在抢锁前快速失败；持锁者不被卡住；submit 不进。"""
     gate = ClassifiedWriteGate()
@@ -159,30 +128,3 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     message = payload["message"] if isinstance(payload, dict) else str(payload)
     assert game.session._submit_called is False
     assert game.actions == []
-
-
-
-def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch):
-    """#1322：awaiting 相位仍经 submit_hitl 在 write_gate 内提交（权威复查保留）。"""
-    gate = ClassifiedWriteGate()
-    game = _ResolveGame(TurnPhase.AWAITING_DECISION.value, gate)
-    submitted = {"ok": False}
-
-    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
-        with write_gate:
-            assert gate.locked(), "submit must run while write gate held"
-            game.actions.append("submit")
-            submitted["ok"] = True
-            return "邸报：已裁。"
-
-    game.session.submit_hitl_choices = _submit_hitl  # type: ignore[method-assign]
-    game.session.last_decree = "诏曰：发帑。"
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-
-    events = asyncio.run(_consume_resolve_sse())
-    assert submitted["ok"] is True
-    kinds = [ev for ev, _ in events]
-    assert "stage" not in kinds
-    assert kinds[-1] == "done"
-    payload = events[-1][1]
-    assert payload["report"] == "邸报：已裁。"

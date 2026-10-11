@@ -85,10 +85,7 @@ def _character(name: str, office: str, office_type: str) -> Character:
 
 
 def _cost_events(db: GameDB, dossier_id: int) -> list[dict]:
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
-        (int(dossier_id),),
-    ).fetchall()]
+    return [dict(row) for row in db.dossiers.cost_events(int(dossier_id))]
 
 
 def _expected_satisfaction(
@@ -225,7 +222,7 @@ def _first_month_gazette_via_production_settle(
     db = session.db
     closed_turn = int(session.state.turn)
     # 邸报是自由正文：判空观察副本，返回原串。
-    existing = str(db.get_turn_report(closed_turn) or "")
+    existing = str(db.turn_reports.report_text(closed_turn) or "")
     if existing.strip():
         return existing
 
@@ -239,7 +236,7 @@ def _first_month_gazette_via_production_settle(
         return ""
 
     # 唯一真源：落库 turn_report（closed_turn）；禁用内存 last_report 冒充。
-    return str(db.get_turn_report(closed_turn) or "")
+    return str(db.turn_reports.report_text(closed_turn) or "")
 
 
 def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> dict:
@@ -253,7 +250,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         state = session.state
         # Low authority so resistance is on the table.
         state.metrics["皇威"] = 15
-        db.save_state(state)
+        db.reign.save_game_state(state)
 
         # P-5 邸报原料：开局无 seed 后，经生产首月结算缝先落非空真实 report。
         # 必须在种植 proposed 案卷之前（否则结算会再进颁布判官）。
@@ -296,7 +293,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
                 },
             )
             planted[key] = did
-            rows_by_id[did] = db.get_decree_dossier(did)
+            rows_by_id[did] = db.dossiers.get(did)
 
         # break_rank must be on both extreme appointments.
         for key in ("cabinet", "bare"):
@@ -325,7 +322,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         )
         # 辞让 path needs force+execution judge; this gate records structured
         # reject as the primary anchor. execution_outcome checked if already set.
-        cabinet_row = db.get_decree_dossier(planted["cabinet"])
+        cabinet_row = db.dossiers.get(planted["cabinet"])
         cabinet_exec = str(cabinet_row.get("execution_outcome") or "")
         cabinet_resign_ok = cabinet_exec in {"degraded", "failed"}
         cabinet_ok = cabinet_reject_ok or cabinet_resign_ok
@@ -349,7 +346,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
                 )
                 bare_force_costs = {"force_error": bare_force_error}
             else:
-                bare_row = db.get_decree_dossier(planted["bare"])
+                bare_row = db.dossiers.get(planted["bare"])
                 bare_force_costs = _three_cost_legs(
                     db, planted["bare"], bare_row,
                     bare_v.get("affected_parties") or [],
@@ -383,7 +380,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
                 )
                 midzhi_force = {"force_error": midzhi_force_error}
             else:
-                midzhi_row = db.get_decree_dossier(planted["midzhi"])
+                midzhi_row = db.dossiers.get(planted["midzhi"])
                 midzhi_force = _three_cost_legs(
                     db, planted["midzhi"], midzhi_row,
                     midzhi_v.get("affected_parties") or [],
@@ -418,16 +415,16 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             payload={"mode": "ordinary"},
         )
         db.conn.execute(
-            "UPDATE decree_dossiers SET status='executing', promulgation_decision='promulgated' "
-            "WHERE id=?",
+            "UPDATE decree_dossiers SET status='executing', "
+            "promulgation_decision='promulgated' WHERE id=?",
             (int(errand),),
         )
         db.conn.commit()
-        db.record_dossier_progress(
+        db.dossiers.record_dossier_progress(
             errand, state.turn, "在途", memorial_text,
             origin="dossier-report:monthly_errand",
         )
-        progress_rows = db.list_dossier_progress(errand)
+        progress_rows = db.dossiers.list_dossier_progress(errand)
         memorial_blob = "\n".join(
             str(r.get("memorial_text") or "") for r in progress_rows
         )
@@ -436,10 +433,10 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         # 邸报：生产首月结算落库 turn_report（证据面；空不造假）
         gazette_blob = str(first_month_gazette or "")
         if not gazette_blob.strip():
-            reports = db.list_turn_reports()
+            reports = db.turn_reports.list_archives()
             gazette_blob = str((reports[-1]["report"] if reports else "") or "")
             if not gazette_blob.strip() and int(state.turn) > 0:
-                gazette_blob = str(db.get_turn_report(int(state.turn) - 1) or "")
+                gazette_blob = str(db.turn_reports.report_text(int(state.turn) - 1) or "")
         p4_gazette = _surface_capture("邸报gazette", gazette_blob)
 
         checks = {

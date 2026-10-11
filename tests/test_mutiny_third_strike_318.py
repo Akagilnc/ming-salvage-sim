@@ -1,9 +1,9 @@
+from __future__ import annotations
 """#318 — 第3振转流寇 + owner_power 唯一写口 + 空来源受限（ADR 0025 D5/D7）。
 
 seam = 月末确定性结算 tick（apply_fixed_period_flows）
      + apply_army_deltas / transition_army_owner_power 唯一 adapter。
 """
-from __future__ import annotations
 
 from ming_sim.applier import Provenance
 
@@ -18,6 +18,8 @@ BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
 def _configure(db) -> None:
+    value = 1  # active substrate_hub cutover
+    # hub-only: cutover markers retired (#1889)
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
@@ -41,9 +43,9 @@ def _set(
 ) -> None:
     central = arrears  # active hub source-split seed
     db.conn.execute(
-        """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
+        """UPDATE armies SET loyalty=?, is_mutinied=?,
            province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
-        (loyalty, arrears, latched, central, ARMY),
+        (loyalty, latched, central, ARMY),
     )
     if mutiny_count is not None:
         db.conn.execute(
@@ -242,7 +244,7 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     db.conn.execute(
         """UPDATE armies SET pay_source_region='liaodong',
            province_pay_share=0, central_pay_share=1,
-           province_pay_arrears=0, central_pay_arrears=3, arrears=3 WHERE id=?""",
+           province_pay_arrears=0, central_pay_arrears=3 WHERE id=?""",
         (ARMY,),
     )
     db.conn.commit()
@@ -278,7 +280,7 @@ def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
     db.conn.execute(
         """UPDATE armies SET owner_power='bandits', mutiny_count=3, is_mutinied=0,
            pay_source_region='', province_pay_share=0, central_pay_share=0,
-           province_pay_arrears=0, central_pay_arrears=0, arrears=0 WHERE id=?""",
+           province_pay_arrears=0, central_pay_arrears=0 WHERE id=?""",
         (ARMY,),
     )
     db.conn.commit()
@@ -315,7 +317,7 @@ def test_transfer_to_ming_requires_d6_pay_source(game):
     db.conn.execute(
         """UPDATE armies SET owner_power='houjin', mutiny_count=0, is_mutinied=0,
            pay_source_region='', province_pay_share=0, central_pay_share=0,
-           arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?""",
+           province_pay_arrears=0, central_pay_arrears=0 WHERE id=?""",
         (ARMY,),
     )
     db.conn.commit()
@@ -375,14 +377,14 @@ def test_hub_excluded_zero_manpower_latched_clears_once(game, identity):
     db, state, _ = game
     _configure(db)
     _set(
-        db, loyalty=10, arrears=0, latched=1,
+        db, loyalty=10, arrears=9, latched=1,
         mutiny_count=2, mutiny_probation=3, manpower=0,
     )
     # 豁免军双累加器/份额须为 0（hub 守恒）；本测只钉清闩，不测发饷
     db.conn.execute(
         """UPDATE armies SET is_tusi=?, self_funded_pay=?,
            pay_source_region='', province_pay_share=0, central_pay_share=0,
-           province_pay_arrears=0, central_pay_arrears=0, arrears=0
+           province_pay_arrears=0, central_pay_arrears=0
            WHERE id=?""",
         (identity["is_tusi"], identity["self_funded_pay"], ARMY),
     )
@@ -477,7 +479,7 @@ def test_hub_excluded_persisted_third_strike_defects_once(game, identity):
     db.conn.execute(
         """UPDATE armies SET is_tusi=?, self_funded_pay=?,
            pay_source_region='', province_pay_share=0, central_pay_share=0,
-           province_pay_arrears=0, central_pay_arrears=0, arrears=0
+           province_pay_arrears=0, central_pay_arrears=0
            WHERE id=?""",
         (identity["is_tusi"], identity["self_funded_pay"], ARMY),
     )

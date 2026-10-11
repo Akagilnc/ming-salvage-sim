@@ -1,3 +1,4 @@
+from __future__ import annotations
 """faction_delta / class_delta 两段逐项拒收契约及不同输入形状（ADR 0008 决定 1，#14/#63）。
 
 原先 `db.adjust_factions`/`adjust_classes` 对查无此派系/阶级名 `if not row: continue`
@@ -9,7 +10,6 @@ class 则只收嵌套字段 dict、扁平 int 逐项拒收。
 经现役原子声明入口验证逐项拒收。
 """
 
-from __future__ import annotations
 
 import pytest
 

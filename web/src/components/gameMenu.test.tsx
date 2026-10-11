@@ -9,7 +9,6 @@ import {
   LoadTab,
   SavesList,
   ShutdownTab,
-  mergePersistedSaveSnapshot,
 } from "./gameMenu";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -186,7 +185,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(strength?.disabled).toBe(false);
     expect(strength?.value).toBe("off");
     const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
-    expect(offOption?.textContent).toBe("关（codex 最低=低）");
     cleanup();
   });
 
@@ -225,37 +223,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(strength?.disabled).toBe(false);
     const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
-    expect(offOption?.textContent).toBe("关（grok 最低=低）");
-    cleanup();
-  });
-
-  it("in-game CLI runner dropdown includes grok from shared source (#1274 W1)", async () => {
-    mockFetch({
-      ...BASE_LLM_RESPONSE,
-      channel: "cli",
-      cli_runner: "agy",
-      cli_runners: [
-        { value: "agy", label: "agy（Gemini）" },
-        { value: "codex", label: "codex" },
-        { value: "claude", label: "claude" },
-        { value: "cursor", label: "cursor" },
-        { value: "kimi", label: "kimi" },
-        { value: "grok", label: "grok" },
-      ],
-      persisted: {
-        ...BASE_LLM_RESPONSE.persisted,
-        channel: "cli",
-        cli_runner: "agy",
-      },
-    });
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    const runnerSelect = Array.from(document.querySelectorAll("select")).find((select) =>
-      Array.from(select.options).some((option) => option.value === "codex")
-    );
-    const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
-    expect(runnerValues).toEqual(["agy", "codex", "claude", "cursor", "kimi", "grok"]);
     cleanup();
   });
 
@@ -403,43 +370,66 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
-  it("uses advanced model capability for API reasoning support", async () => {
+  it(
+    "saves the backend-projected off reasoning strength",
+    async () => {
+      const calls: Array<{ url: string; init?: RequestInit }> = [];
+      global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.minimax.io/v1",
+            model: "minimax-test",
+            thinking_level: "",
+            reasoning_strength: "off",
+            reasoning_supported: true,
+            persisted: { ...BASE_LLM_RESPONSE.persisted, thinking_level: "", reasoning_strength: "off" },
+          }),
+        } as Response);
+      });
+      const { cleanup } = render(<LLMConfigTab />);
+      await act(async () => {});
+
+      const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+      expect(strength?.value).toBe("off");
+      const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+        (b.textContent ?? "").includes("保存并应用")
+      );
+      await act(async () => {
+        saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+      const body = JSON.parse(String(post!.init!.body));
+      expect(body.thinking_level).toBe("");
+      expect(body.reasoning_strength).toBe("off");
+      cleanup();
+    }
+  );
+
+  it.each([
+    { base_url: "https://api.deepseek.com/v1", model: "deepseek-chat",
+      advanced_base_url: "https://api.example.com/v1", advanced_model: "gpt-5",
+      reasoning_supported: true },
+    { base_url: "https://api.example.com/v1", model: "gpt-5", reasoning_supported: false },
+  ])("uses backend API reasoning capability: $reasoning_supported", async (capability) => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         ...BASE_LLM_RESPONSE,
-        base_url: "https://api.deepseek.com/v1",
-        model: "deepseek-chat",
-        advanced_base_url: "https://api.example.com/v1",
-        advanced_model: "gpt-5",
-        reasoning_supported: true,
+        ...capability,
       }),
     } as Response);
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(strength?.disabled).toBe(false);
+    expect(strength?.disabled).toBe(!capability.reasoning_supported);
     cleanup();
   });
 
-  it("trusts backend reasoning_supported over local API model heuristics", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        ...BASE_LLM_RESPONSE,
-        base_url: "https://api.example.com/v1",
-        model: "gpt-5",
-        reasoning_supported: false,
-      }),
-    } as Response);
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(strength?.disabled).toBe(true);
-    cleanup();
-  });
 
   it("keeps trusting backend reasoning support for whitespace-only API edits", async () => {
     global.fetch = vi.fn().mockResolvedValue({
@@ -510,40 +500,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(strength?.disabled).toBe(false);
     expect(calls.some((call) => call.init?.method === "POST")).toBe(true);
     cleanup();
-  });
-
-  it("merges save response fields into existing persisted snapshot when the response omits persisted", () => {
-    const current: LLMConfigInfo = {
-      ...BASE_LLM_RESPONSE,
-      persisted: {
-        ...BASE_LLM_RESPONSE.persisted,
-        base_url: "https://old.example.com/v1",
-        model: "old-model",
-        api_reasoning_strength: "low",
-        cli_reasoning_strength: "medium",
-        cli_runner: "codex",
-        cli_model: "raw-cli-model",
-        cli_timeout_seconds: 120,
-      },
-    };
-    const response: Partial<LLMConfigInfo> = {
-      ...BASE_LLM_RESPONSE,
-      base_url: "https://api.example.com/v1",
-      model: "gpt-5",
-      reasoning_strength: "high",
-      reasoning_supported: true,
-    };
-    delete response.persisted;
-
-    expect(mergePersistedSaveSnapshot(response as LLMConfigInfo, current)).toMatchObject({
-      base_url: "https://api.example.com/v1",
-      model: "gpt-5",
-      api_reasoning_strength: "high",
-      cli_reasoning_strength: "medium",
-      cli_runner: "codex",
-      cli_model: "raw-cli-model",
-      cli_timeout_seconds: 120,
-    });
   });
 
   it("refreshes reasoning support from the save response before trusting the saved backend snapshot", async () => {

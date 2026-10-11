@@ -8,6 +8,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.reign_state.store import ReignStateStore
+from ming_sim.entities.character.store import CharacterStore
 
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 from ming_sim.applier import Provenance
@@ -26,6 +28,7 @@ from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from ming_sim.applier import load_stored_list
 from ming_sim.applier import connection_owns_transaction
 from ming_sim.db import normalize_office
 from ming_sim.settlement.views import view
@@ -279,19 +282,12 @@ def write_audience_error_pack(
 
 def resolve_standing_roster(db: Any) -> List[str]:
     """开夜时动态解析常在员额：在职且 active 的御前近臣槽位持有者。"""
-    rows = db.conn.execute(
-        "SELECT name, office, office_type, status FROM characters "
-        "WHERE status = 'active' ORDER BY name"
-    ).fetchall()
+    rows = CharacterStore(db.conn).read_resolve_standing_roster()
     return [str(row["name"]) for row in rows if is_inner_court_attendant(row)]
 
 
 def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
-    row = db.conn.execute(
-        "SELECT * FROM audience_nights "
-        "WHERE status IN (?, ?) ORDER BY id DESC LIMIT 1",
-        (NIGHT_STATUS_OPEN, NIGHT_STATUS_CLOSING),
-    ).fetchone()
+    row = db.reign.open_or_closing_night()
     return _hydrate_night(_row_dict(row)) if row is not None else None
 def assert_night_accepts_player_input(
     db: Any,
@@ -331,10 +327,7 @@ def assert_night_accepts_player_input(
 
 
 def get_night(db: Any, night_id: int) -> Optional[Dict[str, Any]]:
-    row = db.conn.execute(
-        "SELECT * FROM audience_nights WHERE id = ?",
-        (int(night_id),),
-    ).fetchone()
+    row = db.reign.night_by_id(int(night_id))
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 
@@ -399,12 +392,7 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     # 撤回的轮（status='undone'）从「按夜取数」隐去——与「该轮未发生」等价（#506）。
     # failed 半场轮 / consumed 空问话召见 scaffold 同样不计入夜时间线。
-    rows = db.conn.execute(
-        "SELECT * FROM chat_turns WHERE night_id = ? "
-        "AND status NOT IN ('undone', 'failed', 'consumed') "
-        "ORDER BY night_seq ASC, id ASC",
-        (int(night_id),),
-    ).fetchall()
+    rows = db.reign.list_alive_night_chat_turns(int(night_id))
     return [_row_dict(r) for r in rows]
 def night_archive_metadata(
     ledgers: List[Dict[str, Any]], turns: List[Dict[str, Any]],
@@ -503,7 +491,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             content = str(row["content"] or "")
             # #544：只走 GameDB._parse_highlights_json 唯一真源（SELECT 已点名该列）
             hl: List[str] = (
-                db._parse_highlights_json(row["highlights_json"])
+                db.chat_messages.parse_highlights(row["highlights_json"])
                 if role == "minister"
                 else []
             )
@@ -592,12 +580,16 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
 
     events.sort(key=lambda item: (item[0], item[1]))
     return [item[2] for item in events]
+
+
+
+
 def _allocate_seq(db: Any, night_id: int) -> int:
-    return db.allocate_night_seq(int(night_id))
+    return db.reign.allocate_night_seq(int(night_id))
 
 
 def _character_status(db: Any, name: str) -> str:
-    status, _reason = db.get_character_status(name)
+    status, _reason = db.characters.get_character_status(name)
     return str(status or "")
 
 
@@ -632,12 +624,7 @@ def is_pending_source_round(db: Any, night_id: int, chat_turn_id: int, turn: int
     """封夜后只承接同月、同夜仍待补的既有回话，不开放新玩家输入。"""
     if chat_turn_id <= 0:
         return False
-    return db.conn.execute(
-        "SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 "
-        "WHERE t.id=? AND t.night_id=? AND t.status='active' "
-        "AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?",
-        (int(chat_turn_id), int(night_id), int(turn)),
-    ).fetchone() is not None
+    return ReignStateStore(db.conn).read_is_pending_source_round_owned((int(chat_turn_id), int(night_id), int(turn))).fetchone() is not None
 
 
 def append_ledger_entry(
@@ -715,31 +702,22 @@ def append_ledger_entry(
         raise AudienceNightError("封夜后仅可补记引擎明发账", code="night_closed")
     seq = _allocate_seq(db, night_id)
     origin = str(origin_ref or "").strip()
-    cur = db.conn.execute(
-        """
-        INSERT INTO story_ledger_entries
-            (night_id, seq, person_names, audibility, body, tags,
-             source_chat_turn_id, presence_effect, order_key, origin_chat_turn_id,
-             origin_ref)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            int(night_id),
-            seq,
-            json.dumps(persons, ensure_ascii=False),
-            audibility,
-            body or "",
-            json.dumps(tag_list, ensure_ascii=False),
-            int(source_chat_turn_id or 0),
-            presence_effect or "",
-            None if order_key is None else float(order_key),
-            int(origin_chat_turn_id or 0),
-            origin,
-        ),
+    entry_id = db.reign.insert_story_ledger_entry_row(
+        night_id=int(night_id),
+        seq=seq,
+        person_names=json.dumps(persons, ensure_ascii=False),
+        audibility=audibility,
+        body=body or "",
+        tags=json.dumps(tag_list, ensure_ascii=False),
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+        presence_effect=presence_effect or "",
+        order_key=None if order_key is None else float(order_key),
+        origin_chat_turn_id=int(origin_chat_turn_id or 0),
+        origin_ref=origin,
     )
     if owns:
         db.conn.commit()
-    return int(cur.lastrowid)
+    return int(entry_id)
 
 
 def open_night(
@@ -860,7 +838,7 @@ def summon_enter(
 
 
 def list_in_flight_chat_turns(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    return db.list_in_flight_chat_turns(night_id=int(night_id))
+    return db.reign.list_in_flight_chat_turns(night_id=int(night_id))
 
 
 def wait_in_flight_clear(
@@ -892,11 +870,7 @@ def _set_night_fields(db: Any, night_id: int, **fields: Any) -> None:
         return
     owns = _should_commit(db)
     assignments = ", ".join(f"{k} = ?" for k in fields)
-    params = list(fields.values()) + [int(night_id)]
-    db.conn.execute(
-        f"UPDATE audience_nights SET {assignments} WHERE id = ?",
-        params,
-    )
+    db.reign.update_night(assignments, int(night_id), tuple(fields.values()))
     _commit_if_owns(db, owns=owns)
 
 
@@ -914,7 +888,7 @@ def _commit_night_approved(
     （#1853：原轮/月链 error_pack 与失败路径承接，不另造 failed 专属传输）。"""
     rows: List[Dict[str, object]] = []
     for kind in sorted(kinds):
-        rows.extend(db.list_night_approved_pending(int(night_id), kind=kind))
+        rows.extend(db.dossiers.list_night_approved_pending(int(night_id), kind=kind))
     if not rows:
         return []
     action_ids = [int(r["id"]) for r in rows]
@@ -939,20 +913,7 @@ def publish_night_directives(db: Any, night_id: int) -> None:
         str(did)
         for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
     }
-    _mingfa_candidates = db.conn.execute(
-        """
-        SELECT td.id AS directive_id, td.actor, td.text,
-               MIN(d.id) AS dossier_id
-        FROM pending_actions pa
-        JOIN turn_directives td ON td.source_pending_action_id = pa.id
-        JOIN decree_dossiers d ON d.pending_action_id = pa.id
-        WHERE pa.night_id = ? AND pa.kind = 'directive'
-          AND pa.status = 'committed'
-        GROUP BY td.id, td.actor, td.text
-        ORDER BY td.id
-        """,
-        (int(night_id),),
-    ).fetchall()
+    _mingfa_candidates = db.dossiers.committed_directive_candidates(int(night_id))
     for _pd in _mingfa_candidates:
         _did_int = int(_pd["directive_id"] or 0)
         _did = str(_did_int)
@@ -1235,10 +1196,7 @@ def _project_unsettled_summon_kind(
         return "fresh"
     from ming_sim.matching import is_capital_location
 
-    row = db.conn.execute(
-        "SELECT location, transit_to, status FROM characters WHERE name=?",
-        (person_name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_project_unsettled_summon_kind((person_name,))
     if row is None:
         return "in_transit"
     status = str(row["status"] or "active").strip() or "active"
@@ -1308,10 +1266,7 @@ def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
     for item in list_unsettled_summons(db):
         if item["kind"] != "waiting":
             continue
-        row = db.conn.execute(
-            "SELECT location FROM characters WHERE name=?",
-            (item["person_name"],),
-        ).fetchone()
+        row = CharacterStore(db.conn).read_list_waiting_audience_summons((item["person_name"],))
         location = str(row["location"] or "").strip() if row is not None else ""
         # 防御：kind 已判定 waiting；location 仍回填权威行止供汇总读端。
         if location and not is_capital_location(location):
@@ -1353,6 +1308,10 @@ def settle_applied_arrived_summons(
         if settle_summon_origin(db, origin):
             settled.append(origin)
     return settled
+
+
+def ledger_tags(db: Any, entry_id: int) -> Any:
+    return db.reign.ledger_tags(int(entry_id))
 
 
 def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) -> None:
@@ -1846,17 +1805,9 @@ def set_night_protagonist(
 
 def reproject_night_protagonist(db: Any, night_id: int) -> str:
     """按存活源轮时序重投影夜当前主角；调用方负责事务提交。"""
-    row = db.conn.execute(
-        "SELECT protagonist_name FROM chat_turns WHERE night_id=? "
-        "AND status NOT IN ('undone','failed') AND protagonist_name != '' "
-        "ORDER BY id DESC LIMIT 1",
-        (int(night_id),),
-    ).fetchone()
+    row = db.reign.latest_alive_protagonist_for_night(int(night_id))
     name = str(row["protagonist_name"] or "") if row is not None else ""
-    db.conn.execute(
-        "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
-        (name, int(night_id)),
-    )
+    db.reign.set_night_protagonist(int(night_id), name)
     return name
 
 

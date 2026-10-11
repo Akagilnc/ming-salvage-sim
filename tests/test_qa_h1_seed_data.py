@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1274 QA 包辛 H-1：seed 扩修钉测（#1359/#1360/#1365/#1361）。
 
 只钉 content/seed 静态口径 + 开局贯通；禁臆写史实、禁动引擎。
@@ -5,7 +6,6 @@
 #1404 若另定单名主官须对照本钉与 gazette 再开。
 """
 
-from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -29,6 +29,16 @@ def _army_by_id(aid: str) -> dict:
     raise AssertionError(f"armies.json 缺 id={aid}")
 
 
+def _offstage_or_dismissed_empty_office(characters: dict) -> set[str]:
+    """#1889：归位后以结构化 status + 空 office 识别在野旧臣，不锁自由文案。"""
+    return {
+        name
+        for name, ch in characters.items()
+        if (ch.status or "") in {"offstage", "dismissed"}
+        and not (ch.office or "").strip()
+    }
+
+
 def _deficit_seed():
     events = load_event_content("seed_events.json")
     by_id = {ev.id: ev for ev in events}
@@ -37,16 +47,18 @@ def _deficit_seed():
 
 
 def test_guanning_commander_not_bajiu_offstage_yuan():
-    """#1359 / ADR 0009：关宁 commander 不得是罢居袁崇焕；袁崇焕离事不持现职。
+    """#1359/#1889：关宁 commander 不得是 offstage 袁崇焕；须与 opening_gazette 分统口径一致。
 
     gazette：「关外无主帅。关宁军由祖大寿、何可纲、赵率教分统」。
     controller（A-3 已改）与 commander 同落分统名，禁再写袁崇焕。
+    袁崇焕以结构化 status/reason_code 归位；不锁 status_reason 自由文案。
     """
     _, characters = load_character_content()
     yuan = characters["袁崇焕"]
-    assert (yuan.office or "") == ""
     assert yuan.status == "offstage"
-    assert (yuan.status_reason or "").strip()
+    assert yuan.reason_code == "自请"
+    assert not (yuan.office or "").strip()
+    assert "袁崇焕" in _offstage_or_dismissed_empty_office(characters)
     army = _army_by_id("guanning")
     commander = army["commander"]
     controller = army["controller"]

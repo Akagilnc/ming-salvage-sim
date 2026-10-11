@@ -1,3 +1,4 @@
+from __future__ import annotations
 """ADR 0009 person archive contract — exercised through the person-delta applier.
 
 #1185: drop constant-matrix self-checks. Keep transition/reason rules that
@@ -5,7 +6,6 @@ surface as settle_delta outcomes (reason_code aliases, title-kind
 normalization, reason-override priority).
 """
 
-from __future__ import annotations
 
 from ming_sim import issues
 from tests.conftest import active_ming_character
@@ -18,7 +18,7 @@ def _active_names(db, content, *, exclude=()):
         c.name
         for c in content.characters.values()
         if getattr(c, "power_id", "ming") == "ming"
-        and db.get_character_status(c.name)[0] == "active"
+        and db.characters.get_character_status(c.name)[0] == "active"
         and c.name not in exclude
     ]
 

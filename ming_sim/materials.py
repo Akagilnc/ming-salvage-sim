@@ -8,6 +8,8 @@ live agent session.
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.textual_fact.store import TextualFactStore
 
 
 import hashlib
@@ -20,6 +22,7 @@ from pathlib import Path
 from typing import Any, List, Mapping, Optional, Sequence
 
 from ming_sim.exceptions import DeclarationDataError
+from ming_sim.applier import load_stored_list, load_stored_object
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
@@ -326,7 +329,7 @@ def _own_affair_lines(
     closed rows remain readable, and this projection does not invent a
     natural-close algorithm.
     """
-    from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience, origin_visible_to
+    from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience, origin_visible_to, _issue_audience_names
     from ming_sim.participant_roster import participant_roster_names
 
     store = db.affairs
@@ -358,6 +361,7 @@ def _own_affair_lines(
         linked_material.setdefault(linked_affair_id, []).append(text)
 
     for issue in knowledge.get("issues") or []:
+        _issue_audience_names(db, issue)
         raw_id = issue.get("id")
         if raw_id is None or raw_id == "":
             continue
@@ -392,7 +396,7 @@ def _own_affair_lines(
         )
 
     handling_ids: set[int] = set()
-    for issue in db.list_active_issues():
+    for issue in db.issues.active_rows():
         issue_id = int(issue["id"])
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
         if not linked_affair_id:
@@ -447,11 +451,12 @@ def _character_affair_lines(
     carrier (ADR 0154) — it never surfaces as a second standalone identity,
     whether the affair is open or closed (`_own_affair_lines` folds it in).
     """
-    from ming_sim.knowledge import _issue_audience_case_events
+    from ming_sim.knowledge import _issue_audience_case_events, _issue_audience_names
 
     lines: list[tuple[str, str, str, str, bool]] = []
     seen: set[str] = set()
     for issue in knowledge.get("issues") or []:
+        _issue_audience_names(db, issue)
         raw_id = issue.get("id")
         if raw_id is None or raw_id == "":
             continue
@@ -544,7 +549,7 @@ def _opening_affair_lines(
     }
     handled: list[tuple[str, str]] = []
     seen: set[str] = set()
-    active = db.list_active_issues()
+    active = db.issues.active_rows()
     for issue in active:
         issue_id = int(issue["id"])
         if _issue_linked_affair_id(db, issue_id):
@@ -572,9 +577,9 @@ def _opening_affair_lines(
 
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
     return [
-        dict(row) for row in db.list_directives(state, statuses=("draft",))
+        dict(row) for row in db.issues.list_directives(state.turn, statuses=("draft",))
         if int(row["turn"]) < int(state.turn)
-        and db.get_dossier_for_directive(int(row["id"])) is None
+        and db.dossiers.get_for_directive(int(row["id"])) is None
     ]
 
 
@@ -613,7 +618,7 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any, *, 
     from ming_sim.supervision import report_origin_base
 
     name = str(getattr(character, "name", "") or "")
-    orders = db.get_active_secret_orders_for_minister(name) if name else []
+    orders = db.character_knowledge.get_active_secret_orders_for_minister(name) if name else []
     if orders:
         monthly = GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
         lines = [
@@ -668,7 +673,7 @@ def _write_textual_fact_files(
         subjects.append(("character", name, name))
     region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
     if region_ids:
-        for row in db.region_rows():
+        for row in db.regions.rows():
             if str(row["id"] or "") not in region_ids:
                 continue
             rid = str(row["id"] or "")
@@ -715,7 +720,7 @@ def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]
     if not region_ids:
         return []
     index: list[str] = []
-    for row in db.region_rows():
+    for row in db.regions.rows():
         if str(row["id"] or "") not in region_ids:
             continue
         name = str(row["name"] or row["id"] or "")
@@ -784,7 +789,7 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
         knowledge.get("office_type") or getattr(character, "office_type", "") or ""
     )
     rows = project_court_roster_rows(
-        db.current_court_roster_rows(state),
+        db.characters.current_court_rows(int(state.year), int(state.period)),
         knowledge,
         office_type,
     )
@@ -950,7 +955,7 @@ def _write_character_public_layer(
     )
     index.extend(_write_gazette_index(
         tmp,
-        db.list_turn_reports(),
+        _with_archived_gazette_titles(_character_gazette_rows(public_events), db),
         prefix=f"{base}/{_CHARACTER_GAZETTE_DIR}" if base else _CHARACTER_GAZETTE_DIR,
     ))
     return index
@@ -1009,10 +1014,10 @@ def world_materials_root(db: Any, state: Any) -> Path:
 
 
 def secret_order_dossier_ids(db: Any) -> set[int]:
-    """案卷关联：secret_order_id 有值的案卷。沿 list_decree_dossiers，不另查一套。"""
+    """案卷关联：secret_order_id 有值的案卷。沿 store.list_dossiers，不另查一套。"""
     return {
         int(row["id"])
-        for row in db.list_decree_dossiers()
+        for row in db.dossiers.list_dossiers()
         if row.get("secret_order_id")
     }
 
@@ -1025,10 +1030,6 @@ def is_secret_order_origin(origin: object) -> bool:
     """是否密令来源：origin/source_id 以 SECRET_ORDER_ORIGIN_PREFIX 开头。"""
     return str(origin or "").startswith(SECRET_ORDER_ORIGIN_PREFIX)
 
-
-def secret_order_origin(order_id: object) -> str:
-    """密令来源字符串：前缀 + 密令 id。"""
-    return f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}"
 
 
 def _candidate_event_fact(ev: Any) -> dict[str, object]:
@@ -1113,7 +1114,7 @@ def _world_board_text(
 
 
 def _world_roster_text(db: Any, state: Any) -> str:
-    rows = db.current_court_roster_rows(state)
+    rows = db.characters.current_court_rows(int(state.year), int(state.period))
     if not rows:
         return "在朝名册：暂无。"
     return "在朝名册：\n" + "\n".join(
@@ -1257,7 +1258,7 @@ def _world_fiscal_levy_petitions(db: Any, state: Any) -> list:
     from ming_sim.issues import gather_fiscal_levy_petitions
 
     presented = {}
-    for row in db.list_event_petition_records():
+    for row in db.issues.list_event_petition_records():
         event_id = str(row.get("event_id") or "")
         # list_event_petition_records 已保证在场 petition 为对象；此处不再重验。
         record = row.get("petition") or {}
@@ -1458,7 +1459,7 @@ def _world_effect_materials(
             if table == "issues":
                 # list_world_effect_history 已用 loads_effect_dict / parse_engine 保证
                 # 四字段为对象；此处只做人物子项投影，不再重验对象闸。
-                for field in ("ongoing_effects", "cancel_cost", "effect_on_resolve", "effect_on_fail"):
+                for field in ("ongoing_effects", "effect_on_resolve", "effect_on_fail"):
                     effects = row[field]
                     for key in (PERSON_CHANGE_KEY,):
                         items = effects.get(key)
@@ -1578,13 +1579,13 @@ def _write_world_tree(
     # All linked dossiers remain available, regardless of dossier/affair status.
     # Use the unified reported seam (general + secret) and the existing actual
     # rail (progress + economy/fiscal effects); neither rail certifies the other.
-    for dossier in db.list_decree_dossiers():
+    for dossier in db.dossiers.list_dossiers():
         dossier_id = int(dossier["id"])
         key = f"affair-{int(dossier.get('affair_id') or 0)}"
         if key not in affair_materials or dossier_id in (exclude_dossier_ids or set()):
             continue
         secret_order = (
-            db.get_secret_order(int(dossier["secret_order_id"]))
+            db.character_knowledge.get_secret_order(int(dossier["secret_order_id"]))
             if dossier.get("secret_order_id") else None
         )
         materials = {
@@ -1593,12 +1594,12 @@ def _write_world_tree(
                     field: value for field, value in dossier.items()
                     if not field.endswith("_json") and field not in _DOSSIER_MATERIAL_SKIP
                 },
-                "判决历史": visible_history(db.list_decree_dossier_decisions(dossier_id)),
-                "背书": visible_history(db.list_dossier_endorsements(dossier_id)),
-                "关联": visible_history(db.list_dossier_links(dossier_id)),
+                "判决历史": visible_history(db.dossiers.decisions(dossier_id)),
+                "背书": visible_history(db.dossiers.endorsements(dossier_id)),
+                "关联": visible_history(db.dossiers.links(dossier_id)),
             },
             "奏报": {
-                "月度进度": visible_history(db.list_dossier_progress(dossier_id)),
+                "月度进度": visible_history(db.dossiers.list_dossier_progress(dossier_id)),
                 "检举": [
                     {field: row[field] for field in (
                         "id", "turn", "accuser_name", "accuser_faction",
@@ -1612,7 +1613,7 @@ def _write_world_tree(
                 "已落效果": _world_effect_materials(
                     db, f"dossier:{dossier_id}", secret_turn_ids or set(), public_only,
                 ),
-                "对账": visible_history(db.list_dossier_reconciliations(dossier_id)),
+                "对账": visible_history(db.dossiers.reconciliations(dossier_id)),
             },
         }
         affair_materials[key].append(_material_facts_text({f"案卷 {dossier_id}": materials}))
@@ -1631,7 +1632,7 @@ def _write_world_tree(
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
         tmp,
-        db.list_turn_reports(),
+        db.turn_reports.list_archives(),
         prefix=_WORLD_GAZETTE_DIR,
     ))
 
@@ -1649,7 +1650,7 @@ def dossier_paid_amount(db: Any, dossier_id: object) -> int:
         return 0
     return sum(
         max(0, -int(move.get("delta") or 0))
-        for move in db.list_economy_moves_for_dossier(oid)
+        for move in db.reign.list_economy_moves_for_dossier(oid)
     )
 
 
@@ -1672,7 +1673,7 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
         target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
     except RevokeOriginUnresolved:
         return {}
-    dossier = db.get_decree_dossier(int(target_dossier_id))
+    dossier = db.dossiers.get(int(target_dossier_id))
     if dossier is None:
         return {}
     from ming_sim.participant_roster import decode_durable_participant_roster
@@ -1693,7 +1694,7 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
             "progress_band": str(row.get("progress_band") or ""),
             "narrative": str(row.get("narrative") or ""),
         }
-        for row in db.list_dossier_progress(int(target_dossier_id))
+        for row in db.dossiers.list_dossier_progress(int(target_dossier_id))
     ]
     return {
         "dossier_id": int(target_dossier_id),
@@ -1715,7 +1716,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
     真实强颁在同一次颁布里会把在途案卷转入 executing，或把终局载荷结案，
     不会带着 promulgated 进入次月。
     """
-    rows = db.list_decree_dossiers_for_simulation(int(turn))
+    rows = db.dossiers.list_for_simulation(int(turn))
     facts: list[dict[str, object]] = []
     for row in rows:
         status = str(row.get("status") or "")
@@ -1858,15 +1859,7 @@ def _resolve_present_character(
     hit = characters.get(name)
     if hit is not None:
         return hit
-    row = db.conn.execute(
-        """
-        SELECT name, office, office_type, faction, aliases, personal_skills,
-               loyalty, ability, integrity, courage, style, identity, intrigue,
-               summary, power_id
-        FROM characters WHERE name=?
-        """,
-        (name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_resolve_present_character((name,))
     if row is not None:
         return _character_projection_from_db_row(row)
     from ming_sim.models import Character
@@ -1902,13 +1895,10 @@ def _scene_spoken_text(db: Any) -> str:
         ):
             if not mid:
                 continue
-            row = db.conn.execute(
-                "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
-            ).fetchone()
-            if row is None:
+            body = db.chat_messages.content_of(int(mid))
+            if body is None:
                 continue
             # #1812 P6：对话正文是自由文本，判空用局部 stripped 副本，写出用原文。
-            body = str(row["content"] or "")
             if not body.strip():
                 continue
             lines.append(f"{role_label}：{body}")
@@ -2007,7 +1997,7 @@ def _write_one_present_person(
     from ming_sim.context import character_context_with_db
 
     dossier_body = character_context_with_db(character, db, turn=int(state.turn))
-    status, reason = db.get_character_status(name)
+    status, reason = db.characters.get_character_status(name)
     status_text = str(status or "").strip()
     reason_text = str(reason or "")
     if status_text and status_text != "active":
@@ -2168,11 +2158,9 @@ def actual_progress_notes(db: Any, dossier_id: int) -> list[dict[str, object]]:
 
 def _write_secret_actual_note_files(tmp: Path, db: Any) -> list[str]:
     """推演目录里的实况原文。人物目录与滤掉密令案卷的邸报目录不写。"""
-    if not hasattr(db, "list_secret_orders") or not hasattr(db, "get_dossier_for_secret_order"):
-        return []
     written: list[str] = []
-    for order in db.list_secret_orders():
-        dossier = db.get_dossier_for_secret_order(int(order["id"]))
+    for order in db.character_knowledge.list_secret_orders():
+        dossier = db.dossiers.get_for_secret_order(int(order["id"]))
         if dossier is None:
             continue
         notes = actual_progress_notes(db, int(dossier["id"]))
@@ -2274,15 +2262,13 @@ def _inquiry_monthly_report_rels(
     from ming_sim.knowledge import knowledge_row_visible_to
 
     name = str(getattr(character, "name", "") or "")
-    if not name or not hasattr(db, "list_secret_orders"):
+    if not name:
         return []
-    own_active: set[int] = set()
-    if hasattr(db, "get_active_secret_orders_for_minister"):
-        own_active = {
-            int(order["id"])
-            for order in db.get_active_secret_orders_for_minister(name)
-        }
-    by_id = {int(order["id"]): order for order in db.list_secret_orders()}
+    own_active = {
+        int(order["id"])
+        for order in db.character_knowledge.get_active_secret_orders_for_minister(name)
+    }
+    by_id = {int(order["id"]): order for order in db.character_knowledge.list_secret_orders()}
     written: list[str] = []
     seen: set[int] = set()
     for event in knowledge.get("events") or []:
@@ -2325,3 +2311,48 @@ def inquiry_order_source_suffix(order_id: int) -> str:
 def dossier_id_in_origin(origin: object) -> Optional[int]:
     match = re.match(r"(?:decree_)?dossier:(\d+)(?:[:/]|$)", str(origin or ""))
     return int(match.group(1)) if match else None
+
+
+def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, object]]:
+    """Person gazette rows come only from that person's typed public projection.
+
+    Raw ``turn_reports`` aggregates are not an authorization boundary (#883 / #1832).
+    """
+    rows: list[dict[str, object]] = []
+    for item in public_events or []:
+        source_id = str(item.get("source_id") or "")
+        if not (
+            source_id.startswith("projection:turn_report:")
+            or (source_id.startswith("turn_report:") and source_id.endswith(":public"))
+        ):
+            continue
+        body = str(item.get("body") or "")
+        if not body.strip():
+            continue
+        rows.append({
+            "year": int(item.get("year") or 0),
+            "period": int(item.get("period") or 0),
+            "turn": int(item.get("turn") or 0),
+            "body": body,
+        })
+    return rows
+
+
+
+def _with_archived_gazette_titles(
+    rows: Sequence[dict[str, object]], db: Any,
+) -> list[dict[str, object]]:
+    """标题只取 turn_reports 已入档字段。缺标题留空，不读正文。"""
+    archived: dict[int, str] = {}
+    for item in db.turn_reports.list_archives():
+        archived[int(item.get("turn") or 0)] = str(item.get("title") or "")
+    stamped: list[dict[str, object]] = []
+    for row in rows:
+        current = str(row.get("title") or "")
+        if current.strip():
+            stamped.append(row)
+            continue
+        copy = dict(row)
+        copy["title"] = archived.get(int(row.get("turn") or 0), "")
+        stamped.append(copy)
+    return stamped

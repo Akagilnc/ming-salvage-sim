@@ -1,3 +1,7 @@
+from __future__ import annotations
+from types import SimpleNamespace
+import web_app
+from ming_sim.session import GameSession
 """QA 包丙「密令路」：#1376 投影洞（#1849 reopen 后入口只剩殿上）。
 
 接缝：
@@ -5,12 +9,9 @@
   须如实反映 staged secret_order 候选（确认闸门不动，只修可见性）
 """
 
-from __future__ import annotations
-
-from types import SimpleNamespace
 
 
-import web_app
+
 
 
 def _active_minister_name(db, content) -> str:
@@ -19,7 +20,7 @@ def _active_minister_name(db, content) -> str:
             continue
         if getattr(ch, "office_type", "") in ("后宫", "宗藩"):
             continue
-        if db.get_character_status(getattr(ch, "name", name))[0] == "active":
+        if db.characters.get_character_status(getattr(ch, "name", name))[0] == "active":
             return getattr(ch, "name", name)
     raise AssertionError("找不到 active 的大明大臣")
 
@@ -104,4 +105,4 @@ def test_pending_secret_order_count_reflects_staged_candidate(game):
     assert payload["pending_secret_order_count"] == 1
     assert payload["pending_count"] == 1
     # 闸门：尚未落真实密令表
-    assert db.list_secret_orders() == []
+    assert db.character_knowledge.list_secret_orders() == []

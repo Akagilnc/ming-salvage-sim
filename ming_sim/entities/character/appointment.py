@@ -124,7 +124,7 @@ def _displace_duplicate_offices(
         # Seat-aware exclusive collision: resolved local seat only bumps the
         # same seat; empty resolved seat is central identity (title-only).
         if new_seat:
-            holder_seat = db.character_office_region(row["name"])
+            holder_seat = db.characters.office_region(row["name"])
             if holder_seat != new_seat:
                 continue
         conflicting = [p for p in holder_parts if p in new_parts]
@@ -151,7 +151,7 @@ def _displace_duplicate_offices(
         # 全顶替 → 名分，备档删除、任所清空；部分保留 → 余职 + 原 seat 入 record。
         # 内存 seat 必须以备档真源对齐（record 后可能因非地方 office_type 钳空）。
         retained_seat = "" if fully_displaced else str(
-            db.character_office_region(row["name"]) or ""
+            db.characters.office_region(row["name"]) or ""
         ).strip()
         if fully_displaced:
             db.conn.execute(
@@ -167,7 +167,7 @@ def _displace_duplicate_offices(
         db._record_character_office(
             row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
         )
-        archived_seat = str(db.character_office_region(row["name"]) or "").strip()
+        archived_seat = str(db.characters.office_region(row["name"]) or "").strip()
         if content is not None and row["name"] in content.characters:
             ch = content.characters[row["name"]]
             ch.office = new_holder_office
@@ -257,7 +257,7 @@ def apply_office_appointment(
         if canon:
             name = canon
     in_roster = content is not None and name in content.characters
-    cur_status = db.get_character_status(name)[0] if in_roster else ""
+    cur_status = db.characters.get_character_status(name)[0] if in_roster else ""
     current_office_type = content.characters[name].office_type if in_roster else ""
 
     def _fields_before_write(*, current_office_type: str):
@@ -319,7 +319,7 @@ def apply_office_appointment(
             if content is not None and name in content.characters:
                 content.characters[name].status_reason = ""
                 content.characters[name].reason_code = ""
-        seat = db.character_office_region(name) or seat
+        seat = db.characters.office_region(name) or seat
         displaced_parts = _displace_duplicate_offices(
             db, content, name, new_office, region_id=seat,
         )
@@ -356,7 +356,7 @@ def apply_office_appointment(
         )
     if not appointed:
         return RejectedItem(item={"name": name, "new_office": new_office, "kind": "appoint"}, reason=f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}", category="invalid_transition", source=source)
-    seat = db.character_office_region(appointed) or seat
+    seat = db.characters.office_region(appointed) or seat
     displaced_parts = _displace_duplicate_offices(
         db, content, appointed, new_office, region_id=seat,
     )

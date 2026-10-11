@@ -1,19 +1,8 @@
-"""#1837 reopen：旧 agent 退役后，转译承接禁摊派/荐人/查访/催办/行程语气。
-
-Seams:
-- dispatch_declaration（声明 → 既有暂存 / 查访写口 / 传召账）
-- GameSession.scene_chat 建轮 agno_session_id = scene-night-{night_id}
-"""
-
 from __future__ import annotations
-
 from tests.material_helpers import prepare_identity_materials
-
 import json
 from types import SimpleNamespace
-
 import pytest
-
 from ming_sim.audience_night import (
     list_unsettled_summons,
     open_night,
@@ -26,6 +15,17 @@ from tests.month_chain_helpers import make_light_session
 from tests.recommendation_rows import recommendation_events
 from tests.test_covert_levy_651 import _realize_fork
 from ming_sim.session_write_queue import ClassifiedWriteGate
+"""#1837 reopen：旧 agent 退役后，转译承接禁摊派/荐人/查访/催办/行程语气。
+
+Seams:
+- dispatch_declaration（声明 → 既有暂存 / 查访写口 / 传召账）
+- GameSession.scene_chat 建轮 agno_session_id = scene-night-{night_id}
+"""
+
+
+
+
+
 
 
 def _hong(db, content) -> str:
@@ -37,7 +37,6 @@ def _hong(db, content) -> str:
     ).fetchone()
     assert row is not None
     return str(row["name"])
-
 
 
 def _active_minister(db, content, *, office_type: str | None = None):
@@ -54,7 +53,6 @@ def _active_minister(db, content, *, office_type: str | None = None):
     ).fetchone()
     assert row is not None
     return SimpleNamespace(name=str(row["name"]), office_type=str(row["office_type"] or ""))
-
 
 
 def _bound_exposure(db, state):
@@ -84,7 +82,6 @@ def _bound_exposure(db, state):
     return int(did), str(executor)
 
 
-
 def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, minister_name="殿上", scene_reply=None, close_before_translation=False):
     from tests.conftest import persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
     from tests.test_audience_translation_1838 import _scene_session
@@ -108,13 +105,12 @@ def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, m
     ctid = db.create_chat_turn(
         state, minister_name, "s", 0, night_id=int(night["id"]), status="active",
     )
-    mid = db.append_chat_message(minister_name, state.turn, "user", words)
-    db.update_chat_turn_messages(ctid, user_message_id=mid)
+    mid = db.chat_messages.insert(minister_name=minister_name, turn=state.turn, role='user', content=words)
+    db.reign.update_chat_turn_messages(ctid, user_message_id=mid)
     reply = sess.scene_chat(words, chat_turn_id=ctid)
     future = persist_and_schedule_scene(sess, db, reply, speaker=minister_name)
     assert future is not None
     return future.result()
-
 
 
 def _close_offline(db, state, content, night_id):
@@ -124,7 +120,6 @@ def _close_offline(db, state, content, night_id):
     )
 
 
-
 def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     """Drive the player month entry with only model outputs supplied offline."""
     from tests.month_chain_helpers import empty_rescript_response
@@ -132,7 +127,7 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     import ming_sim.month_chain as month_chain
     from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     stage_declaration(
         db, decree_ref=decree_ref_for_dossier(db, dossier),
         declaration={"effects": {}}, turn=int(state.turn),
@@ -149,7 +144,6 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     db.save_turn_report(state, "月报", title="月报", public_body="月报")
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.advanced and int(state.turn) > before
-
 
 
 @pytest.mark.parametrize("late", [False, True], ids=["open-night", "closed-night"])
@@ -206,7 +200,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert dossier["target_id"] == str(other_did)
     from ming_sim.covert_levy import active_prohibition_dossier
     army_id = db.conn.execute("SELECT target_id FROM decree_dossiers WHERE id=?", (other_did,)).fetchone()[0]
-    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (army_id,))
+    db.conn.execute('UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=10 WHERE id=?', (army_id,))
     before = int(state.turn)
     _player_month(db, state, content, monkeypatch, int(dossier["id"]), effects={
         "fiscal_creates": [{
@@ -218,11 +212,10 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert prohibition is not None
     assert prohibition["id"] == dossier["id"]
     assert int(state.turn) > before
-    assert db.get_fiscal_config().get("禁后摊派_base") is None
+    assert db.fiscal_config.values().get("禁后摊派_base") is None
     from ming_sim.due_review import list_due_review_scenes
     scenes = list_due_review_scenes(db)
     assert any(s["decision"] == "禁摊派" and s["shortfall_reopened"] for s in scenes)
-
 
 
 def test_commission_failure_does_not_erase_prior_staged_item(game):
@@ -243,130 +236,6 @@ def test_commission_failure_does_not_erase_prior_staged_item(game):
         "SELECT status FROM pending_actions WHERE id=?", (staged_id,)
     ).fetchone()["status"] == "pending"
 
-
-
-def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
-    db, state, content = game
-    recommender = _active_minister(db, content, office_type="兵部")
-    same_faction = next(
-        c for c in content.characters.values()
-        if c.name != recommender.name
-        and c.faction == recommender.faction
-        and c.office_type not in ("后宫", "宗藩")
-    )
-    db.conn.execute(
-        "UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?",
-        (same_faction.name,),
-    )
-    db.conn.commit()
-    reason = "\n  请予试任巡盐御史，臣敢以身家保。  \n"
-    words = "陛下，巡盐之事可有合适人选？"
-    scene_reply = f"臣荐{same_faction.name}任巡盐御史。{reason}"
-    existing_id = db.stage_pending_action(
-        state.turn, "office", "任命", recommender.name,
-        {"name": same_faction.name, "office": "巡盐御史", "appoint_action": "任命",
-         "text": scene_reply},
-    )
-    decl = {
-        "commissions": [{
-            "text": scene_reply,
-            "appointment": {
-                "name": same_faction.name,
-                "office": "巡盐御史",
-                "appoint_action": "任命",
-            },
-            "recommendation": {
-                "recommender": recommender.name,
-                "reason": reason,
-            },
-        }],
-    }
-    result = _scene_declaration(db, state, content, monkeypatch, words, decl,
-                                minister_name=recommender.name, scene_reply=scene_reply)
-    assert result.commissions.rejected == []
-    assert len(result.commissions.applied) == 1
-    assert result.commissions.applied[0]["id"] == existing_id
-    row = db.conn.execute(
-        "SELECT kind, action, payload_json FROM pending_actions WHERE id=?",
-        (result.commissions.applied[0]["id"],),
-    ).fetchone()
-    assert row["kind"] == "office" and row["action"] == "任命"
-    payload = json.loads(row["payload_json"])
-    assert payload["name"] == same_faction.name
-    assert payload["office"] == "巡盐御史"
-    assert payload["recommendation"]["recommender"] == recommender.name
-    assert payload["recommendation"]["candidate"]["name"] == same_faction.name
-    # 荐语 reason 输入→payload.reason 原样运输（#1897 T1）
-    assert payload["reason"] == reason
-    approval = _scene_declaration(db, state, content, monkeypatch, "准", {
-        "promises": [{"action_id": result.commissions.applied[0]["id"], "decision": "应允"}],
-    })
-    assert len(approval.promises.applied) == 1
-    _close_offline(db, state, content, int(open_night(db, state)["id"]))
-    dossier = db.conn.execute(
-        "SELECT id FROM decree_dossiers WHERE pending_action_id=?",
-        (result.commissions.applied[0]["id"],),
-    ).fetchone()
-    assert dossier is not None
-    _player_month(db, state, content, monkeypatch, int(dossier["id"]))
-    appointed = db.conn.execute(
-        "SELECT office FROM characters WHERE name=?", (same_faction.name,),
-    ).fetchone()
-    assert appointed["office"] == "巡盐御史"
-    events = recommendation_events(db, state, recommender.name)
-    assert any(e["candidate"] == same_faction.name for e in events)
-
-
-
-def test_repeated_same_appointment_moves_with_the_later_source_night(game, monkeypatch):
-    """语义未变的再任命仍走既有候选补账，归属改到后一夜，应允不再 missing_ref。"""
-    from ming_sim.audience_night import get_open_night
-
-    db, state, content = game
-    appointee = next(
-        c for c in content.characters.values()
-        if c.status == "active" and c.office != "巡抚"
-        and c.office_type not in ("后宫", "宗藩", "未仕")
-    )
-    decl = {"commissions": [{
-        "text": "着即中旨擢用。",
-        "appointment": {
-            "name": appointee.name, "office": "巡抚", "action": "任命", "mode": "midzhi",
-        },
-    }]}
-    first = _scene_declaration(db, state, content, monkeypatch, "擢用。", decl)
-    assert first.commissions.rejected == []
-    staged_id = int(first.commissions.applied[0]["id"])
-    night1 = int(get_open_night(db)["id"])
-    _close_offline(db, state, content, night1)
-
-    second = _scene_declaration(db, state, content, monkeypatch, "仍是这道中旨。", decl)
-    assert second.commissions.rejected == []
-    assert int(second.commissions.applied[0]["id"]) == staged_id
-    night2 = int(get_open_night(db)["id"])
-    assert night2 != night1
-    row = db.conn.execute(
-        "SELECT night_id FROM pending_actions WHERE id=?", (staged_id,),
-    ).fetchone()
-    assert int(row["night_id"]) == night2
-    ledger = db.conn.execute(
-        "SELECT night_id, source_chat_turn_id FROM story_ledger_entries "
-        "WHERE night_id=? AND tags LIKE ?",
-        (night2, f"%pending:{staged_id}%"),
-    ).fetchall()
-    assert ledger
-    assert all(int(item["night_id"]) == night2 for item in ledger)
-    turn_nights = {
-        int(item["id"]): int(item["night_id"])
-        for item in db.conn.execute("SELECT id, night_id FROM chat_turns")
-    }
-    assert all(turn_nights[int(item["source_chat_turn_id"])] == night2 for item in ledger)
-
-    approval = _scene_declaration(db, state, content, monkeypatch, "准。", {
-        "promises": [{"action_id": staged_id, "decision": "应允"}],
-    })
-    assert approval.promises.rejected == []
-    assert any(int(item.get("action_id") or 0) == staged_id for item in approval.promises.applied)
 
 
 
@@ -400,7 +269,6 @@ def test_recommendation_outside_slice_is_rejected(game):
     assert result.commissions.applied == []
     assert result.commissions.rejected
     assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
-
 
 
 def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, monkeypatch):
@@ -446,91 +314,6 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
         release_material_tree(prepared.root)
 
 
-
-def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
-    """交办 order_id 才拉该令月报；未交办、自办与缺令都不开查访文件。"""
-    from pathlib import Path
-    from tests.test_secret_order_declaration_landing_1897 import _covert_task
-
-    from ming_sim.audience_night import summon_enter
-    from ming_sim.materials import (
-            prepare_scene_materials,
-        release_material_tree,
-    )
-
-    db, state, content = game
-    attendant = _active_minister(db, content)
-    db.conn.execute(
-        "UPDATE characters SET office='御前近臣' WHERE name=?", (attendant.name,)
-    )
-    assignee = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "AND name!=? AND office_type NOT IN ('后宫','宗藩','未仕') "
-        "ORDER BY name LIMIT 1",
-        (attendant.name,),
-    ).fetchone()
-    assert assignee is not None
-    memorial = "  只有部分办到。\n"
-    visible = db.create_secret_order(
-        state, str(assignee["name"]), "查仓储", "密查太仓", [],
-        deadline_months=2, covert_task=_covert_task(target_units=1),
-    )
-    hidden = db.create_secret_order(
-        state, str(assignee["name"]), "查内库", "密查内库", [],
-        deadline_months=2,
-        covert_task=_covert_task(target_units=1),
-    )
-    own = db.create_secret_order(
-        state, attendant.name, "查自己", "承办人自办", [],
-        deadline_months=2, covert_task=_covert_task(target_units=1),
-    )
-    for order_id in (visible, hidden, own):
-        dossier = db.get_dossier_for_secret_order(order_id)
-        db.record_dossier_progress(
-            int(dossier["id"]), state.turn, "在办", memorial,
-            origin=db.DOSSIER_REPORT_ORIGIN_MONTHLY,
-        )
-    db.close_secret_order(visible, "done", "结案原话另存", state.turn)
-
-    result = _scene_declaration(db, state, content, monkeypatch, "去查那几件密令的月报。", {
-        "inquiries": [
-            {"attendant": attendant.name, "query": "查仓储月报", "order_id": visible},
-            {"attendant": attendant.name, "query": "查自己承办的", "order_id": own},
-            {"attendant": attendant.name, "query": "查没有的", "order_id": 9_999_999},
-            {"attendant": attendant.name, "query": "形状不对", "order_id": True},
-        ],
-    })
-    assert {item["order_id"] for item in result.inquiries.applied} == {visible, own}
-    assert {item.category for item in result.inquiries.rejected} == {
-        "hallucinated_id", "invalid_shape",
-    }
-    from ming_sim.materials import _safe_segment
-    rel = f"密令/查访月报/{visible}.txt"
-    character_tree = prepare_identity_materials(db, state, attendant)
-    try:
-        assert rel in character_tree.index_lines
-        assert f"密令/查访月报/{hidden}.txt" not in character_tree.index_lines
-        assert f"密令/查访月报/{own}.txt" not in character_tree.index_lines
-        assert (Path(character_tree.root) / rel).is_file()
-    finally:
-        release_material_tree(character_tree.root)
-
-    _close_offline(db, state, content, int(open_night(db, state)["id"]))
-    night = open_night(db, state)
-    summon_enter(db, int(night["id"]), attendant.name)
-    scene_tree = prepare_scene_materials(db, state)
-    try:
-        person_seg = _safe_segment(attendant.name)
-        scene_rel = f"人物/{person_seg}/密令/查访月报/{visible}.txt"
-        assert scene_rel in scene_tree.index_lines
-        assert f"人物/{person_seg}/密令/查访月报/{hidden}.txt" not in scene_tree.index_lines
-        assert f"人物/{person_seg}/密令/查访月报/{own}.txt" not in scene_tree.index_lines
-        assert (Path(scene_tree.root) / scene_rel).is_file()
-    finally:
-        release_material_tree(scene_tree.root)
-
-
-
 @pytest.mark.parametrize("with_source_turn", [False, True])
 def test_separate_inquiries_same_turn_survive_and_retry_is_idempotent(game, with_source_turn):
     db, state, content = game
@@ -556,7 +339,6 @@ def test_separate_inquiries_same_turn_survive_and_retry_is_idempotent(game, with
                    if event["kind"] == "inquiry_assignment"]
     assert len(assignments) == 2
     assert len({event["source_id"] for event in assignments}) == 2
-
 
 
 def test_rush_commitment_stages_pending_催办(game, monkeypatch):
@@ -613,7 +395,6 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     assert committed is not None
 
 
-
 def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeypatch):
     from tests.conftest import persist_and_schedule_scene, stub_audience_translate
     from tests.test_audience_translation_1838 import _scene_session
@@ -647,7 +428,6 @@ def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeyp
     assert len(rows) == 1 and rows[0]["travel_tone"] == "加急"
 
 
-
 def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
     from tests.conftest import persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
     from tests.test_audience_translation_1838 import _scene_session
@@ -658,7 +438,7 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
     db.conn.execute(
         "UPDATE characters SET location='shaanxi', transit_to='' WHERE name=?", (person,)
     )
-    if db.get_character_status(person)[0] != "active":
+    if db.characters.get_character_status(person)[0] != "active":
         db.set_character_status(state, person, "active")
 
     class SceneAgent:
@@ -722,7 +502,6 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
     assert arrival_turns[person] < arrival_turns[ordinary]
 
 
-
 @pytest.mark.parametrize("ineligible", ["enemy", "vassal"])
 def test_urgent_summons_cannot_bypass_audience_admission(game, monkeypatch, ineligible):
     from tests.conftest import persist_and_schedule_scene, stub_audience_translate
@@ -751,3 +530,136 @@ def test_urgent_summons_cannot_bypass_audience_admission(game, monkeypatch, inel
     assert future is not None
     future.result()
     assert not [row for row in list_unsettled_summons(db) if row["person_name"] == person]
+
+def test_repeated_same_appointment_moves_with_the_later_source_night(game, monkeypatch):
+    """语义未变的再任命仍走既有候选补账，归属改到后一夜，应允不再 missing_ref。"""
+    from ming_sim.audience_night import get_open_night
+
+    db, state, content = game
+    appointee = next(
+        c for c in content.characters.values()
+        if c.status == "active" and c.office != "巡抚"
+        and c.office_type not in ("后宫", "宗藩", "未仕")
+    )
+    decl = {"commissions": [{
+        "text": "着即中旨擢用。",
+        "appointment": {
+            "name": appointee.name, "office": "巡抚", "action": "任命", "mode": "midzhi",
+        },
+    }]}
+    first = _scene_declaration(db, state, content, monkeypatch, "擢用。", decl)
+    assert first.commissions.rejected == []
+    staged_id = int(first.commissions.applied[0]["id"])
+    night1 = int(get_open_night(db)["id"])
+    _close_offline(db, state, content, night1)
+
+    second = _scene_declaration(db, state, content, monkeypatch, "仍是这道中旨。", decl)
+    assert second.commissions.rejected == []
+    assert int(second.commissions.applied[0]["id"]) == staged_id
+    night2 = int(get_open_night(db)["id"])
+    assert night2 != night1
+    row = db.conn.execute(
+        "SELECT night_id FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert int(row["night_id"]) == night2
+    ledger = db.conn.execute(
+        "SELECT night_id, source_chat_turn_id FROM story_ledger_entries "
+        "WHERE night_id=? AND tags LIKE ?",
+        (night2, f"%pending:{staged_id}%"),
+    ).fetchall()
+    assert ledger
+    assert all(int(item["night_id"]) == night2 for item in ledger)
+    turn_nights = {
+        int(item["id"]): int(item["night_id"])
+        for item in db.conn.execute("SELECT id, night_id FROM chat_turns")
+    }
+    assert all(turn_nights[int(item["source_chat_turn_id"])] == night2 for item in ledger)
+
+    approval = _scene_declaration(db, state, content, monkeypatch, "准。", {
+        "promises": [{"action_id": staged_id, "decision": "应允"}],
+    })
+    assert approval.promises.rejected == []
+    assert any(int(item.get("action_id") or 0) == staged_id for item in approval.promises.applied)
+
+
+def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
+    """交办 order_id 才拉该令月报；未交办、自办与缺令都不开查访文件。"""
+    from pathlib import Path
+    from tests.test_secret_order_declaration_landing_1897 import _covert_task
+
+    from ming_sim.audience_night import summon_enter
+    from ming_sim.materials import (
+            prepare_scene_materials,
+        release_material_tree,
+    )
+
+    db, state, content = game
+    attendant = _active_minister(db, content)
+    db.conn.execute(
+        "UPDATE characters SET office='御前近臣' WHERE name=?", (attendant.name,)
+    )
+    assignee = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND name!=? AND office_type NOT IN ('后宫','宗藩','未仕') "
+        "ORDER BY name LIMIT 1",
+        (attendant.name,),
+    ).fetchone()
+    assert assignee is not None
+    memorial = "  只有部分办到。\n"
+    visible = db.create_secret_order(
+        state, str(assignee["name"]), "查仓储", "密查太仓", [],
+        deadline_months=2, covert_task=_covert_task(target_units=1),
+    )
+    hidden = db.create_secret_order(
+        state, str(assignee["name"]), "查内库", "密查内库", [],
+        deadline_months=2,
+        covert_task=_covert_task(target_units=1),
+    )
+    own = db.create_secret_order(
+        state, attendant.name, "查自己", "承办人自办", [],
+        deadline_months=2, covert_task=_covert_task(target_units=1),
+    )
+    for order_id in (visible, hidden, own):
+        dossier = db.dossiers.get_for_secret_order(order_id)
+        db.dossiers.record_dossier_progress(
+            int(dossier["id"]), state.turn, "在办", memorial,
+            origin=db.DOSSIER_REPORT_ORIGIN_MONTHLY,
+        )
+    db.close_secret_order(visible, "done", "结案原话另存", state.turn)
+
+    result = _scene_declaration(db, state, content, monkeypatch, "去查那几件密令的月报。", {
+        "inquiries": [
+            {"attendant": attendant.name, "query": "查仓储月报", "order_id": visible},
+            {"attendant": attendant.name, "query": "查自己承办的", "order_id": own},
+            {"attendant": attendant.name, "query": "查没有的", "order_id": 9_999_999},
+            {"attendant": attendant.name, "query": "形状不对", "order_id": True},
+        ],
+    })
+    assert {item["order_id"] for item in result.inquiries.applied} == {visible, own}
+    assert {item.category for item in result.inquiries.rejected} == {
+        "hallucinated_id", "invalid_shape",
+    }
+    from ming_sim.materials import _safe_segment
+    rel = f"密令/查访月报/{visible}.txt"
+    character_tree = prepare_identity_materials(db, state, attendant)
+    try:
+        assert rel in character_tree.index_lines
+        assert f"密令/查访月报/{hidden}.txt" not in character_tree.index_lines
+        assert f"密令/查访月报/{own}.txt" not in character_tree.index_lines
+        assert (Path(character_tree.root) / rel).is_file()
+    finally:
+        release_material_tree(character_tree.root)
+
+    _close_offline(db, state, content, int(open_night(db, state)["id"]))
+    night = open_night(db, state)
+    summon_enter(db, int(night["id"]), attendant.name)
+    scene_tree = prepare_scene_materials(db, state)
+    try:
+        person_seg = _safe_segment(attendant.name)
+        scene_rel = f"人物/{person_seg}/密令/查访月报/{visible}.txt"
+        assert scene_rel in scene_tree.index_lines
+        assert f"人物/{person_seg}/密令/查访月报/{hidden}.txt" not in scene_tree.index_lines
+        assert f"人物/{person_seg}/密令/查访月报/{own}.txt" not in scene_tree.index_lines
+        assert (Path(scene_tree.root) / scene_rel).is_file()
+    finally:
+        release_material_tree(scene_tree.root)

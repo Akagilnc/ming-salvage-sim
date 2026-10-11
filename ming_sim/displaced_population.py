@@ -32,10 +32,7 @@ def surcharge_population_pool_members(db: GameDB, region_id: str) -> set[str]:
     """Return the materialized provincial rows that make up a surcharge pool."""
     return {
         str(row["name"])
-        for row in db.conn.execute(
-            "SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')",
-            (region_id,),
-        ).fetchall()
+        for row in db.classes.read_surcharge_population_pool_members((region_id,))
     }
 
 def apply_levy_driven_transfers(

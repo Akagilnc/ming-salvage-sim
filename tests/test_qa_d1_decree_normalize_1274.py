@@ -1,17 +1,17 @@
+from __future__ import annotations
+import json
+import types
+import pytest
 """#1274 QA D-1 拟诏归一残余：验证庭 r1 四类处方聚焦测。
 
 1) #1391 泛称闭集（大臣）capture 零 409；「不存在之人甲」仍 409
-2) #1331/#1339 起居注 involved_people 投影滤非人；开夜 time_of_day 走模块默认常量
+2) #1331/#1339 起居注 involved_people 投影滤非人；默认时辰非「此时」
 3) #1341/#1338 PATCH /api/decree 零调用方已拆，OpenAPI/实现一致
 4) #1327 空载短路；#1465 切片③：外层 30s 总罩已删
 """
 
-from __future__ import annotations
 
-import json
-import types
 
-import pytest
 
 
 # ── 1) #1391 泛称闭集 ──────────────────────────────────────────────
@@ -55,11 +55,9 @@ def test_night_archive_involved_people_drops_non_persons(game):
     assert "杨嗣昌" in people
 
 
-
 # ── 3) #1341/#1338 PATCH 死契约拆除 ────────────────────────────────
-# 退役闸类负向由 tests/test_web_audience_night_498.py::
-# test_asgi_dossiered_directive_has_no_retired_review_surface 真实 HTTP 承担；
-# 不在此维护 app.routes / OpenAPI 注册表平行证明。
 
 
-# ── 4) 补交抽取核 ────────────────────────────────────────────────
+
+
+# ── 4) #1327 空载/有界 capture ─────────────────────────────────────

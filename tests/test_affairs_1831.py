@@ -1,30 +1,20 @@
+from __future__ import annotations
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+from ming_sim.applier import Provenance, atomic
+import pytest
+from ming_sim import issues as issues_mod
+from ming_sim.settlement import SettlementContext, settle_delta
+from tests.test_declaration_dispatch_1835 import _minister
 """#1831 事务记录与指向：收夜同生、新指旧、当前情况可恢复、代码不判了结。"""
 
-from __future__ import annotations
-
-from ming_sim.entities.issue.tracker import apply_issue_tracker_output
-
-from ming_sim.applier import Provenance, atomic
 
 
-import pytest
 
-from ming_sim import issues as issues_mod
 
-from ming_sim.settlement import SettlementContext, settle_delta
+
 
 NINGYUAN = "宁远护送"
 ORIGIN = "拨银、调将、派兵去宁远"
-
-
-def _minister(db):
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    return str(row["name"])
-
-
 
 def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
     body = {"attach": attach}
@@ -38,6 +28,9 @@ def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
     else:
         body["affair_id"] = int(affair_id)
     return body
+
+
+
 
 
 
@@ -93,6 +86,7 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
 
 
 
+
 def test_same_name_affairs_are_not_merged(game):
     """同名事务不合并；顶层 affair_declarations 已随退休协议退出，不另立专用段。"""
     db, state, _ = game
@@ -145,17 +139,13 @@ def test_typed_affair_new_issues_share_provenance(game):
     assert db.affairs.get(existing.id).status == "open"
 
 
-
 def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):
     """战略人物越权来源逐项拒收；已声明的合法同批战果仍落账。"""
     db, state, content = game
     issues_mod.bind_content(content)
     state.year = 1638
     state.period = 9
-    authorized = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
+    db.affairs.open(name=NINGYUAN, origin=ORIGIN, year=state.year, period=state.period, turn=state.turn)
     db.conn.execute(
         "UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"),
     )
@@ -190,7 +180,7 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         }]}
 
     dispatch_month_segment(db, state, segment="戊寅虏变战果", translate_fn=translate)
-    assert db.has_event_triggered("wuyin_lubian")
+    assert db.issues.has_event_triggered("wuyin_lubian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",),
     ).fetchone()["military_pressure"] == 35
@@ -201,7 +191,6 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         "SELECT COUNT(*) FROM rejection_reports WHERE section='applied_person_changes' "
         "AND category='unauthorized_affair_origin'"
     ).fetchone()[0] == 1
-
 
 
 def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeypatch):
@@ -232,3 +221,10 @@ def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeyp
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM issues WHERE affair_id > 0",
     ).fetchone()["n"] == pointers_before
+
+def _minister(db):
+    row = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    return str(row["name"])

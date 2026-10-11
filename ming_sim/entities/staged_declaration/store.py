@@ -15,9 +15,13 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 
 from ming_sim.applier import atomic, connection_owns_transaction
+from ming_sim.applier import (
+    atomic, connection_owns_transaction,
+    load_stored_object, load_stored_list,
+)
 
 
-_SCHEMA_SQL = """
+_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS staged_declarations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     decree_ref TEXT NOT NULL,
@@ -31,11 +35,16 @@ CREATE TABLE IF NOT EXISTS staged_declarations (
     created_turn INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+"""
+
+_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_staged_declarations_decree
     ON staged_declarations(decree_ref, id);
 CREATE INDEX IF NOT EXISTS idx_staged_declarations_status
     ON staged_declarations(decree_ref, status, id);
 """
+
+_SCHEMA_SQL = _TABLE_SQL + _INDEX_SQL
 
 
 class DecreeAlreadySettled(ValueError):
@@ -248,6 +257,16 @@ class StagedDeclarationStore:
         if owns:
             self._conn.commit()
         return int(cur.rowcount or 0)
+
+    def read_month_fact_materials(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT decree_ref, declaration_json, forecast_text, visible_refs_json FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id", params).fetchall()
+
+
+def _load_questions(raw: object) -> list[dict]:
+    questions = load_stored_list(raw, label="questions_json")
+    if any(not isinstance(question, dict) for question in questions):
+        raise ValueError("questions_json 成员须为对象")
+    return questions
 
 
 

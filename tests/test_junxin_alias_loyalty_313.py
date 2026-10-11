@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#313 — 中文「军心」别名 morale→loyalty（ADR 0025 D1 附带必修）。
 
 验收（纯单元，extractor delta 别名落库 seam）：
@@ -5,7 +6,6 @@
 - army_delta 含「士气」key → 仍落 army.morale（别名回归快照）
 """
 
-from __future__ import annotations
 
 from ming_sim.applier import Provenance
 

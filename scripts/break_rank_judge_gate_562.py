@@ -104,7 +104,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
                 target_kind="character", target_id=f"gate-562-{index}-{slot}",
                 payload={"name": name, "office": "陕西巡抚"},
             ))
-        rows = [db.get_decree_dossier(dossier_id) for dossier_id in ids]
+        rows = [db.dossiers.get(dossier_id) for dossier_id in ids]
         persisted = {
             int(row["id"]): json.loads(str(row["payload_json"]))["break_rank"]
             for row in rows

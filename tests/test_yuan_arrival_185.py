@@ -1,10 +1,10 @@
+from __future__ import annotations
 """#185 e2e：人物启程后，由引擎倒数 tick 落 location 并清空在途账。
 
 `人物变更.行止` 只接受非空 `transit_to` 启程；抵达唯一由 `tick_transit_arrivals`
 处理。测试同时核对 DB 与 content 镜像。
 """
 
-from __future__ import annotations
 
 import ming_sim.issues as issues
 from ming_sim.decree import tick_transit_arrivals

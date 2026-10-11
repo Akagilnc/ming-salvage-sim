@@ -1,17 +1,6 @@
-"""#628 / ADR 0079 信用事件写端。
-
-测试预算 ≤4：
-① AC1：#623 既有辜负写口行为覆盖，本片不重写该 origin
-② 兑付/撑完 + 谏处置三型（正）；校验拒收（fulfilled/任命）不落伪信用（负）
-③ 处置映射：丢卒两笔 / 包庇撑腰 / 查办不记（负）；真变形案卷 + #565 连坐面
-④ 幂等（origin 写前判重）+ 叙事语境 + restore
-"""
-
 from __future__ import annotations
-
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.applier import Provenance
-
 from ming_sim.breach_plea import (
     BREACH_KIND_REMOVE_SPONSOR,
     finalize_persist,
@@ -35,8 +24,27 @@ from ming_sim.urge_lever import (
 )
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
+from ming_sim.credit_events import (
+    KIND_BACK,
+    KIND_BETRAY,
+    KIND_FULFILL,
+    KIND_SCAPEGOAT,
+    resolve_credit_events_from_extraction,
+)
+"""#628 / ADR 0079 信用事件写端。
+
+测试预算 ≤4：
+① AC1：#623 既有辜负写口行为覆盖，本片不重写该 origin
+② 兑付/撑完 + 谏处置三型（正）；校验拒收（fulfilled/任命）不落伪信用（负）
+③ 处置映射：丢卒两笔 / 包庇撑腰 / 查办不记（负）；真变形案卷 + #565 连坐面
+④ 幂等（origin 写前判重）+ 叙事语境 + restore
+"""
+
+
+
 
 # ── helpers ───────────────────────────────────────────────────────────
+
 
 def _executing_dossier(db, state, *, token: str, roster=None):
     if roster is None:
@@ -52,19 +60,21 @@ def _executing_dossier(db, state, *, token: str, roster=None):
         participants=roster,
     )
     apply_dossier_promulgation(db, state, did, "promulgated")
-    assert db.get_decree_dossier(did)["status"] == "executing"
+    assert db.dossiers.get(did)["status"] == "executing"
     return did
+
 
 def _transformed_dossier(db, state, *, token: str, roster=None):
     """真实暴露的变形案卷（非空 fixture）——先落执行格 transformed。"""
     did = _executing_dossier(db, state, token=token, roster=roster)
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did, "transformed", f"名实已乖·{token}", int(state.turn),
         close=True, commit=True,
     )
-    d = db.get_decree_dossier(did)
+    d = db.dossiers.get(did)
     assert d["execution_outcome"] == "transformed"
     return did
+
 
 def _insert_commitment(db, state, *, title: str, origin_ref: str, host: str = "倪元璐"):
     issue_id = db.insert_issue(
@@ -97,6 +107,7 @@ def _insert_commitment(db, state, *, title: str, origin_ref: str, host: str = "�
     db.conn.commit()
     return int(issue_id)
 
+
 def _credit_edges(db, *, event_kind=None, target=None, source=None):
     sql = "SELECT * FROM relation_edge_events WHERE 1=1"
     params = []
@@ -112,6 +123,7 @@ def _credit_edges(db, *, event_kind=None, target=None, source=None):
     sql += " ORDER BY id"
     return [dict(r) for r in db.conn.execute(sql, params).fetchall()]
 
+
 def _SCAPEGOAT_ROSTER():
     # #565 同构：主办倪元璐←委派徐光启；卒=倪，车=徐
     return [
@@ -122,7 +134,9 @@ def _SCAPEGOAT_ROSTER():
         {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
     ]
 
+
 # ── ① AC1：#623 既有，不重复 ─────────────────────────────────────────
+
 
 def test_ac1_breach_plea_guofu_not_reimplemented(game):
     """挽留回绝→辜负仍由 #623 finalize_persist 写出；本片 resolve 不重写该 origin。"""
@@ -149,7 +163,7 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
         reason="罢主办试既有", target_dossier_id=did,
     )
     todo = next(
-        t for t in db.list_next_audience_todos(status="pending")
+        t for t in db.dossiers.list_next_audience_todos(status="pending")
         if int(t["id"]) == todo_id
     )
     before = len(_credit_edges(db, event_kind="辜负", target=holder))
@@ -163,7 +177,9 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
     edges2 = _credit_edges(db, event_kind="辜负", target=holder)
     assert len(edges2) == len(edges)
 
+
 # ── ② 兑付/撑完 + 谏三型 + 校验拒收不落伪信用 ───────────────────────
+
 
 def test_fulfill_back_and_urge_three_decisions(game):
     """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled/任命不落。"""
@@ -224,7 +240,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
         db, state, token="rej-ful-628",
         roster=[{"character_id": "刘鸿训", "tier": "主办", "role": "承办"}],
     )
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did_rej_f, "fulfilled", "预置终值语境", int(state.turn),
         close=False, commit=True,
     )
@@ -260,7 +276,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
     cid_g = _insert_commitment(
         db, state, title="乞宽限案", origin_ref=f"dossier:{did_g}", host="倪元璐",
     )
-    db.insert_next_audience_todo(
+    db.dossiers.insert_next_audience_todo(
         commitment_ref=cid_g, stage_idx=0, due_turn=state.turn + 2,
         criterion_text="乞恩宽限", origin_context="催紧",
         entry_kind=ENTRY_KIND_GRACE_PLEA, created_turn=state.turn - 1,
@@ -273,7 +289,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
     cid_rg = _insert_commitment(
         db, state, title="拒宽限案", origin_ref=f"dossier:{did_rg}", host="徐光启",
     )
-    db.insert_next_audience_todo(
+    db.dossiers.insert_next_audience_todo(
         commitment_ref=cid_rg, stage_idx=0, due_turn=state.turn + 2,
         criterion_text="乞恩宽限", origin_context="再催",
         entry_kind=ENTRY_KIND_GRACE_PLEA, created_turn=state.turn - 1,
@@ -286,7 +302,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
     cid_rr = _insert_commitment(
         db, state, title="斥退谏案", origin_ref=f"dossier:{did_rr}", host="黄道周",
     )
-    db.insert_next_audience_todo(
+    db.dossiers.insert_next_audience_todo(
         commitment_ref=cid_rr, stage_idx=0, due_turn=state.turn + 1,
         criterion_text="期限过急，恐难如期", origin_context="急催",
         entry_kind=ENTRY_KIND_RUSH_REMONSTRANCE, created_turn=state.turn - 1,
@@ -301,7 +317,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
     ]
     assert not g_edges
     pending_grace = [
-        t for t in db.list_next_audience_todos(status="pending")
+        t for t in db.dossiers.list_next_audience_todos(status="pending")
         if int(t.get("commitment_ref") or 0) == cid_g
     ]
     assert pending_grace
@@ -318,7 +334,9 @@ def test_fulfill_back_and_urge_three_decisions(game):
     ]
     assert rr_edges and rr_edges[-1]["context"] == "期限过急，恐难如期"
 
+
 # ── ③ 处置映射正负 ───────────────────────────────────────────────────
+
 
 def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     """丢卒保车两笔；包庇→撑腰；查办→不记；级联回声（放归/被顶替）不计。"""
@@ -479,7 +497,9 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
             content.characters[successor].office_type,
         ) = old_succ
 
+
 # ── ④ 幂等 + 叙事语境 + restore + 只写不读 ────────────────────────
+
 
 def test_idempotent_narrative_restore_write_only(game, tmp_path):
     """同处置同窗不双写；跨案同人不错吞；叙事语境；restore；零消费。"""

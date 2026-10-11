@@ -1,5 +1,5 @@
-"""测试侧只读回读的单一副本：多文件共用的 SELECT 读口只在此定义一次（#1834 JA-2）。"""
 from __future__ import annotations
+"""测试侧只读回读的单一副本：多文件共用的 SELECT 读口只在此定义一次（#1834 JA-2）。"""
 
 import json
 

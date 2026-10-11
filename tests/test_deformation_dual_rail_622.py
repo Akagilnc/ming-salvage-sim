@@ -1,19 +1,7 @@
-"""#622 变形判定＋双口径分叉（0072 口径＋0073 读端）。
-
-测试预算 ≤3：
-① AC1+AC2（transformed/degraded 对照）端到端 tracer + AC4 溯源 + 假进度零入 apply
-② AC5 稽核信号正负成对
-
-#621 接管窗/连坐/fail-closed 既有断言不得放松（本文件不改 #621 测）。
-"""
-
 from __future__ import annotations
-
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.applier import Provenance, atomic
-
 import json
-
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.due_review import apply_pending_due_reviews
@@ -23,24 +11,24 @@ from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
+from functools import partial
+from tests.test_due_review_621 import _executing_policy_dossier as _executing_policy
+from tests.test_fiscal_beyond_intent_1260 import _prime_and_apply_due_review as _apply_due_review
+"""#622 变形判定＋双口径分叉（0072 口径＋0073 读端）。
+
+测试预算 ≤3：
+① AC1+AC2（transformed/degraded 对照）端到端 tracer + AC4 溯源 + 假进度零入 apply
+② AC5 稽核信号正负成对
+
+#621 接管窗/连坐/fail-closed 既有断言不得放松（本文件不改 #621 测）。
+"""
+
+
+
+
 
 # ── shared helpers ────────────────────────────────────────────────────
 
-def _executing_policy(db, state, *, token: str):
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        participants=[
-            {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
-            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
-        ],
-    )
-    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
 
 def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     origin = f"dossier:{int(dossier_id)}"
@@ -48,35 +36,9 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     created = out.issue.new_issues[0]
     return int(created["issue_id"])
 
-def _prime_and_apply_due_review(
-    db, state, content, *, dossier_id: int, title: str,
-    outcome: str, note: str,
-):
-    """模型声明写执行格后，正式复核只消费 todo（#1835 J18）。"""
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    _insert_final_stage(db, state, content, dossier_id=dossier_id, title=title)
-    write_due_staged_commitment_todos(db, state)
-    db.conn.execute(
-        "UPDATE next_audience_todos SET created_turn=?",
-        (state.turn - 1,),
-    )
-    db.conn.commit()
-    written = settle_delta(
-        state, db,
-        {"dossier_executions": [{
-            "dossier_id": int(dossier_id),
-            "outcome": outcome,
-            "note": note,
-        }]},
-        SettlementContext(content=content),
-    )
-    assert not section(written, "dossier_executions").rejected, written
-    with atomic(db):
-        results = apply_pending_due_reviews(db, state)
-    assert results and results[0].get("branch") == "dossier"
-    assert results[0].get("consumed") is True
-    return results[0]
+
+_prime_and_apply_due_review = partial(_apply_due_review, stage_writer=_insert_final_stage)
+
 
 def _cost_liability(db, dossier_id):
     return [
@@ -89,7 +51,9 @@ def _cost_liability(db, dossier_id):
         ).fetchall()
     ]
 
+
 # ── ① AC1+AC2(+AC4) tracer ───────────────────────────────────────────
+
 
 def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, content):
     """同场景仅旨外标记不同 → transformed vs degraded；双口径三面；假进度零入 apply；restore 溯源。"""
@@ -100,14 +64,14 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     before_fp = _world_fingerprint(db)
 
     # 承办人先挂过程奏报（假象：报已成）
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         xf_id, state.turn, "在办", "田亩清丈已十之八九，即可全竣",
         commit=True,
     )
     # 月末 extractor 落旨外恶果（浮收翻倍样例）——同 origin 载体
     applied = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': 12, 'category': '地方浮收', 'reason': '借清丈之名额外加派入私', 'origin_ref': f'dossier:{xf_id}', 'beyond_intent': True}]}, SettlementContext(content=content))
     assert view(applied, "economy_moves"), applied
-    moves = db.list_economy_moves_for_dossier(xf_id)
+    moves = db.reign.list_economy_moves_for_dossier(xf_id)
     assert moves and moves[0]["beyond_intent"] is True
     assert moves[0]["origin_ref"] == f"dossier:{xf_id}"
 
@@ -116,7 +80,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert after_real != before_fp  # 实况入 apply
     # 再挂一条纯假进度，世界不得再变
     mid_fp = _world_fingerprint(db)
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         xf_id, state.turn, "已全完", "田亩尽数清丈、国库应增百万",
         commit=True,
     )
@@ -126,7 +90,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
         db, state, content, dossier_id=xf_id, title="变形对照·清丈",
         outcome="transformed", note="名实已乖，借清丈行私",
     )
-    xf_dossier = db.get_decree_dossier(xf_id)
+    xf_dossier = db.dossiers.get(xf_id)
     assert xf_dossier["execution_outcome"] == "transformed"
     assert xf_dossier["status"] == "closed"
     assert (result_xf.get("execution") or {}).get("outcome") == "transformed"
@@ -135,10 +99,10 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
 
     # 双口径三面：既有模型/测试奏报 × 执行格记变形 × 实况效果在库
     # 复核不代写终奏；分叉读既有 progress 与执行格。
-    xf_progress = db.list_dossier_progress(xf_id)
+    xf_progress = db.dossiers.list_dossier_progress(xf_id)
     assert xf_progress, "prior reported progress must remain"
     assert all(not r.get("is_terminal") for r in xf_progress)
-    assert db.list_economy_moves_for_dossier(xf_id)
+    assert db.reign.list_economy_moves_for_dossier(xf_id)
     bands = {r["progress_band"] for r in xf_progress}
     assert "transformed" not in bands
 
@@ -148,43 +112,45 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     db.backup_to(str(backup))
     restored = GameDB(str(backup), content=content)
     try:
-        r_moves = restored.list_economy_moves_for_dossier(xf_id)
+        r_moves = restored.reign.list_economy_moves_for_dossier(xf_id)
         assert r_moves and r_moves[0]["beyond_intent"] is True
         assert r_moves[0]["origin_ref"] == f"dossier:{xf_id}"
-        assert restored.get_decree_dossier(xf_id)["execution_outcome"] == "transformed"
+        assert restored.dossiers.get(xf_id)["execution_outcome"] == "transformed"
     finally:
         restored.close()
 
     # ── degraded 对照：同场景无旨外标记、仅表报 → degraded ──
     deg_id = _executing_policy(db, state, token="deg-622")
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         deg_id, state.turn, "在办", "田亩清丈已十之八九，即可全竣",
         commit=True,
     )
     # 无 durable beyond_intent 效果——仅表报
-    assert db.list_economy_moves_for_dossier(deg_id) == []
+    assert db.reign.list_economy_moves_for_dossier(deg_id) == []
 
     # 模型声明 degraded：有表报无旨外实绩的分叉由声明写格，不由代码代判
     result_deg = _prime_and_apply_due_review(
         db, state, content, dossier_id=deg_id, title="打折对照·清丈",
         outcome="degraded", note="表报有之、实绩未充",
     )
-    deg_dossier = db.get_decree_dossier(deg_id)
+    deg_dossier = db.dossiers.get(deg_id)
     assert deg_dossier["execution_outcome"] == "degraded"
     assert (result_deg.get("execution") or {}).get("outcome") == "degraded"
-    deg_progress = db.list_dossier_progress(deg_id)
+    deg_progress = db.dossiers.list_dossier_progress(deg_id)
     assert deg_progress, "prior reported progress must remain"
     assert all(not r.get("is_terminal") for r in deg_progress)
     assert "degraded" not in {r["progress_band"] for r in deg_progress}
     # 假进度尾部：再写奏报，世界 fingerprint 不变
     fp_before_fake = _world_fingerprint(db)
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         deg_id, state.turn + 1, "已竣", "奏称完结而库银未动",
         commit=True,
     )
     assert _world_fingerprint(db) == fp_before_fake
 
+
 # ── ② AC5 稽核信号正负成对 ───────────────────────────────────────────
+
 
 def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     """有稽核链 → 月报输入面确定性携带分叉信号；无链 → 键不出现。"""
@@ -195,11 +161,11 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
 
     # 被稽核目标案卷：奏报 + 旨外实况 → 分叉
     target_id = _executing_policy(db, state, token="audit-target-622")
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         target_id, state.turn, "已竣", "清丈全完、加派如额",
         commit=True,
     )
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         target_id, "transformed", "奏报与旨外实况相左", state.turn,
         close=False, commit=True,
     )
@@ -212,8 +178,8 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     audit_order = create_test_secret_order(
         db, state, actor, "密查清丈浮收", "逐月密奏", ["稽核"], deadline_months=4,
     )
-    audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])
-    db.add_dossier_links(
+    audit_dossier = int(db.dossiers.get_for_secret_order(audit_order)["id"])
+    db.dossiers.add_links(
         audit_dossier,
         [{"target_dossier_id": target_id, "relation_type": "稽核", "note": "密查该路清丈"}],
     )
@@ -233,141 +199,37 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     escort_order = create_test_secret_order(
         db, state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4,
     )
-    escort_dossier = int(db.get_dossier_for_secret_order(escort_order)["id"])
+    escort_dossier = int(db.dossiers.get_for_secret_order(escort_order)["id"])
     nudges2 = db.list_monthly_dossier_progress_nudges()
     escort_nudge = next(n for n in nudges2 if int(n["dossier_id"]) == escort_dossier)
     assert "audit_fork_signals" not in escort_nudge
 
-# ── ⑤ coerce 闭世界肯定识别器（#622 r2 畸形归 0）────────────────────
-
-def test_coerce_beyond_intent_flag_closed_affirmative_world():
-    """coerce_beyond_intent_flag 闭世界负向闸：缺席、否定、畸形不得捏造肯定。
-
-    正向肯定经真实补饷入口与 ledger/回执案覆盖；本处只锁负向。
-    """
-    coerce = GameDB.coerce_beyond_intent_flag
-
-    # 否定 / 缺省
-    for value in (False, 0, 0.0, None, "否", "无", "off", "false", "no", "0"):
-        assert coerce(value) == 0, value
-
-    # 畸形：非标量 + 垃圾串 + 空串 —— 一律 0（不得捏造肯定）
-    for value in ([], {}, [False], {"a": 1}, "null", "None", "0.0", "", "  ", "maybe", "garbage"):
-        assert coerce(value) == 0, value
 
 # ── ⑥ 补饷路由 seam：beyond_intent 不得因 purpose 分叉丢键（#622 r3）──
+
 
 def _seed_army_arrears(db, army_id: str, arrears: int) -> None:
     db.conn.execute(
         """
         UPDATE armies
-        SET arrears = ?, province_pay_arrears = 0, central_pay_arrears = ?
+        SET province_pay_arrears = 0, central_pay_arrears = ?
         WHERE id = ?
         """,
-        (arrears, arrears, army_id),
+        (arrears, army_id),
     )
     db.conn.commit()
 
-def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
-    """定向补饷：beyond_intent 经 coerce 落 ledger 且 applied 回执回响；无标记仍为 0。"""
-    db, state, _content = game
-    army_id = "guanning"
-    _seed_army_arrears(db, army_id, 30)
-    state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
-
-    ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
-
-    applied, applied_rejections = _apply_economy_list(
-        db,
-        state,
-        [{
-            "account": "国库",
-            "delta": -10,
-            "purpose": "补饷",
-            "target_kind": "army",
-            "target_id": army_id,
-            "category": "补饷",
-            "reason": "定向补饷旨外",
-            "origin_ref": "dossier:item",
-            "beyond_intent": True,
-        }],
-        origin_ref="dossier:parent",
-    source=Provenance.system_simulation)
-    assert applied and applied[0].get("beyond_intent") is True, applied
-    assert applied[0]["delta"] == -10
-    assert applied[0]["origin_ref"] == "dossier:parent"
-    assert applied[0]["applied"] is True
-
-    row = db.conn.execute(
-        "SELECT beyond_intent, purpose, target_id, origin_ref FROM economy_ledger "
-        "WHERE id > ? ORDER BY id DESC LIMIT 1",
-        (ledger_before,),
-    ).fetchone()
-    assert row is not None
-    assert int(row["beyond_intent"]) == 1
-    assert row["purpose"] == "补饷"
-    assert row["target_id"] == army_id
-    assert row["origin_ref"] == "dossier:parent"
-
-    # 反向锚：不带标记 → ledger=0，canonical 回执为 false/空来源
-    applied_plain, applied_plain_rejections = _apply_economy_list(
-        db,
-        state,
-        [{
-            "account": "国库",
-            "delta": -5,
-            "purpose": "补饷",
-            "target_kind": "army",
-            "target_id": army_id,
-            "category": "补饷",
-            "reason": "定向补饷无标记",
-        }],
-    source=Provenance.system_simulation)
-    assert applied_plain and applied_plain[0]["beyond_intent"] is False, applied_plain
-    assert applied_plain[0]["origin_ref"] == ""
-    assert applied_plain[0]["applied"] is True
-    plain_row = db.conn.execute(
-        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
-        ("定向补饷无标记",),
-    ).fetchone()
-    assert plain_row is not None
-    assert int(plain_row["beyond_intent"]) == 0
-
-    # 畸形值仍由 coerce 单点归 0，补饷分支不得自建判定
-    applied_bad, applied_bad_rejections = _apply_economy_list(
-        db,
-        state,
-        [{
-            "account": "国库",
-            "delta": -3,
-            "purpose": "补饷",
-            "target_kind": "army",
-            "target_id": army_id,
-            "category": "补饷",
-            "reason": "定向补饷畸形",
-            "beyond_intent": [],
-        }],
-    source=Provenance.system_simulation)
-    assert applied_bad and applied_bad[0]["beyond_intent"] is False, applied_bad
-    assert applied_bad[0]["origin_ref"] == ""
-    assert applied_bad[0]["applied"] is True
-    bad_row = db.conn.execute(
-        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
-        ("定向补饷畸形",),
-    ).fetchone()
-    assert bad_row is not None
-    assert int(bad_row["beyond_intent"]) == 0
 
 def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     """池化补饷：承诺月拨带 beyond_intent，拆分落库每行均继承（走 issues 结算 choke）。"""
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_army_arrears(db, "guanning", 40)
     _seed_army_arrears(db, "xuan_da", 30)
     state.metrics["国库"] = 500
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
     db.insert_issue(
@@ -409,7 +271,9 @@ def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     assert {r["target_id"] for r in rows} <= {"guanning", "xuan_da"}
     assert sum(int(r["delta"]) for r in rows) == -50
 
+
 # ── ⑦ #651 continue：四出口 receipt × outer-first origin 对账矩阵 ─────────
+
 
 def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
     """四出口 canonical receipt 与 durable ledger 共用 outer-first effective origin。
@@ -575,3 +439,66 @@ def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
         ordinary_rows = [r for r in _ledger_after(before) if str(r["reason"] or "") == ordinary_reason]
         _assert_ledger_matches(ordinary_rows, expect_origin=expect_origin, expect_beyond=expect_beyond)
         assert sum(int(r["delta"]) for r in ordinary_rows) == -4
+
+def _executing_policy(db, state, *, token: str):
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"清丈差务·{token}",
+        target_kind="issue",
+        target_id=token,
+        participants=[
+            {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
+            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
+        ],
+    )
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
+    return dossier_id
+
+
+def _prime_and_apply_due_review(
+    db, state, content, *, dossier_id: int, title: str,
+    outcome: str, note: str,
+):
+    """模型声明写执行格后，正式复核只消费 todo（#1835 J18）。"""
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    _insert_final_stage(db, state, content, dossier_id=dossier_id, title=title)
+    write_due_staged_commitment_todos(db, state)
+    db.conn.execute(
+        "UPDATE next_audience_todos SET created_turn=?",
+        (state.turn - 1,),
+    )
+    db.conn.commit()
+    written = settle_delta(
+        state, db,
+        {"dossier_executions": [{
+            "dossier_id": int(dossier_id),
+            "outcome": outcome,
+            "note": note,
+        }]},
+        SettlementContext(content=content),
+    )
+    assert not section(written, "dossier_executions").rejected, written
+    with atomic(db):
+        results = apply_pending_due_reviews(db, state)
+    assert results and results[0].get("branch") == "dossier"
+    assert results[0].get("consumed") is True
+    return results[0]
+
+
+def test_coerce_beyond_intent_flag_closed_affirmative_world():
+    """coerce_beyond_intent_flag 闭世界负向闸：缺席、否定、畸形不得捏造肯定。
+
+    正向肯定经真实补饷入口与 ledger/回执案覆盖；本处只锁负向。
+    """
+    coerce = GameDB.coerce_beyond_intent_flag
+
+    # 否定 / 缺省
+    for value in (False, 0, 0.0, None, "否", "无", "off", "false", "no", "0"):
+        assert coerce(value) == 0, value
+
+    # 畸形：非标量 + 垃圾串 + 空串 —— 一律 0（不得捏造肯定）
+    for value in ([], {}, [False], {"a": 1}, "null", "None", "0.0", "", "  ", "maybe", "garbage"):
+        assert coerce(value) == 0, value

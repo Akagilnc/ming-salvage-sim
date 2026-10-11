@@ -15,6 +15,7 @@ run）；监督在场行、连续月数、稽核人派系与操守定性等事�
 """
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
 
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
@@ -36,11 +37,6 @@ EMPTY_TRANSFORMATION_TENDENCY_FACTS: Dict[str, object] = {
     "exposure_count": 0,
 }
 
-# 执行格形态闭集（与 GameDB._DOSSIER_EXECUTION_OUTCOMES 对齐）
-EXECUTION_FORMS = frozenset({
-    "executing", "fulfilled", "degraded", "failed", "transformed",
-})
-
 # #619 origin 结构化标记（扩 origin 字符串，不加列）
 ORIGIN_MARK_PRIVATE_GOODS = "private_goods"
 ORIGIN_MARK_SAME_FACTION_BLIND = "same_faction_blind"
@@ -59,6 +55,20 @@ INTEGRITY_MEDIOCRE_BANDS = frozenset({"操守多亏", "操守未稳", "操守平
 # GameDB.trigger_supervision_countermeasures 一并退役——代码不再按 integrity 档
 # 判定人物是否反制、不再 hash 指定反制形态。监督在场事实与稽核人定性仍照留，
 # 供 #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
+
+# #1889 / ADR 0151：检举、在场、暴露三表的表名、PRAGMA 列白名单与禁钝化列
+# 片段随 schema 一并归案卷 store（此处的平行副本即第二份 schema 知识）。
+# 此处只作再导出，供既有 import 路径不断。
+from ming_sim.entities.dossier import (  # noqa: E402
+    DENUNCIATION_ALLOWED_COLS,
+    DENUNCIATION_TABLE,
+    EXPOSURE_ALLOWED_COLS,
+    EXPOSURE_TABLE,
+    FORBIDDEN_DULLING_COL_FRAGMENTS,
+    PRESENCE_ALLOWED_COLS,
+    PRESENCE_TABLE,
+)
+
 
 def integrity_band(value: object) -> str:
     return str(qualitative_character_axis("integrity", value) or "")
@@ -299,10 +309,7 @@ def build_transformation_tendency_facts(
 def character_tenure(db: Any, name: str) -> str:
     if not name:
         return "真除"
-    row = db.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-        (name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_resolve_executor_appointment_tenure((name,))
     if row is None:
         return "真除"
     return normalize_appointment_tenure(row["appointment_tenure"])
@@ -311,10 +318,7 @@ def character_tenure(db: Any, name: str) -> str:
 def character_faction_integrity(db: Any, name: str) -> Tuple[str, object]:
     if not name:
         return "", None
-    row = db.conn.execute(
-        "SELECT faction, integrity FROM characters WHERE name=?",
-        (name,),
-    ).fetchone()
+    row = CharacterStore(db.conn).read_character_faction_integrity((name,))
     if row is None:
         return "", None
     return str(row["faction"] or ""), row["integrity"]

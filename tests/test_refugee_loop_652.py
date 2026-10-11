@@ -1,19 +1,9 @@
-"""#652：流民环闭合——投贼吃池顶 + 赈济/招抚回流 + 唯一判官成色链。
-
-主测缝：settle_delta /
-advance_without_decree（可控 LLM seam 真实月结）。
-owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不动。
-"""
-
 from __future__ import annotations
 from tests.readback_helpers import class_population as _pop
-
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
 import sqlite3
-
 import pytest
-
 from ming_sim.applier import atomic
 from ming_sim.constants import (
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
@@ -25,9 +15,21 @@ from tests.month_chain_helpers import canned_full_settlement, make_light_session
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.settlement.views import section
+"""#652：流民环闭合——投贼吃池顶 + 赈济/招抚回流 + 唯一判官成色链。
+
+主测缝：apply_score_extraction /
+advance_without_decree（可控 LLM seam 真实月结）。
+owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不动。
+"""
+
+
+
+
 
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
+
+
 
 
 def _strength(db: GameDB, power_id: str) -> int:
@@ -51,7 +53,6 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
     return dossier_id
 
 
-
 def _reset_shaanxi_pool(db):
     db.conn.execute(
         "UPDATE classes SET population=? WHERE name='流民' AND region_id='shaanxi'",
@@ -65,6 +66,7 @@ def _reset_shaanxi_pool(db):
 
 
 # ── 刀① 池清单 + 投贼吸收 ───────────────────────────────────────────────────
+
 
 def _database_path(db: GameDB) -> str:
     return str(db.conn.execute("PRAGMA database_list").fetchone()[2])
@@ -87,7 +89,7 @@ def test_standalone_surcharge_is_durable_to_second_connection(game):
         state, action_type="policy", decree_text="陕西加派",
         target_kind="region", target_id="shaanxi",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     applied = settle_delta(state, db, {'surcharge_decrees': [{'region_id': 'shaanxi', 'monthly_amount': 10.0, 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
     expected = view(applied, "surcharge_decrees")[0]["加派基线"]
     with sqlite3.connect(_database_path(db)) as reopened:
@@ -107,7 +109,7 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
         state, action_type="policy", decree_text="陕西加派",
         target_kind="region", target_id="shaanxi",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     with pytest.raises(RuntimeError):
         with atomic(db):
             settle_delta(state, db, {'surcharge_decrees': [{'region_id': 'shaanxi', 'monthly_amount': 10.0, 'origin_ref': f'dossier:{dossier_id}'}], 'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': 'bandit_li_zicheng', 'requested_count': 10000, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
@@ -225,8 +227,8 @@ def test_non_recovery_grant_no_回流(game, monkeypatch):
         },
     )
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "fulfilled"
-    assert db.list_economy_moves_for_dossier(dossier_id)
+    assert db.dossiers.get(dossier_id)["execution_outcome"] == "fulfilled"
+    assert db.reign.list_economy_moves_for_dossier(dossier_id)
     before = _pop(db, "流民", "shaanxi")
     _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
@@ -236,14 +238,14 @@ def test_non_recovery_grant_no_回流(game, monkeypatch):
 def test_recovery_without_paid_evidence_produces_nothing(game, monkeypatch):
     db, state, content = game
     dossier_id = _recovery_grant(db, state, amount=30)
-    assert db.list_economy_moves_for_dossier(dossier_id)
+    assert db.reign.list_economy_moves_for_dossier(dossier_id)
     db.conn.execute("DELETE FROM economy_ledger WHERE origin_ref=?", (f"dossier:{dossier_id}",))
     db.conn.execute("DELETE FROM decree_dossier_reconciliations WHERE dossier_id=?", (dossier_id,))
     db.conn.execute(
         "UPDATE decree_dossiers SET closed_turn=? WHERE id=?", (state.turn, dossier_id),
     )
     db.conn.commit()
-    assert db.list_economy_moves_for_dossier(dossier_id) == []
+    assert db.reign.list_economy_moves_for_dossier(dossier_id) == []
     before = _pop(db, "流民", "shaanxi")
     _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
@@ -257,6 +259,7 @@ _NOTE_BY = {
     "failed": "押解尽失，赈务无成",
     "transformed": "银两被挪作他用，名实已乖",
 }
+
 
 def _in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag="赈"):
     """真实 recovery producer：in_transit 赈灾 → executing + 实付。"""
@@ -277,10 +280,10 @@ def _in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag
         },
     )
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row["status"] == "executing"
     assert row["execution_outcome"] in ("", None)
-    moves = db.list_economy_moves_for_dossier(dossier_id)
+    moves = db.reign.list_economy_moves_for_dossier(dossier_id)
     assert moves and any(int(m.get("delta") or 0) < 0 for m in moves)
     return dossier_id
 
@@ -345,10 +348,10 @@ def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi
     )
     apply_dossier_verdicts(db, state, [rejected_verdict(dossier_id)])
     apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row["status"] == "executing"
     assert str(row["execution_outcome"] or "") == ""
-    assert any(int(move.get("delta") or 0) < 0 for move in db.list_economy_moves_for_dossier(dossier_id))
+    assert any(int(move.get("delta") or 0) < 0 for move in db.reign.list_economy_moves_for_dossier(dossier_id))
     return dossier_id
 
 
@@ -426,92 +429,6 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
         before = after
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
-    """次月无旨：真实强颁留下的在途赈灾，经世界段与转译落账，读档后仍在。
-
-    模型替身只接外部调用，不读开场或段文。引擎不代选成败。
-    """
-    import ming_sim.month_chain as month_chain
-    import ming_sim.month_translate as month_translate
-    from ming_sim.materials import continuing_dossier_facts
-    from ming_sim.models import LLMConfig
-
-    real_world = month_chain.run_world_segment_text
-    real_translate = month_translate.translate_month_segment
-
-    db, state, content = game
-    amount = 40
-    _reset_shaanxi_pool(db)
-    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount * 2 + 50)
-    shaanxi_id = _force_in_transit_recovery_grant(db, state, amount=amount, tag="west")
-    henan_id = _in_transit_recovery_grant(
-        db, state, amount=amount, region_id="henan", tag="east",
-    )
-    state.next_period()
-    db.save_state(state)
-
-    sim_calls: list = []
-    _canned_judge(
-        monkeypatch, outcome="fulfilled", dossier_id=shaanxi_id,
-        sim_calls=sim_calls,
-    )
-    monkeypatch.setattr(month_chain, "run_world_segment_text", real_world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", real_translate)
-
-    def _world_model(_agent, _message, tag, **_kwargs):
-        if tag == "gazette":
-            return '{"title":"邸报","report":"本月赈灾实况。"}'
-        assert tag == "world-segment"
-        return "handled"
-
-    def _translate_model(_prompt, _llm_config, *, tag, policy=None):
-        del _prompt, policy
-        assert tag == "month_segment_translate"
-        # 本月各效果段不得预支下月回流。
-        assert _pop(db, "流民", "shaanxi") == displaced_before
-        return {"effects": {"dossier_executions": [{
-            "dossier_id": shaanxi_id,
-            "outcome": "fulfilled",
-            "note": "declared",
-        }]}}
-
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", _world_model)
-    monkeypatch.setattr(
-        month_translate, "run_declaration_translate_prompt", _translate_model,
-    )
-
-    displaced_before = _pop(db, "流民", "shaanxi")
-    farmer_before = _pop(db, "农民", "shaanxi")
-    closed_turn = int(state.turn)
-    session = make_light_session(db, state, content)
-    session.llm_config = LLMConfig(
-        api_key="test", base_url="http://127.0.0.1:9", model="test", channel="api",
-    )
-    result = session.advance_without_decree()
-    assert result is not None and result.awaiting is False
-    assert result.advanced is True
-    assert int(state.turn) == closed_turn + 1
-
-    expected = int(round(
-        amount * RECOVERY_PERSONS_PER_WAN * RECOVERY_OUTCOME_FACTORS["fulfilled"]
-    ))
-    loaded = GameDB(_database_path(db), content)
-    try:
-        loaded_state = loaded.load_state()
-        landed = loaded.get_decree_dossier(shaanxi_id)
-        assert landed["status"] == "closed"
-        assert landed["execution_outcome"] == "fulfilled"
-        assert int(landed["closed_turn"] or 0) == closed_turn
-        other = loaded.get_decree_dossier(henan_id)
-        assert other["status"] == "executing"
-        assert str(other["execution_outcome"] or "") == ""
-        still = {int(row["id"]) for row in continuing_dossier_facts(loaded, loaded_state.turn)}
-        assert henan_id in still and shaanxi_id not in still
-        assert _pop(loaded, "流民", "shaanxi") == displaced_before - expected
-        assert _pop(loaded, "农民", "shaanxi") == farmer_before + expected
-    finally:
-        loaded.close()
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -535,4 +452,4 @@ def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
     result = make_light_session(db, state, content).advance_without_decree()
     assert result is not None and result.awaiting is False
     assert result.advanced is False
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"

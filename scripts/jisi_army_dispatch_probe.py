@@ -90,12 +90,16 @@ def _query_snapshot(sess: GameSession) -> dict[str, object]:
             ARMY_IDS,
         ).fetchall()
     ]
-    reports = [
-        dict(r)
-        for r in db.conn.execute(
-            "SELECT turn,year,period,substr(report,1,1200) AS report FROM turn_reports ORDER BY turn"
-        ).fetchall()
-    ]
+    from ming_sim.entities.record_store import TurnReportStore
+
+    reports = []
+    for row in TurnReportStore(db.conn).list_archives():
+        reports.append({
+            "turn": row["turn"],
+            "year": row["year"],
+            "period": row["period"],
+            "report": str(row["report"] or "")[:1200],
+        })
     return {"armies": armies, "army_logs": logs, "reports": reports}
 
 

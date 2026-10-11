@@ -1,6 +1,6 @@
 import json
-
 from ming_sim.models import Character
+
 
 
 def _add(db, state, name, office, office_type):
@@ -48,7 +48,7 @@ def test_white_body_high_appointment_is_marked_but_regular_first_office_is_not(g
     from ming_sim.decree import build_promulgation_judge_context
 
     context = build_promulgation_judge_context(
-        db, state, [db.get_decree_dossier(high_id)]
+        db, state, [db.dossiers.get(high_id)]
     )
     assert context["dossiers"][0]["break_rank"]["is_break_rank"] is True
 
@@ -113,10 +113,6 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     _add(db, state, "候铨乙", "兵部尚书", "兵部")
     db.set_character_office("候铨乙", "听用候铨", "待铨")
     db.conn.execute("UPDATE characters SET reason_code='被顶替' WHERE name='候铨乙'")
-    # Recreate the archived previous office via status/reason enum path (not free-text displace).
-    db.conn.execute(
-        "UPDATE character_offices SET office_title='兵部尚书',office_type='兵部' WHERE character_name='候铨乙'"
-    )
     _return_id, returned = _appointment_dossier(db, state, "候铨乙", "户部尚书")
     assert returned["break_rank"]["basis"] == "historical_office"
     assert returned["break_rank"]["is_break_rank"] is False
@@ -133,13 +129,19 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     assert big["break_rank"]["is_break_rank"] is True
     assert big["break_rank"]["current_rank_band"] - big["break_rank"]["new_rank_band"] >= 2
 
-    db.conn.execute(
-        "UPDATE character_offices SET office_title='翰林院编修',office_type='翰林院' "
-        "WHERE character_name='候铨乙'"
-    )
+    db.set_character_office("候铨乙", "翰林院编修", "翰林院")
+    db.set_character_office("候铨乙", "听用候铨", "待铨")
     _disp_jump_id, disp_jump = _appointment_dossier(db, state, "候铨乙", "兵部尚书")
     assert disp_jump["break_rank"]["basis"] == "historical_office"
     assert disp_jump["break_rank"]["is_break_rank"] is True
+
+
+
+
+
+
+
+
 
 
 def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(game):
@@ -163,15 +165,18 @@ def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(gam
 
 
 
+
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
-    """旧档 office_type 待铨/空时，任命案卷仍按历史实职识别破格（公开 break_rank）。"""
+    """#1889：备档只存历史 office_title，官职类别真源唯一是 characters.office_type。
+
+    原实现这条覆盖的是「备档 office_type 被写成待铨/空」的历史兼容形态；该列已删，
+    同一形态改由真源侧表达：人物 office_type 落到待铨而备档仍留可识别的实职名。
+    """
     db, state, _content = game
     name = "旧档实职"
     _add(db, state, name, "翰林院编修", "翰林院")
     db.set_character_status(state, name, "retired", "致仕")
-    db.conn.execute(
-        "UPDATE character_offices SET office_type='待铨' WHERE character_name=?", (name,)
-    )
+    db.conn.execute("UPDATE characters SET office_type='待铨' WHERE name=?", (name,))
     _dossier_id, payload = _appointment_dossier(db, state, name, "兵部尚书")
     assert payload["break_rank"]["basis"] == "historical_office"
     assert payload["break_rank"]["is_break_rank"] is True

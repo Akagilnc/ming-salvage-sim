@@ -1,17 +1,5 @@
-"""#641 人物固有层 `性情` 写核 + 召对人物上下文接关系账。
-
-验收锚（owner A / 大理寺 continue）：
-1. settle_delta 后 DB / content / person_logs 一致
-2. 同事务后段故障 → DB+运行态旧 style；提交后 reload 可读新 style
-3. 查无人物、空/非字符串 style 结构化拒收
-4. character_context_with_db 含自身 style，关系仅经 project_relation_ledger(viewer=name)
-5. relation_edge_events 落边不改 style；性情改 style 不写边
-"""
-
 from __future__ import annotations
-
 import pytest
-
 import ming_sim.issues as issues
 from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
@@ -21,6 +9,18 @@ from ming_sim.relation_read import project_relation_ledger
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.settlement.views import section
+"""#641 人物固有层 `性情` 写核 + 召对人物上下文接关系账。
+
+验收锚（owner A / 大理寺 continue）：
+1. apply_score_extraction 后 DB / content / person_logs 一致
+2. 同事务后段故障 → DB+运行态旧 style；提交后 reload 可读新 style
+3. 查无人物、空/非字符串 style 结构化拒收
+4. character_context_with_db 含自身 style，关系仅经 project_relation_ledger(viewer=name)
+5. relation_edge_events 落边不改 style；性情改 style 不写边
+"""
+
+
+
 
 PERSON = "毛文龙"
 NEW_STYLE = "旧恨未消，却更沉得住气，临事少作张扬。"
@@ -32,7 +32,6 @@ def _style_row(db, name=PERSON):
         "SELECT style FROM characters WHERE name=?", (name,)
     ).fetchone()["style"]
 
-
 def _temperament_item(**overrides):
     item = {
         "name": PERSON,
@@ -43,7 +42,6 @@ def _temperament_item(**overrides):
     }
     item.update(overrides)
     return item
-
 
 def test_inertia_natural_resolve_applies_temperament_style(game):
     """生产入口：issue 自然结案 effect_on_resolve 性情 → DB/runtime/person_logs 一致。"""
@@ -83,7 +81,6 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
     assert log["action"] == "性情"
     assert log["payload_summary"] == "经事锤炼，固有层改写"
 
-
 def test_apply_score_extraction_writes_temperament_style_and_log(game):
     db, state, content = game
     before = _style_row(db)
@@ -113,7 +110,6 @@ def test_apply_score_extraction_writes_temperament_style_and_log(game):
     ).fetchone()
     assert log["action"] == "性情"
     assert log["payload_summary"] == "经事锤炼，固有层改写"
-
 
 def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
     """自由文本 style 只判空、不改写：DB/runtime/applied/log normalized 与输入原串逐字节相等。"""
@@ -155,7 +151,6 @@ def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
     assert content.characters[PERSON].style == PADDED_STYLE
     assert section(blank_out, "applied_person_changes").rejected[0].category == "invalid_enum"
 
-
 def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
     db, state, content = game
     before_db = _style_row(db)
@@ -170,7 +165,6 @@ def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
     assert _style_row(db) == before_db
     assert content.characters[PERSON].style == before_rt
 
-
 def test_temperament_committed_style_survives_reload(game):
     db, state, content = game
     settle_delta(state, db, {'人物变更': [_temperament_item()]}, SettlementContext(content=content))
@@ -178,7 +172,6 @@ def test_temperament_committed_style_survives_reload(game):
 
     assert _style_row(db) == NEW_STYLE
     assert content.characters[PERSON].style == NEW_STYLE
-
 
 @pytest.mark.parametrize(
     ("item", "category"),
@@ -217,7 +210,7 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
         c for c in content.characters.values()
         if c.name != person.name
         and c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
+        and db.characters.get_character_status(c.name)[0] == "active"
         and getattr(c, "power_id", "ming") == "ming"
     )
 
@@ -254,7 +247,7 @@ def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
         c for c in content.characters.values()
         if c.name != person.name
         and c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
+        and db.characters.get_character_status(c.name)[0] == "active"
         and getattr(c, "power_id", "ming") == "ming"
     )
     padded_summary_founding = "  旧谊未断，朝堂仍有声气。  "
@@ -328,7 +321,6 @@ def test_relation_edge_events_do_not_mutate_style(game):
         ("性情",),
     ).fetchone()["c"]
     assert after_temperament_logs == before_temperament_logs
-
 
 def test_temperament_does_not_write_relation_edges(game):
     db, state, content = game

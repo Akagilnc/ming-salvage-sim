@@ -80,7 +80,7 @@ def produce_memorials(session, chain: dict, *, source) -> None:
         return
     db, state = session.db, session.state
     officers = triage_officers(db)
-    backlog = [row for row in db.list_rescript_drafts(status="revision_pending")
+    backlog = [row for row in db.issues.list_rescript_drafts(status="revision_pending")
                if int(row["answered_turn"]) < int(state.turn)]
     if officers:
         data = parse_agent_json(run_rescript_text(session, officers=officers, backlog=backlog), "rescript-draft")
@@ -112,7 +112,7 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
     db, state = session.db, session.state
     consumed = chain.setdefault("rescript_consumed", [])
     products = chain.setdefault("rescript_answer_products", {})
-    for row in sorted(db.list_rescript_drafts(), key=lambda r: (r["answered_turn"], r["answer_order"])):
+    for row in sorted(db.issues.list_rescript_drafts(), key=lambda r: (r["answered_turn"], r["answer_order"])):
         key = f"rescript_draft:{row['turn']}:{row['idx']}"
         if row["status"] != "decided" or row["answered_turn"] != int(state.turn) or key in consumed:
             continue
@@ -157,7 +157,7 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
                     participants=payload.get("participant_roster"), commit=False,
                 )
                 for did in ids:
-                    db.add_dossier_endorsement(
+                    db.dossiers.add_endorsement(
                         did, form="御笔手敕", endorser_id="", imperial=True,
                         decision_key=key, source_chat_turn_id=0, commit=False,
                     )

@@ -1,3 +1,7 @@
+from __future__ import annotations
+import pytest
+from ming_sim.settlement import SettlementContext, settle_delta
+from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
 """PR2-S1(ADR 0008 决定 1,#91)——两个整段吞 section 迁入逐项拒收契约。
 
 section 5 power_updates、section 9b character_power_changes：原先 `try: db.apply_*()
@@ -8,12 +12,8 @@ except Exception: print [WARN]` 整段吞——连代码异常都被吞掉(违 A
 从现役 pre_settle 与 dispatch_declaration 入口验证逐项拒收。
 """
 
-from __future__ import annotations
 
-import pytest
-from ming_sim.settlement import SettlementContext, settle_delta
 
-from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
 
 def run_settle(db, state, content, extracted, **kwargs):
     """These rejection tests model canonical spontaneous extractor envelopes."""
@@ -22,13 +22,13 @@ def run_settle(db, state, content, extracted, **kwargs):
             item.setdefault("origin_ref", "盘面自发")
     return run_declaration(db, state, content, extracted)
 
-
 def _valid_power_id(db):
     """取一个非 ming 的合法 power id,供「好项照落」对照。"""
     row = db.conn.execute(
         "SELECT id FROM powers WHERE id != 'ming' LIMIT 1").fetchone()
     assert row is not None, "probe.db 需至少一个非明势力"
     return row[0]
+
 
 
 

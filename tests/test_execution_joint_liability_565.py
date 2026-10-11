@@ -1,13 +1,14 @@
+from ming_sim.settlement.dossier import apply_dossier_promulgation
+import pytest
+from ming_sim.strict_types import validate_affected_parties
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import section, view
+import ming_sim.issues as issue_engine
 """#565 执行格终值链 + 委派连坐（唯一契约 r3）。"""
 
 
 
-from ming_sim.settlement.dossier import apply_dossier_promulgation
-import pytest
 
-from ming_sim.strict_types import validate_affected_parties
-from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import section, view
 
 def _roster():
     """主办倪元璐←委派徐光启（协办位，仅次责）；另有协办黄道周、知情王承恩。
@@ -33,7 +34,7 @@ def _executing_dossier(db, state, *, roster=None):
         participants=roster if roster is not None else _roster(),
     )
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id
 
 
@@ -82,6 +83,7 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
 
 
 
+
 @pytest.mark.parametrize("outcome,lead_tier,lead_status,lead_delta,delegator_delta", [
     ("failed", "主办", "active", -8, -4),
     ("transformed", "主办", "active", -8, -4),
@@ -119,7 +121,7 @@ def test_adapter_replay_is_idempotent_on_joint_liability_rows(
     assert {e["target"] for e in first_edges} == {
         name for name, delta in (("倪元璐", lead_delta), ("徐光启", delegator_delta)) if delta
     }
-    assert db.get_decree_dossier(dossier_id)["execution_note"] == "初结"
+    assert db.dossiers.get(dossier_id)["execution_note"] == "初结"
 
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing' WHERE id=?", (dossier_id,),
@@ -154,10 +156,11 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     )
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] == "failed"
     assert _cost_events(db, dossier_id) == []
     assert db.get_relation_edge_events(event_kind="连坐") == []
+
 
 
 
@@ -180,7 +183,7 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
         }],
     )
     assert section(result, "dossier_executions").rejected
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
 
     # 全键合法但声明 roster 推不出的派系 → accept-and-ignore（不驱动机械额度）
@@ -211,6 +214,13 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
 
 
 
+
+
+
+
+
+
+
 def test_living_offstage_delegator_still_charged(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
@@ -221,7 +231,7 @@ def test_living_offstage_delegator_still_charged(game):
 
     assert _sat(db, "西学") == max(0, before - 4)
     targets = {
-        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        e["target"] for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert "徐光启" in targets
@@ -231,8 +241,8 @@ def test_direct_record_dossier_execution_does_not_trigger_joint_liability(game):
     """挂载点=适配器；record_dossier_execution 本身不扫/不扣连坐。"""
     db, state, _content = game
     dossier_id = _executing_dossier(db, state)
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         dossier_id, "failed", "直写终值", state.turn, close=True,
     )
     assert _cost_events(db, dossier_id) == []
-    assert db.get_relation_edge_events(event_kind="连坐") == []
+    assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []

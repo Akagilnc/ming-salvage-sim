@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1902：召对非流式路由退役后，测试改走唯一的流式入口。
 
 #1902 撤下 POST /api/audience/chat（非流式，drain stream 回 done 载荷）——前端自
@@ -5,7 +6,6 @@
 SSE 终态夹具；SSE 解析本身在 tests.sse_helpers（#1902 全仓单一真源）。
 """
 
-from __future__ import annotations
 
 from typing import Any
 

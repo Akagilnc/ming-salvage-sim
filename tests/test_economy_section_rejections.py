@@ -1,3 +1,4 @@
+from __future__ import annotations
 """economy_moves 段迁入逐项拒收契约（ADR 0008 决定 1，#14 economy 残留 / ADR 0012）。
 
 原先 `_clean_economy_moves`（cleaner，pre-apply）与 `_apply_economy_list`（applier）对
@@ -8,7 +9,6 @@
 从现役原子声明入口验证 applier 的拒收契约。
 """
 
-from __future__ import annotations
 
 from functools import partial
 

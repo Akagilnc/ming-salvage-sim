@@ -37,9 +37,9 @@ def _prepare_authority_change_item(
         dossier_id = _parse_sqlite_id(item.get("dossier_id"))
     except (TypeError, ValueError) as exc:
         raise AuthorityDataError(str(exc), category="missing_dossier_source") from exc
-    if dossier_id <= 0 or db.get_decree_dossier(dossier_id) is None:
+    if dossier_id <= 0 or db.dossiers.get(dossier_id) is None:
         raise AuthorityDataError("missing_dossier_source")
-    if not db.dossier_authorizes_effects(dossier_id):
+    if not db.dossiers.authorizes_effects(dossier_id):
         raise AuthorityDataError("dossier_not_effect_eligible")
     op = str(item.get("动作") or item.get("op") or "").strip()
     if op not in _AUTHORITY_GRANT_OPS | _AUTHORITY_REVOKE_OPS:
@@ -60,7 +60,7 @@ def _prepare_authority_change_item(
             "SELECT 1 FROM characters WHERE name=?", (holder_id,)
         ).fetchone():
             raise AuthorityDataError("授权对象不在人物档")
-        origin = db.find_authority_by_origin(
+        origin = db.characters.find_authority_by_origin(
             dossier_id, holder_id=holder_id, privilege=privilege, scope=scope,
         )
         if origin is not None:
@@ -88,7 +88,7 @@ def _prepare_authority_change_item(
             raise AuthorityDataError("授权回合非法") from None
         if expires_turn is not None and expires_turn < effective_turn:
             raise AuthorityDataError("授权失效回合不得早于生效回合")
-        existing = db.find_active_authority(
+        existing = db.characters.find_active_authority(
             state.turn, holder_id=holder_id, privilege=privilege, scope=scope,
         )
         if existing is not None:
@@ -109,7 +109,7 @@ def _prepare_authority_change_item(
         raise AuthorityDataError(str(exc), category="unknown_authority_id") from exc
     if authority_id <= 0:
         raise AuthorityDataError("unknown_authority_id")
-    record = db.get_authority(authority_id)
+    record = db.characters.get_authority(authority_id)
     if record is None:
         raise AuthorityDataError("unknown_authority_id")
     if bool(record.get("revoked")):
@@ -182,8 +182,8 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
         dossier_id = _parse_sqlite_id(text.split(":", 1)[1])
     except ValueError:
         return None
-    row = db.get_decree_dossier(dossier_id)
-    if row is None or not db.dossier_authorizes_effects(dossier_id):
+    row = db.dossiers.get(dossier_id)
+    if row is None or not db.dossiers.authorizes_effects(dossier_id):
         return None
     payload = row["payload"]  # GameDB.get_decree_dossier 已校验持久 JSON。
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":

@@ -1,15 +1,5 @@
 from ming_sim.settlement.dossier import apply_dossier_verdicts
 # #1504 typed covert-task contract fixtures (applier-native 万亩 / 实务事功).
-LIAO_PAY_COVERT_TASK = {
-    "kind": "核发辽饷",
-    "axes": ["实务事功"],
-    "direction": 1,
-    "delivery": {
-        "unit": "万两", "target_units": 1.0, "effect_sign": -1,
-        "purpose": "辽饷", "category": "军饷", "account": "国库",
-    },
-}
-
 
 TYPED_COVERT_TASK = {
     "kind": "清丈",
@@ -102,7 +92,7 @@ def promulgate_proposed_appointments(db, state, content):
     # #657 §C.8：midzhi 亦不附 affected_parties（不猜派）。
     verdicts = [
         {"dossier_id": row["id"], "decision": "promulgated"}
-        for row in db.list_decree_dossiers(status="proposed")
+        for row in db.dossiers.list_dossiers(status="proposed")
         if row["action_type"] == "appointment"
     ]
     apply_dossier_verdicts(db, state, verdicts, content=content)
@@ -121,7 +111,7 @@ def promulgated_policy_origin(db, state, token: str) -> str:
         payload={"token": token},
     )
     assert dossier_id > 0
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
 def create_issue_with_effect(db, state, title: str, effect: dict, *, content=None):
@@ -161,7 +151,7 @@ def executing_owned_policy(db, state, *, token: str, holder: str = ""):
         payload={"mode": "ordinary", "text": token},
     )
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id, holder
 
 def executing_rostered_policy(db, state, *, token: str, roster=None, decree_text=None):
@@ -179,7 +169,7 @@ def executing_rostered_policy(db, state, *, token: str, roster=None, decree_text
         participants=roster,
     )
     apply_dossier_promulgation(db, state, did, "promulgated")
-    assert db.get_decree_dossier(did)["status"] == "executing"
+    assert db.dossiers.get(did)["status"] == "executing"
     return did
 
 def executing_staged_policy(db, state, *, token: str, host: str = "倪元璐"):
@@ -234,7 +224,7 @@ def audit_policy_dossier(
         participants=[{"character_id": auditor, "tier": "主办"}],
     )
     apply_dossier_promulgation(db, state, aid, "promulgated")
-    db.add_dossier_links(aid, [{
+    db.dossiers.add_links(aid, [{
         "target_dossier_id": int(subject_id),
         "relation_type": SUPERVISION_RELATION,
         "note": note if note is not None else f"稽核案卷{subject_id}",
@@ -248,8 +238,8 @@ def recorded_executing_policy(
         state, action_type="policy", decree_text=decree_text,
         target_kind=target_kind, target_id=target_id,
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.transition(dossier_id, "executing")
     return dossier_id
 
 from ming_sim.supervision import SUPERVISION_RELATION

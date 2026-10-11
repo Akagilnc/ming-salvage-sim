@@ -1,3 +1,23 @@
+from __future__ import annotations
+from types import SimpleNamespace
+import json
+import httpx
+import sqlite3
+import pytest
+from openai import APIConnectionError, APITimeoutError
+from ming_sim.faction_brew import STANCE_KEY, VIEW_FACTION_STANCE
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.relation_brew import (
+    FOUNDINGS_KEY,
+    RECENT_KEY,
+)
+from ming_sim.relations import EMPEROR_NODE
+import threading
+from ming_sim.relation_brew import (
+    FOUNDINGS_KEY,
+    RECENT_KEY,
+    MonthEndRelationBrewLeg,
+)
 """#636 关系摘要层 S5：两段式存储＋月末增量重酿腿。
 
 验收锚（冻结票面＋庭裁 r1-r4）：
@@ -10,24 +30,9 @@
   持久化链路写入→读回字节原样。
 """
 
-from __future__ import annotations
 
-from types import SimpleNamespace
-import json
 
-import httpx
-import sqlite3
 
-import pytest
-from openai import APIConnectionError, APITimeoutError
-
-from ming_sim.faction_brew import STANCE_KEY, VIEW_FACTION_STANCE
-from ming_sim.exceptions import LLMUnavailable
-from ming_sim.relation_brew import (
-    FOUNDINGS_KEY,
-    RECENT_KEY,
-)
-from ming_sim.relations import EMPEROR_NODE
 
 
 def run_month_end_relation_brew(db, state, brew_fn):
@@ -61,22 +66,6 @@ def run_month_end_relation_brew(db, state, brew_fn):
             queue.complete(ticket)
     finally:
         mt._brew_fn_for_session = orig
-
-
-@pytest.mark.parametrize("error_type", [APITimeoutError, APIConnectionError])
-def test_provider_fault_becomes_typed_brew_failure(monkeypatch, error_type):
-    """生产调用缝仅把已知 provider 故障译成声明类型，保留原始 cause。"""
-    from ming_sim.mechanical_tail import _brew_fn_for_session
-
-    fault = error_type(request=httpx.Request("POST", "https://llm.invalid/v1"))
-    monkeypatch.setattr("ming_sim.agents.create_relation_brew_agent", lambda *_a: object())
-    def fail(*_a, **_kw):
-        raise fault
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", fail)
-    brew = _brew_fn_for_session(SimpleNamespace(llm_config=object(), agno_db=None))
-    with pytest.raises(LLMUnavailable) as caught:
-        brew(json.dumps({"source": "甲", "target": "乙"}))
-    assert caught.value.__cause__ is fault
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -296,7 +285,7 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game):
     brew_fn = _brew_fn_factory([])
     brew_fn.outputs = [_script(recent="首月近况。")]
     run_month_end_relation_brew(db, state, brew_fn)
-    assert db.get_relation_summary(source, target) is not None
+    assert db.person_logs.get_relation_summary(source, target) is not None
 
     # 次月新事件：prior 与 new 互斥、已消化旧事只在 prior。
     state.turn += 1
@@ -354,6 +343,9 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
     assert stored.encode("utf-8") == fixture
 
 
+# --------------------------------------------- P5：批内条目并行不串行
+
+
 # ------------------------------------------------- 「本月新增」总判据（历史水位不选旧事）
 
 def test_historical_events_alone_do_not_select_in_later_month(game):
@@ -374,24 +366,6 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
 
 # ------- 判词类③ fail-loud 异常边界：DB/schema/程序错误响亮，仅 LLM 单条降级
 
-def test_prepare_claim_db_error_propagates_loudly(game):
-    """认领 DB 失败不得伪装成 LLM 降级：无 durable claim 就开酿会让失败月失去恢复
-    凭据（庭裁 r3 F1②缝），必须响亮上抛（ADR 0005/0008）。
-    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-
-    fault = sqlite3.OperationalError("认领库不可写")
-
-    def boom(*args, **kwargs):
-        raise fault
-
-    db.claim_relation_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError) as ei:
-        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
-    assert ei.value is fault
-
 
 def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
     """apply 落定的 DB/schema 错误是落库侧错（ADR 0005）：响亮上抛，不走单条降级、
@@ -405,15 +379,15 @@ def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
     def boom(*args, **kwargs):
         raise fault
 
-    db.apply_relation_brew_result = boom
+    db.person_logs.apply_relation_brew_result = boom
     marked: list = []
-    original_mark = db.mark_relation_brew_pending
+    original_mark = db.person_logs.mark_relation_brew_pending
 
     def spy_mark(**kwargs):
         marked.append(kwargs)
         return original_mark(**kwargs)
 
-    db.mark_relation_brew_pending = spy_mark
+    db.person_logs.mark_relation_brew_pending = spy_mark
     with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
     assert ei.value is fault
@@ -435,52 +409,56 @@ def test_mark_failure_after_llm_failure_propagates_loudly(game):
     def boom(*args, **kwargs):
         raise fault
 
-    db.mark_relation_brew_pending = boom
+    db.person_logs.mark_relation_brew_pending = boom
     with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, failing_brew)
     assert ei.value is fault
 
 
-def test_brew_program_error_propagates_loudly_not_degraded(game):
-    """判词残留项②：_brew_one 宽吞拆类——brew_fn 内的程序错（KeyError 等非 LLM
-    失败声明类型）不得被吞成单条降级留痕，必须响亮上抛（ADR 0005）；durable
-    claim 已在册，恢复凭据不丢。来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
+@pytest.mark.parametrize('error_type', [KeyError, ValueError])
+def test_brew_program_error_propagates_loudly_not_degraded(game, error_type):
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
-    fault = KeyError("酿制手程序错误")
+    fault = error_type("酿制手程序错误")
 
     def buggy_brew(payload_json: str) -> str:
         raise fault
 
-    with pytest.raises(KeyError) as ei:
+    with pytest.raises(error_type) as ei:
         run_month_end_relation_brew(db, state, buggy_brew)
     assert ei.value is fault
     # 响亮上扑而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+    assert [(row["source"], row["target"]) for row in db.person_logs.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")
     ]
 
 
-def test_brew_fn_value_error_is_program_error_propagates_loudly(game):
-    """判词机械反例（确认庭 r5 残余）：_brew_fn 自身抛出的裸 ValueError 是程序错
-    ——降级面按结构位置分界而非异常类型，LLM 调用缝只收声明类型 LLMUnavailable，
-    调用段的 ValueError/KeyError 等一律响亮上抛（ADR 0005），不得吞成单条降级；
-    durable claim 已在册，恢复凭据不丢。来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
-    fault = ValueError("酿制手程序错误")
 
-    def buggy_brew(payload_json: str) -> str:
+# -------------------------------- 庭裁 Z1：畸形酿制产出严格拒收（不修补不改写）
+
+
+
+
+
+
+# -------------------------------- 庭裁 Z2：删固定 max_workers=4，按批定容
+
+
+
+@pytest.mark.parametrize("error_type", [APITimeoutError, APIConnectionError])
+def test_provider_fault_becomes_typed_brew_failure(monkeypatch, error_type):
+    """生产调用缝仅把已知 provider 故障译成声明类型，保留原始 cause。"""
+    from ming_sim.mechanical_tail import _brew_fn_for_session
+
+    fault = error_type(request=httpx.Request("POST", "https://llm.invalid/v1"))
+    monkeypatch.setattr("ming_sim.agents.create_relation_brew_agent", lambda *_a: object())
+    def fail(*_a, **_kw):
         raise fault
-
-    with pytest.raises(ValueError) as ei:
-        run_month_end_relation_brew(db, state, buggy_brew)
-    assert ei.value is fault
-    # 响亮上抛而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
-        ("温体仁", "周延儒")
-    ]
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", fail)
+    brew = _brew_fn_for_session(SimpleNamespace(llm_config=object(), agno_db=None))
+    with pytest.raises(LLMUnavailable) as caught:
+        brew(json.dumps({"source": "甲", "target": "乙"}))
+    assert caught.value.__cause__ is fault

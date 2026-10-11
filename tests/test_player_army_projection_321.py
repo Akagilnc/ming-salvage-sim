@@ -1,13 +1,8 @@
-"""#321 — 玩家军心/士气/欠饷投影：复用 derive + qualitative/arrears helper，四链去 raw。"""
 from __future__ import annotations
-
 from ming_sim.applier import Provenance
-
 import sqlite3
 from types import SimpleNamespace
-
 import pytest
-
 import web_app
 from ming_sim.db import (
     GameDB,
@@ -15,9 +10,19 @@ from ming_sim.db import (
 )
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
+from ming_sim.db import GameDB
+"""#321 — 玩家军情结构化投影：真实载荷与地图节点不暴露 raw 军情。"""
+
+
+
 
 ARMY = "guanning"
-_RAW_KEYS = frozenset({"morale", "loyalty", "arrears"})
+
+
+_RAW_KEYS = frozenset({
+    "morale", "loyalty", "arrears",
+    "province_pay_arrears", "central_pay_arrears",
+})
 _SIT_KEYS = frozenset({"mutiny_tier", "morale_text", "arrears_text"})
 _MUTINY_ORDINAL_KEYS = frozenset(
     {
@@ -31,10 +36,36 @@ _MUTINY_ORDINAL_KEYS = frozenset(
         "mutiny_state",
     }
 )
+# 六档真值表（票面 latch / 边界 / probation；含全部明确边界样本）
+_TIER_CASES = (
+    # (is_mutinied, loyalty, probation, expected_tier)
+    (1, 100, 0, "哗变"),  # latch L=100
+    (1, 100, 1, "哗变"),  # latch 盖过 probation
+    (1, 95, 0, "哗变"),
+    (1, 10, 3, "哗变"),
+    (0, 39, 0, "鼓噪"),
+    (0, 19, 0, "鼓噪"),  # L<20 未闩 → 鼓噪，非哗变
+    (0, 30, 1, "鼓噪"),  # probation 不覆盖低档
+    (0, 40, 0, "不满"),
+    (0, 50, 1, "不满"),  # probation 不覆盖中低档
+    (0, 59, 0, "不满"),
+    (0, 60, 1, "不满"),  # probation 只挡回正常
+    (0, 80, 2, "不满"),
+    (0, 60, 0, "一般"),
+    (0, 69, 0, "一般"),
+    (0, 70, 0, "优秀"),
+    (0, 79, 0, "优秀"),
+    (0, 80, 0, "死忠"),
+    (0, 100, 0, "死忠"),
+)
+
+_TIER_IDS = [
+    f"L{loyalty}-latch{latch}-p{prob}-{tier}"
+    for latch, loyalty, prob, tier in _TIER_CASES
+]
 
 
 def _configure(db) -> None:
-    # #1835 C1：现役唯一 substrate_hub 军饷路径。
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
@@ -44,7 +75,6 @@ def _configure(db) -> None:
         (ARMY,),
     )
     db.conn.commit()
-
 
 
 def _write_mutiny_fixture(
@@ -59,16 +89,15 @@ def _write_mutiny_fixture(
     redemption_count: int,
     morale: int = 55,
 ) -> None:
-    central = arrears
+    central = arrears  # active hub source-split seed
     db.conn.execute(
-        """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
+        """UPDATE armies SET loyalty=?, is_mutinied=?,
            mutiny_count=?, mutiny_probation=?, full_pay_streak=?, redemption_count=?,
            morale=?, province_pay_arrears=0, central_pay_arrears=?,
            manpower=10000, owner_power='ming'
            WHERE id=?""",
         (
             loyalty,
-            arrears,
             is_mutinied,
             mutiny_count,
             mutiny_probation,
@@ -82,10 +111,8 @@ def _write_mutiny_fixture(
     db.conn.commit()
 
 
-
 def _payload_by_id(db):
     return {p["id"]: p for p in db.army_payload()}
-
 
 
 def _web_runtime(db, state, content):
@@ -118,14 +145,12 @@ def _web_runtime(db, state, content):
     return runtime
 
 
-
 def _find_army_in_map_nodes(nodes, army_id: str = ARMY):
     for node in nodes:
         for army in node.get("armies") or []:
             if army.get("id") == army_id:
                 return army
     raise AssertionError(f"map_nodes 未挂载军队 {army_id}")
-
 
 
 def _assert_structured_situation(card: dict, label: str, *, expected_tier: str | None = None) -> None:
@@ -140,6 +165,8 @@ def _assert_structured_situation(card: dict, label: str, *, expected_tier: str |
     assert isinstance(card["arrears_text"], str) and card["arrears_text"].strip()
     if expected_tier is not None:
         assert card["mutiny_tier"] == expected_tier, f"{label}.mutiny_tier"
+
+
 
 
 

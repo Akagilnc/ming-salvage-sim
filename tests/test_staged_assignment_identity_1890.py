@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1890 票面验收面：交办暂存的统一身份与整轮撤回逆转（db 层可达部分）。
 
 全部经真实入口 ``dispatch_declaration`` / ``undo_chat_turn``，不桩被验机制本身：
@@ -17,7 +18,6 @@
 ``tests/test_audience_undo_506.py`` 在同一接缝上证明，本文件不另建平行证明。
 """
 
-from __future__ import annotations
 
 from ming_sim.settlement.dossier import apply_dossier_verdicts
 import json
@@ -58,9 +58,11 @@ def _finish_turn(db, state, minister: str, ctid: int, question: str) -> None:
     撤回闸只认 active 轮，所以端到端用例必须经这条真实升级路径，不能
     直接改 status 假装轮已完成。
     """
-    user_id = db.append_chat_message(minister, int(state.turn), "user", question)
-    reply_id = db.append_chat_message(minister, int(state.turn), "minister", "遵旨。")
-    db.update_chat_turn_messages(
+    user_id = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="user", content=question)
+    db.conn.commit()
+    reply_id = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="minister", content="遵旨。")
+    db.conn.commit()
+    db.reign.update_chat_turn_messages(
         int(ctid), user_message_id=user_id, minister_message_id=reply_id,
     )
     assert db.conn.execute(
@@ -220,7 +222,7 @@ def test_voided_assignment_cannot_be_approved_after_retraction(game):
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "voided"
-    assert action_id not in [r["id"] for r in db.list_night_approved_pending(night_id)]
+    assert action_id not in [r["id"] for r in db.dossiers.list_night_approved_pending(night_id)]
 
 def test_revision_keeps_original_source_turn_and_undo_restores_it(game):
     """改稿不换身份，且改稿真的改了、撤回真的还原了。
@@ -478,9 +480,7 @@ def test_undo_deletes_only_this_turns_committed_draft_directive(game):
     ).fetchone()["id"])
     # 无关 draft：同回合、非召对来源的拟旨候选（走 add_directive 那条无 pending
     # 的老路），撤回不得波及。
-    other_draft = db.add_directive(
-        state, None, "过月世界段拟的旨", "大臣拟旨", actor=minister, status="draft",
-    )
+    other_draft = db.issues.add_directive(state.turn, state.year, state.period, None, '过月世界段拟的旨', '大臣拟旨', actor=minister, status='draft')
     db.commit_pending_actions(
         state, content=content, action_ids=[staged_id], directive_status="draft",
     )
@@ -518,7 +518,7 @@ def _promulgated_policy_origin(db, state, *, token: str) -> str:
         payload={"token": token},
     )
     assert dossier_id > 0
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
 # ── ADR 0142：交办机械事实不从自由散文反推 ────────────────────────────
@@ -567,7 +567,7 @@ def _promulgate_assignment(game, label: str, *, text: str, **assignment_fields):
     ).fetchone()
     assert directive is not None, "交办收夜后没成拟旨行"
     db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(int(directive["id"]))
+    dossier = db.dossiers.get_for_directive(int(directive["id"]))
     assert dossier is not None, "拟旨没成案卷"
     apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],

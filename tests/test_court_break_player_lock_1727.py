@@ -1,3 +1,14 @@
+from __future__ import annotations
+import asyncio
+import json
+from types import SimpleNamespace
+import httpx
+import web_app
+from ming_sim import audience_night as an
+from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.sse_helpers import parse_sse_event_pairs as _parse_sse_chunk
+import pytest
+from tests.conftest import stub_scene_agent
 """#1727：court_break 后 done→end 窗口内召对写入口必须落幕。
 
 常绿验收（fix 后一直绿）：
@@ -9,17 +20,8 @@
 D2/D3 是病因钉，修好后不要求常绿——本文件不收录。
 """
 
-from __future__ import annotations
 
-import asyncio
-import json
-from types import SimpleNamespace
 
-import httpx
-
-import web_app
-from ming_sim import audience_night as an
-from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 
@@ -34,6 +36,16 @@ class _StreamFarewellAgent:
 
 
 
+def _active_minister(game) -> str:
+    for name, ch in game.content.characters.items():
+        if getattr(ch, "power_id", "ming") != "ming":
+            continue
+        if getattr(ch, "office_type", "") == "后宫":
+            continue
+        if game.db.characters.get_character_status(name)[0] == "active":
+            return name
+    raise AssertionError("no active ming minister")
+
 
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
@@ -43,12 +55,9 @@ def _client() -> httpx.AsyncClient:
 
 
 
-from tests.sse_helpers import parse_sse_event_pairs as _parse_sse_chunk
-
 
 def _named_scene_beats(scroll) -> list[str]:
     return [m["beat"] for m in scroll if m["beat"] not in {"coda", ""}]
-
 
 
 def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch):
@@ -140,15 +149,3 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
         and m.get("beat") == "dialogue"
         for m in scroll
     ), scroll
-
-
-
-def _active_minister(game) -> str:
-    for name, ch in game.content.characters.items():
-        if getattr(ch, "power_id", "ming") != "ming":
-            continue
-        if getattr(ch, "office_type", "") == "后宫":
-            continue
-        if game.db.get_character_status(name)[0] == "active":
-            return name
-    raise AssertionError("no active ming minister")

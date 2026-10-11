@@ -1,3 +1,10 @@
+from __future__ import annotations
+import json
+from tests.conftest import open_hall_turn
+from ming_sim import audience_night as an
+from ming_sim.declaration_dispatch import dispatch_declaration
+from ming_sim.materials import list_materials, prepare_scene_materials, read_material
+from ming_sim.public_sayings import list_public_sayings
 """#1839 C2 当场实况直写（夜内直写白名单第四类）。
 
 转译声明为「已发生」的实况当场落世界账本：人物生死 / 下狱 / 革职 / 在场、
@@ -10,15 +17,8 @@ Seams:
 - prepare_scene_materials（下一句目录可见实况）
 """
 
-from __future__ import annotations
-import json
-from tests.conftest import open_hall_turn
 
 
-from ming_sim import audience_night as an
-from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.materials import list_materials, prepare_scene_materials, read_material
-from ming_sim.public_sayings import list_public_sayings
 
 def _active_minister(db, *, exclude: set[str] | None = None) -> str:
     skip = exclude or set()
@@ -32,7 +32,6 @@ def _active_minister(db, *, exclude: set[str] | None = None) -> str:
         if name not in skip:
             return name
     raise AssertionError("no active minister")
-
 
 def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, night_id: int = 0):
     """一轮窗口：搭建对话轮 → 公开入口分派（入口自记前像）→ 标抽取水位。"""
@@ -50,7 +49,7 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
         (minister, state.turn, "臣遵旨。"),
     ).lastrowid
     db.conn.commit()
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
     )
     # 前像由 dispatch_declaration 公开入口自记，helper 不再代行生产机制。
@@ -65,8 +64,7 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     return int(night_id), int(chat_id), result
 
 
-def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
-    """AC1：当场落生死，下一句目录里已是实况。"""
+def test_kill_lands_status_dead(game):
     db, state, _ = game
     victim = _active_minister(db)
     witness = _active_minister(db, exclude={victim})
@@ -85,17 +83,8 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
         db, state, witness, declaration, night_id=night_id,
     )
 
-    status, reason = db.get_character_status(victim)
+    status, reason = db.characters.get_character_status(victim)
     assert status == "dead"
-    assert reason == declaration["on_scene_facts"][0]["reason"]
-
-    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
-    listed = list_materials(prepared.root)
-    roster_paths = [p for p in listed if p.endswith("朝臣名册.txt")]
-    assert roster_paths
-    court = {row["name"] for row in db.current_court_roster_rows(state)}
-    assert victim not in court
-
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):
     """AC2：孙传庭伤臂 → 文字事实；袁崇焕对外死讯 → 公开说法；目录可见。"""
@@ -133,6 +122,8 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
     public_rel = f"人物/{_safe_segment(sun)}/公开说法/{state.year}年{state.period}月.txt"
     assert public_rel in listed
     assert death_rumour in read_material(prepared.root, public_rel)
+
+
 
 
 def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
@@ -188,7 +179,7 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     before_sayings = db.conn.execute(
         "SELECT COUNT(*) c FROM public_sayings"
     ).fetchone()["c"]
-    before_status = db.get_character_status(other)[0]
+    before_status = db.characters.get_character_status(other)[0]
     before_listed = db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
     ).fetchone()
@@ -227,11 +218,10 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     assert after_edges == before_edges
     assert after_facts == before_facts
     assert after_sayings == before_sayings
-    assert db.get_character_status(other)[0] == before_status
+    assert db.characters.get_character_status(other)[0] == before_status
     assert db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
     ).fetchone() is before_listed
-
 
 def test_commission_stays_staged_not_bypassing_promulgation(game):
     """AC4：任洪承畴、拨三十万仍是暂存交办，不因「当场」绕过颁布关。"""

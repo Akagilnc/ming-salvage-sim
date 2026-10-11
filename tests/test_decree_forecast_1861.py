@@ -1,6 +1,6 @@
+from __future__ import annotations
 """#1861：召对应允后的夜里逐旨预推，只进暂存，不进账本与可读目录。"""
 
-from __future__ import annotations
 
 import json
 import shutil
@@ -246,7 +246,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     assert stored[0].verdict["decision"] == "promulgated"
     assert stored[0].questions and stored[0].questions[0]["title"] == "请旨"
     assert isinstance(stored[0].forecast_text, str)
-    assert db.list_pending_decisions(state.turn) == []
+    assert db.issues.list_pending_decisions(state.turn) == []
     assert policies and policies[0].retry_429 is False and policies[0].max_attempts == 3
     assert judge_policies and all(
         item is not None and item.retry_429 is False and item.max_attempts == 3
@@ -343,7 +343,7 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     assert stored[0].questions is None
     assert stored[0].forecast_text is None
     assert stored[0].declaration == {}
-    assert db.list_pending_decisions(state.turn) == []
+    assert db.issues.list_pending_decisions(state.turn) == []
     assert db.conn.execute(
         "SELECT 1 FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone() is None
@@ -445,7 +445,7 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
 def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
     db, state, content = game
     state.turn += 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ids = []
     pending_ids = []
     minister = next(iter(content.characters.values()))
@@ -515,10 +515,14 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         assert len(fresh) == 1 and fresh[0].status == "staged"
         assert fresh[0].verdict["decision"] == "promulgated"
         assert dossier_id in fresh[0].visible_refs["dossiers"]
-    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
+    from ming_sim.month_chain import _settle_edicts
 
-    held_refs = [held_dossier_decree_ref(dossier_id) for dossier_id in ids]
-    settle_staged_declarations_in_decree_order(db, state, held_refs)
+    chain = {}
+    _settle_edicts(sess, chain=chain)
+    assert all(
+        db.dossiers.get(dossier_id)["promulgation_decision"] == "promulgated"
+        for dossier_id in ids
+    )
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)
@@ -526,13 +530,13 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         assert db.staged_declarations.is_settled(held_ref)
 
     # 再次进入月链结算：留中案卷仍保持 dossier 身份，旧 pending-action 暂存不被冒名结算
-    settle_staged_declarations_in_decree_order(db, state, held_refs)
+    _settle_edicts(sess, chain=chain)
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)
         assert not db.staged_declarations.is_settled(stale_ref)
         assert db.staged_declarations.is_settled(held_ref)
-        dossier = db.get_decree_dossier(dossier_id)
+        dossier = db.dossiers.get(dossier_id)
         assert forecast_mod.decree_ref_for_dossier(db, dossier) == held_ref
     late = db.create_decree_dossier(
         state, action_type="policy", decree_text="预推后", target_kind="issue",

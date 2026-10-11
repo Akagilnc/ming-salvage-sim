@@ -617,7 +617,7 @@ def _fiscal_levy_reinstate_abolished(
     if not stem or seeded is None:
         # 非 seed 目录内的 dynamic 赋饷无默认值可依：不臆造基线，留给「查无记录=在征」。
         return False
-    catalog = db.get_fiscal_config()
+    catalog = db.fiscal_config.values()
     present = [key for key in keys if key in catalog]
     if len(present) == len(set(keys)):
         # 调零落法：行在册，把被调零的键调回**该键自己**的 seed 值（与调零罢同一对

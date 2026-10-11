@@ -1,6 +1,12 @@
 """固定月度财政流与数值/经济/派系 delta 应用。L6。"""
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.building.store import BuildingStore
+from ming_sim.entities.social_class.store import ClassStore
+from ming_sim.entities.fiscal_container.store import FiscalContainerStore
+from ming_sim.entities.region.store import RegionStore
+from ming_sim.entities.reign_state.store import ReignStateStore
 
 from ming_sim.models import _load_durable_json_object
 
@@ -133,19 +139,11 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
 def _fiscal_container_values_when_complete(
     db: GameDB, keys: Tuple[str, ...]
 ) -> Optional[Dict[str, float]]:
-    rows = db.conn.execute(
-        f"SELECT key, value FROM fiscal_containers WHERE key IN ({','.join('?' for _ in keys)})",
-        keys,
-    ).fetchall()
-    if len(rows) != len(keys):
-        return None
-    values = {key: 0.0 for key in keys}
-    values.update({str(row["key"]): float(row["value"] or 0.0) for row in rows})
-    return values
+    return FiscalContainerStore(db.conn).values_when_complete(keys)
 
 
 def _fiscal_config_rate(db: GameDB, key: str) -> float:
-    cfg = db.get_fiscal_config()
+    cfg = db.fiscal_config.values()
     minimum = db.fiscal_config_minimum_value(key)
     if key not in cfg and (
         minimum is not None or db.fiscal_config_loss_rate_pair(key) is not None
@@ -235,34 +233,6 @@ def _substrate_hub_budget_income_lines(
     return income, expense
 
 
-def _set_fiscal_container(db: GameDB, key: str, value: float, note: str) -> None:
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_containers (key, value, note)
-        VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = excluded.value,
-          note = excluded.note,
-          updated_at = CURRENT_TIMESTAMP
-        """,
-        (key, float(value), note),
-    )
-
-
-def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None:
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_containers (key, value, note)
-        VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = fiscal_containers.value + excluded.value,
-          note = excluded.note,
-          updated_at = CURRENT_TIMESTAMP
-        """,
-        (key, float(delta), note),
-    )
-
-
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
 # budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
 # 税收走 substrate_hub 预算投影；军饷预算只列京运补与中央份额拟拨，
@@ -281,7 +251,7 @@ def compute_budget_lines(
     建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。
     现役仅 substrate_hub 路径。"""
-    cfg = db.get_fiscal_config()
+    cfg = db.fiscal_config.values()
     hub_income_lines, hub_expense_lines = _substrate_hub_budget_income_lines(
         db, state, project_missing=project_substrate_hub
     )
@@ -548,7 +518,7 @@ def _central_dues_with_haircut(
     返回（折后中央份额 Due by army id，免除额 by army id——仅 >0 者入）。"""
     from ming_sim.pay_order import haircut_due, resolve_haircut_bp
 
-    config = db.get_fiscal_config()
+    config = db.fiscal_config.values()
     turn = int(state.turn)
     dues: Dict[str, float] = {}
     exempts: Dict[str, float] = {}
@@ -614,7 +584,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         """
         SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,
                pay_source_region, province_pay_share, central_pay_share,
-               province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
+               province_pay_arrears, central_pay_arrears, consecutive_pay_shortfall_months, is_tusi, self_funded_pay
         FROM armies
         WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
           AND central_pay_share > 0
@@ -648,24 +618,19 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         raise _FixedFiscalAbort(
             f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
         ) from exc
-    _add_fiscal_container(
-        db, "C_京运克扣", hub_outbound.central_transport_human_loss,
+    db.fiscal_containers.add("C_京运克扣", hub_outbound.central_transport_human_loss,
         "京运转运人为克扣（可追赃）",
     )
-    _add_fiscal_container(
-        db, "C_京运运损", hub_outbound.central_transport_sink_loss,
+    db.fiscal_containers.add("C_京运运损", hub_outbound.central_transport_sink_loss,
         "京运转运自然运损（sink）",
     )
-    _set_fiscal_container(
-        db, "hub_京运损耗", hub_outbound.central_transport_loss,
+    db.fiscal_containers.replace("hub_京运损耗", hub_outbound.central_transport_loss,
         "本月京运转运损耗",
     )
-    _set_fiscal_container(
-        db, "hub_京运实拨", hub_outbound.jingyun_paid_total,
+    db.fiscal_containers.replace("hub_京运实拨", hub_outbound.jingyun_paid_total,
         "本月京运补实拨",
     )
-    _set_fiscal_container(
-        db, "hub_中央军饷实拨", hub_outbound.central_paid_total,
+    db.fiscal_containers.replace("hub_中央军饷实拨", hub_outbound.central_paid_total,
         "本月中央军饷实拨",
     )
     try:
@@ -833,12 +798,12 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 f"substrate_hub 太仓入库 hub 分配失败：{exc}"
             ) from exc
         central_loss = taicang_human_loss + taicang_sink_loss
-        _add_fiscal_container(db, "C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
-        _add_fiscal_container(db, "C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
-        _set_fiscal_container(db, "hub_省级起运到京", remittance_amount, "Σ本月明控省起运到京")
-        _set_fiscal_container(db, "hub_盐税解京", salt_amount, "明控省盐税中央旁路")
-        _set_fiscal_container(db, "hub_商税解京", commerce_amount, "明控省商税中央旁路")
-        _set_fiscal_container(db, "hub_太仓亏空", central_loss, "本月中央太仓亏空与挪用")
+        db.fiscal_containers.add("C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
+        db.fiscal_containers.add("C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
+        db.fiscal_containers.replace("hub_省级起运到京", remittance_amount, "Σ本月明控省起运到京")
+        db.fiscal_containers.replace("hub_盐税解京", salt_amount, "明控省盐税中央旁路")
+        db.fiscal_containers.replace("hub_商税解京", commerce_amount, "明控省商税中央旁路")
+        db.fiscal_containers.replace("hub_太仓亏空", central_loss, "本月中央太仓亏空与挪用")
 
         for category, raw_amount, amount, reason in (
             ("起运", raw_remittance_amount, remittance_amount, f"{TURN_UNIT}省级起运入京"),

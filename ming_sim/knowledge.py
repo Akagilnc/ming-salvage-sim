@@ -5,6 +5,12 @@ ledgers. Current office accounts are rebuilt from world state on every read.
 """
 
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character_knowledge.store import CharacterKnowledgeStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.reign_state.store import ReignStateStore
+from ming_sim.applier import load_stored_list
 
 import json
 import re
@@ -45,9 +51,7 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
 
     raw: object = None
     saw_db_row = False
-    row = db.conn.execute(
-        "SELECT audiences FROM events WHERE id=?", (origin_ref,),
-    ).fetchone()
+    row = db.issues.read_issue_audience_names((origin_ref,))
     if row is not None:
         saw_db_row = True
         raw = row["audiences"]
@@ -123,12 +127,12 @@ def origin_visible_to(
         return True
     if not character_name:
         return False
-    order = db.get_secret_order(order_id)
+    order = db.character_knowledge.get_secret_order(order_id)
     if order is None:
         return False
     if character_name == str(order["minister_name"]):
         return True
-    dossier = db.get_dossier_for_secret_order(order_id)
+    dossier = db.dossiers.get_for_secret_order(order_id)
     if dossier is not None and character_name in participant_roster_names(dossier["participant_roster"]):
         return True
     # Inquiry assignments are actual delegated handling, not a position grant.
@@ -170,7 +174,7 @@ def project_court_roster_rows(
 
 def _appointment_register(db: Any, state: Any) -> str:
     """吏部任免簿：当前在朝职名，不是派系底账。"""
-    rows = db.current_court_roster_rows(state)
+    rows = db.characters.current_court_rows(int(state.year), int(state.period))
     if not rows:
         return "任免簿：暂无。"
     return "任免簿：\n" + "\n".join(
@@ -203,9 +207,7 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
 
 
 def _army_register(db: Any) -> str:
-    rows = db.conn.execute(
-        "SELECT name,manpower FROM armies WHERE owner_power='ming' ORDER BY name"
-    ).fetchall()
+    rows = ArmyStore(db.conn).read_army_register()
     return "兵籍在册：\n" + "\n".join(
         f"{row['name']}：{int(row['manpower'])}人" for row in rows
     )
@@ -259,9 +261,7 @@ def current_character_office(
 ) -> tuple[str, str]:
     """Current durable (office, office_type); missing DB row falls back to seed character fields."""
     name = str(character_name or getattr(character, "name", "") or "")
-    current = db.conn.execute(
-        "SELECT office, office_type FROM characters WHERE name = ?", (name,),
-    ).fetchone()
+    current = CharacterStore(db.conn).read_current_character_office((name,))
     return (
         str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
         str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),
@@ -283,7 +283,7 @@ def _issue_audience_case_events(
     """
     known = set(known_source_ids or ())
     synthesized: list[Dict[str, object]] = []
-    active_issues = db.list_active_issues()
+    active_issues = db.issues.active_rows()
     for issue in active_issues:
         source_id = f"issue:{int(issue['id'])}"
         if source_id in known:
@@ -325,7 +325,7 @@ def build_character_knowledge(
     events = db._character_knowledge_events(character_name) if character_name else []
     public_events = db._character_knowledge_events("")
     # Issued directives are public; read their original records.
-    for directive in db.list_issued_directives():
+    for directive in db.issues.list_issued_directives():
         public_events.append({
             "turn": int(directive["turn"]), "year": int(directive["year"]),
             "period": int(directive["period"]), "kind": "public",
@@ -354,7 +354,7 @@ def build_character_knowledge(
     ]
     visible_public.extend(public_saying_events)
     visible_issues = []
-    for issue in db.list_active_issues():
+    for issue in db.issues.active_rows():
         if not origin_visible_to(db, issue["origin_ref"], character_name):
             continue
         source_id = f"issue:{issue['id']}"

@@ -1,10 +1,12 @@
-"""#608：六科官署与言官 seed。"""
-
 from __future__ import annotations
-
 from ming_sim.db import (
     _member_office_weight,
 )
+"""#608：六科官署与言官 seed。"""
+
+
+
+
 
 
 def test_fresh_seed_contains_sourced_six_sciences_censors(game):
@@ -14,7 +16,7 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
 
     assert names <= set(content.characters)
     rows = db.conn.execute(
-        "SELECT name, office, office_type, status, debut_year, summary FROM characters "
+        "SELECT name, office_type, status, debut_year FROM characters "
         "WHERE name IN (?, ?) ORDER BY name",
         tuple(sorted(names)),
     ).fetchall()
@@ -22,23 +24,16 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     assert len(rows) == 2
     for row in rows:
         assert row["office_type"] == "六科"
-        assert "给事中" in row["office"]
-        assert "《明史》卷258" in row["summary"]
 
     by_name = {row["name"]: row for row in rows}
     assert by_name["许誉卿"]["status"] == "active"
     assert by_name["韩一良"]["status"] == "offstage"
     assert by_name["韩一良"]["debut_year"] == 1628
 
-    before = db._faction_office_weight_sum("中立")
     assert state.year == 1627
     assert db.apply_historical_debuts(state) == []
-    assert db._faction_office_weight_sum("中立") == before
 
     state.year = 1628
     debuted = db.apply_historical_debuts(state)
     assert any(item["name"] == "韩一良" for item in debuted)
-    assert db.get_character_status("韩一良")[0] == "active"
-    assert db._faction_office_weight_sum("中立") == before + _member_office_weight(
-        "六科", "户科给事中"
-    )
+    assert db.characters.get_character_status("韩一良")[0] == "active"

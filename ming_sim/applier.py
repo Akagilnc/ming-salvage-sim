@@ -20,6 +20,161 @@ def safe_json_dumps(value: Any, **kwargs: Any) -> str:
     return json.dumps(value, **kwargs).encode("utf-8", "backslashreplace").decode("utf-8")
 
 
+class StoredDocumentError(Exception):
+    """Present durable JSON is corrupt or wrong-shaped.
+
+    Load-seam fault for already-persisted documents. Not a model/product
+    validation error: callers that isolate LLM ValueError must not catch this.
+    Blank/missing documents still resolve to ``blank`` and do not raise.
+    """
+
+
+def durable_int(
+    raw: object, *, label: str, blank: int | None = 0,
+) -> int:
+    """Read one integer from a durable column.
+
+    ``blank`` is the value for None/empty on *optional* columns (e.g. due_turn).
+    Pass ``blank=None`` for required columns: None/empty is StoredDocumentError,
+    not a silent 0. Present values reuse strict_int (reject bool/float/overflow).
+    """
+    if raw is None or raw == "":
+        if blank is None:
+            raise StoredDocumentError(f"{label} 损坏")
+        return int(blank)
+    from ming_sim.strict_types import strict_int
+
+    try:
+        return strict_int(raw)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StoredDocumentError(f"{label} 损坏") from exc
+
+
+def durable_float(
+    raw: object, *, label: str, blank: float | None = 0.0,
+    allow_nonfinite: bool = False,
+) -> float:
+    """Read one float from a durable column.
+
+    ``blank`` is the value for None/empty on *optional* columns.
+    Pass ``blank=None`` for required columns. Bool is always corruption.
+    Non-finite values raise unless ``allow_nonfinite`` (e.g. gone-fact difficulty).
+    """
+    import math
+
+    if raw is None or raw == "":
+        if blank is None:
+            raise StoredDocumentError(f"{label} 损坏")
+        return float(blank)
+    if isinstance(raw, bool):
+        raise StoredDocumentError(f"{label} 损坏")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise StoredDocumentError(f"{label} 损坏") from exc
+    if math.isfinite(value):
+        return float(value)
+    # 仅合法 +inf（gone 事实难度）；NaN / −inf 仍是损坏。
+    if allow_nonfinite and value == float("inf"):
+        return float(value)
+    raise StoredDocumentError(f"{label} 损坏")
+
+
+def coerce_beyond_intent_flag(value: object) -> int:
+    """闭世界肯定识别器：仅契约内肯定表示 →1；缺席/否定/空/畸形一律 →0。
+
+    肯定：True / 非零 int·float / 肯定串集 {"1","true","yes","on","是","有","真"}。
+    开放兜底永不得回归——畸形输入不得捏造肯定标记（0072/0118 真相层）。
+    Durable beyond_intent 列的唯一归一；Store 与写口共用，不经 GameDB 反向依赖。
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return 1 if int(value) != 0 else 0
+    text = str(value).strip().lower()
+    return 1 if text in {"1", "true", "yes", "on", "是", "有", "真"} else 0
+
+
+def load_stored_json(raw: object, *, label: str, blank: object = None) -> object:
+    """Read one durable JSON document.
+
+    Blank or missing text is the absent document (`blank`). A present value
+    that is not JSON raises StoredDocumentError; it is not rewritten empty.
+    """
+    if isinstance(raw, (dict, list)):
+        return raw
+    if raw is None:
+        return blank
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise StoredDocumentError(f"{label} 损坏") from exc
+    if not isinstance(raw, str):
+        raise StoredDocumentError(f"{label} 损坏")
+    if not raw.strip():
+        return blank
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise StoredDocumentError(f"{label} 损坏") from exc
+
+
+def load_stored_object(raw: object, *, label: str) -> dict:
+    """Durable JSON object. Blank is {}. A present non-object raises."""
+    value = load_stored_json(raw, label=label, blank={})
+    if not isinstance(value, dict):
+        raise StoredDocumentError(f"{label} 必须为对象")
+    return value
+
+
+def parse_engine_payload_json(
+    raw: object, *, surface: str = "payload_json",
+) -> dict:
+    """#624 / ADR 0005：引擎侧 payload 读路单一助手。
+
+    真空/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + StoredDocumentError。
+    """
+    from ming_sim.token_stats import tlog
+
+    try:
+        return dict(load_stored_object(raw, label=surface))
+    except StoredDocumentError as exc:
+        tlog(f"[{surface}] {exc}")
+        raise
+
+
+def load_stored_list(raw: object, *, label: str) -> list:
+    """Durable JSON list. Blank is []. A present non-list raises."""
+    value = load_stored_json(raw, label=label, blank=[])
+    if not isinstance(value, list):
+        raise StoredDocumentError(f"{label} 必须为名单")
+    return value
+
+
+def load_stored_object_list(raw: object, *, label: str) -> list[dict]:
+    """Already-decoded durable field: list of objects.
+
+    Blank/missing → []. A present non-list — including a JSON text string — is
+    corruption (no second json.loads). Top-level JSON documents still use
+    load_stored_list / load_stored_object at the document boundary.
+    """
+    from collections.abc import Mapping
+
+    if raw is None or raw == "":
+        return []
+    if not isinstance(raw, list):
+        raise StoredDocumentError(f"{label} 必须为名单")
+    out: list[dict] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise StoredDocumentError(f"{label} 成员须为对象")
+        out.append(dict(item))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 决定 2/8：事务边界 —— commit 暂停连接 + atomic 包裹
 # ---------------------------------------------------------------------------
@@ -438,6 +593,22 @@ class RejectionCollector:
         self._buffer.clear()
         self._flushed.clear()
         self._commit_rejections.clear()
+
+
+def list_rejection_reports_for_turn(conn: Any, turn: int) -> List[Any]:
+    """Read rejection_reports rows for one turn (owner read port; table may be absent)."""
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
+    ).fetchone()
+    if exists is None:
+        return []
+    return list(
+        conn.execute(
+            "SELECT section, item_json, reason, category, source FROM rejection_reports "
+            "WHERE turn=? ORDER BY id",
+            (int(turn),),
+        )
+    )
 
 
 def register_runtime_outcome_callbacks(

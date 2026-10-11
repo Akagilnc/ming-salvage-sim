@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1835 转译输出契约与分派器（C0，铺路）。
 
 受控声明桩（模拟转译 LLM 一次产出）直接喂 ``dispatch_declaration``，验证：
@@ -7,7 +8,6 @@
 召对与过月两处调用同一个 dispatch_declaration，没有第二份同构逻辑（AC4）。
 """
 
-from __future__ import annotations
 
 import json
 
@@ -327,7 +327,7 @@ def test_on_scene_person_status_change_lands_and_rejects_nonexistent_person(game
 
     assert len(result.on_scene_facts.applied) == 1
     assert len(result.on_scene_facts.rejected) == 1
-    status, _ = db.get_character_status(minister)
+    status, _ = db.characters.get_character_status(minister)
     assert status == "imprisoned"
 
 
@@ -366,7 +366,7 @@ def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game
     })
     assert bad.on_scene_facts.applied == []
     assert len(bad.on_scene_facts.rejected) == 1
-    status, _ = db.get_character_status(other_minister)
+    status, _ = db.characters.get_character_status(other_minister)
     assert status != "imprisoned"  # 拒收在变更发生前，不留半成品
 
 
@@ -393,7 +393,7 @@ def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_t
         }],
     })
     assert len(first.on_scene_facts.applied) == 1
-    status_before, _ = db.get_character_status(minister)
+    status_before, _ = db.characters.get_character_status(minister)
     assert status_before == "imprisoned"
 
     conflicting = dispatch_declaration(db, state, {
@@ -406,7 +406,7 @@ def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_t
     assert len(conflicting.on_scene_facts.rejected) == 1
     assert conflicting.on_scene_facts.rejected[0].category == "invalid_state"
 
-    status_after, _ = db.get_character_status(minister)
+    status_after, _ = db.characters.get_character_status(minister)
     assert status_after == "imprisoned"  # 没有被冲突项的「dead」半写进去
     row = db.conn.execute(
         "SELECT affair_id, status, office, status_reason, reason_code, loyalty, style, power_id "
@@ -810,9 +810,9 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
 
 def _emperor_turn(db, state, minister: str, text: str) -> int:
     """本轮口谕源轮（真表形）：用户消息先落，chat_turns 再绑 user_message_id。"""
-    mid = db.append_chat_message(minister, int(state.turn), "user", text)
+    mid = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role='user', content=text)
     ctid = db.create_chat_turn(state, minister, "test-sess", 0, status="active")
-    db.update_chat_turn_messages(ctid, user_message_id=int(mid))
+    db.reign.update_chat_turn_messages(ctid, user_message_id=int(mid))
     db.conn.commit()
     return int(ctid)
 
@@ -862,11 +862,11 @@ def test_new_secret_order_declaration_lands_through_the_single_write_mouth(game)
     assert int(payload["origin_chat_message_id"]) > 0  # 密言溯源钉在口谕源轮
 
     # 确认闸：未批红前不进真实密令表。
-    assert db.list_secret_orders() == []
+    assert db.character_knowledge.list_secret_orders() == []
 
     committed = db.commit_pending_actions(state, content=db.content, minister_name=minister)
     assert [(c["kind"], c["action"]) for c in committed] == [("secret_order", "新建")]
-    orders = db.get_active_secret_orders_for_minister(minister)
+    orders = db.character_knowledge.get_active_secret_orders_for_minister(minister)
     assert len(orders) == 1
     assert orders[0]["content"] == body
     # 批红后暂存行落定，且真实密令挂上本条暂存（#1376 回传同一 id）。
@@ -936,7 +936,7 @@ def test_secret_order_staging_and_landing_are_visible_only_to_handlers(game):
     )
     assert result.commissions.rejected == []
     db.commit_pending_actions(state, content=db.content, minister_name=minister)
-    order = db.get_active_secret_orders_for_minister(minister)[0]
+    order = db.character_knowledge.get_active_secret_orders_for_minister(minister)[0]
     for origin in (f"secret_order:{order['id']}", f"secret_order_brief:{order['id']}"):
         assert origin_visible_to(db, origin, minister)
         assert not origin_visible_to(db, origin, other)
@@ -976,7 +976,7 @@ def test_secret_order_binds_declared_affair_to_its_dossier(game):
     assert payload["affair_declaration"] == {"attach": "existing", "affair_id": affair.id}
 
     db.commit_pending_actions(state, content=db.content, minister_name=minister)
-    order = db.get_active_secret_orders_for_minister(minister)[0]
+    order = db.character_knowledge.get_active_secret_orders_for_minister(minister)[0]
     dossier = db.conn.execute(
         "SELECT affair_id FROM decree_dossiers WHERE secret_order_id=?",
         (int(order["id"]),),
@@ -1043,7 +1043,7 @@ def test_secret_order_empty_covert_task_is_rejected_with_canonical_rejection_rec
     ]
     # 批红后：坏密令从未进暂存闸，真实密令表只有独立交办那条的结果。
     db.commit_pending_actions(state, content=db.content, minister_name=minister)
-    assert db.list_secret_orders() == []
+    assert db.character_knowledge.list_secret_orders() == []
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM pending_actions WHERE kind='secret_order'",
     ).fetchone()["c"] == 0
@@ -1092,7 +1092,7 @@ def test_secret_order_title_lands_verbatim_through_the_real_write_mouth(game):
     )
     assert result.commissions.rejected == []
     db.commit_pending_actions(state, content=db.content, minister_name=minister)
-    order = db.get_active_secret_orders_for_minister(minister)[0]
+    order = db.character_knowledge.get_active_secret_orders_for_minister(minister)[0]
     assert order["title"] == title  # 含首尾空白与换行，未被 strip 篡改
 
 def test_effects_reach_accounting_mouth_without_preseeded_empty_shell(game, monkeypatch):

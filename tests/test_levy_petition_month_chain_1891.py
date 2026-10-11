@@ -1,10 +1,10 @@
+from __future__ import annotations
 """#1891 端到端：真实过月链上，请饷奏疏由世界段生成、经批红页由皇帝亲裁。
 
 只桩最外层模型调用。供料、案头、答复落账、转译与 applier 走生产路径。
 断言落在事件身份、闭集供料、终局、月份，以及已落的结构化账字段上。
 """
 
-from __future__ import annotations
 
 import json
 
@@ -63,7 +63,7 @@ def _prepare(db, state, content, monkeypatch, year=1631, period=1):
     issues.bind_content(content)
     state.year = year
     state.period = period
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
 def _install_model_boundary(
     monkeypatch, *, world_text, continue_text="遵旨。", declaration=None, world_log=None,
@@ -420,7 +420,7 @@ def test_no_levy_petition_means_no_extra_ask_and_no_new_run(game, monkeypatch):
     issues.bind_content(content)
     state.year = 1630
     state.period = 12
-    db.save_state(state)
+    db.reign.save_game_state(state)
     seen = _install_model_boundary(monkeypatch, world_text="本月无大事。")
     session = _make_session(db, state, content)
 

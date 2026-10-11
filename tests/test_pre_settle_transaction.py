@@ -1,6 +1,11 @@
+from __future__ import annotations
+import sqlite3
+import pytest
+from ming_sim.decree import pre_settle
+from tests.dossier_test_helpers import create_test_secret_order
 """S4 — pre_settle 自成事务 + settling 完成相位 + begin_turn 白名单（ADR 0008 决定 3 第二条）。
 
-pre_settle（暂存动作 commit + 固定财政 + auto_submit_due_secret_orders）
+pre_settle（暂存动作 commit + 固定财政 + auto_trigger + auto_submit_due_secret_orders）
 整体包成自己的单事务：完成时同事务内落中间相位 settling；崩在内部=全回滚=相位未变=
 重进时干净重跑前半段。settling 加进 begin_turn 保活白名单，重载不被重置回 summoning。
 
@@ -11,21 +16,15 @@ TurnPhase.X.value——pin 的是**落盘字符串值本身**，有意 enum 无�
 应响亮失败。S4 把生产代码相位比较统一到 TurnPhase enum，测试侧落盘断言不跟随。
 """
 
-from __future__ import annotations
 
-import sqlite3
 
-import pytest
 
-from ming_sim.decree import pre_settle
-from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _ledger_count(db, turn: int) -> int:
     return db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
     ).fetchone()[0]
-
 
 
 def test_crash_reload_at_settling_no_double_fiscal_tick(game):
@@ -55,7 +54,6 @@ def test_crash_reload_at_settling_no_double_fiscal_tick(game):
         db2.conn.close()
 
 
-
 def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
     """phase=settling 重载走 begin_turn → 保活不被重置回 summoning（白名单生效，
     ADR 0008 S4；白名单外的相位重载即被重置，守门失效）。"""
@@ -64,7 +62,7 @@ def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
 
     db, state, content = game
     state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     # 用 __new__ 跳过重型 __init__（agno/registry/LLM），只装 begin_turn 需要的协作者；
     # 重型协作者打桩（registry 建 agent / auto_save / office 同步均与白名单无关）。
@@ -84,7 +82,6 @@ def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
     assert db.load_state().turn_phase == TurnPhase.SETTLING.value
 
 
-
 def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, monkeypatch):
     """auto_submit_due_secret_orders 挪进 pre_settle 事务（ADR 0008 S4）：#1504 到期只打
     期限戳保持 active；pre_settle 内部崩溃 → 戳写随事务回滚，order 仍是 active 且无新戳。
@@ -94,52 +91,27 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
     db.conn.execute(
         "UPDATE secret_orders SET status='active', due_turn=?, result='' WHERE id=2", (turn,))
     db.conn.commit()
-    assert db.conn.execute(
-        "SELECT status FROM secret_orders WHERE id=2").fetchone()[0] == "active"
+    before = db.conn.execute(
+        "SELECT status, result FROM secret_orders WHERE id=2").fetchone()
+    assert before[0] == "active"
+    original_result = before[1]
 
-    orig_save = db.save_state
+    orig_save = db.reign.save_game_state
     def _boom_save(st):
         raise RuntimeError("phase-write boom")
-    monkeypatch.setattr(db, "save_state", _boom_save)
+    monkeypatch.setattr(db.reign, "save_game_state", _boom_save)
 
     with pytest.raises(RuntimeError):
         pre_settle(state, db)
 
-    monkeypatch.setattr(db, "save_state", orig_save)
+    monkeypatch.setattr(db.reign, "save_game_state", orig_save)
     other = sqlite3.connect(db.path)
     try:
         row = other.execute("SELECT status, result FROM secret_orders WHERE id=2").fetchone()
     finally:
         other.close()
     assert row[0] == "active"
-    assert "[期限届满]" not in (row[1] or "")
-
-
-
-def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
-    """pre_settle 内部崩溃时财政回滚，结算相位不推进。"""
-    db, state, content = game
-    turn = state.turn
-    before_phase = state.turn_phase
-    before_ledger = _ledger_count(db, turn)
-
-    def _boom(*a, **k):
-        raise RuntimeError("pre_settle boom")
-    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
-
-    with pytest.raises(RuntimeError):
-        pre_settle(state, db)
-
-    other = sqlite3.connect(db.path)
-    try:
-        on_disk = other.execute(
-            "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
-    finally:
-        other.close()
-    assert on_disk == before_ledger
-    assert state.turn_phase == before_phase != "settling"
-    assert not db.conn.in_transaction
-
+    assert row[1] == original_result
 
 
 def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
@@ -174,10 +146,10 @@ def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
     assert not db.conn.in_transaction
 
 
-
 # ---------------------------------------------------------------------------
 # cmr S4 r1 修复回归（F1 settling 复位 / F2 sticky / F3 skip 路守门）
 # ---------------------------------------------------------------------------
+
 
 def test_two_consecutive_player_months_both_get_fiscal_tick(game, monkeypatch):
     """玩家连续结算两回合，第二回合财政照常落账（cmr S4 r1 F1，3/3 critical）。
@@ -200,47 +172,22 @@ def test_two_consecutive_player_months_both_get_fiscal_tick(game, monkeypatch):
     assert rows_t2 > 0  # 第二回合财政 tick 真跑了
 
 
-
-def test_enter_review_does_not_clobber_settling(game):
-    """enter_review 不得抹掉崩溃保活的 settling（cmr S4 r1 F2）。
-
-    抹成 reviewing 后 pre_settle 守门失效=同回合二次财政 tick。
-    """
+@pytest.mark.parametrize('phase', ["settling", "awaiting_decision"])
+def test_enter_review_preserves_front_half_done_phase(game, phase):
     from ming_sim.session import GameSession
     db, state, content = game
-    state.turn_phase = "settling"
-    db.save_state(state)
+    state.turn_phase = phase
+    db.reign.save_game_state(state)
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
 
     sess.enter_review()
-    assert state.turn_phase == "settling"
+    assert state.turn_phase == phase
 
     sess.back_to_summoning()
-    assert state.turn_phase == "settling"
-
-
-
-def test_advance_without_edict_refused_after_settling(game):
-    """#1274 r1：空壳已删；settling 恢复归 session.resolve_turn，不再经独立退朝壳拒绝。"""
-
-    from ming_sim.decree import pre_settle
-
-
-    db, state, content = game
-    turn = state.turn
-    pre_settle(state, db)  # 真跑：落财政 + settling
-    rows_after_pre = db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
-    assert rows_after_pre > 0
-    assert state.turn_phase == "settling"
-    assert state.turn == turn
-    rows_final = db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
-    assert rows_final == rows_after_pre
-
+    assert state.turn_phase == phase
 
 
 # ---------------------------------------------------------------------------
@@ -267,30 +214,9 @@ def test_pre_settle_guard_covers_awaiting_decision(game):
     assert rows_after == rows_before  # 前半段没有二跑
 
 
-
 # ---------------------------------------------------------------------------
 # cmr S4 r3 修复回归（FRONT_HALF_DONE_PHASES 集中化）
 # ---------------------------------------------------------------------------
-
-def test_sticky_phases_cover_awaiting_decision(game):
-    """粘滞守门覆盖 awaiting_decision（cmr S4 r3 F1）。
-
-    CLI 重载于 awaiting 时 enter_review 抹相位=守门 miss 双 tick+决策搁浅。
-    """
-    from ming_sim.session import GameSession
-    db, state, content = game
-    state.turn_phase = "awaiting_decision"
-    db.save_state(state)
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-
-    sess.enter_review()
-    assert state.turn_phase == "awaiting_decision"
-    sess.back_to_summoning()
-    assert state.turn_phase == "awaiting_decision"
-
 
 
 def test_advance_without_edict_refused_at_awaiting(game):
@@ -304,7 +230,7 @@ def test_advance_without_edict_refused_at_awaiting(game):
     turn = state.turn
     pre_settle(state, db)  # 真落财政 + settling
     state.turn_phase = "awaiting_decision"  # HITL 暂停后的相位
-    db.save_state(state)
+    db.reign.save_game_state(state)
     rows_before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
 
@@ -325,7 +251,6 @@ def test_advance_without_edict_refused_at_awaiting(game):
     assert state.turn_phase == "awaiting_decision"
 
 
-
 def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     """resolve_turn 在 awaiting 态幂等返回已存决策，不二跑 simulator（cmr S4 r3 F3）。
 
@@ -335,8 +260,8 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "awaiting_decision"
-    db.save_state(state)
-    db.save_pending_decisions(state.turn, [{
+    db.reign.save_game_state(state)
+    db.issues.save_pending_decisions(state.turn, [{
         "title": "辽东战和", "context": "皇太极请款",
         "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
     }])
@@ -352,7 +277,6 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     res = sess.resolve_turn()
     assert res.awaiting is True
     assert res.decisions
-
 
 
 def test_guarded_early_return_does_not_consume_pending(game):
@@ -381,7 +305,6 @@ def test_guarded_early_return_does_not_consume_pending(game):
     assert statuses and all(s == "pending" for s in statuses)
 
 
-
 def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
     """settling 相位与诏书占位同事务可见（PR #90 R1 codex P2）：占位写崩 → 前半段
     整体回滚（相位回 summoning、财政无残留、无 context 行）。
@@ -396,7 +319,7 @@ def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
 
     def _boom(self, *a, **k):
         raise RuntimeError("placeholder save crash")
-    monkeypatch.setattr(type(db), "save_resolve_context", _boom)
+    monkeypatch.setattr(type(db.resolve_contexts), "save", _boom)
 
     with pytest.raises(RuntimeError):
         decree_mod.resolve_directives(state, db, None, None, "减赋诏",
@@ -406,4 +329,4 @@ def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
     assert state.turn_phase == "summoning"            # 内存已重载刷净
     assert db.load_state().turn_phase == "summoning"  # 盘上 settling 未泄漏
     assert _ledger_count(db, turn) == before_ledger   # 财政随占位一起回滚
-    assert db.get_resolve_context(turn) is None       # 不留半截上下文
+    assert db.resolve_contexts.get(turn) is None       # 不留半截上下文

@@ -1,6 +1,6 @@
+from __future__ import annotations
 """推荐事件落库行读取（测试侧直查；生产单读口 list_recommendation_events 已退休）。"""
 
-from __future__ import annotations
 
 
 def recommendation_events(db, state, recommender=None):

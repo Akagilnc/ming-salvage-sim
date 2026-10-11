@@ -1,6 +1,6 @@
+from __future__ import annotations
 """#1900 ordinary grant.escort living contracts (revoked specialized escort paths retired)."""
 
-from __future__ import annotations
 
 from ming_sim.applier import Provenance
 from ming_sim.declaration_dispatch import dispatch_declaration
@@ -56,7 +56,7 @@ def test_commission_declares_escort_inside_same_grant_decree(game):
         "character_id": actor, "tier": "主办", "role": "押解护送", "delegator_id": None,
     }]
     dossier_id = _dossier_for_pending(db, state, int(result.commissions.applied[0]["id"]))
-    roster = db.get_decree_dossier(dossier_id)["participant_roster"]
+    roster = db.dossiers.get(dossier_id)["participant_roster"]
     assert {
         "character_id": actor, "tier": "主办", "role": "押解护送", "delegator_id": None,
     } in roster

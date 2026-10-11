@@ -15,6 +15,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.person_log.store import PersonLogStore
 
 import re
 
@@ -115,15 +117,7 @@ def _existing_edge_id(
     if not base:
         return None
     bare = base.split("|", 1)[0]
-    row = db.conn.execute(
-        """
-        SELECT id FROM relation_edge_events
-        WHERE source=? AND target=? AND event_kind=?
-          AND (origin=? OR origin LIKE ?)
-        ORDER BY id LIMIT 1
-        """,
-        (source, target, event_kind, base, f"{bare}|%"),
-    ).fetchone()
+    row = PersonLogStore(db.conn).read_existing_leg_id((source, target, event_kind, base, f"{bare}|%"))
     return int(row["id"]) if row is not None else None
 
 
@@ -173,7 +167,7 @@ def write_credit_event(
 
 
 def _sponsor_names(db: Any, dossier_id: int) -> List[str]:
-    dossier = db.get_decree_dossier(int(dossier_id))
+    dossier = db.dossiers.get(int(dossier_id))
     if not isinstance(dossier, dict):
         return []
     parties = project_execution_liability_parties(dossier.get("participant_roster"))
@@ -190,10 +184,7 @@ def _sponsor_names(db: Any, dossier_id: int) -> List[str]:
 
 
 def _commitment_ids_for_dossier(db: Any, dossier_id: int) -> List[int]:
-    rows = db.conn.execute(
-        "SELECT id FROM issues WHERE origin_ref=?",
-        (f"dossier:{int(dossier_id)}",),
-    ).fetchall()
+    rows = IssueStore(db.conn).read_commitment_ids_for_dossier((f"dossier:{int(dossier_id)}",))
     return [int(row["id"]) for row in rows]
 
 
@@ -221,7 +212,7 @@ def _fulfillment_context(db: Any, dossier_id: int, *, hint: object = "") -> str:
     text = _narrative_context(hint)
     if text:
         return text
-    dossier = db.get_decree_dossier(int(dossier_id))
+    dossier = db.dossiers.get(int(dossier_id))
     if isinstance(dossier, dict):
         return _narrative_context(dossier.get("execution_note"))
     return ""
@@ -236,7 +227,7 @@ def record_fulfillment_credit(
     """
     did = int(dossier_id)
     out: List[Dict[str, object]] = []
-    dossier = db.get_decree_dossier(did)
+    dossier = db.dossiers.get(did)
     if not isinstance(dossier, dict):
         return out
     if str(dossier.get("execution_outcome") or "").strip() != "fulfilled":
@@ -459,7 +450,7 @@ def resolve_disposition_credit_from_extraction(
 
     out: List[Dict[str, object]] = []
     for did, group in by_dossier.items():
-        dossier = db.get_decree_dossier(int(did))
+        dossier = db.dossiers.get(int(did))
         if not isinstance(dossier, dict) or not _is_exposed_transformed(dossier):
             continue
         roster = dossier.get("participant_roster") or []
@@ -526,7 +517,7 @@ def _pending_urge_todos(db: Any, state: Any) -> List[Dict[str, object]]:
     turn = int(getattr(state, "turn", 0) or 0)
     kinds = {ENTRY_KIND_GRACE_PLEA, ENTRY_KIND_RUSH_REMONSTRANCE}
     return [
-        t for t in db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if str(t.get("entry_kind") or "") in kinds
         and int(t.get("created_turn") or 0) < turn
     ]
@@ -589,7 +580,7 @@ def _resolve_one_urge_todo(
         context=context,
         origin=origin,
     )
-    consumed = db.mark_next_audience_todo_status(
+    consumed = db.dossiers.mark_next_audience_todo_status(
         int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
     )
     return {

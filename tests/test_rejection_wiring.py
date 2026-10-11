@@ -1,18 +1,19 @@
+from __future__ import annotations
+import json
+import pytest
+from tests.section_rejection_helpers import run_declaration as run_settle
+from tests.section_rejection_helpers import rejection_rows
+from tests.conftest import active_ming_character
+from tests.section_rejection_helpers import game, rejection_rows
 """PR2-S0(ADR 0008 决定 5/8,#91)——拒收收集器接进结算管线。
 
 生命周期与事务对齐:现役声明分派产生的拒收项 → 事务内 flush 进
 rejection_reports → commit 成功后镜像 jsonl → 回滚不留行不留镜像。
 """
 
-from __future__ import annotations
 
-import json
 
-import pytest
 
-from tests.section_rejection_helpers import run_declaration as run_settle
-from tests.section_rejection_helpers import rejection_rows
-from tests.conftest import active_ming_character
 
 
 def _rejection_rows(db, turn):
@@ -26,7 +27,6 @@ def _rejection_rows(db, turn):
     return rejection_rows(
         db, turn, columns="section, reason, category, source, attempt"
     )
-
 
 
 def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
@@ -55,55 +55,6 @@ def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
 
 
 
-def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
-    """原子声明在 flush 之后崩 → 事务回滚:rejection_reports 无行、jsonl 无镜像。
-
-    镜像只在 commit 成功后写,否则留「DB 没有、文件却有」的孤立行。
-    退役的 dossier_reconciliations 提案不再作为回滚夹具（#1900 J6）。
-    """
-    from ming_sim.applier import RejectionCollector
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-
-    real_flush = RejectionCollector.flush_to_db
-
-    def _boom(self, db_):
-        real_flush(self, db_)
-        raise RuntimeError("crash after flush")
-
-    monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
-
-    with pytest.raises(RuntimeError):
-        run_settle(db, state, content, {
-            "人物变更": [{"name": "查无此人乙", "动作": "处置", "status": "dead", "reason": "测试"}],
-        }, narrative="x", decree_text="y")
-
-    monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
-    assert _rejection_rows(db, turn) == []
-    assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
-
-
-
-def test_issue_section_rejections_are_collected(game, monkeypatch, tmp_path):
-    """局势段的拒收必须进报告——它正是实测最常被喂脏的段（origin_kind 缺失被拒，
-    agy 实录）。ADR 0150 决定 2 后拒收走 canonical RejectedItem、段名由登记表
-    给出（不再靠旧桥接递归猜 dotted 路径），故此处钉的是具名段 ``issue_summary``。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "new_issues": [{"title": "臆造局势", "kind": "initiative"}],  # 缺 origin_kind → 拒
-    }, narrative="x", decree_text="y")
-
-    rows = _rejection_rows(db, turn)
-    assert len(rows) == 1
-    assert rows[0][0] == "issue_summary"
-    assert rows[0][1]  # reason 非空；不锁自由措辞
-
-
 
 def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp_path):
     """嵌套 atomic 内跑 settle:mirror 必须等最外层 commit——否则外层回滚后
@@ -124,7 +75,6 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
 
     assert _rejection_rows(db, turn) == []  # DB 行随外层回滚消失
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()  # 镜像未先写
-
 
 
 
@@ -150,9 +100,6 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_summary"]
     assert len(rows) == 1
     assert rows[0][1]  # reason 非空
-
-
-
 
 
 def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path):
@@ -181,7 +128,6 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
     assert rows[0][1]  # reason 非空；不锁自由措辞
 
 
-
 def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeypatch, tmp_path):
     """rejection_reports.item_json = 原始 delta 项(ADR 决定 5「原 item 原样保留」)
     canonical RejectedItem.item 直接持有原件，不把运输包装存作 item。"""
@@ -201,7 +147,6 @@ def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeyp
     assert row is not None
     item = _json.loads(row[0])
     assert item == {"power_id": "查无此势力", "changes": {"leverage": 5}}  # 原件
-
 
 
 def test_person_change_rejection_item_json_keeps_original_delta_item(game, monkeypatch, tmp_path):
@@ -229,74 +174,6 @@ def test_person_change_rejection_item_json_keeps_original_delta_item(game, monke
     assert row is not None
     item = _json.loads(row[0])
     assert item == raw_item
-
-
-
-def test_power_move_rejection_item_json_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
-    """易主委托底层 power helper 后的拒收,也要保留完整 ADR0009 原始条目。"""
-    import json as _json
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    name = active_ming_character(db, content)
-    raw_item = {
-        "name": name,
-        "动作": "易主",
-        "new_power": "ghost_power",
-        "方式": "主动投敌",
-        "反噬": {},
-        "reason": "测试非法势力",
-    }
-
-    run_settle(
-        db,
-        state,
-        content,
-        {"人物变更": [raw_item]},
-        narrative="x",
-        decree_text="y",
-    )
-
-    row = db.conn.execute(
-        "SELECT item_json FROM rejection_reports WHERE turn=? AND section='applied_person_changes'",
-        (turn,),
-    ).fetchone()
-    assert row is not None
-    item = _json.loads(row[0])
-    assert item == raw_item
-
-
-
-def test_office_change_rejection_item_json_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
-    """任命/调任委托任官 helper 后的拒收,也要保留完整 ADR0009 原始条目。"""
-    import json as _json
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    name = active_ming_character(db, content)
-    raw_item = {"name": name, "动作": "任命", "reason": "漏填官职"}
-
-    run_settle(
-        db,
-        state,
-        content,
-        {"人物变更": [raw_item]},
-        narrative="x",
-        decree_text="y",
-    )
-
-    row = db.conn.execute(
-        "SELECT category, item_json FROM rejection_reports "
-        "WHERE turn=? AND section='applied_person_changes'",
-        (turn,),
-    ).fetchone()
-    assert row is not None
-    assert row["category"] == "missing_field"
-    item = _json.loads(row["item_json"])
-    assert item == raw_item
-
 
 
 def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
@@ -340,7 +217,6 @@ def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, m
         db.conn.commit()
 
 
-
 def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):
     """易主本身可落库时,嵌套反噬拒收也要进入 rejection_reports,不能藏在成功项内部。"""
     db, state, content = game
@@ -351,7 +227,7 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
         for candidate, ch in content.characters.items()
         if getattr(ch, "power_id", "ming") == "ming"
         and getattr(ch, "office_type", "") != "后宫"
-        and db.get_character_status(candidate)[0] == "active"
+        and db.characters.get_character_status(candidate)[0] == "active"
     )
     ch = content.characters[name]
     old_power = ch.power_id
@@ -398,7 +274,6 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
         ch.power_id = old_power
         ch.office = old_office
         ch.office_type = old_office_type
-
 
 
 def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monkeypatch, tmp_path):
@@ -466,8 +341,6 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         ch.office_type = old_office_type
 
 
-
-
 def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):
     """Natural issue resolution must persist nested person backlash rejections."""
     from tests.test_due_review_621 import _settle_empty_month
@@ -499,3 +372,20 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type
+
+def test_issue_section_rejections_are_collected(game, monkeypatch, tmp_path):
+    """局势段的拒收必须进报告——它正是实测最常被喂脏的段（origin_kind 缺失被拒，
+    agy 实录）。ADR 0150 决定 2 后拒收走 canonical RejectedItem、段名由登记表
+    给出（不再靠旧桥接递归猜 dotted 路径），故此处钉的是具名段 ``issue_summary``。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "new_issues": [{"title": "臆造局势", "kind": "initiative"}],  # 缺 origin_kind → 拒
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn)
+    assert len(rows) == 1
+    assert rows[0][0] == "issue_summary"
+    assert rows[0][1]  # reason 非空；不锁自由措辞

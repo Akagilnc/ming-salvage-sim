@@ -192,7 +192,7 @@ def apply_situation_monthly_drift(
     # inertia 是每月自然漂移基础量，对所有进行中 issue 都生效（含本月被 advance 触动的）。
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     inertia_rejections: List[RejectedItem] = []
-    active = db.list_active_issues()
+    active = db.issues.active_rows()
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
 

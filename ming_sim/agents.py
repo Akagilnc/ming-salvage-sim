@@ -192,7 +192,7 @@ def _history_backed_truncate_anchor(
     if not session_id:
         return None
     # game_db 已非 None：直调必备 GameDB 截缝，禁 hasattr 能力缺失兼容。
-    keep = game_db.agno_runs_length(session_id)
+    keep = game_db.reign.agno_runs_length(session_id)
     return game_db, session_id, keep
 
 
@@ -201,10 +201,10 @@ def _truncate_history_backed_agent_runs(
 ) -> None:
     """transport 再试前丢掉本 attempt 已落的 completed 空 run。
 
-    只调 GameDB.truncate_agno_session_runs（召对 truncate_chat_turn_agno_runs 同缝）；
+    只调 ReignStateStore.truncate_agno_session_runs（召对 truncate_chat_turn_agno_runs 同缝）；
     不回滚游戏落账。cache_session 置空使下一 attempt 从已截 DB 重载，非第二套历史算法。
     """
-    game_db.truncate_agno_session_runs(session_id, max(0, int(keep_count)))
+    game_db.reign.truncate_agno_session_runs(session_id, max(0, int(keep_count)))
     if hasattr(agent, "_cached_session"):
         agent._cached_session = None
     if hasattr(agent, "_cached_session_db"):

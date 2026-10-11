@@ -62,7 +62,7 @@ def apply_dossier_participant_items(
             "delegator_id": delegator_id,
         }], commit=False)
         if not added:
-            existing = db.get_decree_dossier(dossier_id) or {}
+            existing = db.dossiers.get(dossier_id) or {}
             roster = existing.get("participant_roster") or []
             if not any(
                 row.get("character_id") == character_id

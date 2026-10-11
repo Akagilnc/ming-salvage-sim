@@ -2,11 +2,10 @@ import ming_sim.draft_intent as draft_intent
 import ming_sim.cli_backend as cli_backend
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
-
 import pytest
-
-import ming_sim.draft_intent as draft_intent
 from tests.dossier_test_helpers import rejected_verdict
+
+
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
     return db.create_decree_dossier(
@@ -27,11 +26,14 @@ def _rejected_verdict(dossier_id):
 
 
 
+
+
+
 def test_predeclared_midzhi_promulgation_persists_stigma(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["stigma"] == [{
+    assert db.dossiers.get(dossier_id)["stigma"] == [{
         "kind": "midzhi", "reason": "predeclared", "turn": state.turn,
         "source_action": "promulgated",
     }]
@@ -44,7 +46,7 @@ def test_missing_dossier_mode_defaults_to_ordinary(game):
         "UPDATE decree_dossiers SET payload_json='{}' WHERE id=?", (dossier_id,)
     )
 
-    assert db.get_decree_dossier(dossier_id)["mode"] == "ordinary"
+    assert db.dossiers.get(dossier_id)["mode"] == "ordinary"
 
 
 @pytest.mark.parametrize(
@@ -66,7 +68,7 @@ def test_declared_staging_uses_typed_mode_not_minister_text(
     db.commit_pending_actions(state, action_ids={candidate_id})
     db.ensure_dossiers_for_draft_directives(state)
 
-    dossiers = db.list_decree_dossiers()
+    dossiers = db.dossiers.list_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == expected
 
@@ -80,21 +82,21 @@ def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     )
     db.update_directive_candidate(candidate_id, {"text": "增列核验期限"})
     pending = next(
-        row for row in db.list_pending_actions(state.turn)
+        row for row in db.dossiers.list_pending_actions(state.turn)
         if row["id"] == candidate_id
     )
     assert json.loads(pending["payload_json"])["mode"] == "midzhi"
 
     db.update_directive_candidate(candidate_id, {"mode": "ordinary"})
     pending = next(
-        row for row in db.list_pending_actions(state.turn)
+        row for row in db.dossiers.list_pending_actions(state.turn)
         if row["id"] == candidate_id
     )
     assert json.loads(pending["payload_json"])["mode"] == "ordinary"
 
     db.commit_pending_actions(state, kind_filter="directive")
     db.ensure_dossiers_for_draft_directives(state)
-    dossiers = db.list_decree_dossiers()
+    dossiers = db.dossiers.list_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == "ordinary"
 
@@ -105,14 +107,14 @@ def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
     apply_dossier_promulgation(db,
         state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳",
     )
-    db.record_dossier_decision(dossier_id, "hold")
+    db.dossiers.record_dossier_decision(dossier_id, "hold")
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
     apply_dossier_promulgation(db,
         state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣再驳",
     )
 
-    stored = db.get_decree_dossier(dossier_id)
+    stored = db.dossiers.get(dossier_id)
     decisions = db.conn.execute(
         "SELECT turn,decision FROM decree_dossier_decisions "
         "WHERE dossier_id=? AND rescript_action='' ORDER BY id",
@@ -139,7 +141,7 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     with pytest.raises(ValueError):
         apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
-    assert db.get_decree_dossier(dossier_id)["stigma"] == [
+    assert db.dossiers.get(dossier_id)["stigma"] == [
         {"kind": "midzhi", "reason": "predeclared", "turn": state.turn,
          "source_action": "rejected"},
     ]
@@ -154,10 +156,19 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
     apply_dossier_verdicts(db, state, [_rejected_verdict(dossier_id)])
     apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
-    assert db.get_decree_dossier(dossier_id)["stigma"] == [{
+    assert db.dossiers.get(dossier_id)["stigma"] == [{
         "kind": "midzhi", "reason": "rescript", "turn": state.turn,
         "source_action": "force_promulgated",
     }]
+
+
+# ---------------------------------------------------------------------------
+# #657 片2：canonical / capability 回验
+# ---------------------------------------------------------------------------
+
+
+
+
 
 
 @pytest.mark.parametrize("labels", [["", "乙"], ["甲", "甲"]])

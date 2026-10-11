@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#662（[#477 S14]）：灾害／兵灾驱动入池——流民池的天灾与兵祸入口。
 
 canonical＝ADR 0087 + #662 票庭判词（run 01a02d40-244d-7e4c-8386-5af682d584a2）施工边界：
@@ -8,7 +9,6 @@ canonical＝ADR 0087 + #662 票庭判词（run 01a02d40-244d-7e4c-8386-5af682d58
 主测缝＝settle_delta 的人口守恒落账。
 """
 
-from __future__ import annotations
 from tests.readback_helpers import class_population as _pop, global_population as _global_population
 
 from test_population_transfers_649 import (

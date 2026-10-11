@@ -1,1 +1,5 @@
-"""局势（issue_advances / new_issues / close_issues / cancels）落库段。"""
+"""局势行与推进记录（#1889）。"""
+
+from ming_sim.entities.issue.store import IssueStore
+
+__all__ = ("IssueStore",)

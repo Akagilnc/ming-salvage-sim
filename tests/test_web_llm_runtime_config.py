@@ -1,14 +1,26 @@
 from __future__ import annotations
-
 import asyncio
 import json
 from pathlib import Path
 import sqlite3
 import threading
-
 import pytest
-
 import web_app
+from types import SimpleNamespace
+from fastapi.testclient import TestClient
+from ming_sim.models import LLMConfig
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -318,27 +330,6 @@ def test_menu_save_llm_accepts_default_headers_from_request(monkeypatch):
     assert result["llm"]["default_headers"] == headers
 
 
-def test_menu_status_exposes_default_headers(monkeypatch):
-    """#1794：设置页读回入口 menu/status 露出 default_headers。"""
-    headers = {"X-Session": "read-me", "User-Agent": "ming-qa/1.0"}
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
-    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
-    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
-    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
-        "channel": "api",
-        "api": {
-            "base_url": "https://api.example.com/v1",
-            "model": "gpt-api",
-            "api_key": "sk-test",
-            "default_headers": headers,
-        },
-    })
-
-    status = asyncio.run(web_app.api_menu_status())
-    assert status["llm"]["default_headers"] == headers
 
 
 
@@ -362,6 +353,9 @@ def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypat
     assert status["llm_ready"] is True
     assert status["llm"]["channel"] == "cli"
     assert status["llm"]["cli_runner"] == "codex"
+
+
+
 
 
 
@@ -397,33 +391,6 @@ def test_1271_menu_save_cli_grok_high_round_trip(monkeypatch):
     assert saved and saved[0][1]["channel"] == "cli"
     assert saved[0][1]["cli_runner"] == "grok"
     assert saved[0][1]["reasoning_strength"] == "high"
-
-
-def test_1271_menu_status_grok_reasoning_supported_and_capability_list(monkeypatch):
-    """#1271：menu/status reasoning_supported=True + payload 名单含 grok。"""
-    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
-
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
-    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
-    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
-    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
-        "channel": "cli",
-        "api": {"base_url": "", "model": "", "api_key": ""},
-        "cli": {"runner": "grok", "model": "", "timeout_seconds": "240", "reasoning_strength": "high"},
-        "reasoning_strength": "high",
-    })
-
-    status = asyncio.run(web_app.api_menu_status())
-    assert status["llm"]["cli_runner"] == "grok"
-    assert status["llm"]["reasoning_strength"] == "high"
-    assert status["llm"]["reasoning_supported"] is True
-    assert "grok" in status["llm"]["cli_reasoning_runners"]
-    assert set(status["llm"]["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
-    assert set(status["llm"]["cli_reasoning_floor_runners"]) == {"codex", "claude", "grok"}
-
 
 
 
@@ -480,17 +447,17 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch, webg
     seed = web_app.WebGame(fresh=True)
     try:
         seed.favorites = {seed_marker}
-        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        seed.db.reign.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         assert db_path.exists()
 
         # 构造同一回合可区分的 begin/preresolve 自动档；热加载不得改写任一源档。
         begin_marker = "__begin_1702__"
         preresolve_marker = "__preresolve_1702__"
         seed.favorites = {begin_marker}
-        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        seed.db.reign.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         begin_path = Path(seed.session.auto_save("begin"))
         seed.favorites = {preresolve_marker}
-        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        seed.db.reign.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         preresolve_path = Path(seed.session.auto_save("preresolve"))
         begin_bytes = begin_path.read_bytes()
         preresolve_bytes = preresolve_path.read_bytes()
@@ -498,7 +465,7 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch, webg
         # 真正建立下一回合的 end_turn 产出 begin；重复普通 begin_turn 刷新不改写内容。
         seed.state.turn += 1
         seed.state.period += 1
-        seed.db.save_state(seed.state)
+        seed.db.reign.save_game_state(seed.state)
         seed.session.end_turn()
         next_begin_path = next((ud / "saves").glob(
             f"auto_*_{seed.state.year:04d}_{seed.state.period:02d}_t{seed.state.turn:04d}_begin.db"
@@ -506,7 +473,7 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch, webg
         next_begin_bytes = next_begin_path.read_bytes()
         after_begin_marker = "__after_begin_1702__"
         seed.favorites = {after_begin_marker}
-        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        seed.db.reign.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         seed.session.begin_turn()
         seed.session.begin_turn()
         assert next_begin_path.read_bytes() == next_begin_bytes
@@ -515,7 +482,7 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch, webg
                 "SELECT value FROM kv_store WHERE key = 'favorites'"
             ).fetchone()[0])
         assert archived_favorites == [preresolve_marker]
-        assert after_begin_marker in json.loads(seed.db.kv_get("favorites"))
+        assert after_begin_marker in json.loads(seed.db.reign.kv_get("favorites"))
     finally:
         seed.session.close()
 
@@ -539,12 +506,14 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch, webg
         _assert_hud(cont.state_payload())
         assert begin_marker in cont.favorites
         cont.favorites.add(seed_marker)
-        cont.db.kv_set("favorites", json.dumps(sorted(cont.favorites), ensure_ascii=False))
-        assert seed_marker in json.loads(cont.db.kv_get("favorites"))
+        cont.db.reign.kv_set("favorites", json.dumps(sorted(cont.favorites), ensure_ascii=False))
+        assert seed_marker in json.loads(cont.db.reign.kv_get("favorites"))
 
         assert calls == [], f"continue/load_save 不应触发 LLM 调用，实得 {calls}"
     finally:
         cont.session.close()
+
+
 
 
 
@@ -566,3 +535,55 @@ def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch)
 
     assert exc.value.status_code == 400
     assert not saved
+
+
+
+
+
+def test_menu_status_exposes_default_headers(monkeypatch):
+    """#1794：设置页读回入口 menu/status 露出 default_headers。"""
+    headers = {"X-Session": "read-me", "User-Agent": "ming-qa/1.0"}
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-api",
+            "api_key": "sk-test",
+            "default_headers": headers,
+        },
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+    assert status["llm"]["default_headers"] == headers
+
+
+def test_1271_menu_status_grok_reasoning_supported_and_capability_list(monkeypatch):
+    """#1271：menu/status reasoning_supported=True + payload 名单含 grok。"""
+    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "grok", "model": "", "timeout_seconds": "240", "reasoning_strength": "high"},
+        "reasoning_strength": "high",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+    assert status["llm"]["cli_runner"] == "grok"
+    assert status["llm"]["reasoning_strength"] == "high"
+    assert status["llm"]["reasoning_supported"] is True
+    assert "grok" in status["llm"]["cli_reasoning_runners"]
+    assert set(status["llm"]["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
+    assert set(status["llm"]["cli_reasoning_floor_runners"]) == {"codex", "claude", "grok"}

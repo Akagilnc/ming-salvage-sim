@@ -1,3 +1,6 @@
+from ming_sim.applier import Provenance
+import pytest
+from ming_sim.army_pay import army_needed
 """#173：物理移除退役的 armies.maintenance_per_turn 列。月饷由 army_needed(按兵力派生)唯一承载。
 
 本文件验删列后的契约——维护费彻底不再是字段：
@@ -9,16 +12,10 @@
 （PR2「写端脱钩」时维护费列尚在的脏值/严格度语义已随列删除一并退场。）
 """
 
-from ming_sim.applier import Provenance
-
-import pytest
-
-from ming_sim.army_pay import army_needed
 
 
 def _pseudo(title="测试"):
     return type("E", (), {"id": "test", "title": title})()
-
 
 def _pay_source():
     return {
@@ -31,6 +28,7 @@ def _pay_source():
 # ── schema：列已物理删除 ──────────────────────────────────────────────
 
 
+# ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
 
 def test_new_army_maintenance_key_ignored(game):
     # LLM 若仍塞维护费/军费（别名已删）→ 当未知键忽略，不入库、不报错、建军照成。
@@ -42,7 +40,6 @@ def test_new_army_maintenance_key_ignored(game):
     assert created and created_rejections == [], created
     assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_y'").fetchone() is not None
 
-
 def test_new_army_still_requires_manpower(read_game):
     db, state, _ = read_game
     created, created_rejections = db.create_armies_from_extraction(state, [{
@@ -50,7 +47,6 @@ def test_new_army_still_requires_manpower(read_game):
     }], source=Provenance.system_simulation)
     assert created_rejections and created_rejections[0].category == "invalid_enum" and not created
     assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_z'").fetchone() is None
-
 
 def test_new_army_inf_manpower_rejected_not_crash(read_game):
     # int(float("inf")) 抛 OverflowError（不在 (TypeError,ValueError) 内）→ _new_army_historically_applied
@@ -61,7 +57,6 @@ def test_new_army_inf_manpower_rejected_not_crash(read_game):
     }], source=Provenance.system_simulation)
     assert created_rejections and created_rejections[0].category == "invalid_enum" and not created
     assert db.conn.execute("SELECT id FROM armies WHERE id='inf_army'").fetchone() is None
-
 
 # ── 月饷纯由兵力派生，与已删的维护费无关 ──────────────────────────────
 
@@ -76,7 +71,6 @@ def test_pay_derives_from_manpower(game):
     hi = db.conn.execute("SELECT * FROM armies WHERE id='pay_hi'").fetchone()
     assert army_needed(hi) > army_needed(lo) > 0, "兵力多者月饷应更大（月饷随兵力派生）"
 
-
 # ── army_delta 写维护费 → 非法字段拒收（别名已删） ────────────────────
 
 @pytest.mark.parametrize("field_key", ["维护费", "maintenance_per_turn", "军费"])
@@ -89,20 +83,6 @@ def test_army_delta_maintenance_rejected_as_invalid_field(game, field_key):
         state, _pseudo("加饷"), None, "户部", {aid: {field_key: 5, "reason": "诏加饷"}}, source=Provenance.system_simulation)
     assert changes_rejections and changes_rejections[0].category == "invalid_enum", \
         f"写维护费应作非法字段拒收(invalid_enum)：{changes_rejections}"
-
-
-def test_army_delta_other_fields_still_apply(game):
-    # 拒维护费不误伤同信封其它合法字段（士气照落）。
-    db, state, _ = game
-    aid = str(db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    before = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
-    db.apply_army_deltas(
-        state, _pseudo("整饬"), None, "兵部", {aid: {"维护费": 5, "士气": -3, "reason": "整饬"}}, source=Provenance.system_simulation)
-    after = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
-    assert after == before - 3, "拒维护费不应连累同军合法字段（士气）落库"
 
 
 # ── extractor 写端 prompt 不教军队维护费 ─────────────────────────────

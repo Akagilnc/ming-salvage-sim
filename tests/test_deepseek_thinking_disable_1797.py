@@ -1,9 +1,9 @@
+from __future__ import annotations
 """#1797：DeepSeek 全系按模型 id 关思考；llm_dump 记 reasoning/usage/finish_reason。
 
 真实入口 create_chat_model / run_agent_text；不跑真实 LLM。
 """
 
-from __future__ import annotations
 
 from types import SimpleNamespace
 

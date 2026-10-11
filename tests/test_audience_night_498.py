@@ -1,25 +1,7 @@
-"""#498 召对夜容器与故事账本地基——真实入口→DB 末态 tracer。
-
-一条贯穿：web/CLI 会话 seam 与 GameSession 公开颁诏/过回合入口，断言 DB 可观察
-结果。覆盖 AC1–10 核心：账本骨架、多夜隔离、完成态与 night_seq 对齐、死账、
-员额、AC8 顺势收夜顺序、AC9 崩溃续跑真实任免/候选、AC10 完成等待与超时、旧档迁移。
-
-不锁 LLM 叙事正文；不接受 failed 当成功。
-"""
-
 from __future__ import annotations
 from tests.conftest import open_hall_turn
-
 from pathlib import Path
-
 import pytest
-
-_POLICY_FIELDS = {
-    "dossier_action_type": "policy",
-    "target_kind": "issue",
-    "target_id": "test-policy",
-}
-
 from ming_sim import audience_night as an
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
@@ -31,6 +13,34 @@ from ming_sim.audience_night import (
     AudienceNightError,
 )
 from ming_sim.db import GameDB
+from ming_sim.audience_night import (
+    AUDIBILITY_PUBLIC,
+    CLOSE_STEP_COMMIT_OFFICE,
+    METHOD_XUANRU,
+    METHOD_YUECI,
+    TAG_ENTER,
+    TAG_MINGFA,
+    TAG_STANDING_ROSTER,
+    AudienceNightError,
+)
+"""#498 召对夜容器与故事账本地基——真实入口→DB 末态 tracer。
+
+一条贯穿：web/CLI 会话 seam 与 GameSession 公开颁诏/过回合入口，断言 DB 可观察
+结果。覆盖 AC1–10 核心：账本骨架、多夜隔离、完成态与 night_seq 对齐、死账、
+员额、AC8 顺势收夜顺序、AC9 崩溃续跑真实任免/候选、AC10 完成等待与超时、旧档迁移。
+
+不锁 LLM 叙事正文；不接受 failed 当成功。
+"""
+
+
+
+
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 
 
 def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
@@ -42,15 +52,15 @@ def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
             continue
         if getattr(ch, "office_type", "") == "后宫":
             continue
-        if db.get_character_status(name)[0] == "active":
+        if db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("no active ming minister")
-
 
 
 def _find_entries(entries, *required_tags):
     need = set(required_tags)
     return [e for e in entries if need.issubset(set(e["tags"]))]
+
 
 
 
@@ -61,7 +71,7 @@ def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨�
         (minister, state.turn, text),
     ).lastrowid
     db.conn.commit()
-    db.update_chat_turn_messages(chat_id, minister_message_id=int(mid))
+    db.reign.update_chat_turn_messages(chat_id, minister_message_id=int(mid))
     # #501：production 里回话落库后由尾随/收夜前 drain 抽取落账，收夜时无待补。本 #498
     # 时序/隔离用例不涉抽取，直接把水位推到 done 以反映合法收夜前态（否则引擎收夜 drain
     # 闸对未抽回话 fail-closed）。
@@ -69,7 +79,6 @@ def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨�
         "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?", (int(chat_id),)
     )
     db.conn.commit()
-
 
 
 def test_legacy_reply_without_segments_stays_neutral_in_night_scroll(game):
@@ -84,7 +93,6 @@ def test_legacy_reply_without_segments_stays_neutral_in_night_scroll(game):
     assert reply["role"] == "scene"
     assert reply["speaker"] == ""
     assert reply["highlights"] == []
-
 
 
 # ── AC1/2/5 开夜→宣人→收夜 ──────────────────────────────────────────
@@ -121,7 +129,6 @@ def test_open_summon_close_chain_readable_by_night(game):
     assert an.get_night(db, night["id"])["status"] == "closed"
 
 
-
 def test_summon_method_and_bad_method(game):
     db, state, content = game
     minister = _active_minister(db, content)
@@ -134,8 +141,9 @@ def test_summon_method_and_bad_method(game):
     assert ei.value.code == "bad_summon_method"
 
 
-
 # ── AC3 多夜隔离 + AC4 timeline ──────────────────────────────────────
+
+
 
 
 def test_chat_completion_via_attach(game):
@@ -153,7 +161,6 @@ def test_chat_completion_via_attach(game):
     assert done["status"] == "active"
 
 
-
 def test_attach_without_scene_anchors_persists_readable_defaults(game):
     """真实入口（web/CLI attach）不带玩家选值时，夜容器时辰/地点仍持久非空、可读（#498 AC）。"""
     db, state, content = game
@@ -166,7 +173,6 @@ def test_attach_without_scene_anchors_persists_readable_defaults(game):
     ).fetchone()
     assert str(row["time_of_day"]).strip()  # 非空可读，非裸空串
     assert str(row["location"]).strip()
-
 
 
 # ── AC6/7 死账与员额 ────────────────────────────────────────────────
@@ -182,7 +188,6 @@ def test_dead_person_enter_rejected_with_error_pack(game):
     assert ei.value.code == "dead_present"
     assert ei.value.error_pack_path
     assert Path(ei.value.error_pack_path).is_dir()
-
 
 
 def test_standing_roster_skips_dead(game):
@@ -212,11 +217,18 @@ def test_standing_roster_skips_dead(game):
     assert victim not in names
 
 
-
 # ── AC8：公开入口顺势收夜（GameSession.resolve_turn / advance）────────
 
 
+
+
+
+
+
+
 # ── AC9：真实任免 + 候选转档 + 崩溃续跑 ──────────────────────────────
+
+
 
 
 def test_close_night_only_commits_this_night_approved(game):
@@ -246,7 +258,6 @@ def test_close_night_only_commits_this_night_approved(game):
         "SELECT status FROM pending_actions WHERE id=?", (unapproved,)).fetchone()["status"] == "pending"
 
 
-
 def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content, tmp_path):
     """finding1：status=closing,cursor=0（office 提交前断电）→ 关库重开。
     新召对（open_night 无 content）被响亮拒绝、不隐式封夜丢任免；携 content 的显式续收
@@ -274,6 +285,13 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
     db2 = GameDB(path, content)
     state2 = db2.load_state()
     assert an.get_night(db2, night["id"])["status"] == "closing"
+    before = db2.conn.total_changes
+    for what in ("召对", "阅折"):
+        with pytest.raises(AudienceNightError) as blocked:
+            an.assert_night_accepts_player_input(db2, what=what)
+        assert blocked.value.code == "night_closing"
+        assert blocked.value.detail == {"night_id": night["id"], "what": what}
+    assert db2.conn.total_changes == before
     # 新召对：open_night 无 content/registry → 响亮拒绝，不隐式封夜、不丢任免
     with pytest.raises(AudienceNightError) as ei:
         open_hall_turn(
@@ -287,13 +305,12 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
     assert an.get_night(db2, night["id"])["status"] == "closed"
     assert db2.conn.execute(
         "SELECT office FROM characters WHERE name=?", (minister,)).fetchone()["office"] == old_office
-    assert db2.list_decree_dossiers(
+    assert db2.dossiers.list_dossiers(
         status="proposed", target_kind="character", target_id=minister
     )
     assert db2.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "committed"
     db2.close()
-
 
 
 # ── AC10 在飞回话 × 真实 web 入口 → tests/test_web_audience_night_498.py ──
@@ -328,6 +345,12 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
     assert int(n_nights) == 0
 
 
+# 旧档无 night_id 再 ensure_column 补列的迁移测已删（#1889∪#1812）：
+# - schema CREATE 已含 chat_turns.night_id / night_seq 与 idx_chat_turns_night
+#   （ming_sim/schema.py）；#1889 删除 GameDB.ensure_column，明确「不再为旧档 ALTER」。
+# - #1812「没有历史包袱的全面重构」：只为旧 ALTER 梯存在的测试随退役入口删。
+# - 新档开门走 CREATE；不恢复 ensure_column / 旧档迁移梯。
+
 
 # 结算相位不得召对 + 等 gate 期间相位翻转（TOCTOU）被拒 → 真实 WebGame.chat_stream 验证，
 # 见 tests/test_web_audience_night_498.py::test_phase_flip_while_waiting_gate_is_rejected。
@@ -348,6 +371,7 @@ def test_bad_audibility_and_append_after_close(game):
     with pytest.raises(AudienceNightError) as ei2:
         an.append_ledger_entry(db, night["id"], tags=["试"])
     assert ei2.value.code == "night_closed"
+
 
 
 
@@ -374,9 +398,9 @@ def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):
         "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
         (candidate_id,),
     ).fetchone()["id"])
-    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.dossiers.get_for_directive(directive_id) is None
     an.close_night(db, state, night_id=int(night["id"]), content=content)
-    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.dossiers.get_for_directive(directive_id) is None
     entries = an.list_ledger(db, int(night["id"]))
     assert not any(TAG_MINGFA in (entry.get("tags") or []) for entry in entries)
     assert not any(

@@ -1,10 +1,10 @@
+from __future__ import annotations
 """#884 — 点火冒烟装钟 + 主/高级并行 + 阶段名留痕。
 
 编排器已迁仓外；本仓残留接缝 = 设置页连通性 verify（点火冒烟）。
 验收：永不响应 → 超时→重试→耗尽，账面有阶段名（正负成对）；主+高级烟互不依赖则并行。
 """
 
-from __future__ import annotations
 
 
 import httpx

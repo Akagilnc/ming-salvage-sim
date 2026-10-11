@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1902：非流式颁诏路由退役后，测试改走唯一的流式入口。
 
 web_app 撤 POST /api/decree/issue（非流式，与 issue/stream 的 worker 同构）——颁布
@@ -6,7 +7,6 @@ web_app 撤 POST /api/decree/issue（非流式，与 issue/stream 的 worker 同
 payload），使原来看 HTTP 状态码 + detail 的断言可以逐字迁移，不被削弱。
 """
 
-from __future__ import annotations
 
 from typing import Any, Optional
 

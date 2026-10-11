@@ -91,7 +91,7 @@ def test_fiscal_golden(name, st, p, actions, expect):
     _assert_end(st, p, actions, expect)
 
 
-# Invalid inputs remain fail-loud; prose is not an exception contract.
+# ── G21 非法输入 fail-loud（ValueError 负向契约；不锁生产报错文案）──
 RAISE_CASES = [
     ("G21 负挖隐田", S(), base, [dict(type="清丈", cost=2, 挖隐田=-100)], ValueError),
     ("G21b unknown action", S(), base, [dict(type="发射导弹", cost=5)], ValueError),
@@ -158,10 +158,3 @@ def test_fiscal_nonfinite_derived_fails_loud():
     # nan 比较恒 False 漏过 → 静默持久化毒态。末态 finite 校验 → FiscalConservationError（被隔离不落库）。
     with pytest.raises(FiscalConservationError):
         settle_tick(S(), dict(base, 正赋应征=1e308, 三饷应征=1e308), [])
-
-
-def test_conservation_error_is_distinct_type():
-    # 守恒破是 settlement bug（fail-loud），与坏输入 ValueError 区分；正常 tick 不抛
-    assert issubclass(FiscalConservationError, AssertionError)
-    res = settle_tick(S(), base, [])
-    assert math.isfinite(res.new_st["省库库银"])

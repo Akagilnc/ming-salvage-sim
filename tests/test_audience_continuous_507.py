@@ -1,3 +1,7 @@
+from __future__ import annotations
+from ming_sim.audience_night import PRESENCE_EXIT
+from ming_sim import audience_night as an
+from ming_sim.audience_night import AUDIBILITY_PUBLIC
 """#507 连场编排——presence-aware 组装：谁在场听到了什么，区间事实送对。
 
 连场一夜中，可闻账按在场区间分流：侍立者听到区间内公开对话，
@@ -8,20 +12,15 @@
 （御前低语不流入），本片验在账本可闻性读边界。每正向配显式负向。
 """
 
-from __future__ import annotations
-from ming_sim.audience_night import PRESENCE_EXIT
 
-from ming_sim import audience_night as an
-from ming_sim.audience_night import AUDIBILITY_PUBLIC
 
 STANDING = "王承恩"  # 常在员额（内廷近臣全程在场）
 
 
 def _activate(db, state, *names: str) -> None:
     for n in names:
-        if db.get_character_status(n)[0] != "active":
+        if db.characters.get_character_status(n)[0] != "active":
             db.set_character_status(state, n, "active", reason="连场测试置在场")
-
 
 
 def _public(db, nid, name, body):
@@ -30,26 +29,23 @@ def _public(db, nid, name, body):
     )
 
 
-
-def _record_exit(db, nid, name):
-    return an.append_ledger_entry(
-        db, nid,
-        person_names=[name],
-        audibility=AUDIBILITY_PUBLIC,
-        body="",
-        presence_effect=PRESENCE_EXIT,
-        check_dead=False,
-    )
-
-
-
 # ── AC2/AC3：侍立者补话组装取其在场时段殿上公开对话；未在场者取空 ──────────
+
+
+
+
+
+
 
 
 # ── AC1：乾清宫一夜连场骨架可跑（宣→留侍→宣→插话站台→同殿）──────────────
 
 
+
+
 # ── AC4：回奏输入按角色见闻分流（同问不同答/臣不知，千人千答非旧询问机制）──
+
+
 
 
 # ── 出殿边界：告退后殿上公开对话不入其组装（区间终点，两条出场路径各一）──────
@@ -70,3 +66,13 @@ def test_exit_excludes_later_public_ledger_from_character_hearing(game):
     visible_ids = {r["id"] for r in an.audible_entries_for(db, nid, "毕自严")}
     assert heard_id in visible_ids
     assert unheard_id not in visible_ids
+
+def _record_exit(db, nid, name):
+    return an.append_ledger_entry(
+        db, nid,
+        person_names=[name],
+        audibility=AUDIBILITY_PUBLIC,
+        body="",
+        presence_effect=PRESENCE_EXIT,
+        check_dead=False,
+    )

@@ -1,10 +1,10 @@
+from __future__ import annotations
 """#670 Web 殿上 chat/chat_stream 测试壳共享 admission 契约。
 
 生产 WebGame 殿上入口调 session.consume_audience_admission。
 测试假壳不得各自复制放行方法体，也不得在 web_app 对缺方法 fail-open。
 """
 
-from __future__ import annotations
 
 import sqlite3
 from types import SimpleNamespace

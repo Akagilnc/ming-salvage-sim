@@ -94,7 +94,7 @@ def generate_ending_summary_for_tail(
 
     def _load_gazettes():
         loaded = []
-        for row in db.list_turn_reports():
+        for row in db.turn_reports.list_archives():
             turn = int(row.get("turn") or 0)
             if turn > int(closed_state.turn):
                 continue
@@ -143,7 +143,7 @@ def generate_ending_summary_for_tail(
         }
         for row in reports
     ]
-    save = save_fn or db.save_ending_summary
+    save = save_fn or db.reign.save_ending_summary
 
     def _save():
         save(

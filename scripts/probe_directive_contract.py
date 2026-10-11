@@ -39,14 +39,14 @@ def add_narrative_probe_directive(
     """Create one probe directive through the engine write seam.
 
     #1902：拟诏台手写入口退役，会话层 add_directive 随之删除；探针改走
-    ``db.add_directive``（同一 turn_directives 表、同一 payload 形状）。返回
+    ``db.issues.add_directive``（同一 turn_directives 表、同一 payload 形状）。返回
     会话层现役的 ``DirectiveView``（list_directives 的同一投影类型）——不另造
     同形视图，各探针脚本的 ``view.id`` 用法不变。
     """
     from ming_sim.session import DirectiveView
 
-    directive_id = session.db.add_directive(
-        session.state,
+    directive_id = session.db.issues.add_directive(
+        session.state.turn, session.state.year, session.state.period,
         None,
         text,
         "手动新增",

@@ -11,6 +11,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.staged_commitment import load_commitment_stages
+from ming_sim.entities.issue.store import IssueStore
 
 from typing import Any, Dict, List, Optional
 
@@ -62,10 +64,7 @@ _TERMINAL_OUTCOMES = frozenset({"fulfilled", "degraded", "failed", "transformed"
 
 
 def _issue_meta(db: Any, commitment_ref: int) -> Dict[str, object]:
-    row = db.conn.execute(
-        "SELECT id, title, origin_ref, stages_json, stage_text FROM issues WHERE id=?",
-        (int(commitment_ref),),
-    ).fetchone()
+    row = IssueStore(db.conn).read_issue_meta((int(commitment_ref),))
     if row is None:
         return {
             "id": int(commitment_ref),
@@ -78,7 +77,7 @@ def _issue_meta(db: Any, commitment_ref: int) -> Dict[str, object]:
         "id": int(row["id"]),
         "title": str(row["title"] or ""),
         "origin_ref": str(row["origin_ref"] or ""),
-        "stages": normalize_commitment_stages(row["stages_json"]),
+        "stages": load_commitment_stages(row["stages_json"]),
         "stage_text": str(row["stage_text"] or ""),
     }
 
@@ -98,7 +97,7 @@ def resolve_due_review_branch(
     dossier_id = parse_dossier_id_from_origin(origin_ref)
     if dossier_id is None:
         return {"branch": "no_dossier", "dossier_id": None, "dossier": None}
-    dossier = db.get_decree_dossier(int(dossier_id))
+    dossier = db.dossiers.get(int(dossier_id))
     if dossier is None:
         return {"branch": "no_dossier", "dossier_id": None, "dossier": None}
     if str(dossier.get("status") or "") != "executing":
@@ -157,7 +156,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     if branch["dossier_id"] is not None:
         # 读端方法属 GameDB 契约面：抛错=代码/schema bug，响亮上抛（ADR 0005），
         # 不得吞成「空证据」误导裁决。催办/监督缺源仍按空列表降级。
-        progress_reports = db.list_dossier_progress(int(branch["dossier_id"]))
+        progress_reports = db.dossiers.list_dossier_progress(int(branch["dossier_id"]))
         # #1260：durable_effects 合并单源（economy+fiscal）。
         durable_effects = db.list_dossier_durable_effects(int(branch["dossier_id"]))
         # #625：监督事实底只读注入（解 A）；不改 decide_due_review_verdict。
@@ -282,7 +281,7 @@ def list_due_review_scenes(
     单一分派：staged → 复命场面；breach_plea → 哭谏场面；
     urge（谏/宽限）走 #624 list_urge_audience_scenes；未知跳过。
     """
-    todos = db.list_next_audience_todos(status=status)
+    todos = db.dossiers.list_next_audience_todos(status=status)
     # list_next_audience_todos 已按 due_turn, commitment_ref, stage_idx, id 排序
     scenes: List[Dict[str, object]] = []
     for todo in todos:
@@ -297,7 +296,7 @@ def list_due_review_scenes(
 
 def _dossier_terminal_snapshot(db: Any, dossier_id: int) -> Dict[str, object]:
     """读已有执行格终值；不代判。"""
-    existing = db.get_decree_dossier(int(dossier_id))
+    existing = db.dossiers.get(int(dossier_id))
     if existing is None:
         return {"rejected": True, "reason": "案卷不存在"}
     prev_outcome = str(existing.get("execution_outcome") or "")
@@ -363,12 +362,12 @@ def apply_due_review_for_todo(
         exec_result = _dossier_terminal_snapshot(db, int(dossier_id))
         if exec_result.get("is_terminal"):
             branch = "dossier"
-            consumed = bool(db.mark_next_audience_todo_status(
+            consumed = bool(db.dossiers.mark_next_audience_todo_status(
                 int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
             ))
         elif mid_stage:
             # 中段只消费场面待办，不关案、不写终值。
-            consumed = bool(db.mark_next_audience_todo_status(
+            consumed = bool(db.dossiers.mark_next_audience_todo_status(
                 int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
             ))
         elif branch == "dossier":
@@ -380,7 +379,7 @@ def apply_due_review_for_todo(
             }
         else:
             # 案卷已不在 executing 且无终值（如中断态）：只消费待办，不代写。
-            consumed = bool(db.mark_next_audience_todo_status(
+            consumed = bool(db.dossiers.mark_next_audience_todo_status(
                 int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
             ))
     else:
@@ -390,7 +389,7 @@ def apply_due_review_for_todo(
             "outcome": None,
         }
         # 无案卷桥：只消费待办，不伪造案卷终值。
-        consumed = bool(db.mark_next_audience_todo_status(
+        consumed = bool(db.dossiers.mark_next_audience_todo_status(
             int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
         ))
 
@@ -416,7 +415,7 @@ def apply_pending_due_reviews(
     """
     turn = int(getattr(state, "turn", 0) or 0)
     results: List[Dict[str, object]] = []
-    pending = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    pending = db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
     for todo in pending:
         if int(todo.get("created_turn") or 0) >= turn:
             continue

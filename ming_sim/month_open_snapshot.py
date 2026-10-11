@@ -40,9 +40,10 @@ def _clear_settlement_display_if_orphan(
     phase = str(state.turn_phase or "")
     if phase in FRONT_HALF_DONE_PHASES:
         return False
-    if db.get_month_open_snapshot(turn) is None:
+    if db.month_open_snapshots.get(turn) is None:
         return False
-    db.clear_month_open_snapshot(turn)
+    db.month_open_snapshots.delete(int(turn))
+    db.conn.commit()
     tlog(f"[month_open_snapshot] {reason} turn={turn} phase={phase}")
     return True
 

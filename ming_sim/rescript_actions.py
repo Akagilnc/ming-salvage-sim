@@ -1,5 +1,9 @@
 """Persist emperor answers; effects belong to the month-chain continuation."""
 from __future__ import annotations
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.applier import StoredDocumentError, load_stored_object
 
 import json
 from typing import Any
@@ -26,8 +30,8 @@ def persist_answers(db: Any, state: Any, choices: list, *, content: Any = None) 
     keys = [item["decision_key"] for item in requests]
     if len(set(keys)) != len(keys):
         raise ValueError("重复 decision_key")
-    rows = {r["decision_key"]: r for r in db.get_rescript_desk_rows_by_keys(keys)}
-    open_keys = {r["decision_key"] for r in db.list_rescript_desk(int(state.turn))}
+    rows = {r["decision_key"]: r for r in db.issues.get_rescript_desk_rows_by_keys(keys)}
+    open_keys = {r["decision_key"] for r in db.issues.list_rescript_desk(int(state.turn))}
     for choice in requests:
         row = rows.get(choice["decision_key"])
         if row is None:
@@ -90,7 +94,7 @@ def apply_imperial_deliberation_push(
 ) -> int:
     """Reuse the stalled dossier and retain imperial decision-key provenance."""
     did = int(target_dossier_id)
-    row = db.get_decree_dossier(did)
+    row = db.dossiers.get(did)
     if not decision_key or row is None or row["status"] != "proposed":
         raise ValueError("御笔强推要求原 proposed 案卷与 decision_key")
     payload = dict(row["payload"])
@@ -104,8 +108,8 @@ def apply_imperial_deliberation_push(
         raise ValueError("无人站台原案缺局势记录")
     payload["deliberation_state"] = "backed"
     payload["imperial_push_note"] = decree_text
-    db.update_decree_dossier_payload(did, payload, commit=False)
-    db.add_dossier_endorsement(
+    db.dossiers.update_payload(did, payload, commit=False)
+    db.dossiers.add_endorsement(
         did, form="御笔手敕", endorser_id="", imperial=True,
         decision_key=decision_key, source_chat_turn_id=0, commit=False,
     )

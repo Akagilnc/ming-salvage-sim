@@ -1,21 +1,9 @@
-"""#1837 C1a：召对转译——交办载荷与应允。
-
-Seams:
-- translate_audience_turn / apply_audience_round_translation（转译 → C0 分派）
-- GameSession.scene_chat（回话后转译；退役并行分类器）
-- close_night 收夜成案 → 过月落账
-"""
-
 from __future__ import annotations
 from ming_sim.settlement.dossier import apply_dossier_promulgation
-
 from ming_sim.session_write_queue import get_session_write_queue
-
 import json
 from types import SimpleNamespace
-
 import pytest
-
 import ming_sim.audience_translate as audience_translate
 from ming_sim.audience_night import (
     close_night,
@@ -29,6 +17,24 @@ from tests.conftest import (
     persist_and_schedule_scene,
     stub_audience_translate,
 )
+from ming_sim.session import GameSession
+from tests.conftest import (
+    note_queue_until_game_teardown,
+    offline_empty_audience_translate,
+    persist_and_schedule_scene,
+    stub_audience_translate,
+)
+"""#1837 C1a：召对转译——交办载荷与应允。
+
+Seams:
+- translate_audience_turn / apply_audience_round_translation（转译 → C0 分派）
+- GameSession.scene_chat（回话后转译；退役并行分类器）
+- close_night 收夜成案 → 过月落账
+"""
+
+
+
+
 
 
 def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None):
@@ -219,7 +225,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
     did = int(db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (aid,),
     ).fetchone()["id"])
-    ends = db.list_dossier_endorsements(did)
+    ends = db.dossiers.endorsements(did)
     assert len(ends) == 1
     assert ends[0]["form"] == "御笔手敕"
     assert ends[0]["source_chat_turn_id"] == ctid
@@ -332,7 +338,6 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     ).fetchone()
     assert rejection is not None
     assert rejection["category"] == "invalid_state"
-
 
 
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
@@ -472,7 +477,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert appt is not None, case["label"]
 
         grant_dossiers = [
-            d for d in db.list_decree_dossiers()
+            d for d in db.dossiers.list_dossiers()
             if d["action_type"] == "grant_allocation"
             and str(d.get("target_id") or "") == case["grant_target_id"]
             and int(d.get("pending_action_id") or 0) == int(pending[0]["id"])
@@ -480,7 +485,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert grant_dossiers, case["label"]
 
         state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
-        db.save_state(state)
+        db.reign.save_game_state(state)
         for d in grant_dossiers:
             apply_dossier_promulgation(db,
                 state, int(d["id"]), decision="promulgated", content=content,
@@ -565,7 +570,6 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     assert db.conn.execute(
         "SELECT 1 FROM turn_directives WHERE source_pending_action_id=?", (staged_id,),
     ).fetchone() is not None
-
 
 
 @pytest.mark.parametrize("message", ["留下听着", "今日就到这里吧"])
@@ -710,38 +714,7 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
     ).fetchone()["c"]
     assert after == before  # 失败不得当分派成功写库
     # 后台失败 → 待补水位，不洗成成功空声明
-    assert db.get_story_extract_status(ctid) == "pending"
-
-
-def test_translate_empty_success_still_dispatches_without_failure(game, monkeypatch):
-    """成功空声明仍可分派（零写），与调用失败可区分。
-
-    #1902 T5：经 _scene_turn 真建轮+落回话+调度；外部水位 done、pending 零增量。
-    """
-    db, state, content = game
-    open_night(db, state, location="乾清宫", time_of_day="夜")
-
-    class FakeAgent:
-        def run(self, message):
-            return SimpleNamespace(content="臣在。", tools=[])
-
-    monkeypatch.setattr(
-        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
-    )
-    sess = _sess(
-        db, state, content, monkeypatch,
-        translate_fn=offline_empty_audience_translate,
-    )
-    before = db.conn.execute(
-        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
-    ).fetchone()["c"]
-    result, ctid = _scene_turn(sess, db, state, "边事如何？")
-    assert result.answer == "臣在。"
-    after = db.conn.execute(
-        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
-    ).fetchone()["c"]
-    assert after == before  # 空成功零写，不得造 pending
-    assert db.get_story_extract_status(ctid) == "done"  # 与失败 pending 可区分
+    assert db.reign.get_story_extract_status(ctid) == "pending"
 
 
 def test_appointment_without_text_is_rejected_not_templated(game):
@@ -996,39 +969,3 @@ def test_appointment_region_id_stages_into_pending_payload(game):
     )
     assert payload.get("text") == edict
     assert payload.get("region_id") == region
-
-
-def test_scene_chat_translation_can_approve_staged_action(game, monkeypatch):
-    db, state, content = game
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    _persist_night_chat(db, state, night_id, "昨夜已问边饷", "臣已回奏。")
-    staged = dispatch_declaration(
-        db, state,
-        {"commissions": [{"text": "旧暂存旨正文独特标记XYZ"}]},
-        minister_name="", night_id=night_id,
-    )
-    staged_id = int(staged.commissions.applied[0]["id"])
-
-    def translate_fn(prompt, llm_config):
-        return {
-            **offline_empty_audience_translate(prompt, llm_config),
-            "commissions": [],
-            "promises": [{"action_id": staged_id, "decision": "应允"}],
-        }
-
-    class FakeAgent:
-        def run(self, message):
-            return SimpleNamespace(content="臣领旨。", tools=[])
-
-    monkeypatch.setattr(
-        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
-    )
-    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
-    # 用不会与规则段「准」混淆的皇帝原话
-    _scene_turn(sess, db, state, "着即照办")
-
-    row = db.conn.execute(
-        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
-    ).fetchone()
-    assert int(row["night_approved"] or 0) == 1

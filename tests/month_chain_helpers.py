@@ -1,11 +1,24 @@
+from __future__ import annotations
 """Light GameSession and canned external model seams for real player-month tests."""
 
-from __future__ import annotations
 
+from concurrent.futures import Future
 from typing import Optional
 
 import ming_sim.decree as decree_mod
 from ming_sim.session import GameSession
+
+
+class InlineExecutor:
+    """Run canned deterministic work to completion, with the executor's Future contract."""
+
+    def submit(self, fn):
+        future = Future()
+        try:
+            future.set_result(fn())
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
 
 
 def make_light_session(db, state, content):

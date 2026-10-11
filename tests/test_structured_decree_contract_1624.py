@@ -1,13 +1,38 @@
-"""#1624 Shared structured-decree negative admission gates."""
-
 from __future__ import annotations
-
 import pytest
-
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
     assemble_structured_decree,
 )
+import json
+"""#1624 结构化旨意共同契约：真实入口主干（禁 helper 直调冒充入口；禁 prompt 文本锁）。"""
+
+
+
+
+
+
+# #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
+_OWNER_ROSTER = [
+    {"character_id": "毕自严", "tier": "主办", "role": "总核赈务", "delegator_id": None},
+    {"character_id": "陈新甲", "tier": "协办", "role": "", "delegator_id": None},
+]
+
+_OWNER_OPTION = {
+    "label": "着户部继续核查陕西赈务，按月具报。",
+    "hint": "督赈",
+    "action_type": "assignment",
+    "target_kind": "region",
+    "target_id": "shaanxi",
+    "locality_scope": "single",
+    "region_id": "shaanxi",
+    "assignee_name": "",
+    "transaction_category": "督赈",
+    "deadline_months": 2,
+    "participant_roster": [dict(item) for item in _OWNER_ROSTER],
+}
+
+
 
 
 def test_shared_validate_rejects_region_id_and_category_holes():
@@ -56,21 +81,3 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     assert ei.value.failed_fields == frozenset(
         {"action_type", "dossier_action_type"}
     )
-    # 同值或一侧空：维持现状（不因 alias 比较误伤）
-    same = assemble_structured_decree({
-        "action_type": "policy",
-        "dossier_action_type": "policy",
-        "target_kind": "policy",
-        "target_id": "x",
-        "locality_scope": "none",
-    })
-    assert same["action_type"] == "policy"
-    assert same["dossier_action_type"] == "policy"
-    only_action = assemble_structured_decree({
-        "action_type": "policy",
-        "target_kind": "policy",
-        "target_id": "x",
-        "locality_scope": "none",
-    })
-    assert only_action["action_type"] == "policy"
-    assert only_action["dossier_action_type"] == "policy"

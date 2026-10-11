@@ -1,3 +1,12 @@
+from __future__ import annotations
+from ming_sim.models import TurnPhase
+from tests.test_enter_settlement_period_1235 import _click_before
+from fastapi.testclient import TestClient
+from pathlib import Path
+from ming_sim.session_write_queue import ClassifiedWriteGate
+import threading
+from types import SimpleNamespace
+import web_app
 """QA 包乙刀② #1343/#1378/#1379/#1388：核账遮罩生命周期（快照清理时点）。
 
 单谓词不动：settlement_display ⇔ 当前回合快照在。
@@ -5,25 +14,141 @@
 验收：
   · 并发 A 成功未推月 + B 进 atomic 时 DELETE 不落 B 事务
   · clear 抛错后 inflight 归零
-  · 真实入口成功回 summoning 清残留（见 test_month_chain_1847 玩家月链）
+  · 真实入口成功回 summoning 清残留（见 test_month_open_snapshot_1234 退朝入口）
 """
 
-from __future__ import annotations
 
 
-from ming_sim.models import TurnPhase
 
 
-from tests.test_enter_settlement_period_1235 import _click_before
 
 
-def test_refresh_turn_no_longer_clears_orphan(web_game):
-    """F3：refresh_turn 不再是清理点——直调不得清残留（清理只在受理样板成功支）。"""
-    db, state = web_game.db, web_game.state
-    before = _click_before(state)
-    db.capture_month_open_snapshot(state)
+
+
+def _shell(db, state, content):
+    """轻壳 WebGame：真 db/state + 真 write_gate。"""
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(
+        advance_without_decree=lambda **_k: None,
+        db=db,
+        state=state,
+        content=content,
+        begin_turn=lambda: None,
+        previous_summary="",
+        last_decree="",
+        last_report="",
+        pending_count=lambda: 0,
+        pending_decisions=lambda: [],
+        victory=lambda: {"status": "ongoing", "summary": ""},
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
+    )
+    runtime._write_gate = ClassifiedWriteGate()
+    runtime._settlement_entry_lock = threading.Lock()
+    runtime._settlement_entry_inflight = 0
+    runtime.directive_rows = lambda: []
+    runtime.issue_payloads = lambda: []
+    runtime.legacies_payload = lambda: []
+    runtime.closed_this_turn_payloads = lambda: []
+    runtime.map_nodes = lambda: []
+    runtime.ending_payload = lambda: None
+    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+    runtime.character_power_id = lambda c: "ming"
+    return runtime
+
+
+def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
+    """验收：成功支 clear 抛错仍执行 _end_settlement_entry（inflight 归零）。
+
+    且 settled_ok 不得在 clear 前预置真——clear 抛须走失败 exit，
+    禁「成功态 + 死遮罩」绕过失败收口。
+    """
+    db, state, content = game
+    runtime = _shell(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
+    db.capture_month_open_snapshot(state)
 
-    web_game.refresh_turn()
-    assert db.get_month_open_snapshot(int(state.turn)) == before
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
+
+    def _boom_clear(_t):
+        raise RuntimeError("clear boom")
+
+    db.month_open_snapshots.delete = _boom_clear  # type: ignore[method-assign]
+
+    response = TestClient(web_app.app, raise_server_exceptions=False).post(
+        "/api/decree/advance_without_edict", json={},
+    )
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["message"] == "clear boom"
+    assert detail["error_type"] == "RuntimeError"
+    assert detail["reason"] == "clear boom"
+    assert Path(detail["error_pack_path"]).is_dir()
+    assert db.month_open_snapshots.get(int(state.turn)) is not None
+    assert runtime.state_payload()["settlement_entry_inflight"] is False
+
+
+def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
+    """对称：失败支 exit 抛错亦不得卡住 inflight（嵌套 finally 销账）。"""
+    db, state, content = game
+    runtime = _shell(db, state, content)
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.reign.save_game_state(state)
+
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
+
+    def _boom_exit(*_a, **_k):
+        raise RuntimeError("exit boom")
+
+    db.month_open_snapshots.delete = _boom_exit
+    runtime.session.advance_without_decree = lambda **_k: (_ for _ in ()).throw(ValueError("body fail"))
+
+    response = TestClient(web_app.app, raise_server_exceptions=False).post(
+        "/api/decree/advance_without_edict", json={},
+    )
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["message"] == "exit boom"
+    assert detail["error_type"] == "RuntimeError"
+    assert detail["reason"] == "exit boom"
+    assert Path(detail["error_pack_path"]).is_dir()
+    assert db.month_open_snapshots.get(int(state.turn)) is not None
+    assert runtime.state_payload()["settlement_entry_inflight"] is False
+
+
+def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
+    """负向：clear_orphan 抛错后 settled_ok 仍假 → 失败 exit 清常态死遮罩。
+
+    与 boom db.clear 不同：此处只炸 orphan 包装，exit 走真 clear 可清快照。
+    """
+    db, state, content = game
+    runtime = _shell(db, state, content)
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.reign.save_game_state(state)
+    db.capture_month_open_snapshot(state)
+    assert runtime.state_payload()["turn"]["settlement_display"] is True
+
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
+
+    import ming_sim.month_open_snapshot as mos
+
+    def _boom_orphan(_db, _state):
+        raise RuntimeError("orphan clear boom")
+
+    monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
+
+    response = TestClient(web_app.app, raise_server_exceptions=False).post(
+        "/api/decree/advance_without_edict", json={},
+    )
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["message"] == "orphan clear boom"
+    assert detail["error_type"] == "RuntimeError"
+    assert detail["reason"] == "orphan clear boom"
+    assert Path(detail["error_pack_path"]).is_dir()
+    assert runtime.state_payload()["settlement_entry_inflight"] is False
+    assert db.month_open_snapshots.get(int(state.turn)) is None
+    assert runtime.state_payload()["turn"]["settlement_display"] is False

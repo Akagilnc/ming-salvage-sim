@@ -19,7 +19,7 @@ def neutralize_covert_fiscal_effects(
     """Undo one old case's beyond-intent fiscal contribution, once per live incarnation."""
     old_origin = f"dossier:{int(exposed_dossier_id)}"
     receipt_origin = f"dossier:{int(prohibition_dossier_id)}"
-    rows = db.list_fiscal_effects_for_dossier(int(exposed_dossier_id))
+    rows = db.fiscal_config.effects_for_dossier(int(exposed_dossier_id))
     raw_keys = {
         str(row.get("key") or "").strip() for row in rows if row.get("beyond_intent")
     }
@@ -51,7 +51,7 @@ def neutralize_covert_fiscal_effects(
         if receipt is not None:
             continue
 
-        current = db.get_fiscal_config().get(key)
+        current = db.fiscal_config.values().get(key)
         if current is None:
             continue
         latest_remove = db.conn.execute(

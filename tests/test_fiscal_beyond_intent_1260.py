@@ -1,22 +1,24 @@
-"""#1260 fiscal 三表 beyond_intent 全链 + 读端单源化 + 嵌套别名。
-
-S1 写端 tracer（三族 + 负向）
-S2 纯 fiscal 旨外 → 留痕/fork；模型写终值后复核消费
-S3 嵌套通道「旨外恶果」别名 → ledger=1
-"""
-
 from __future__ import annotations
-
-
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
+from ming_sim.entities.issue.store import IssueStore
+"""#1260 fiscal 三表 beyond_intent 全链 + 读端单源化 + 嵌套别名。
+
+S1 写端 tracer（三族 + 负向）
+S2 纯 fiscal 旨外 → 终裁/fork/反噬接通
+S3 嵌套通道「旨外恶果」别名 → ledger=1
+"""
+
+
+
 
 
 # ── helpers ──────────────────────────────────────────────────────────
+
 
 def _executing_policy(db, state, *, token: str):
     dossier_id = db.create_decree_dossier(
@@ -31,7 +33,7 @@ def _executing_policy(db, state, *, token: str):
         ],
     )
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     return dossier_id
 
 
@@ -73,7 +75,10 @@ def _prime_and_apply_due_review(
     return results[0]
 
 
+
+
 # ── S1：三族写端 tracer + 负向 ──────────────────────────────────────
+
 
 def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
     """fiscal_creates 写端：肯定→两行 creations 同旗 True；缺省/畸形/否定→False。"""
@@ -83,7 +88,7 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
 
     applied = settle_delta(state, db, {'fiscal_creates': [{'key': '剿饷浮收', 'account': '国库', 'direction': 'income', 'init_value': 15, 'reason': '借剿饷名义加派', 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content))
     assert view(applied, "fiscal_creates"), applied
-    rows = db.list_fiscal_effects_for_dossier(did)
+    rows = db.fiscal_config.effects_for_dossier(did)
     create_rows = [r for r in rows if r.get("effect_kind") == "create"]
     assert {r["key"] for r in create_rows} == {"剿饷浮收_base", "剿饷浮收_rate"}
     assert all(r["beyond_intent"] is True for r in create_rows), create_rows
@@ -106,7 +111,7 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
         out = settle_delta(state, db, {'fiscal_creates': [{'key': key, 'account': '国库', 'direction': 'income', 'init_value': 3, 'reason': f'负向{key}', 'origin_ref': origin, **flag}]}, SettlementContext(content=content))
         assert view(out, "fiscal_creates"), out
     neg_rows = [
-        r for r in db.list_fiscal_effects_for_dossier(did)
+        r for r in db.fiscal_config.effects_for_dossier(did)
         if r.get("effect_kind") == "create"
         and str(r.get("key") or "").endswith("_base")
         and any(str(r.get("key") or "").startswith(k) for k, _ in cases)
@@ -132,7 +137,7 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
     applied = settle_delta(state, db, {'fiscal_changes': [{'key': rate_key, 'delta': 1, 'reason': '借旨加派一成', 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content))
     assert view(applied, "fiscal_changes"), applied
     change_rows = [
-        r for r in db.list_fiscal_effects_for_dossier(did)
+        r for r in db.fiscal_config.effects_for_dossier(did)
         if r.get("effect_kind") == "change"
     ]
     assert change_rows and all(r["beyond_intent"] is True for r in change_rows), change_rows
@@ -146,7 +151,7 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
         out = settle_delta(state, db, {'fiscal_changes': [{'key': rate_key, 'delta': 1, 'reason': f'调率负向{label}', 'origin_ref': origin, **flag}]}, SettlementContext(content=content))
         assert view(out, "fiscal_changes"), out
     all_changes = [
-        r for r in db.list_fiscal_effects_for_dossier(did)
+        r for r in db.fiscal_config.effects_for_dossier(did)
         if r.get("effect_kind") == "change"
     ]
     # first is True; the three negatives are False
@@ -180,7 +185,7 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
         out = settle_delta(state, db, {'fiscal_removes': [{'key': stem, 'reason': f'裁撤{stem}', 'origin_ref': origin, **flag}]}, SettlementContext(content=content))
         assert view(out, "fiscal_removes"), out
         tomb = [
-            r for r in db.list_fiscal_effects_for_dossier(did)
+            r for r in db.fiscal_config.effects_for_dossier(did)
             if r.get("effect_kind") == "remove" and str(r.get("key") or "").startswith(stem)
         ]
         assert tomb, stem
@@ -193,6 +198,8 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
         (origin,),
     ).fetchall()
     assert raw and all("beyond_intent" in dict(r) for r in raw)
+
+
 
 
 def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
@@ -208,13 +215,14 @@ def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
         text="赏银月拨",
     )
     assert created
-    rows = db.list_fiscal_effects_for_dossier(did)
+    rows = db.fiscal_config.effects_for_dossier(did)
     create_rows = [r for r in rows if r.get("effect_kind") == "create"]
     assert create_rows
     assert all(r["beyond_intent"] is False for r in create_rows), create_rows
 
 
-# ── S2：纯 fiscal 旨外案卷 → 留痕/fork；模型写终值后复核消费 ───────
+# ── S2：纯 fiscal 旨外案卷 → 终裁/fork/反噬 ─────────────────────────
+
 
 def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     """纯 fiscal 旨外（零 economy 流水）→ 留痕/fork；模型写 transformed 后复核消费。"""
@@ -226,9 +234,9 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     applied = settle_delta(state, db, {'fiscal_creates': [{'key': '借旨新税', 'account': '国库', 'direction': 'income', 'init_value': 20, 'reason': '借剿饷名义新立浮收', 'origin_ref': origin, 'beyond_intent': True}]}, SettlementContext(content=content))
     assert view(applied, "fiscal_creates")
     # Zero beyond-flagged economy moves (foundation seed may add plain spend later)
-    eco = db.list_economy_moves_for_dossier(did)
+    eco = db.reign.list_economy_moves_for_dossier(did)
     assert not any(bool(m.get("beyond_intent")) for m in eco), eco
-    fisc = db.list_fiscal_effects_for_dossier(did)
+    fisc = db.fiscal_config.effects_for_dossier(did)
     assert any(r.get("beyond_intent") is True for r in fisc), fisc
 
     # Single-source helpers
@@ -237,7 +245,7 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     assert db.dossier_has_beyond_intent(did) is True
 
     # Fork predicate expands to fiscal
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         did, state.turn, "在办", "新税已立、岁入可期",
         commit=True,
     )
@@ -251,32 +259,15 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
         outcome="transformed", note="名实已乖，借旨新立浮收",
     )
     assert (result.get("execution") or {}).get("outcome") == "transformed", result
-    dossier = db.get_decree_dossier(did)
+    dossier = db.dossiers.get(did)
     assert dossier["execution_outcome"] == "transformed"
     assert dossier["status"] == "closed"
 
 
-def test_s2_pure_fiscal_without_beyond_intent_fulfilled(game, content):
-    """无旨外 fiscal 效果；模型写 fulfilled 后复核消费。"""
-    db, state, _ = game
-    did = _executing_policy(db, state, token="s2-neg")
-    origin = f"dossier:{did}"
-
-    applied = settle_delta(state, db, {'fiscal_creates': [{'key': '正额新税', 'account': '国库', 'direction': 'income', 'init_value': 10, 'reason': '奉旨正额', 'origin_ref': origin}]}, SettlementContext(content=content))
-    assert view(applied, "fiscal_creates")
-    assert db.dossier_has_beyond_intent(did) is False
-
-    result = _prime_and_apply_due_review(
-        db, state, content, dossier_id=did, title="正额新税之诺",
-        outcome="fulfilled", note="正额新税如期见成",
-    )
-    assert (result.get("execution") or {}).get("outcome") == "fulfilled", result
-    dossier = db.get_decree_dossier(did)
-    assert dossier["execution_outcome"] == "fulfilled"
-    assert dossier["status"] == "closed"
 
 
 # ── S3：嵌套通道别名 ────────────────────────────────────────────────
+
 
 def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
     """嵌套通道 ongoing_effects.economy 用「旨外恶果」别名 → ledger beyond_intent=1。"""
@@ -284,7 +275,7 @@ def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     state.metrics["国库"] = 500
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
     db.insert_issue(
@@ -320,3 +311,22 @@ def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
     ).fetchall()
     assert rows, "嵌套 ongoing economy 须落 ledger"
     assert all(int(r["beyond_intent"]) == 1 for r in rows), [dict(r) for r in rows]
+
+def test_s2_pure_fiscal_without_beyond_intent_fulfilled(game, content):
+    """无旨外 fiscal 效果；模型写 fulfilled 后复核消费。"""
+    db, state, _ = game
+    did = _executing_policy(db, state, token="s2-neg")
+    origin = f"dossier:{did}"
+
+    applied = settle_delta(state, db, {'fiscal_creates': [{'key': '正额新税', 'account': '国库', 'direction': 'income', 'init_value': 10, 'reason': '奉旨正额', 'origin_ref': origin}]}, SettlementContext(content=content))
+    assert view(applied, "fiscal_creates")
+    assert db.dossier_has_beyond_intent(did) is False
+
+    result = _prime_and_apply_due_review(
+        db, state, content, dossier_id=did, title="正额新税之诺",
+        outcome="fulfilled", note="正额新税如期见成",
+    )
+    assert (result.get("execution") or {}).get("outcome") == "fulfilled", result
+    dossier = db.dossiers.get(did)
+    assert dossier["execution_outcome"] == "fulfilled"
+    assert dossier["status"] == "closed"

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """城市等级(city_level 0-5) + 城防大炮(城头红夷炮门数, 上限 city_level×8)。
 
 city_level：静态结构属性(改一级需五年十年，暂不做变更机制)，按史实分级——
@@ -5,7 +6,6 @@ city_level：静态结构属性(改一级需五年十年，暂不做变更机制
 将来也供经济/内政用。城防炮门数挂 region(地区=城池暂不分)，上限 = city_level×8。
 """
 
-from __future__ import annotations
 
 
 def test_city_level_tiers_by_history(read_game):

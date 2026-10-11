@@ -1,6 +1,7 @@
 """结算 payload 的请旨解析与批红选项校验。请旨来自逐旨／世界段推演，不从邸报抽取。"""
 
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
 
 import json
 import logging

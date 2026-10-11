@@ -6,6 +6,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
 from ming_sim.session import AudienceChatTurn
 
 import asyncio
@@ -545,7 +546,7 @@ def visible_in_court(character: Character, db) -> bool:
         resolve_power_id=lambda c: _character_power_id(c, db),
     ):
         return False
-    if db.get_character_status(character.name)[0] == "offstage":
+    if db.characters.get_character_status(character.name)[0] == "offstage":
         return False
     return True
 
@@ -571,7 +572,7 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
         return False
     if getattr(character, "faction", "") == "流寇":
         return False
-    if db.get_character_status(character.name)[0] != "offstage":
+    if db.characters.get_character_status(character.name)[0] != "offstage":
         return False
     debut_year = int(getattr(character, "debut_year", 0) or 0)
     debut_month = int(getattr(character, "debut_month", 0) or 0)
@@ -719,15 +720,15 @@ class WebGame:
             self.chat_history: Dict[str, List[Dict[str, str]]] = {
                 name: [] for name in self.session.content.characters
             }
-            for name, msgs in self.db.load_all_chat_history().items():
+            for name, msgs in self.db.chat_messages.history_by_minister().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
-            _fav_raw = self.db.kv_get("favorites")
+            _fav_raw = self.db.reign.kv_get("favorites")
             self.favorites: set = (
                 set(_load_durable_str_list(_fav_raw, surface="kv_store.favorites"))
                 if _fav_raw is not None else set(_DEFAULT_FAVORITES)
             )
             if _fav_raw is None:
-                self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
+                self.db.reign.kv_set("favorites", json.dumps(sorted(self.favorites)))
             # #505／#1902 T4：启动恢复生命周期归会话共核；入口只调共核再启宿主后台补跑。
             self.session.reconcile_crashed_audience_turns()
             # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
@@ -758,7 +759,7 @@ class WebGame:
 
     def list_saves(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
-        campaign_id = (self.db.kv_get("campaign_id") or "").strip()
+        campaign_id = (self.db.reign.kv_get("campaign_id") or "").strip()
         for fname in sorted(os.listdir(self.saves_dir())):
             if not fname.endswith(".db"):
                 continue
@@ -877,15 +878,15 @@ class WebGame:
         def _prepare_web_presentation(candidate: GameSession):
             # 发布前准备：仍在共核失败关闭保护区内（读历史/收藏失败须关候选）。
             chat_history = {name: [] for name in candidate.content.characters}
-            for name, msgs in candidate.db.load_all_chat_history().items():
+            for name, msgs in candidate.db.chat_messages.history_by_minister().items():
                 chat_history.setdefault(name, []).extend(msgs)
-            fav_raw = candidate.db.kv_get("favorites")
+            fav_raw = candidate.db.reign.kv_get("favorites")
             favorites = (
                 set(_load_durable_str_list(fav_raw, surface="kv.favorites"))
                 if fav_raw is not None else set(_DEFAULT_FAVORITES)
             )
             if fav_raw is None:
-                candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
+                candidate.db.reign.kv_set("favorites", json.dumps(sorted(favorites)))
             return chat_history, favorites
 
         try:
@@ -941,7 +942,7 @@ class WebGame:
         previous_turn = int(self.state.turn) - 1
         if previous_turn < 0:
             return ""
-        return self.db.get_turn_report(previous_turn)
+        return self.db.turn_reports.report_text(previous_turn)
 
     def _runtime_write_queue(self) -> SessionWriteQueue:
         return get_session_write_queue(self)
@@ -979,18 +980,14 @@ class WebGame:
 
     # ── 序列化 ────────────────────────────────────────────────────────────
     def public_character(self, character: Character) -> Dict[str, Any]:
-        status, status_reason = self.db.get_character_status(character.name)
+        status, status_reason = self.db.characters.get_character_status(character.name)
         # #1683：active=官印/在事态，不得单独译成物理「在朝」；去向另投影 location/transit。
         status_label = _STATUS_LABEL_WEB.get(status, status)
         office = character.office  # 去职者已被清空，可能为空串
         # summary 不含官职（卡片/详情已单独显 office），避免重复
         summary = f"{character.faction}一系，行事{character.style}。"
         power_id = self.db.resolve_power_id(character)  # 权威解析单一真源（#125）
-        loc_row = self.db.conn.execute(
-            "SELECT location, transit_to "
-            "FROM characters WHERE name=?",
-            (character.name,),
-        ).fetchone()
+        loc_row = self.db.characters.read_admit_audience((character.name,))
         location = str(loc_row["location"] or "") if loc_row is not None else ""
         transit_to = str(loc_row["transit_to"] or "") if loc_row is not None else ""
         regions = getattr(self.content, "regions", None) or {}
@@ -1048,8 +1045,7 @@ class WebGame:
             item.id for item in self.session.list_directives(include_pending=True)
         }
         return [
-            row for row in self.db.list_directives(
-                self.state, statuses=("pending", "draft"),
+            row for row in self.db.issues.list_directives(self.state.turn, statuses=("pending", "draft"),
             )
             if int(row["id"]) in visible_ids
         ]
@@ -1057,14 +1053,14 @@ class WebGame:
     def cased_directive_payloads(self) -> List[Dict[str, Any]]:
         """#1764 御案只读投影：已成案·待盖玺（0051 proposed）。
 
-        读 list_dossiered_draft_directives + dossier status；不改 list_directives 过滤，
+        读 dossiers.directives_with_dossiers + dossier status；不改 list_directives 过滤，
         不另立事实源。上游 SELECT td.* + EXISTS 按主键逐行返回，无需 seen 去重。
         过月后 draft 迁出则桌空。
         """
         out: List[Dict[str, Any]] = []
-        for row in self.db.list_dossiered_draft_directives(self.state):
+        for row in self.db.dossiers.directives_with_dossiers(self.state.turn):
             dir_id = int(row["id"])
-            dossier = self.db.get_dossier_for_directive(dir_id)
+            dossier = self.db.dossiers.get_for_directive(dir_id)
             if dossier is None:
                 continue
             if str(dossier.get("status") or "") != "proposed":
@@ -1086,7 +1082,7 @@ class WebGame:
         """对话式拟旨暂存数（pending_actions kind=directive）唯一计数缝——state/chat done 共用。"""
         rows = pending_actions
         if rows is None:
-            rows = self.db.list_pending_actions(int(self.state.turn))
+            rows = self.db.dossiers.list_pending_actions(int(self.state.turn))
         return sum(1 for a in rows if a["kind"] == "directive")
 
     def map_nodes(self) -> List[Dict[str, Any]]:
@@ -1175,7 +1171,7 @@ class WebGame:
         """上回合（resolve 后 state.turn 已 +1）关闭的 issue。"""
         target_turn = max(0, int(self.state.turn) - 1)
         out: List[Dict[str, Any]] = []
-        for row in self.db.list_closed_issues_at(target_turn):
+        for row in IssueStore(self.db.conn).read_list_closed_issues_at((target_turn,)):
             status = str(row["status"])
             effect_key = "effect_on_resolve" if status == "resolved" else "effect_on_fail"
             effect = loads_effect_dict(row[effect_key])  # 统一守门，绝不向前端吐非 dict（#117 R5）
@@ -1195,7 +1191,7 @@ class WebGame:
 
     def issue_payloads(self) -> List[Dict[str, Any]]:
         payloads: List[Dict[str, Any]] = []
-        for row in self.db.list_active_issues():
+        for row in self.db.issues.active_rows():
             commitment_progress = commitment_progress_payload(self.db, self.state, row)
             payload = {
                 "id": int(row["id"]),
@@ -1229,7 +1225,7 @@ class WebGame:
         return self.db.list_player_memorials()
 
     def mark_memorials_read(self, keys: List[str]) -> Dict[str, Any]:
-        self.db.mark_memorials_read(keys)
+        self.db.reign.mark_memorials_read(keys)
         memorials = self.memorial_payloads()
         return {
             "memorials": memorials,
@@ -1272,7 +1268,7 @@ class WebGame:
 
     def _month_open_snapshot(self) -> Optional[Dict[str, int]]:
         """#1234 路③：当前回合未过期月初快照；无则 None（⇔ 非核账展示态）。"""
-        return self.db.get_month_open_snapshot(int(self.state.turn))
+        return self.db.month_open_snapshots.get(int(self.state.turn))
 
     def _display_metrics(self) -> Dict[str, int]:
         """顶栏四键呈现缝：核账期读快照，否则读活值。"""
@@ -1323,11 +1319,7 @@ class WebGame:
             "期初",
         }
         cur_turn = int(self.state.turn)
-        rows = self.db.conn.execute(
-            "SELECT id, account, delta, balance_after, category, reason "
-            "FROM economy_ledger WHERE turn = ? ORDER BY id",
-            (cur_turn - 1,),
-        ).fetchall()
+        rows = self.db.reign.read_budget_ledger_rows((cur_turn - 1,))
         for name, account in budget.items():
             movements = [
                 {
@@ -1376,7 +1368,7 @@ class WebGame:
             return None
         from ming_sim.context import ENDING_LABELS
         from ming_sim.mechanical_tail import ending_summary_pending
-        row = self.db.get_ending_summary() or {}
+        row = self.db.reign.get_ending_summary() or {}
         summary = row.get("summary", "") or ""
         return {
             "status": self.state.ending_status,
@@ -1389,7 +1381,7 @@ class WebGame:
     def state_payload(self) -> Dict[str, Any]:
         directives = [self.directive_payload(row) for row in self.directive_rows()]
         cased_directives = self.cased_directive_payloads()
-        pending_actions = self.db.list_pending_actions(int(self.state.turn))
+        pending_actions = self.db.dossiers.list_pending_actions(int(self.state.turn))
         visible_non_directive_pending = [
             a for a in pending_actions
             if a["kind"] != "directive" and not (a["kind"] == "secret_order" and a["action"] == "新建")
@@ -1411,10 +1403,10 @@ class WebGame:
             pending_decisions = (
                 self.session.pending_decisions() if awaiting_decision else []
             )
-            deferred_rescripts = self.db.list_rescript_drafts(status="revision_pending")
+            deferred_rescripts = self.db.issues.list_rescript_drafts(status="revision_pending")
             durable_phase2_resume = (
                 awaiting_decision
-                and self.db.get_resolve_context(self.state.turn) is not None
+                and self.db.resolve_contexts.get(self.state.turn) is not None
                 and not pending_decisions
             )
             # One failure projection for night forecasts, settlement and rescript continuation.
@@ -1602,7 +1594,7 @@ class WebGame:
             error=error,
         )
         self.chat_history = {name: [] for name in self.session.content.characters}
-        for name, msgs in self.db.load_all_chat_history().items():
+        for name, msgs in self.db.chat_messages.history_by_minister().items():
             self.chat_history.setdefault(name, []).extend(msgs)
 
     def undo_last_chat(self, minister_name: str, *, gate_held: bool = False) -> Dict[str, Any]:
@@ -1624,7 +1616,7 @@ class WebGame:
 
         # Web 呈现缓存：历史投影依赖 chat_history。
         self.chat_history = {name: [] for name in self.session.content.characters}
-        for name, msgs in self.db.load_all_chat_history().items():
+        for name, msgs in self.db.chat_messages.history_by_minister().items():
             self.chat_history.setdefault(name, []).extend(msgs)
         present = core.minister_name
         return {
@@ -1637,7 +1629,7 @@ class WebGame:
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
-            "secret_orders": project_secret_orders_for_player(self.db.list_secret_orders()),
+            "secret_orders": project_secret_orders_for_player(self.db.character_knowledge.list_secret_orders()),
             "can_undo_last_chat": self.can_undo_last_chat(present),
         }
 
@@ -1684,7 +1676,7 @@ class WebGame:
             "answer": answer,
             # Persisted identity travels with the real player response; the web client
             # never infers night ownership from cross-night personal chat history.
-            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
+            "campaign_id": str(self.db.reign.kv_get("campaign_id") or ""),
             "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既存读心记录按轮归位；
             # 前端 setChat 不再抹掉历史读心记录。
@@ -1963,7 +1955,7 @@ class WebGame:
             ) or [])
             try:
                 with self._ticketed_write_gate(pending_ticket):
-                    self.db.set_message_highlights(mid, phrases)
+                    self.db.chat_messages.set_highlights(mid, phrases)
             except TicketCancelled:
                 return []
             return phrases
@@ -2174,7 +2166,7 @@ class WebGame:
         # must close the durable turn and pending owner through the same terminal path as a
         # worker failure, rather than escaping this SSE generator.
         try:
-            identity["campaign_id"] = str(self.db.kv_get("campaign_id") or "")
+            identity["campaign_id"] = str(self.db.reign.kv_get("campaign_id") or "")
             if chat_turn_id:
                 from ming_sim.audience_night import get_open_night
                 open_night = get_open_night(self.db)
@@ -2350,7 +2342,7 @@ class WebGame:
                                 self.chat_history = {
                                     name: [] for name in self.session.content.characters
                                 }
-                                for name, msgs in self.db.load_all_chat_history().items():
+                                for name, msgs in self.db.chat_messages.history_by_minister().items():
                                     self.chat_history.setdefault(name, []).extend(msgs)
                         except Exception as _caught_failure:
                             logger.exception(
@@ -4484,7 +4476,7 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     """列出密令的玩家投影。status 为空返回全部，否则按投影后的状态过滤。"""
     game = get_game()
     orders = project_secret_orders_for_player(
-        game.db.list_secret_orders(), status=status,
+        game.db.character_knowledge.list_secret_orders(), status=status,
     )
     return {"orders": orders}
 
@@ -4500,13 +4492,13 @@ def api_history_turns() -> Dict[str, Any]:
 async def api_history_turn(turn: int) -> Dict[str, Any]:
     """某回合玩家历史：只交付邸报、诏书、已颁草案与独立递话原文。"""
     db = get_game().db
-    archive = db.get_turn_report_archive(turn)
+    archive = db.turn_reports.archive(turn)
     report = str((archive or {}).get("report") or "")
     attendant_message = str((archive or {}).get("attendant_message") or "")
     # #1843 reopen：本月诏书改读月链常驻的 pending_resolve_context.decree_text
-    resolve_ctx = db.get_resolve_context(turn) or {}
+    resolve_ctx = db.resolve_contexts.get(turn) or {}
     decree_text = str(resolve_ctx.get("decree_text") or "")
-    directives = db.list_directives_by_turn(turn)
+    directives = db.issues.list_directives_by_turn(turn)
     # exists：report/递话纯空白与空串同属缺席（临时 strip）；payload 仍回原文
     if (
         not str(report or "").strip()
@@ -4547,7 +4539,7 @@ async def api_add_favorite(minister_name: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"未找到：{minister_name}")
     with _serialized_web_write(game):
         game.favorites.add(minister_name)
-        game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
+        game.db.reign.kv_set("favorites", json.dumps(sorted(game.favorites)))
     return {"favorites": sorted(game.favorites)}
 
 
@@ -4556,7 +4548,7 @@ async def api_remove_favorite(minister_name: str) -> Dict[str, Any]:
     game = get_game()
     with _serialized_web_write(game):
         game.favorites.discard(minister_name)
-        game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
+        game.db.reign.kv_set("favorites", json.dumps(sorted(game.favorites)))
     return {"favorites": sorted(game.favorites)}
 
 
@@ -4589,7 +4581,7 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         + [message["speaker"] for message in messages if message["role"] in {"minister", "attendant"} and message["speaker"]]
     ))
     characters = getattr(getattr(game, "content", None), "characters", {})
-    pending_replies = game.db.list_unextracted_replies(night_id=int(night["id"]))
+    pending_replies = game.db.reign.list_unextracted_replies(night_id=int(night["id"]))
 
     return {
         "night_id": int(night["id"]),
@@ -4618,12 +4610,12 @@ async def api_audience_chat_history() -> Dict[str, Any]:
             "faction": "", "style": "", "status": "active", "status_label": "在殿",
             "summary": "", "favorite": False,
         },
-        "campaign_id": str(game.db.kv_get("campaign_id") or ""),
+        "campaign_id": str(game.db.reign.kv_get("campaign_id") or ""),
         "night_id": int(open_night["id"]) if open_night else 0,
         "history": game.chat_projection(),
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
         "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),
-        "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
+        "generating_turn_ids": [int(r["id"]) for r in game.db.reign.list_in_flight_chat_turns(
             night_id=int(open_night["id"]) if open_night else None,
             minister_name=SCENE_CHAT_SPEAKER,
         )],

@@ -5,6 +5,7 @@ import pytest
 
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
+from ming_sim.db import GameDB
 import ming_sim.issues as issues_mod
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
@@ -100,10 +101,62 @@ def test_person_title_kind_does_not_materialize_office_parent(fresh_game_dir):
     minister = sess.db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
     ).fetchone()[0]
+    before = sess.db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        (minister,),
+    ).fetchone()
     sess.db.set_character_office(minister, "降臣", "身名分")
     assert sess.db.conn.execute(
         "SELECT 1 FROM offices WHERE office_type='身名分'"
     ).fetchone() is None
-    assert sess.db.conn.execute(
-        "SELECT 1 FROM character_offices WHERE character_name=?", (minister,)
-    ).fetchone() is None
+    after = sess.db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        (minister,),
+    ).fetchone()
+    if before is None:
+        assert after is None
+    else:
+        assert after["office_title"] == before["office_title"]
+        assert after["office_title"] != "降臣"
+
+
+def test_appointment_category_survives_reopen_from_canonical_source(fresh_game_dir):
+    """#1889：官职类别真源唯一 = characters.office_type；备档只留历史官名。
+
+    经真实入口授官 → 关闭重开：官职与类别仍与真源一致，起复按备档历史官名可复原品级
+    （behavior 由 test_office_rank_562 的 restoration 用例守）。此处守「重开不篡改真源、
+    不残留第二个可写类别」这一外部可见结果。
+    """
+    sess, dbp, content = fresh_game_dir
+    db = sess.db
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND office_type NOT IN ('身名分', '待铨') ORDER BY name LIMIT 1"
+    ).fetchone()[0]
+    db.set_character_office(
+        minister, "山西巡抚", "地方", "真除", region_id="shaanxi",
+    )
+    db.conn.commit()
+    truth = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (minister,)
+    ).fetchone()
+    sess.close()
+
+    reopened = GameDB(dbp, content=content)
+    try:
+        reopened.load_state()
+        row = reopened.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?", (minister,)
+        ).fetchone()
+        assert (row["office"], row["office_type"]) == (truth["office"], truth["office_type"]), (
+            "重开后官职/类别须与真源一致（备档不得反向改写真源）"
+        )
+        archived = reopened.conn.execute(
+            "SELECT office_title FROM character_offices WHERE character_name=?", (minister,)
+        ).fetchone()
+        assert archived is not None and archived["office_title"] == "山西巡抚", (
+            "备档应留最近实职历史标题供起复读品级"
+        )
+        assert reopened.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        reopened.close()

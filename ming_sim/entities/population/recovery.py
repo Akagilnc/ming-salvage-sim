@@ -15,7 +15,7 @@ def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> in
     本回合对账实抵优先；否则累加该案已落 economy_moves 负向出账。
     **不**回退 payload.amount（ordered 非实付，零 ledger 不得假阳性出回流）。
     """
-    history = db.list_dossier_reconciliations(int(dossier_id))
+    history = db.dossiers.reconciliations(int(dossier_id))
     arrived_this_turn = [
         int(row["arrived_amount"])
         for row in history
@@ -24,7 +24,7 @@ def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> in
     if arrived_this_turn:
         return max(0, sum(arrived_this_turn))
     paid = 0
-    for move in db.list_economy_moves_for_dossier(int(dossier_id)):
+    for move in db.reign.list_economy_moves_for_dossier(int(dossier_id)):
         delta = int(move.get("delta") or 0)
         if delta < 0:
             paid += -delta
@@ -62,7 +62,7 @@ def _apply_recovery_driven_transfers(
         dossier_id = int(row["id"])
         if (dossier_id, turn) in seen_keys:
             continue
-        payload = db.get_decree_dossier(dossier_id)["payload"]
+        payload = db.dossiers.get(dossier_id)["payload"]
         grant_action = str(payload.get("grant_action") or "").strip()
         if grant_action not in RECOVERY_GRANT_ACTIONS:
             continue
@@ -86,7 +86,7 @@ def _apply_recovery_driven_transfers(
         if cadence == "每月":
             reconciled = [
                 int(item["arrived_amount"])
-                for item in db.list_dossier_reconciliations(dossier_id)
+                for item in db.dossiers.reconciliations(dossier_id)
                 if int(item.get("turn") or 0) == turn
             ]
             if reconciled:

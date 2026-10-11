@@ -1,13 +1,14 @@
+from __future__ import annotations
+import json
+import pytest
+import ming_sim.decree as decree_mod
+from ming_sim.session_write_queue import get_session_write_queue
 """玩家月链恢复入口与持久化决议验证。"""
 
-from __future__ import annotations
 
 
-import json
 
-import pytest
 
-import ming_sim.decree as decree_mod
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +28,7 @@ def _recovery_session(db, state, content, monkeypatch):
     )
     sess = make_light_session(db, state, content)
     return sess
+
 
 
 
@@ -59,7 +61,6 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
     assert row["source"] == "simulation"               # 非 triggered 行 source 不被误标
     assert json.loads(row["choice_json"]) == {"label": "留"}  # choice 仍记录
 
-
 def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game):
     """HITL 选择只暂存 choice，不抢先把新事件写成 triggered 终态。"""
     import json
@@ -72,7 +73,6 @@ def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game)
     assert row["terminal_state"] == ""
     assert row["source"] == "hitl_decision"
     assert json.loads(row["choice_json"]) == {"label": "斩"}
-
 
 def test_mark_event_triggered_upgrades_pending_choice_row(game):
     """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。
@@ -100,7 +100,6 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
     assert row["source"] == "event_pool"
     assert row["terminal_reason"] == "留"
     assert json.loads(row["choice_json"]) == {"label": "留"}
-
 
 @pytest.mark.parametrize(
     ("marker", "terminal_state", "source", "reason"),
@@ -145,24 +144,6 @@ def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_stat
     assert json.loads(row["choice_json"]) == {"label": "留"}
 
 
-def test_recovery_blocked_by_pending_directives(game, monkeypatch):
-    """恢复与正常路同守门：pending 拟旨未核定不得推进（cmr S7 r8 codex）。
-
-    跳过守门的话恢复期大臣新拟的旨随推进孤儿在旧回合——正常路会拦。
-    """
-    import ming_sim.decree as dm
-
-    db, state, content = game
-    turn = state.turn
-    dm.pre_settle(state, db, content=content)
-    # 恢复期大臣拟旨（pending 待准驳）
-    db.add_directive(state, None, "请拨内帑", source="minister", status="pending")
-
-    sess = _recovery_session(db, state, content, monkeypatch)
-    with pytest.raises(ValueError):
-        sess.resolve_turn()
-    assert state.turn == turn  # 未推进，拟旨不孤儿
-
 
 def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。
@@ -179,3 +160,34 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     ):
         with pytest.raises(ValueError):
             call()
+
+
+def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, monkeypatch):
+    from tests.month_chain_helpers import make_light_session, canned_full_settlement
+    db, state, content = game
+    session = make_light_session(db, state, content)
+    canned_full_settlement(monkeypatch)
+    gate = session._write_gate
+    assert gate.acquire(blocking=False)
+    try:
+        session.resolve_turn(allow_empty_decree=True, write_gate_already_held=True)
+        assert not gate.acquire(blocking=False)
+    finally:
+        gate.release()
+
+def test_recovery_blocked_by_pending_directives(game, monkeypatch):
+    """恢复与正常路同守门：pending 拟旨未核定不得推进（cmr S7 r8 codex）。
+
+    跳过守门的话恢复期大臣新拟的旨随推进孤儿在旧回合——正常路会拦。
+    """
+    import ming_sim.decree as dm
+
+    db, state, content = game
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)
+    # 恢复期大臣拟旨（pending 待准驳）
+    db.issues.add_directive(state.turn, state.year, state.period, None, '请拨内帑', source='minister', status='pending')
+    sess = _recovery_session(db, state, content, monkeypatch)
+    with pytest.raises(ValueError):
+        sess.resolve_turn()
+    assert state.turn == turn  # 未推进，拟旨不孤儿

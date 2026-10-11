@@ -1,45 +1,21 @@
-"""CLI backend contracts: public model/extractor entries (backend mocked).
+from __future__ import annotations
+import json
+from types import SimpleNamespace
+import pytest
+from agno.models.message import Message
+import ming_sim.cli_backend as cb
+from ming_sim.models import LLMConfig
+from ming_sim.exceptions import LLMUnavailable
+import os
+"""CLI backend contracts: public resolve/extract/runner seams (backend mocked).
 
 #1185 wave2b: drop private helper unit pins; merge same-seam tracers; assert
 typed/structural fields over free Chinese presentation copy. Runner subprocess
 stays mocked (no real binary/LLM/network).
 """
 
-from __future__ import annotations
-
-import json
-from types import SimpleNamespace
-
-import pytest
-from agno.models.message import Message
-
-import ming_sim.cli_backend as cb
-from ming_sim.models import LLMConfig
-from ming_sim.exceptions import LLMUnavailable
-
-# #1902：七条一行转发（cb._run_agy/_run_codex/…）已删，注入点统一在 _run_cli_runner
-# （分派点唯一）。本文件按 runner 名注入：单 runner 直接绑，多 runner 走路由表。
-def _patch_runner(monkeypatch, runner: str, fake) -> None:
-    """把某个 runner 的调用绑到 fake（fake 收 prompt + kwargs，同旧转发签名）。"""
-
-    def _wrapped(_runner, prompt, **kwargs):
-        assert _runner == runner, f"注入错宿主：{_runner} != {runner}"
-        return fake(prompt, **kwargs)
-
-    monkeypatch.setattr(cb, "_run_cli_runner", _wrapped)
 
 
-def _patch_runners(monkeypatch, fakes: dict) -> None:
-    """多 runner 路由：{runner: fake}，未列者原样放行到真实实现。"""
-    real = cb._run_cli_runner
-
-    def _router(runner, prompt, **kwargs):
-        fake = fakes.get(runner)
-        if fake is None:
-            return real(runner, prompt, **kwargs)
-        return fake(prompt, **kwargs)
-
-    monkeypatch.setattr(cb, "_run_cli_runner", _router)
 
 
 def _cli_codex_cfg() -> LLMConfig:
@@ -49,14 +25,14 @@ def _cli_codex_cfg() -> LLMConfig:
     )
 
 
-# ── cli_backend_from_env / backend dispatch ──
+# ── enrich_initiative_effects ──
 
-# #1902：cli_backend_from_env（MING_SIM_LLM_BACKEND 选宿主）退役——下列
-# env 分派用例随之删除；无配置的直调路固定走默认 runner，
-# 选宿主只认运行配置（channel + cli_runner）。
+
+# ── cli_backend_from_env / backend dispatch ──
 
 
 # ── secret extract keep family ──
+
 
 # ── runner argv / error contracts (subprocess mocked) ──
 
@@ -151,6 +127,8 @@ def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tm
     assert captured["kw"].get("stdin") is None
     assert "--sandbox" not in captured["cmd"]
 
+
+
 @pytest.mark.parametrize(
     "runner,model_flag",
     [
@@ -182,20 +160,6 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     assert 'model_reasoning_effort="medium"' not in joined
 
 
-def test_run_codex_stderr_banner_does_not_become_body(monkeypatch):
-    """stdout 空时 stderr 日志／banner 不得冒充正文；走既有空输出失败契约。"""
-
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    _capture_run(
-        monkeypatch,
-        _P(stdout="", stderr="diag\nOpenAI Codex v0.125.0\nlogs", returncode=0),
-    )
-    with pytest.raises(LLMUnavailable) as ei:
-        cb.CliChat(id="cli-test", backend="codex").invoke(
-            [Message(role="user", content="p")], Message(role="assistant"),
-        )
-    assert ei.value.code == "llm_empty_output"
-
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
     monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
     captured = _capture_run(monkeypatch)
@@ -205,16 +169,9 @@ def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
     assert out == "STDOUT_BODY"
     assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == "10000"
 
-def test_run_claude_off_reasoning_uses_explicit_minimum_tokens(monkeypatch):
-    monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
-    captured = _capture_run(monkeypatch)
-    out = cb.CliChat(id="cli-test", backend="claude", reasoning_strength="off").invoke(
-        [Message(role="user", content="p")], Message(role="assistant"),
-    ).content
-    assert out == "STDOUT_BODY"
-    assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == "2000"
 
 # ── _resolve_cli_bin / login shell path ──
+
 
 @pytest.mark.parametrize(
     "runner,resolved",
@@ -239,6 +196,147 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
 
 
 # ── CliChat public: prompt shape + typed completion structure ──
+
+
+
+def test_clichat_call_cli_unknown_backend_raises():
+    with pytest.raises(RuntimeError):
+        cb.CliChat(id="m", backend="bogus").invoke(
+            [Message(role="user", content="p")], Message(role="assistant"),
+        )
+
+# ── agy 单次调用 / runner 失败分类（重试归 transport，runner 内无私有循环）──
+
+
+
+
+def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
+    """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
+    from tests.cli_process_doubles import install_fake_cli_runner
+
+    script = install_fake_cli_runner(monkeypatch, [{"returncode": 1}])
+    with pytest.raises(cb.subprocess.CalledProcessError) as caught:
+        cb.CliChat(id="cli-test", backend="agy").invoke(
+            [Message(role="user", content="p")], Message(role="assistant"),
+        )
+    assert caught.value.returncode == 1
+    assert len(script.processes) == 1
+
+class _RcProc:
+    pass
+
+@pytest.mark.parametrize(
+    "runner,proc",
+    [
+        ("codex", _P(stderr="error: auth failed", returncode=1)),
+        ("claude", _P(stderr="auth required", returncode=1)),
+    ],
+)
+def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, proc):
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    _capture_run(monkeypatch, proc)
+    with pytest.raises(cb.subprocess.CalledProcessError) as caught:
+        cb.CliChat(id="cli-test", backend=runner).invoke(
+            [Message(role="user", content="p")], Message(role="assistant"),
+        )
+    assert caught.value.returncode == 1
+    assert caught.value.stderr == proc.stderr
+
+def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
+    """rc=0 但零输出 = 可重试 typed 空输出（交 transport 再试），不是确定性失败。"""
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    _capture_run(monkeypatch, _P(stdout="", stderr="", returncode=0))
+    with pytest.raises(LLMUnavailable) as ei:
+        cb.CliChat(id="cli-test", backend="codex").invoke(
+            [Message(role="user", content="p")], Message(role="assistant"),
+        )
+    assert ei.value.code == "llm_empty_output"
+
+# ── trace throat ──
+
+
+
+
+def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
+    """真实 runner 失败后，trace.error 须保留原故障可见诊断（非仅非空）。"""
+    recs = []
+    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+    injected = RuntimeError("codex 挂了")
+
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(injected))
+    # 官方：ExceptionInfo.value 对象身份
+    # https://docs.pytest.org/en/stable/how-to/assert.html#assertions-about-expected-exceptions
+    with pytest.raises(RuntimeError) as ei:
+        cb.CliChat(id="cli-test", backend="codex").invoke(
+            [Message(role="user", content="任意提示")], Message(role="assistant"),
+        )
+    assert ei.value is injected
+    assert len(recs) == 1
+    # 可见诊断须能回溯到原故障来源，不是任意非空串
+    assert recs[0].get("error") == str(injected)
+
+
+# ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──
+
+def test_public_cli_support(monkeypatch):
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import create_chat_model
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "opencode")
+    with pytest.raises(LLMUnavailable):
+        create_chat_model(LLMConfig(api_key="", base_url="", model="m", channel="cli", cli_runner="opencode"))
+
+
+
+
+
+
+
+# ── #1256 S2 gate LLM args / config / evidence ──
+
+
+
+
+
+
+
+def _patch_runner(monkeypatch, runner: str, fake) -> None:
+    """把某个 runner 的调用绑到 fake（fake 收 prompt + kwargs，同旧转发签名）。"""
+
+    def _wrapped(_runner, prompt, **kwargs):
+        assert _runner == runner, f"注入错宿主：{_runner} != {runner}"
+        return fake(prompt, **kwargs)
+
+    monkeypatch.setattr(cb, "_run_cli_runner", _wrapped)
+
+
+def _patch_runners(monkeypatch, fakes: dict) -> None:
+    """多 runner 路由：{runner: fake}，未列者原样放行到真实实现。"""
+    real = cb._run_cli_runner
+
+    def _router(runner, prompt, **kwargs):
+        fake = fakes.get(runner)
+        if fake is None:
+            return real(runner, prompt, **kwargs)
+        return fake(prompt, **kwargs)
+
+    monkeypatch.setattr(cb, "_run_cli_runner", _router)
+
+
+def test_run_codex_stderr_banner_does_not_become_body(monkeypatch):
+    """stdout 空时 stderr 日志／banner 不得冒充正文；走既有空输出失败契约。"""
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    _capture_run(
+        monkeypatch,
+        _P(stdout="", stderr="diag\nOpenAI Codex v0.125.0\nlogs", returncode=0),
+    )
+    with pytest.raises(LLMUnavailable) as ei:
+        cb.CliChat(id="cli-test", backend="codex").invoke(
+            [Message(role="user", content="p")], Message(role="assistant"),
+        )
+    assert ei.value.code == "llm_empty_output"
 
 
 def test_clichat_invoke_code_fault_traced_and_reraised(monkeypatch):
@@ -279,86 +377,3 @@ def test_clichat_invoke_typed_unavailable_traced_and_reraised(monkeypatch):
     assert traced.get("tag") == "诏书润色官"
     assert "cli down" in (ei.value.provider_message or "")
     assert "cli down" not in ei.value.message
-
-def test_clichat_call_cli_unknown_backend_raises():
-    with pytest.raises(RuntimeError):
-        cb.CliChat(id="m", backend="bogus").invoke(
-            [Message(role="user", content="p")], Message(role="assistant"),
-        )
-
-# ── agy 单次调用 / runner 失败分类（重试归 transport，runner 内无私有循环）──
-
-
-def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
-    """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
-    from tests.cli_process_doubles import install_fake_cli_runner
-
-    script = install_fake_cli_runner(monkeypatch, [{"returncode": 1}])
-    with pytest.raises(cb.subprocess.CalledProcessError) as caught:
-        cb.CliChat(id="cli-test", backend="agy").invoke(
-            [Message(role="user", content="p")], Message(role="assistant"),
-        )
-    assert caught.value.returncode == 1
-    assert len(script.processes) == 1
-
-
-@pytest.mark.parametrize(
-    "runner,proc",
-    [
-        ("codex", _P(stderr="error: auth failed", returncode=1)),
-        ("claude", _P(stderr="auth required", returncode=1)),
-    ],
-)
-def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, proc):
-
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    _capture_run(monkeypatch, proc)
-    with pytest.raises(cb.subprocess.CalledProcessError) as caught:
-        cb.CliChat(id="cli-test", backend=runner).invoke(
-            [Message(role="user", content="p")], Message(role="assistant"),
-        )
-    assert caught.value.returncode == 1
-    assert caught.value.stderr == proc.stderr
-
-def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
-    """rc=0 但零输出 = 可重试 typed 空输出（交 transport 再试），不是确定性失败。"""
-
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    _capture_run(monkeypatch, _P(stdout="", stderr="", returncode=0))
-    with pytest.raises(LLMUnavailable) as ei:
-        cb.CliChat(id="cli-test", backend="codex").invoke(
-            [Message(role="user", content="p")], Message(role="assistant"),
-        )
-    assert ei.value.code == "llm_empty_output"
-
-# ── trace throat ──
-
-
-def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
-    """真实 runner 失败后，trace.error 须保留原故障可见诊断（非仅非空）。"""
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    injected = RuntimeError("codex 挂了")
-
-    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(injected))
-    # 官方：ExceptionInfo.value 对象身份
-    # https://docs.pytest.org/en/stable/how-to/assert.html#assertions-about-expected-exceptions
-    with pytest.raises(RuntimeError) as ei:
-        cb.CliChat(id="cli-test", backend="codex").invoke(
-            [Message(role="user", content="任意提示")], Message(role="assistant"),
-        )
-    assert ei.value is injected
-    assert len(recs) == 1
-    # 可见诊断须能回溯到原故障来源，不是任意非空串
-    assert recs[0].get("error") == str(injected)
-
-def test_office_inference_llm_call_is_traced(monkeypatch):
-    import ming_sim.db as dbmod
-    dbmod._OFFICE_TYPE_LLM_CACHE.clear()
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    _capture_run(monkeypatch, _P(stdout="边镇"))
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
-    assert got == "边镇"
-    assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]

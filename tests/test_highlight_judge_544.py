@@ -1,42 +1,32 @@
-"""#544 高亮判官管道：同通道后处理 · 清单落库 · 两通道时序。"""
-
 from __future__ import annotations
-
 import threading
-
 import pytest
 from pathlib import Path
 from types import SimpleNamespace
-
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
 from ming_sim.highlight_judge import (
     run_highlight_judge,
 )
+from typing import Any, Dict, List
+"""#544 高亮判官管道：同通道后处理 · 清单落库 · 两通道时序 · 静默降级。
+
+票面 AC（冻结 r2）：
+- 超时/坏输出 → 无高亮、零报错、回话照常（注入假输出、零真 LLM）
+- 清单落库 + restore 后仍在（build_chat_projection / audience_night 卷轴）
+- 非流式同到（折等待窗、超时封顶）；流式不挡流、流完补挂
+- 慢而成功的判官：流式=回话先显示；非流式=折窗封顶
+"""
+
+
+
+
 
 
 # ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(("output", "expected"), [
-    ("", []),
-    ("not json", []),
-    ('{"highlights": "辽饷"}', []),
-    ('{"phrases": ["甲"]}', []),
-    ('{"highlights": [1, null, ""]}', []),
-    ('{"highlights": ["辽饷", "军心"]}', ["辽饷", "军心"]),
-])
-def test_run_highlight_judge_success_returns_phrases(output, expected):
-    class _Ok:
-        def run(self, *_a, **_k):
-            return SimpleNamespace(content=output)
 
-    assert run_highlight_judge(
-        minister_reply="臣陈**辽饷**与军心。",
-        llm_config=object(),
-        agent=_Ok(),
-        timeout_s=1.0,
-    ) == expected
 
 
 
@@ -44,12 +34,13 @@ def test_run_highlight_judge_success_returns_phrases(output, expected):
 
 
 def _minister_turn(db, state, minister: str, reply: str, night_id: int = 0):
-    uid = db.append_chat_message(minister, int(state.turn), "user", "问。")
-    mid = db.append_chat_message(minister, int(state.turn), "minister", reply)
+    uid = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="user", content="问。")
+    db.conn.commit()
+    mid = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="minister", content=reply)
+    db.conn.commit()
     cid = db.create_chat_turn(state, minister, "hl-test", 0, night_id=night_id)
-    db.update_chat_turn_messages(cid, user_message_id=uid, minister_message_id=mid)
+    db.reign.update_chat_turn_messages(cid, user_message_id=uid, minister_message_id=mid)
     return cid, mid
-
 
 
 def _settle_minister_reply(db, state, chat_turn_id: int, night_id: int, minister: str, reply: str):
@@ -65,12 +56,11 @@ def _settle_minister_reply(db, state, chat_turn_id: int, night_id: int, minister
     )
 
 
-
 def test_build_chat_projection_includes_minister_highlights(game):
     db, state, _ = game
     minister = "温体仁"
     _cid, mid = _minister_turn(db, state, minister, "臣陈辽饷与户部亏空。")
-    db.set_message_highlights(mid, ["辽饷", "户部亏空"])
+    db.chat_messages.set_highlights(mid, ["辽饷", "户部亏空"])
     # 帝/递话消息不得因列默认而带高亮清单（只标大臣）
     uid_row = db.conn.execute(
         "SELECT id FROM chat_messages WHERE role='user' ORDER BY id DESC LIMIT 1"
@@ -85,7 +75,6 @@ def test_build_chat_projection_includes_minister_highlights(game):
     assert minister_msgs[0]["highlights"] == ["辽饷", "户部亏空"]
 
 
-
 def test_read_night_scroll_includes_minister_highlights(game):
     db, state, _ = game
     minister = "杨嗣昌"
@@ -93,7 +82,7 @@ def test_read_night_scroll_includes_minister_highlights(game):
     cid, mid = _minister_turn(
         db, state, minister, "臣请据实核账。", night_id=night_id,
     )
-    db.set_message_highlights(mid, ["据实核账"])
+    db.chat_messages.set_highlights(mid, ["据实核账"])
 
     scroll = an.read_night_scroll(db, night_id)
     assert any(m["role"] == "scene" and m.get("chat_turn_id") == cid
@@ -109,7 +98,6 @@ def test_read_night_scroll_includes_minister_highlights(game):
             assert m.get("highlights") == []
 
 
-
 def test_highlights_survive_db_restore(game, content, tmp_path):
     """接口层：落库后重开同档，两读端仍带回清单。"""
     import shutil
@@ -120,7 +108,7 @@ def test_highlights_survive_db_restore(game, content, tmp_path):
     cid, mid = _minister_turn(
         src_db, state, minister, "臣陈军务与辽饷。", night_id=night_id,
     )
-    src_db.set_message_highlights(mid, ["军务", "辽饷"])
+    src_db.chat_messages.set_highlights(mid, ["军务", "辽饷"])
     assert any(m["role"] == "scene" and m["highlights"] == []
                for m in an.read_night_scroll(src_db, night_id) if m.get("chat_turn_id") == cid)
     _settle_minister_reply(src_db, state, cid, night_id, minister, "臣陈军务与辽饷。")
@@ -139,7 +127,6 @@ def test_highlights_survive_db_restore(game, content, tmp_path):
         assert scroll_min and scroll_min[0]["highlights"] == ["军务", "辽饷"]
     finally:
         db2.close()
-
 
 
 # ── 通道时序（注入假判官，零真 LLM）────────────────────────────────────

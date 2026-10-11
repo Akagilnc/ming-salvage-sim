@@ -1,3 +1,4 @@
+from __future__ import annotations
 """SSE 文本 → 事件列表的单一真源（#1902）。
 
 此前仓内有多份同形解析：非流式召对/颁诏退役后新增的两个 helper 各自抄了一份，
@@ -11,7 +12,6 @@
 故多行拼接分支不会出现；解析仍按 SSE 规范把同名字段的多行 data 接起来。
 """
 
-from __future__ import annotations
 
 import json
 

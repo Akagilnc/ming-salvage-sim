@@ -10,6 +10,9 @@
 """
 
 from __future__ import annotations
+from ming_sim.staged_commitment import normalize_commitment_stages
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
 
 from ming_sim.participant_roster import decode_durable_participant_roster
 
@@ -18,13 +21,14 @@ from ming_sim.models import _load_durable_json_list
 import json
 from typing import Any, Dict, List, Optional
 
+from ming_sim.applier import durable_int, load_stored_list, parse_engine_payload_json
 from ming_sim.exceptions import PendingActionRefusal
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
-    normalize_commitment_stages,
+    load_commitment_stages,
     stages_to_json,
 )
 
@@ -112,7 +116,7 @@ def collect_urge_history(
 
     # 密令路：案卷挂 secret_order_id 时并入史源
     if dossier_id is not None:
-        dossier = db.get_decree_dossier(int(dossier_id))
+        dossier = db.dossiers.get(int(dossier_id))
         so_id = 0
         if isinstance(dossier, dict):
             so_id = int(dossier.get("secret_order_id") or 0)
@@ -157,7 +161,7 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
     # 名册/参与人持久列表：腐坏响亮，不 catch-to-[]（#1897 E1）。
     from ming_sim.db import _load_durable_str_list
     if dossier_id is not None:
-        dossier = db.get_decree_dossier(int(dossier_id))
+        dossier = db.dossiers.get(int(dossier_id))
         if isinstance(dossier, dict):
             # get_decree_dossier 已解码名册为 list[dict]。
             roster = dossier.get("participant_roster") or []
@@ -232,9 +236,7 @@ def _record_commitment_urge(
 
 
 def _issue_exists(db: Any, commitment_ref: int) -> bool:
-    row = db.conn.execute(
-        "SELECT id FROM issues WHERE id=?", (int(commitment_ref),),
-    ).fetchone()
+    row = IssueStore(db.conn).read_issue_exists((int(commitment_ref),))
     return row is not None
 
 
@@ -381,7 +383,7 @@ def list_urge_audience_scenes(
     db: Any, state: Any = None, *, status: str = TODO_STATUS_PENDING,
 ) -> List[Dict[str, object]]:
     """次回合召对顶出：谏/宽限 pending（不进 due-review 白名单、不占接管窗）。"""
-    todos = db.list_next_audience_todos(status=status)
+    todos = db.dossiers.list_next_audience_todos(status=status)
     scenes: List[Dict[str, object]] = []
     for todo in todos:
         if not is_urge_audience_entry_kind(todo.get("entry_kind")):
@@ -400,12 +402,12 @@ def consume_pending_urge_audience_todos(
     """
     turn = int(getattr(state, "turn", 0) or 0)
     results: List[Dict[str, object]] = []
-    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
+    for todo in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING):
         if not is_urge_audience_entry_kind(todo.get("entry_kind")):
             continue
         if int(todo.get("created_turn") or 0) >= turn:
             continue
-        ok = db.mark_next_audience_todo_status(
+        ok = db.dossiers.mark_next_audience_todo_status(
             int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
         )
         results.append({

@@ -1,17 +1,8 @@
-"""#1468 / #1353：转译 LLM 死透 → 耗尽失败单源（真实 HTTP 入口）。
-
-主两月 tracer 与场外 COURT_BREAK 夹具已随退役入口清除；本文件只保留仍有
-真实入口契约价值的死透负向案。#1902 F3：删专用死夹具。
-"""
-
 from __future__ import annotations
 from tests.conftest import stub_webgame_boundary
-
 import json
-
 import pytest
 from fastapi.testclient import TestClient
-
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
@@ -19,6 +10,24 @@ import web_app
 from ming_sim import audience_night as an
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 from tests.conftest import stub_audience_translate
+"""#1468 过月主链 e2e tracer——真实 HTTP 入口两月循环 + #1353 fold-in 钉。
+
+回应 owner「测试全绿流程走不通」：全仓接缝钉照不到跨接缝状态机脱节；
+本文件从真实 HTTP 入口走玩家基本循环，仅在最外层 LLM 接缝 deterministic stub
+（不 mock 内部函数 / 结算核 / 收夜编排）。
+
+主 tracer：new_game → 召对开夜/回话/收夜 → 拟旨 → POST /api/decree/issue/stream
+（消费 SSE 到终态）→ 月+1 → 再一月。起点置十一月以真跨 year rollover
+（year+1 且 period 回 1）。断言 turn+2 与 year/period 跨年安全月序 +2、无 409 死锁、
+无裸 500、闸/账双向等量（成功过月 count==len(pending)==0）。
+#1353 fold-in 钉：
+- 植入欠账后一次过月动作成功（流内处理、无 409、无 CTA、账清、月+1）
+- 真死 LLM stub → 失败单源（通传未达），非待补 CTA/409；夜保持可重按
+"""
+
+
+
+
 
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
@@ -40,8 +49,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
         "ming_sim.mechanical_tail._brew_fn_for_session",
         lambda _session: offline_brew,
     )
-
-
 
 
 @pytest.fixture
@@ -67,7 +74,6 @@ def tracer_client(tmp_path, monkeypatch, _offline_scene_beat_generator):
             web_app.web_game = None
 
 
-
 def _assert_not_bare_500(resp, *, step: str) -> None:
     """裸 500 = 无 detail 的服务器崩；结构化 4xx/可读 500 detail 另论。"""
     if resp.status_code < 500:
@@ -87,7 +93,6 @@ def _assert_not_bare_500(resp, *, step: str) -> None:
     )
 
 
-
 def _pick_active_minister(state: dict) -> str:
     for m in state.get("ministers") or []:
         if not isinstance(m, dict):
@@ -104,11 +109,9 @@ def _pick_active_minister(state: dict) -> str:
     raise AssertionError(f"no active ming minister in state ministers={state.get('ministers')!r}")
 
 
-
 def _turn_of(state: dict) -> int:
     turn = state.get("turn") or {}
     return int(turn.get("turn") or 0)
-
 
 
 def _get_state(client: TestClient) -> dict:
@@ -116,7 +119,6 @@ def _get_state(client: TestClient) -> dict:
     _assert_not_bare_500(resp, step="GET /api/game/state")
     assert resp.status_code == 200, resp.text
     return resp.json()
-
 
 
 def _pending_payload(client: TestClient) -> dict:
@@ -130,20 +132,17 @@ def _pending_payload(client: TestClient) -> dict:
     return {"pending": retries, "count": len(retries)}
 
 
+# ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
 
-def _parse_sse(text: str) -> list[dict]:
-    """解析 SSE 文本为 [{event, data}, ...]（与仓内其他 ASGI tracer 同形）。"""
-    events: list[dict] = []
-    for block in (text or "").strip().split("\n\n"):
-        cur: dict = {}
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                cur["event"] = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                cur["data"] = line[len("data:"):].strip()
-        if cur:
-            events.append(cur)
-    return events
+
+# ── #1353 fold-in：带欠账一次过月成功 + 死透失败单源 ─────────────────────
+
+
+
+
+
+
+# ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
 
 
 
@@ -190,3 +189,6 @@ def _post_issue_stream(
     raise AssertionError(
         f"{step}: unexpected terminal SSE event {ev!r}; body={resp.text!r}"
     )
+
+
+from tests.sse_helpers import parse_sse_events as _parse_sse

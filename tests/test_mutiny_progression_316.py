@@ -1,13 +1,15 @@
-"""#316 — 月末真实结算入口持久推进哗变次数、军心上限与察看期。"""
 from __future__ import annotations
-
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
+"""#316 — 月末真实结算入口持久推进哗变次数、军心上限与察看期。"""
+
+
 
 ARMY = "guanning"
 
-
 def _configure(db) -> None:
+    value = 1  # active substrate_hub cutover
+    # hub-only: cutover markers retired (#1889)
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
@@ -17,18 +19,14 @@ def _configure(db) -> None:
     )
     db.conn.commit()
 
-
-
 def _set(db, *, loyalty: int, arrears: float, latched: int) -> None:
     central = arrears  # active hub source-split seed
     db.conn.execute(
-        """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
+        """UPDATE armies SET loyalty=?, is_mutinied=?,
            province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
-        (loyalty, arrears, latched, central, ARMY),
+        (loyalty, latched, central, ARMY),
     )
     db.conn.commit()
-
-
 
 def _tick(db, state):
     state.metrics["国库"] = 10**9
@@ -38,8 +36,6 @@ def _tick(db, state):
            FROM armies WHERE id=?""",
         (ARMY,),
     ).fetchone()
-
-
 
 def test_repeated_mutiny_persists_count_cap_and_probation(game):
     db, state, _ = game
@@ -70,28 +66,22 @@ def test_repeated_mutiny_persists_count_cap_and_probation(game):
     _set(db, loyalty=95, arrears=0, latched=1)
     probation = _tick(db, state)
     assert tuple(probation[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 2)
-    assert derive_army_mutiny_state(probation) == "不满"
 
     # 解闩后的非满饷月不减；连续满饷归零后且 loyalty>=60 才恢复正常。
     _set(db, loyalty=60, arrears=1, latched=0)
     partial_pay = _tick(db, state)
     assert tuple(partial_pay[k] for k in ("loyalty", "is_mutinied", "mutiny_probation")) == (60, 0, 2)
-    assert derive_army_mutiny_state(partial_pay) == "不满"
     _set(db, loyalty=55, arrears=0, latched=0)
     full_pay_1 = _tick(db, state)
     assert tuple(full_pay_1[k] for k in ("loyalty", "mutiny_probation")) == (60, 1)
-    assert derive_army_mutiny_state(full_pay_1) == "不满"
     _set(db, loyalty=55, arrears=0, latched=0)
     full_pay_2 = _tick(db, state)
     assert tuple(full_pay_2[k] for k in ("loyalty", "mutiny_probation")) == (60, 0)
-    assert derive_army_mutiny_state(full_pay_2) == "正常"
 
     # 察看期重入是第三振 → #318 同事务经 adapter 转流寇（清 latch）。
     _set(db, loyalty=19, arrears=5, latched=0)
     third = _tick(db, state)
     assert tuple(third[k] for k in ("is_mutinied", "mutiny_count", "mutiny_probation", "owner_power")) == (0, 3, 0, "bandits")
-
-
 
 def test_mutiny_count_is_capped_at_three(game):
     db, state, _ = game

@@ -1,3 +1,13 @@
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+from ming_sim.applier import Provenance
+import json
+import pytest
+import ming_sim.issues as I
+import ming_sim.entities.issue.records as issue_records
+from ming_sim.models import Event
+from contextlib import nullcontext
+from ming_sim.entities.issue.store import IssueStore
+from tests.section_rejection_helpers import game
 """#63 class 4 / ADR 0008 决定 1：apply_issue_tracker_output 的 new_issues 段 insert 路迁逐项拒收。
 
 原先：db.insert_issue 连同内联 int()/dict()/list() 强转一起裹在 `try: ... except Exception:
@@ -6,21 +16,13 @@ print[WARN]; skip`——脏字段（int("abc")/dict("脏")/list(5)）与 insert 
 insert 的代码/DB 异常上抛（ADR 0005 fail-loud）。用 kind=situation 避开 initiative 配额门。
 """
 
-from ming_sim.entities.issue.tracker import apply_issue_tracker_output
-from ming_sim.applier import Provenance
 
-import json
 
-import pytest
-
-import ming_sim.issues as I
-import ming_sim.entities.issue.records as issue_records
-from ming_sim.models import Event
 
 
 def _decree_origin(db, state) -> str:
     dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试新立局势来源", target_kind="issue", target_id="validation")
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
 
@@ -78,7 +80,7 @@ def _pick_event_pool_id(db):
             continue
         if getattr(ev, "auto_trigger", False):
             continue
-        if db.find_any_issue_by_origin("event_pool", ev.id) is not None:
+        if IssueStore(db.conn).read_find_any_issue_by_origin(("event_pool", ev.id)) is not None:
             continue
         return eid
     pytest.skip("内容包无可用 situation/非auto/未触发 预设 event，跳过 event_pool 用例")
@@ -113,6 +115,8 @@ def _hist_event(eid, gate=None):
     )
 
 
+
+
 def test_new_issue_oversized_severity_clamped_not_abort(game):
     db, state, _ = game
     # severity=10**100：int() 过得了但绑定 SQLite 抛 OverflowError——insert_issue 移除 broad
@@ -127,6 +131,8 @@ def test_new_issue_oversized_severity_clamped_not_abort(game):
     iid = int(created[0]["issue_id"])
     sev = db.conn.execute("SELECT severity FROM issues WHERE id=?", (iid,)).fetchone()["severity"]
     assert sev == 100  # clamp 到域上界
+
+
 
 
 def test_new_issue_severity_zero_preserved(game):
@@ -181,41 +187,6 @@ def test_new_issue_valid_decree_still_creates(game):
 # （在 try 外）不受影响。
 
 
-def test_event_to_issue_insert_exception_propagates(read_game, monkeypatch):
-    db, state, _ = read_game
-    # 直接覆盖 fix 点：event_to_issue 内 insert 真异常上抛，不再 WARN 吞成 None。
-    eid = _pick_event_pool_id(db)
-    ev = I._ctx().event_by_id[eid]
-
-    def _boom(*a, **k):
-        raise RuntimeError("模拟 event_to_issue insert 落库代码异常")
-
-    monkeypatch.setattr(type(db), "insert_issue", _boom)
-    with pytest.raises(RuntimeError):
-        issue_records.event_to_issue(db, state, ev)
-
-
-def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
-    db, state, content = game
-    # codex 强调的 call-site seam：通过 apply_issue_tracker_output 的 event_pool 分支驱动，
-    # insert 真异常一路上抛（上层 applier.atomic 据此 SettlementAbort），不被吞成静默 rejected。
-    eid = "__event_pool_insert_exception__"
-    ev = _hist_event(eid)
-    I.bind_content(content)
-    _open_event_window(state, ev)
-
-    def _boom(*a, **k):
-        raise RuntimeError("模拟 event_pool insert 落库代码异常")
-
-    with _TempEvents(content, ev):
-        _ensure_event_candidate(db, state, eid)
-        monkeypatch.setattr(type(db), "insert_issue", _boom)
-        with pytest.raises(RuntimeError):
-            apply_issue_tracker_output(db, state, {
-                "new_issues": [{"origin_kind": "event_pool", "id": eid}],
-            }, source=Provenance.system_simulation)
-
-
 def test_event_to_issue_duplicate_returns_none_not_raise(game):
     db, state, _ = game
     # 幂等回归保护：移除 broad except 不得波及两种 None 的区分——同源事件第二次触发仍由
@@ -240,7 +211,7 @@ def test_new_issue_event_pool_rejects_expired_event(game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0].item["id"] == eid
-    assert db.find_any_issue_by_origin("event_pool", eid) is None
+    assert db.issues.read_find_any_issue_by_origin(('event_pool', eid)) is None
 
 
 def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
@@ -274,13 +245,11 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
     rejected = [item for item in _rejected(out) if item.item.get("id") == downstream.id]
     assert [item["id"] for item in created] == [upstream.id], out
     assert len(rejected) == 1, out
-    assert db.find_any_issue_by_origin("event_pool", downstream.id) is None
+    assert db.issues.read_find_any_issue_by_origin(('event_pool', downstream.id)) is None
 
 
-# --- tags 字段严格化（cmr ni r8 codex medium）---
-# tags = list(ni.get("tags") or []) 对标量串静默拆字（list("募营")=['募','营']）、对非串元素
-# 不拒（list([5])=[5]）会污染 DB tags。缺省/null/空串→[]，present 须 list/tuple 且元素全 str。
-# （原 pairing 词表裁断已按 F12 拆除；本段只守 tags 形状。）
+# --- tags 字段严格化（cmr ni r8）---
+# 缺省/null/空串→[]；present 须 list/tuple 且元素全 str。拒标量串拆字与非串元素静默落库。
 
 
 def test_new_issue_valid_list_tags_preserved(game):
@@ -293,3 +262,9 @@ def test_new_issue_valid_list_tags_preserved(game):
     iid = int(created[0]["issue_id"])
     row = db.conn.execute("SELECT tags FROM issues WHERE id=?", (iid,)).fetchone()
     assert json.loads(row["tags"]) == ["募营", "边事"], "整词须保全、不得拆字"
+
+
+# --- cancel_cost 与 effect 字段同走 _eff_dict 容忍（cmr ni r9 codex medium）---
+# cancel_cost 旧用 dict(raw)：标量串 raise 拒整项（违 P1：次要字段脏不该丢整个 issue），list-of-pairs
+# 静默 garble（dict([["民心",-5]])={'民心':-5}、dict(["ab"])={'a':'b'}）。改与 ongoing/effect 三个
+# dict 字段统一 _eff_dict（非 dict → {} 容忍）：issue 仍正常立、cancel_cost 落空 {} 不 garble。

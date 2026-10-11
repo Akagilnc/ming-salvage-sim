@@ -9,11 +9,15 @@ from __future__ import annotations
 from ming_sim.exceptions import DeclarationDataError
 
 from ming_sim.models import _load_durable_json_list, _load_durable_json_object
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
 
 import json
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from ming_sim.applier import load_stored_list, load_stored_object
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.executor_routing import duty_route_categories
 
@@ -149,7 +153,7 @@ def stage_pacification_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
@@ -296,7 +300,7 @@ def stage_punishment_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
@@ -750,7 +754,7 @@ def _list_pending_office_rows(
     """本夜/本回合 pending 人事候选（kind=office）。不另建索引。"""
     rows = list(pend_for_minister or [])
     if not rows:
-        rows = db.list_pending_actions(int(turn))
+        rows = db.dossiers.list_pending_actions(int(turn))
     out: List[Dict[str, Any]] = []
     for row in rows:
         if row.get("kind") != "office":
@@ -1022,7 +1026,7 @@ def _parse_revoke_decree_target(
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
         if linked <= 0:
             return None
-        dossier = db.get_decree_dossier(linked)
+        dossier = db.dossiers.get(linked)
         if dossier is None or not _dossier_is_revocable_decree(db, dossier):
             return None
         return {
@@ -1031,7 +1035,7 @@ def _parse_revoke_decree_target(
             "issue_id": tid,
             "dossier_id": linked,
         }
-    dossier = db.get_decree_dossier(tid)
+    dossier = db.dossiers.get(tid)
     if dossier is None or not _dossier_is_revocable_decree(db, dossier):
         return None
     return {
@@ -1099,7 +1103,7 @@ def stage_assignment_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
@@ -1231,7 +1235,7 @@ def stage_revoke_decree_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
     existing_id = 0

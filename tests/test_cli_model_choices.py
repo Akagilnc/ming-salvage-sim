@@ -1,3 +1,4 @@
+from __future__ import annotations
 """CLI runner 策展模型清单（前端下拉的单一真源）。
 
 CLI Model 从自由文本框改成 per-runner 策展下拉，清单在后端单点定义、经
@@ -5,7 +6,6 @@ config 端点暴露给前端。这里测清单结构 + 默认档语义 + 与默�
 （不重写字面量），以及 menu/status 确实把清单带出去。
 """
 
-from __future__ import annotations
 
 import asyncio
 

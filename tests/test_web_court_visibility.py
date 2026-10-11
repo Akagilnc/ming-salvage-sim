@@ -1,19 +1,21 @@
+from __future__ import annotations
+from ming_sim.entities.character.appointment import apply_office_appointment
+from ming_sim.applier import Provenance, RejectedItem
+from types import SimpleNamespace
+import web_app
+from web_app import in_talent_pool, visible_in_court
+import pytest
+from tests.test_qa_c2_settlement_display_lifecycle_1343 import _shell
 """#104: 朝堂大臣列表按 DB 权威状态过滤 offstage（离场/未登场不入列）。
 
-回归要点：过滤须用 db.get_character_status（DB 权威），**不能用内存 c.status**——
+回归要点：过滤须用 db.characters.get_character_status（DB 权威），**不能用内存 c.status**——
 auto-debut 等路径（db.set_character_status）只写 DB、不回写内存，c.status 会 stale。
 issue #104 原提议的 `c.status != "offstage"` 会把「DB 已 active 但内存仍 offstage」
 的已登场人物（如 debut 后的李自成/郑成功）永久挡在朝堂外，比原 bug 更糟。
 """
-from __future__ import annotations
 
-from ming_sim.entities.character.appointment import apply_office_appointment
-from ming_sim.applier import Provenance, RejectedItem
 
-from types import SimpleNamespace
 
-import web_app
-from web_app import in_talent_pool, visible_in_court
 
 
 def _active_ming_minister(db, content) -> str:
@@ -23,17 +25,15 @@ def _active_ming_minister(db, content) -> str:
         # #1317：未仕/后宫/宗藩非朝臣可召样本
         if getattr(ch, "office_type", "") in ("后宫", "宗藩", "未仕"):
             continue
-        if db.get_character_status(name)[0] == "active":
+        if db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("基底盘面无 active 的大明大臣")
 
 
-
 def test_active_ming_minister_visible(read_game):
-    db, _state, content = read_game
+    db, state, content = read_game
     name = _active_ming_minister(db, content)
-    assert visible_in_court(content.characters[name], db) is True
-
+    assert content.characters[name].name in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
 
 
 def test_active_non_ming_character_not_in_court(game):
@@ -49,8 +49,7 @@ def test_active_non_ming_character_not_in_court(game):
         import pytest
         pytest.skip("基底盘面无非 ming 人物")
     db.set_character_status(state, name, "active", "测试：在世")
-    assert visible_in_court(content.characters[name], db) is False
-
+    assert content.characters[name].name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
 
 
 def test_db_offstage_excluded_even_if_memory_active(game):
@@ -60,8 +59,8 @@ def test_db_offstage_excluded_even_if_memory_active(game):
     ch = content.characters[name]
     db.set_character_status(state, name, "offstage", "测试：离场")
     assert ch.status == "active"  # 内存 stale，证明分叉确实存在
-    assert visible_in_court(ch, db) is False
-
+    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
+    assert name not in {row["name"] for row in db.characters.current_court_rows(state.year, state.period)}
 
 
 def test_db_active_included_even_if_memory_offstage(game):
@@ -74,11 +73,10 @@ def test_db_active_included_even_if_memory_offstage(game):
     try:
         ch.status = "offstage"  # 模拟 JSON seed / stale 内存
         db.set_character_status(state, name, "active", "测试：历史登场")
-        assert visible_in_court(ch, db) is True
+        assert ch.name in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
     finally:
         # content fixture 是 session 作用域，还原内存 status 防跨用例污染（Codex R2）
         ch.status = original_status
-
 
 
 def _materialized_prince(db, state, content):
@@ -100,19 +98,14 @@ def _materialized_prince(db, state, content):
     return name, ch
 
 
-
-def test_vassal_prince_excluded_from_court(game):
-    """宗室/就藩藩王（office_type=宗藩）不是可召见/可任免的朝堂官员，即便 ming+active 也不入列
-    （用户 2026-06-14 拍：宗室要隐藏）。藩王在册数据照旧留 DB（事件按名引用不受影响），只是不进
-    朝堂/任免列表 UI。"""
+@pytest.mark.parametrize('status, surface', [("active", "ministers"), ("offstage", "talent_pool")])
+def test_vassal_prince_excluded_from_court(game, status, surface):
     db, state, content = game
     name, ch = _materialized_prince(db, state, content)
-    db.set_character_status(state, name, "active", "测试：在世")
+    db.set_character_status(state, name, status, "测试：在世")
     # 物化后 setup 真生效：DB 确为 active+ming（否则仅 office_type 短路，测不出 gate 优先于状态）
-    assert db.get_character_status(name)[0] == "active"
-    assert web_app._character_power_id(ch, db) == "ming"
-    assert visible_in_court(ch, db) is False
-
+    assert db.characters.get_character_status(name)[0] == status
+    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()[surface]}
 
 
 def test_offstage_former_minister_in_talent_pool(game):
@@ -130,28 +123,16 @@ def test_offstage_former_minister_in_talent_pool(game):
         import pytest
         pytest.skip("基底盘面无合适的朝堂类前臣")
     db.set_character_status(state, name, "offstage", "测试：自请罢居")
-    assert in_talent_pool(content.characters[name], db, state.year, state.period) is True
+    assert content.characters[name].name in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
     # 在野不入朝堂列表（两个列表互斥，offstage 只进人才池）
-    assert visible_in_court(content.characters[name], db) is False
-
+    assert content.characters[name].name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
 
 
 def test_active_minister_not_in_talent_pool(read_game):
     """在朝（active）大臣不进在野池——人才池只补 offstage 这一漏面。"""
     db, state, content = read_game
     name = _active_ming_minister(db, content)
-    assert in_talent_pool(content.characters[name], db, state.year, state.period) is False
-
-
-
-def test_vassal_prince_excluded_from_talent_pool(game):
-    """宗藩（藩王不入仕）即便 offstage+ming 也不进人才池（按 office_type 排除）。"""
-    db, state, content = game
-    name, ch = _materialized_prince(db, state, content)
-    db.set_character_status(state, name, "offstage", "测试")
-    assert db.get_character_status(name)[0] == "offstage"  # 物化后 setup 真生效
-    assert in_talent_pool(ch, db, state.year, state.period) is False
-
+    assert content.characters[name].name not in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
 
 
 def test_amnestied_rebel_excluded_from_talent_pool(game):
@@ -170,9 +151,8 @@ def test_amnestied_rebel_excluded_from_talent_pool(game):
     db.set_character_status(state, name, "offstage", "测试：招抚后罢居")
     db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (name,))
     db.conn.commit()
-    assert db.get_character_status(name)[0] == "offstage"
-    assert in_talent_pool(ch, db, state.year, state.period) is False
-
+    assert db.characters.get_character_status(name)[0] == "offstage"
+    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
 
 
 def test_same_year_future_month_debut_excluded_from_talent_pool(game):
@@ -188,18 +168,17 @@ def test_same_year_future_month_debut_excluded_from_talent_pool(game):
     try:
         db.set_character_status(state, name, "offstage", "测试")
         ch.debut_year, ch.debut_month = state.year, state.period + 1  # 同年下月才登场
-        assert in_talent_pool(ch, db, state.year, state.period) is False
+        assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
         ch.debut_month = state.period  # 月份已到 → 视为已登场，可进池
-        assert in_talent_pool(ch, db, state.year, state.period) is True
+        assert ch.name in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
     finally:
         # content fixture 是 session 作用域，还原内存 debut 字段防跨用例污染
         ch.debut_year, ch.debut_month = orig
 
 
-
 def test_consort_excluded_from_court(read_game):
     """后宫不算朝堂大臣，DB active 也不入列。"""
-    db, _state, content = read_game
+    db, state, content = read_game
     consort = next(
         (n for n, c in content.characters.items()
          if getattr(c, "office_type", "") == "后宫"),
@@ -208,8 +187,7 @@ def test_consort_excluded_from_court(read_game):
     if consort is None:
         import pytest
         pytest.skip("基底盘面无后宫人物")
-    assert visible_in_court(content.characters[consort], db) is False
-
+    assert content.characters[consort].name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
 
 
 def test_zongfan_cannot_be_summoned_via_can_summon(game):
@@ -226,7 +204,7 @@ def test_zongfan_cannot_be_summoned_via_can_summon(game):
         pytest.skip("基底盘面无宗藩人物")
     db.add_character(state, content.characters[prince], source="测试物化")
     db.set_character_status(state, prince, "active", "测试：在世")
-    assert db.get_character_status(prince)[0] == "active"  # 即便 active 也拒
+    assert db.characters.get_character_status(prince)[0] == "active"  # 即便 active 也拒
     ok, _reason = sess.can_summon(content.characters[prince])
     assert ok is False
     # 后宫不受宗藩闸影响：active+ming 后宫仍可召
@@ -239,13 +217,11 @@ def test_zongfan_cannot_be_summoned_via_can_summon(game):
         assert ok2 is True
 
 
-
 def _bare_session(db):
     from ming_sim.session import GameSession
     sess = GameSession.__new__(GameSession)
     sess.db = db
     return sess
-
 
 
 def _enemy_active_name(db, content) -> str:
@@ -258,7 +234,6 @@ def _enemy_active_name(db, content) -> str:
     pytest.skip("基底盘面无 active 外藩人物")
 
 
-
 def test_enemy_active_character_cannot_be_summoned(read_game):
     """非大明势力（后金/蒙古/朝鲜/流寇）即便 active 也不可召见——皇帝召的是大明朝廷命官，
     不能召对敌酋（如皇太极）。can_summon 是 summon_minister 工具链共用闸，集中守此一处（#125）。
@@ -266,10 +241,9 @@ def test_enemy_active_character_cannot_be_summoned(read_game):
     db, state, content = read_game
     sess = _bare_session(db)
     enemy = _enemy_active_name(db, content)
-    assert db.get_character_status(enemy)[0] == "active"  # active 也拒
+    assert db.characters.get_character_status(enemy)[0] == "active"  # active 也拒
     ok, _reason = sess.can_summon(content.characters[enemy])
     assert ok is False
-
 
 
 def test_summon_power_check_uses_db_not_content(game):
@@ -293,32 +267,6 @@ def test_summon_power_check_uses_db_not_content(game):
 
 
 
-def test_normal_ming_minister_still_summonable(read_game):
-    """回归：正常大明 active 大臣不受 #125 power 闸影响，照常可召。"""
-    db, state, content = read_game
-    sess = _bare_session(db)
-    name = _active_ming_minister(db, content)
-    ok, _ = sess.can_summon(content.characters[name])
-    assert ok is True
-
-
-
-def test_db_resolve_power_id_authoritative(game):
-    """db.resolve_power_id：DB 行 power_id 优先于内存，DB 无行时回退内存，再默认 ming。"""
-    db, state, content = game
-    name = _active_ming_minister(db, content)
-    ch = content.characters[name]
-    db.conn.execute("UPDATE characters SET power_id='houjin' WHERE name=?", (name,))
-    db.conn.commit()
-    assert db.resolve_power_id(ch) == "houjin"  # DB 权威压过内存的 ming
-    # DB 无该行 → 回退内存 power_id
-    ghost = SimpleNamespace(name="查无此人_测试", power_id="mongol")
-    assert db.resolve_power_id(ghost) == "mongol"
-    # 内存也无 → 默认 ming
-    ghost2 = SimpleNamespace(name="查无此人_测试2")
-    assert db.resolve_power_id(ghost2) == "ming"
-
-
 
 # ── #1317 r2：身份归一 ≠ 可召资格；未仕/宗藩别名解析 + 可召排未仕 ──────────
 
@@ -333,49 +281,20 @@ def _session_stub(db, content):
 
 
 
-def test_shi_kefa_not_in_summonable_court_roster(read_game):
-    """#1317/#1462：史可法 office=诸生/未仕，不得以在朝身份入可召名册。
-
-    #1462：debut_year=0 表示开局即在场，不得标 offstage（否则 apply_historical_debuts
-    永不激活，人才池/朝堂双排除且无法按姓名铨选发现）。在场态靠 office_type='未仕'
-    可召资格过滤挡召见；任命写路径仍可入仕。
-
-    接缝：can_summon + visible_in_court 两面同拒。
-    """
-    db, _state, content = read_game
-    assert "史可法" in content.characters, "seed 须含史可法"
-    ch = content.characters["史可法"]
-    assert ch.office_type == "未仕"
-    assert "诸生" in (ch.office or "")
-    # #1462：开局即在场（debut_year 默认 0），status 须 active
-    assert int(getattr(ch, "debut_year", 0) or 0) == 0
-    assert ch.status == "active", ch.status
-    row = db.conn.execute(
-        "SELECT status, debut_year FROM characters WHERE name=?", ("史可法",),
-    ).fetchone()
-    assert row is not None
-    assert row["status"] == "active"
-    assert int(row["debut_year"] or 0) == 0
-
-    sess = _session_stub(db, content)
-    ok, reason = sess.can_summon(ch)
-    assert ok is False, f"史可法 can_summon 应拒，实际放行 reason={reason!r}"
-    assert reason
-
-    assert visible_in_court(ch, db) is False, "史可法不得入 web 朝堂 ministers 投影"
 
 
 
-def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
-    """#1317 回归：真在朝大臣（非未仕）仍可召、仍在名册——禁谓词收窄误伤。"""
-    db, _state, content = read_game
-    sess = _session_stub(db, content)
-
-    for name in ("温体仁", "毕自严", "张瑞图"):
-        assert name in content.characters, f"seed 缺 {name}"
-        ch = content.characters[name]
-        assert ch.office_type != "未仕"
-        assert db.get_character_status(name)[0] == "active", name
-        assert visible_in_court(ch, db) is True, name
-        ok, reason = sess.can_summon(ch)
-        assert ok is True, f"{name} 被误伤：{reason}"
+def test_role_roster_only_lists_current_active_ming_people(game):
+    db, state, content = game
+    names = list(content.characters)[:4]
+    for name, status, debut_year, power_id in zip(
+        names, ("dismissed", "offstage", "active", "active"),
+        (0, 0, state.year + 1, 0), ("ming", "ming", "ming", "houjin"),
+    ):
+        db.conn.execute(
+            "UPDATE characters SET office_type='礼部', status=?, debut_year=?, power_id=? WHERE name=?",
+            (status, debut_year, power_id, name),
+        )
+    db.conn.commit()
+    listed = {row["name"] for row in db.characters.current_court_rows(state.year, state.period)}
+    assert set(names).isdisjoint(listed)

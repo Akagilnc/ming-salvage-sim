@@ -4,6 +4,9 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.faction.store import FactionStore
+from ming_sim.entities.power.store import PowerStore
+from ming_sim.entities.region.store import RegionStore
 
 from typing import Dict, List, Optional
 
@@ -192,7 +195,7 @@ def held_authority_context(
     """大臣可见的在持授权定性摘要；裸 authority_records.id 永不入面。"""
     if turn is None:
         turn = db.load_state().turn
-    rows = db.list_active_authorities(int(turn), holder_id=character.name)
+    rows = db.characters.list_active_authorities(int(turn), holder_id=character.name)
     if not rows:
         return ""
     labels: List[str] = []
@@ -246,10 +249,7 @@ def character_context_with_db(
 
 def faction_context_with_db(character: Character, db: GameDB) -> str:
     """只组装当前人物认同度允许知道的本派档料；不提供全局派系表。"""
-    faction = db.conn.execute(
-        "SELECT agenda, satisfaction, leverage FROM factions WHERE name = ?",
-        (character.faction,),
-    ).fetchone()
+    faction = FactionStore(db.conn).read_faction_context_with_db((character.faction,))
     bucket = _identity_bucket(character.identity)
     dossier = _FACTION_DOSSIERS.get(character.faction)
     if bucket == "low":

@@ -1,14 +1,15 @@
 from ming_sim.settlement.dossier import apply_dossier_verdicts
 import json
-
 import pytest
-
 import ming_sim.decree as decree_mod
 from ming_sim.exceptions import LLMContractError
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
 from tests.dossier_test_helpers import rejected_verdict
+from ming_sim.qualitative import qualitative_character_axis
+
+
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
     return db.create_decree_dossier(
@@ -17,36 +18,51 @@ def _dossier(db, state, text="清丈天下田亩", **payload):
     )
 
 
+
+
+
 def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
     db, _state, _content = game
     with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts({"verdicts": []}, [], db)
 
-
-@pytest.mark.parametrize("decision", ["promulgated", "rejected"])
-def test_promulgation_verdict_rejects_unknown_fields(game, decision):
+@pytest.mark.parametrize("decision, field, value, snapshot, midzhi", [
+    ('promulgated', 'foo', 'bar', False, False),
+    ('rejected', 'foo', 'bar', False, False),
+    ('rejected', 'imperial_authority_band', '极弱', True, False),
+    ('rejected', 'appointment_tenure', '署理', True, False),
+    ('rejected', 'authorization_ids', ['forged-auth'], True, False),
+    ('rejected', 'endorsement_entry_ids', [1], True, False),
+    ('rejected', None, None, False, True),
+])
+def test_promulgation_verdict_rejects_unknown_fields(game, decision, field, value, snapshot, midzhi):
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     verdict = (
         {"dossier_id": dossier_id, "decision": "promulgated"}
         if decision == "promulgated"
-        else _rejected_verdict(dossier_id, context["imperial_authority_band"])
+        else _rejected_verdict(dossier_id, context["imperial_authority_band"], midzhi=midzhi)
     )
-    verdict["foo"] = "bar"
-
+    if field is not None:
+        target = verdict["criteria_snapshot"] if snapshot else verdict
+        target[field] = value
     with pytest.raises(decree_mod.LLMContractError):
-        decree_mod.validate_promulgation_verdicts(
-            [verdict], dossiers, db, prepared_context=context,
-        )
+        decree_mod.validate_promulgation_verdicts([verdict], dossiers, db, prepared_context=context)
+
 
 
 def test_rejected_verdict_still_requires_full_rejection_contract(game):
-    """#1397 负向边界：打回契约不因顺颁容错而放松。"""
+    """#1397 负向边界：打回契约不因顺颁容错而放松。
+
+    只给缘由、不给完整打回契约（受影响方 + typed 判据快照）的判决必须被拒，
+    且一条 verdict 都不落账——区分度是**拒收后颁布格与判决表仍为空**这条
+    结构化事实，不靠报错措辞（#1889）。
+    """
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
 
     with pytest.raises(decree_mod.LLMContractError):
@@ -55,8 +71,9 @@ def test_rejected_verdict_still_requires_full_rejection_contract(game):
             dossiers, db, prepared_context=context,
         )
 
-
-
+    after = db.dossiers.get(dossier_id)
+    assert after["promulgation_decision"] == "", after["promulgation_decision"]
+    assert db.dossiers.decisions(dossier_id) == []
 
 
 
@@ -75,7 +92,7 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
 def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
     verdict["legal_reason_code"] = ""
@@ -90,7 +107,6 @@ def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
             decree_mod.validate_promulgation_verdicts(
                 [verdict], dossiers, db, prepared_context=context,
             )
-
 
 def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, monkeypatch):
     """一批判官一次调用，再走既有校验。入口是 llm_promulgation_verdicts。"""
@@ -113,7 +129,7 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
         ]})
 
     monkeypatch.setattr(decree_mod, "run_agent_text", canned)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     raw = decree_mod.llm_promulgation_verdicts(
         dossiers, state, db=db, agno_db=None, llm_config=object(),
@@ -131,35 +147,11 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
     assert [row["id"] for row in calls[0][0]["dossiers"]] == [first, second]
 
 
-@pytest.mark.parametrize(
-    ("snapshot_key", "forged"),
-    [
-        ("imperial_authority_band", "极弱"),
-        ("appointment_tenure", "署理"),
-        ("authorization_ids", ["forged-auth"]),
-        ("endorsement_entry_ids", [1]),
-    ],
-)
-def test_rejected_snapshot_must_equal_the_prepared_judge_input(
-    game, snapshot_key, forged,
-):
-    db, state, _content = game
-    dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
-    verdict["criteria_snapshot"][snapshot_key] = forged
-
-    with pytest.raises(decree_mod.LLMContractError):
-        decree_mod.validate_promulgation_verdicts(
-            [verdict], dossiers, db, prepared_context=context,
-        )
-
 
 def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     gatekeepers = {row["name"] for row in context["gatekeepers"]}
     outsider = next(
@@ -168,21 +160,6 @@ def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
     )
     verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
     verdict["gatekeeper_id"] = outsider
-
-    with pytest.raises(decree_mod.LLMContractError):
-        decree_mod.validate_promulgation_verdicts(
-            [verdict], dossiers, db, prepared_context=context,
-        )
-
-
-def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
-    db, state, _content = game
-    dossier_id = _dossier(db, state)
-    dossiers = db.list_decree_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    verdict = _rejected_verdict(
-        dossier_id, context["imperial_authority_band"], midzhi=True,
-    )
 
     with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts(
@@ -226,11 +203,11 @@ def test_review_exempt_actions_auto_promulgate_without_judge_contract_abort(
     session = SimpleNamespace(
         db=db, state=state, llm_config=object(), agno_db=None, content=content,
     )
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     product = produce_forecast_product(
         session, snapshot_for_existing_dossier(session, dossier),
     )
 
     assert product["verdict"] == {"dossier_id": dossier_id, "decision": "promulgated"}
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
-    assert db.list_decree_dossier_decisions(dossier_id) == []
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
+    assert db.dossiers.decisions(dossier_id) == []

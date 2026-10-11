@@ -764,7 +764,7 @@ def _preflight_declared_event_groups(
         if not _is_strategic_foreign_node_event(event):
             _reject(pending, f"效果归属的战略事件不存在：{event_id}")
             continue
-        if event_id not in candidates or db.event_terminal_state(event_id) or event.auto_trigger:
+        if event_id not in candidates or db.issues.event_terminal_state(event_id) or event.auto_trigger:
             _reject(pending, f"战略事件当前不能触发：{event_id}")
             continue
         if not any(

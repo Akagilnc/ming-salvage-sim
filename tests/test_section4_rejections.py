@@ -1,3 +1,9 @@
+from __future__ import annotations
+import json
+from ming_sim.applier import Provenance
+import pytest
+from tests.section_rejection_helpers import rejection_rows as _rejection_rows, run_declaration
+from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
 """PR2-S2(ADR 0008 决定 1,#91)——section 4 三条裸奔路迁入逐项拒收契约。
 
 section 4 的 create_armies_from_extraction(new_armies)、apply_region_deltas
@@ -10,14 +16,7 @@ cannon cap 12、firearm 0-100)保持——clamp 不是拒收,clamp 后照落。
 从现役 pre_settle 与 dispatch_declaration 入口验证逐项拒收。
 """
 
-from __future__ import annotations
-import json
 
-from ming_sim.applier import Provenance
-
-import pytest
-
-from tests.section_rejection_helpers import rejection_rows as _rejection_rows, run_declaration
 
 
 def run_settle(db, state, content, extracted, **kwargs):
@@ -31,19 +30,16 @@ def run_settle(db, state, content, extracted, **kwargs):
             item.setdefault("origin_ref", "盘面自发")
     return run_declaration(db, state, content, extracted)
 
-
 def _a_region(db):
     """取一个开局在册地区 id,供「好项照落」对照。"""
     row = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()
     assert row is not None
     return row[0]
 
-
 def _an_army(db):
     row = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
     assert row is not None
     return row[0]
-
 
 def _pay_source():
     return {
@@ -52,56 +48,9 @@ def _pay_source():
         "central_pay_share": 0.0,
     }
 
+# ---- region_delta：查无此地 ----
 
-# ---- 实体逐项拒收公共主干 ----
 
-@pytest.mark.parametrize("delta_key,section,table,key_expr,where,good_field,bad_field,bad_target,bad_value,category", [
-    (*entity, target, value, category)
-    for entity in (
-        ("region_delta", "region_changes", "regions", "id", "1", "public_support", "unrest"),
-        ("army_delta", "army_changes", "armies", "id", "1", "morale", "training"),
-        ("power_updates", "power_changes", "powers", "id", "id != 'ming'", "leverage", "military_strength"),
-        ("faction_delta", "faction_delta", "factions", "name", "1", "satisfaction", "leverage"),
-        ("class_delta", "class_delta", "classes", "name || '@' || region_id", "1", "satisfaction", "leverage"),
-    )
-    for target, value, category in (
-        ("missing", 3, "missing_ref"), ("field", 3, "invalid_enum"),
-        ("value", None, "invalid_enum"), ("value", "三成", "invalid_enum"),
-        ("value", 3.7, "invalid_enum"), ("value", True, "invalid_enum"),
-    )
-    if target == "missing" or entity[0] in ("region_delta", "army_delta")
-    or (entity[0] == "power_updates" and (target == "field" or value in (None, "三成")))
-])
-def test_entity_delta_rejection_keeps_valid_sibling(
-    game, delta_key, section, table, key_expr, where, good_field, bad_field,
-    bad_target, bad_value, category,
-):
-    """Mixed entity deltas share one dispatch and persisted-refusal contract."""
-    db, state, content = game
-    from ming_sim.decree import pre_settle
-    pre_settle(state, db, content=content)
-    if bad_target == "value":
-        good_field, bad_field = bad_field, good_field
-    key, before, bad_before = db.conn.execute(
-        f"SELECT {key_expr}, {good_field}, {bad_field} FROM {table} WHERE {where} LIMIT 1"
-    ).fetchone()
-    origin = {} if delta_key in ("faction_delta", "class_delta") else {"origin_ref": "盘面自发"}
-    good = {good_field: 2, **origin}
-    if bad_target == "missing":
-        delta = {"查无此实体": {bad_field: bad_value, **origin}, key: good}
-        category = "hallucinated_id" if delta_key == "power_updates" else category
-    else:
-        delta = {key: {**good, "查无此字段" if bad_target == "field" else bad_field: bad_value}}
-    run_declaration(db, state, content, {delta_key: delta})
-    rows = _rejection_rows(db, state.turn, section)
-    assert len(rows) == 1
-    assert rows[0]["category"] == category
-    assert rows[0]["reason"]
-    after, bad_after = db.conn.execute(
-        f"SELECT {good_field}, {bad_field} FROM {table} WHERE {key_expr}=?", (key,)
-    ).fetchone()
-    assert after == min(100, before + 2)
-    assert bad_after == bad_before
 
 
 @pytest.mark.parametrize("bad_controller", [None, "", "   ", "null", " NULL ", "not_a_real_power"])
@@ -123,11 +72,11 @@ def test_region_controlled_by_rejects_non_power_id_and_preserves_region(game, ba
     assert len(rows) == 1
     _, reason, category, _ = rows[0]
     assert category == "invalid_enum"
+    assert "controlled_by" in reason
     after = db.conn.execute(
         "SELECT controlled_by FROM regions WHERE id=?", (good,)
     ).fetchone()[0]
     assert after == before
-
 
 def test_region_controlled_by_accepts_existing_power_ids_and_restore_hook(game):
     """合法 powers.id 仍可落库；非 ming→ming 收复时原 on_restore 覆盖逻辑仍触发。"""
@@ -157,7 +106,6 @@ def test_region_controlled_by_accepts_existing_power_ids_and_restore_hook(game):
     ]
     assert "controlled_by" in log_fields
     assert "public_support" in log_fields
-
 
 def test_region_controlled_by_mixed_invalid_and_valid_siblings_apply(game):
     """坏 controlled_by 只拒该字段，不阻断同地区好字段和同批其它地区合法控制权变更。"""
@@ -190,7 +138,6 @@ def test_region_controlled_by_mixed_invalid_and_valid_siblings_apply(game):
     assert after_unrest != before_unrest
     assert other_controller == "houjin"
 
-
 # ---- army_delta：查无此军 ----
 
 
@@ -201,7 +148,6 @@ def _valid_power_id(db):
         "SELECT id FROM powers WHERE id != 'ming' LIMIT 1").fetchone()
     assert row is not None
     return row[0]
-
 
 def test_unknown_owner_power_army_rejected_good_builds(game):
     """new_armies owner_power 不在 powers 表 → 原 raise ValueError 崩整月,改为逐项
@@ -232,7 +178,6 @@ def test_unknown_owner_power_army_rejected_good_builds(game):
         "SELECT id FROM armies WHERE id='ghost_corps'").fetchone()
     assert ghost is None
 
-
 def test_army_missing_manpower_rejected_good_builds(game):
     """new_armies 缺/非法 manpower（#173 PR2 后唯一必填，维护费退役）→ 原 raise
     ValueError 崩整月,改为逐项拒收留痕(invalid_enum),同信封好军照建(ADR 决定 1)。"""
@@ -258,7 +203,6 @@ def test_army_missing_manpower_rejected_good_builds(game):
     assert db.conn.execute(
         "SELECT id FROM armies WHERE id='halfbuilt_corps'").fetchone() is None
 
-
 def test_duplicate_army_without_manpower_rejected(game):
     """new_armies 命中已有 id/name 但无 manpower 增量 → 原 print 静默跳,改为逐项
     拒收留痕(invalid_enum,扩军无量=无意义项)(ADR 决定 1)。"""
@@ -276,54 +220,30 @@ def test_duplicate_army_without_manpower_rejected(game):
     assert rows[0][2] == "invalid_enum"
     assert rows[0][1]
 
-
 # ---- 代码异常(bug 类,非脏数据)→ 原样上抛，原子分派回滚整批 ----
 
-@pytest.mark.parametrize("method,section,table,field,error", [
-    ("apply_region_deltas", "region_delta", "regions", "public_support", AttributeError),
-    ("apply_army_deltas", "army_delta", "armies", "morale", KeyError),
-    ("apply_power_deltas", "power_updates", "powers", "leverage", AttributeError),
-    ("create_armies_from_extraction", "new_armies", "powers", None, AttributeError),
-])
-def test_entity_write_exception_aborts_dispatch(game, monkeypatch, method, section, table, field, error):
-    db, state, content = game
-    key = db.conn.execute(f"SELECT id FROM {table} WHERE id != 'ming' LIMIT 1").fetchone()[0]
-    fault = error("entity write fault")
-
-    def _boom(self, *args, **kwargs):
-        raise fault
-
-    monkeypatch.setattr(type(db), method, _boom)
-    item = {key: {field: 2, "origin_ref": "盘面自发"}} if field else [
-        {"id": "x_corps", "owner_power": key, "manpower": 1000,
-         "maintenance_per_turn": 1, "origin_ref": "盘面自发"},
-    ]
-    with pytest.raises(error) as raised:
-        run_declaration(db, state, content, {section: item})
-    assert raised.value is fault
 
 
 # ---- clamp 语义(P2 铁律):clamp 不是拒收,clamp 后照落 ----
 
-def test_army_cannon_over_cap_clamps_not_rejected(game):
-    """army cannon_equipment 超 cap 12 → clamp 后照落,不算拒收(P2 铁律保持)。"""
+@pytest.mark.parametrize('field, before, value, cap', [("cannon_equipment", 0, 99, 12), ("firearm_equipment", 50, 999, 100)])
+def test_army_cannon_over_cap_clamps_not_rejected(game, field, before, value, cap):
     db, state, content = game
     turn = state.turn
     good = _an_army(db)
-    db.conn.execute("UPDATE armies SET cannon_equipment=0 WHERE id=?", (good,))
+    db.conn.execute(f"UPDATE armies SET {field}=? WHERE id=?", (before, good))
     db.conn.commit()
 
     run_settle(db, state, content, {
-        "army_delta": {good: {"cannon_equipment": 99}},  # 远超 cap 12
+        "army_delta": {good: {field: value}},  # 远超 cap 12
     }, narrative="x", decree_text="y")
 
     # clamp 不是拒收
     rows = _rejection_rows(db, turn, "army_changes")
     assert rows == []
     after = db.conn.execute(
-        "SELECT cannon_equipment FROM armies WHERE id=?", (good,)).fetchone()[0]
-    assert after == 12  # clamp 后照落
-
+        f"SELECT {field} FROM armies WHERE id=?", (good,)).fetchone()[0]
+    assert after == cap  # clamp 后照落
 
 def test_region_cannon_over_cap_clamps_not_rejected(game):
     """region cannon 超 cap city_level×8 → clamp 后照落,不算拒收(P2 铁律保持)。"""
@@ -345,44 +265,6 @@ def test_region_cannon_over_cap_clamps_not_rejected(game):
     after = db.conn.execute(
         "SELECT cannon FROM regions WHERE id=?", (rid,)).fetchone()[0]
     assert after == cap  # clamp 后照落,不超城防上限
-
-
-def test_army_firearm_over_100_clamps_not_rejected(game):
-    """army firearm_equipment 超 100 → clamp 后照落,不算拒收(P2 铁律 0-100 保持)。"""
-    db, state, content = game
-    turn = state.turn
-    good = _an_army(db)
-    db.conn.execute("UPDATE armies SET firearm_equipment=50 WHERE id=?", (good,))
-    db.conn.commit()
-
-    run_settle(db, state, content, {
-        "army_delta": {good: {"firearm_equipment": 999}},  # 远超 100
-    }, narrative="x", decree_text="y")
-
-    rows = _rejection_rows(db, turn, "army_changes")
-    assert rows == []
-    after = db.conn.execute(
-        "SELECT firearm_equipment FROM armies WHERE id=?", (good,)).fetchone()[0]
-    assert after == 100  # clamp 后照落
-
-
-def test_duplicate_army_noninteger_manpower_rejected(game):
-    """new_armies 命中已有 id 但 manpower 非整数 → 原 print 静默跳,改为逐项
-    拒收留痕(invalid_enum)(ADR 决定 1)。"""
-    db, state, content = game
-    turn = state.turn
-    dup_id, dup_name = db.conn.execute(
-        "SELECT id, name FROM armies LIMIT 1").fetchone()
-
-    run_settle(db, state, content, {
-        "new_armies": [
-            {"id": dup_id, "name": dup_name, "owner_power": "ming", "manpower": "若干"}],
-    }, narrative="x", decree_text="y")
-
-    rows = _rejection_rows(db, turn, "army_changes")
-    assert len(rows) == 1
-    assert rows[0][2] == "invalid_enum"
-    assert rows[0][1]
 
 
 # ───────────────────────── cmr S2 r1 修复回归 ─────────────────────────
@@ -408,7 +290,6 @@ def test_dirty_region_cannon_value_rejected_not_abort(game, bad):
         (rid, turn)).fetchone()[0]
     assert log == 1
 
-
 def test_dirty_optional_army_field_rejects_item(game):
     """new_armies 可选数值字段在场但脏(morale '高'→静默 50)= 伪造军备——
     在场即须合法,拒该项留痕;缺省才走默认(cmr S2 r1 codex P1)。"""
@@ -426,7 +307,6 @@ def test_dirty_optional_army_field_rejects_item(game):
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
 
-
 def test_absent_optional_army_fields_use_defaults(game):
     """缺省可选字段照走默认(50/0)——「在场即须合法」不影响缺省路(pin)。"""
     db, state, content = game
@@ -441,6 +321,24 @@ def test_absent_optional_army_fields_use_defaults(game):
     assert row is not None
     assert row[0] == 50 and row[1] == 0
 
+def test_issue_path_tolerates_previously_skipped_cases(game):
+    """国策结案路对「历史上 print-skip」的三案(army 非法字段等)不升级为崩月
+    ——S2 把它们改成拒收记录后,_raise_on_rejected 不得把历史可活的脏数据
+    变成新的中断路(cmr S2 r1 claude P2:「维持原行为」当真)。好字段照落。"""
+    import ming_sim.entities.issue.effects as I
+
+    db, state, content = game
+    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
+    before = db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
+
+    I._apply_issue_entities(db, state, {
+        "army_delta": {aid: {"morale": 2, "士气大振": 1}},  # 非法字段,历史 print-skip
+    }, "局势#测试结案")  # 不抛
+
+    after = db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
+    assert after == min(100, before + 2)  # 好字段照落
 
 def test_nondict_new_army_item_recorded_not_silent(read_game):
     """new_armies 非 dict 项不再静默 continue——留拒收记录(issue 路容忍不升级,
@@ -449,7 +347,6 @@ def test_nondict_new_army_item_recorded_not_silent(read_game):
     created, created_rejections = db.create_armies_from_extraction(state, ["不是dict的项"], actor="测试", source=Provenance.system_simulation)
     assert len(created_rejections) == 1
     assert created_rejections[0].category == "invalid_enum"
-
 
 @pytest.mark.parametrize("field,bad", [("equipment", "精良"), ("mobility", "快"), ("loyalty", "高")])
 def test_all_score_fields_guarded_on_creation(game, field, bad):
@@ -469,7 +366,6 @@ def test_all_score_fields_guarded_on_creation(game, field, bad):
     ).fetchone()[0] == 0
     rows = _rejection_rows(db, turn, "army_changes")
     assert len(rows) == 1
-
 
 def test_issue_path_tolerated_rejections_reach_reports(game):
     """issue 结案路的容忍拒收项不得蒸发——经 issue_summary 落
@@ -541,23 +437,76 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     after = db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
     assert after == min(100, before + 1)  # 好字段照落
 
-# --- ported from claude/1812-w4 (issue-path tolerance; skip obsolete formatter mix) ---
 
-def test_issue_path_tolerates_previously_skipped_cases(game):
-    """国策结案路对「历史上 print-skip」的三案(army 非法字段等)不升级为崩月
-    ——S2 把它们改成拒收记录后,_raise_on_rejected 不得把历史可活的脏数据
-    变成新的中断路(cmr S2 r1 claude P2:「维持原行为」当真)。好字段照落。"""
-    import ming_sim.entities.issue.effects as I
 
+@pytest.mark.parametrize("delta_key,section,table,key_expr,where,good_field,bad_field,bad_target,bad_value,category", [
+    (*entity, target, value, category)
+    for entity in (
+        ("region_delta", "region_changes", "regions", "id", "1", "public_support", "unrest"),
+        ("army_delta", "army_changes", "armies", "id", "1", "morale", "training"),
+        ("power_updates", "power_changes", "powers", "id", "id != 'ming'", "leverage", "military_strength"),
+        ("faction_delta", "faction_delta", "factions", "name", "1", "satisfaction", "leverage"),
+        ("class_delta", "class_delta", "classes", "name || '@' || region_id", "1", "satisfaction", "leverage"),
+    )
+    for target, value, category in (
+        ("missing", 3, "missing_ref"), ("field", 3, "invalid_enum"),
+        ("value", None, "invalid_enum"), ("value", "三成", "invalid_enum"),
+        ("value", 3.7, "invalid_enum"), ("value", True, "invalid_enum"),
+    )
+    if target == "missing" or entity[0] in ("region_delta", "army_delta")
+    or (entity[0] == "power_updates" and (target == "field" or value in (None, "三成")))
+])
+def test_entity_delta_rejection_keeps_valid_sibling(
+    game, delta_key, section, table, key_expr, where, good_field, bad_field,
+    bad_target, bad_value, category,
+):
+    """Mixed entity deltas share one dispatch and persisted-refusal contract."""
     db, state, content = game
-    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
-    before = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
+    from ming_sim.decree import pre_settle
+    pre_settle(state, db, content=content)
+    if bad_target == "value":
+        good_field, bad_field = bad_field, good_field
+    key, before, bad_before = db.conn.execute(
+        f"SELECT {key_expr}, {good_field}, {bad_field} FROM {table} WHERE {where} LIMIT 1"
+    ).fetchone()
+    origin = {} if delta_key in ("faction_delta", "class_delta") else {"origin_ref": "盘面自发"}
+    good = {good_field: 2, **origin}
+    if bad_target == "missing":
+        delta = {"查无此实体": {bad_field: bad_value, **origin}, key: good}
+        category = "hallucinated_id" if delta_key == "power_updates" else category
+    else:
+        delta = {key: {**good, "查无此字段" if bad_target == "field" else bad_field: bad_value}}
+    run_declaration(db, state, content, {delta_key: delta})
+    rows = _rejection_rows(db, state.turn, section)
+    assert len(rows) == 1
+    assert rows[0]["category"] == category
+    assert rows[0]["reason"]
+    after, bad_after = db.conn.execute(
+        f"SELECT {good_field}, {bad_field} FROM {table} WHERE {key_expr}=?", (key,)
+    ).fetchone()
+    assert after == min(100, before + 2)
+    assert bad_after == bad_before
 
-    I._apply_issue_entities(db, state, {
-        "army_delta": {aid: {"morale": 2, "士气大振": 1}},  # 非法字段,历史 print-skip
-    }, "局势#测试结案")  # 不抛
 
-    after = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
-    assert after == min(100, before + 2)  # 好字段照落
+@pytest.mark.parametrize("method,section,table,field,error", [
+    ("apply_region_deltas", "region_delta", "regions", "public_support", AttributeError),
+    ("apply_army_deltas", "army_delta", "armies", "morale", KeyError),
+    ("apply_power_deltas", "power_updates", "powers", "leverage", AttributeError),
+    ("create_armies_from_extraction", "new_armies", "powers", None, AttributeError),
+])
+def test_entity_write_exception_aborts_dispatch(game, monkeypatch, method, section, table, field, error):
+    db, state, content = game
+    key = db.conn.execute(f"SELECT id FROM {table} WHERE id != 'ming' LIMIT 1").fetchone()[0]
+    fault = error("entity write fault")
+
+    def _boom(self, *args, **kwargs):
+        raise fault
+
+    monkeypatch.setattr(type(db), method, _boom)
+    item = {key: {field: 2, "origin_ref": "盘面自发"}} if field else [
+        {"id": "x_corps", "owner_power": key, "manpower": 1000,
+         "maintenance_per_turn": 1, "origin_ref": "盘面自发"},
+    ]
+    with pytest.raises(error) as raised:
+        run_declaration(db, state, content, {section: item})
+    assert raised.value is fault

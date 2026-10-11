@@ -11,7 +11,12 @@ from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from ming_sim.applier import connection_owns_transaction
+from ming_sim.applier import (
+    connection_owns_transaction, load_stored_list,
+)
+from ming_sim.entities.character import CharacterStore
+from ming_sim.entities.dossier import DossierStore
+from ming_sim.entities.issue import IssueStore
 from ming_sim.strict_types import strict_int
 
 _ATTACH_NEW = "new"
@@ -162,12 +167,9 @@ class AffairStore:
             return affair_id
         key = str(parsed.get("birth_key") or "").strip()
         if key:
-            existing = self._conn.execute(
-                "SELECT id FROM affairs WHERE birth_key=?",
-                (key,),
-            ).fetchone()
-            if existing is not None:
-                return int(existing["id"])
+            existing_id = self.peek_declared_id(declaration, allowed=allowed)
+            if existing_id is not None:
+                return existing_id
         return self.open(
             name=str(parsed["name"]),
             origin=str(parsed["origin"]),
@@ -255,6 +257,19 @@ class AffairStore:
         if owns:
             self._conn.commit()
 
+    def _dossiers(self) -> DossierStore:
+        """#1889 / ADR 0151：案卷表的读写一律经案卷 store，本模块只编排指针语义。"""
+        return DossierStore(self._conn)
+
+
+    def point_character(self, name: str, affair_id: int) -> None:
+        self.get(affair_id)
+        CharacterStore(self._conn).set_affair_id_if_unbound(str(name), int(affair_id))
+
+    def point_issue_row(self, issue_id: int, affair_id: int) -> None:
+        self.get(affair_id)
+        IssueStore(self._conn).set_affair_id_if_unbound(int(issue_id), int(affair_id))
+
     def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)
         if label is None:
@@ -270,11 +285,7 @@ class AffairStore:
 
     def dossiers(self, affair_id: int) -> tuple[dict[str, object], ...]:
         self.get(affair_id)
-        rows = self._conn.execute(
-            "SELECT id, action_type, affair_id FROM decree_dossiers "
-            "WHERE affair_id=? ORDER BY id",
-            (int(affair_id),),
-        ).fetchall()
+        rows = self._dossiers().rows_for_affair(int(affair_id))
         return tuple(
             {
                 "id": int(row["id"]),
@@ -306,13 +317,10 @@ class AffairStore:
             return
         if kind != _ORIGIN_DOSSIER:
             return
-        row = self._conn.execute(
-            "SELECT affair_id FROM decree_dossiers WHERE id=?",
-            (int(target),),
-        ).fetchone()
-        if row is None:
+        try:
+            current = self._dossiers().affair_id_of(int(target))
+        except KeyError:
             return
-        current = int(row["affair_id"] or 0)
         if current:
             self.attach_pointer(table, row_id, current)
 
@@ -321,12 +329,7 @@ class AffairStore:
         return f"{_ORIGIN_AFFAIR}:{int(affair_id)}"
 
     def affair_id_for_issue(self, issue_id: int) -> int:
-        row = self._conn.execute(
-            "SELECT affair_id FROM issues WHERE id=?", (int(issue_id),)
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"局势不存在：{issue_id}")
-        return int(row["affair_id"] or 0)
+        return IssueStore(self._conn).affair_id_of(int(issue_id))
 
     @staticmethod
     def current_situation(textual_facts: Any, affair_id: int):

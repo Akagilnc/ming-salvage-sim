@@ -1,15 +1,10 @@
-"""密令更新路径：按精确 order_id 更新已有密令要旨；不按承办大臣合并，同一大臣可有多条 active 密令。
-
-补 toolcall 缺口——CLI 后端无 function-calling，原 report/update 密令工具失效，
-「补充/更新已有密令」无路径。
-"""
-
 from __future__ import annotations
 from tests.dossier_test_helpers import create_test_secret_order
+"""密令更新路径：按精确 order id 更新 active 密令（现役 id 写路）。
 
+旧按承办大臣猜选最新 active 的 upsert_secret_order 已退役。
+"""
 
-# ── update_secret_order_by_id：会话动作「更新」必须改精确 target，不是最新 active ──
-# CMR F1：web_app 旧实现走 upsert(按最新 active 改)→ 大臣多条密令时改错条。
 
 def test_update_by_id_targets_exact_order_not_newest(game):
     db, state, _ = game

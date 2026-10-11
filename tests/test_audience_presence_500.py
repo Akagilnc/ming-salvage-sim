@@ -1,3 +1,21 @@
+from __future__ import annotations
+from ming_sim import audience_night as an
+import pytest
+from ming_sim.audience_night import (
+    AUDIBILITY_PRIVATE,
+    AUDIBILITY_PUBLIC,
+    PRESENCE_EXIT,
+    TAG_ENTER,
+    TAG_EXIT,
+    AudienceNightError,
+)
+from ming_sim.audience_night import (
+    AUDIBILITY_PRIVATE,
+    AUDIBILITY_PUBLIC,
+    TAG_ENTER,
+    TAG_EXIT,
+    AudienceNightError,
+)
 """#500 在场推导与进出账——真实 GameDB + 真实 content 语境的进出账 → 在场末态。
 
 一条外部行为契约：进出账（入殿/告退/传召在途）经确定性推导器得出「任一时刻
@@ -8,19 +26,8 @@ summon_enter 落入殿账；断言推导器读账的机器承重态（在场/不
 （常在员额）全程在场。不锁叙事正文；每正向配显式负向。
 """
 
-from __future__ import annotations
 
-import pytest
 
-from ming_sim import audience_night as an
-from ming_sim.audience_night import (
-    AUDIBILITY_PRIVATE,
-    AUDIBILITY_PUBLIC,
-    PRESENCE_EXIT,
-    TAG_ENTER,
-    TAG_EXIT,
-    AudienceNightError,
-)
 
 STANDING = "王承恩"  # 常在员额（信邸内官随驾 → 内廷近臣）
 
@@ -28,9 +35,8 @@ STANDING = "王承恩"  # 常在员额（信邸内官随驾 → 内廷近臣）
 def _activate(db, state, *names: str) -> None:
     """把北极星在场者置为 active（徐光启开局 offstage 罢居），供入殿账。"""
     for n in names:
-        if db.get_character_status(n)[0] != "active":
+        if db.characters.get_character_status(n)[0] != "active":
             db.set_character_status(state, n, "active", reason="召对测试置在场")
-
 
 
 def _last_seq(db, night_id: int) -> int:
@@ -38,20 +44,26 @@ def _last_seq(db, night_id: int) -> int:
     return int(entries[-1]["seq"]) if entries else 0
 
 
+# ── AC1：「令 X 退下」口令 → 确定性告退账 → 名单查询即时变化（数据→引擎→交互）──
 
-def _record_exit(db, night_id: int, name: str, **kwargs):
-    """现役在场 exit 供料：走已有账本入口 presence_effect，不经已退役独立写口。"""
-    return an.append_ledger_entry(
-        db, night_id,
-        person_names=[name],
-        audibility=AUDIBILITY_PUBLIC,
-        body="",
-        presence_effect=PRESENCE_EXIT,
-        check_dead=False,
-        **kwargs,
 
-    )
 
+
+
+
+# ── AC1 真实入口 tracer：CLI 玩家「退下」口令 → 引擎告退账 → 名单即时去人 ──
+
+
+
+
+
+
+
+
+
+
+# ── L1 R2：court_action=dismiss 单缝——非流式 web /api/audience/chat
+#          与 CLI tool 路共 GameSession.chat 产源，令退落告退账、名单即时去人 ──
 
 
 # ── L2：告退后再宣入须重新落入殿账（present_names_at 单一在场真源）──────────
@@ -82,8 +94,6 @@ def test_reenter_after_exit_reappears_in_roster(game):
     assert _enters() == before + 1
 
 
-
-
 # ── L3：传召在途召法校验与 summon_enter 对齐 ──────────────────────────────
 
 
@@ -102,7 +112,6 @@ def test_transit_rejects_bad_method(game):
     assert eid and "洪承畴" not in an.present_names_at(db, nid)
 
 
-
 # ── AC2/3/5：表驱动进出账 → 任一时刻在场名单 ────────────────────────────
 
 
@@ -118,8 +127,6 @@ def _build_presence_night(db, state):
     an.summon_enter(db, nid, "王绍徽"); seqs["王绍徽_入"] = _last_seq(db, nid)
     _record_exit(db, nid, "徐光启"); seqs["徐光启_退"] = _last_seq(db, nid)
     return nid, seqs
-
-
 
 
 # (label, at_seq_key, expected_present ⊇, expected_absent)
@@ -157,7 +164,8 @@ def test_present_names_at_table(game, label, at_key, expected_present, expected_
     present = an.present_names_at(db, nid, at_seq=at_seq)
     assert expected_present <= present, f"{label}: 缺 {expected_present - present}"
     assert not (expected_absent & present), f"{label}: 误含 {expected_absent & present}"
-
+    assert not any(TAG_EXIT in entry["tags"] and STANDING in entry["person_names"]
+                   for entry in an.list_ledger(db, nid))
 
 
 def test_present_names_at_uses_timeline_key_not_raw_seq(game):
@@ -180,24 +188,6 @@ def test_present_names_at_uses_timeline_key_not_raw_seq(game):
     assert "毕自严" in present  # 旧码在大 seq 抽取账处误 break → 毕自严漏掉
     assert "徐光启" in present
 
-
-
-def test_standing_roster_present_throughout(game):
-    """AC3：王承恩（常在员额）全程在场——每个关键时刻均在名单。"""
-    db, state, content = game
-    nid, seqs = _build_presence_night(db, state)
-    checkpoints = [
-        seqs["徐光启_入"], seqs["毕自严_入"], seqs["洪承畴_途"],
-        seqs["王绍徽_入"], seqs["徐光启_退"], None,
-    ]
-    for at in checkpoints:
-        assert STANDING in an.present_names_at(db, nid, at_seq=at)
-    # 负向：常在员额从未落告退账 → 无 TAG_EXIT 条目挂其名
-    exits = [
-        e for e in an.list_ledger(db, nid)
-        if TAG_EXIT in e["tags"] and STANDING in e["person_names"]
-    ]
-    assert exits == []
 
 
 
@@ -236,3 +226,16 @@ def test_audible_interval_public_only(game):
 
     # 不在场者取数为空
     assert an.audible_entries_for(db, nid, "洪承畴") == []
+
+def _record_exit(db, night_id: int, name: str, **kwargs):
+    """现役在场 exit 供料：走已有账本入口 presence_effect，不经已退役独立写口。"""
+    return an.append_ledger_entry(
+        db, night_id,
+        person_names=[name],
+        audibility=AUDIBILITY_PUBLIC,
+        body="",
+        presence_effect=PRESENCE_EXIT,
+        check_dead=False,
+        **kwargs,
+
+    )

@@ -314,10 +314,10 @@ def event_to_issue(
     if issues._is_fiscal_levy_event(ev):
         return None
     if ev.trigger_gate:
-        if db.find_active_issue_by_origin("event_pool", ev.id) is not None:
+        if db.issues.read_find_active_issue_by_origin(('event_pool', ev.id)) is not None:
             return None
     else:
-        if db.find_any_issue_by_origin("event_pool", ev.id) is not None:
+        if db.issues.read_find_any_issue_by_origin(('event_pool', ev.id)) is not None:
             return None
     # 初值由 severity 推一个偏中性的 bar
     bar = max(20, min(60, 50 - int(ev.severity / 5)))
@@ -475,7 +475,7 @@ def auto_trigger_seed_issues_in_atomic(
         if not issues._gate_passed(ev.trigger_gate, state.metrics, db):
             continue
         apply_trigger_effect = historical_event or (
-            ev.event_type != "situation" and not db.has_event_triggered(ev.id)
+            ev.event_type != "situation" and not db.issues.has_event_triggered(ev.id)
         )
         if apply_trigger_effect and ev.effect_on_trigger:
             rejected = issue_effects._apply_issue_entities(
@@ -501,9 +501,9 @@ def auto_trigger_seed_issues_in_atomic(
             # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
             # 核心事实，此处补落一次并记终态（#1892 终态与实况同落、只落一次）。
             row = (
-                db.find_active_issue_by_origin("event_pool", ev.id)
+                db.issues.read_find_active_issue_by_origin(('event_pool', ev.id))
                 if ev.trigger_gate
-                else db.find_any_issue_by_origin("event_pool", ev.id)
+                else db.issues.read_find_any_issue_by_origin(('event_pool', ev.id))
             )
             if row is None:
                 raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")

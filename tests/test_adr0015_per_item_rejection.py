@@ -1,5 +1,7 @@
 import pytest
 import json
+from tests.section_rejection_helpers import game
+
 
 
 
@@ -19,10 +21,6 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
 
 
 
-
-
-
-
 def test_sqlite_text_encoding_fault_aborts_dispatch_without_refusal(game):
     from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import dispatch_declaration
@@ -33,7 +31,7 @@ def test_sqlite_text_encoding_fault_aborts_dispatch_without_refusal(game):
         state, action_type="policy", decree_text="新立局势", target_kind="issue",
         target_id="encoding-fault",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     before_metrics = dict(state.metrics)
     before_issues = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
     with pytest.raises(UnicodeEncodeError):

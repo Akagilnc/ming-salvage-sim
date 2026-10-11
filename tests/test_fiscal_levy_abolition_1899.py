@@ -21,7 +21,7 @@ def _at(game, year, period, turn):
     db, state, content = game
     issues.bind_content(content)
     state.year, state.period, state.turn = year, period, turn
-    db.save_state(state)
+    db.reign.save_game_state(state)
     return db, state
 
 
@@ -66,7 +66,7 @@ def test_abolished_liao_levy_stops_collection_next_month(game, zeroing):
     assert _settle(db)["_meta"]["辽饷九厘基线"] == pytest.approx(seed)
     _settle_month(game, 12)
     assert _settle(db)["p"]["三饷应征"] == 0
-    assert db.event_terminal_state("liao_levy_rise_1631") is None
+    assert db.issues.event_terminal_state("liao_levy_rise_1631") is None
 
 
 @pytest.mark.parametrize("land_derived", [False, True])

@@ -2,6 +2,10 @@
 
 Status: Accepted（承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定2，由 design-dig `dig-4`/`dig-5`/`dig-6`/`dig-7`/`dig-9` fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；PR #123 已 merge（`847dc3da5`，2026-06-15）转 Accepted。实现属编码活、spawn 隔壁。）
 
+## 现役实现状态（#1889）
+
+依 [#1812 重构验收](https://github.com/Akagilnc/ming-salvage-sim/issues/1812)及 #1889 本轮裁定，无现役消费者的血债累账、侦测防备与缓存重建链已清退，独占的 `faction_axis_debt`、`centrifuge_log`、`factions.edict_overdraw` schema 和测试一并删除；不迁移或改动用户存档。下文保留历史设计与 #1895 改约记录，其中「保留」「不退役」不代表本轮实现仍存在。现役派系 leverage/satisfaction 写口及世界财政、人口因果链不受此清退影响。
+
 ## 后出设计修订（#1895，待票庭重审）
 
 法源同母 ADR 0011 修订段（assistant `694be3db-1790-4ac2-9858-2a36c9ba1b74`「代码替人算心思的，一律废掉，世界因果照留」；owner `6049ebf8-df48-420e-bcaa-f65d10a7759d`「可以」）。票面已由事中收敛并获署；本段已按 #1895 修订并交票庭重审。重审未过前，不把本段写成已经生效的并行施工合同。

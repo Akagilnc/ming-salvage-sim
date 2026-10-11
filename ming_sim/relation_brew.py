@@ -26,6 +26,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.person_log.store import PersonLogStore
 
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -66,17 +67,13 @@ def select_brew_targets(db: Any, *, year: int, period: int) -> List[Dict[str, An
     事件（庭裁 r3 F1② fresh claim→durable pending 缝）重启后仍是新事件，仍被
     选中。既无本月新事件又无 pending 的关系不入选（TD-3 无事不变）。"""
     summaries = {
-        (row["source"], row["target"]): row for row in db.get_relation_summaries()
+        (row["source"], row["target"]): row for row in db.person_logs.get_relation_summaries()
     }
     pending = {
-        (row["source"], row["target"]): row for row in db.get_relation_brew_pending()
+        (row["source"], row["target"]): row for row in db.person_logs.get_relation_brew_pending()
     }
     latest_event_id: Dict[Tuple[str, str], int] = {}
-    for row in db.conn.execute(
-        "SELECT source, target, MAX(id) AS max_id FROM relation_edge_events "
-        "WHERE year = ? AND period = ? GROUP BY source, target",
-        (int(year), int(period)),
-    ).fetchall():
+    for row in PersonLogStore(db.conn).read_select_faction_brew_targets((int(year), int(period))):
         latest_event_id[(row["source"], row["target"])] = int(row["max_id"])
 
     targets: List[Dict[str, Any]] = []
@@ -103,7 +100,7 @@ def collect_new_edge_events(db: Any, *, source: str, target: str, watermark: int
     """水位之上的新边事件（TD-4：重酿输入必含新事件；翻转可回溯的依据）。"""
     return [
         row
-        for row in db.get_relation_edge_events(source=source, target=target)
+        for row in db.person_logs.get_relation_edge_events(source=source, target=target)
         if int(row["id"]) > int(watermark)
     ]
 
@@ -274,9 +271,9 @@ class MonthEndRelationBrewLeg:
         if not targets and not faction_targets:
             return False
         if targets:
-            self._db.claim_relation_brew_targets(year=self.year, period=self.period)
+            self._db.person_logs.claim_relation_brew_targets(year=self.year, period=self.period)
         if faction_targets:
-            self._db.claim_faction_brew_targets(year=self.year, period=self.period)
+            self._db.person_logs.claim_faction_brew_targets(year=self.year, period=self.period)
         # 输入先串行备好（纯计算、确定性，不含 LLM 调用），brew() 才能零 DB 并行。
         # 批内条目无依赖必并行（P5）：关系对与派系工作项混排同一批，关系在前、
         # 派系在后（各自按序，确定性）。
@@ -381,7 +378,7 @@ class MonthEndRelationBrewLeg:
                     reason = str(exc) if exc is not None else "空结果"
                     tlog(f"[relation-brew] {faction} 态势酿制失败降级（保旧摘要）：{reason}")
                     # 认领先行下 pending 已持久在册（不靠此处补记）；本写只刷新失败原因。
-                    self._db.mark_faction_brew_pending(
+                    self._db.person_logs.mark_faction_brew_pending(
                         faction=faction, year=self.year, period=self.period,
                         reason=reason,
                     )
@@ -408,7 +405,7 @@ class MonthEndRelationBrewLeg:
                 reason = str(exc) if exc is not None else "空结果"
                 tlog(f"[relation-brew] {source}→{target} 酿制失败降级（保旧摘要）：{reason}")
                 # 认领先行下 pending 已持久在册（不靠此处补记）；本写只刷新失败原因。
-                self._db.mark_relation_brew_pending(
+                self._db.person_logs.mark_relation_brew_pending(
                     source=source, target=target, year=self.year, period=self.period,
                     reason=reason,
                 )
@@ -419,7 +416,7 @@ class MonthEndRelationBrewLeg:
             last_event_id = max(
                 [int(event["id"]) for event in job["new_events"]] + [int(job["watermark"])]
             )
-            self._db.apply_relation_brew_result(
+            self._db.person_logs.apply_relation_brew_result(
                 source=source, target=target, dimension=job["dimension"],
                 founding_segment=merge_founding_segment(
                     str(job["summary"]["founding_segment"]) if job["summary"] else "",

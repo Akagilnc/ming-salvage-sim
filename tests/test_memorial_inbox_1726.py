@@ -1,16 +1,16 @@
+from __future__ import annotations
+from ming_sim.settlement.dossier import apply_dossier_promulgation
+from ming_sim.session_write_queue import ClassifiedWriteGate
+from ming_sim.db import GameDB
+from ming_sim.models import TurnPhase
 """#1726：奏疏收件箱 — 读取端接通 + 未读模型。
 
 验收入口：state_payload → 面板同源计数；已读随存档持久化。
 """
 
-from __future__ import annotations
-
-from ming_sim.settlement.dossier import apply_dossier_promulgation
-from ming_sim.session_write_queue import ClassifiedWriteGate
 
 
-from ming_sim.db import GameDB
-from ming_sim.models import TurnPhase
+
 
 
 def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
@@ -44,7 +44,7 @@ def test_new_game_memorial_inbox_empty(game):
     assert db.list_player_memorials() == []
     assert _unread_count(db) == 0
     # 开局常有局势，但奏疏计数必须与之脱钩
-    assert len(db.list_active_issues()) >= 1
+    assert len(db.issues.active_rows()) >= 1
 
 
 def test_progress_and_denunciation_project_as_memorials(game):
@@ -53,7 +53,7 @@ def test_progress_and_denunciation_project_as_memorials(game):
     owner = _active_name(db)
     did = _executing_with_owner(db, state, owner=owner, token="prog")
     body_progress = "臣已拨银十万两，库藏尚可周转。"
-    pid = db.record_dossier_progress(
+    pid = db.dossiers.record_dossier_progress(
         did, state.turn, "在办", body_progress,
         origin="dossier-report:monthly_errand", commit=True,
     )
@@ -104,21 +104,21 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
     owner = _active_name(db)
     did = _executing_with_owner(db, state, owner=owner, token="read")
 
-    pid1 = db.record_dossier_progress(
+    pid1 = db.dossiers.record_dossier_progress(
         did, state.turn, "在途", "首批已出京",
         origin="dossier-report:monthly_errand", commit=True,
     )
     key1 = f"progress:{pid1}"
     assert _unread_count(db) == 1
 
-    db.mark_memorials_read([key1])
+    db.reign.mark_memorials_read([key1])
     assert _unread_count(db) == 0
     rows = db.list_player_memorials()
     assert rows[0]["key"] == key1
     assert rows[0]["unread"] is False
 
     # 同案卷再来新奏报 → 新 key 未读，旧 key 仍已读
-    pid2 = db.record_dossier_progress(
+    pid2 = db.dossiers.record_dossier_progress(
         did, state.turn + 1, "在办", "次月续报已至",
         origin="dossier-report:monthly_errand", commit=True,
     )
@@ -137,7 +137,7 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
         by_key = {r["key"]: r for r in restored.list_player_memorials()}
         assert by_key[key1]["unread"] is False
         assert by_key[key2]["unread"] is True
-        restored.mark_memorials_read([key2])
+        restored.reign.mark_memorials_read([key2])
         assert _unread_count(restored) == 0
     finally:
         restored.close()
@@ -154,7 +154,7 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     owner = _active_name(db)
     did = _executing_with_owner(db, state, owner=owner, token="api")
     body = "臣工本月办理进度奏报。"
-    pid = db.record_dossier_progress(
+    pid = db.dossiers.record_dossier_progress(
         did, state.turn, "在办", body,
         origin="dossier-report:monthly_errand", commit=True,
     )
@@ -232,7 +232,7 @@ def test_progress_without_owner_uses_diegetic_fallback(game):
         (did,),
     )
     db.conn.commit()
-    pid = db.record_dossier_progress(
+    pid = db.dossiers.record_dossier_progress(
         did, state.turn, "在办", "无主名奏报正文",
         origin="dossier-report:monthly_errand", commit=True,
     )
@@ -240,7 +240,6 @@ def test_progress_without_owner_uses_diegetic_fallback(game):
     assert row["author_name"]
     assert row["author_name"] != str(did)
     assert not row["author_name"].isdigit()
-
 
 def _unread_count(db):
     return sum(1 for row in db.list_player_memorials() if row["unread"])

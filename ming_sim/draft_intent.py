@@ -903,7 +903,7 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     if db is None:
         return ""
     # #1902 F1：库查询失败不得洗成空事实继续抽取；逐行脏载荷仍可跳过。
-    rows = db.list_decree_dossiers(status="proposed")
+    rows = db.dossiers.list_dossiers(status="proposed")
     lines: List[str] = []
     for row in rows or []:
         payload = row["payload"]

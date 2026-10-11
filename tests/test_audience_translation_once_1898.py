@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1898：关档重开经真实 WebGame 入口补跑待补转译（ADR 0036 恢复接缝）。
 
 钉：重开补跑走票据写闸真源，票据排空后待补轮转 done 且落账成行；再次重开
@@ -10,7 +11,6 @@
 tests/test_qa_t1_extraction_dual_source_1353.py，此处不复制。
 """
 
-from __future__ import annotations
 
 from contextlib import contextmanager
 
@@ -63,14 +63,14 @@ def test_reopen_webgame_catches_up_pending_translation(webgame_env, monkeypatch)
         nid = int(night["id"])
         ctid = first.db.create_chat_turn(first.state, minister, "sess", 0, night_id=nid)
         first.db.persist_minister_reply(minister, int(first.state.turn), "臣领旨。", ctid)
-        first.db.mark_story_extraction_pending(ctid)
+        first.db.reign.mark_story_extraction_pending(ctid)
         an._set_night_fields(first.db, nid, status=an.NIGHT_STATUS_CLOSING)
         first.db.conn.commit()
 
     with _open_webgame(fresh=False) as reopened:
         # 排空走队列唯一真源 wait_idle（禁另造轮询/sleep 排空）。
         assert reopened._runtime_write_queue().wait_idle(), "重开补跑票据未排空"
-        assert reopened.db.get_story_extract_status(ctid) == "done"
+        assert reopened.db.reign.get_story_extract_status(ctid) == "done"
         assert _ledger_rows(reopened, nid, ctid) >= 1
 
     # 再次重开不增副本（恢复是补跑，不是重复落账）。

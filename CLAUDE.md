@@ -71,6 +71,13 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 正向口径：切片只跑聚焦；全量在最终待合并状态跑到绿（失败/修复后重跑）。同构于仓外 `ak-pi-workflow-roles` 司天家族测试策略（该仓 #215 provenance）；worker prompt / reviewer 验收面属外部编排器仓，由其维护，本仓不改。
 
+### 报错断言在本仓的落法（规则本身见全局硬规 #13）
+
+#13 禁盯文、保闸类契约的负向案。落到 pytest 的报错断言：
+
+- 生产代码自己拼的报错文案不进 `match=`——文案会被人改，改了就假红，也测不到行为。拒收要靠**异常类型**、**拒收后的结构化结果**（零落库、名册原样、调用序列）或**用例自身的入参**来区分。
+- 两类 `match=` 保留：**测试自己注入的失败**（匹配的字串就写在测试里，证明注入的失败传到了这一层）；**机器记号**（字段名、枚举值、错误码、CLI flag 这类不随人改的标识符）。
+
 ## ship-pre DoD 全闭环点检（#911 自项目 CLAUDE.md 迁出 → DEV_WORKFLOW；PR #1193 迁回）
 
 进 ship-pre / CMR 评审循环前必须确认 feature 全闭环完成，不是「核心写路径接通」就进。Definition of Done = 所有闭环面都齐——**写入端 + 读取端 + 恢复端 + 真实 extractor 输出 + UI/呈现端 + 文档契约**，缺一面都不算 ship-ready。

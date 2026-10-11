@@ -90,13 +90,15 @@ characters (
 character_offices (
   character_name TEXT PRIMARY KEY,
   office_title TEXT,
-  office_type TEXT,
   source TEXT,
+  dossier_id INTEGER,
+  appointment_tenure TEXT,
+  region_id TEXT,
   updated_at TIMESTAMP
 )
 ```
 
-`characters` 保存当前名分和状态；`character_offices` 保存最近任职备档，不是完整履历。`character_offices` 的低层唯一共享 writer 是 `GameDB._record_character_office`：运行期由 canonical 人物核调用；seed/迁移按 ADR 0009 豁免。起复、品级与破格判断只读，不得平行回写。
+`characters` 保存当前名分和状态；`character_offices` 保存最近任职备档，不是完整履历。`office_type` 在 `characters` 与 `office_change_records`，不在 `character_offices`。备档的权威写口是 `CharacterStore`（`upsert_office` 与快照恢复）。运行期由 `GameDB._record_character_office` 先判断实职再调用；seed 按 ADR 0009 豁免。起复、品级与破格判断只读，不得平行回写。
 
 过程史与来源分别在 `person_logs`、案卷及同源 origin 中；不要从旁白反解析人物结构。
 

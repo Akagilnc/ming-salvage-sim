@@ -1,17 +1,18 @@
+from __future__ import annotations
+import pytest
+from ming_sim.applier import Provenance
+from ming_sim.decree import resolve_directives
+from tests.month_chain_helpers import canned_full_settlement, make_light_session
+import threading
 """#1274 / #1843 — 无旨月走同一过月主链，不走 16ms 快路。
 
 没有旨意只是这个月没有旨意。ADR 0157 把推进放到邸报写成之后，
 无旨月仍跑前括号、世界段和局势惯性，但不在邸报未写时自行推进。
 """
 
-from __future__ import annotations
 
 
-import pytest
 
-from ming_sim.applier import Provenance
-from ming_sim.decree import resolve_directives
-from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
 # Back-compat aliases for this file's call sites.
 _canned_full_settlement = canned_full_settlement
@@ -55,7 +56,7 @@ def test_no_edict_advance_runs_full_settlement_chain(web_game, monkeypatch):
     assert int(state.turn) == closed_turn + 1
     # 世界段必经（负向：快路已死，也不再走 extractor）
     assert len(sim_calls) == 1
-    assert db.get_turn_report(closed_turn)
+    assert db.turn_reports.report_text(closed_turn)
     # 局势 bar：惯性推进后至少有一条变化，或 inertia 路径已跑过（空盘面也允许全不变）
     bars_after = _issue_bars(db)
     # 有 inertia≠0 的 issue 时 bar 应动；无则仅要求链跑通（上面 turn/report/sim 已锁）
@@ -94,7 +95,7 @@ def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
     assert result.advanced is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -120,13 +121,7 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
     """有旨月与无旨月同一主链：世界段跑一次，邸报未写则不推进。"""
     db, state, content = game
     closed_turn = int(state.turn)
-    db.add_directive(
-        state, None, "着户部清核辽饷。", source="player", status="draft",
-        dossier_payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue", "target_id": "liao-pay-audit-1274",
-        },
-    )
+    db.issues.add_directive(state.turn, state.year, state.period, None, '着户部清核辽饷。', source='player', status='draft', dossier_payload={'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'liao-pay-audit-1274'})
 
     sim_calls = []
     _canned_full_settlement(
@@ -141,4 +136,4 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
     assert result.advanced is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)

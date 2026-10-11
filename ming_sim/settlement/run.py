@@ -305,7 +305,7 @@ def _preflight(
         runtime_content=ctx.content if ctx.content is not None else content_context(),
         candidate_event_ids_at_input=candidate_ids,
         candidate_event_ids_authoritative=candidate_authoritative,
-        relation_pre_roster={row["name"] for row in db.current_court_roster_rows(state)},
+        relation_pre_roster={row["name"] for row in db.characters.current_court_rows(state.year, state.period)},
         authorized_open_affairs=set(frozen),
         frozen_open_affairs=frozen,
     )

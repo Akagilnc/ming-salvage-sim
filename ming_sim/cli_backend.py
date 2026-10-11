@@ -17,6 +17,8 @@
 """
 
 from __future__ import annotations
+from ming_sim.entities.issue.store import IssueStore
+from ming_sim.entities.reign_state.store import ReignStateStore
 
 from ming_sim.action_materialize import DecreeMaterializationValidationError
 from ming_sim.exceptions import DeclarationDataError
@@ -45,6 +47,7 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
 
+from ming_sim.applier import load_stored_object
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CLI_DEFAULT_RUNNER, CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig

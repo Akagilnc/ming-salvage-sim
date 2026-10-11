@@ -1,12 +1,12 @@
+from __future__ import annotations
 """#1843 reopen：史册本月诏书改读 pending_resolve_context.decree_text。"""
 
-from __future__ import annotations
 
 
 def test_history_turn_reads_decree_text_from_resolve_context(game, monkeypatch):
     db, state, content = game
     turn = int(state.turn)
-    db.save_resolve_context(
+    db.resolve_contexts.save(
         turn,
         decree_text="着宁远补饷三十万两",
         simulator_payload={},

@@ -1,1 +1,5 @@
-"""非明势力（power_updates / bandit_absorptions）落库段。"""
+"""势力行与势力日志（#1889）。"""
+
+from ming_sim.entities.power.store import PowerStore
+
+__all__ = ("PowerStore",)

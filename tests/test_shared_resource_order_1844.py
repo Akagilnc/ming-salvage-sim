@@ -1,17 +1,16 @@
-"""#1844：共同资源先交代先扣、跨类按交代先后、有账封顶、拒收进供料。"""
-
 from __future__ import annotations
-
 from tests.conftest import wait_for_background_jobs
-
 import json
 import sqlite3
-
 import pytest
-
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.month_translate import dispatch_month_segment
 from tests.test_month_chain_1843 import _prepare_player_month
+"""#1844：共同资源先交代先扣、跨类按交代先后、有账封顶、拒收进供料。"""
+
+
+
+
 
 
 def _settled_declaration(db, decree_ref: str) -> dict:
@@ -106,7 +105,7 @@ def test_player_decrees_soft_cap_shared_treasury_in_order(game, monkeypatch):
     )
     _quiesce_treasury_tick(db)
     state.metrics["国库"] = 120
-    db.save_state(state)
+    db.reign.save_game_state(state)
     first_ref = _stage_player_edict(
         db, state, minister, affair.id,
         {"economy_moves": [{
@@ -243,7 +242,7 @@ def test_player_decrees_sequential_army_station_reads_updated_roster(game, monke
 def test_world_segment_cross_category_order_by_declaration(game, order, expected_arrears):
     """先加欠饷再拨款清欠按交代先后；对调先后时按当时存量，不因类别段序颠倒。"""
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
     db.conn.commit()
     state.metrics["国库"] = 100
     arrears_effect = {"army_delta": {"jingying": {
@@ -282,7 +281,7 @@ def test_world_segment_cross_category_order_by_declaration(game, order, expected
 def test_world_segment_cross_category_order_survives_reopen(game, tmp_path):
     """过月落账后重开：欠饷已清与拒收一致性仍在。"""
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
     db.conn.commit()
     state.metrics["国库"] = 50
     dispatch_month_segment(
@@ -337,6 +336,18 @@ def _invalid_shape_matches(db, section: str, key: str, value: str) -> int:
     for row in rows:
         item = json.loads(row["item_json"])
         if isinstance(item, dict) and item.get(key) == value:
+            matched += 1
+    return matched
+
+
+def _missing_ref_target_matches(conn, target_id: str) -> int:
+    """Count missing_ref rows whose decoded item carries target_id."""
+    matched = 0
+    for row in conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE category='missing_ref'"
+    ):
+        item = json.loads(row["item_json"])
+        if isinstance(item, dict) and item.get("target_id") == target_id:
             matched += 1
     return matched
 

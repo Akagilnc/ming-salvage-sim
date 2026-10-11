@@ -91,7 +91,7 @@ def allegiance_change_rejection(
             return (str(error["reason"]), str(error["category"]))
         if str(origin_ref or "").startswith("dossier:"):
             dossier_id = _parse_sqlite_id(str(origin_ref).split(":", 1)[1])
-            dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
+            dossier = db.dossiers.get(dossier_id) if dossier_id else None
             if dossier is not None:
                 action_type = str(dossier.get("action_type") or "").strip()
                 if (
@@ -347,7 +347,7 @@ def apply_person_changes(
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
-            cur_status, _ = db.get_character_status(name)
+            cur_status, _ = db.characters.get_character_status(name)
             reason_code = normalize_reason_code(item.get("reason_code"))
             transition = resolve_person_transition(
                 cur_status,

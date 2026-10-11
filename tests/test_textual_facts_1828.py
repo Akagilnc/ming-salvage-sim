@@ -1,6 +1,6 @@
+from __future__ import annotations
 """#1828 文字事实：追加、带月、挂对象；不当传闻、不转公式。"""
 
-from __future__ import annotations
 
 from ming_sim.applier import atomic
 from ming_sim.db import GameDB
@@ -82,7 +82,7 @@ def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
 
 def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game):
     db, state, _ = game
-    before_status, before_reason = db.get_character_status("孙传庭")
+    before_status, before_reason = db.characters.get_character_status("孙传庭")
     before_row = db.conn.execute(
         "SELECT loyalty, ability, status FROM characters WHERE name=?",
         ("孙传庭",),
@@ -98,7 +98,7 @@ def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game
         turn=state.turn,
     )
 
-    after_status, after_reason = db.get_character_status("孙传庭")
+    after_status, after_reason = db.characters.get_character_status("孙传庭")
     after_row = db.conn.execute(
         "SELECT loyalty, ability, status FROM characters WHERE name=?",
         ("孙传庭",),

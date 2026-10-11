@@ -78,7 +78,8 @@
       "location": "beizhili",
       "status": "offstage",
       "reason_code": "自请",
-      "status_reason": "前内阁首辅，罢居蒲州"
+      "status_reason": "前内阁首辅,罢居蒲州",
+      "historical_office": "内阁首辅"
     },
     {
       "name": "张瑞图",
@@ -443,7 +444,8 @@
       "location": "beizhili",
       "status": "offstage",
       "reason_code": "自请",
-      "status_reason": "前礼部尚书，罢居松江"
+      "status_reason": "前礼部尚书,罢居松江",
+      "historical_office": "礼部尚书"
     },
     {
       "name": "刘鸿训",
@@ -510,7 +512,8 @@
       "location": "beizhili",
       "status": "dismissed",
       "reason_code": "获罪削籍",
-      "status_reason": "前礼部右侍郎，罢居常熟"
+      "status_reason": "前礼部右侍郎,罢居常熟",
+      "historical_office": "礼部右侍郎"
     },
     {
       "name": "李标",
@@ -579,7 +582,8 @@
       "location": "beizhili",
       "status": "offstage",
       "reason_code": "自请",
-      "status_reason": "前蓟辽督师，罢居高阳"
+      "status_reason": "前蓟辽督师,罢居高阳",
+      "historical_office": "蓟辽督师"
     },
     {
       "name": "崔呈秀",
@@ -681,7 +685,8 @@
       "location": "beizhili",
       "status": "offstage",
       "reason_code": "自请",
-      "status_reason": "前礼部右少卿，罢居上海"
+      "status_reason": "前礼部右少卿,罢居上海",
+      "historical_office": "礼部右少卿"
     },
     {
       "name": "李之藻",
@@ -820,7 +825,8 @@
       "location": "henan",
       "status": "offstage",
       "reason_code": "自请",
-      "status_reason": "前登莱巡抚，罢居睢州"
+      "status_reason": "前登莱巡抚,罢居睢州",
+      "historical_office": "登莱巡抚"
     },
     {
       "name": "周延儒",
@@ -1216,7 +1222,8 @@
       "location": "guangdong",
       "status": "offstage",
       "reason_code": "自请",
-      "status_reason": "前辽东巡抚，罢居东莞"
+      "status_reason": "前辽东巡抚,罢居东莞",
+      "historical_office": "辽东巡抚"
     },
     {
       "name": "曹文诏",

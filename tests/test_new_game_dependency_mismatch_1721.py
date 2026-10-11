@@ -1,5 +1,5 @@
-"""#1721 B2: stale importable agno must reach POST /api/menu/new_game as typed facts."""
 from __future__ import annotations
+"""#1721 B2: stale importable agno must reach POST /api/menu/new_game as typed facts."""
 
 import json
 import os

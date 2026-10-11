@@ -84,7 +84,7 @@ def _current_forecast_ref(session: Any, key: tuple) -> Optional[str]:
             return pending_action_decree_ref(action_id, version)
     else:
         _, _night_id, dossier_id = key
-        row = session.db.get_decree_dossier(dossier_id)
+        row = session.db.dossiers.get(dossier_id)
         if row is not None and _is_held_for_rejudgment(row, int(session.state.turn)):
             return held_dossier_decree_ref(dossier_id)
     return None
@@ -259,7 +259,7 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
 
 def _held_snapshot(session: Any, dossier_id: int) -> Optional[Dict[str, Any]]:
     db, state = session.db, session.state
-    row = db.get_decree_dossier(int(dossier_id))
+    row = db.dossiers.get(int(dossier_id))
     if row is None or not _is_held_for_rejudgment(row, int(state.turn)):
         return None
     candidate = copy.deepcopy(row)
@@ -340,10 +340,7 @@ def decree_ref_for_dossier(db: Any, dossier: Dict[str, Any]) -> str:
         return held_dossier_decree_ref(int(dossier["id"]))
     pending_id = int(dossier.get("pending_action_id") or 0)
     if pending_id > 0:
-        row = db.conn.execute(
-            "SELECT version FROM pending_actions WHERE id=?",
-            (pending_id,),
-        ).fetchone()
+        row = db.dossiers.pending_version_row(pending_id)
         version = int(row["version"] or 1) if row is not None else 1
         return pending_action_decree_ref(pending_id, version)
     return held_dossier_decree_ref(int(dossier["id"]))
@@ -571,9 +568,7 @@ def schedule_restored_decree_forecasts(owner_or_db: Any, pending_action_ids: lis
     db = session.db
     bind_forecast_owner(session)
     for action_id in pending_action_ids:
-        row = db.conn.execute(
-            "SELECT night_id FROM pending_actions WHERE id=?", (int(action_id),),
-        ).fetchone()
+        row = db.dossiers.pending_night_id_row(int(action_id))
         if row is not None and int(row["night_id"] or 0) > 0:
             schedule_pending_decree_forecast(
                 session, int(action_id), night_id=int(row["night_id"]),
@@ -591,7 +586,7 @@ def _failed_forecast_key(session: Any, failure: Dict[str, Any]) -> Optional[tupl
         key = ("decree_forecast", int(row["id"]), int(row["version"] or 1), int(row["night_id"] or 0))
         if pending_action_decree_ref(key[1], key[2]) == ref and _current_forecast_ref(session, key) == ref:
             return key
-    for row in session.db.list_decree_dossiers_for_simulation(int(session.state.turn)):
+    for row in session.db.dossiers.list_for_simulation(int(session.state.turn)):
         key = ("held_decree_forecast", 0, int(row["id"]))
         if held_dossier_decree_ref(key[2]) == ref and _current_forecast_ref(session, key) == ref:
             return key
@@ -672,7 +667,7 @@ def schedule_held_decree_forecasts(session: Any) -> bool:
             turn = int(session.state.turn)
 
             def snapshot_held_ids() -> list[int]:
-                rows = session.db.list_decree_dossiers_for_simulation(turn)
+                rows = session.db.dossiers.list_for_simulation(turn)
                 return [
                     int(row["id"]) for row in rows
                     if _is_held_for_rejudgment(row, turn)

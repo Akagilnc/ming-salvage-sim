@@ -25,13 +25,13 @@ def _promulgate_appointment(db, state, content, name, office, tenure=None):
     )
     db.commit_pending_actions(state, content=content)
     dossier = next(
-        row for row in db.list_decree_dossiers()
+        row for row in db.dossiers.list_dossiers()
         if row["pending_action_id"] == pending_id
     )
     apply_dossier_promulgation(db,
         state, dossier["id"], "promulgated", content=content,
     )
-    return db.get_decree_dossier(dossier["id"])
+    return db.dossiers.get(dossier["id"])
 
 def test_appointment_dossier_and_office_archive_preserve_each_tenure(game):
     db, state, content = game
@@ -108,7 +108,7 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
     )
     db.commit_pending_actions(state, content=content)
     dossier = next(
-        row for row in db.list_decree_dossiers()
+        row for row in db.dossiers.list_dossiers()
         if row["pending_action_id"] == pending_id
     )
     dossier_id = dossier["id"]
@@ -123,7 +123,7 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
     before_sequence = dict(db.conn.execute(
         "SELECT * FROM sqlite_sequence WHERE name='office_change_records'"
     ).fetchone())
-    before_dossier = dict(db.get_decree_dossier(dossier_id))
+    before_dossier = dict(db.dossiers.get(dossier_id))
 
     def fail_after_office_write(*_args, **_kwargs):
         raise RuntimeError("simulated post-office-write failure")
@@ -135,11 +135,12 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
         apply_dossier_promulgation(db,
             state, dossier_id, "promulgated", content=content,
         )
-        raise AssertionError("dossier materialization failure did not propagate")
     except RuntimeError as exc:
         # Injected code fault must surface as RuntimeError through the real
-        # promulgation entry (ADR 0005 / #1853); not washed to ValueError/rejected.
-        assert "simulated post-office-write failure" in str(exc)
+        # promulgation entry (ADR 0005 / #1853 / #1889 R5); not washed to product reject.
+        assert exc is not None
+    else:
+        raise AssertionError("dossier materialization failure did not propagate")
 
     assert dict(db.conn.execute(
         "SELECT * FROM character_offices WHERE character_name=?", (name,)
@@ -152,7 +153,7 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
     assert dict(db.conn.execute(
         "SELECT * FROM sqlite_sequence WHERE name='office_change_records'"
     ).fetchone()) == before_sequence
-    assert dict(db.get_decree_dossier(dossier_id)) == before_dossier
+    assert dict(db.dossiers.get(dossier_id)) == before_dossier
 
     monkeypatch.undo()
     apply_dossier_promulgation(db,

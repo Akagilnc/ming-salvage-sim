@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1893 人物事件与弹劾潮候选：供料 → 世界段挑选 → 既有写口落账的真入口行为。
 
 三个根因类各钉一条行为（不复检内部结构、不锁措辞）：
@@ -14,7 +15,6 @@
 不替模型判断「该不该发生 / 该不该发难」——那属 P6，只断言供给可达与写口幂等。
 """
 
-from __future__ import annotations
 
 import json
 
@@ -267,7 +267,7 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
             "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
         ).fetchone()[0] == 1
-        assert db.event_terminal_state(ev.id) == "triggered"
+        assert db.issues.event_terminal_state(ev.id) == "triggered"
         # 读档续跑：同一段再落一次不重发（终态已在候选硬门里排掉）。
         again = dispatch_month_segment(
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
@@ -291,7 +291,7 @@ def test_not_selected_candidate_leaves_no_terminal_state(game, content):
         dispatch_month_segment(
             db, state, segment="本月无事", translate_fn=lambda rq, cfg: {"effects": {}},
         )
-        assert db.event_terminal_state(ev.id) is None
+        assert db.issues.event_terminal_state(ev.id) is None
         assert ev.id in {item["id"] for item in candidate_supply(db, state)["events"]}
     finally:
         _drop_event(content, ev)
@@ -336,7 +336,7 @@ def test_supplied_outcome_labels_match_writer_whitelist(game, content):
     db, state, _ = game
     # 推进到有战略战事候选的时点，否则本用例无候选可验（空转）。
     state.year, state.period = 1629, 11
-    db.save_state(state)
+    db.reign.save_game_state(state)
     captured = {}
 
     def _capture(request, config):

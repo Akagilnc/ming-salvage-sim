@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1902 Web 入口：存档名校验走菜单删档公共入口（单一真源）。
 
 路由退役的闸类负向由真实 ASGI HTTP 案承担（见
@@ -5,7 +6,6 @@
 本文件不另立注册表/OpenAPI 平行证明。
 """
 
-from __future__ import annotations
 
 import asyncio
 import os

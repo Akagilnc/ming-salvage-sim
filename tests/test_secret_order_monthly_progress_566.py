@@ -1,18 +1,17 @@
-"""#566: production settlement owns the durable monthly progress rail."""
-
 import threading
 from pathlib import Path
-
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
+"""#566: production settlement owns the durable monthly progress rail."""
+
+
 
 
 def _actor(db):
     return str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"])
-
 
 
 def _order(db, state, title="护行辽饷", tags=None, deadline=4):
@@ -29,8 +28,7 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
             },
         },
     )
-    return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
-
+    return order_id, int(db.dossiers.get_for_secret_order(order_id)["id"])
 
 
 def _production_session(db, state, content):
@@ -46,9 +44,9 @@ def _production_session(db, state, content):
     return session
 
 
-
 def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
+
 
 
 
@@ -79,7 +77,6 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
     assert sim_note in disclosure["body"]
 
 
-
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
     db, state, content = game
     _, title_only = _order(db, state, title="保护堤岸", tags=["河工"])
@@ -97,85 +94,12 @@ def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game
         for did in ids
     ]
     db.record_monthly_dossier_progress(state.turn, reports)
-    assert db.list_dossier_progress(title_only)
-    assert db.list_dossier_progress(unrelated)
-    assert db.list_dossier_progress(short)
+    assert db.dossiers.list_dossier_progress(title_only)
+    assert db.dossiers.list_dossier_progress(unrelated)
+    assert db.dossiers.list_dossier_progress(short)
 
 
 
-def test_close_secret_order_keeps_model_reports_without_synthesizing_terminal(game):
-    """结案只落 result/执行格；不把结案正文写成人物终奏。"""
-    db, state, content = game
-    eligible_id, eligible = _order(db, state)
-    ordinary_id, ordinary = _order(db, state, title="保护堤岸", tags=["河工"])
-    state.turn += 1
-    db.save_state(state)
-    reports = [
-        {"dossier_id": eligible, "progress_band": "在途", "memorial_text": "已出京"},
-        {"dossier_id": ordinary, "progress_band": "在办", "memorial_text": "河工并列密奏"},
-    ]
-    db.record_monthly_dossier_progress(state.turn, reports)
-    before_eligible = db.list_dossier_progress(eligible)
-    before_ordinary = db.list_dossier_progress(ordinary)
-
-    db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
-    db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
-
-    after_eligible = db.list_dossier_progress(eligible)
-    after_ordinary = db.list_dossier_progress(ordinary)
-    assert after_eligible == before_eligible
-    assert after_ordinary == before_ordinary
-    assert all(not row.get("is_terminal") for row in after_eligible)
-    assert db.get_decree_dossier(eligible)["status"] == "closed"
-    assert db.get_decree_dossier(ordinary)["status"] == "closed"
-
-
-
-def test_character_terminal_status_closes_orders_without_synthetic_memorial(game):
-    """人物终态关密令/案卷；终态落账，不污染既有模型月报。"""
-    db, state, content = game
-    assignee = _actor(db)
-    chained_id, chained_dossier = _order(db, state, title="护行辽饷")
-    unchained_id, unchained_dossier = _order(
-        db, state, title="清查库藏", tags=["财政"],
-    )
-    state.turn += 1
-    db.save_state(state)
-    reports = [
-        {
-            "dossier_id": chained_dossier,
-            "progress_band": "在途",
-            "memorial_text": "首批已出京",
-        },
-        {
-            "dossier_id": unchained_dossier,
-            "progress_band": "在办",
-            "memorial_text": "库藏并列密奏",
-        },
-    ]
-    db.record_monthly_dossier_progress(state.turn, reports)
-    before_chained = db.list_dossier_progress(chained_dossier)
-    before_unchained = db.list_dossier_progress(unchained_dossier)
-
-    db.set_character_status(state, assignee, "dead", "途中病故")
-
-    orders = {
-        int(row["id"]): row
-        for row in db.conn.execute(
-            "SELECT id,status,result FROM secret_orders WHERE id IN (?, ?)",
-            (chained_id, unchained_id),
-        ).fetchall()
-    }
-    assert orders[chained_id]["status"] == "failed"
-    assert orders[unchained_id]["status"] == "failed"
-    assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
-    assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
-    chained_progress = db.list_dossier_progress(chained_dossier)
-    unchained_progress = db.list_dossier_progress(unchained_dossier)
-    assert chained_progress == before_chained
-    assert unchained_progress == before_unchained
-    assert all(not row.get("is_terminal") for row in chained_progress)
-    assert unchained_progress
 
 
 
@@ -192,9 +116,8 @@ def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     assert row["deadline_span"] == 1
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
     db.update_secret_order_by_id(state, order_id, "护行辽饷", "继续逐月办理", ["护行"], 3)
-    assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
+    assert db.dossiers.get(dossier_id)["due_turn"] != state.turn + 3
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
-
 
 
 def _stage_routed_secret_order(db, state, action, deadline):
@@ -220,7 +143,6 @@ def _stage_routed_secret_order(db, state, action, deadline):
     return pending_id, target_id
 
 
-
 def _rows(db, table, where="", params=()):
     import math
 
@@ -232,7 +154,6 @@ def _rows(db, table, where="", params=()):
         key: ("<NaN>" if isinstance(value, float) and math.isnan(value) else value)
         for key, value in dict(row).items()
     } for row in db.conn.execute(sql, params).fetchall()]
-
 
 
 def _rollback_snapshot(db, state, pending_ids):
@@ -256,7 +177,6 @@ def _rollback_snapshot(db, state, pending_ids):
         "metrics": dict(state.metrics),
         "clock": (state.turn, state.year, state.period, state.turn_phase),
     }
-
 
 
 @pytest.mark.parametrize("entry", ["cli", "web"])
@@ -337,7 +257,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     assert reloaded.metrics == before["metrics"]
 
 
-
 def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
     db, state, _content = game
     _, dossier_id = _order(db, state)
@@ -360,4 +279,77 @@ def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
                 "progress_band": "伪进展",
                 "memorial_text": "不得命中真实案卷",
             }])
-    assert db.list_dossier_progress(dossier_id) == []
+    assert db.dossiers.list_dossier_progress(dossier_id) == []
+
+def test_close_secret_order_keeps_model_reports_without_synthesizing_terminal(game):
+    """结案只落 result/执行格；不把结案正文写成人物终奏。"""
+    db, state, content = game
+    eligible_id, eligible = _order(db, state)
+    ordinary_id, ordinary = _order(db, state, title="保护堤岸", tags=["河工"])
+    state.turn += 1
+    db.reign.save_game_state(state)
+    reports = [
+        {"dossier_id": eligible, "progress_band": "在途", "memorial_text": "已出京"},
+        {"dossier_id": ordinary, "progress_band": "在办", "memorial_text": "河工并列密奏"},
+    ]
+    db.record_monthly_dossier_progress(state.turn, reports)
+    before_eligible = db.dossiers.list_dossier_progress(eligible)
+    before_ordinary = db.dossiers.list_dossier_progress(ordinary)
+
+    db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
+    db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
+
+    after_eligible = db.dossiers.list_dossier_progress(eligible)
+    after_ordinary = db.dossiers.list_dossier_progress(ordinary)
+    assert after_eligible == before_eligible
+    assert after_ordinary == before_ordinary
+    assert all(not row.get("is_terminal") for row in after_eligible)
+    assert db.dossiers.get(eligible)["status"] == "closed"
+    assert db.dossiers.get(ordinary)["status"] == "closed"
+
+
+def test_character_terminal_status_closes_orders_without_synthetic_memorial(game):
+    """人物终态关密令/案卷；终态落账，不污染既有模型月报。"""
+    db, state, content = game
+    assignee = _actor(db)
+    chained_id, chained_dossier = _order(db, state, title="护行辽饷")
+    unchained_id, unchained_dossier = _order(
+        db, state, title="清查库藏", tags=["财政"],
+    )
+    state.turn += 1
+    db.reign.save_game_state(state)
+    reports = [
+        {
+            "dossier_id": chained_dossier,
+            "progress_band": "在途",
+            "memorial_text": "首批已出京",
+        },
+        {
+            "dossier_id": unchained_dossier,
+            "progress_band": "在办",
+            "memorial_text": "库藏并列密奏",
+        },
+    ]
+    db.record_monthly_dossier_progress(state.turn, reports)
+    before_chained = db.dossiers.list_dossier_progress(chained_dossier)
+    before_unchained = db.dossiers.list_dossier_progress(unchained_dossier)
+
+    db.set_character_status(state, assignee, "dead", "途中病故")
+
+    orders = {
+        int(row["id"]): row
+        for row in db.conn.execute(
+            "SELECT id,status,result FROM secret_orders WHERE id IN (?, ?)",
+            (chained_id, unchained_id),
+        ).fetchall()
+    }
+    assert orders[chained_id]["status"] == "failed"
+    assert orders[unchained_id]["status"] == "failed"
+    assert db.dossiers.get(chained_dossier)["status"] == "closed"
+    assert db.dossiers.get(unchained_dossier)["status"] == "closed"
+    chained_progress = db.dossiers.list_dossier_progress(chained_dossier)
+    unchained_progress = db.dossiers.list_dossier_progress(unchained_dossier)
+    assert chained_progress == before_chained
+    assert unchained_progress == before_unchained
+    assert all(not row.get("is_terminal") for row in chained_progress)
+    assert unchained_progress

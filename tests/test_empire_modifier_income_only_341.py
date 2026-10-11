@@ -1,3 +1,4 @@
+from __future__ import annotations
 """帝国修正只作用收入、不放大支出（issue #341）。
 
 根因：record_issue_economy_move 对支出（delta < 0）也调 apply_legacy_pct，
@@ -7,7 +8,6 @@
 开局 4 条负 legacy 累加：-2-3-4-3 = -12% 国库修正（可从 opening_legacies.json 核实）。
 """
 
-from __future__ import annotations
 
 
 def test_expenditure_not_amplified_by_legacy(game):

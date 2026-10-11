@@ -1,14 +1,15 @@
-"""#1840 monthly segment translation through the C0 declaration seam."""
-
 from __future__ import annotations
-
 import sqlite3
-
 import pytest
-
 from ming_sim.settlement.views import section, view
 from tests.conftest import active_ming_character
 from tests.test_declaration_dispatch_1835 import _minister as _character_name
+"""#1840 monthly segment translation through the C0 declaration seam."""
+
+
+
+
+
 
 @pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
     (1, 0, 10, 1, 0, 0), (5, 11, 10, 1, 0, 0), (0, 0, 0, 0, 0, 0),
@@ -68,11 +69,12 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
         [-actual_cannon, actual_cannon] if actual_cannon else []
     )
 
+
 def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET arrears=6, province_pay_arrears=0, central_pay_arrears=6 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=6 WHERE id='jingying'")
     state.metrics["国库"], state.metrics["内库"] = 100, 0
     move = {
         "origin_ref": "盘面自发", "account": "国库", "delta": -5,
@@ -97,15 +99,19 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     assert db.conn.execute("SELECT arrears FROM armies WHERE id='jingying'").fetchone()[0] == 6
     assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE category='调拨'").fetchone()[0] == 0
 
+
 def _army_id(db) -> str:
     row = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()
     assert row is not None
     return str(row["id"])
 
+
 def _region_id(db) -> str:
     row = db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 1").fetchone()
     assert row is not None
     return str(row["id"])
+
+
 
 
 def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_order(game):
@@ -143,6 +149,7 @@ def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_or
     )
     assert [fact.body for fact in person_facts] == ["人物先记一事", "人物再记一事"]
     assert [fact.body for fact in army_facts] == ["军队先记一事", "军队再记一事"]
+
 
 def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game):
     from ming_sim.month_translate import dispatch_month_segment
@@ -269,6 +276,8 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     ).fetchone()[0] == displaced_before + farmer_before
 
 
+
+
 def test_world_segment_failure_rolls_back_only_current_segment(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -309,6 +318,7 @@ def test_world_segment_failure_rolls_back_only_current_segment(game):
     )
     assert [fact.body for fact in facts] == ["前一段已落"]
 
+
 def test_world_segment_effects_use_frozen_visible_affairs(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -338,6 +348,10 @@ def test_world_segment_effects_use_frozen_visible_affairs(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM rejection_reports WHERE category='invalid_enum'"
     ).fetchone()[0] >= 1
+
+
+
+
 
 
 def test_world_segment_repeated_entity_effects_apply_in_order(game):
@@ -378,6 +392,7 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
     assert refs[0][0] == refs[1][0]
     # #652：世界段不回流；仅邸报后月份推进会扣池。
     assert _pop(db, "流民", "shaanxi") == refugees_before
+
 
 @pytest.mark.parametrize(
     ("initial_pressure", "first_pressure", "second_pressure", "second_morale", "second_reason", "second_army_event", "triggered", "pressure", "morale", "first_reason"),
@@ -471,7 +486,7 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
     dispatch_month_segment(db, state, segment="己巳之变两笔战果", translate_fn=lambda r, c: {
         "effects": effects,
     })
-    assert db.has_event_triggered("jisi_lubian") is triggered
+    assert db.issues.has_event_triggered("jisi_lubian") is triggered
     assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
     assert db.conn.execute("SELECT morale FROM armies WHERE id='jingying'").fetchone()[0] == morale
     if first_pressure in (35, 10, "非法增量") and first_reason is not None:
@@ -508,6 +523,7 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
         assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure_before
         assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
 
+
 def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -540,9 +556,10 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
             }],
         }],
     })
-    assert db.has_event_triggered("jisi_lubian") is False
+    assert db.issues.has_event_triggered("jisi_lubian") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
+
 
 def _closed_affair(db, state):
     hidden = db.affairs.open(
@@ -557,6 +574,7 @@ def _closed_affair(db, state):
     db.conn.commit()
     return hidden
 
+
 def _json_has_army_id(value, army_id: str) -> bool:
     if isinstance(value, dict):
         if value.get("id") == army_id:
@@ -565,6 +583,7 @@ def _json_has_army_id(value, army_id: str) -> bool:
     if isinstance(value, list):
         return any(_json_has_army_id(child, army_id) for child in value)
     return False
+
 
 def _army_rejection_categories(db, army_id: str) -> set[str]:
     import json
@@ -576,6 +595,7 @@ def _army_rejection_categories(db, army_id: str) -> set[str]:
         )
         if _json_has_army_id(json.loads(item_json), army_id)
     }
+
 
 @pytest.mark.parametrize("station_region,category", [
     (None, "unauthorized_affair_origin"),
@@ -614,7 +634,7 @@ def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_regi
             }],
         }],
     })
-    assert db.has_event_triggered("jisi_lubian") is True
+    assert db.issues.has_event_triggered("jisi_lubian") is True
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id='beizhili'"
     ).fetchone()[0] == pressure_before + 5
@@ -622,6 +642,7 @@ def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_regi
     assert state.metrics["国库"] == treasury_before - 1
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
     assert _army_rejection_categories(db, "jisi_hidden_affair_1840") == {category}
+
 
 @pytest.mark.parametrize("station_region", [None, "no-such-region"])
 def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
@@ -653,11 +674,12 @@ def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
             }],
         }],
     })
-    assert db.has_event_triggered("jisi_lubian") is False
+    assert db.issues.has_event_triggered("jisi_lubian") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
     assert _army_rejection_categories(db, "jisi_hidden_only_1840") == {"event_rejected"}
+
 
 def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
     from ming_sim.month_translate import dispatch_month_segment
@@ -685,10 +707,11 @@ def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
             }],
         }],
     })
-    assert db.has_event_triggered("jisi_lubian") is False
+    assert db.issues.has_event_triggered("jisi_lubian") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
+
 
 def test_final_strategic_rejection_leaves_no_owned_effects(game):
     """Owned fields and the event ledger stay one envelope.
@@ -727,6 +750,20 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game):
             },
         ],
     })
-    triggered = db.has_event_triggered("jisi_lubian")
+    triggered = db.issues.has_event_triggered("jisi_lubian")
     assert state.metrics["民心"] == metric_before + (-3 if triggered else 0)
     assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)
+
+
+
+
+
+
+
+
+def test_null_emperor_fate_does_not_end_the_month(game):
+    from ming_sim.month_translate import dispatch_month_segment
+    db, state, _ = game
+    result = dispatch_month_segment(db, state, segment="本月", translate_fn=lambda request, config: {"effects": {"emperor_fate": None}})
+    assert not state.ended and not state.ending_status
+    assert all(not view(applied, "victory_status") for applied in result.effects.applied)

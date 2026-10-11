@@ -1,7 +1,18 @@
+from __future__ import annotations
+import json
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import section, view
+from ming_sim.applier import Provenance
+from copy import deepcopy
+from ming_sim.relations import (
+    resolve_relation_edge_events_from_extraction,
+    settlement_edge_origin,
+)
+import pytest
 """#633 [479·S2] 结算口：extractor 边事件模块——契约·捕获·落库。
 
 验收对表（冻结票面 + 庭裁 r1/r2）：
-- 邸报大臣互动经 extractor delta → settle_delta → relation_edge_events 落库，
+- 邸报大臣互动经 extractor delta → apply_score_extraction → relation_edge_events 落库，
   origin 回指本回合（TD-1 结算侧）。
 - relations 模块并入既有 ThreadPoolExecutor 并发装配，无第二套编排。
 - 捕获为空零事件零副作用；shape 垃圾按既有 extractor 契约拒收。
@@ -10,24 +21,12 @@
   N-1 行；负向=无反向行/联署互连行；断言 source/target/kind 三元组而非「有一行」。
 """
 
-from __future__ import annotations
-import json
-from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import section, view
 
-from ming_sim.applier import Provenance
 
-from copy import deepcopy
-
-from ming_sim.relations import (
-    resolve_relation_edge_events_from_extraction,
-    settlement_edge_origin,
-)
-import pytest
 
 
 def _edge_rows(db, **kw):
-    return db.get_relation_edge_events(**kw)
+    return db.person_logs.get_relation_edge_events(**kw)
 
 
 def _triplets(rows):
@@ -36,7 +35,9 @@ def _triplets(rows):
 
 # ── 路由归属：受控 section 归 relations 独占槽 ────────────────────────
 
+
 # ── TD-1 结算侧：当场落库、origin 回指本回合、方向三元组 ─────────────
+
 
 def test_settlement_interaction_lands_directed_edge_with_origin_round(game):
     db, state, content = game
@@ -60,6 +61,7 @@ def test_settlement_interaction_lands_directed_edge_with_origin_round(game):
 
 
 # ── r2 F2 基数：三人联名=牵头→各联署恰两行；负向禁例 ─────────────────
+
 
 def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
     db, state, content = game
@@ -94,6 +96,7 @@ def test_replayed_delta_does_not_double_write(game):
 
 # ── 空捕获：零事件零副作用 ───────────────────────────────────────────
 
+
 def test_empty_capture_writes_nothing(game):
     db, state, content = game
     before = db.conn.execute(
@@ -108,6 +111,7 @@ def test_empty_capture_writes_nothing(game):
 
 
 # ── shape 垃圾按既有契约拒收 ─────────────────────────────────────────
+
 
 def test_shape_garbage_rejected_per_existing_extractor_contract(game):
     db, state, content = game
@@ -197,7 +201,7 @@ def _promulgated_dossier(db, state, holder, token):
         executor_id=holder,
         payload={"token": token},
     )
-    db.record_dossier_decision(did, "promulgated")
+    db.dossiers.record_dossier_decision(did, "promulgated")
     return did
 
 
@@ -227,6 +231,7 @@ def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
 
 
 # ── V2：dossier 来源锁本批冻结输入闭集（fail-closed 双重合取） ────────
+
 
 def test_authorized_dossier_outside_frozen_batch_rejected_zero_edges(game):
     """已颁授权但不在本批冻结输入的案卷：逐项拒收留痕，好项不受牵连。"""
@@ -296,6 +301,7 @@ def test_missing_frozen_dossier_set_is_empty_closed_set(game):
 
 # ── F1：context 存储零删改，全链字节相等 ────────────────────────────
 
+
 def test_context_stored_byte_identical_through_full_chain(game):
     """含首尾空白+换行的 context 经 extractor JSON → apply → DB 字节相等。"""
     db, state, content = game
@@ -344,10 +350,8 @@ def test_writer_rejects_non_string_context(game):
     assert _edge_rows(db, source="甲", target="乙") == []
 
 
-# ── P5 并行装配：新模块并入同一 executor，不串行 ────────────────────
-
-
 # ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
+
 
 def test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges(game):
     """幻觉名/错字/「皇帝」入大臣边端点：逐项拒收留痕，零写入。"""
@@ -397,31 +401,6 @@ def test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges(
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
 
 
-@pytest.mark.parametrize(
-    ("targets", "label"),
-    [
-        ([], "空列表"),
-        (["温体仁", "   "], "全无效"),
-    ],
-)
-def test_empty_or_all_invalid_targets_reject_whole_item_zero_edges(
-    game, targets, label,
-):
-    """V10：受动者列表为空（含全无效成员被拒后为空的等价情形）——整项
-    fail-closed 拒收留痕，不得静默零写冒充成功；同批独立好互动照落。"""
-    db, state, content = game
-    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '温体仁', '受动者': targets, '类目': '联名', '语境': f'{label}受动者的联名互动。', '来源引用': '盘面自发'}, {'施动者': '毕自严', '受动者': '王绍徽', '类目': '协作', '语境': '同批好项照常落。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
-    res = view(out, "relation_edge_event_resolutions")
-    rejected = section(out, "relation_edge_event_resolutions").rejected
-    # 空列表项产生且仅产生一条 invalid_relation_event 留痕
-    assert len(rejected) == 1
-    assert rejected[0].category == "invalid_relation_event"
-    assert rejected[0].item["施动者"] == "温体仁"
-    # 坏项零边写入；同批独立好互动不受牵连照常落库
-    rows = _edge_rows(db)
-    assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
-
-
 def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
     """两个合格在朝大臣的合法边照常落库（端点守门不误伤）。"""
     db, state, content = game
@@ -433,16 +412,17 @@ def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
 
 # ── T1 r5 B 案：批内 pre∪post 名册并集时间语义 ────────────────────────
 
+
 def test_interaction_then_same_batch_dismissal_still_lands(game):
     """先互动后退场（同批罢黜）：端点 ∈ 入口 pre-roster，边照落。
 
     回归锚：旧实现按 apply 后 live 名册校验，会把退场者当月真实互动静默丢账
     （P1 事实账完整性缺口）；B 案以入口 canonical pre-roster 保住该向。"""
     db, state, content = game
-    assert db.get_character_status("王绍徽")[0] == "active"
+    assert db.characters.get_character_status("王绍徽")[0] == "active"
     out = settle_delta(state, db, {'人物变更': [{'name': '王绍徽', 'origin_ref': '盘面自发', '动作': '罢黜', 'reason': '同批罢黜时序验收'}], 'relation_edge_events': [{'施动者': '王绍徽', '受动者': '毕自严', '类目': '结怨', '语境': '退场前真实互动须当回合落账。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     # 人物变更确实生效：该员已出 post 名册（证明拒收不是守门失灵）
-    assert db.get_character_status("王绍徽")[0] == "dismissed"
+    assert db.characters.get_character_status("王绍徽")[0] == "dismissed"
     res = view(out, "relation_edge_event_resolutions")
     assert section(out, "relation_edge_event_resolutions").rejected == []
     row = _edge_rows(db, source="王绍徽", target="毕自严")[0]
@@ -456,10 +436,10 @@ def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
     回归锚：任何只冻 pre roster/前移 resolver 的方案会误拒同批入场者的真实
     互动；B 案以人物变更 apply 后的 post-roster 并入并集保住该向。"""
     db, state, content = game
-    assert db.get_character_status("孙承宗")[0] != "active"
+    assert db.characters.get_character_status("孙承宗")[0] != "active"
     out = settle_delta(state, db, {'人物变更': [{'name': '孙承宗', 'origin_ref': '盘面自发', '动作': '任命', 'office': '兵部尚书', 'reason': '同批起复时序验收'}], 'relation_edge_events': [{'施动者': '孙承宗', '受动者': '毕自严', '类目': '协作', '语境': '起复后当月互动须落账。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     # 人物变更确实生效：该员已入 post 名册（证明落库不是 pre 资格）
-    assert db.get_character_status("孙承宗")[0] == "active"
+    assert db.characters.get_character_status("孙承宗")[0] == "active"
     res = view(out, "relation_edge_event_resolutions")
     assert section(out, "relation_edge_event_resolutions").rejected == []
     row = _edge_rows(db, source="孙承宗", target="毕自严")[0]
@@ -482,12 +462,13 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
 
 # ── r6 确认庭：资格集必传单一契约——无 live/post fallback ─────────────
 
+
 def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     """负向：端点资格唯一语义＝传入的 pre∪post 并集。在 live 名册但在传入
     资格集之外者仍拒收——不存在「仅 live 可过而 pre∪post 不过」的通路。
     （settle_delta 批内 post=live，故该构造只能经直调缝验证。）"""
     db, state, content = game
-    assert db.get_character_status("王绍徽")[0] == "active"  # live 在册
+    assert db.characters.get_character_status("王绍徽")[0] == "active"  # live 在册
     res, res_rejections = resolve_relation_edge_events_from_extraction(
         db, state,
         {"relation_edge_events": [{

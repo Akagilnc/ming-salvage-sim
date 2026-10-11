@@ -1,3 +1,7 @@
+from __future__ import annotations
+from ming_sim.applier import Provenance
+from ming_sim.db import GameDB
+from ming_sim.models import Event
 """#659：军队结构化实际驻地 → 财政事实属地 / S7 军镇 / 逃亡人口闭环。
 
 票面根修：station_region=regions.id；station 只做人读细地点；欠饷事实 region
@@ -7,13 +11,8 @@ population_transfers。禁止 station 文本解析、第二事实核、第二转
 本文件验证调防后的驻地与饷源分离、非法驻地拒收，以及新档驻地和人口切片。
 """
 
-from __future__ import annotations
-
-from ming_sim.applier import Provenance
 
 
-from ming_sim.db import GameDB
-from ming_sim.models import Event
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
 JUNHU_LIAODONG = 230000
@@ -30,14 +29,12 @@ def _pop(db: GameDB, name: str, region_id: str) -> int:
     return int(row[0]) if row else 0
 
 
-
 def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
     db.conn.execute(
-        "UPDATE armies SET province_pay_arrears=?, central_pay_arrears=?, arrears=? WHERE id=?",
-        (province, central, province + central, army_id),
+        'UPDATE armies SET province_pay_arrears=?, central_pay_arrears=? WHERE id=?',
+        (province, central, army_id,),
     )
     db.conn.commit()
-
 
 
 def _pseudo_event(title: str = "调防") -> Event:
@@ -45,7 +42,6 @@ def _pseudo_event(title: str = "调防") -> Event:
         id="test_659", title=title, kind="圣旨", summary="",
         urgency=0, severity=0, credibility=100, interests=[], audiences=[],
     )
-
 
 
 def test_redeploy_moves_fact_region_keeps_pay_source(game):
@@ -77,7 +73,6 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     assert row["pay_source_region"] == pay_src == "liaodong"
 
 
-
 def test_station_region_rejects_unknown_region_id(game):
     """非空 station_region 必须是已入库 regions.id；不从 station 反推。"""
     db, state, _content = game
@@ -91,7 +86,6 @@ def test_station_region_rejects_unknown_region_id(game):
         "SELECT station_region FROM armies WHERE id='dongjiang'"
     ).fetchone()
     assert row["station_region"] == "dongjiang_area"
-
 
 
 def test_fresh_seed_station_region_and_class_slices(game):

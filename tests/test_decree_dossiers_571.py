@@ -2,12 +2,14 @@ import ming_sim.draft_intent as draft_intent
 from ming_sim.session import GameSession
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
-
 import pytest
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.settlement.views import section
+import ming_sim.issues as issue_engine
+from ming_sim.entities.issue.store import IssueStore
+
 
 def _active_people(db, count):
     people = [
@@ -19,10 +21,8 @@ def _active_people(db, count):
     assert len(people) == count
     return people
 
-
 def _active_minister(db):
     return _active_people(db, 1)[0]
-
 
 def test_dossier_roster_preserves_multiple_leads_support_roles_and_knowers(game):
     db, state, _content = game
@@ -38,14 +38,13 @@ def test_dossier_roster_preserves_multiple_leads_support_roles_and_knowers(game)
         ],
     )
 
-    restored = db.get_decree_dossier(dossier_id)
+    restored = db.dossiers.get(dossier_id)
     assert restored["participant_roster"] == [
         {"character_id": people[0], "tier": "主办", "role": "主持清丈", "delegator_id": None},
         {"character_id": people[1], "tier": "主办", "role": "会同清丈", "delegator_id": None},
         {"character_id": people[2], "tier": "协办", "role": "接应钱粮", "delegator_id": None},
         {"character_id": people[3], "tier": "知情", "role": "备悉", "delegator_id": None},
     ]
-
 
 @pytest.mark.parametrize("participants", [
     ["not-an-object"],
@@ -64,10 +63,13 @@ def test_dossier_create_rejects_malformed_structured_roster(game, participants):
             target_kind="issue", target_id="granary", participants=participants,
         )
 
-    assert db.list_decree_dossiers() == []
-
+    assert db.dossiers.list_dossiers() == []
 
 def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(game):
+    """名册引用的人物必须已入库：create 整份拒收、append 单条拒收且名册不变。
+
+    区分度是**结构化后置断言**（拒收后零案卷 / roster 原样），不靠报错措辞（#1889）。
+    """
     db, state, _content = game
     person = _active_minister(db)
 
@@ -77,7 +79,7 @@ def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(g
             target_kind="issue", target_id="granary",
             participants=[{"character_id": "不存在的人", "tier": "主办"}],
         )
-    assert db.list_decree_dossiers() == []
+    assert db.dossiers.list_dossiers() == []
 
     dossier_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="命查仓储。",
@@ -88,10 +90,9 @@ def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(g
         db.append_decree_dossier_participants(dossier_id, [{
             "character_id": person, "tier": "协办", "delegator_id": "不存在的委派人",
         }])
-    assert db.get_decree_dossier(dossier_id)["participant_roster"] == [{
+    assert db.dossiers.get(dossier_id)["participant_roster"] == [{
         "character_id": person, "tier": "主办", "role": "", "delegator_id": None,
     }]
-
 
 @pytest.mark.parametrize("write_path", ["create", "append"])
 @pytest.mark.parametrize("delegation", ["self", "unrelated"])
@@ -112,7 +113,7 @@ def test_dossier_roster_write_boundary_rejects_invalid_delegator(
                 state, action_type="assignment", decree_text="命查仓储。",
                 target_kind="issue", target_id="granary", participants=invalid,
             )
-        assert db.list_decree_dossiers() == []
+        assert db.dossiers.list_dossiers() == []
     else:
         dossier_id = db.create_decree_dossier(
             state, action_type="assignment", decree_text="命查仓储。",
@@ -121,8 +122,7 @@ def test_dossier_roster_write_boundary_rejects_invalid_delegator(
         )
         with pytest.raises(ValueError):
             db.append_decree_dossier_participants(dossier_id, invalid[1:])
-        assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
-
+        assert len(db.dossiers.get(dossier_id)["participant_roster"]) == 1
 
 def test_dossier_roster_append_keeps_existing_entries_and_delegator(game):
     db, state, _content = game
@@ -142,14 +142,14 @@ def test_dossier_roster_append_keeps_existing_entries_and_delegator(game):
         [{"character_id": people[2], "tier": "知情", "role": "知会"}],
     )
 
-    assert db.get_decree_dossier(dossier_id)["participant_roster"] == [
+    assert db.dossiers.get(dossier_id)["participant_roster"] == [
         {"character_id": people[0], "tier": "主办", "role": "总理", "delegator_id": None},
         {"character_id": people[1], "tier": "协办", "role": "推算", "delegator_id": people[0]},
         {"character_id": people[2], "tier": "知情", "role": "知会", "delegator_id": None},
     ]
 
-
 def test_dossier_append_is_idempotent_only_for_identical_character_entry(game):
+    """同人条目照原样追加才幂等；改 tier 或改 role 一律拒收且名册不变。"""
     db, state, _content = game
     lead = _active_minister(db)
     original = {"character_id": lead, "tier": "主办", "role": "总理"}
@@ -171,10 +171,9 @@ def test_dossier_append_is_idempotent_only_for_identical_character_entry(game):
             ],
         )
 
-    assert db.get_decree_dossier(dossier_id)["participant_roster"] == [{
+    assert db.dossiers.get(dossier_id)["participant_roster"] == [{
         **original, "delegator_id": None,
     }]
-
 
 def test_month_end_extractor_appends_self_dispatched_participant(game):
     db, state, _content = game
@@ -190,11 +189,10 @@ def test_month_end_extractor_appends_self_dispatched_participant(game):
     assert view(result, "dossier_participants") == [{
         "dossier_id": dossier_id, "character_id": people[1], "tier": "协办",
     }]
-    assert db.get_decree_dossier(dossier_id)["participant_roster"][-1] == {
+    assert db.dossiers.get(dossier_id)["participant_roster"][-1] == {
         "character_id": people[1], "tier": "协办", "role": "推算历法",
         "delegator_id": people[0],
     }
-
 
 @pytest.mark.parametrize("bad_patch", [
     {"character_id": "", "tier": "协办", "delegator_id": "lead"},
@@ -217,7 +215,7 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
 
     assert section(result, "dossier_participants").rejected
     assert view(result, "dossier_participants")[0]["character_id"] == good
-    roster = db.get_decree_dossier(dossier_id)["participant_roster"]
+    roster = db.dossiers.get(dossier_id)["participant_roster"]
     assert [item["character_id"] for item in roster] == [lead, good]
 
 
@@ -237,8 +235,7 @@ def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
     result = settle_delta(state, db, {'dossier_participants': [{'dossier_id': dossier_id, 'character_id': worker, 'tier': '协办', 'delegator_id': lead}]}, SettlementContext(dossier_ids_at_input=set()))
 
     assert section(result, "dossier_participants").rejected
-    assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
-
+    assert len(db.dossiers.get(dossier_id)["participant_roster"]) == 1
 
 def test_committing_each_directive_creates_independent_restoreable_dossier(game):
     db, state, _content = game
@@ -261,14 +258,13 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
         state, kind_filter="directive", action_ids=ids, directive_status="draft"
     )
 
-    dossiers = db.list_decree_dossiers(status="proposed")
+    dossiers = db.dossiers.list_dossiers(status="proposed")
     assert [row["decree_text"] for row in dossiers[-2:]] == [
         "着户部清核辽饷。",
         "着兵部点验军械。",
     ]
     assert len({row["id"] for row in dossiers[-2:]}) == 2
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
-
 
 
 def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
@@ -283,7 +279,7 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
         (minister, state.turn),
     ).lastrowid
     db.conn.commit()
-    db.update_chat_turn_messages(chat_turn_id, user_message_id=int(message_id))
+    db.reign.update_chat_turn_messages(chat_turn_id, user_message_id=int(message_id))
 
     pending_id = db.stage_pending_action(
         state.turn,
@@ -303,7 +299,7 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
     )
 
     dossier = next(
-        row for row in db.list_decree_dossiers()
+        row for row in db.dossiers.list_dossiers()
         if row["pending_action_id"] == pending_id
     )
     assert dossier["pending_action_id"] == pending_id
@@ -311,7 +307,6 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
     assert dossier["executor_kind"] == "character"
     assert dossier["executor_id"] == minister
     assert dossier["decree_text"] == "暗中核清关宁军饷"
-
 
 def test_terminal_target_does_not_interrupt_another_executor(game):
     db, state, _content = game
@@ -322,15 +317,14 @@ def test_terminal_target_does_not_interrupt_another_executor(game):
         target_kind="character", target_id=target,
         executor_kind="character", executor_id=executor,
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.transition(dossier_id, "executing")
 
     db.set_character_status(state, target, "imprisoned", reason="下狱")
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["status"] == "executing"
     assert dossier["participant_roster"] == []
-
 
 def test_office_action_waits_for_verdict_then_materializes_from_same_payload(game):
     db, state, content = game
@@ -350,7 +344,7 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
     db.commit_pending_actions(state, content=content)
 
     dossier = next(
-        row for row in db.list_decree_dossiers(target_kind="character", target_id=minister)
+        row for row in db.dossiers.list_dossiers(target_kind="character", target_id=minister)
         if row["pending_action_id"] == pending_id
     )
     assert dossier["status"] == "proposed"
@@ -361,23 +355,25 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
     apply_dossier_promulgation(db,
         state, dossier["id"], "promulgated", content=content
     )
-    dossier = db.get_decree_dossier(dossier["id"])
+    dossier = db.dossiers.get(dossier["id"])
     assert dossier["status"] == "executing"
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (minister,)
     ).fetchone()["office"] == "兵部主事"
 
-
-@pytest.mark.parametrize("status", ("executing", "closed"))
-def test_dossier_cannot_start_in_execution_state(game, status):
+@pytest.mark.parametrize("action_type, target_kind, target_id, options", [
+    ("appointment", "character", "invalid", {"status": "executing"}),
+    ("appointment", "character", "invalid", {"status": "closed"}),
+    *[(action, "issue", "not-a-decree", {}) for action in
+      ("extraordinary_summons", "summons", "inquiry", "pressure_inquiry", "public_support")],
+])
+def test_dossier_cannot_start_in_execution_state(game, action_type, target_kind, target_id, options):
     db, state, _content = game
     with pytest.raises(ValueError):
         db.create_decree_dossier(
-            state, action_type="appointment", decree_text="非法初态",
-            target_kind="character", target_id="invalid",
-            status=status,
+            state, action_type=action_type, decree_text="非法案卷准入",
+            target_kind=target_kind, target_id=target_id, **options,
         )
-
 
 def test_secret_order_and_dossier_roll_back_as_one_unit(game, monkeypatch):
     db, state, _content = game
@@ -387,28 +383,26 @@ def test_secret_order_and_dossier_roll_back_as_one_unit(game, monkeypatch):
         raise RuntimeError("dossier write failed")
 
     monkeypatch.setattr(db, "create_decree_dossier", fail_dossier)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='dossier write failed'):
         _create_secret_order(db, state, minister, "密查", "查账", [])
     assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 0
-
 
 def test_character_terminal_state_closes_secret_order_and_execution_slot(game):
     db, state, _content = game
     minister = _active_minister(db)
     order_id = _create_secret_order(db, state, minister, "密查", "查账", [])
-    dossier = db.get_dossier_for_secret_order(order_id)
-    db.transition_decree_dossier(dossier["id"], "executing")
+    dossier = db.dossiers.get_for_secret_order(order_id)
+    db.dossiers.transition(dossier["id"], "executing")
 
     db.set_character_status(state, minister, "imprisoned", reason="下狱")
 
-    order = db.get_secret_order(order_id)
-    dossier = db.get_dossier_for_secret_order(order_id)
+    order = db.character_knowledge.get_secret_order(order_id)
+    dossier = db.dossiers.get_for_secret_order(order_id)
     assert order["status"] == "failed"
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
     assert dossier["closed_turn"] == state.turn
     assert dossier["interruption_reason"]
-
 
 
 def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejection(game):
@@ -428,22 +422,21 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
         state, [_rejected_verdict(dossier_id)]
     )
     assert state.metrics["国库"] == before
-    rejected = db.get_decree_dossier(dossier_id)
+    rejected = db.dossiers.get(dossier_id)
     assert rejected["promulgation_blocked_layer"] == "six_offices"
     assert rejected["promulgation_reason"] == "科臣封驳。"
 
     apply_dossier_verdicts(db,
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}]
     )
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert state.metrics["国库"] == before - 10
     assert dossier["status"] == "closed"
     assert dossier["promulgation_decision"] == "rejected"
-    moves = db.list_economy_moves_for_dossier(dossier_id)
+    moves = db.reign.list_economy_moves_for_dossier(dossier_id)
     assert len(moves) == 1
     assert moves[0]["dossier_id"] is None
     assert moves[0]["origin_ref"] == f"dossier:{dossier_id}"
-
 
 def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
     db, state, content = game
@@ -458,7 +451,7 @@ def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
     )
     db.commit_pending_actions(state, content=content)
     dossier = next(
-        row for row in db.list_decree_dossiers()
+        row for row in db.dossiers.list_dossiers()
         if row["pending_action_id"] == pending_id
     )
     assert dossier["action_type"] == "assignment"
@@ -468,11 +461,10 @@ def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )
-    assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+    assert db.dossiers.get(dossier["id"])["status"] == "executing"
 
     db.set_character_status(state, assignee, "dead", reason="病故")
-    assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
-
+    assert db.dossiers.get(dossier["id"])["status"] == "closed"
 
 @pytest.mark.parametrize("entry", ("pending_commit", "confirm"))
 @pytest.mark.parametrize(
@@ -534,7 +526,7 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
         db.confirm_directive(directive_id)
         assert db.ensure_dossiers_for_draft_directives(state) == []
 
-    dossier = db.get_dossier_for_directive(directive_id)
+    dossier = db.dossiers.get_for_directive(directive_id)
     assert dossier is not None
     assert dossier["executor_kind"] == expected_executor_kind
     assert dossier["executor_id"] == (assignee if expected_executor_kind else "")
@@ -544,11 +536,10 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
             state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
             content=content,
         )
-        assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+        assert db.dossiers.get(dossier["id"])["status"] == "executing"
         terminal_status = "dead" if entry == "pending_commit" else "dismissed"
         db.set_character_status(state, assignee, terminal_status, reason="人物终态")
-        assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
-
+        assert db.dossiers.get(dossier["id"])["status"] == "closed"
 
 @pytest.mark.parametrize("invalid_id", [True, 1.5, "1.5", 2 ** 63])
 def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
@@ -557,14 +548,13 @@ def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
         state, action_type="policy", decree_text="奉旨办理",
         target_kind="issue", target_id="strict-execution-id",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.transition(dossier_id, "executing")
 
     result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': invalid_id, 'outcome': 'fulfilled', 'note': '办理完毕'}]}, SettlementContext(content=content))
 
     assert section(result, "dossier_executions").rejected
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
 
 def test_dossier_execution_accepts_sqlite_integer_id(game):
     db, state, content = game
@@ -572,8 +562,8 @@ def test_dossier_execution_accepts_sqlite_integer_id(game):
         state, action_type="policy", decree_text="奉旨办理",
         target_kind="issue", target_id="valid-execution-id",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.transition(dossier_id, "executing")
 
     result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': '办理完毕'}]}, SettlementContext(content=content))
 
@@ -581,8 +571,7 @@ def test_dossier_execution_accepts_sqlite_integer_id(game):
         "dossier_id": dossier_id, "outcome": "fulfilled",
         "source_item": {"dossier_id": dossier_id, "outcome": "fulfilled", "note": "办理完毕"},
     }]
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
-
+    assert db.dossiers.get(dossier_id)["status"] == "closed"
 
 def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(game):
     db, state, content = game
@@ -615,8 +604,7 @@ def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(
     settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': -10, 'category': '重复拨帑', 'origin_ref': f'dossier:{structured_id}'}, {'account': '国库', 'delta': -5, 'category': '水利涌现', 'origin_ref': f'dossier:{narrative_id}'}]}, SettlementContext(content=content))
 
     assert state.metrics["国库"] == before - 15
-    assert len(db.list_economy_moves_for_dossier(structured_id)) == 1
-
+    assert len(db.reign.list_economy_moves_for_dossier(structured_id)) == 1
 
 def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(game):
     db, state, content = game
@@ -636,12 +624,11 @@ def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(ga
             "office_type": "central",
         },
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
 
     result = settle_delta(state, db, {'人物变更': [{'name': person['name'], '动作': '调任', 'office': '兵部尚书', 'office_type': 'central', '任别': '真除', 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
 
     assert view(result, "applied_person_changes") == []
-
 
 def test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type(game):
     db, state, content = game
@@ -662,7 +649,7 @@ def test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type(gam
             "office_type": "地方",
         },
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
 
     result = settle_delta(state, db, {'人物变更': [{'name': person['name'], '动作': '调任', 'office': '前置异官', 'office_type': '地方', 'region_id': 'shaanxi', '任别': '真除', 'origin_ref': f'dossier:{dossier_id}'}, {'name': person['name'], '动作': '调任', 'office': '同名未知官', '任别': '真除', 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
 
@@ -673,7 +660,6 @@ def test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type(gam
         "SELECT office, office_type FROM characters WHERE name=?", (person["name"],)
     ).fetchone()
     assert (persisted["office"], persisted["office_type"]) == ("前置异官", "地方")
-
 
 def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(game):
     db, state, content = game
@@ -693,7 +679,7 @@ def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(
             "office": "兵部尚书",
         },
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
 
     result = settle_delta(state, db, {'人物变更': [{'name': person['name'], '动作': '评定', 'loyalty': 1, 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
 
@@ -702,27 +688,25 @@ def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(
         "SELECT loyalty FROM characters WHERE name=?", (person["name"],)
     ).fetchone()[0] == person["loyalty"] + 1
 
-
 def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="持续办理",
         target_kind="issue", target_id="ongoing-policy",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.transition(dossier_id, "executing")
 
     with pytest.raises(ValueError):
-        db.record_dossier_execution(
+        db.dossiers.record_execution(
             dossier_id, "executing", "仍在办理", state.turn, close=True,
         )
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         dossier_id, "executing", "仍在办理", state.turn, close=False,
     )
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["status"] == "executing"
     assert dossier["closed_turn"] == 0
-
 
 def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_close(game):
     db, state, content = game
@@ -742,15 +726,14 @@ def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_
     }]
     assert state.metrics["国库"] == before - 3
 
-
 def test_extractor_accepts_transformed_execution_outcome(game):
     db, state, content = game
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="奉旨办理而借题行私",
         target_kind="issue", target_id="transformed-policy",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.transition(dossier_id, "executing")
 
     result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'transformed', 'note': '名义奉行，实则借旨行私'}]}, SettlementContext(content=content))
 
@@ -758,20 +741,18 @@ def test_extractor_accepts_transformed_execution_outcome(game):
         "dossier_id": dossier_id, "outcome": "transformed",
         "source_item": {"dossier_id": dossier_id, "outcome": "transformed", "note": "名义奉行，实则借旨行私"},
     }]
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "transformed"
 
 
 
-# #1849 / ADR 0152 决定 1：Web 独立手拟新增口（POST /api/directives）已退役，
-# 拟旨落桌走 CLI 手拟同款 capture 核 + session.add_directive，覆盖面不减。
-# 旧「web/cli」入口轴已随之失去用途（函数不再读它），只留行为维度。
 
 
-# #1902：拟诏台手写改稿（Web PATCH /api/directives、CLI edit）随整条入口退役，
-# 「手改旨文并重抽 mechanics」这条能力不再存在，本用例随之退役；改稿入口不再
-# 注册的回归由 tests/test_web_entry_1902.py 钉。
+
+
+
+
 
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
@@ -780,24 +761,23 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
     db, state, content = game
     actor = _active_minister(db)
     order_id = _create_secret_order(db, state, actor, "密查仓储", "核清仓储", [])
-    dossier = db.get_dossier_for_secret_order(order_id)
+    dossier = db.dossiers.get_for_secret_order(order_id)
     assert dossier["status"] == "promulgated"
 
     db.update_secret_order_progress(
         order_id, "已开始核账",
     )
-    assert db.get_dossier_for_secret_order(order_id)["status"] == "executing"
+    assert db.dossiers.get_for_secret_order(order_id)["status"] == "executing"
     reopened = GameDB(db.path, content=content)
     try:
-        assert reopened.get_dossier_for_secret_order(order_id)["status"] == "executing"
+        assert reopened.dossiers.get_for_secret_order(order_id)["status"] == "executing"
     finally:
         reopened.close()
 
     db.close_secret_order(order_id, "done", "账目核清", state.turn)
-    terminal = db.get_dossier_for_secret_order(order_id)
+    terminal = db.dossiers.get_for_secret_order(order_id)
     assert terminal["status"] == "closed"
     assert terminal["execution_outcome"] == "fulfilled"
-
 
 def test_secret_order_progress_undo_restores_order_and_dossier_axes(game):
     db, state, _content = game
@@ -806,10 +786,10 @@ def test_secret_order_progress_undo_restores_order_and_dossier_axes(game):
         state, actor, "密查仓储", "核清仓储", [],
     )
     chat_turn_id = db.create_chat_turn(state, actor, "dossier-undo", 0)
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         chat_turn_id,
-        db.append_chat_message(actor, state.turn, "user", "继续查办"),
-        db.append_chat_message(actor, state.turn, "minister", "臣遵旨"),
+        db.chat_messages.insert(minister_name=actor, turn=state.turn, role='user', content='继续查办'),
+        db.chat_messages.insert(minister_name=actor, turn=state.turn, role='minister', content='臣遵旨'),
     )
     before = db.capture_chat_rollback_snapshot()
     db.update_secret_order_progress(
@@ -821,11 +801,10 @@ def test_secret_order_progress_undo_restores_order_and_dossier_axes(game):
 
     db.undo_chat_turn(chat_turn_id)
 
-    assert db.get_secret_order(order_id)["result"] == ""
-    dossier = db.get_dossier_for_secret_order(order_id)
+    assert db.character_knowledge.get_secret_order(order_id)["result"] == ""
+    dossier = db.dossiers.get_for_secret_order(order_id)
     assert dossier["status"] == "promulgated"
     assert dossier["execution_outcome"] == ""
-
 
 def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypatch):
     from ming_sim.applier import atomic
@@ -834,12 +813,12 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
     order_id = _create_secret_order(db,
         state, _active_minister(db), "密查仓储", "核清仓储", [],
     )
-    dossier_before = db.get_dossier_for_secret_order(order_id)
+    dossier_before = db.dossiers.get_for_secret_order(order_id)
 
     def fail_execution(*_args, **_kwargs):
         raise RuntimeError("dossier close failed")
 
-    monkeypatch.setattr(db, "record_dossier_execution", fail_execution)
+    monkeypatch.setattr(db.dossiers, "record_execution", fail_execution)
     with atomic(db):
         with pytest.raises(RuntimeError):
             db.close_secret_order(
@@ -849,13 +828,12 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
             "UPDATE game_state SET ending_status='caller-continued' WHERE id=1"
         )
 
-    assert db.get_secret_order(order_id)["status"] == "active"
-    assert db.get_secret_order(order_id)["result"] == ""
-    assert db.get_dossier_for_secret_order(order_id) == dossier_before
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "active"
+    assert db.character_knowledge.get_secret_order(order_id)["result"] == ""
+    assert db.dossiers.get_for_secret_order(order_id) == dossier_before
     assert db.conn.execute(
         "SELECT ending_status FROM game_state WHERE id=1"
     ).fetchone()["ending_status"] == "caller-continued"
-
 
 def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
     from ming_sim.applier import atomic
@@ -871,27 +849,9 @@ def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
             )
             raise RuntimeError("rollback")
 
-    dossier = db.get_dossier_for_secret_order(order_id)
+    dossier = db.dossiers.get_for_secret_order(order_id)
     assert db.conn.execute("SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=?", (int(dossier["id"]),)).fetchone()[0] == 0
-    assert db.get_dossier_for_secret_order(order_id)["status"] == "promulgated"
-
-
-@pytest.mark.parametrize(
-    "action_type",
-    (
-        "extraordinary_summons", "summons", "inquiry",
-        "pressure_inquiry", "public_support",
-    ),
-)
-def test_dialogue_and_engine_action_types_cannot_create_dossiers(
-    game, action_type,
-):
-    db, state, _content = game
-    with pytest.raises(ValueError):
-        db.create_decree_dossier(
-            state, action_type=action_type, decree_text="非旨意动作",
-            target_kind="issue", target_id="not-a-decree",
-        )
+    assert db.dossiers.get_for_secret_order(order_id)["status"] == "promulgated"
 
 
 def test_create_secret_order_has_resumable_dossier(game):
@@ -900,10 +860,9 @@ def test_create_secret_order_has_resumable_dossier(game):
     order_id = _create_secret_order(db,
         state, actor, "在办密令", "成案即有案卷", [], deadline_months=1,
     )
-    dossier = db.get_dossier_for_secret_order(order_id)
+    dossier = db.dossiers.get_for_secret_order(order_id)
     assert dossier is not None
     assert dossier["status"] in {"promulgated", "executing"}
-
 
 def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
     db, state, _content = game
@@ -911,31 +870,30 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
         state, action_type="special_decree", decree_text="着核边饷",
         target_kind="issue", target_id="frontier-pay",
     )
-    db.record_dossier_decision(
+    db.dossiers.record_dossier_decision(
         dossier_id, "rejected", blocked_layer="six_offices",
         reason="封驳",
     )
-    db.record_dossier_decision(dossier_id, "hold")
+    db.dossiers.record_dossier_decision(dossier_id, "hold")
 
     assert dossier_id not in {
-        row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
+        row["id"] for row in db.dossiers.list_for_simulation(state.turn)
     }
     with pytest.raises(ValueError):
         apply_dossier_verdicts(db,
             state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
         )
     state.next_period()
-    db.save_state(state)
+    db.reign.save_game_state(state)
     assert dossier_id in {
-        row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
+        row["id"] for row in db.dossiers.list_for_simulation(state.turn)
     }
     apply_dossier_verdicts(db,
         state, [{
             "dossier_id": dossier_id, "decision": "promulgated",
         }],
     )
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
 
 def test_interim_verdict_rejects_reserved_legal_reason_code(game):
     db, state, _content = game
@@ -948,7 +906,6 @@ def test_interim_verdict_rejects_reserved_legal_reason_code(game):
             "dossier_id": dossier_id, "decision": "rejected",
             "legal_reason_code": "statute-42",
         }])
-
 
 def test_session_manual_directive_keeps_structured_action_at_submission(
     game, monkeypatch,
@@ -972,22 +929,13 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
         content=content,
     )
     try:
-        directive_id = session.db.add_directive(
-            session.state, None, "着查河南河工", "手动新增",
-            dossier_payload={
-                "dossier_action_type": "assignment",
-                "target_kind": "region",
-                "target_id": "河南",
-                "locality_scope": "single",
-                "assignee": _active_minister(session.db),
-            },
-        )
-        assert session.db.get_dossier_for_directive(directive_id) is None
+        directive_id = session.db.issues.add_directive(session.state.turn, session.state.year, session.state.period, None, '着查河南河工', '手动新增', dossier_payload={'dossier_action_type': 'assignment', 'target_kind': 'region', 'target_id': '河南', 'locality_scope': 'single', 'assignee': _active_minister(session.db)})
+        assert session.db.dossiers.get_for_directive(directive_id) is None
 
         session.db.ensure_dossiers_for_draft_directives(session.state)
         reopened = GameDB(db.path, content=content)
         try:
-            dossier = reopened.get_dossier_for_directive(directive_id)
+            dossier = reopened.dossiers.get_for_directive(directive_id)
             assert dossier["action_type"] == "assignment"
             assert dossier["target_kind"] == "region"
             assert dossier["target_id"] == "河南"
@@ -996,8 +944,6 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
             reopened.close()
     finally:
         session.db.close()
-
-
 
 def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game, monkeypatch):
     from ming_sim.decree_forecast import decree_ref_for_dossier
@@ -1017,7 +963,7 @@ def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(gam
         notes="probe smoke",
     )
     db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(directive.id)
+    dossier = db.dossiers.get_for_directive(directive.id)
     assert dossier["action_type"] == "policy"
     assert dossier["target_kind"] == "issue"
     assert dossier["target_id"] == "probe:contract-smoke:1"
@@ -1032,8 +978,7 @@ def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(gam
     player.resolve_turn(allow_empty_decree=True)
 
     assert state.turn == 2
-    assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
-
+    assert db.dossiers.get(dossier["id"])["status"] == "executing"
 
 def test_directive_freezes_at_dossier_birth(game):
     db, state, _content = game
@@ -1041,23 +986,18 @@ def test_directive_freezes_at_dossier_birth(game):
         "dossier_action_type": "policy",
         "target_kind": "issue", "target_id": "river-works",
     }
-    editable_id = db.add_directive(
-        state, None, "河工初稿", "手动新增", dossier_payload=payload,
-    )
+    editable_id = db.issues.add_directive(state.turn, state.year, state.period, None, '河工初稿', '手动新增', dossier_payload=payload)
     db.update_directive_text(
         editable_id, "河工改稿", dossier_payload=payload,
     )
     db.delete_directive(editable_id)
 
-    directive_id = db.add_directive(
-        state, None, "着修河工", "手动新增", dossier_payload=payload,
-    )
+    directive_id = db.issues.add_directive(state.turn, state.year, state.period, None, '着修河工', '手动新增', dossier_payload=payload)
     db.ensure_dossiers_for_draft_directives(state)
     with pytest.raises(ValueError):
         db.update_directive_text(directive_id, "成案后改稿")
     with pytest.raises(ValueError):
         db.delete_directive(directive_id)
-
 
 def test_directive_edit_replaces_mechanical_payload_before_submission(game):
     db, state, _content = game
@@ -1068,15 +1008,13 @@ def test_directive_edit_replaces_mechanical_payload_before_submission(game):
         "account": "国库", "amount": 10, "execution_surface": "immediate",
     }
     hundred = {**ten, "amount": 100}
-    directive_id = db.add_directive(
-        state, None, "拨十两赈济", "手动新增", dossier_payload=ten,
-    )
+    directive_id = db.issues.add_directive(state.turn, state.year, state.period, None, '拨十两赈济', '手动新增', dossier_payload=ten)
 
     db.update_directive_text(
         directive_id, "改拨百两赈济", dossier_payload=hundred,
     )
     db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(directive_id)
+    dossier = db.dossiers.get_for_directive(directive_id)
     assert json.loads(dossier["payload_json"])["amount"] == 100
 
     apply_dossier_verdicts(db,
@@ -1084,22 +1022,14 @@ def test_directive_edit_replaces_mechanical_payload_before_submission(game):
     )
     assert state.metrics["国库"] == before - 100
 
-
 def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
     db, state, _content = game
     # #1716：太仓是 resolve_grant_account 合法别名→国库；未知账户才在 shape 边界拒。
-    directive_id = db.add_directive(
-        state, None, "发外库银十两赈济", "手动新增",
-        dossier_payload={
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief",
-            "account": "外库", "amount": 10, "execution_surface": "immediate",
-        },
-    )
+    directive_id = db.issues.add_directive(state.turn, state.year, state.period, None, '发外库银十两赈济', '手动新增', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'relief', 'account': '外库', 'amount': 10, 'execution_surface': 'immediate'})
 
     # #654 路3：成案失败记 rejection、保持 draft，不向外抛
     db.ensure_dossiers_for_draft_directives(state)
-    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.dossiers.get_for_directive(directive_id) is None
     status = db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
     ).fetchone()["status"]
@@ -1110,7 +1040,6 @@ def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
     assert [(r["category"], json.loads(r["item_json"])["directive_id"]) for r in rej] == [
         ("locality_fanout_failed", directive_id),
     ]
-
 
 def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
     db, state, _content = game
@@ -1132,59 +1061,20 @@ def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
 
     apply_dossier_promulgation(db, state, dossier_id, "promulgated")
 
-    dossier = db.get_decree_dossier(dossier_id)
-    assert state.metrics["国库"] == 0
-    assert dossier["status"] == "closed"
-    assert dossier["execution_outcome"] == "failed"
-
-    # #1902 N6：结构化终态已钉；不足额说明词面非契约。
-
-def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
-    db, state, _content = game
-    state.metrics["国库"] = 5
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="拨银十两赈济",
-        target_kind="issue",
-        target_id="relief",
-        payload={
-            "account": "国库", "amount": 10,
-            "execution_surface": "immediate",
-        },
-    )
-
-    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     assert state.metrics["国库"] == 0
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
 
 
-@pytest.mark.parametrize(
-    "payload",
-    (
-        {
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief", "account": "国库",
-        },
-        {
-            "dossier_action_type": "assignment",
-            "assignee": "不存在的人",
-        },
-    ),
-)
+@pytest.mark.parametrize('payload', ({'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'relief', 'account': '国库'}, {'dossier_action_type': 'assignment', 'assignee': '不存在的人'}, {'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'account': '国库', 'amount': 10, 'execution_surface': 'immediate'}))
 def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
     game, payload,
 ):
     db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "不完整机械旨意", "手动新增", dossier_payload=payload,
-    )
-    # #654 路3：校验失败不抛穿；零行 + draft/rejection
+    directive_id = db.issues.add_directive(state.turn, state.year, state.period, None, '不完整机械旨意', '手动新增', dossier_payload=payload)    # #654 路3：校验失败不抛穿；零行 + draft/rejection
     db.ensure_dossiers_for_draft_directives(state)
-    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.dossiers.get_for_directive(directive_id) is None
     status = db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
     ).fetchone()["status"]
@@ -1195,21 +1085,244 @@ def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
     ).fetchone()["n"] >= 1
 
 
-def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
+def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
     db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "拨银十两但未指明去处", "手动新增",
-        dossier_payload={
+    order_id = _create_secret_order(db,
+        state, _active_minister(db), "安抚诸将", "每月拨银安抚诸将", [],
+        deadline_months=3,
+    )
+    dossier = db.dossiers.get_for_secret_order(order_id)
+    assert db.resolve_commitment_origin_ref(
+        state, f"secret_order:{order_id}", origin_kind="decree",
+    ) == f"dossier:{dossier['id']}"
+
+def test_military_directive_projects_normalized_due_turn_to_dossier(game):
+    db, state, _content = game
+    directive_id = db.issues.add_directive(state.turn, state.year, state.period, None, '命洪承畴四月内出师', '手动新增', dossier_payload={'dossier_action_type': 'military_order', 'target_kind': 'army', 'target_id': 'guanning', 'assignee': _active_minister(db), 'deadline_months': 4})
+
+    db.ensure_dossiers_for_draft_directives(state)
+
+    dossier = db.dossiers.get_for_directive(directive_id)
+    payload = json.loads(dossier["payload_json"])
+    assert payload["due_turn"] == state.turn + 4
+    assert dossier["due_turn"] == state.turn + 4
+
+
+
+def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="military_order", decree_text="三月后出师",
+        target_kind="region", target_id="shaanxi",
+        executor_kind="character", executor_id=_active_minister(db),
+        due_turn=state.turn + 3,
+        payload={
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single",
+        },
+    )
+    apply_dossier_verdicts(db,
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+    state.turn += 1
+    db.reign.save_game_state(state)
+    assert dossier_id in {
+        row["id"] for row in db.dossiers.list_for_simulation(state.turn)
+    }
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': '奉旨出师，军令已毕'}]}, SettlementContext(content=content))
+    assert view(result, "dossier_executions") == [{
+        "dossier_id": dossier_id, "outcome": "fulfilled",
+        "source_item": {"dossier_id": dossier_id, "outcome": "fulfilled", "note": "奉旨出师，军令已毕"},
+    }]
+    assert db.dossiers.get(dossier_id)["status"] == "closed"
+
+@pytest.mark.parametrize("origin_ref", (
+    "dossier:not-a-number", "dossier:1:extra", f"dossier:{2 ** 63}",
+))
+def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
+
+    db, state, content = game
+    before = state.metrics["国库"]
+    result = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': -9, 'category': '伪造案卷', 'origin_ref': origin_ref}]}, SettlementContext(content=content))
+
+    assert state.metrics["国库"] == before
+    assert view(result, "economy_moves") == []
+    refused = section(result, "economy_moves").rejected
+    assert len(refused) == 1
+    assert refused[0].category == "invalid_origin_ref"
+
+def test_withdrawn_rescript_records_closed_turn(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="暂缓河工",
+        target_kind="issue", target_id="river-works",
+    )
+    db.dossiers.record_dossier_decision(
+        dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
+    )
+    db.dossiers.record_dossier_decision(dossier_id, "withdrawn", reason="收回成命")
+    restored = GameDB(db.path, content=content)
+    try:
+        dossier = restored.dossiers.get(dossier_id)
+        assert dossier["status"] == "closed"
+        assert dossier["closed_turn"] == state.turn
+    finally:
+        restored.close()
+
+def test_secret_order_target_survives_restore_and_is_queryable(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    order_id = _create_secret_order(db,
+        state, _active_minister(db), "密查仓储", "核清仓储", [],
+    )
+    restored = GameDB(db.path, content=content)
+    try:
+        matches = restored.dossiers.list_dossiers(
+            target_kind="secret_order", target_id=order_id,
+        )
+        assert [row["secret_order_id"] for row in matches] == [order_id]
+    finally:
+        restored.close()
+
+def test_allocation_candidate_edit_preserves_mechanical_payload(game):
+    db, state, content = game
+    actor = _active_minister(db)
+    before = state.metrics["国库"]
+    candidate_id = db.stage_directive_candidate(
+        state.turn, actor, {
+            "text": "初稿拨帑", "actor": actor,
             "dossier_action_type": "grant_allocation",
-            "target_kind": "issue",
-            "account": "国库",
-            "amount": 10,
+            "target_kind": "account", "target_id": "国库",
+            "amount": 10, "account": "国库",
             "execution_surface": "immediate",
         },
     )
-    # #654 路3：缺 canonical target → rejection，不抛穿
+    db.update_directive_candidate(
+        candidate_id, {"text": "改稿拨帑赈济", "actor": actor},
+    )
+    db.commit_pending_actions(
+        state, content=content, action_ids=[candidate_id],
+    )
+    dossier = next(
+        row for row in db.dossiers.list_dossiers()
+        if row["pending_action_id"] == candidate_id
+    )
+    payload = json.loads(dossier["payload_json"])
+    assert payload["amount"] == 10
+    assert payload["account"] == "国库"
+    assert dossier["decree_text"] == "改稿拨帑赈济"
+    apply_dossier_verdicts(db,
+        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+    )
+    assert state.metrics["国库"] == before - 10
+
+def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="着查仓储",
+        target_kind="issue", target_id="granary-audit",
+        executor_kind="character",
+        executor_id=_active_minister(db),
+        payload={"immediate_terminal": True},
+    )
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+
+    with pytest.raises(ValueError):
+        db.dossiers.record_execution(
+            dossier_id, "fulfilled", "伪造直结", state.turn,
+        )
+    with pytest.raises(ValueError):
+        db.dossiers.transition(dossier_id, "closed")
+
+    db.dossiers.transition(dossier_id, "executing")
+    db.dossiers.record_execution(
+        dossier_id, "fulfilled", "真实执行完毕", state.turn,
+    )
+    assert db.dossiers.get(dossier_id)["status"] == "closed"
+
+@pytest.mark.parametrize(("balance", "expected_actual", "status", "outcome"), [
+    (20, -10, "executing", ""),
+    (4, -4, "closed", "failed"),
+    (0, 0, "closed", "failed"),
+])
+def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
+    game, balance, expected_actual, status, outcome,
+):
+    db, state, _content = game
+    state.metrics["内库"] = balance
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="内帑拨银押解赈济",
+        target_kind="issue", target_id="relief",
+        payload={
+            "account": "内库", "amount": 10,
+            "execution_surface": "in_transit",
+        },
+    )
+
+    assert state.metrics["内库"] == max(0, balance - 10)
+    assert [row["delta"] for row in db.reign.list_economy_moves_for_dossier(dossier_id)] == (
+        [] if expected_actual == 0 else [expected_actual]
+    )
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
+
+    dossier = db.dossiers.get(dossier_id)
+    assert dossier["status"] == status
+    assert dossier["execution_outcome"] == outcome
+    assert state.metrics["内库"] == max(0, balance - 10)
+    assert len(db.reign.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
+    if outcome != "failed":
+        assert status == "executing"
+        assert dossier_id in {
+            row["id"] for row in db.dossiers.list_for_simulation(state.turn)
+        }
+        db.dossiers.record_execution(
+            dossier_id, "fulfilled", "赈银押解到达", state.turn,
+        )
+        assert db.dossiers.get(dossier_id)["status"] == "closed"
+
+def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
+    db, state, content = game
+    character = next(
+        item for item in content.characters.values()
+        if item.aliases and db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=? AND status='active'",
+            (item.name,),
+        ).fetchone()
+    )
+    directive_id = db.issues.add_directive(state.turn, state.year, state.period, None, '密授权理财', 'player_decree', dossier_payload={'dossier_action_type': 'secret_authorization', 'target_kind': 'character', 'target_id': character.aliases[0], 'assignee': character.aliases[0], 'authorization_id': '理财', 'authorization_ids': ['伪授权']})
     db.ensure_dossiers_for_draft_directives(state)
-    assert db.get_dossier_for_directive(directive_id) is None
+    dossier = db.dossiers.get_for_directive(directive_id)
+    assert dossier is not None
+    assert dossier["target_id"] == character.name
+    apply_dossier_verdicts(db,
+        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    stored_payload = json.loads(dossier["payload_json"])
+    assert "authorization_id" not in stored_payload
+    assert "authorization_ids" not in stored_payload
+
+def test_secret_authorization_rejects_missing_assignee_without_grant(game):
+    db, state, content = game
+    actor = _active_minister(db)
+    payload = {
+        "dossier_action_type": "secret_authorization",
+        "target_kind": "character", "target_id": actor,
+        "assignee": actor, "authorization_id": "理财",
+    }
+    payload.pop("assignee")
+    directive_id = db.issues.add_directive(state.turn, state.year, state.period, None, '残缺密授权', 'player_decree', dossier_payload=payload)
+    # #654 路3：缺 assignee → rejection 保持 draft，不抛穿
+    db.ensure_dossiers_for_draft_directives(state)
+    assert db.dossiers.get_for_directive(directive_id) is None
     status = db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
     ).fetchone()["status"]
@@ -1221,39 +1334,147 @@ def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
         ("locality_fanout_failed", directive_id),
     ]
 
-
-def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
+def test_in_transit_allocation_requires_execution_verdict(game):
     db, state, _content = game
-    order_id = _create_secret_order(db,
-        state, _active_minister(db), "安抚诸将", "每月拨银安抚诸将", [],
-        deadline_months=3,
-    )
-    dossier = db.get_dossier_for_secret_order(order_id)
-    assert db.resolve_commitment_origin_ref(
-        state, f"secret_order:{order_id}", origin_kind="decree",
-    ) == f"dossier:{dossier['id']}"
-
-
-def test_military_directive_projects_normalized_due_turn_to_dossier(game):
-    db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "命洪承畴四月内出师", "手动新增",
-        dossier_payload={
-            "dossier_action_type": "military_order",
-            "target_kind": "army", "target_id": "guanning",
-            "assignee": _active_minister(db),
-            "deadline_months": 4,
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="拨银押解赴陕",
+        target_kind="region",
+        target_id="shaanxi",
+        payload={
+            "account": "国库", "amount": 10,
+            "execution_surface": "in_transit",
+            "locality_scope": "single",
+            "target_kind": "region",
+            "target_id": "shaanxi",
         },
     )
+    apply_dossier_verdicts(db,
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
+    with pytest.raises(ValueError):
+        db.dossiers.close(dossier_id)
+    db.dossiers.record_execution(
+        dossier_id, "fulfilled", "押解到陕", state.turn,
+    )
+    dossier = db.dossiers.get(dossier_id)
+    assert dossier["status"] == "closed"
+    assert dossier["execution_note"] == "押解到陕"
+    assert dossier["interruption_reason"] == ""
 
-    db.ensure_dossiers_for_draft_directives(state)
+@pytest.mark.parametrize("value", [True, 1.5, 2.9])
+def test_durable_allocation_rejects_non_integer_amount_without_downgrade(game, value):
+    db, state, _content = game
+    minister = _active_minister(db)
+    candidate_id = db.stage_directive_candidate(state.turn, minister, {
+        "text": "拨帑赈济。", "actor": minister,
+        "dossier_action_type": "grant_allocation",
+        "target_kind": "issue", "target_id": "invalid-allocation",
+        "amount": value, "account": "国库", "execution_surface": "immediate",
+    })
 
-    dossier = db.get_dossier_for_directive(directive_id)
-    payload = json.loads(dossier["payload_json"])
-    assert payload["due_turn"] == state.turn + 4
-    assert dossier["due_turn"] == state.turn + 4
+    db.commit_pending_actions(
+        state, kind_filter="directive", action_ids=[candidate_id],
+        directive_status="draft",
+    )
+
+    pending = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (candidate_id,)
+    ).fetchone()
+    assert pending["status"] == "failed"
+    assert not any(
+        row["pending_action_id"] == candidate_id for row in db.dossiers.list_dossiers()
+    )
+
+def test_durable_military_order_without_assignee_fails_loudly(game):
+    db, state, _content = game
+    minister = _active_minister(db)
+    candidate_id = db.stage_directive_candidate(state.turn, minister, {
+        "text": "三月内整军。", "actor": minister,
+        "dossier_action_type": "military_order",
+        "target_kind": "army", "target_id": "capital-army",
+        "deadline_months": 3, "assignee": "",
+    })
+
+    db.commit_pending_actions(
+        state, kind_filter="directive", action_ids=[candidate_id],
+        directive_status="draft",
+    )
+
+    pending = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (candidate_id,)
+    ).fetchone()
+    assert pending["status"] == "failed"
+    assert not any(
+        row["pending_action_id"] == candidate_id for row in db.dossiers.list_dossiers()
+    )
+
+def test_complete_rejection_verdict_is_restoreable_audit_record(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    verdict["gatekeeper_id"] = _active_minister(db)
+    verdict["criteria_snapshot"]["endorsement_entry_ids"] = [1]
+    apply_dossier_verdicts(db, state, [verdict])
+
+    restored = GameDB(db.path, content=content)
+    try:
+        row = restored.dossiers.decisions(dossier_id)[-1]
+        assert row["primary_opponents"] == verdict["primary_opponents"]
+        assert row["gatekeeper_id"] == verdict["gatekeeper_id"]
+        assert row["criteria_snapshot"] == verdict["criteria_snapshot"]
+        assert row["affected_parties"] == verdict["affected_parties"]
+        assert row["midzhi_unpromulgatable"] is False
+        assert restored.dossiers.get(dossier_id)["promulgation_reason"] == verdict["reason"]
+    finally:
+        restored.close()
+
+def test_rejection_verdict_defaults_omitted_midzhi_marker_to_false(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    assert "midzhi_unpromulgatable" not in verdict
+
+    apply_dossier_verdicts(db, state, [verdict])
+
+    row = db.dossiers.decisions(dossier_id)[-1]
+    assert row["midzhi_unpromulgatable"] is False
 
 
+@pytest.mark.parametrize("contamination", [
+    {"primary_opponents": [{"kind": "faction", "key": 1}]},
+    {"primary_opponents": [{"kind": "faction", "key": 1.5}]},
+    {"primary_opponents": [{"kind": "faction", "key": True}]},
+    {"resistance_scores": [99.5]},
+    {"resistance_detail": {"score": 99.5}},
+    {"resistance_detail": {"nested": [{"blocked": True}]}},
+])
+def test_rejection_contract_rejects_numeric_contamination_without_history(
+    game, contamination,
+):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    verdict.update(contamination)
+
+    with pytest.raises(ValueError):
+        apply_dossier_verdicts(db, state, [verdict])
+
+    assert db.dossiers.decisions(dossier_id) == []
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 def test_sequential_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
     import ming_sim.cli_backend as cli_backend
@@ -1298,447 +1519,3 @@ def test_sequential_draft_extraction_preserves_each_mechanical_payload(monkeypat
     assert results[1]["dossier_action_type"] == "military_order"
     assert results[1]["mode"] == "midzhi"
     assert str(results[1].get("execution_surface") or "").strip() == ""
-
-
-def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
-
-    db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="military_order", decree_text="三月后出师",
-        target_kind="region", target_id="shaanxi",
-        executor_kind="character", executor_id=_active_minister(db),
-        due_turn=state.turn + 3,
-        payload={
-            "target_kind": "region", "target_id": "shaanxi",
-            "locality_scope": "single",
-        },
-    )
-    apply_dossier_verdicts(db,
-        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
-    )
-    state.turn += 1
-    db.save_state(state)
-    assert dossier_id in {
-        row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
-    }
-    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': '奉旨出师，军令已毕'}]}, SettlementContext(content=content))
-    assert view(result, "dossier_executions") == [{
-        "dossier_id": dossier_id, "outcome": "fulfilled",
-        "source_item": {"dossier_id": dossier_id, "outcome": "fulfilled", "note": "奉旨出师，军令已毕"},
-    }]
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
-
-
-@pytest.mark.parametrize("origin_ref", (
-    "dossier:not-a-number", "dossier:1:extra", f"dossier:{2 ** 63}",
-))
-def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
-
-    db, state, content = game
-    before = state.metrics["国库"]
-    result = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': -9, 'category': '伪造案卷', 'origin_ref': origin_ref}]}, SettlementContext(content=content))
-
-    assert state.metrics["国库"] == before
-    assert view(result, "economy_moves") == []
-    refused = section(result, "economy_moves").rejected
-    assert len(refused) == 1
-    assert refused[0].category == "invalid_origin_ref"
-
-
-def test_withdrawn_rescript_records_closed_turn(game):
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="暂缓河工",
-        target_kind="issue", target_id="river-works",
-    )
-    db.record_dossier_decision(
-        dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
-    )
-    db.record_dossier_decision(dossier_id, "withdrawn", reason="收回成命")
-    restored = GameDB(db.path, content=content)
-    try:
-        dossier = restored.get_decree_dossier(dossier_id)
-        assert dossier["status"] == "closed"
-        assert dossier["closed_turn"] == state.turn
-    finally:
-        restored.close()
-
-
-def test_secret_order_target_survives_restore_and_is_queryable(game):
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    order_id = _create_secret_order(db,
-        state, _active_minister(db), "密查仓储", "核清仓储", [],
-    )
-    restored = GameDB(db.path, content=content)
-    try:
-        matches = restored.list_decree_dossiers(
-            target_kind="secret_order", target_id=order_id,
-        )
-        assert [row["secret_order_id"] for row in matches] == [order_id]
-    finally:
-        restored.close()
-
-
-def test_allocation_candidate_edit_preserves_mechanical_payload(game):
-    db, state, content = game
-    actor = _active_minister(db)
-    before = state.metrics["国库"]
-    candidate_id = db.stage_directive_candidate(
-        state.turn, actor, {
-            "text": "初稿拨帑", "actor": actor,
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "account", "target_id": "国库",
-            "amount": 10, "account": "国库",
-            "execution_surface": "immediate",
-        },
-    )
-    db.update_directive_candidate(
-        candidate_id, {"text": "改稿拨帑赈济", "actor": actor},
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[candidate_id],
-    )
-    dossier = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == candidate_id
-    )
-    payload = json.loads(dossier["payload_json"])
-    assert payload["amount"] == 10
-    assert payload["account"] == "国库"
-    assert dossier["decree_text"] == "改稿拨帑赈济"
-    apply_dossier_verdicts(db,
-        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-    )
-    assert state.metrics["国库"] == before - 10
-
-
-def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="assignment",
-        decree_text="着查仓储",
-        target_kind="issue", target_id="granary-audit",
-        executor_kind="character",
-        executor_id=_active_minister(db),
-        payload={"immediate_terminal": True},
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-
-    with pytest.raises(ValueError):
-        db.record_dossier_execution(
-            dossier_id, "fulfilled", "伪造直结", state.turn,
-        )
-    with pytest.raises(ValueError):
-        db.transition_decree_dossier(dossier_id, "closed")
-
-    db.transition_decree_dossier(dossier_id, "executing")
-    db.record_dossier_execution(
-        dossier_id, "fulfilled", "真实执行完毕", state.turn,
-    )
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
-
-
-@pytest.mark.parametrize(("balance", "expected_actual", "status", "outcome"), [
-    (20, -10, "executing", ""),
-    (4, -4, "closed", "failed"),
-    (0, 0, "closed", "failed"),
-])
-def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
-    game, balance, expected_actual, status, outcome,
-):
-    db, state, _content = game
-    state.metrics["内库"] = balance
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="内帑拨银押解赈济",
-        target_kind="issue", target_id="relief",
-        payload={
-            "account": "内库", "amount": 10,
-            "execution_surface": "in_transit",
-        },
-    )
-
-    assert state.metrics["内库"] == max(0, balance - 10)
-    assert [row["delta"] for row in db.list_economy_moves_for_dossier(dossier_id)] == (
-        [] if expected_actual == 0 else [expected_actual]
-    )
-    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-
-    dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["status"] == status
-    assert dossier["execution_outcome"] == outcome
-    assert state.metrics["内库"] == max(0, balance - 10)
-    assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
-    if outcome != "failed":
-        assert status == "executing"
-        assert dossier_id in {
-            row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
-        }
-        db.record_dossier_execution(
-            dossier_id, "fulfilled", "赈银押解到达", state.turn,
-        )
-        assert db.get_decree_dossier(dossier_id)["status"] == "closed"
-
-
-
-def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
-    db, state, content = game
-    character = next(
-        item for item in content.characters.values()
-        if item.aliases and db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=? AND status='active'",
-            (item.name,),
-        ).fetchone()
-    )
-    directive_id = db.add_directive(
-        state, None, "密授权理财", "player_decree",
-        dossier_payload={
-            "dossier_action_type": "secret_authorization",
-            "target_kind": "character", "target_id": character.aliases[0],
-            "assignee": character.aliases[0], "authorization_id": "理财",
-            "authorization_ids": ["伪授权"],
-        },
-    )
-    db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(directive_id)
-    assert dossier is not None
-    assert dossier["target_id"] == character.name
-    apply_dossier_verdicts(db,
-        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        content=content,
-    )
-    stored_payload = json.loads(dossier["payload_json"])
-    assert "authorization_id" not in stored_payload
-    assert "authorization_ids" not in stored_payload
-
-
-def test_secret_authorization_rejects_missing_assignee_without_grant(game):
-    db, state, content = game
-    actor = _active_minister(db)
-    payload = {
-        "dossier_action_type": "secret_authorization",
-        "target_kind": "character", "target_id": actor,
-        "assignee": actor, "authorization_id": "理财",
-    }
-    payload.pop("assignee")
-    directive_id = db.add_directive(
-        state, None, "残缺密授权", "player_decree", dossier_payload=payload,
-    )
-    # #654 路3：缺 assignee → rejection 保持 draft，不抛穿
-    db.ensure_dossiers_for_draft_directives(state)
-    assert db.get_dossier_for_directive(directive_id) is None
-    status = db.conn.execute(
-        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
-    ).fetchone()["status"]
-    assert status == "draft"
-    rows = db.conn.execute(
-        "SELECT category, item_json FROM rejection_reports WHERE section='directive_locality'",
-    ).fetchall()
-    assert [(r["category"], json.loads(r["item_json"])["directive_id"]) for r in rows] == [
-        ("locality_fanout_failed", directive_id),
-    ]
-
-
-def test_in_transit_allocation_requires_execution_verdict(game):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="拨银押解赴陕",
-        target_kind="region",
-        target_id="shaanxi",
-        payload={
-            "account": "国库", "amount": 10,
-            "execution_surface": "in_transit",
-            "locality_scope": "single",
-            "target_kind": "region",
-            "target_id": "shaanxi",
-        },
-    )
-    apply_dossier_verdicts(db,
-        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
-    )
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    with pytest.raises(ValueError):
-        db.close_decree_dossier(dossier_id)
-    db.record_dossier_execution(
-        dossier_id, "fulfilled", "押解到陕", state.turn,
-    )
-    dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["status"] == "closed"
-    assert dossier["execution_note"] == "押解到陕"
-    assert dossier["interruption_reason"] == ""
-
-
-@pytest.mark.parametrize("value", [True, 1.5, 2.9])
-def test_durable_allocation_rejects_non_integer_amount_without_downgrade(game, value):
-    db, state, _content = game
-    minister = _active_minister(db)
-    candidate_id = db.stage_directive_candidate(state.turn, minister, {
-        "text": "拨帑赈济。", "actor": minister,
-        "dossier_action_type": "grant_allocation",
-        "target_kind": "issue", "target_id": "invalid-allocation",
-        "amount": value, "account": "国库", "execution_surface": "immediate",
-    })
-
-    db.commit_pending_actions(
-        state, kind_filter="directive", action_ids=[candidate_id],
-        directive_status="draft",
-    )
-
-    pending = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (candidate_id,)
-    ).fetchone()
-    assert pending["status"] == "failed"
-    assert not any(
-        row["pending_action_id"] == candidate_id for row in db.list_decree_dossiers()
-    )
-
-
-def test_durable_military_order_without_assignee_fails_loudly(game):
-    db, state, _content = game
-    minister = _active_minister(db)
-    candidate_id = db.stage_directive_candidate(state.turn, minister, {
-        "text": "三月内整军。", "actor": minister,
-        "dossier_action_type": "military_order",
-        "target_kind": "army", "target_id": "capital-army",
-        "deadline_months": 3, "assignee": "",
-    })
-
-    db.commit_pending_actions(
-        state, kind_filter="directive", action_ids=[candidate_id],
-        directive_status="draft",
-    )
-
-    pending = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (candidate_id,)
-    ).fetchone()
-    assert pending["status"] == "failed"
-    assert not any(
-        row["pending_action_id"] == candidate_id for row in db.list_decree_dossiers()
-    )
-
-
-def test_complete_rejection_verdict_is_restoreable_audit_record(game):
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    verdict = _rejected_verdict(dossier_id)
-    verdict["gatekeeper_id"] = _active_minister(db)
-    verdict["criteria_snapshot"]["endorsement_entry_ids"] = [1]
-    apply_dossier_verdicts(db, state, [verdict])
-
-    restored = GameDB(db.path, content=content)
-    try:
-        row = restored.list_decree_dossier_decisions(dossier_id)[-1]
-        assert row["primary_opponents"] == verdict["primary_opponents"]
-        assert row["gatekeeper_id"] == verdict["gatekeeper_id"]
-        assert row["criteria_snapshot"] == verdict["criteria_snapshot"]
-        assert row["affected_parties"] == verdict["affected_parties"]
-        assert row["midzhi_unpromulgatable"] is False
-        assert restored.get_decree_dossier(dossier_id)["promulgation_reason"] == verdict["reason"]
-    finally:
-        restored.close()
-
-
-def test_rejection_verdict_defaults_omitted_midzhi_marker_to_false(game):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    verdict = _rejected_verdict(dossier_id)
-    assert "midzhi_unpromulgatable" not in verdict
-
-    apply_dossier_verdicts(db, state, [verdict])
-
-    row = db.list_decree_dossier_decisions(dossier_id)[-1]
-    assert row["midzhi_unpromulgatable"] is False
-
-
-@pytest.mark.parametrize("missing", [
-    "blocked_layer", "primary_opponents", "gatekeeper_id", "reason", "criteria_snapshot",
-])
-def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    verdict = _rejected_verdict(dossier_id)
-    verdict.pop(missing)
-    with pytest.raises(ValueError):
-        apply_dossier_verdicts(db, state, [verdict])
-
-
-@pytest.mark.parametrize(("field", "bad_value"), [
-    ("primary_opponents", [{"kind": "faction", "key": "not-a-real-faction"}]),
-    ("primary_opponents", [{"kind": "class", "key": "士绅"}]),
-    ("primary_opponents", [{"kind": "faction", "key": "东林", "score": 1}]),
-    ("gatekeeper_id", "not-a-real-character"),
-])
-def test_rejection_runtime_contract_rejects_unknown_references(game, field, bad_value):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    verdict = _rejected_verdict(dossier_id)
-    verdict[field] = bad_value
-    with pytest.raises(ValueError):
-        apply_dossier_verdicts(db, state, [verdict])
-
-
-@pytest.mark.parametrize(("field", "bad_value"), [
-    ("imperial_authority_band", "low"),
-    ("appointment_tenure", "临时"),
-    ("authorization_ids", [{}]),
-    ("endorsement_entry_ids", [True]),
-    ("endorsement_entry_ids", ["1"]),
-])
-def test_rejection_snapshot_rejects_malformed_typed_values(game, field, bad_value):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    verdict = _rejected_verdict(dossier_id)
-    verdict["criteria_snapshot"][field] = bad_value
-    with pytest.raises(ValueError):
-        apply_dossier_verdicts(db, state, [verdict])
-
-
-@pytest.mark.parametrize("contamination", [
-    {"primary_opponents": [{"kind": "faction", "key": 1}]},
-    {"primary_opponents": [{"kind": "faction", "key": 1.5}]},
-    {"primary_opponents": [{"kind": "faction", "key": True}]},
-    {"resistance_scores": [99.5]},
-    {"resistance_detail": {"score": 99.5}},
-    {"resistance_detail": {"nested": [{"blocked": True}]}},
-])
-def test_rejection_contract_rejects_numeric_contamination_without_history(
-    game, contamination,
-):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    verdict = _rejected_verdict(dossier_id)
-    verdict.update(contamination)
-
-    with pytest.raises(ValueError):
-        apply_dossier_verdicts(db, state, [verdict])
-
-    assert db.list_decree_dossier_decisions(dossier_id) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"

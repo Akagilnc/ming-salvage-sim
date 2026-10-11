@@ -1,6 +1,6 @@
+from __future__ import annotations
 """玩家月链 pre_settle 行为测试。"""
 
-from __future__ import annotations
 
 from ming_sim.decree import pre_settle
 from ming_sim.models import Event

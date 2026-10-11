@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1896：目标遮掩因子（ADR 0108 阴谋能力）交付与消费。
 
 陛下 2026-10-01 选了问卷第二项「这次就补上」（第一项是「先不做，票面写明
@@ -11,7 +12,6 @@ per-character `characters.intrigue` 列及其 seed 数据件，并把它接进 0
   且**不是**代理轴（identity / 自由类目 / 关系网计数皆不动难度）；
 """
 
-from __future__ import annotations
 
 
 # ---------------------------------------------------------------- 人物账本接缝
