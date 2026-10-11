@@ -14,7 +14,7 @@ import pytest
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
-from ming_sim.exceptions import LLMUnavailable
+from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
 from tests.rescript_test_helpers import sql_rescript_draft
@@ -387,7 +387,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         llm_calls.append(1)
         if fail_once["armed"]:
             fail_once["armed"] = False
-            raise RuntimeError("模型调用耗尽")
+            raise LLMUnavailable("模型调用耗尽")
         return "加赈落实，仓廪出十万。"
 
     real_dispatch = month_translate.dispatch_declaration
@@ -419,12 +419,10 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         "hint": choice.get("hint") or "",
     }]
 
-    try:
+    with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-        raised = None
-    except RuntimeError as exc:
-        raised = exc
-    assert isinstance(raised, RuntimeError)
+    assert isinstance(blocked.value.__cause__, LLMUnavailable)
+    assert blocked.value.error_pack_path
     assert db.staged_declarations.questions_for(ref), (
         "续推失败后 questions 已清，恢复将无法再续推"
     )
@@ -522,12 +520,10 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     desk_row = session.pending_decisions()[0]
     payload = _hitl_payload(desk_row)
 
-    try:
+    with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-        raised = None
-    except LLMUnavailable as exc:
-        raised = exc
-    assert raised is not None
+    assert isinstance(blocked.value.__cause__, LLMUnavailable)
+    assert blocked.value.error_pack_path
     assert db.staged_declarations.questions_for(ref)
     assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
 
@@ -562,12 +558,10 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     desk_row = session.pending_decisions()[0]
     payload = _hitl_payload(desk_row)
 
-    try:
+    with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-        raised = None
-    except LLMUnavailable as exc:
-        raised = exc
-    assert raised is not None
+    assert isinstance(blocked.value.__cause__, LLMUnavailable)
+    assert blocked.value.error_pack_path
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_continued") is not True
     assert chain.get("world_questions")

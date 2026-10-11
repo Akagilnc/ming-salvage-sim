@@ -109,7 +109,7 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 
 ## 决定 11：旧 key 退场
 
-**总则（2026-06-11 拍）：旧有/上游机制能用不是坏事，但若成为改进的绊脚石，果断踢开——不为将就吞技术债。** alias 的存在理由只有「重放正确性」（ADR 0008 ready=1 重试真源 + 历史 delta 文件），不是对旧 key 的敬意；哪天碍事，一次性迁移脚本洗旧数据 + 删 alias，不背永久房租。新管线设计永远不为旧 key 语义弯腰。
+**总则（2026-06-11 拍）：旧有/上游机制能用不是坏事，但若成为改进的绊脚石，果断踢开——不为将就吞技术债。** 本节旧 alias 规则已退役，现行字段规范化见本 ADR「后出注记（#1843 reopen，2026-09-28）」及 [DELTA_SCHEMA](../DELTA_SCHEMA.md)。
 
 - **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active：月末路径历史行为即逐项拒收（issues.py:1332），结案路径历史行为为响亮中止（issues.py:694）；两者均从未把 active 落为真实迁移，译为拒收不改写已落库历史（结案通道由中止改逐项拒收=C2 拒收语义的有意收编）；同理，**月末 delta 通道的项打 `legacy_gate` 标记**（通道知识在翻译调用点——翻月末 delta 还是结案效果由调用方天然知道，无需 C2 ApplyContext 扩展），**闸门在条目执行位求值**：执行彼刻**目标人物的当前 status**≠active → 拒收（legacy 注记），逐项复刻旧管线 mid-sequence 语义（issues.py:1352；注意区分——这里校验的是人物彼刻状态，不是 payload 里的迁往 status）；**结案效果通道不打此标记**——旧结案路径（issues.py:694）历史上无此闸，「下狱→赐死」类迁移在彼处合法落库过，加闸反而改写历史；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
 - **四旧 key 译项按旧管线执行序拼入数组**：appointments(后宫→册封) → character_status_changes → character_power_changes → office_changes → **appointments 朝臣 spillover 译项（任命/调任）殿后**——复刻旧管线 `office_change_items = 本体 + spillover` 的实际执行位（issues.py:1292 收集、:1391 殿后执行），同 delta 多 key 触及同一人时末态与旧管线一致。
@@ -165,4 +165,4 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 
 ## 后出注记（#1843 reopen，2026-09-28）
 
-原以「ready=1 重试真源 + 历史 delta 文件」为别名表存在理由的条款：#1843 已删 `TOP_LEVEL_ALIASES` / 五模块 extractor 别名与 `turn_extractions`；条目字段规范化（`ITEM_FIELD_ALIASES` / `_canonical_item_fields`）与 C0 声明形状（`EMPTY_EXTRACTION`）保留。ready=1 整套归 #1846。
+原以「ready=1 重试真源 + 历史 delta 文件」为别名表存在理由的条款：#1843 已删 `TOP_LEVEL_ALIASES` / 五模块 extractor 别名与 `turn_extractions`；条目字段规范化（`ITEM_FIELD_ALIASES` / `_canonical_item_fields`）与 C0 声明形状（`EMPTY_EXTRACTION`）保留。ready=1 整套已由 [#1846](https://github.com/Akagilnc/ming-salvage-sim/issues/1846) 退役。

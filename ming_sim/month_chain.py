@@ -1,7 +1,6 @@
 """ADR 0157 玩家过月主链：步骤 1–3，以及步骤 4–6 的继续条件。
 
-#1846：模型调用用尽 / 代码异常停在当前过月 run，恢复真源 = 暂存声明 + 落账
-状态 + 本链 call_failure；玩家重试只续未完成步，转译逃生口由同一颗重试触发。
+#1846: existing monthly progress and saved night directives are the recovery sources.
 
 #1847：步骤 4 请旨/打回三选统一收口既有 HITL 案头；答复后从问处续推再交步骤 5。
 批红文书页呈现归 #1826。#1862：批红与全部效果落定后，邸报作者一次写出标题和正文，
@@ -19,7 +18,6 @@ from typing import Any, Dict, List, Mapping, Optional
 from ming_sim.applier import Provenance, atomic
 
 _CHAIN_KEY = "month_chain"
-_TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate"})
 _WORLD_QUESTION_PREFIX = "world-question:"
 _DECREE_QUESTION_PREFIX = "decree-question:"
 
@@ -506,14 +504,17 @@ def run_player_month_chain(
         abort_from(exc)
     # #1845：下次过月前 join／重开续接上月机械尾。尾异常不改写成月链 call_failure。
     ensure_mechanical_tails(_session_owner(db, state, llm_config, agno_db, content))
-    # 请旨续推的原故障原样上浮：问与 world_continued 都未消费，批红入口重试看见同一颗异常。
-    _consume_rescript_answers(
-        SimpleNamespace(
-            db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
-        ),
-        chain, source=source,
-    )
     try:
+        _guard_month_call(
+            db, state, chain, decree_text=decree_text, source=source,
+            step="rescript_continue",
+            operation=lambda: _consume_rescript_answers(
+                SimpleNamespace(
+                    db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
+                ),
+                chain, source=source,
+            ),
+        )
         return _run_loaded_month_chain(
             state, db, agno_db, llm_config, chain,
             decree_text=decree_text, content=content,
@@ -626,7 +627,7 @@ def _run_opening_levy(
 def _consume_call_failure_for_retry(
     db: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
 ) -> None:
-    """玩家点「重试」再入主链：按需丢段，然后清失败标记，只续未完成步。"""
+    """清失败标记，保留已存产物与落账进度。"""
     from ming_sim.db import GameDB
 
     failure = GameDB.optional_object(
@@ -635,9 +636,6 @@ def _consume_call_failure_for_retry(
     if failure is None:
         return
     step = str(failure.get("step") or "")
-    if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
-        _discard_segment_for_escape(chain, failure)
-        chain["translate_exhaust_stops"] = 0
     if step == "secret_orders_supply":
         # 0058 缺报或 0073 执行态校验失败的产物作废并重起供料；其它中断保留产物。
         if chain.get("secret_orders_supply_invalid"):
@@ -649,17 +647,6 @@ def _consume_call_failure_for_retry(
             chain.pop("covert_progress_done", None)
     chain.pop("call_failure", None)
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
-
-
-def _discard_segment_for_escape(
-    chain: Dict[str, Any], failure: Dict[str, Any],
-) -> None:
-    """完整段文转译反复用尽后的逃生口：丢未落段文，已落账不动。"""
-    step = str(failure.get("step") or "")
-    if step == "world_translate":
-        chain.pop("world_text", None)
-        chain["world_text_ready"] = False
-        chain.pop("world_questions", None)
 
 
 def _abort_month_call(
@@ -675,7 +662,7 @@ def _abort_month_call(
     decree_ref: str = "",
 ) -> None:
     """停住当前过月 run：持久化相位内 call_failure + 错误包，再 SettlementAbort。"""
-    from ming_sim.error_pack import settlement_abort_message, write_error_pack
+    from ming_sim.error_pack import write_error_pack
     from ming_sim.exceptions import SettlementAbort
 
     turn = int(state.turn)
@@ -685,17 +672,12 @@ def _abort_month_call(
         from ming_sim.decree import reload_state_from_db
         reload_state_from_db(db, state, content=db.content)
     committed = _load_chain(db, turn)
-    escape_armed = False
-    if kind == "model_exhausted" and step in _TRANSLATE_ESCAPE_STEPS:
-        stops = int(committed.get("translate_exhaust_stops") or 0) + 1
-        committed["translate_exhaust_stops"] = stops
-        escape_armed = stops >= 2
     original = str(getattr(exc, "message", None) or exc)
     pack_path = ""
     pack_exc: Optional[BaseException] = None
     try:
         pack_path = write_error_pack(
-            db, state, exc=exc, extracted=None, resolve_ctx=None,
+            db, state, exc=exc,
         )
     except Exception as caught_pack:
         # 写包失败不得顶替原故障，也不得挡住已提交相位上的失败标记。
@@ -704,7 +686,6 @@ def _abort_month_call(
         "kind": kind,
         "step": step,
         "message": original,
-        "escape_armed": escape_armed,
     }
     if pack_path:
         failure["error_pack_path"] = pack_path
@@ -718,11 +699,8 @@ def _abort_month_call(
         raise SettlementAbort(
             original, turn=turn, stage=step, error_pack_path=None,
         ) from pack_exc
-    abort_message = (
-        settlement_abort_message(pack_path) if kind == "code_exception" else original
-    )
     raise SettlementAbort(
-        abort_message,
+        original,
         turn=turn,
         stage=step,
         error_pack_path=pack_path,
@@ -977,7 +955,6 @@ def _run_world_segment(
             persisted["declaration_outcome"] = outcome
         _collect_disclosures_from_result(persisted, result)
         persisted["world_committed"] = True
-        persisted.pop("translate_exhaust_stops", None)
         _save_chain(db, turn, persisted, source=source)
 
     def adopt_committed() -> None:

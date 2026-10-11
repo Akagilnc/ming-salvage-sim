@@ -11451,7 +11451,7 @@ class GameDB:
         if str(payload.get("target_kind") or row.get("target_kind") or "") != "army" or not target_id:
             raise ValueError("拨饷案卷须指定 target_kind=army 与 target_id")
         origin_ref = f"dossier:{int(dossier_id)}"
-        # 幂等：同案已有补饷流水则不二扣（ready 重放 / 重复 settle 护栏）。
+        # 幂等：同案已有补饷流水则不二扣。
         existing = [
             m for m in self.list_economy_moves_for_dossier(int(dossier_id))
             if str(m.get("purpose") or "") == "补饷"
@@ -17190,7 +17190,7 @@ class GameDB:
                 code_fault = exc
             # atomic 已回滚；错误包须在事务外写（write_error_pack 约束）
             pack_path = write_error_pack(
-                self, state, exc=code_fault, extracted=None, resolve_ctx=None,
+                self, state, exc=code_fault,
             )
             raise SettlementAbort(
                 settlement_abort_message(pack_path),

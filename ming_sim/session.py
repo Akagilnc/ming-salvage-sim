@@ -1391,8 +1391,7 @@ class GameSession:
         return state.turn_phase in FRONT_HALF_DONE_PHASES
 
     def _refuse_if_settling(self) -> None:
-        """FRONT_HALF_DONE 冻结诏稿变更：恢复窗口新增/确认的 draft 会被 settle 的
-        mark_directives_issued 连带标 issued，而重放 delta 不含它们=幽灵颁布（ship-pre r1）。"""
+        """Freeze decree changes once the month's front half has committed."""
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
             raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
 
@@ -1521,7 +1520,6 @@ class GameSession:
                 # 已持久载荷损坏：系统故障，不得跳过进补交空 carry（#1897 E1）。
                 pack_path = write_error_pack(
                     self.db, self.state, exc=durable_exc,
-                    extracted=None, resolve_ctx=None,
                 )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
@@ -1595,7 +1593,7 @@ class GameSession:
                     }
                     continue
                 pack_path = write_error_pack(
-                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                    self.db, self.state, exc=exc,
                 )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
@@ -1624,7 +1622,6 @@ class GameSession:
                     continue
                 pack_path = write_error_pack(
                     self.db, self.state, exc=write_exc,
-                    extracted=None, resolve_ctx=None,
                 )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
@@ -1664,6 +1661,14 @@ class GameSession:
         # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
         write_queue = get_session_write_queue(self)
         def _drain_catch_up_and_continue() -> None:
+            from ming_sim.decree_forecast import failed_decree_forecast
+            forecast_failure = failed_decree_forecast(self)
+            if forecast_failure is not None:
+                raise SettlementAbort(
+                    str(forecast_failure["message"]), turn=int(self.state.turn),
+                    stage=str(forecast_failure["step"]),
+                    error_pack_path=forecast_failure.get("error_pack_path"),
+                )
             # 票的完成只表示本次 worker 已终止，不代表机械尾已终结。
             # 屏障等完票后复查持久状态；非耗尽异常留下 pending 时不能过月。
             from ming_sim.mechanical_tail import _pending_mechanical_tails
@@ -1686,7 +1691,6 @@ class GameSession:
                     except RuntimeError as pending_exc:
                         pack_path = write_error_pack(
                             self.db, self.state, exc=pending_exc,
-                            extracted=None, resolve_ctx=None,
                         )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
@@ -1708,7 +1712,7 @@ class GameSession:
                     f"召对转译重试耗尽，待补 {len(still_pending)} 轮"
                 )
                 pack_path = write_error_pack(
-                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                    self.db, self.state, exc=exc,
                 )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
@@ -2030,8 +2034,10 @@ class GameSession:
                 "army_targets": army_targets,
             }
             from ming_sim.agents import run_agent_text
+            from ming_sim.llm_transport import audience_transport_policy
             raw = run_agent_text(
                 agent, json.dumps(payload, ensure_ascii=False), tag="rescript-revise",
+                transport_policy=audience_transport_policy(),
             )
             data = _parse_rescript_json_strict(raw)
             if not isinstance(data, dict) or "items" in data:
@@ -2083,7 +2089,11 @@ class GameSession:
                 f"关系账切片：{json.dumps(relation_slice, ensure_ascii=False)}\n"
                 f"派系态势：{json.dumps(faction_rows, ensure_ascii=False)}"
             )
-            raw = run_agent_text(agent, prompt, tag="rescript-deliberate")
+            from ming_sim.llm_transport import audience_transport_policy
+            raw = run_agent_text(
+                agent, prompt, tag="rescript-deliberate",
+                transport_policy=audience_transport_policy(),
+            )
             obj = _parse_rescript_json_strict(str(raw or ""))
             if not isinstance(obj, dict):
                 raise ValueError("deliberate LLM 意愿须为 object")
@@ -2164,9 +2174,7 @@ class GameSession:
         self, phase1_state: Dict[str, object],
     ) -> Dict[str, object]:
         """#1838 reopen：召见无旁白 Future 可等；原样透传 phase1 summons。"""
-        if phase1_state.get("ready_replay"):
-            return {"joined": [], "ready_replay": True}
-        return {"joined": list(phase1_state.get("summons") or []), "ready_replay": False}
+        return {"joined": list(phase1_state.get("summons") or [])}
 
     def finish_rescript_phase2(
         self,
@@ -2179,34 +2187,33 @@ class GameSession:
 
         #1838 reopen：已消费 ≔ origin_ref + TAG_ENTER；不再读取旁白正文。
         """
-        if not phase1_state.get("ready_replay"):
-            from ming_sim.audience_night import rescript_summon_origin_consumed
-            unconsumed: List[str] = []
-            seen_origins: set[str] = set()
-            for item in join_state.get("joined") or []:
-                origin = str(item.get("origin_ref") or "")
-                if origin:
-                    seen_origins.add(origin)
-                row = self.db.conn.execute(
-                    "SELECT tags FROM story_ledger_entries WHERE origin_ref = ?",
-                    (origin,),
-                ).fetchone()
-                entry = {"tags": str(row["tags"] or "[]")} if row is not None else None
-                if not rescript_summon_origin_consumed(entry):
-                    unconsumed.append(
-                        f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
-                    )
-            for fact in self._iter_unconsumed_decided_summons():
-                origin = str(fact.get("origin_ref") or "")
-                if origin in seen_origins:
-                    continue
+        from ming_sim.audience_night import rescript_summon_origin_consumed
+        unconsumed: List[str] = []
+        seen_origins: set[str] = set()
+        for item in join_state.get("joined") or []:
+            origin = str(item.get("origin_ref") or "")
+            if origin:
+                seen_origins.add(origin)
+            row = self.db.conn.execute(
+                "SELECT tags FROM story_ledger_entries WHERE origin_ref = ?",
+                (origin,),
+            ).fetchone()
+            entry = {"tags": str(row["tags"] or "[]")} if row is not None else None
+            if not rescript_summon_origin_consumed(entry):
                 unconsumed.append(
-                    f"{fact.get('decision_key')}:{fact.get('target') or ''}:{origin}"
+                    f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
                 )
-            if unconsumed:
-                raise ValueError(
-                    "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
-                )
+        for fact in self._iter_unconsumed_decided_summons():
+            origin = str(fact.get("origin_ref") or "")
+            if origin in seen_origins:
+                continue
+            unconsumed.append(
+                f"{fact.get('decision_key')}:{fact.get('target') or ''}:{origin}"
+            )
+        if unconsumed:
+            raise ValueError(
+                "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
+            )
 
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)

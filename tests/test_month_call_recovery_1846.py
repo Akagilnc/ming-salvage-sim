@@ -1,4 +1,4 @@
-"""#1846：过月模型调用统一重试、停住、逃生口与恢复真源（ADR 0157）。
+"""#1846：过月模型调用统一重试、停住与恢复真源（ADR 0157）。
 
 接缝：audience_transport_policy + run_with_transport；run_player_month_chain /
 resolve_turn 停住与续跑；state_payload.settlement_recovery 投影。
@@ -286,21 +286,21 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
 
-    with pytest.raises(SettlementAbort):
-        session.resolve_turn(allow_empty_decree=True)
+    for _ in range(3):
+        with pytest.raises(SettlementAbort):
+            session.resolve_turn(allow_empty_decree=True)
+        session.state = state = db.load_state()
 
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
-    # world() mock return "世界段已成文。" → month_chain.world_text 原样暂存
-    assert chain.get("world_text") == "世界段已成文。"
     assert chain.get("world_text_ready") is True
     assert not chain.get("world_committed")
     assert db.staged_declarations.is_settled(ref)
     rows_after_fail = _ningyuan_ledger_rows(db)
     assert len(rows_after_fail) == 1 and int(rows_after_fail[0]["delta"]) == -5
     assert world_calls == [1]
-    assert translate_calls == ["fail"]
+    assert translate_calls == ["fail"] * 3
 
     def translate_ok(*_a, **_k):
         translate_calls.append("ok")
@@ -316,83 +316,9 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     result = session.advance_without_decree()
     assert result.advanced is True
     assert world_calls == [1]
-    assert translate_calls == ["fail", "ok"]
+    assert translate_calls == ["fail"] * 3 + ["ok"]
     assert len(_ningyuan_ledger_rows(db)) == 1
     assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -5
-
-
-def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
-    game, monkeypatch, tmp_path,
-):
-    """转译再点重试仍用尽 → 继续停；再点同一钮才丢段重推，已落不动。"""
-    import ming_sim.month_chain as month_chain
-    import ming_sim.month_translate as month_translate
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    minister = next(iter(content.characters.values())).name
-    state.metrics["国库"] = 400_000
-    db.save_state(state)
-    ref = _stage_settled_ready_edict(db, state, minister, delta=-2)
-    turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
-
-    world_texts = ["第一段文", "逃生口重推段文"]
-    world_calls = {"n": 0}
-
-    def world(*_a, **_k):
-        text = world_texts[min(world_calls["n"], len(world_texts) - 1)]
-        world_calls["n"] += 1
-        return text
-
-    translate_results = [
-        LLMUnavailable("t1", code="llm_timeout"),
-        LLMUnavailable("t2", code="llm_timeout"),
-        {"effects": {}},
-    ]
-    translate_calls = {"n": 0}
-
-    def translate(*_a, **_k):
-        item = translate_results[translate_calls["n"]]
-        translate_calls["n"] += 1
-        if isinstance(item, Exception):
-            raise item
-        return item
-
-    monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    session = make_light_session(db, state, content)
-    session.llm_config = SimpleNamespace(model="m", advanced_model="m")
-
-    with pytest.raises(SettlementAbort):
-        session.resolve_turn(allow_empty_decree=True)
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
-        "month_chain", {},
-    )
-    assert chain.get("world_text") == "第一段文"
-    assert (chain.get("call_failure") or {}).get("escape_armed") is False
-    assert len(_ningyuan_ledger_rows(db)) == 1
-
-    # 第一次玩家重试：仍只续转译，不丢段；再次用尽后武装逃生口
-    with pytest.raises(SettlementAbort):
-        session.resolve_turn(allow_empty_decree=True)
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
-        "month_chain", {},
-    )
-    assert chain.get("world_text") == "第一段文"
-    assert world_calls["n"] == 1
-    assert (chain.get("call_failure") or {}).get("escape_armed") is True
-    assert len(_ningyuan_ledger_rows(db)) == 1
-
-    # 第二次玩家重试：丢段重推
-    db.save_turn_report(state, "邸报已成")
-    result = session.resolve_turn(allow_empty_decree=True)
-    assert result.advanced is True
-    assert world_calls["n"] == 2
-    assert translate_calls["n"] == 3
-    assert db.staged_declarations.is_settled(ref)
-    assert len(_ningyuan_ledger_rows(db)) == 1
-    assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -2
 
 
 def test_settlement_recovery_projects_month_call_failure(
@@ -457,7 +383,6 @@ def test_settlement_recovery_projects_month_call_failure(
     )
     failure_again = chain_again.get("call_failure") or {}
     assert failure_again.get("kind") == "model_exhausted"
-    assert failure_again.get("escape_armed") is False
     web_game.session.close()
 
 
