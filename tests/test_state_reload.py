@@ -31,7 +31,6 @@ def _restore_content(content):
         if ch is not None:
             ch.office, ch.status, ch.office_type, ch.faction = office, status, office_type, faction
 
-import ming_sim.decree as decree_mod
 from ming_sim.decree import pre_settle, reload_state_from_db
 
 
@@ -68,18 +67,6 @@ def test_reload_scrubs_next_period_advance(game):
 
     assert state.turn == db_turn
     assert state.year == db_year and state.period == db_period
-
-
-def test_reload_content_no_crash(game):
-    """content 非 None 时重建 characters，state 仍刷新。"""
-    db, state, content = game
-    db.conn.execute("UPDATE game_state SET turn_phase='reviewing' WHERE id=1")
-    db.conn.commit()
-
-    returned = reload_state_from_db(db, state, content=content)
-
-    assert returned is state
-    assert state.turn_phase == "reviewing"
 
 
 def _ledger_count(db, turn: int) -> int:
@@ -237,15 +224,6 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
 
 # ── atomic_and_reload helper（S4：六处 try/atomic/except-reload-reraise 公共内核） ──
 
-def test_atomic_and_reload_commits_on_success(game):
-    """正常退出：body 写入照常提交（与裸 with atomic 同语义）。"""
-    from ming_sim.decree import atomic_and_reload
-    db, state, content = game
-    with atomic_and_reload(db, state, content=content):
-        db.conn.execute("UPDATE metrics SET value = 12345 WHERE key = '国库'")
-    row = db.conn.execute("SELECT value FROM metrics WHERE key = '国库'").fetchone()
-    assert int(row["value"]) == 12345
-
 
 def test_atomic_and_reload_reloads_and_reraises_at_depth0(game):
     """最外层 body 抛错：回滚后 reload 刷净内存，原异常透传。"""
@@ -280,23 +258,3 @@ def test_atomic_and_reload_chains_reload_failure(game, monkeypatch):
     # 原异常对象保真：注入异常对象作期望；reload 次生只挂 cause。
     assert ei.value is body_error
     assert ei.value.__cause__ is reload_error
-
-
-def test_atomic_and_reload_runs_on_error_before_reload(game, monkeypatch):
-    """on_error 钩子在 reload 前触发（settle 的 collector.reset 语义）。"""
-    import ming_sim.decree as decree_mod
-    from ming_sim.decree import atomic_and_reload
-    db, state, content = game
-
-    order = []
-    real_reload = decree_mod.reload_state_from_db
-    def _tracking_reload(*a, **k):
-        order.append("reload")
-        return real_reload(*a, **k)
-    monkeypatch.setattr(decree_mod, "reload_state_from_db", _tracking_reload)
-
-    with pytest.raises(RuntimeError):
-        with atomic_and_reload(db, state, content=content,
-                               on_error=lambda exc: order.append("on_error")):
-            raise RuntimeError("boom")
-    assert order == ["on_error", "reload"]

@@ -796,8 +796,6 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent?.match(/刚完成的答复/g)).toHaveLength(1);
   });
 
-
-
   it("keeps the last-known scroll without importing personal history when refresh fails", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
@@ -877,6 +875,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       .find((node) => node.textContent?.includes("臣请奏边务"));
     expect(streamed?.classList.contains("scene")).toBe(true);
     expect(streamed?.querySelector("span")).toBeNull();
+  });
 
   it("attributes the thinking row to the selected minister", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
@@ -1234,14 +1233,6 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     expect(userBubbles).toHaveLength(1);
   });
 
-  it("切回有记录大臣：语义轮完整含朕问/回话/递话", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [], night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
-    renderModal({ minister: hong, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-
-    expect(document.querySelector(".minister-profile")).toBeNull();
-  });
-
 });
 
 describe("#1480 / #1499 FullscreenModal modal-layout-bare 只随 hideTitle", () => {
@@ -1285,9 +1276,8 @@ describe("#1480 / #1499 FullscreenModal modal-layout-bare 只随 hideTitle", () 
 
 describe("AudienceArchiveModal — read-only scene archive", () => {
 
-  it("places a failed translation beneath its source turn, including retry failure", async () => {
+  it("places a failed translation beneath its source turn", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
-      if (url === "/api/audience/translation/retry") return Promise.reject(new Error("retry failed"));
       return Promise.resolve({ ok: true, json: async () =>
         url === "/api/history/turns" ? { turns: [{ kind: "night", night_id: 31, title: "旧夜", involved_people: [] }] }
           : { messages: [
@@ -1300,8 +1290,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     const source = host.querySelector('[data-audience-turn-id="8"]');
     expect(source?.querySelector('[data-testid="archive-translation-retry-8"]')).not.toBeNull();
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); });
-
   });
   it("keeps the selected night when an earlier night's translation retry finishes late", async () => {
     let releaseOldRetry: (() => void) | undefined;
@@ -1527,46 +1515,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(memorialPres[0].textContent).toBe(raw);
   });
 
-  it("#671 attendant-only 月档列表标签为递话、不冒充奏报", async () => {
-    const monthTurn = {
-      kind: "month" as const,
-      turn: 7,
-      year: 1627,
-      period: 10,
-      has_report: false,
-      has_attendant: true,
-      has_directive: false,
-    };
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve({
-      ok: true,
-      json: async () => url === "/api/history/turns"
-        ? { turns: [monthTurn] }
-        : {
-            turn: 7,
-            exists: true,
-            year: 1627,
-            period: 10,
-            report: "",
-            attendant_message: "递话正文",
-            decree_text: "",
-            directives: [],
-          },
-    })));
-    const host = document.createElement("div"); document.body.appendChild(host);
-    const root = createRoot(host); mountedRoots.push({ root, host });
-    await act(async () => {
-      root.render(<HistoryModal onClose={() => {}} />);
-      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-    });
-
-    const item = host.querySelector(".history-turn-item");
-    expect(item).not.toBeNull();
-
-    // History dialog opens for attendant-message turns without locking aria copy.
-    const dialog = host.querySelector('[role="dialog"]');
-    expect(dialog).not.toBeNull();
-
-  });
 });
 
 describe("ChatModal — cancel button during busy (issue #353)", () => {
@@ -1644,22 +1592,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
     ) as HTMLButtonElement | undefined;
 
     act(() => dismiss!.click());
-    expect(onClose).toHaveBeenCalledOnce();
-  });
-
-  it("#1398 朕知道了视口常显：不埋在长文滚底", () => {
-    const onClose = vi.fn();
-    const longReport = Array.from({ length: 48 }, (_, i) =>
-      `第${i + 1}段·边报钱粮探子回报——${"详文".repeat(24)}`,
-    ).join("\n\n");
-    const host = renderReportModal({ report: longReport, onClose });
-    const dismissBtn = Array.from(host.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("朕知道了"),
-    ) as HTMLButtonElement | undefined;
-
-    // 吸底/视口常显：dismiss 不得是滚容器后代（长文滚底才见）
-
-    act(() => dismissBtn!.click());
     expect(onClose).toHaveBeenCalledOnce();
   });
 

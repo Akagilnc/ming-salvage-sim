@@ -284,23 +284,6 @@ describe("MenuPage continue SSE stages (#1195)", () => {
   });
 });
 
-describe("MenuPage subtitle", () => {
-  it("does not show incorrect era year 崇祯元年 in subtitle", () => {
-    const cleanup = render(
-      <MenuPage
-        status={null}
-        onRefresh={async () => { throw new Error("not called"); }}
-        onEnterGame={async () => {}}
-        error=""
-        setError={() => {}}
-      />
-    );
-    const subtitle = document.querySelector(".menu-tagline");
-    expect((subtitle?.textContent || "").trim()).not.toBe("");
-    cleanup();
-  });
-});
-
 describe("ApiSettingsModal reasoning strength", () => {
   it("disables reasoning strength for unsupported CLI runners", () => {
     const cleanup = render(

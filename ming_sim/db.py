@@ -9297,37 +9297,27 @@ class GameDB:
         self, state, payload, *, actor: str, reason: str, origin_ref: str,
         content=None,
     ) -> None:
-        """军令职守面：payload.office / office_changes → 人物变更唯一核。"""
+        """军令职守面：payload.office → 人物变更唯一核。"""
         office_items: List[Dict[str, object]] = []
-        raw_changes = payload.get("office_changes")
-        if isinstance(raw_changes, list):
-            for raw in raw_changes:
-                if isinstance(raw, dict):
-                    office_items.append(dict(raw))
         office_title = str(payload.get("office") or "").strip()
         if office_title and actor:
-            if not any(
-                str(i.get("name") or "").strip() == actor
-                and str(i.get("new_office") or i.get("office") or "").strip()
-                for i in office_items
-            ):
-                office_item: Dict[str, object] = {
-                    "name": actor,
-                    "动作": "调任",
-                    "new_office": office_title,
-                    "office": office_title,
-                    "reason": reason,
-                }
-                # Preserve typed 任所 from dossier/pending payload; do not invent.
-                seat = str(
-                    payload.get("region_id")
-                    or payload.get("任所")
-                    or payload.get("辖区")
-                    or ""
-                ).strip()
-                if seat:
-                    office_item["region_id"] = seat
-                office_items.append(office_item)
+            office_item: Dict[str, object] = {
+                "name": actor,
+                "动作": "调任",
+                "new_office": office_title,
+                "office": office_title,
+                "reason": reason,
+            }
+            # Preserve typed 任所 from dossier/pending payload; do not invent.
+            seat = str(
+                payload.get("region_id")
+                or payload.get("任所")
+                or payload.get("辖区")
+                or ""
+            ).strip()
+            if seat:
+                office_item["region_id"] = seat
+            office_items.append(office_item)
         if not office_items:
             return
         from ming_sim.issues import _apply_person_changes

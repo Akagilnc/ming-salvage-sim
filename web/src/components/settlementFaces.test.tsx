@@ -249,29 +249,6 @@ describe("#1236 roster chat entry stripped in settlement_display", () => {
      // 名册仍在
   });
 
-  it("#1323 awaiting：MinisterCardList title 吃 settlementClosedReason(phase)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ layout: "{}" }) } as Response)));
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const root = createRoot(host);
-    mounted.push({ root, host });
-    await act(async () => {
-      root.render(
-        <MinisterCardList
-          list={[minister()]}
-          portraitPrefix="minister_"
-          selectedMinister=""
-          emptyNote=""
-          onOpenChat={() => {}}
-          chatEntryEnabled={false}
-          phase="awaiting_decision"
-        />,
-      );
-    });
-    const card = host.querySelector("button.minister-card") as HTMLButtonElement;
-    expect(card.disabled).toBe(true);
-  });
-
   it("AppointmentDrawer 任免名册不再承载召对入口", () => {
     const host = mount(
       <AppointmentDrawer

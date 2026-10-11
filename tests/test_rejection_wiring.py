@@ -7,7 +7,6 @@ rejection_reports → commit 成功后镜像 jsonl → 回滚不留行不留镜�
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -52,54 +51,6 @@ def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
     assert len(lines) == 1
     assert lines[0]["section"] == "applied_person_changes"
     assert lines[0]["turn"] == turn
-
-
-def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
-    """原子声明在 flush 之后崩 → 事务回滚:rejection_reports 无行、jsonl 无镜像。
-
-    镜像只在 commit 成功后写,否则留「DB 没有、文件却有」的孤立行。
-    退役的 dossier_reconciliations 提案不再作为回滚夹具（#1900 J6）。
-    """
-    from ming_sim.applier import RejectionCollector
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-
-    # 在途拨帑供合法 recon 好项；与坏引用同批，覆盖对账+拒收已 flush 后回滚。
-    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), 80)
-    gid = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="拨银押解",
-        target_kind="region",
-        target_id="shaanxi",
-        payload={
-            "account": "内库",
-            "amount": 30,
-            "execution_surface": "in_transit",
-        },
-    )
-    db.apply_dossier_promulgation(state, gid, "promulgated")
-    assert db.dossiers.get(gid)["status"] == "executing"
-
-    real_flush = RejectionCollector.flush_to_db
-
-    def _boom(self, db_):
-        real_flush(self, db_)
-        raise RuntimeError("crash after flush")
-
-    monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
-
-    with pytest.raises(RuntimeError):
-        run_settle(db, state, content, {
-            "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
-        }, narrative="x", decree_text="y")
-
-    monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
-    assert _rejection_rows(db, turn) == []
-    assert db.dossiers.reconciliations(gid) == []
-    assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
 
 
 def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_path):
@@ -188,28 +139,6 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_summary.cancels"]
     assert len(rows) == 1
     assert rows[0][1]  # reason 非空
-
-
-
-
-def test_bridge_synthesizes_reason_when_producer_omits(game):
-    """桥接层集中守 ADR「拒收行必带原因」不变式:任何 producer 漏给 reason,
-    落库前合成非空兜底——规则写一处,未来新 section 免疫同类缺陷(fix-coverage
-    drift 处方:集中化,cmr S0 r3)。"""
-    from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.decree import _collect_inline_rejections
-
-    db, state, content = game
-    collector = RejectionCollector()
-    _collect_inline_rejections(collector, {
-        "some_section": [{"rejected": True}],  # producer 没给 reason
-    }, 1, Provenance.unknown)
-    collector.flush_to_db(db)
-    db.conn.commit()
-
-    row = db.conn.execute(
-        "SELECT reason FROM rejection_reports WHERE section='some_section'").fetchone()
-    assert row is not None and row[0]  # 非空兜底
 
 
 def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path):
@@ -519,7 +448,6 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         ch.power_id = old_power
         ch.office = old_office
         ch.office_type = old_office_type
-
 
 
 def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):

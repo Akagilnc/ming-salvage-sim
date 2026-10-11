@@ -5919,19 +5919,6 @@ def _apply_person_changes(
                 applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
             cur_status, _ = db.characters.get_character_status(name)
-            if item.get("legacy_gate") and cur_status != "active":
-                reject_reason = f"当前非 active（{cur_status}）"
-                if cur_status == "dead" and status != "dead":
-                    reject_reason = "dead 无 status 出边"
-                applied.append(
-                    rejected(
-                        item,
-                        reject_reason,
-                        "invalid_transition",
-                        status=status,
-                    )
-                )
-                continue
             reason_code = normalize_reason_code(item.get("reason_code"))
             transition = resolve_person_transition(
                 cur_status,

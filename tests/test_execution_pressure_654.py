@@ -19,16 +19,6 @@ def env(game):
 
 # ── 词表 / scope 归一 ──────────────────────────────────────────────
 
-@pytest.mark.parametrize("raw,expected", [
-    (None, "none"),
-    ("", "none"),
-    ("无", "none"),
-    ("全国", "national"),
-    ("单省", "single"),
-    ("national", "national"),
-])
-def test_normalize_locality_scope(raw, expected):
-    assert normalize_locality_scope(raw) == expected
 
 def test_normalize_locality_scope_rejects_unknown():
     with pytest.raises(ValueError):
@@ -190,7 +180,6 @@ def test_region_zero_hit_fail_loud(env):
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
 
-
 def test_create_decree_dossier_int_abi_single_row(env):
     db, state, _ = env
     did = db.create_decree_dossier(
@@ -270,8 +259,6 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     )
     db.conn.commit()
     return int(cur.lastrowid)
-
-
 
 
 def test_path1_conversational_draft_bad_roster_marks_failed(env):

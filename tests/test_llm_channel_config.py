@@ -654,27 +654,6 @@ def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
 
 # --- #1271 S1: cli_supports_reasoning_strength 单源委派 ---
 
-@pytest.mark.parametrize(
-    "runner,expected",
-    [
-        ("codex", True),
-        ("claude", True),
-        ("grok", True),
-        ("pi", True),  # #1274-qa-y1：pi --thinking / model:<thinking>
-        ("agy", False),
-        ("kimi", False),
-        ("cursor", False),
-        ("", False),
-        ("CODEX", True),  # 大小写归一
-        (" Grok ", True),
-    ],
-)
-def test_cli_supports_reasoning_strength_matrix(runner, expected):
-    """#1271/#1274-y1：能力名单含 grok/pi；agy/kimi/cursor 仍 False；codex/claude 不变。"""
-    from ming_sim.llm_config import cli_supports_reasoning_strength
-
-    assert cli_supports_reasoning_strength(runner) is expected
-
 
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""

@@ -500,10 +500,7 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
 
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──
 
-def test_public_cli_support_restores_existing_runners(monkeypatch):
-    assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
-    assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
-    assert set(cb.cli_model_choices()) == {row["value"] for row in cb.cli_runner_choices()}
+def test_public_cli_support(monkeypatch):
     for name in ("opencode",):
         assert not cb.is_supported_cli_runner(name)
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)

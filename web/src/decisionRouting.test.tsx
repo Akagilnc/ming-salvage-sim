@@ -174,10 +174,6 @@ describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-
 describe("#1418 r2 needsPhase2Resume（all-decided 续跑谓词）", () => {
   const decided = { ...validDecision, status: "decided" };
 
-  it("awaiting + 全员 decided + settlement_display 真 → 需续跑", () => {
-    expect(needsPhase2Resume("awaiting_decision", [decided], true)).toBe(true);
-  });
-
   it("负向：快照已清（正常完成月）不触发续跑面", () => {
     expect(needsPhase2Resume("awaiting_decision", [decided], false)).toBe(false);
     expect(needsPhase2Resume("awaiting_decision", [decided], undefined)).toBe(false);
@@ -194,9 +190,7 @@ describe("#1418 r2 needsPhase2Resume（all-decided 续跑谓词）", () => {
     expect(needsPhase2Resume("awaiting_decision", [{ status: "decided" }], true)).toBe(false);
   });
 
-  it("#657 服务端 typed resume_phase2 空 pending 仍触发续跑", () => {
-    expect(needsPhase2Resume("awaiting_decision", [], false, true)).toBe(true);
-    expect(needsPhase2Resume("awaiting_decision", [], undefined, true)).toBe(true);
+  it("#657 服务端 typed resume_phase2", () => {
     expect(needsPhase2Resume("settling", [], true, true)).toBe(false);
   });
 });

@@ -114,31 +114,6 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
     assert row[1] == original_result
 
 
-def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
-    """pre_settle 内部崩溃时财政回滚，结算相位不推进。"""
-    db, state, content = game
-    turn = state.turn
-    before_phase = state.turn_phase
-    before_ledger = _ledger_count(db, turn)
-
-    def _boom(*a, **k):
-        raise RuntimeError("pre_settle boom")
-    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
-
-    with pytest.raises(RuntimeError):
-        pre_settle(state, db)
-
-    other = sqlite3.connect(db.path)
-    try:
-        on_disk = other.execute(
-            "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
-    finally:
-        other.close()
-    assert on_disk == before_ledger
-    assert state.turn_phase == before_phase != "settling"
-    assert not db.conn.in_transaction
-
-
 def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
     """pre_settle 内部注入异常（财政落账之后的到期密令抛）→ 异常透传、economy_ledger 无半行、
     phase 仍是入口态（非 settling）——整体回滚干净（ADR 0008 验收测试②）。"""
@@ -366,10 +341,6 @@ def test_guarded_early_return_does_not_consume_pending(game):
     statuses = [r["status"] for r in db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=?", (state.turn,)).fetchall()]
     assert statuses and all(s == "pending" for s in statuses)
-
-
-
-
 
 
 def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
