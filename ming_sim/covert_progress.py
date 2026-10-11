@@ -489,16 +489,18 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
     if not isinstance(delivery, Mapping):
         return None
     kind, axes = raw.get("kind"), raw.get("axes")
-    if not isinstance(kind, str) or not kind.strip():
+    if isinstance(kind, (Mapping, list, tuple)) or not str(kind or "").strip():
         return None
-    if not isinstance(axes, list) or not axes or any(normalize_axis(axis) is None for axis in axes):
+    if not normalize_axes(axes):
+        return None
+    if isinstance(axes, (list, tuple)) and any(normalize_axis(axis) is None for axis in axes):
         return None
     if isinstance(raw.get("direction"), bool) or raw.get("direction") not in (-1, 1):
         return None
     if isinstance(delivery.get("effect_sign"), bool) or delivery.get("effect_sign") not in (-1, 1):
         return None
     fields = delivery.get("canonical_fields")
-    if fields is not None and not isinstance(fields, list):
+    if fields is not None and not isinstance(fields, (list, tuple)):
         return None
     inv_target = str(
         raw.get("investigation_target") or delivery.get("investigation_target") or ""
