@@ -786,7 +786,7 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
 
 
 def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
-    """案卷 payload 读口：复用 get_decree_dossier，腐坏响亮（#1897 E1/K2）。"""
+    """案卷 payload 读口：复用 DossierStore.get，腐坏响亮（#1897 E1/K2）。"""
     dossier = db.dossiers.get(int(dossier_id))
     if dossier is None:
         return {}
@@ -915,7 +915,7 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     """已被别的案查获过的事实键（#1896 同一事实不重复查获）。
 
     键取"已掌握（mastered）"：掌握证据不再置 used，故去重也只看掌握。
-    复用 get_decree_dossier，腐坏 payload 不上扫跳过（#1897 E1/K2）。
+    复用 DossierStore.get，腐坏 payload 不上扫跳过（#1897 E1/K2）。
     """
     used: set[str] = set()
     rows = db.dossiers.read_globally_used_fact_keys()

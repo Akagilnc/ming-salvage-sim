@@ -137,7 +137,7 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
     origin_ref = row["origin_ref"] or ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
-        # get_decree_dossier 已响亮解码名册；再消费其结构化列表。
+        # DossierStore.get 已响亮解码名册；再消费其结构化列表。
         dossier = db.dossiers.get(int(did))
         if dossier is not None:
             for item in decode_durable_participant_roster(

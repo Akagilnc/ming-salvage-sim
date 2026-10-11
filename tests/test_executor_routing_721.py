@@ -276,8 +276,8 @@ def test_pending_routing_rejection_lands_on_ensure_batch_seam(
     bad = db.issues.add_directive(state.turn, state.year, state.period, None, '缺目标', 'test', status='pending', dossier_payload=_bad_directive_payload())
     good = db.issues.add_directive(state.turn, state.year, state.period, None, '清丈', 'test', status='pending', dossier_payload=_directive_payload('清丈'))
 
-    db.confirm_directive(bad)
-    db.confirm_directive(good)
+    db.issues.confirm_directive(bad)
+    db.issues.confirm_directive(good)
     # confirm 只翻状态，不成案、不标 rejected
     assert db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (bad,),

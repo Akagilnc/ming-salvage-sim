@@ -398,7 +398,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
     did = _insert_directive(
         db, state, text="清丈天下田亩", payload=payload, status="pending",
     )
-    db.confirm_directive(did)
+    db.issues.confirm_directive(did)
     row = db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()

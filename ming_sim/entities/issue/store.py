@@ -795,15 +795,6 @@ class IssueStore:
         )
 
 
-    def write_append_rescript_drafts(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE pending_decisions SET title=?, context=?, options_json=?, choice_json='', "
-            "status='pending', revision_round=revision_round+1, prior_options_json=options_json, "
-            "actor_name=?, actor_office=?, actor_faction=?, presentation_order=? "
-            "WHERE turn=? AND idx=? AND kind='rescript_draft'",
-            params,
-        )
-
     def insert_pending_decision(self, params: Any) -> Any:
         return self._conn.execute(
             """INSERT INTO pending_decisions
@@ -815,26 +806,11 @@ class IssueStore:
         )
 
 
-    def write_confirm_directive(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                    UPDATE turn_directives
-                    SET status = 'draft', updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ? AND status = 'pending'
-                    """,
-            params,
-        )
-
     def write_undo_chat_turn(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "DELETE FROM turn_directives WHERE id=? AND status='draft'", params
         )
 
-    def read_append_rescript_drafts(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
-            params,
-        ).fetchone()
 
     def read_update_directive_text(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -858,16 +834,6 @@ class IssueStore:
             params,
         ).fetchone()
 
-    def read_confirm_directive(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM turn_directives WHERE id=?", params
-        ).fetchone()
-
-    def read_append_rescript_drafts_pending_decisions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT COALESCE(MAX(presentation_order), 0) FROM pending_decisions", params
-        ).fetchone()
-
 
     def read_fiscal_levy_petitions_awaiting_verdict(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -882,22 +848,21 @@ class IssueStore:
             params,
         ).fetchall()
 
-    def write_persist_answers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE pending_decisions SET choice_json=?, status='decided', answered_turn=?, answer_order=? "
+    def record_rescript_answer(
+        self, choice_json: str, answered_turn: int, source_turn: int, idx: int, kind: str,
+    ) -> None:
+        """Persist one answer in the next durable order of the answering turn."""
+        self._conn.execute(
+            "UPDATE pending_decisions SET choice_json=?, status='decided', answered_turn=?, "
+            "answer_order=(SELECT COALESCE(MAX(answer_order),0)+1 "
+            "FROM pending_decisions WHERE answered_turn=?) "
             "WHERE turn=? AND idx=? AND kind=? AND status='pending'",
-            params,
+            (choice_json, answered_turn, answered_turn, source_turn, idx, kind),
         )
 
     def read_apply_imperial_deliberation_push(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT id FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
-            params,
-        ).fetchone()
-
-    def read_persist_answers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT COALESCE(MAX(answer_order),0) FROM pending_decisions WHERE answered_turn=?",
             params,
         ).fetchone()
 
@@ -943,3 +908,81 @@ class IssueStore:
         return self._conn.execute(
             "SELECT * FROM issues WHERE affair_id=? ORDER BY id", (affair_id,)
         ).fetchall()
+
+    def append_rescript_drafts(
+        self, turn: int, drafts: List[Dict[str, object]], *,
+        revisions: Sequence[Dict[str, object]] = (),
+    ) -> None:
+        """收存模型顺序；修订保留原身份，与月链相位同事务。"""
+        order = int(
+            self._conn.execute(
+                "SELECT COALESCE(MAX(presentation_order), 0) FROM pending_decisions"
+            ).fetchone()[0]
+        )
+        for item in revisions:
+            order += 1
+            self._conn.execute(
+                "UPDATE pending_decisions SET title=?, context=?, options_json=?, choice_json='', "
+                "status='pending', revision_round=revision_round+1, prior_options_json=options_json, "
+                "actor_name=?, actor_office=?, actor_faction=?, presentation_order=? "
+                "WHERE turn=? AND idx=? AND kind='rescript_draft'",
+                (
+                    item["title"], item["context"],
+                    json.dumps(item["options"], ensure_ascii=False),
+                    item["actor_name"], item["actor_office"], item["actor_faction"],
+                    order, item["turn"], item["idx"],
+                ),
+            )
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
+            (int(turn),),
+        ).fetchone()
+        idx = int(row[0] or 0)
+        for d in drafts:
+            order += 1
+            actor_name = str(d.get("actor_name") or "")
+            actor_office = str(d.get("actor_office") or "")
+            actor_faction = str(d.get("actor_faction") or "")
+            event_id = str(d.get("event_id") or "").strip()
+            if not event_id:
+                event_id = f"urgent:{int(turn)}:{idx}"
+            self.insert_pending_decision(
+                (
+                    int(turn),
+                    idx,
+                    event_id,
+                    str(d.get("title") or ""),
+                    str(d.get("context") or ""),
+                    "",
+                    "",
+                    json.dumps(d.get("options") or [], ensure_ascii=False),
+                    "",
+                    "pending",
+                    "rescript_draft",
+                    actor_name,
+                    actor_office,
+                    actor_faction,
+                    order,
+                )
+            )
+            idx += 1
+
+    def confirm_directive(self, directive_id: int) -> None:
+        """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。
+
+        #1769：只翻状态。成案/补交/耗尽唯一批缝 =
+        ensure_dossiers_for_draft_directives + _resubmit_draft_admission_failures；
+        禁止在 confirm 内 ensure、标 rejected 或另建重试。产物错 pending 入 draft
+        后走 B 路；真代码故障仍由批缝 SettlementAbort（0005/0008）。
+        """
+        with atomic(SimpleNamespace(conn=self._conn)):
+            self._conn.execute(
+                "UPDATE turn_directives SET status='draft', updated_at=CURRENT_TIMESTAMP "
+                "WHERE id=? AND status='pending'",
+                (int(directive_id),),
+            )
+            row = self._conn.execute(
+                "SELECT id FROM turn_directives WHERE id=?", (int(directive_id),),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"旨稿不存在：{directive_id}")

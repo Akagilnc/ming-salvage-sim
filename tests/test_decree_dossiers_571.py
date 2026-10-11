@@ -523,7 +523,7 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
     ).fetchone()["id"])
     if entry == "confirm":
         # #1769：confirm 只翻 draft；executor 投影落 ensure 批缝
-        db.confirm_directive(directive_id)
+        db.issues.confirm_directive(directive_id)
         assert db.ensure_dossiers_for_draft_directives(state) == []
 
     dossier = db.dossiers.get_for_directive(directive_id)

@@ -1167,7 +1167,7 @@ def _apply_deferred_disclosures(
 def _enrich_eligible_dossiers_for_supply(
     db: Any, candidates: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。
+    """合资格案卷供料：复用 DossierStore.get／typed contract 读口补齐正文与执行契约。
 
     密令关联案卷的现行要旨与期限只读 secret_orders（#1897 S2）；案卷 decree_text
     是发令历史原诏，不作现行正文真源。

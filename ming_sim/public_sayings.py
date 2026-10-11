@@ -12,12 +12,10 @@ from ming_sim.models import (
     require_persistent_string_list,
 )
 
-import json
 from typing import Any, Iterable
 
 from ming_sim.applier import connection_owns_transaction
 
-SOURCE_PREFIX = "public_saying:"
 LAYER_TITLE = "有此说法"
 
 
@@ -42,23 +40,9 @@ def record_public_saying(
     text = body
     affair = affair_ref.strip()
     people = _character_names(involved_characters)
-    people_json = json.dumps(people, ensure_ascii=False)
     owns = bool(commit) and connection_owns_transaction(db.conn)
-    cur = db.character_knowledge.write_record_public_saying(
-        (
-            int(state.turn),
-            int(state.year),
-            int(state.period),
-            text,
-            people_json,
-            affair,
-            f"{SOURCE_PREFIX}pending",
-        )
-    )
-    saying_id = int(cur.lastrowid)
-    source_id = f"{SOURCE_PREFIX}{saying_id}"
-    db.character_knowledge.write_record_public_saying_public_sayings(
-        (source_id, saying_id)
+    saying_id = db.character_knowledge.insert_public_saying(
+        state.turn, state.year, state.period, text, people, affair,
     )
     if owns:
         db.conn.commit()

@@ -1,10 +1,11 @@
 """Building rows and the building change log.
 
-#1889: one write port. Id generation, clamps and field legality stay with the caller.
+#1889: one write port. Clamps and field legality stay with the caller.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from ming_sim.entities.column_write import checked_columns
@@ -56,6 +57,20 @@ class BuildingStore:
             [row[column] for column in columns],
         )
 
+    def insert_new(self, row: Mapping[str, object]) -> str:
+        """Allocate a free regional identity and insert the validated building."""
+        region_id = row["region_id"]
+        base = re.sub(r"[^a-z0-9]+", "", (region_id or "rgn").lower()) or "rgn"
+        seq = int(self._conn.execute(
+            "SELECT COUNT(*) FROM buildings WHERE region_id = ?", (region_id,),
+        ).fetchone()[0])
+        building_id = f"{base}_b{seq + 1}"
+        while self.get(building_id) is not None:
+            seq += 1
+            building_id = f"{base}_b{seq + 1}"
+        self.insert({**row, "id": building_id})
+        return building_id
+
     def update(self, building_id: str, values: Mapping[str, object]) -> int:
         columns = _checked(values, allowed=_MUTABLE_COLUMNS)
         if not columns:
@@ -103,14 +118,3 @@ class BuildingStore:
             "SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings",
             params,
         ).fetchall()
-
-    def read_add_building(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM buildings WHERE id = ?", params
-        ).fetchone()
-
-
-    def read_add_building_buildings(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT COUNT(*) FROM buildings WHERE region_id = ?", params
-        ).fetchone()

@@ -352,23 +352,24 @@ class PersonLogStore:
             for row in rows
         ]
 
-    def write_record_relation_edge_event(self, params: Any = ()) -> Any:
-        return self._conn.execute(
+    def record_relation_edge_event(self, params: Any) -> int:
+        """Insert an edge idempotently and return its durable identity."""
+        self._conn.execute(
             "\n            INSERT OR IGNORE INTO relation_edge_events\n                (source, target, event_kind, context, origin, origin_round,\n                 turn, year, period, evidence)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
             params,
         )
+        row = self._conn.execute(
+            "SELECT id FROM relation_edge_events "
+            "WHERE source=? AND target=? AND event_kind=? AND context=? AND origin=?",
+            params[:5],
+        ).fetchone()
+        return int(row["id"])
 
     def write_apply_faction_brew_result(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "DELETE FROM relation_brew_pending WHERE item_kind = '派系' AND target = ?",
             params,
         )
-
-    def read_record_relation_edge_event(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "\n            SELECT id FROM relation_edge_events\n            WHERE source = ? AND target = ? AND event_kind = ? AND context = ? AND origin = ?\n            ",
-            params,
-        ).fetchone()
 
     def read_originated_quantity_this_turn(self, params: Any = ()) -> Any:
         return self._conn.execute(

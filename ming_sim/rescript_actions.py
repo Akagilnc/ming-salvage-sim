@@ -56,21 +56,13 @@ def persist_answers(db: Any, state: Any, choices: list, *, content: Any = None) 
             if choice.get("label") and choice["label"] not in {o.get("label") for o in row["options"]}:
                 raise ValueError("所选票拟不在原奏折中")
     with atomic_and_reload(db, state, content=content):
-        order = int(db.issues.read_persist_answers((int(state.turn),))[0])
         for choice in requests:
             row = rows[choice["decision_key"]]
             if row["choice"]:
                 continue
-            order += 1
-            db.issues.write_persist_answers(
-                (
-                    json.dumps(choice, ensure_ascii=False),
-                    int(state.turn),
-                    order,
-                    row["source_turn"],
-                    row["idx"],
-                    row["kind"],
-                )
+            db.issues.record_rescript_answer(
+                json.dumps(choice, ensure_ascii=False), int(state.turn),
+                row["source_turn"], row["idx"], row["kind"],
             )
             event_id = str(row.get("event_id") or "")
             from ming_sim.month_chain import _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX, _LEVY_PETITION_PREFIX

@@ -93,18 +93,20 @@ class ClassStore:
             params,
         )
 
-    def write_apply_population_transfers_classes(self, params: Any = ()) -> Any:
-        return self._conn.execute(
+    def record_population_transfer(
+        self, source_class: str, source_region: str,
+        target_class: str, target_region: str, amount: int,
+        *, turn: int, source: str, target: str, reason: str, origin_ref: str,
+    ) -> None:
+        """Write both population stocks and their one transfer in the caller's transaction."""
+        self.write_apply_population_transfers((amount, source_class, source_region))
+        self._conn.execute(
             "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
             "WHERE name=? AND region_id=?",
-            params,
+            (amount, target_class, target_region),
         )
-
-    def write_apply_population_transfers_population_transfer_ledger(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
+        self._conn.execute(
             "INSERT INTO population_transfer_ledger "
             "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
-            params,
+            (turn, source, target, amount, reason, origin_ref),
         )

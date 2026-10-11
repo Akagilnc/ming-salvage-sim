@@ -22,14 +22,17 @@ boundary and travel with the row that carries the content.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from ming_sim.entities.column_write import upsert_by_pk
 from ming_sim.applier import (
     StoredDocumentError,
     durable_int,
     load_stored_list,
+    safe_json_dumps,
 )
+
+PUBLIC_SAYING_SOURCE_PREFIX = "public_saying:"
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS character_knowledge_events (
@@ -86,10 +89,7 @@ _SNAPSHOT_COLUMNS = {
             "importance",
             "status",
             "result",
-            "sim_note",
-            "excluded_names",
             "dossier_progress_json",
-            "excluded_targets",
             "turn_closed",
             "created_at",
             "updated_at",
@@ -105,8 +105,6 @@ _SNAPSHOT_COLUMNS = {
             "involved_characters",
             "affair_ref",
             "source_id",
-            "excluded_names",
-            "excluded_targets",
             "created_at",
         }
     ),
@@ -397,16 +395,25 @@ class CharacterKnowledgeStore:
             params,
         )
 
-    def read_restore_secret_order_brief_projection_in_tx(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT turn_issued,year_issued,period_issued,minister_name,title,content FROM secret_orders WHERE id=?",
-            params,
-        ).fetchone()
-
-    def read_submit_secret_order_for_review(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT status, turn_issued FROM secret_orders WHERE id = ?", params
-        ).fetchone()
+    def restore_secret_order_brief_projection(
+        self, order_id: int, origin_chat_message_ids: Iterable[int],
+    ) -> None:
+        order = self.secret_order_row(int(order_id))
+        if order is None:
+            return
+        pins = list(origin_chat_message_ids)
+        self.write_restore_secret_order_brief_projection_in_tx(
+            (
+                int(order_id),
+                int(order["turn_issued"]),
+                int(order["year_issued"]),
+                int(order["period_issued"]),
+                str(order["minister_name"]),
+                str(order["title"]),
+                str(order["content"]),
+                safe_json_dumps(pins, ensure_ascii=False),
+            )
+        )
 
 
     def write_rush_secret_order_secret_orders(self, params: Any = ()) -> Any:
@@ -427,15 +434,6 @@ class CharacterKnowledgeStore:
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'", params
         ).fetchone()
 
-    def read_interrupt_dossiers_for_character(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT status,result FROM secret_orders WHERE id=?", params
-        ).fetchone()
-
-    def write_record_public_saying_public_sayings(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE public_sayings SET source_id=? WHERE id=?", params
-        )
 
     def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -502,39 +500,17 @@ class CharacterKnowledgeStore:
         ).fetchall()
 
 
-    def read_update_secret_order_by_id(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT status, tags, minister_name FROM secret_orders WHERE id=?", params
-        ).fetchone()
-
-    def write_update_secret_order_by_id(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, deadline_span=?, "
-            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            params,
-        )
-
-    def write_update_secret_order_by_id_secret_orders(self, params: Any = ()) -> Any:
-        return self._conn.execute(
+    def update_secret_order(
+        self, order_id: int, title: str, content: str, tags_json: str,
+        *, due_turn: Optional[int], deadline_span: Optional[int],
+    ) -> None:
+        self._conn.execute(
             "UPDATE secret_orders SET title=?, content=?, tags=?, "
+            "due_turn=COALESCE(?,due_turn), deadline_span=COALESCE(?,deadline_span), "
             "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            params,
+            (title, content, tags_json, due_turn, deadline_span, int(order_id)),
         )
 
-    def read_note_secret_order_report(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT status FROM secret_orders WHERE id=?", params
-        ).fetchone()
-
-    def read_update_secret_order_sim_note_in_transaction(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM secret_orders WHERE id=? AND status='active'", params
-        ).fetchone()
-
-    def read_rush_secret_order(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, title, status, due_turn FROM secret_orders WHERE id = ?", params
-        ).fetchone()
 
     def read_character_knowledge_events_character_knowledge_events(
         self, params: Any = ()
@@ -567,13 +543,26 @@ class CharacterKnowledgeStore:
             params,
         ).fetchone()
 
-    def write_record_public_saying(self, params: Any = ()) -> Any:
-        return self._conn.execute(
+    def insert_public_saying(
+        self, turn: int, year: int, period: int, body: str,
+        involved_characters: list[str], affair_ref: str,
+    ) -> int:
+        cur = self._conn.execute(
             "INSERT INTO public_sayings "
             "(turn, year, period, body, involved_characters, affair_ref, source_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params,
+            (
+                int(turn), int(year), int(period), body,
+                json.dumps(involved_characters, ensure_ascii=False), affair_ref,
+                f"{PUBLIC_SAYING_SOURCE_PREFIX}pending",
+            ),
         )
+        saying_id = int(cur.lastrowid)
+        self._conn.execute(
+            "UPDATE public_sayings SET source_id=? WHERE id=?",
+            (f"{PUBLIC_SAYING_SOURCE_PREFIX}{saying_id}", saying_id),
+        )
+        return saying_id
 
     def read_list_public_sayings(self, params: Any = ()) -> Any:
         return self._conn.execute(

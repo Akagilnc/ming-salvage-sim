@@ -2397,24 +2397,19 @@ class DossierStore:
             params,
         )
 
-    def write_record_monthly_grant_reconciliations(self, params: Any = ()) -> Any:
-        return self._conn.execute(
+    def record_monthly_grant_reconciliation(self, params: Any) -> Optional[dict[str, object]]:
+        """Record the first monthly reconciliation; later segments leave it untouched."""
+        cur = self._conn.execute(
             """
                     INSERT INTO decree_dossier_reconciliations
                         (dossier_id, turn, ordered_amount, arrived_amount, loss_amount,
                          escorted, escort_source_dossier_id, relation_type, note)
                     VALUES (?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(dossier_id, turn) DO UPDATE SET
-                        ordered_amount=excluded.ordered_amount,
-                        arrived_amount=excluded.arrived_amount,
-                        loss_amount=excluded.loss_amount,
-                        escorted=excluded.escorted,
-                        escort_source_dossier_id=excluded.escort_source_dossier_id,
-                        relation_type=excluded.relation_type,
-                        note=excluded.note
+                    ON CONFLICT(dossier_id, turn) DO NOTHING
                     """,
             params,
         )
+        return self.reconciliations(int(params[0]))[-1] if cur.rowcount else None
 
     def write_accept_faction_denunciations(self, params: Any = ()) -> Any:
         return self._conn.execute(
@@ -2453,23 +2448,14 @@ class DossierStore:
         )
 
 
-    def write_update_secret_order_sim_note_in_transaction(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            """
-                    INSERT INTO dossier_actual_progress
-                        (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
-                    VALUES (?, ?, 0, '', '', ?, ?)
-                    """,
-            params,
-        )
-
-    def write_update_secret_order_sim_note_in_transaction_dossier_actual_progress(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            "UPDATE dossier_actual_progress SET note=? WHERE id=?", params
+    def set_actual_progress_note(self, dossier_id: int, turn: int, note: str) -> None:
+        """Set this month's original note without changing existing progress units."""
+        self._conn.execute(
+            "INSERT INTO dossier_actual_progress "
+            "(dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref) "
+            "VALUES (?, ?, 0, '', '', ?, ?) "
+            "ON CONFLICT(dossier_id, turn) DO UPDATE SET note=excluded.note",
+            (int(dossier_id), int(turn), note, f"dossier:{int(dossier_id)}"),
         )
 
     def read_list_monthly_dossier_progress_nudges(self, params: Any = ()) -> Any:
@@ -2591,12 +2577,6 @@ class DossierStore:
             params,
         ).fetchall()
 
-    def read_update_secret_order_sim_note_in_transaction(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, units FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
-            params,
-        ).fetchone()
-
     def read_undo_chat_turn(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT source_chat_turn_id FROM pending_actions WHERE id=?", params
@@ -2627,13 +2607,6 @@ class DossierStore:
                     """,
             params,
         ).fetchall()
-
-    def read_record_monthly_grant_reconciliations(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM decree_dossier_reconciliations "
-            "WHERE dossier_id=? AND turn=?",
-            params,
-        ).fetchone()
 
     def read_accept_faction_denunciations(self, params: Any = ()) -> Any:
         return self._conn.execute(

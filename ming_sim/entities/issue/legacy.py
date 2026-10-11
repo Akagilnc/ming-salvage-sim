@@ -5,7 +5,6 @@ from ming_sim.applier import parse_engine_payload_json
 
 import ming_sim.issues as issues
 
-import json
 from typing import List
 
 from ming_sim.db import (
@@ -40,34 +39,9 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
     一个函数覆盖新档（全补）/旧档（补缺）/达标档（不补/清残）。"""
     for leg in issues._ctx().opening_legacies:
         passed = issues._gate_passed(leg.clear_gate, state.metrics, db)
-        existing = db.reign.read_sync_opening_legacies((leg.key,))
-        if existing is not None:
-            db.reign.write_sync_opening_legacies(
-                (
-                    leg.name,
-                    json.dumps(leg.modifiers, ensure_ascii=False),
-                    leg.narrative_hint,
-                    json.dumps(leg.clear_gate, ensure_ascii=False),
-                    leg.key,
-                )
-            )
+        if db.reign.sync_opening_legacy(
+            legacy_key=leg.key, name=leg.name, modifiers=leg.modifiers,
+            narrative_hint=leg.narrative_hint, clear_gate=leg.clear_gate,
+            passed=passed, start_month=int(state.year) * 12 + int(state.period),
+        ):
             db._legacy_mod_cache = None
-        if passed:
-            if existing is not None:
-                db.reign.write_sync_opening_legacies_legacies(
-                    (leg.key,)
-                )
-                db._legacy_mod_cache = None
-            continue
-        # 未达标且无 active 行 → 补上
-        if existing is None:
-            db.insert_legacy(
-                state,
-                name=leg.name,
-                modifiers=leg.modifiers,
-                narrative_hint=leg.narrative_hint,
-                duration_months=-1,
-                clear_gate=leg.clear_gate,
-                legacy_key=leg.key,
-                commit=False,
-            )

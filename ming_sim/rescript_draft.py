@@ -93,7 +93,7 @@ def produce_memorials(session, chain: dict, *, source) -> None:
     else:
         items, revisions, originals = [], [], {}
     with atomic(db):
-        db.append_rescript_drafts(int(state.turn), items, revisions=[
+        db.issues.append_rescript_drafts(int(state.turn), items, revisions=[
             {**item, "turn": originals[item["decision_key"]]["turn"],
              "idx": originals[item["decision_key"]]["idx"]} for item in revisions
         ])

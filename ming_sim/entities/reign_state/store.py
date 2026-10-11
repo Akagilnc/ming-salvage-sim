@@ -859,22 +859,27 @@ class ReignStateStore:
         ).fetchall()
 
 
-    def write_sync_opening_legacies(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE legacies\n                   SET name=?, modifiers=?, narrative_hint=?, clear_gate=?\n                   WHERE legacy_key=? AND status='active'",
-            params,
+    def sync_opening_legacy(
+        self, *, legacy_key: str, name: str, modifiers: object,
+        narrative_hint: str, clear_gate: object, passed: bool, start_month: int,
+    ) -> bool:
+        """Refresh the active opening fact, clear it, or seed the missing active row."""
+        modifiers_json = json.dumps(modifiers, ensure_ascii=False)
+        gate_json = json.dumps(clear_gate, ensure_ascii=False)
+        cur = self._conn.execute(
+            "UPDATE legacies SET name=?, modifiers=?, narrative_hint=?, clear_gate=?, "
+            "status=CASE WHEN ? THEN 'cleared' ELSE status END "
+            "WHERE legacy_key=? AND status='active'",
+            (name, modifiers_json, narrative_hint, gate_json, passed, legacy_key),
         )
-
-    def read_sync_opening_legacies(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM legacies WHERE legacy_key=? AND status='active'", params
-        ).fetchone()
-
-    def write_sync_opening_legacies_legacies(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE legacies SET status='cleared' WHERE legacy_key=? AND status='active'",
-            params,
+        if cur.rowcount:
+            return True
+        if passed:
+            return False
+        self.write_insert_legacy(
+            (name, None, modifiers_json, narrative_hint, start_month, -1, gate_json, legacy_key)
         )
+        return True
 
     def read_apply_recovery_driven_transfers(self, params: Any = ()) -> Any:
         return self._conn.execute(

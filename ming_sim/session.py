@@ -2342,7 +2342,7 @@ class GameSession:
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
         # pre_settle owning transaction 与财政等副作用一起物化。
         for pending in self.db.issues.list_directives(self.state.turn, statuses=('pending',)):
-            self.db.confirm_directive(int(pending["id"]))
+            self.db.issues.confirm_directive(int(pending["id"]))
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
         # #1769：产物错 → 告诉 LLM 失败事实与原产物后重交；耗尽保持 draft、月照过

@@ -437,10 +437,7 @@ def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
         ) from exc
     if backing is None:
         return None
-    getter = getattr(db, "get_decree_dossier", None)
-    if getter is None:
-        raise RuntimeError("db missing get_decree_dossier")
-    dossier = getter(backing)  # 读故障不包装
+    dossier = db.dossiers.get(backing)  # 读故障不包装
     if dossier is None:
         raise DecreeMaterializationValidationError(
             f"backing_dossier_id 所指案卷不存在：{backing}",
@@ -4739,17 +4736,8 @@ class GameDB:
             is None
         ):
             raise DeclarationDataError(f"建筑 region_id 引用未入库地区 '{region_id}'")
-        base = re.sub(r"[^a-z0-9]+", "", (region_id or "rgn").lower()) or "rgn"
-        seq = self.buildings.read_add_building_buildings((region_id,))[0]
-        building_id = f"{base}_b{int(seq) + 1}"
-        while self.buildings.read_add_building((building_id,)):
-            seq += 1
-            building_id = f"{base}_b{int(seq) + 1}"
-        stored_name = name if str(name).strip() else "无名建筑"
-        stored_status = status if str(status).strip() else "新立，尚在筹建。"
-        self.buildings.insert(
+        building_id = self.buildings.insert_new(
             {
-                "id": building_id,
                 "region_id": region_id,
                 "name": name if name.strip() else "无名建筑",
                 "category": category,
@@ -5388,26 +5376,6 @@ class GameDB:
         return self.reign.is_global_last_active_chat_turn(int(row["id"]))
 
 
-    def _restore_secret_order_brief_projection_in_tx(
-        self, order_id: int, origin_chat_message_ids: Iterable[int],
-    ) -> None:
-        order = self.character_knowledge.read_restore_secret_order_brief_projection_in_tx((int(order_id),))
-        if order is None:
-            return
-        pins = self._coerce_positive_message_ids(origin_chat_message_ids)
-        self.character_knowledge.write_restore_secret_order_brief_projection_in_tx(
-            (
-                int(order_id),
-                int(order["turn_issued"]),
-                int(order["year_issued"]),
-                int(order["period_issued"]),
-                str(order["minister_name"]),
-                str(order["title"]),
-                str(order["content"]),
-                safe_json_dumps(pins, ensure_ascii=False),
-            )
-        )
-
     def _restore_chat_rollback_items_in_tx(
         self, items: Iterable[sqlite3.Row], undone_message_ids: Iterable[int],
         *, retract_context: bool = False,
@@ -5482,7 +5450,9 @@ class GameDB:
                             raw_pins,
                             surface=f"rollback.secret_orders#{int(target_id)}.brief_pins",
                         )
-                    self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)
+                    self.character_knowledge.restore_secret_order_brief_projection(
+                        int(target_id), self._coerce_positive_message_ids(pins),
+                    )
             else:
                 raise ValueError(f"不支持的回滚策略：{strategy}")
         if not restored_directive_ids:
@@ -5736,61 +5706,6 @@ class GameDB:
                 "has_directive": bool(material.get("has_directive", False)),
             })
         return sorted(combined, key=lambda item: (int(item["turn"]), 0 if item["kind"] == "month" else int(item["night_id"])))
-
-
-    def append_rescript_drafts(
-        self, turn: int, drafts: List[Dict[str, object]], *,
-        revisions: Sequence[Dict[str, object]] = (),
-    ) -> None:
-        """收存模型顺序；修订保留原身份，与月链相位同事务。"""
-        order = int(
-            self.issues.read_append_rescript_drafts_pending_decisions()[0]
-        )
-        for item in revisions:
-            order += 1
-            self.issues.write_append_rescript_drafts(
-                (
-                    item["title"],
-                    item["context"],
-                    json.dumps(item["options"], ensure_ascii=False),
-                    item["actor_name"],
-                    item["actor_office"],
-                    item["actor_faction"],
-                    order,
-                    item["turn"],
-                    item["idx"],
-                )
-            )
-        row = self.issues.read_append_rescript_drafts((int(turn),))
-        idx = int(row[0] or 0)
-        for d in drafts:
-            order += 1
-            actor_name = str(d.get("actor_name") or "")
-            actor_office = str(d.get("actor_office") or "")
-            actor_faction = str(d.get("actor_faction") or "")
-            event_id = str(d.get("event_id") or "").strip()
-            if not event_id:
-                event_id = f"urgent:{int(turn)}:{idx}"
-            self.issues.insert_pending_decision(
-                (
-                    int(turn),
-                    idx,
-                    event_id,
-                    str(d.get("title") or ""),
-                    str(d.get("context") or ""),
-                    "",
-                    "",
-                    json.dumps(d.get("options") or [], ensure_ascii=False),
-                    "",
-                    "pending",
-                    "rescript_draft",
-                    actor_name,
-                    actor_office,
-                    actor_faction,
-                    order,
-                )
-            )
-            idx += 1
 
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
@@ -6544,17 +6459,13 @@ class GameDB:
         for dossier_id, target in targets.items():
             ordered = int(target["ordered_amount"])
             escorted = bool(target["escorted"])
-            # 分段过月会多次调本写入：已有本回合行的路不覆盖。
-            existing = self.dossiers.read_record_monthly_grant_reconciliations((int(dossier_id), int(turn)))
-            if existing is not None:
-                continue
             lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
             arrived = (lo + hi) // 2
             loss = ordered - arrived
             note = ""
             source_id = target["escort_source_dossier_id"]
             relation = str(target["relation_type"] or "")
-            self.dossiers.write_record_monthly_grant_reconciliations(
+            report = self.dossiers.record_monthly_grant_reconciliation(
                 (
                     int(dossier_id),
                     int(turn),
@@ -6567,8 +6478,8 @@ class GameDB:
                     note,
                 )
             )
-            history = self.dossiers.reconciliations(int(dossier_id))
-            reports.append(history[-1])
+            if report is not None:
+                reports.append(report)
         return reports
 
     # ── #625 / ADR 0077 supervision fact bottom ─────────────────────────
@@ -8517,7 +8428,7 @@ class GameDB:
                 self.dossiers.transition(dossier_id, "executing", commit=False)
             order_id = row["secret_order_id"]
             if order_id is not None:
-                order = self.character_knowledge.read_interrupt_dossiers_for_character((int(order_id),))
+                order = self.character_knowledge.secret_order_row(int(order_id))
                 if order is not None and order["status"] == "active":
                     from ming_sim.covert_progress import player_facing_secret_order_close_text
                     result = player_facing_secret_order_close_text(
@@ -9632,7 +9543,7 @@ class GameDB:
     ) -> set[int]:
         """返回批前盘面中确实不匹配的荐人快照案号；其他异常原样上抛。
 
-        dossiers 须为 canonical 案卷行（get_decree_dossier/list_decree_dossiers 已解码 payload）。
+        dossiers 须为 canonical 案卷行（DossierStore.get/list_dossiers 已解码 payload）。
         """
         invalid = set()
         for row in dossiers:
@@ -9899,20 +9810,6 @@ class GameDB:
             commit=commit,
         )
 
-
-    def confirm_directive(self, directive_id: int) -> None:
-        """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。
-
-        #1769：只翻状态。成案/补交/耗尽唯一批缝 =
-        ensure_dossiers_for_draft_directives + _resubmit_draft_admission_failures；
-        禁止在 confirm 内 ensure、标 rejected 或另建重试。产物错 pending 入 draft
-        后走 B 路；真代码故障仍由批缝 SettlementAbort（0005/0008）。
-        """
-        with atomic(self):
-            self.issues.write_confirm_directive((directive_id,))
-            row = self.issues.read_confirm_directive((int(directive_id),))
-            if row is None:
-                raise KeyError(f"旨稿不存在：{directive_id}")
 
     def ensure_dossiers_for_draft_directives(
         self, state: GameState, *,
@@ -11322,9 +11219,7 @@ class GameDB:
         When no pin intent is provided, preserve brief pins (do not auto-capture
         pure-public messages as new secret-origin bloodline).
         """
-        row = self.character_knowledge.read_update_secret_order_by_id(
-            (int(order_id),)
-        )
+        row = self.character_knowledge.secret_order_row(int(order_id))
         if row is None or row["status"] != "active":
             return False
         persisted_title = title
@@ -11353,21 +11248,11 @@ class GameDB:
         if origin_chat_message_id is None and classify_ids is None:
             classify_ids = self._brief_origin_chat_message_ids(int(order_id))
         with atomic(self):
-            if deadline:
-                self.character_knowledge.write_update_secret_order_by_id(
-                    (
-                        persisted_title,
-                        content,
-                        tags_json,
-                        int(state.turn) + deadline,
-                        deadline,
-                        int(order_id),
-                    )
-                )
-            else:
-                self.character_knowledge.write_update_secret_order_by_id_secret_orders(
-                    (persisted_title, content, tags_json, int(order_id))
-                )
+            self.character_knowledge.update_secret_order(
+                int(order_id), persisted_title, content, tags_json,
+                due_turn=int(state.turn) + deadline if deadline else None,
+                deadline_span=deadline if deadline else None,
+            )
             self._classify_secret_order_audience(
                 state, int(order_id), str(row["minister_name"]), persisted_title, content,
                 origin_chat_message_id=origin_chat_message_id,
@@ -11462,9 +11347,7 @@ class GameDB:
         raw = text
         if not raw.strip():
             return False
-        row = self.character_knowledge.read_note_secret_order_report(
-            (int(order_id),)
-        )
+        row = self.character_knowledge.secret_order_row(int(order_id))
         if row is None or row["status"] != "active":
             # 未知／非 active：领域拒收（调用方见 False），不是内部故障。
             return False
@@ -11485,9 +11368,7 @@ class GameDB:
         空陈词只缩短到期回合。
         坏类型 schema 故障，不洗成空陈词（#1897 J820-E1）。
         """
-        row = self.character_knowledge.read_submit_secret_order_for_review(
-            (int(order_id),)
-        )
+        row = self.character_knowledge.secret_order_row(int(order_id))
         if not row or row["status"] != "active":
             return False
         current_turn = self._current_game_turn(int(row["turn_issued"] or 0))
@@ -11562,13 +11443,13 @@ class GameDB:
 
         只写 note，不改 units。显式传入的正文（含空白）原样写入，不以
         strip/TRIM 仲裁旧／新（P6 / #1897 N2）。数值写口见
-        record_dossier_actual_progress：note is None 才保留已存正文。
+        DossierStore.record_actual_progress；本口只替换正文，保留数值实况。
         坏类型 schema 故障，禁 str()/or 洗白（#1897 J820-E1）。
         """
         raw = sim_note
         if not isinstance(raw, str):
             raise TypeError(f"secret_orders#{order_id}.sim_note must be text, got {raw!r}")
-        row = self.character_knowledge.read_update_secret_order_sim_note_in_transaction((int(order_id),))
+        row = self.character_knowledge.secret_order_row(int(order_id), active_only=True)
         if row is None:
             return
         dossier = self.dossiers.get_for_secret_order(int(order_id))
@@ -11576,15 +11457,7 @@ class GameDB:
             raise ValueError("密令进展缺少对应案卷")
         did = int(dossier["id"])
         turn = self._current_game_turn()
-        existing = self.dossiers.read_update_secret_order_sim_note_in_transaction((did, int(turn)))
-        if existing is None:
-            self.dossiers.write_update_secret_order_sim_note_in_transaction(
-                (did, int(turn), raw, f"dossier:{did}")
-            )
-        else:
-            self.dossiers.write_update_secret_order_sim_note_in_transaction_dossier_actual_progress(
-                (raw, int(existing["id"]))
-            )
+        self.dossiers.set_actual_progress_note(did, turn, raw)
         self.dossiers.mark_secret_order_in_progress(order_id, commit=False)
 
 
@@ -11596,9 +11469,7 @@ class GameDB:
         reason: str = "",
     ) -> Dict[str, object]:
         """缩短 active 密令期限。deadline_months<=0 表示本月到期对账。"""
-        row = self.character_knowledge.read_rush_secret_order(
-            (int(order_id),)
-        )
+        row = self.character_knowledge.secret_order_row(int(order_id))
         if row is None:
             raise PendingActionRefusal(
                 "密令不存在",
@@ -11713,7 +11584,7 @@ class GameDB:
         effective_year = int(year if year is not None else default_year)
         effective_period = int(period if period is not None else default_period)
         bound_origin, origin_round = bind_origin_round(origin, effective_turn)
-        self.person_logs.write_record_relation_edge_event(
+        edge_id = self.person_logs.record_relation_edge_event(
             (
                 source,
                 target,
@@ -11729,10 +11600,7 @@ class GameDB:
         )
         if owns_transaction:
             self.conn.commit()
-        row = self.person_logs.read_record_relation_edge_event(
-            (source, target, kind, context, bound_origin)
-        )
-        return int(row["id"])
+        return edge_id
 
 
     # ------------------------------------------------------------------

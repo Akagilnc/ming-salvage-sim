@@ -144,7 +144,7 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
     if dossier_id is not None:
         dossier = db.dossiers.get(int(dossier_id))
         if isinstance(dossier, dict):
-            # get_decree_dossier 已解码名册为 list[dict]。
+            # DossierStore.get 已解码名册为 list[dict]。
             roster = dossier.get("participant_roster") or []
             for item in roster:
                 if item.get("tier") == "主办":

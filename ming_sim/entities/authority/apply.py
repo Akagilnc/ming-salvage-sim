@@ -182,7 +182,7 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.dossiers.get(dossier_id)
     if row is None or not db.dossiers.authorizes_effects(dossier_id):
         return None
-    payload = row["payload"]  # GameDB.get_decree_dossier 已校验持久 JSON。
+    payload = row["payload"]  # DossierStore.get 已校验持久 JSON。
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
         return None
     return row

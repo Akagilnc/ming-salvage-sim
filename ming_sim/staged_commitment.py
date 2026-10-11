@@ -272,7 +272,7 @@ def list_due_grant_report_dossiers_for_scan(
 
     commitment_ref=0；stage_idx=dossier_id 作 UNIQUE 去重键；
     payload 携带 dossier_id/origin_ref 供 due_review 桥接。
-    复用 get_decree_dossier 响亮读口，不平行宽容腐坏 payload（#1897 E1/K2）。
+    复用 DossierStore.get 响亮读口，不平行宽容腐坏 payload（#1897 E1/K2）。
     """
     rows = db.dossiers.read_list_due_grant_report_dossiers_for_scan(
         (int(turn),)
@@ -285,7 +285,7 @@ def list_due_grant_report_dossiers_for_scan(
         dossier = db.dossiers.get(did)
         if dossier is None:
             raise ValueError(f"案卷不存在：{did}")
-        payload = dossier["payload"]  # get_decree_dossier 经权威解码，必为 dict
+        payload = dossier["payload"]  # DossierStore.get 经权威解码，必为 dict
         # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         due_turn = int(row["due_turn"] or 0)
         # #1897：due 扫描写入待办的自由字段原样透传，禁 strip。

@@ -401,7 +401,7 @@ def restore_pay_order_override(
             f"恢复 override 的 revoke 案卷 dossier:{int(revoke_dossier_id)} "
             f"未过合法颁布门（顺颁/强颁），禁删 config"
         )
-    # get_decree_dossier 已给规范 payload；禁止旁路 payload_json 再解码。
+    # DossierStore.get 已给规范 payload；禁止旁路 payload_json 再解码。
     entries = target["payload"].get("entries")
     prepared = prepare_pay_order_entries(db, entries)
     target_origin = f"dossier:{int(target_dossier_id)}"

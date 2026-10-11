@@ -150,21 +150,10 @@ def _apply_population_transfers(
         amount = min(amount, int(src_row["population"]))
         if amount > 0:
             # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
-            db.classes.write_apply_population_transfers(
-                (amount, src_cls, src_region)
-            )
-            db.classes.write_apply_population_transfers_classes(
-                (amount, dst_cls, dst_region)
-            )
-            db.classes.write_apply_population_transfers_population_transfer_ledger(
-                (
-                    int(db.reign.read_current_settle_turn(())[0]),
-                    row_source,
-                    target,
-                    amount,
-                    raw_reason,
-                    origin_ref,
-                )
+            db.classes.record_population_transfer(
+                src_cls, src_region, dst_cls, dst_region, amount,
+                turn=int(db.reign.read_current_settle_turn(())[0]),
+                source=row_source, target=target, reason=raw_reason, origin_ref=origin_ref,
             )
         region_name = str(
             db.regions.field_row('name', src_region)["name"]
