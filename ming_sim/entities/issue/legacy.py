@@ -16,10 +16,7 @@ from ming_sim.models import GameState
 def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     """每月调一次：取所有 active 且带 clear_gate 的 legacy，gate 达标即置 'cleared'。
     返回被消除的 legacy 名称列表（供叙事/提示用，不强制使用）。"""
-    rows = db.conn.execute(
-        "SELECT id, name, clear_gate, narrative_hint FROM legacies "
-        "WHERE status='active' AND clear_gate != '' AND clear_gate != '{}'"
-    ).fetchall()
+    rows = db.reign.read_clear_gated_legacies(())
     cleared: List[str] = []
     for row in rows:
         gate = GameDB.parse_engine_payload_json(
@@ -28,9 +25,7 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
         if not gate:
             continue
         if issues._gate_passed(gate, state.metrics, db):
-            db.conn.execute(
-                "UPDATE legacies SET status='cleared' WHERE id=?", (int(row["id"]),)
-            )
+            db.reign.write_clear_gated_legacies((int(row["id"]),))
             cleared.append(str(row["name"]))
     if cleared:
         db._legacy_mod_cache = None  # active 集变了，修正符缓存失效
@@ -44,29 +39,22 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
     一个函数覆盖新档（全补）/旧档（补缺）/达标档（不补/清残）。"""
     for leg in issues._ctx().opening_legacies:
         passed = issues._gate_passed(leg.clear_gate, state.metrics, db)
-        existing = db.conn.execute(
-            "SELECT id FROM legacies WHERE legacy_key=? AND status='active'",
-            (leg.key,),
-        ).fetchone()
+        existing = db.reign.read_sync_opening_legacies((leg.key,))
         if existing is not None:
-            db.conn.execute(
-                """UPDATE legacies
-                   SET name=?, modifiers=?, narrative_hint=?, clear_gate=?
-                   WHERE legacy_key=? AND status='active'""",
+            db.reign.write_sync_opening_legacies(
                 (
                     leg.name,
                     json.dumps(leg.modifiers, ensure_ascii=False),
                     leg.narrative_hint,
                     json.dumps(leg.clear_gate, ensure_ascii=False),
                     leg.key,
-                ),
+                )
             )
             db._legacy_mod_cache = None
         if passed:
             if existing is not None:
-                db.conn.execute(
-                    "UPDATE legacies SET status='cleared' WHERE legacy_key=? AND status='active'",
-                    (leg.key,),
+                db.reign.write_sync_opening_legacies_legacies(
+                    (leg.key,)
                 )
                 db._legacy_mod_cache = None
             continue

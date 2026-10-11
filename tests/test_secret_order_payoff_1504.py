@@ -1035,10 +1035,10 @@ def test_spoliation_requires_real_knowledge_source(game):
             "SELECT name FROM characters WHERE status='active' AND name NOT IN (?,?)",
             (name, target),
         ).fetchall()
-        if not db.get_relation_edge_events(person=target)
+        if not db.person_logs.get_relation_edge_events(person=target)
         or all(
             str(e["source"]) != row["name"] and str(e["target"]) != row["name"]
-            for e in db.get_relation_edge_events(person=target)
+            for e in db.person_logs.get_relation_edge_events(person=target)
         )
     )
     out = apply_investigation_spoliation(

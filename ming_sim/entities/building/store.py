@@ -40,10 +40,6 @@ class BuildingStore:
     def has_any(self) -> bool:
         return self._conn.execute("SELECT 1 FROM buildings LIMIT 1").fetchone() is not None
 
-    def exists(self, building_id: str) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM buildings WHERE id = ?", (building_id,),
-        ).fetchone() is not None
 
     def get(self, building_id: str) -> Any:
         return self._conn.execute(
@@ -84,3 +80,41 @@ class BuildingStore:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             tuple(row.get(column) for column in _LOG_COLUMNS),
         )
+
+    def read_buildings_report(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM buildings WHERE region_id = ? ORDER BY category, name",
+            params,
+        ).fetchall()
+
+    def read_buildings_report_(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM buildings ORDER BY region_id, category, name", params
+        ).fetchall()
+
+    def read_compute_budget_lines(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT category, condition, maintenance, output_metric, output_amount FROM buildings",
+            params,
+        ).fetchall()
+
+    def read_apply_fixed_period_flows(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings",
+            params,
+        ).fetchall()
+
+    def read_add_building(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM buildings WHERE id = ?", params
+        ).fetchone()
+
+    def read_remove_building(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT name FROM buildings WHERE id = ?", params
+        ).fetchone()
+
+    def read_add_building_buildings(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM buildings WHERE region_id = ?", params
+        ).fetchone()

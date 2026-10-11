@@ -10,8 +10,7 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.reign_state.store import ReignStateStore
-from ming_sim.entities.staged_declaration.store import StagedDeclarationStore
+from ming_sim.applier import list_rejection_reports_for_turn
 
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdict_metadata
 import re
@@ -250,11 +249,7 @@ def _month_fact_materials(
     turn = int(state.turn)
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
-    rows = db.conn.execute(
-        "SELECT decree_ref, declaration_json, forecast_text "
-        "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
-        (turn,),
-    ).fetchall()
+    rows = db.staged_declarations.read_month_fact_materials((turn,))
     for row in rows:
         decree_ref = str(row["decree_ref"] or "")
         # 已结算声明是内部机械事实；与 parse_engine_payload_json 同权威，
@@ -271,11 +266,7 @@ def _month_fact_materials(
         if isinstance(forecast, str) and forecast.strip():
             forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
-    for row in db.conn.execute(
-        "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
-        "WHERE turn=? ORDER BY id",
-        (turn,),
-    ):
+    for row in db.reign.read_month_ledger((turn,)):
         origin = str(row["origin_ref"] or "")
         landed.append({
             "account": row["account"],
@@ -285,25 +276,21 @@ def _month_fact_materials(
             "origin_ref": origin,
         })
     rejections: List[Dict[str, Any]] = []
-    exists = db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-    ).fetchone()
-    if exists is not None:
-        for row in db.conn.execute(
-            "SELECT section, item_json, reason, category FROM rejection_reports "
-            "WHERE turn=? ORDER BY id",
-            (turn,),
-        ):
-            from ming_sim.db import GameDB
-            item = GameDB.parse_engine_payload_json(
-                row["item_json"],
-            )
-            rejections.append({
+
+    for row in list_rejection_reports_for_turn(db.conn, turn):
+        from ming_sim.db import GameDB
+
+        item = GameDB.parse_engine_payload_json(
+            row["item_json"],
+        )
+        rejections.append(
+            {
                 "section": row["section"],
                 "item": item,
                 "reason": row["reason"],
                 "category": row["category"],
-            })
+            }
+        )
     answers: List[Dict[str, Any]] = []
     answer_rows = db.issues.list_pending_decisions(turn) + [
         r for r in db.issues.list_rescript_drafts() if r["answered_turn"] == turn

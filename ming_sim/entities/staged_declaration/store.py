@@ -16,8 +16,9 @@ from typing import Any, Mapping
 
 from ming_sim.applier import atomic, connection_owns_transaction
 from ming_sim.applier import (
-    atomic, connection_owns_transaction,
-    load_stored_object, load_stored_list,
+    atomic,
+    connection_owns_transaction,
+    load_stored_list,
 )
 
 
@@ -258,13 +259,19 @@ class StagedDeclarationStore:
             self._conn.commit()
         return int(cur.rowcount or 0)
 
+    def read_month_fact_materials(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT decree_ref, declaration_json, forecast_text "
+            "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
+            params,
+        ).fetchall()
+
+
 def _load_questions(raw: object) -> list[dict]:
     questions = load_stored_list(raw, label="questions_json")
     if any(not isinstance(question, dict) for question in questions):
         raise ValueError("questions_json 成员须为对象")
     return questions
-
-
 
 
 def _row_to_staged(row: Any) -> StagedDeclaration:

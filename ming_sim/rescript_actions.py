@@ -1,8 +1,5 @@
 """Persist emperor answers; effects belong to the month-chain continuation."""
 from __future__ import annotations
-from ming_sim.entities.army.store import ArmyStore
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.issue.store import IssueStore
 from ming_sim.applier import StoredDocumentError, load_stored_object
 
 import json
@@ -59,19 +56,21 @@ def persist_answers(db: Any, state: Any, choices: list, *, content: Any = None) 
             if choice.get("label") and choice["label"] not in {o.get("label") for o in row["options"]}:
                 raise ValueError("所选票拟不在原奏折中")
     with atomic_and_reload(db, state, content=content):
-        order = int(db.conn.execute(
-            "SELECT COALESCE(MAX(answer_order),0) FROM pending_decisions WHERE answered_turn=?", (int(state.turn),),
-        ).fetchone()[0])
+        order = int(db.issues.read_persist_answers((int(state.turn),))[0])
         for choice in requests:
             row = rows[choice["decision_key"]]
             if row["choice"]:
                 continue
             order += 1
-            db.conn.execute(
-                "UPDATE pending_decisions SET choice_json=?, status='decided', answered_turn=?, answer_order=? "
-                "WHERE turn=? AND idx=? AND kind=? AND status='pending'",
-                (json.dumps(choice, ensure_ascii=False), int(state.turn), order,
-                 row["source_turn"], row["idx"], row["kind"]),
+            db.issues.write_persist_answers(
+                (
+                    json.dumps(choice, ensure_ascii=False),
+                    int(state.turn),
+                    order,
+                    row["source_turn"],
+                    row["idx"],
+                    row["kind"],
+                )
             )
             event_id = str(row.get("event_id") or "")
             from ming_sim.month_chain import _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX, _LEVY_PETITION_PREFIX
@@ -101,9 +100,7 @@ def apply_imperial_deliberation_push(
     if payload.get("deliberation_state") != "stalled":
         raise ValueError("御笔强推只接无人站台原案")
     origin = f"dossier:{did}"
-    issue = db.conn.execute(
-        "SELECT id FROM issues WHERE origin_ref=? AND status='active' LIMIT 1", (origin,),
-    ).fetchone()
+    issue = db.issues.read_apply_imperial_deliberation_push((origin,))
     if issue is None:
         raise ValueError("无人站台原案缺局势记录")
     payload["deliberation_state"] = "backed"

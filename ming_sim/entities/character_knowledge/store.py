@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Mapping, Optional
 
+from ming_sim.entities.column_write import upsert_by_pk
 from ming_sim.applier import (
     StoredDocumentError,
     durable_int,
@@ -67,6 +68,49 @@ CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
 
 def ensure_schema(conn: Any) -> None:
     conn.executescript(_SCHEMA_SQL)
+
+
+_SNAPSHOT_COLUMNS = {
+    "secret_orders": frozenset(
+        {
+            "id",
+            "turn_issued",
+            "due_turn",
+            "deadline_span",
+            "year_issued",
+            "period_issued",
+            "minister_name",
+            "title",
+            "content",
+            "tags",
+            "importance",
+            "status",
+            "result",
+            "sim_note",
+            "excluded_names",
+            "dossier_progress_json",
+            "excluded_targets",
+            "turn_closed",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "public_sayings": frozenset(
+        {
+            "id",
+            "turn",
+            "year",
+            "period",
+            "body",
+            "involved_characters",
+            "affair_ref",
+            "source_id",
+            "excluded_names",
+            "excluded_targets",
+            "created_at",
+        }
+    ),
+}
 
 
 class CharacterKnowledgeStore:
@@ -177,7 +221,7 @@ class CharacterKnowledgeStore:
         status: str | None = None,
         minister_name: str | None = None,
     ) -> list[dict[str, object]]:
-        from ming_sim.applier import durable_int, load_stored_list, load_stored_object
+        from ming_sim.applier import durable_int, load_stored_list
         from ming_sim.entities.dossier.store import DossierStore
 
         rows = self.secret_order_rows(status, minister_name)
@@ -241,10 +285,7 @@ class CharacterKnowledgeStore:
         """
         from ming_sim.supervision import report_origin_base
 
-        row = self._conn.execute(
-            "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
-            (int(order_id),),
-        ).fetchone()
+        row = self.read_record_secret_dossier_progress((int(order_id),))
         if row is None:
             raise ValueError("密令不存在")
         reports = load_stored_list(
@@ -336,12 +377,312 @@ class CharacterKnowledgeStore:
 
     def list_secret_dossier_progress_items(self, order_id: int) -> list:
         """Load private-rail progress members; missing order is legal absence ([])."""
-        row = self._conn.execute(
-            "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
-            (int(order_id),),
-        ).fetchone()
+        row = self.read_record_secret_dossier_progress((int(order_id),))
         if row is None:
             return []
         return load_stored_list(
             row["dossier_progress_json"], label="dossier_progress_json",
         )
+
+    def write_close_in_current_transaction(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n                UPDATE secret_orders\n                SET status = ?, result = ?, turn_closed = ?, updated_at = CURRENT_TIMESTAMP\n                WHERE id = ?\n                ",
+            params,
+        )
+
+    def write_submit_secret_order_for_review(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE secret_orders SET due_turn = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'active'",
+            params,
+        )
+
+    def read_restore_secret_order_brief_projection_in_tx(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT turn_issued,year_issued,period_issued,minister_name,title,content FROM secret_orders WHERE id=?",
+            params,
+        ).fetchone()
+
+    def read_submit_secret_order_for_review(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status, turn_issued FROM secret_orders WHERE id = ?", params
+        ).fetchone()
+
+    def write_rush_secret_order(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE secret_orders SET due_turn = ?, deadline_span = 0, "
+            "updated_at=CURRENT_TIMESTAMP WHERE id = ?",
+            params,
+        )
+
+    def write_rush_secret_order_secret_orders(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE secret_orders SET due_turn = ?, deadline_span = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            params,
+        )
+
+    def read_auto_submit_due_secret_orders(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT id, title, result FROM secret_orders\n            WHERE status = 'active' AND due_turn > 0 AND due_turn <= ?\n            ORDER BY id\n            ",
+            params,
+        ).fetchall()
+
+    def read_create_secret_order(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM secret_orders WHERE status='active'", params
+        ).fetchone()
+
+    def read_interrupt_dossiers_for_character(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status,result FROM secret_orders WHERE id=?", params
+        ).fetchone()
+
+    def write_record_public_saying_public_sayings(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE public_sayings SET source_id=? WHERE id=?", params
+        )
+
+    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, title, status FROM secret_orders ORDER BY id", params
+        ).fetchall()
+
+    def write_restore_secret_order_brief_projection_in_tx(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            """
+                INSERT INTO secret_order_briefs
+                    (order_id,turn,year,period,minister_name,title,body,origin_chat_message_ids)
+                VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                    turn=excluded.turn, year=excluded.year, period=excluded.period,
+                    minister_name=excluded.minister_name, title=excluded.title, body=excluded.body,
+                    origin_chat_message_ids=excluded.origin_chat_message_ids,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+            params,
+        )
+
+    def write_register_character_knowledge_source(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT OR REPLACE INTO character_knowledge_sources "
+            "(turn,year,period,kind,title,body,source_id,participant_roster) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            params,
+        )
+
+    def write_record_public_knowledge_event(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id) VALUES (?,?,?,?,?,?,?,?)",
+            params,
+        )
+
+    def write_create_secret_order(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                    INSERT INTO secret_orders
+                        (turn_issued, due_turn, deadline_span, year_issued, period_issued, minister_name, title, content, tags, importance, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                    """,
+            params,
+        )
+
+    def read_brief_origin_chat_message_ids(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+            params,
+        ).fetchone()
+
+    def read_record_secret_dossier_progress(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT dossier_progress_json FROM secret_orders WHERE id=?", params
+        ).fetchone()
+
+    def read_character_knowledge_events(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT turn, year, period, kind, title, body, source_id, participant_roster "
+            "FROM character_knowledge_sources ORDER BY turn, id",
+            params,
+        ).fetchall()
+
+
+    def read_update_secret_order_by_id(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status, tags, minister_name FROM secret_orders WHERE id=?", params
+        ).fetchone()
+
+    def write_update_secret_order_by_id(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, deadline_span=?, "
+            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            params,
+        )
+
+    def write_update_secret_order_by_id_secret_orders(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE secret_orders SET title=?, content=?, tags=?, "
+            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            params,
+        )
+
+    def read_note_secret_order_report(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status FROM secret_orders WHERE id=?", params
+        ).fetchone()
+
+    def read_update_secret_order_sim_note_in_transaction(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM secret_orders WHERE id=? AND status='active'", params
+        ).fetchone()
+
+    def read_rush_secret_order(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, title, status, due_turn FROM secret_orders WHERE id = ?", params
+        ).fetchone()
+
+    def read_character_knowledge_events_character_knowledge_events(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT turn, year, period, kind, title, body, source_id "
+            "FROM character_knowledge_events WHERE character_name='' ORDER BY turn, id",
+            params,
+        ).fetchall()
+
+    def read_character_knowledge_events_secret_order_briefs(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT turn, year, period, title, body, order_id FROM secret_order_briefs "
+            "WHERE minister_name=? ORDER BY turn, order_id",
+            params,
+        ).fetchall()
+
+    def read_record_secret_order_disclosure(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM character_knowledge_events "
+            "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
+            params,
+        ).fetchone()
+
+    def read_origin_visible_to(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
+            params,
+        ).fetchone()
+
+    def write_record_public_saying(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT INTO public_sayings "
+            "(turn, year, period, body, involved_characters, affair_ref, source_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params,
+        )
+
+    def read_list_public_sayings(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, turn, year, period, body, involved_characters, affair_ref, source_id "
+            "FROM public_sayings ORDER BY id",
+            params,
+        ).fetchall()
+
+    def read_known_names(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT source_id, participant_roster, kind FROM character_knowledge_sources",
+            params,
+        ).fetchall()
+
+    def snapshot_rows(self, table: str) -> Any:
+        if table not in _SNAPSHOT_COLUMNS:
+            raise ValueError(table)
+        return self._conn.execute(f"SELECT * FROM {table}").fetchall()
+
+    def restore_snapshot(self, table: str, row: Mapping[str, object]) -> None:
+        upsert_by_pk(
+            self._conn,
+            table,
+            row,
+            pk="id",
+            allowed=_SNAPSHOT_COLUMNS[table],
+            what=table,
+        )
+
+    def delete_snapshot(self, table: str, row_id: object) -> None:
+        if table not in _SNAPSHOT_COLUMNS:
+            raise ValueError(table)
+        self._conn.execute(f"DELETE FROM {table} WHERE id=?", (row_id,))
+
+    def secret_brief_pins(self, order_id: int | None = None) -> list[Any]:
+        if order_id is None:
+            return self._conn.execute(
+                "SELECT order_id,origin_chat_message_ids FROM secret_order_briefs",
+            ).fetchall()
+        return self._conn.execute(
+            "SELECT order_id,origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+            (order_id,),
+        ).fetchall()
+
+    def participant_record_rows(self):
+        for table, columns in self.participant_roster_tables():
+            quoted = '"' + table.replace('"', '""') + '"'
+            selected = {name: name for name in columns}
+            id_expr = selected.get("id", "rowid")
+            source_expr = selected.get("source_id")
+            # Tables without source_id use their own record identity.
+            fallback_prefix = table[:-1] if table.endswith("s") else table
+            source_sql = (
+                source_expr if source_expr else f"'{fallback_prefix}:' || {id_expr}"
+            )
+            turn_expr = (
+                selected.get("turn")
+                or selected.get("origin_turn")
+                or selected.get("created_turn")
+                or "0"
+            )
+            year_expr = selected.get("year") or selected.get("created_year") or "0"
+            period_expr = (
+                selected.get("period") or selected.get("created_period") or "0"
+            )
+            kind_expr = selected.get("kind") or "'assignment'"
+            title_expr = selected.get("title") or "''"
+            body_expr = (
+                selected.get("body")
+                or selected.get("stage_text")
+                or selected.get("content")
+                or selected.get("decree_text")
+                or "''"
+            )
+            secrecy_sql = (
+                " AND action_type <> 'secret_order'"
+                if table == "decree_dossiers"
+                else ""
+            )
+            query = (
+                f"SELECT {turn_expr} AS turn, {year_expr} AS year, {period_expr} AS period, "
+                f"{kind_expr} AS kind, {title_expr} AS title, {body_expr} AS body, "
+                f"{source_sql} AS source_id, participant_roster "
+                f"FROM {quoted} WHERE participant_roster <> '[]'{secrecy_sql} ORDER BY turn, {id_expr}"
+            )
+            yield from self._conn.execute(query).fetchall()
+
+    def participant_roster_tables(self) -> list[tuple[str, set[str]]]:
+        """List durable user tables that expose the common roster column."""
+        tables = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        result: list[tuple[str, set[str]]] = []
+        for row in tables:
+            table = str(row["name"])
+            if table in {"character_knowledge_sources", "issues"}:
+                continue
+            columns = {
+                str(column["name"])
+                for column in self._conn.execute(
+                    'PRAGMA table_info("' + table.replace('"', '""') + '")'
+                ).fetchall()
+            }
+            if "participant_roster" in columns:
+                result.append((table, columns))
+        return result

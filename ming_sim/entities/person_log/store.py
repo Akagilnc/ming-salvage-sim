@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Mapping, Optional
 
+from ming_sim.entities.column_write import bind_affair_once, upsert_by_pk
 from ming_sim.applier import connection_owns_transaction
 
 
@@ -42,6 +43,25 @@ CREATE INDEX IF NOT EXISTS idx_person_logs_origin
 
 def ensure_schema(conn: Any) -> None:
     conn.executescript(_SCHEMA_SQL)
+
+
+_EDGE_COLUMNS = frozenset(
+    {
+        "id",
+        "source",
+        "target",
+        "event_kind",
+        "context",
+        "origin",
+        "origin_round",
+        "turn",
+        "year",
+        "period",
+        "evidence",
+        "affair_id",
+        "created_at",
+    }
+)
 
 
 class PersonLogStore:
@@ -81,14 +101,13 @@ class PersonLogStore:
             normalized_text = json.dumps(dict(normalized), ensure_ascii=False, sort_keys=True)
         else:
             normalized_text = str(normalized or "")
-        cur = self._conn.execute(
-            "INSERT INTO person_logs "
-            "(turn, year, period, person_name, action, payload_summary, "
-            " derived_from, normalized, source, origin_ref) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        cur = self.write_record_person_log(
             (
-                int(turn), int(year), int(period),
-                name, act,
+                int(turn),
+                int(year),
+                int(period),
+                name,
+                act,
                 str(payload_summary or ""),
                 str(derived_from or ""),
                 # Full value: normalized is structured audit JSON, and any
@@ -96,14 +115,12 @@ class PersonLogStore:
                 normalized_text,
                 str(source or ""),
                 str(origin_ref or ""),
-            ),
+            )
         )
         if commit:
             self._conn.commit()
         return int(cur.lastrowid or 0)
 
-    def write_delete_relation_edge_events_for_chat_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute('DELETE FROM relation_edge_events WHERE origin LIKE ?', params)
 
     def delete_relation_edge_events_for_chat_turn(self, chat_turn_id: int) -> int:
         """撤回联动：删该轮源绑定的边事件行（召对判官 + 转译声明 origin 前缀）。
@@ -115,7 +132,8 @@ class PersonLogStore:
         cid = int(chat_turn_id)
         total = 0
         for prefix in (SUMMON_EDGE_ORIGIN_PREFIX, "转译声明"):
-            cur = self.write_delete_relation_edge_events_for_chat_turn(
+            cur = self._conn.execute(
+                "DELETE FROM relation_edge_events WHERE origin LIKE ?",
                 (f"{prefix}|chat_turn:{cid}|%",),
             )
             total += int(cur.rowcount)
@@ -136,8 +154,6 @@ class PersonLogStore:
     def read_import_relationship_seed(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT COUNT(*) AS c FROM relation_edge_events', params).fetchone()
 
-    def write_apply_seed_founding_segment(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            INSERT INTO relation_summaries\n                (source, target, dimension, founding_segment, recent_segment,\n                 last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)\n            VALUES (?, ?, ?, ?, '', 0, 0, 0, 0)\n            ON CONFLICT(source, target) DO UPDATE SET\n                dimension = excluded.dimension,\n                founding_segment = excluded.founding_segment,\n                updated_at = CURRENT_TIMESTAMP\n            ", params)
 
     def apply_seed_founding_segment(
         self,
@@ -151,7 +167,8 @@ class PersonLogStore:
         if dimension not in ("君臣", "大臣"):
             raise ValueError(f"未知关系维度: {dimension!r}")
         owns = connection_owns_transaction(self._conn)
-        self.write_apply_seed_founding_segment(
+        self._conn.execute(
+            "\n            INSERT INTO relation_summaries\n                (source, target, dimension, founding_segment, recent_segment,\n                 last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)\n            VALUES (?, ?, ?, ?, '', 0, 0, 0, 0)\n            ON CONFLICT(source, target) DO UPDATE SET\n                dimension = excluded.dimension,\n                founding_segment = excluded.founding_segment,\n                updated_at = CURRENT_TIMESTAMP\n            ",
             (str(source), str(target), dimension, str(founding_segment)),
         )
         if owns:
@@ -175,12 +192,22 @@ class PersonLogStore:
             raise ValueError(f"未知关系维度: {dimension!r}")
         owns = connection_owns_transaction(self._conn)
         try:
-            self.write_apply_relation_brew_result((
-                str(source), str(target), dimension,
-                str(founding_segment), str(recent_segment),
-                int(last_event_id), int(turn), int(year), int(period),
-            ))
-            self.write_apply_relation_brew_result_relation_brew_pending(
+            self._conn.execute(
+                "\n                INSERT INTO relation_summaries\n                    (source, target, dimension, founding_segment, recent_segment,\n                     last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ON CONFLICT(source, target) DO UPDATE SET\n                    dimension = excluded.dimension,\n                    founding_segment = excluded.founding_segment,\n                    recent_segment = excluded.recent_segment,\n                    last_event_id = excluded.last_event_id,\n                    last_brewed_turn = excluded.last_brewed_turn,\n                    last_brewed_year = excluded.last_brewed_year,\n                    last_brewed_period = excluded.last_brewed_period,\n                    updated_at = CURRENT_TIMESTAMP\n                ",
+                (
+                    str(source),
+                    str(target),
+                    dimension,
+                    str(founding_segment),
+                    str(recent_segment),
+                    int(last_event_id),
+                    int(turn),
+                    int(year),
+                    int(period),
+                ),
+            )
+            self._conn.execute(
+                "DELETE FROM relation_brew_pending WHERE source = ? AND target = ?",
                 (str(source), str(target)),
             )
             if owns:
@@ -205,7 +232,8 @@ class PersonLogStore:
         """酿制失败的月份进持久 pending-backlog。"""
         owns = connection_owns_transaction(self._conn)
         try:
-            self.write_mark_relation_brew_pending(
+            self._conn.execute(
+                "\n                INSERT INTO relation_brew_pending (source, target, year, period, reason)\n                VALUES (?, ?, ?, ?, ?)\n                ON CONFLICT(source, target) DO UPDATE SET\n                    year = excluded.year,\n                    period = excluded.period,\n                    reason = excluded.reason\n                ",
                 (str(source), str(target), int(year), int(period), str(reason)),
             )
             if owns:
@@ -221,7 +249,8 @@ class PersonLogStore:
     def claim_relation_brew_targets(self, *, year: int, period: int) -> int:
         """settled 年月入选关系先作 durable claim。返回本次新认领的关系数。"""
         owns = connection_owns_transaction(self._conn)
-        cur = self.write_claim_relation_brew_targets(
+        cur = self._conn.execute(
+            "\n            INSERT INTO relation_brew_pending (source, target, year, period, reason)\n            SELECT e.source, e.target, ?, ?, '月末新事件认领'\n            FROM relation_edge_events AS e\n            LEFT JOIN relation_summaries AS s\n                ON s.source = e.source AND s.target = e.target\n            WHERE e.year = ? AND e.period = ?\n              AND e.id > COALESCE(s.last_event_id, 0)\n            GROUP BY e.source, e.target\n            ON CONFLICT(source, target) DO NOTHING\n            ",
             (int(year), int(period), int(year), int(period)),
         )
         if owns:
@@ -231,7 +260,8 @@ class PersonLogStore:
     def claim_faction_brew_targets(self, *, year: int, period: int) -> int:
         """settled 年月涉派派系先作 durable claim。返回本次新认领的派系数。"""
         owns = connection_owns_transaction(self._conn)
-        cur = self.write_claim_faction_brew_targets(
+        cur = self._conn.execute(
+            "\n            INSERT INTO relation_brew_pending\n                (source, target, year, period, reason, item_kind)\n            SELECT DISTINCT '', c.faction, ?, ?, '月末涉派新事件认领', '派系'\n            FROM relation_edge_events AS e\n            JOIN characters AS c ON c.name = e.source OR c.name = e.target\n            JOIN factions AS f ON f.name = c.faction\n            LEFT JOIN faction_stance_summaries AS s ON s.faction = c.faction\n            WHERE e.year = ? AND e.period = ?\n              AND e.id > COALESCE(s.last_event_id, 0)\n            ON CONFLICT(source, target) DO NOTHING\n            ",
             (int(year), int(period), int(year), int(period)),
         )
         if owns:
@@ -249,7 +279,8 @@ class PersonLogStore:
         """派系酿制失败月进持久 pending-backlog。"""
         owns = connection_owns_transaction(self._conn)
         try:
-            self.write_mark_faction_brew_pending(
+            self._conn.execute(
+                "\n                INSERT INTO relation_brew_pending\n                    (source, target, year, period, reason, item_kind)\n                VALUES ('', ?, ?, ?, ?, '派系')\n                ON CONFLICT(source, target) DO UPDATE SET\n                    year = excluded.year,\n                    period = excluded.period,\n                    reason = excluded.reason\n                ",
                 (str(faction), int(year), int(period), str(reason)),
             )
             if owns:
@@ -262,23 +293,6 @@ class PersonLogStore:
                     pass
             raise
 
-    def write_claim_relation_brew_targets(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            INSERT INTO relation_brew_pending (source, target, year, period, reason)\n            SELECT e.source, e.target, ?, ?, '月末新事件认领'\n            FROM relation_edge_events AS e\n            LEFT JOIN relation_summaries AS s\n                ON s.source = e.source AND s.target = e.target\n            WHERE e.year = ? AND e.period = ?\n              AND e.id > COALESCE(s.last_event_id, 0)\n            GROUP BY e.source, e.target\n            ON CONFLICT(source, target) DO NOTHING\n            ", params)
-
-    def write_claim_faction_brew_targets(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            INSERT INTO relation_brew_pending\n                (source, target, year, period, reason, item_kind)\n            SELECT DISTINCT '', c.faction, ?, ?, '月末涉派新事件认领', '派系'\n            FROM relation_edge_events AS e\n            JOIN characters AS c ON c.name = e.source OR c.name = e.target\n            JOIN factions AS f ON f.name = c.faction\n            LEFT JOIN faction_stance_summaries AS s ON s.faction = c.faction\n            WHERE e.year = ? AND e.period = ?\n              AND e.id > COALESCE(s.last_event_id, 0)\n            ON CONFLICT(source, target) DO NOTHING\n            ", params)
-
-    def write_apply_relation_brew_result(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n                INSERT INTO relation_summaries\n                    (source, target, dimension, founding_segment, recent_segment,\n                     last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ON CONFLICT(source, target) DO UPDATE SET\n                    dimension = excluded.dimension,\n                    founding_segment = excluded.founding_segment,\n                    recent_segment = excluded.recent_segment,\n                    last_event_id = excluded.last_event_id,\n                    last_brewed_turn = excluded.last_brewed_turn,\n                    last_brewed_year = excluded.last_brewed_year,\n                    last_brewed_period = excluded.last_brewed_period,\n                    updated_at = CURRENT_TIMESTAMP\n                ', params)
-
-    def write_apply_relation_brew_result_relation_brew_pending(self, params: Any = ()) -> Any:
-        return self._conn.execute('DELETE FROM relation_brew_pending WHERE source = ? AND target = ?', params)
-
-    def write_mark_relation_brew_pending(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n                INSERT INTO relation_brew_pending (source, target, year, period, reason)\n                VALUES (?, ?, ?, ?, ?)\n                ON CONFLICT(source, target) DO UPDATE SET\n                    year = excluded.year,\n                    period = excluded.period,\n                    reason = excluded.reason\n                ', params)
-
-    def write_mark_faction_brew_pending(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n                INSERT INTO relation_brew_pending\n                    (source, target, year, period, reason, item_kind)\n                VALUES ('', ?, ?, ?, ?, '派系')\n                ON CONFLICT(source, target) DO UPDATE SET\n                    year = excluded.year,\n                    period = excluded.period,\n                    reason = excluded.reason\n                ", params)
 
     def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
         row = self._conn.execute(
@@ -355,3 +369,72 @@ class PersonLogStore:
             }
             for row in rows
         ]
+
+    def write_record_relation_edge_event(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            INSERT OR IGNORE INTO relation_edge_events\n                (source, target, event_kind, context, origin, origin_round,\n                 turn, year, period, evidence)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+            params,
+        )
+
+    def write_apply_faction_brew_result(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "DELETE FROM relation_brew_pending WHERE item_kind = '派系' AND target = ?",
+            params,
+        )
+
+    def read_record_relation_edge_event(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT id FROM relation_edge_events\n            WHERE source = ? AND target = ? AND event_kind = ? AND context = ? AND origin = ?\n            ",
+            params,
+        ).fetchone()
+
+    def read_originated_quantity_this_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM person_logs WHERE origin_ref=? AND turn=? AND action=?",
+            params,
+        ).fetchall()
+
+    def write_record_person_log(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                INSERT INTO person_logs
+                (turn, year, period, person_name, action, payload_summary, derived_from, normalized, source, origin_ref)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+            params,
+        )
+
+    def edge_snapshot_rows(self) -> Any:
+        return self._conn.execute("SELECT * FROM relation_edge_events").fetchall()
+
+    def restore_edge(self, row: Mapping[str, object]) -> None:
+        upsert_by_pk(
+            self._conn,
+            "relation_edge_events",
+            row,
+            pk="id",
+            allowed=_EDGE_COLUMNS,
+            what="relation_edge_events",
+        )
+
+    def delete_edge(self, row_id: object) -> None:
+        self._conn.execute("DELETE FROM relation_edge_events WHERE id=?", (row_id,))
+
+    def affair_id_of(self, edge_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT affair_id FROM relation_edge_events WHERE id=?", (int(edge_id),)
+        ).fetchone()
+        if row is None:
+            raise KeyError(edge_id)
+        return int(row["affair_id"] or 0)
+
+    def set_affair_id_if_unbound(self, edge_id: int, affair_id: int) -> int:
+        return bind_affair_once(
+            self._conn, "relation_edge_events", int(edge_id), affair_id
+        )
+
+    def rows_for_affair(self, affair_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM relation_edge_events WHERE affair_id=? ORDER BY id",
+            (affair_id,),
+        ).fetchall()

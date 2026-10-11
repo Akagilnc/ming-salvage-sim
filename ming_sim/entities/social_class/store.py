@@ -49,3 +49,77 @@ class ClassStore:
 
     def read_names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT DISTINCT name FROM classes', params)
+
+    def read_class_report(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT c.name, c.region_id, c.satisfaction, c.leverage, r.name AS region_name\n            FROM classes c\n            LEFT JOIN regions r ON r.id = c.region_id\n            WHERE c.region_id <> '' AND c.satisfaction <= 30 AND c.leverage >= 60\n            ORDER BY c.satisfaction ASC, c.leverage DESC\n            ",
+            params,
+        ).fetchall()
+
+    def read_adjust_classes(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT satisfaction, leverage FROM classes WHERE name = ? AND region_id = ?",
+            params,
+        ).fetchone()
+
+    def read_ordered_names(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT DISTINCT name FROM classes ORDER BY name", params
+        ).fetchall()
+
+    def read_apply_levy_driven_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT population FROM classes WHERE name='农民' AND region_id=?", params
+        ).fetchone()
+
+    def read_apply_population_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT population FROM classes WHERE name=? AND region_id=?", params
+        ).fetchone()
+
+    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT population FROM classes WHERE name='流民' AND region_id=?", params
+        ).fetchone()
+
+    def read_apply_recovery_driven_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM classes WHERE name='农民' AND region_id=?", params
+        ).fetchone()
+
+    def write_adjust_classes(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE classes SET satisfaction = ?, leverage = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name = ? AND region_id = ?",
+            params,
+        )
+
+    def write_apply_population_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name=? AND region_id=?",
+            params,
+        )
+
+    def write_apply_population_transfers_classes(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name=? AND region_id=?",
+            params,
+        )
+
+    def write_apply_population_transfers_population_transfer_ledger(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "INSERT INTO population_transfer_ledger "
+            "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
+            params,
+        )
+
+    def write_apply_bandit_absorptions(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name='流民' AND region_id=?",
+            params,
+        )

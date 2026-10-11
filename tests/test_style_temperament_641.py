@@ -255,7 +255,7 @@ def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
     padded_edge_context = "  两人在朝上声气相通。\n仍留余地。  "
 
     settle_delta(state, db, {'人物变更': [_temperament_item(style=PADDED_STYLE)]}, SettlementContext(content=content))
-    db.apply_relation_brew_result(
+    db.person_logs.apply_relation_brew_result(
         source=person.name,
         target=other.name,
         dimension="大臣",
@@ -310,7 +310,7 @@ def test_relation_edge_events_do_not_mutate_style(game):
     out = settle_delta(state, db, {'relation_edge_events': [{'施动者': source, '受动者': target, '类目': '使绊', '语境': '毕自严在户部用度上挡了王绍徽的路。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     res = view(out, "relation_edge_event_resolutions")
     assert section(out, "relation_edge_event_resolutions").rejected == []
-    rows = db.get_relation_edge_events(source=source, target=target)
+    rows = db.person_logs.get_relation_edge_events(source=source, target=target)
     assert len(rows) == 1
     assert _style_row(db, source) == before_db[source]
     assert _style_row(db, target) == before_db[target]

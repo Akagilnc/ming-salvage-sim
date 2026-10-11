@@ -115,9 +115,8 @@ def _canonicalize_existing_fiscal_levy_terminal_reason(
         state,
     )
     if label != record.get("terminal_reason"):
-        db.conn.execute(
-            "UPDATE event_triggers SET terminal_reason=? WHERE event_id=?",
-            (label, ev.id),
+        db.issues.write_canonicalize_existing_fiscal_levy_terminal_reason(
+            (label, ev.id)
         )
         record["terminal_reason"] = label
 
@@ -315,7 +314,7 @@ def _apply_fiscal_levy_targets(
     tian_abolished = not _fiscal_levy_tian_in_force(db)
     liao_scale = _fiscal_levy_liao_declared_scale(db) if liao_in_force else 0.0
     region_entries: List[Dict[str, object]] = []
-    for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
+    for row in db.regions.read_apply_fiscal_levy_targets(()):
         region_id = str(row["id"])
         fiscal = _load_durable_json(row["fiscal"])
         settle = fiscal.get("settle")
@@ -458,9 +457,8 @@ def _apply_fiscal_levy_targets(
             continue
         settle["p"] = next_p
         settle["_meta"] = meta
-        db.conn.execute(
-            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (json.dumps(fiscal, ensure_ascii=False), region_id),
+        db.regions.update(
+            region_id, {"fiscal": json.dumps(fiscal, ensure_ascii=False)}
         )
         touched += 1
     return touched
@@ -530,16 +528,11 @@ def _fiscal_levy_catalog_in_force(db: GameDB, keys: tuple) -> bool:
     那个残留的 base 不是复征证据（这正是 F1）。整组被 `remove_fiscal_item` 删空同样
     判罢。故在征 ⟺ 组内每个键都在册且 > 0。
     """
-    keys = tuple(keys)
-    if not keys:
-        return True
-    placeholders = ",".join("?" for _ in keys)
-    row = db.conn.execute(
-        f"SELECT COUNT(*) AS n FROM fiscal_config WHERE key IN ({placeholders}) AND value > 0",
-        keys,
-    ).fetchone()
-    # 齐全（n == 组内键数）且全正才算在征；缺键或含零值 = 罢。
-    return int(row["n"] or 0) == len(set(keys))
+    # 齐全且全正才算在征；缺键或含零值 = 罢。目录读口复用所属 Store。
+    return all(
+        row is not None and row["value"] > 0
+        for row in (db.fiscal_config.row(key) for key in keys)
+    )
 
 
 def _fiscal_levy_tian_in_force(db: GameDB) -> bool:
@@ -551,9 +544,7 @@ def _fiscal_levy_tian_in_force(db: GameDB) -> bool:
     """
     if not _fiscal_levy_catalog_in_force(db, _FISCAL_LEVY_TIAN_KEYS):
         return False
-    row = db.conn.execute(
-        "SELECT value FROM fiscal_config WHERE key = '田赋_base'"
-    ).fetchone()
+    row = db.fiscal_config.read_fiscal_levy_tian_in_force()
     if row is None:
         return True
     return int(row["value"] or 0) > 0
@@ -561,9 +552,7 @@ def _fiscal_levy_tian_in_force(db: GameDB) -> bool:
 
 def _fiscal_levy_liao_declared_scale(db: GameDB) -> float:
     """在征辽饷按声明 base / seed base 计。seed 定额缺失时不另造比例。"""
-    row = db.conn.execute(
-        "SELECT value FROM fiscal_config WHERE key = '辽饷_base'"
-    ).fetchone()
+    row = db.fiscal_config.read_fiscal_levy_liao_declared_scale()
     live = int(row["value"] or 0) if row is not None else 0
     seed = db._seeded_fiscal_config_value("辽饷_base")
     if seed is None or seed <= 0 or live <= 0:

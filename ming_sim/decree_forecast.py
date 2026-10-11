@@ -71,10 +71,7 @@ def _current_forecast_ref(session: Any, key: tuple) -> Optional[str]:
     """Resolve the queue's existing identity against the saved directive."""
     if key[0] == "decree_forecast":
         _, action_id, version, night_id = key
-        row = session.db.conn.execute(
-            "SELECT status,kind,action,night_approved,night_id,version "
-            "FROM pending_actions WHERE id=?", (action_id,),
-        ).fetchone()
+        row = session.db.dossiers.read_current_forecast_ref((action_id,))
         if row is not None and (
             row["status"] == "pending" and row["kind"] == "directive"
             and row["action"] == "拟旨" and int(row["night_approved"] or 0) == 1
@@ -198,9 +195,7 @@ def forecast_snapshot(
 
 def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Optional[Dict[str, Any]]:
     db, state = session.db, session.state
-    row = db.conn.execute(
-        "SELECT * FROM pending_actions WHERE id=?", (int(pending_action_id),),
-    ).fetchone()
+    row = db.dossiers.read_pending_snapshot((int(pending_action_id),))
     if row is None:
         return None
     pending = dict(row)
@@ -218,9 +213,7 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
     payload = dict(prepared_directive["payload"])
     action_type = db._directive_dossier_action_type(payload)
     executor_kind, executor_id = db._directive_executor(action_type, payload)
-    next_id = int(db.conn.execute(
-        "SELECT COALESCE(MAX(id),0)+1 FROM decree_dossiers"
-    ).fetchone()[0])
+    next_id = int(db.dossiers.read_pending_snapshot_decree_dossiers()[0])
     candidate: Dict[str, object] = {
         "id": next_id,
         "pending_action_id": int(pending_action_id),
@@ -286,11 +279,7 @@ def _uncased_grant_catalog_token(
         return None
     if pending_id <= 0:
         return None
-    existing = db.conn.execute(
-        "SELECT id FROM decree_dossiers "
-        "WHERE action_type='grant_allocation' AND pending_action_id=? LIMIT 1",
-        (pending_id,),
-    ).fetchone()
+    existing = db.dossiers.read_uncased_grant_catalog_token((pending_id,))
     if existing is not None:
         return None
     return token
@@ -533,10 +522,7 @@ def schedule_pending_decree_forecast(
         return False
     action_id = int(pending_action_id)
     nid = int(night_id)
-    row = session.db.conn.execute(
-        "SELECT version FROM pending_actions WHERE id=?",
-        (action_id,),
-    ).fetchone()
+    row = session.db.dossiers.pending_version_row(action_id)
     if row is None:
         return False
     version = int(row["version"] or 1)
@@ -579,10 +565,9 @@ def _failed_forecast_key(session: Any, failure: Dict[str, Any]) -> Optional[tupl
     if failure.get("step") != "edict_forecast":
         return None
     ref = failure.get("decree_ref")
-    for row in session.db.conn.execute(
-        "SELECT id,version,night_id FROM pending_actions WHERE turn=?",
-        (int(session.state.turn),),
-    ).fetchall():
+    for row in session.db.dossiers.read_failed_forecast_key(
+        (int(session.state.turn),)
+    ):
         key = ("decree_forecast", int(row["id"]), int(row["version"] or 1), int(row["night_id"] or 0))
         if pending_action_decree_ref(key[1], key[2]) == ref and _current_forecast_ref(session, key) == ref:
             return key

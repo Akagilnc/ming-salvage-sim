@@ -77,7 +77,12 @@ def _apply_population_transfers(
                 f"跨省转移本票不做（#475 预留）：{row_source!r} → {target!r} 须同省",
             )
             continue
-        if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (src_region,)).fetchone() is None:
+        if (
+            db.regions.read_assert_commission_grant_target_exists(
+                (src_region,)
+            )
+            is None
+        ):
             _reject("missing_ref", f"population_transfers 未知 region_id：{src_region!r}")
             continue
         # 枚举查键用 strip 副本；落库/回执保留声明原文（F5）。
@@ -124,14 +129,12 @@ def _apply_population_transfers(
         if origin_error:
             rejected.append(RejectedItem(item=item, reason=f"population_transfers {origin_error['reason']}", category=origin_error["category"], source=source))
             continue
-        src_row = db.conn.execute(
-            "SELECT population FROM classes WHERE name=? AND region_id=?",
-            (src_cls, src_region),
-        ).fetchone()
-        dst_row = db.conn.execute(
-            "SELECT population FROM classes WHERE name=? AND region_id=?",
-            (dst_cls, dst_region),
-        ).fetchone()
+        src_row = db.classes.read_apply_population_transfers(
+            (src_cls, src_region)
+        )
+        dst_row = db.classes.read_apply_population_transfers(
+            (dst_cls, dst_region)
+        )
         if src_row is None or dst_row is None:
             missing = row_source if src_row is None else target
             _reject(
@@ -147,25 +150,26 @@ def _apply_population_transfers(
         amount = min(amount, int(src_row["population"]))
         if amount > 0:
             # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
-            db.conn.execute(
-                "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE name=? AND region_id=?",
-                (amount, src_cls, src_region),
+            db.classes.write_apply_population_transfers(
+                (amount, src_cls, src_region)
             )
-            db.conn.execute(
-                "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE name=? AND region_id=?",
-                (amount, dst_cls, dst_region),
+            db.classes.write_apply_population_transfers_classes(
+                (amount, dst_cls, dst_region)
             )
-            db.conn.execute(
-                "INSERT INTO population_transfer_ledger "
-                "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
-                (int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0]),
-                 row_source, target, amount, raw_reason, origin_ref),
+            db.classes.write_apply_population_transfers_population_transfer_ledger(
+                (
+                    int(db.reign.read_current_settle_turn(())[0]),
+                    row_source,
+                    target,
+                    amount,
+                    raw_reason,
+                    origin_ref,
+                )
             )
-        region_name = str(db.conn.execute(
-            "SELECT name FROM regions WHERE id=?", (src_region,)
-        ).fetchone()["name"] or "")
+        region_name = str(
+            db.regions.read_apply_population_transfers((src_region,))["name"]
+            or ""
+        )
         applied.append({
             "source": row_source,
             "target": target,

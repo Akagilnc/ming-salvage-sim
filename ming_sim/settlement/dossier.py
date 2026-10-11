@@ -173,10 +173,9 @@ def apply_dossier_promulgation(
                         target_id = str(
                             payload.get("target_id") or row.get("target_id") or ""
                         ).strip()
-                        army = db.conn.execute(
-                            "SELECT arrears FROM armies WHERE id=?",
-                            (target_id,),
-                        ).fetchone()
+                        army = db.armies.read_apply_dossier_promulgation(
+                            (target_id,)
+                        )
                         still_owed = (
                             float(army["arrears"] or 0) if army is not None else 0.0
                         )
@@ -223,7 +222,9 @@ def apply_dossier_promulgation(
             _apply_pay_order_override_effect(db, state, row, payload, dossier_id)
         elif row["action_type"] == "punishment":
             # #517 / ADR 0055：结构化惩处效果自案卷物化，判决后才落人物/钱粮。
-            previous_materializing = getattr(db.conn, "_materializing_dossier_id", 0)
+            previous_materializing = getattr(
+                db.conn, "_materializing_dossier_id", 0
+            )
             db.conn._materializing_dossier_id = int(dossier_id)
             try:
                 _apply_punishment_verdict_effect(db,
@@ -239,10 +240,7 @@ def apply_dossier_promulgation(
             ).strip()
             if not target:
                 raise ValueError("招抚案卷缺少 canonical target")
-            person_row = db.conn.execute(
-                "SELECT power_id FROM characters WHERE name = ?",
-                (target,),
-            ).fetchone()
+            person_row = db.characters.read_resolve_power_id((target,))
             if person_row is None:
                 raise ValueError(f"招抚案卷目标不存在：{target}")
             old_power = str(person_row["power_id"] or "").strip()
@@ -426,9 +424,7 @@ def _apply_military_order_station_effect(
         return
     if not army_id:
         raise ValueError("军令调驻缺少军队 target")
-    existing = db.conn.execute(
-        "SELECT id FROM armies WHERE id = ?", (army_id,),
-    ).fetchone()
+    existing = db.armies.read_apply_military_order_station_effect((army_id,))
     if existing is None:
         raise ValueError(
             f"军令调驻引用未入库军队 '{army_id}'（既有军调驻不得 new_armies）"
@@ -936,10 +932,7 @@ def _apply_punishment_verdict_effect(
     issue_id = int(payload.get("issue_id") or 0)
     issue = None
     if issue_id:
-        issue = db.conn.execute(
-            "SELECT status,origin_kind,faction_hint,target_roster FROM issues WHERE id=?",
-            (issue_id,),
-        ).fetchone()
+        issue = db.issues.read_apply_punishment_verdict_effect((issue_id,))
         if issue is None or issue["origin_kind"] != "impeachment_surge":
             raise ValueError("处置所指弹劾潮不存在")
         if issue["status"] != "active":
@@ -958,10 +951,8 @@ def _apply_punishment_verdict_effect(
             "压下弹劾", cost_identity="impeachment_suppression",
         ):
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 1)
-            db.conn.execute(
-                "INSERT INTO metrics(key,value) VALUES('皇威',?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (state.metrics["皇威"],),
+            db.reign.write_apply_authority_cost(
+                (state.metrics["皇威"],)
             )
         if faction and db.dossiers.record_cost_event(
             dossier_id, state.turn, "satisfaction", "faction", faction, -1,
@@ -1251,9 +1242,9 @@ def apply_dossier_verdicts(
     """结算判决注入入口：批量、同事务消费每案结构化 verdict。"""
     # Validate the complete batch before the first write at this public seam.
     rows = list(verdicts)
-    faction_names = {str(row["name"]) for row in db.conn.execute("SELECT name FROM factions")}
-    class_names = {str(row["name"]) for row in db.conn.execute("SELECT DISTINCT name FROM classes")}
-    character_ids = {str(row["name"]) for row in db.conn.execute("SELECT name FROM characters")}
+    faction_names = {str(row["name"]) for row in db.factions.read_names()}
+    class_names = {str(row["name"]) for row in db.classes.read_names(())}
+    character_ids = {str(row["name"]) for row in db.characters.read_names()}
     for verdict in rows:
         if not isinstance(verdict, dict):
             raise ValueError("案卷 verdict 须为对象")

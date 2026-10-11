@@ -107,6 +107,7 @@ def test_departure_persists_matrix_distance_and_urgent_factor(game):
     name = _active(db)
     db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
     content.characters[name].location = "beizhili"
+    db.conn.commit()
 
     _land(db, state, {"人物变更": [{
         "name": name, "origin_ref": "盘面自发", "动作": "行止",

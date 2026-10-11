@@ -76,16 +76,16 @@ def apply_army_delta_with_cannon_transfer(
         target_id = payload.pop("cannon_transfer_to")
         cannon_keys = [k for k in payload if ARMY_FIELD_ALIASES.get(k, k) == "cannon_equipment"]
         requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0
-        source_row = db.conn.execute(
-            "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (army_id,)
-        ).fetchone()
+        source_row = db.armies.read_apply_extracted_army_delta((army_id,))
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             rejections.append(RejectedItem(item={"army_id": army_id, "changes": raw_changes}, reason=origin_error["reason"], category=origin_error["category"], source=source))
             return army_changes, rejections
-        target = (db.conn.execute(
-            "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (target_id,)
-        ).fetchone() if isinstance(target_id, str) and target_id else None)
+        target = (
+            db.armies.read_apply_extracted_army_delta((target_id,))
+            if isinstance(target_id, str) and target_id
+            else None
+        )
         if (len(cannon_keys) != 1 or requested >= 0 or source_row is None
                 or target is None or target_id == army_id):
             rejections.append(RejectedItem(item={"army_id": army_id, "changes": raw_changes}, reason="随军炮转移须指定在册来源、去向及负数拟转量", category="missing_ref" if source_row is None or target is None else "invalid_enum", source=source))

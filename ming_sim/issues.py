@@ -6,14 +6,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.army.store import ArmyStore
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.social_class.store import ClassStore
-from ming_sim.entities.faction.store import FactionStore
-from ming_sim.entities.issue.store import IssueStore
-from ming_sim.entities.power.store import PowerStore
-from ming_sim.entities.region.store import RegionStore
-from ming_sim.entities.reign_state.store import ReignStateStore
 
 import json
 import re
@@ -68,7 +60,7 @@ def _ctx() -> GameContent:
 
 def _event_issue_refs(db: GameDB) -> set:
     refs: set = set()
-    for r in IssueStore(db.conn).read_event_issue_refs():
+    for r in db.issues.read_event_issue_refs():
         if r["origin_ref"]:
             refs.add(r["origin_ref"])
     return refs
@@ -80,7 +72,7 @@ def _event_trigger_refs(db: GameDB) -> set:
 
 def _event_terminal_states(db: GameDB) -> Dict[str, str]:
     states: Dict[str, str] = {}
-    for r in IssueStore(db.conn).read_event_terminal_states():
+    for r in db.issues.read_event_terminal_states():
         terminal_state = str(r["terminal_state"] or "")
         if r["event_id"] and terminal_state:
             states[str(r["event_id"])] = terminal_state
@@ -90,9 +82,7 @@ def _event_terminal_states(db: GameDB) -> Dict[str, str]:
 def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     """只读事件终态；财政不由历史批语重建或重放征收决定。"""
     records: Dict[str, Dict[str, str]] = {}
-    for r in db.conn.execute(
-        "SELECT event_id, terminal_state, terminal_reason FROM event_triggers"
-    ).fetchall():
+    for r in db.issues.read_event_terminal_records(()):
         terminal_state = str(r["terminal_state"] or "")
         if r["event_id"] and terminal_state:
             records[str(r["event_id"])] = {
@@ -100,7 +90,6 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
                 "terminal_reason": str(r["terminal_reason"] or ""),
             }
     return records
-
 
 
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
@@ -157,9 +146,7 @@ def _fiscal_levy_petitions_awaiting_verdict(db: GameDB) -> set[str]:
     from ming_sim.month_chain import _LEVY_PETITION_PREFIX
 
     awaiting: set[str] = set()
-    for row in db.conn.execute(
-        "SELECT event_id FROM pending_decisions WHERE kind='decision' AND status='pending'"
-    ).fetchall():
+    for row in db.issues.read_fiscal_levy_petitions_awaiting_verdict():
         event_id = str(row["event_id"] or "").strip()
         if event_id.startswith(_LEVY_PETITION_PREFIX):
             awaiting.add(event_id[len(_LEVY_PETITION_PREFIX):])
@@ -381,8 +368,6 @@ def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[s
     return ""
 
 
-
-
 def _spawned_event_refs(db: GameDB) -> set:
     refs = _event_issue_refs(db)
     refs.update(_event_trigger_refs(db))
@@ -437,8 +422,6 @@ def _merge_first_event_outcome(
             continue
         current[eid] = value
     return unowned
-
-
 
 
 def gather_fiscal_levy_petitions(state: GameState, db: GameDB) -> List[Event]:
@@ -522,7 +505,7 @@ def _event_window_expired(ev: Event, state: GameState) -> bool:
 def _dead_person_core_subjects(ev: Event, db: GameDB) -> List[str]:
     dead: List[str] = []
     for name in getattr(ev, "person_core_subjects", []) or []:
-        row = CharacterStore(db.conn).read_dead_person_core_subjects((str(name),))
+        row = db.characters.read_dead_person_core_subjects((str(name),))
         if row is not None and str(row["status"] or "") == "dead":
             dead.append(str(name))
     return dead
@@ -655,27 +638,18 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
                     return None
                 values.append(1 if db.issues.has_event_terminal_state(cid, "triggered") else 0)
                 continue
-            if table == "region":
-                row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()
-            elif table == "army":
-                row = db.conn.execute(f"SELECT {field} FROM armies WHERE id = ?", (cid,)).fetchone()
-            elif table == "building":
-                row = db.conn.execute(f"SELECT {field} FROM buildings WHERE id = ?", (cid,)).fetchone()
-            elif table == "power":
-                row = db.conn.execute(f"SELECT {field} FROM powers WHERE id = ?", (cid,)).fetchone()
-            elif table == "faction":
-                row = db.conn.execute(f"SELECT {field} FROM factions WHERE name = ?", (cid,)).fetchone()
-            elif table == "character":
-                row = db.conn.execute(f"SELECT {field} FROM characters WHERE name = ?", (cid,)).fetchone()
-            elif table == "class":
-                if "@" in cid:
-                    cname, rid = cid.split("@", 1)
-                else:
-                    cname, rid = cid, ""
-                row = db.conn.execute(
-                    f"SELECT {field} FROM classes WHERE name = ? AND region_id = ?",
-                    (cname, rid),
-                ).fetchone()
+            if table == "class":
+                cname, rid = cid.split("@", 1) if "@" in cid else (cid, "")
+                row = db.classes.field_row(field, cname, rid)
+            else:
+                row = {
+                    "region": db.regions,
+                    "army": db.armies,
+                    "building": db.buildings,
+                    "power": db.powers,
+                    "faction": db.factions,
+                    "character": db.characters,
+                }[table].field_row(field, cid)
         except (TypeError, ValueError) as exc:
             raise RuntimeError(f"gate key 持久读失败：{key}") from exc
         if row is None:
@@ -705,7 +679,7 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
     table, cid, field = parts
     field = _gate_sql_field(table, field, key, kind="text")
     if table == "event":
-        row = IssueStore(db.conn).read_eval_gate_key_str_owned((cid,), field).fetchone()
+        row = db.issues.read_eval_gate_key_str_owned((cid,), field).fetchone()
     else:
         store = {
             "region": db.regions, "army": db.armies,
@@ -777,12 +751,9 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         if isinstance(item, dict):
             personas_by_faction.setdefault(str(item.get("faction") or ""), []).append(item)
 
-    rows = db.conn.execute(
-        "SELECT id,closed_turn,participant_roster,decree_text,execution_note,execution_outcome "
-        "FROM decree_dossiers "
-        "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
-        (max(0, int(state.turn) - 1), int(state.turn)),
-    ).fetchall()
+    rows = db.dossiers.read_gather_impeachment_surge_candidates(
+        (max(0, int(state.turn) - 1), int(state.turn))
+    )
     candidates: List[Dict[str, object]] = []
     for row in rows:
         did = int(row["id"])
@@ -809,10 +780,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
             continue
         # 存在门只看责任集；知情/协办离场不得 any() 否决整卷。
         placeholders = ",".join("?" for _ in responsible_ids)
-        chars = db.conn.execute(
-            f"SELECT name,faction,status FROM characters WHERE name IN ({placeholders})",
-            responsible_ids,
-        ).fetchall()
+        chars = db.characters.named_status_rows(responsible_ids)
         char_by_name = {str(item["name"]): item for item in chars}
         if any(
             name not in char_by_name
@@ -829,10 +797,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         missing = [name for name in union_ids if name not in char_by_name]
         if missing:
             missing_ph = ",".join("?" for _ in missing)
-            for item in db.conn.execute(
-                f"SELECT name,faction,status FROM characters WHERE name IN ({missing_ph})",
-                missing,
-            ).fetchall():
+            for item in db.characters.named_status_rows(missing):
                 char_by_name[str(item["name"])] = item
         eligible_target_ids = [
             name for name in union_ids
@@ -850,16 +815,18 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         ]
         origin_ref = f"commitment:{did}:deformation_exposure"
         for faction in sorted(_LEVERAGE_FACTIONS):
-            if faction in responsible_factions or db.faction_leverage(faction) < 60:
+            if (
+                faction in responsible_factions
+                or db.factions.faction_leverage(faction) < 60
+            ):
                 continue
             situation = situations.get(faction)
             personas = personas_by_faction.get(faction, [])
             if not situation or not personas:
                 continue
-            if db.conn.execute(
-                "SELECT 1 FROM issues WHERE origin_kind='impeachment_surge' "
-                "AND origin_ref=? AND faction_hint=? LIMIT 1", (origin_ref, faction),
-            ).fetchone():
+            if db.issues.read_gather_impeachment_surge_candidates(
+                (origin_ref, faction)
+            ):
                 continue
             candidate_id = f"impeachment_surge:{origin_ref}:{faction}"
             decree_text = str(row["decree_text"] or "")
@@ -943,8 +910,6 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     return candidates
 
 
-
-
 def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, object]]:
     """程序硬触发：seed_events 中标了 auto_trigger 的，trigger_gate 达标即由程序直接
     立 issue，绕过 LLM 因果判定（不进候选池等 extractor 决定）。event_to_issue 自带去重，
@@ -957,8 +922,6 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
         collector.flush_to_db(db)
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return triggered
-
-
 
 
 def _bar_ascii(value: int, width: int = 20) -> str:
@@ -1023,7 +986,6 @@ def show_active_issues(db: GameDB) -> None:
 # `invalid_enum` 拒收（#564），而非 validate 层当 nested-dict shape 拒收。
 
 
-
 FISCAL_LEVY_RESCRIPT_SOURCE = "fiscal_levy_rescript"
 
 def _is_fiscal_levy_event(ev: object) -> bool:
@@ -1051,11 +1013,7 @@ def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]
     from ming_sim.month_chain import _LEVY_PETITION_PREFIX
 
     rows: List[Dict[str, object]] = []
-    for row in db.conn.execute(
-        "SELECT event_id, choice_json FROM pending_decisions "
-        "WHERE turn = ? AND kind='decision' AND status='decided'",
-        (int(turn),),
-    ).fetchall():
+    for row in db.issues.read_fiscal_levy_answered_rows((int(turn),)):
         event_id = str(row["event_id"] or "")
         if not event_id.startswith(_LEVY_PETITION_PREFIX):
             continue

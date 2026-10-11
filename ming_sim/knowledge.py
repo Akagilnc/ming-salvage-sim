@@ -5,11 +5,6 @@ ledgers. Current office accounts are rebuilt from world state on every read.
 """
 
 from __future__ import annotations
-from ming_sim.entities.army.store import ArmyStore
-from ming_sim.entities.character_knowledge.store import CharacterKnowledgeStore
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.issue.store import IssueStore
-from ming_sim.entities.reign_state.store import ReignStateStore
 from ming_sim.applier import load_stored_list
 
 import json
@@ -45,7 +40,7 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     origin_kind = str(issue["origin_kind"] or "")
     origin_ref = str(issue["origin_ref"] or "").strip()
     if origin_kind != "event_pool":
-        return None
+        return None  # Non-event projections need not select event origin fields.
     if not origin_ref:
         return set()
 
@@ -101,10 +96,7 @@ def origin_visible_to(
     Affairs are associations, not access boundaries for their individual facts.
     """
     source = str(origin or "")
-    registered = db.conn.execute(
-        "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
-        (source,),
-    ).fetchone()
+    registered = db.character_knowledge.read_origin_visible_to((source,))
     if registered is not None and registered["kind"] != "public":
         participants = participant_roster_names(registered["participant_roster"])
         if participants and character_name not in participants:
@@ -118,9 +110,7 @@ def origin_visible_to(
 
     dossier_id = dossier_id_in_origin(source) or int(linked_dossier_id)
     if dossier_id:
-        row = db.conn.execute(
-            "SELECT secret_order_id FROM decree_dossiers WHERE id=?", (dossier_id,),
-        ).fetchone()
+        row = db.dossiers.read_origin_visible_to((dossier_id,))
         if row is not None:
             order_id = int(row["secret_order_id"] or order_id)
     if not order_id:
@@ -185,15 +175,8 @@ def _appointment_register(db: Any, state: Any) -> str:
 
 def _household_ledger(db: Any, state: Any, character_name: str) -> str:
     """户部太仓账：保留密支数额，按 typed 密令关联裁去案情语义。"""
-    balance = db.conn.execute(
-        "SELECT balance FROM economy_accounts WHERE account='国库'"
-    ).fetchone()
-    rows = db.conn.execute(
-        """SELECT e.year,e.period,e.delta,e.balance_after,e.category,e.reason,
-                  e.origin_ref, e.dossier_id
-           FROM economy_ledger e
-           WHERE e.account='国库' ORDER BY e.id DESC"""
-    ).fetchall()
+    balance = db.reign.read_household_ledger_balance(())
+    rows = db.reign.read_household_ledger(())
     lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
     for row in reversed(rows):
         hide = not origin_visible_to(db, row["origin_ref"], character_name,
@@ -207,7 +190,7 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
 
 
 def _army_register(db: Any) -> str:
-    rows = ArmyStore(db.conn).read_army_register()
+    rows = db.armies.read_army_register()
     return "兵籍在册：\n" + "\n".join(
         f"{row['name']}：{int(row['manpower'])}人" for row in rows
     )
@@ -244,10 +227,7 @@ def _world(
             db.buildings_report(region_id=primary, qualitative=True)
         )
 
-    armies = db.conn.execute(
-        "SELECT id,name FROM armies WHERE commander=? OR controller=? ORDER BY name",
-        (character_name, character_name),
-    ).fetchall()
+    armies = db.armies.read_world((character_name, character_name))
     if armies:
         ids = tuple(str(row["id"]) for row in armies)
         scope["army_ids"] = ids
@@ -261,7 +241,7 @@ def current_character_office(
 ) -> tuple[str, str]:
     """Current durable (office, office_type); missing DB row falls back to seed character fields."""
     name = str(character_name or getattr(character, "name", "") or "")
-    current = CharacterStore(db.conn).read_current_character_office((name,))
+    current = db.characters.read_current_character_office((name,))
     return (
         str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
         str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),

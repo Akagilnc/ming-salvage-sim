@@ -11,7 +11,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.issue.store import IssueStore
 
 import json
 from typing import Any, Dict, List, Sequence
@@ -187,7 +186,6 @@ def stages_to_json(stages: object) -> str:
     return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
 
 
-
 def stages_list_from_source(stages: object) -> List[Dict[str, object]]:
     """Strict serial capture: reuse ``stages_to_json``, never a parallel parser."""
     return json.loads(stages_to_json(stages))
@@ -249,7 +247,7 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
 
     去重键在写端用 (commitment_id, stage_idx)；此处返回全部到期段候选。
     """
-    rows = IssueStore(db.conn).read_list_due_stages_for_scan()
+    rows = db.issues.read_list_due_stages_for_scan()
     due: List[Dict[str, object]] = []
     for row in rows:
         stages = load_commitment_stages(row["stages_json"])
@@ -276,18 +274,9 @@ def list_due_grant_report_dossiers_for_scan(
     payload 携带 dossier_id/origin_ref 供 due_review 桥接。
     复用 get_decree_dossier 响亮读口，不平行宽容腐坏 payload（#1897 E1/K2）。
     """
-    rows = db.conn.execute(
-        """
-        SELECT id, due_turn, execution_outcome
-        FROM decree_dossiers
-        WHERE status='executing'
-          AND action_type='grant_allocation'
-          AND due_turn > 0
-          AND due_turn <= ?
-        ORDER BY id
-        """,
-        (int(turn),),
-    ).fetchall()
+    rows = db.dossiers.read_list_due_grant_report_dossiers_for_scan(
+        (int(turn),)
+    )
     due: List[Dict[str, object]] = []
     for row in rows:
         if str(row["execution_outcome"] or "").strip():

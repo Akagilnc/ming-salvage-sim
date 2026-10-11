@@ -9,9 +9,6 @@ from __future__ import annotations
 from ming_sim.exceptions import DeclarationDataError
 
 from ming_sim.models import _load_durable_json_list, _load_durable_json_object
-from ming_sim.entities.army.store import ArmyStore
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.issue.store import IssueStore
 
 import json
 import re
@@ -108,17 +105,16 @@ def _apply_existing_appointment_hit(
             if pending_id:
                 resolved = int(pending_id)
         if recommendation_fields:
-            current = session.db.conn.execute(
-                "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
-            ).fetchone()
+            current = session.db.dossiers.read_apply_existing_appointment_hit(
+                (resolved,)
+            )
             from ming_sim.db import GameDB
             stored = GameDB.parse_engine_payload_json(
                 current["payload_json"],
             )
             stored.update(recommendation_fields)
-            session.db.conn.execute(
-                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                (json.dumps(stored, ensure_ascii=False), resolved),
+            session.db.dossiers.set_pending_payload(
+                resolved, json.dumps(stored, ensure_ascii=False)
             )
         return resolved
 
@@ -265,10 +261,7 @@ def stage_punishment_candidate(
                 failed_fields=("issue_id",),
                 category="invalid_shape",
             )
-        issue = db.conn.execute(
-            "SELECT origin_kind,status,target_roster FROM issues WHERE id=?",
-            (linked_issue_id,),
-        ).fetchone()
+        issue = db.issues.read_stage_punishment_candidate((linked_issue_id,))
         if issue is None or issue["status"] != "active" or issue["origin_kind"] != "impeachment_surge":
             return 0
         if disposition not in issue_dispositions_allowed():
@@ -440,7 +433,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     tid = str(raw_target or "").strip()
     if not tid:
         return ""
-    row = db.conn.execute("SELECT id FROM armies WHERE id=?", (tid,)).fetchone()
+    row = db.armies.read_apply_military_order_station_effect((tid,))
     if row is not None:
         return str(row["id"])
     armies = getattr(db.content, "armies", None)
@@ -448,9 +441,9 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
         from ming_sim.matching import canonical_army_id_exact
         matched = canonical_army_id_exact(tid, armies)
         if matched:
-            hit = db.conn.execute(
-                "SELECT id FROM armies WHERE id=?", (matched,),
-            ).fetchone()
+            hit = db.armies.read_apply_military_order_station_effect(
+                (matched,)
+            )
             if hit is not None:
                 return str(hit["id"])
     return ""
@@ -721,7 +714,7 @@ def character_person_names(db: Any) -> set[str]:
         return set()
     return {
         str(row["name"]).strip()
-        for row in db.conn.execute("SELECT name FROM characters").fetchall()
+        for row in db.characters.read_names(())
         if str(row["name"] or "").strip()
     }
 
@@ -884,10 +877,7 @@ def _chat_turn_night_seq(db: Any, chat_turn_id: int) -> Optional[float]:
     """源轮在本夜事件序上的位置。补账用它落回原位，不另排到后写的轮次。"""
     if int(chat_turn_id or 0) <= 0:
         return None
-    row = db.conn.execute(
-        "SELECT night_seq FROM chat_turns WHERE id=?",
-        (int(chat_turn_id),),
-    ).fetchone()
+    row = db.reign.read_chat_turn_night_seq((int(chat_turn_id),))
     if row is None:
         return None
     return float(int(row["night_seq"] or 0))
@@ -1009,7 +999,7 @@ def _parse_revoke_decree_target(
     if tid <= 0:
         return None
     if kind == "issue":
-        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (tid,)).fetchone()
+        row = db.issues.row(tid)
         if row is None:
             return None
         if str(row["kind"] or "").strip() != "initiative":

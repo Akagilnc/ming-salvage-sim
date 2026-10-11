@@ -83,3 +83,37 @@ class PowerStore:
 
     def read_power_display_name(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name FROM powers WHERE id = ?', params).fetchone()
+
+    def read_apply_issue_entities(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT 1 FROM powers WHERE id=?", params).fetchone()
+
+    def read_apply_power_rename(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM powers WHERE id = ?", params
+        ).fetchone()
+
+    def read_find_pacification_target(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT kind, leader, stance FROM powers WHERE id=?", params
+        ).fetchone()
+
+    def read_apply_character_power_changes(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT id FROM powers", params).fetchall()
+
+    def read_strategic_event_result_preflight_error(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM powers WHERE id = ? LIMIT 1", params
+        ).fetchone()
+
+    def read_apply_bandit_absorptions(self, params: Any = ()) -> Any:
+        return self._conn.execute("SELECT id FROM powers WHERE id=?", params).fetchone()
+
+    def write_apply_power_rename(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                INSERT INTO power_name_logs
+                (turn, year, period, power_id, old_name, new_name, old_aliases, new_aliases, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+            params,
+        )

@@ -49,15 +49,7 @@ def _apply_recovery_driven_transfers(
 
     records: List[Dict[str, object]] = []
     remaining_by_region: Dict[str, int] = {}
-    rows = db.conn.execute(
-        """
-        SELECT id, status, target_kind, target_id, payload_json,
-               execution_outcome, closed_turn
-        FROM decree_dossiers
-        WHERE action_type='grant_allocation'
-        ORDER BY id
-        """
-    ).fetchall()
+    rows = db.dossiers.grant_allocation_rows()
     for row in rows:
         dossier_id = int(row["id"])
         if (dossier_id, turn) in seen_keys:
@@ -70,7 +62,12 @@ def _apply_recovery_driven_transfers(
         region_id = str(row["target_id"] or payload.get("target_id") or "").strip()
         if target_kind != "region" or not region_id:
             continue
-        if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (region_id,)).fetchone() is None:
+        if (
+            db.regions.read_assert_commission_grant_target_exists(
+                (region_id,)
+            )
+            is None
+        ):
             continue
         outcome = str(row["execution_outcome"] or "").strip()
         if outcome not in RECOVERY_OUTCOME_FACTORS:
@@ -92,11 +89,7 @@ def _apply_recovery_driven_transfers(
             if reconciled:
                 silver = max(0, sum(reconciled))
             else:
-                paid_row = db.conn.execute(
-                    "SELECT COALESCE(SUM(-delta), 0) FROM economy_ledger "
-                    "WHERE origin_ref=? AND turn=? AND delta<0",
-                    (f"dossier:{dossier_id}", turn),
-                ).fetchone()
+                paid_row = db.reign.read_apply_recovery_driven_transfers((f"dossier:{dossier_id}", turn))
                 silver = max(0, int(paid_row[0] or 0))
         else:
             silver = _recovery_effective_silver_wan(db, dossier_id, turn)
@@ -106,14 +99,10 @@ def _apply_recovery_driven_transfers(
         amount = int(round(raw_persons))
         if amount <= 0:
             continue
-        pool_row = db.conn.execute(
-            "SELECT population FROM classes WHERE name='流民' AND region_id=?",
-            (region_id,),
-        ).fetchone()
-        farmer_row = db.conn.execute(
-            "SELECT 1 FROM classes WHERE name='农民' AND region_id=?",
-            (region_id,),
-        ).fetchone()
+        pool_row = db.classes.read_apply_bandit_absorptions((region_id,))
+        farmer_row = db.classes.read_apply_recovery_driven_transfers(
+            (region_id,)
+        )
         if pool_row is None or farmer_row is None:
             continue
         remaining = remaining_by_region.setdefault(region_id, int(pool_row["population"]))

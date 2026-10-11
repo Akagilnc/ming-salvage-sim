@@ -750,7 +750,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     assert recon["arrived_amount"] == expected_arrived
     assert recon["loss_amount"] == ordered - expected_arrived
     assert recon["turn"] == closed_turn
-    denunciations = db.list_faction_denunciations(
+    denunciations = db.dossiers.denunciations(
         turn=closed_turn, target_dossier_id=dossier_id,
     )
     assert [row["memorial_text"] for row in denunciations] == ["其侵冒有据"]

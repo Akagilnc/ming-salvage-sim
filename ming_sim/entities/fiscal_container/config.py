@@ -24,11 +24,6 @@ class FiscalConfigStore:
     def row(self, key: str) -> Any:
         return self._conn.execute("SELECT * FROM fiscal_config WHERE key=?", (key,)).fetchone()
 
-    def has_any(self, keys: tuple[str, ...]) -> bool:
-        placeholders = ",".join("?" for _ in keys)
-        return self._conn.execute(
-            f"SELECT 1 FROM fiscal_config WHERE key IN ({placeholders})", keys,
-        ).fetchone() is not None
 
     def values(self) -> dict[str, int]:
         return {str(r["key"]): int(r["value"]) for r in self._conn.execute(
@@ -63,12 +58,6 @@ class FiscalConfigStore:
     def set_origin(self, key: str, origin: str) -> None:
         self._conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin, key))
 
-    def override(self, key: str, value: int, note: str, origin: str) -> None:
-        self._conn.execute(
-            "INSERT INTO fiscal_config (key,value,kind,note,origin_ref) VALUES (?,?,'override',?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, origin_ref=excluded.origin_ref",
-            (key, value, note, origin),
-        )
 
     def override_rows_for_origin(self, origin: str) -> list[Any]:
         return list(self._conn.execute(
@@ -104,11 +93,6 @@ class FiscalConfigStore:
             "SELECT COUNT(*) FROM fiscal_config_creations WHERE origin_ref=?", (origin,),
         ).fetchone()[0])
 
-    def removed_at(self, origin: str, turn: int) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM fiscal_config_tombstones WHERE origin_ref=? AND removed_turn=? LIMIT 1",
-            (origin, turn),
-        ).fetchone() is not None
 
     def reduction_at(self, origin: str, turn: int) -> Any:
         return self._conn.execute(
@@ -116,21 +100,6 @@ class FiscalConfigStore:
             "WHERE origin_ref=? AND turn=? AND new_value<old_value LIMIT 1", (origin, turn),
         ).fetchone()
 
-    def neutralization_recorded(self, origin: str, key: str, base_key: str, rate_key: str, reason: str) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM fiscal_config_changes WHERE origin_ref=? AND key=? AND reason=? "
-            "UNION ALL SELECT 1 FROM fiscal_config_tombstones "
-            "WHERE origin_ref=? AND key IN (?,?) AND reason=? LIMIT 1",
-            (origin, key, reason, origin, base_key, rate_key, reason),
-        ).fetchone() is not None
-
-    def latest_lifecycle(self, kind: str, key: str) -> Any:
-        table, _ = _HISTORY[kind]
-        turn = "removed_turn" if kind == "remove" else "turn"
-        return self._conn.execute(
-            f"SELECT *,{turn} AS turn FROM {table} WHERE key=? ORDER BY {turn} DESC,id DESC LIMIT 1",
-            (key,),
-        ).fetchone()
 
     def changes_for(self, key: str, origin: str) -> list[Any]:
         return self._conn.execute(
@@ -178,3 +147,85 @@ class FiscalConfigStore:
             item["beyond_intent"] = bool(coerce_beyond_intent_flag(item.get("beyond_intent")))
             rows.append(item)
         return rows
+
+    def read_fiscal_funding_cut_this_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM fiscal_config_tombstones "
+            "WHERE origin_ref=? AND removed_turn=? LIMIT 1",
+            params,
+        ).fetchone()
+
+    def write_create_fiscal_item(self, params: Any = ()) -> Any:
+        return self._conn.executemany(
+            "INSERT INTO fiscal_config_creations "
+            "(turn, key, value, kind, origin_ref, reason, beyond_intent) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params,
+        )
+
+    def read_create_fiscal_item(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM fiscal_config WHERE key IN (?, ?)", params
+        ).fetchone()
+
+    def read_neutralize_covert_fiscal_effects(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """SELECT 1 FROM fiscal_config_changes
+                   WHERE origin_ref=? AND key=? AND reason=? LIMIT 1""",
+            params,
+        ).fetchone()
+
+    def read_neutralize_covert_fiscal_effects_fiscal_config_tombstones(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT removed_turn turn,id FROM fiscal_config_tombstones WHERE key=? ORDER BY removed_turn DESC,id DESC LIMIT 1",
+            params,
+        ).fetchone()
+
+    def read_neutralize_covert_fiscal_effects_fiscal_config_creations(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT turn,id,origin_ref,beyond_intent FROM fiscal_config_creations WHERE key=? ORDER BY turn DESC,id DESC LIMIT 1",
+            params,
+        ).fetchone()
+
+    def read_neutralize_covert_fiscal_effects_fiscal_config_tombstones_2(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            """SELECT 1 FROM fiscal_config_tombstones
+                       WHERE origin_ref=? AND key IN (?, ?) AND reason=? LIMIT 1""",
+            params,
+        ).fetchone()
+
+    def read_fiscal_levy_tian_in_force(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = '田赋_base'", params
+        ).fetchone()
+
+    def read_fiscal_levy_liao_declared_scale(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = '辽饷_base'", params
+        ).fetchone()
+
+    def write_materialize_pay_order_decree(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT INTO fiscal_config (key, value, kind, note) VALUES (?, ?, 'override', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params,
+        )
+
+    def write_restore_pay_order_override(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT INTO fiscal_config_tombstones"
+            " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
+            " VALUES (?, ?, ?, 'override', ?, ?, 0)",
+            params,
+        )
+
+    def read_restore_pay_order_override(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT value, origin_ref FROM fiscal_config WHERE key = ?", params
+        ).fetchone()

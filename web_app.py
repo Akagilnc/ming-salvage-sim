@@ -769,7 +769,7 @@ class WebGame:
             try:
                 st = os.stat(full)
             except FileNotFoundError:
-                continue  # A save may be deleted while its directory is being listed.
+                continue
             out.append({
                 "name": fname[:-3],
                 "size": st.st_size,
@@ -2636,9 +2636,6 @@ class _NonBlockingWebWriteGate:
         return False
 
 
-
-
-
 @contextlib.contextmanager
 def _serialized_web_write(game):
     """串行化「绕过会话层、直写 game.db」的 web 端点写入，杜绝它与月末结算原子块 / 后台召对
@@ -3610,10 +3607,10 @@ def _main_db_campaign_id() -> str:
         return ""
     conn = sqlite3.connect(db_path)
     try:
-        row = conn.execute(
-            "SELECT value FROM kv_store WHERE key='campaign_id'"
-        ).fetchone()
-        return str(row[0]).strip() if row and row[0] else ""
+        from ming_sim.entities.reign_state.store import ReignStateStore
+
+        value = ReignStateStore(conn).kv_get("campaign_id")
+        return str(value).strip() if value else ""
     finally:
         conn.close()
 
@@ -3633,7 +3630,7 @@ def _scan_saves() -> List[Dict[str, Any]]:
         try:
             st = os.stat(full)
         except FileNotFoundError:
-            continue  # A save may be deleted while its directory is being listed.
+            continue
         meta = _parse_save_name(name)
         out.append({
             "name": name,

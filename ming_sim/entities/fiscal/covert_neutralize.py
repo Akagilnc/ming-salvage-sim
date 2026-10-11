@@ -37,31 +37,21 @@ def neutralize_covert_fiscal_effects(
     for key in sorted(keys):
         stem = db._stem_of(key)
         base_key, rate_key = f"{stem}_base", f"{stem}_rate"
-        receipt = db.conn.execute(
-            """SELECT 1 FROM fiscal_config_changes
-               WHERE origin_ref=? AND key=? AND reason=? LIMIT 1""",
-            (receipt_origin, key, _COVERT_NEUTRALIZATION_REASON),
-        ).fetchone()
+        receipt = db.fiscal_config.read_neutralize_covert_fiscal_effects(
+            (receipt_origin, key, _COVERT_NEUTRALIZATION_REASON)
+        )
         if receipt is None:
-            receipt = db.conn.execute(
-                """SELECT 1 FROM fiscal_config_tombstones
-                   WHERE origin_ref=? AND key IN (?, ?) AND reason=? LIMIT 1""",
-                (receipt_origin, base_key, rate_key, _COVERT_NEUTRALIZATION_REASON),
-            ).fetchone()
+            receipt = db.fiscal_config.read_neutralize_covert_fiscal_effects_fiscal_config_tombstones_2(
+                (receipt_origin, base_key, rate_key, _COVERT_NEUTRALIZATION_REASON)
+            )
         if receipt is not None:
             continue
 
         current = db.fiscal_config.values().get(key)
         if current is None:
             continue
-        latest_remove = db.conn.execute(
-            "SELECT removed_turn turn,id FROM fiscal_config_tombstones WHERE key=? ORDER BY removed_turn DESC,id DESC LIMIT 1",
-            (key,),
-        ).fetchone()
-        latest_create = db.conn.execute(
-            "SELECT turn,id,origin_ref,beyond_intent FROM fiscal_config_creations WHERE key=? ORDER BY turn DESC,id DESC LIMIT 1",
-            (key,),
-        ).fetchone()
+        latest_remove = db.fiscal_config.read_neutralize_covert_fiscal_effects_fiscal_config_tombstones((key,))
+        latest_create = db.fiscal_config.read_neutralize_covert_fiscal_effects_fiscal_config_creations((key,))
         remove_mark = (
             (int(latest_remove["turn"]), 0, int(latest_remove["id"]))
             if latest_remove
@@ -96,11 +86,7 @@ def neutralize_covert_fiscal_effects(
             continue
 
         contribution = 0
-        for row in db.conn.execute(
-            """SELECT id,turn,delta,beyond_intent FROM fiscal_config_changes
-               WHERE key=? AND origin_ref=? ORDER BY turn,id""",
-            (key, old_origin),
-        ).fetchall():
+        for row in db.fiscal_config.changes_for(key, old_origin):
             mark = (int(row["turn"]), 2, int(row["id"]))
             if mark > start and bool(
                 db.coerce_beyond_intent_flag(row["beyond_intent"])

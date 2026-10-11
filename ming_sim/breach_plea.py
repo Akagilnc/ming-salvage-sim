@@ -10,10 +10,6 @@ kind 分派矩阵（法）：
 
 from __future__ import annotations
 from ming_sim.staged_commitment import normalize_commitment_stages
-from ming_sim.entities.character.store import CharacterStore
-from ming_sim.entities.issue.store import IssueStore
-from ming_sim.entities.person_log.store import PersonLogStore
-from ming_sim.entities.reign_state.store import ReignStateStore
 
 
 import json
@@ -119,10 +115,6 @@ def commitment_natural_due_turn(row: Any) -> int:
         return max(int(s["due_turn"]) for s in stages)
     end_turn = int(row["end_turn"] or 0)
     return end_turn if end_turn > 0 else 0
-
-
-
-
 
 
 def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
@@ -288,10 +280,7 @@ def _merge_plea_kind_into_todo(
             if k not in meta:
                 meta[k] = v
     encoded = encode_plea_meta(meta)
-    db.conn.execute(
-        "UPDATE next_audience_todos SET origin_context=? WHERE id=?",
-        (encoded, int(todo["id"])),
-    )
+    db.dossiers.write_merge_plea_kind_into_todo((encoded, int(todo["id"])))
     # criterion 保持首类标签；多类痕迹在 meta
     return int(todo["id"])
 
@@ -421,11 +410,9 @@ def reclaim_bundled_authorities(
     """
     if int(target_dossier_id or 0) <= 0:
         return []
-    bundled = db.conn.execute(
-        "SELECT id FROM authority_records "
-        "WHERE dossier_id=? AND revoked=0 ORDER BY id",
-        (int(target_dossier_id),),
-    ).fetchall()
+    bundled = db.characters.read_reclaim_bundled_authorities(
+        (int(target_dossier_id),)
+    )
     if not bundled:
         return []
     src = int(source_dossier_id or 0)
@@ -465,11 +452,7 @@ def stop_origin_commitment_ticks(
     stopped: List[int] = []
     if int(target_dossier_id or 0) > 0:
         origin_ref = f"dossier:{int(target_dossier_id)}"
-        for iss in db.conn.execute(
-            "SELECT id, cancellable, commitment_kind FROM issues "
-            "WHERE origin_ref=? AND status='active'",
-            (origin_ref,),
-        ).fetchall():
+        for iss in db.issues.read_stop_origin_commitment_ticks((origin_ref,)):
             if not str(iss["commitment_kind"] or "").strip():
                 continue
             if str(iss["cancellable"] or "") == "never":
@@ -481,10 +464,7 @@ def stop_origin_commitment_ticks(
         iid = int(raw)
         if iid <= 0 or iid in stopped:
             continue
-        row_i = db.conn.execute(
-            "SELECT status, cancellable, commitment_kind FROM issues WHERE id=?",
-            (iid,),
-        ).fetchone()
+        row_i = db.issues.read_stop_origin_commitment_ticks_issues((iid,))
         if row_i is None or str(row_i["status"]) != "active":
             continue
         if not str(row_i["commitment_kind"] or "").strip():
@@ -573,7 +553,7 @@ def _guofu_targets_of_0056(
     did = int(dossier_id or 0)
     if did <= 0:
         return set()
-    rows = PersonLogStore(db.conn).read_guofu_targets_of_0056((int(turn), f"dossier:{did}:breach%"))
+    rows = db.person_logs.read_guofu_targets_of_0056((int(turn), f"dossier:{did}:breach%"))
     return {str(r["target"]) for r in rows if str(r["target"] or "").strip()}
 
 
@@ -723,14 +703,14 @@ def _ledger_paid_this_turn(db: Any, origin_refs: Set[str], turn: int) -> int:
         return 0
     paid = 0
     for oref in origin_refs:
-        for r in ReignStateStore(db.conn).read_ledger_paid_this_turn((oref, turn)):
+        for r in db.reign.read_ledger_paid_this_turn((oref, turn)):
             paid += abs(int(r["delta"] or 0))
     return paid
 
 
 def _had_prior_funding(db: Any, origin_refs: Set[str], turn: int) -> bool:
     for oref in origin_refs:
-        n = int(ReignStateStore(db.conn).read_had_prior_funding((oref, turn))["c"])
+        n = int(db.reign.read_had_prior_funding((oref, turn))["c"])
         if n > 0:
             return True
         n = db.fiscal_config.creation_count(oref)
@@ -744,22 +724,11 @@ def _fiscal_funding_cut_this_turn(
 ) -> bool:
     """fiscal_removes/tombstones 或 fiscal 减额命中本承诺 origin。"""
     for oref in origin_refs:
-        row = db.conn.execute(
-            "SELECT 1 FROM fiscal_config_tombstones "
-            "WHERE origin_ref=? AND removed_turn=? LIMIT 1",
-            (oref, turn),
-        ).fetchone()
+        row = db.fiscal_config.read_fiscal_funding_cut_this_turn((oref, turn))
         if row is not None:
             return True
         # 减额至 0 或大幅削减
-        ch = db.conn.execute(
-            """
-            SELECT old_value, new_value FROM fiscal_config_changes
-            WHERE origin_ref=? AND turn=? AND new_value < old_value
-            LIMIT 1
-            """,
-            (oref, turn),
-        ).fetchone()
+        ch = db.fiscal_config.reduction_at(oref, turn)
         if ch is not None:
             old_v, new_v = int(ch["old_value"]), int(ch["new_value"])
             if old_v > 0 and new_v <= 0:
@@ -773,7 +742,7 @@ def _scan_funding_cutoff(db: Any, state: Any) -> List[int]:
     """断供：停拨（ongoing 空/fiscal 裁撤）或欠额达阈（当月实拨 < 承诺×阈）。"""
     written: List[int] = []
     turn = int(getattr(state, "turn", 0) or 0)
-    for row in IssueStore(db.conn).read_list_active_commitments():
+    for row in db.issues.read_list_active_commitments():
         cid = int(row["id"])
         if has_pending_plea(db, cid, breach_kind=BREACH_KIND_FUNDING):
             continue
@@ -816,7 +785,7 @@ def _scan_misappropriation(db: Any, state: Any) -> List[int]:
     """挪用：专款账户本回合被非本承诺流向支用（economy + fiscal 流向）。"""
     written: List[int] = []
     turn = int(getattr(state, "turn", 0) or 0)
-    for row in IssueStore(db.conn).read_list_active_commitments():
+    for row in db.issues.read_list_active_commitments():
         cid = int(row["id"])
         accounts = _dedicated_accounts(row)
         if not accounts:
@@ -827,7 +796,7 @@ def _scan_misappropriation(db: Any, state: Any) -> List[int]:
         diverted = False
         hit_account = ""
         for account in accounts:
-            rows = ReignStateStore(db.conn).read_scan_misappropriation((turn, account))
+            rows = db.reign.read_scan_misappropriation((turn, account))
             for mv in rows:
                 oref = str(mv["origin_ref"] or "").strip()
                 if oref in origin_refs:
@@ -856,7 +825,7 @@ def _scan_misappropriation(db: Any, state: Any) -> List[int]:
 
 def _sponsor_dismissed(db: Any, name: str) -> bool:
     """罢：status 离岗。"""
-    row = CharacterStore(db.conn).read_dead_person_core_subjects((name,))
+    row = db.characters.read_dead_person_core_subjects((name,))
     if row is None:
         return True
     status = str(row["status"] or "")
@@ -867,19 +836,14 @@ def _sponsor_dismissed(db: Any, name: str) -> bool:
 
 def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     """调：status 仍 active，但职务已变（相对承诺/案卷记录的主办职）。"""
-    char = db.conn.execute(
-        "SELECT status, office FROM characters WHERE name=?", (name,),
-    ).fetchone()
+    char = db.characters.read_sponsor_transferred((name,))
     if char is None:
         return False
     if str(char["status"] or "") != "active":
         return False
     current_office = str(char["office"] or "").strip()
     # character_offices 备档
-    co = db.conn.execute(
-        "SELECT office_title FROM character_offices WHERE character_name=?",
-        (name,),
-    ).fetchone()
+    co = db.characters.read_sponsor_transferred_office_title((name,))
     if co is not None:
         current_office = str(co["office_title"] or current_office).strip() or current_office
 
@@ -900,10 +864,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     if not expected:
         did = parse_dossier_id(commitment_row["origin_ref"] or "")
         if did is not None:
-            drow = db.conn.execute(
-                "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?",
-                (int(did),),
-            ).fetchone()
+            drow = db.dossiers.read_sponsor_transferred((int(did),))
             if drow is not None and str(drow["executor_id"] or "") == name:
                 payload = db.parse_engine_payload_json(drow["payload_json"])
                 if isinstance(payload, dict):
@@ -914,13 +875,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
                     ).strip()
 
     # office_change_records：有调任记录且当前 office 与承诺侧 office 身份不等
-    oc = db.conn.execute(
-        """
-        SELECT office_title FROM office_change_records
-        WHERE character_name=? ORDER BY id DESC LIMIT 1
-        """,
-        (name,),
-    ).fetchone()
+    oc = db.characters.read_sponsor_transferred_office_title_by_character_name((name,))
     if oc is not None and expected:
         latest = str(oc["office_title"] or "").strip()
         if latest and expected and latest != expected and current_office != expected:
@@ -938,15 +893,9 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
                 # 过宽；要求 dossier 绑承诺同源
                 did = parse_dossier_id(commitment_row["origin_ref"] or "")
                 if did is not None:
-                    linked = db.conn.execute(
-                        """
-                        SELECT 1 FROM office_change_records
-                        WHERE character_name=? AND dossier_id IS NOT NULL
-                          AND dossier_id != ?
-                        ORDER BY id DESC LIMIT 1
-                        """,
-                        (name, int(did)),
-                    ).fetchone()
+                    linked = db.characters.read_sponsor_transferred_1(
+                        (name, int(did))
+                    )
                     if linked is not None:
                         return True
             return False
@@ -957,7 +906,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
 def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
     """撤人：主办罢/调（status 离岗 或 职务变动而仍 active）。"""
     written: List[int] = []
-    for row in IssueStore(db.conn).read_list_active_commitments():
+    for row in db.issues.read_list_active_commitments():
         cid = int(row["id"])
         if has_pending_plea(db, cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR):
             continue
@@ -1006,8 +955,6 @@ def scan_and_write_breach_pleas(
     written.extend(_scan_misappropriation(db, state))
     written.extend(_scan_remove_sponsor(db, state))
     return written
-
-
 
 
 def _extract_ref_ids(items: object, *, prefixes: Sequence[str]) -> Set[int]:

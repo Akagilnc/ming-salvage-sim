@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from ming_sim.applier import load_stored_json, load_stored_list
 
@@ -139,8 +139,6 @@ class ReignStateStore:
     def read_current_settle_turn(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT turn FROM game_state WHERE id = 1', params).fetchone()
 
-    def read_has_meta_flag(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT value FROM metrics WHERE key=?', params).fetchone()
 
     def read_list_economy_moves_for_dossier(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id', params).fetchall()
@@ -223,7 +221,9 @@ class ReignStateStore:
         return int(row["turn"])
 
     def has_meta_flag(self, key: str) -> bool:
-        row = self.read_has_meta_flag((key,))
+        row = self._conn.execute(
+            "SELECT value FROM metrics WHERE key=?", (key,)
+        ).fetchone()
         return row is not None and int(row["value"]) == 1
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
@@ -386,7 +386,7 @@ class ReignStateStore:
 
     def kv_get(self, key: str) -> str | None:
         row = self._conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
-        return row["value"] if row else None
+        return row[0] if row else None
 
     def kv_set(self, key: str, value: str) -> None:
         self._conn.execute(
@@ -413,10 +413,6 @@ class ReignStateStore:
             (*params, int(night_id)),
         )
 
-    def night_status(self, night_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT status FROM audience_nights WHERE id = ?", (int(night_id),)
-        ).fetchone()
 
     def ledger_tags(self, entry_id: int) -> Any:
         return self._conn.execute(
@@ -776,3 +772,411 @@ class ReignStateStore:
                 "DELETE FROM agno_runs WHERE session_id = ? AND run_id = ?",
                 [(session_id, rid) for rid in drop_ids],
             )
+
+    def list_ledger_summon_rows(self) -> Any:
+        return self._conn.execute(
+            "SELECT id, night_id, person_names, tags FROM story_ledger_entries ORDER BY id"
+        ).fetchall()
+
+    def write_insert_legacy(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT INTO legacies\n               (name, source_issue_id, modifiers, narrative_hint,\n                start_month, duration_months, status, clear_gate, legacy_key)\n               VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
+            params,
+        )
+
+    def write_expire_legacies(self, params: Any = ()) -> Any:
+        return self._conn.executemany(
+            "UPDATE legacies SET status='expired' WHERE id=?", params
+        )
+
+    def read_record_claim_flow_logs(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT turn, year, period FROM game_state WHERE id = 1", params
+        ).fetchone()
+
+    def read_treasury_hub_result(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "\n            SELECT COALESCE(SUM(-delta), 0) AS amount\n            FROM economy_ledger\n            WHERE turn = ? AND account = '国库' AND category = '边饷hub'\n            ",
+            params,
+        ).fetchone()
+
+    def read_treasury_report(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT account, balance FROM economy_accounts ORDER BY account DESC",
+            params,
+        ).fetchall()
+
+    def closed_nights_archive_rows(self) -> Any:
+        return self._conn.execute(
+            """
+                SELECT id,turn,year,period,time_of_day,location,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY turn, location, time_of_day ORDER BY id
+                       ) AS scene_number,
+                       COUNT(*) OVER (
+                           PARTITION BY turn, location, time_of_day
+                       ) AS scene_count
+                FROM audience_nights WHERE status='closed' ORDER BY turn,id
+                """
+        ).fetchall()
+
+    def read_list_active_legacies(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM legacies WHERE status='active' ORDER BY id", params
+        ).fetchall()
+
+    def read_expire_legacies(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, start_month, duration_months FROM legacies WHERE status='active'",
+            params,
+        ).fetchall()
+
+    def read_legacy_modifiers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT modifiers FROM legacies WHERE status='active' ORDER BY id", params
+        ).fetchall()
+
+    def read_ensure_opening_ledger(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM economy_ledger WHERE account = ? LIMIT 1", params
+        ).fetchone()
+
+    def active_chat_turn_actor_and_user_message(
+        self,
+        *,
+        chat_turn_id: int,
+        turn: int,
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT minister_name, user_message_id FROM chat_turns "
+            "WHERE id=? AND turn=? AND status='active'",
+            (int(chat_turn_id), int(turn)),
+        ).fetchone()
+
+    def read_clear_gated_legacies(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, name, clear_gate, narrative_hint FROM legacies WHERE status='active' AND clear_gate != '' AND clear_gate != '{}'",
+            params,
+        ).fetchall()
+
+    def write_clear_gated_legacies(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE legacies SET status='cleared' WHERE id=?", params
+        )
+
+    def write_sync_opening_legacies(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE legacies\n                   SET name=?, modifiers=?, narrative_hint=?, clear_gate=?\n                   WHERE legacy_key=? AND status='active'",
+            params,
+        )
+
+    def read_sync_opening_legacies(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM legacies WHERE legacy_key=? AND status='active'", params
+        ).fetchone()
+
+    def write_sync_opening_legacies_legacies(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE legacies SET status='cleared' WHERE legacy_key=? AND status='active'",
+            params,
+        )
+
+    def read_apply_recovery_driven_transfers(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT COALESCE(SUM(-delta), 0) FROM economy_ledger WHERE origin_ref=? AND turn=? AND delta<0",
+            params,
+        ).fetchone()
+
+    def read_household_ledger_balance(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT balance FROM economy_accounts WHERE account='国库'", params
+        ).fetchone()
+
+    def read_household_ledger(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT e.year,e.period,e.delta,e.balance_after,e.category,e.reason,\n                      e.origin_ref,e.dossier_id\n               FROM economy_ledger e\n               WHERE e.account='国库' ORDER BY e.id DESC",
+            params,
+        ).fetchall()
+
+    def list_night_ids(self) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM audience_nights ORDER BY id"
+        ).fetchall()
+
+    def read_month_ledger(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT account, delta, category, reason, origin_ref FROM economy_ledger WHERE turn=? ORDER BY id",
+            params,
+        )
+
+    def read_chat_turn_night_seq(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT night_seq FROM chat_turns WHERE id=?", params
+        ).fetchone()
+
+    def write_update_summon_travel_tone(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE story_ledger_entries SET tags=? WHERE id=?", params
+        )
+
+    def write_open_night(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                INSERT INTO audience_nights
+                    (turn, year, period, time_of_day, location, status,
+                     close_commit_cursor, next_event_seq)
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+                """,
+            params,
+        )
+
+    def read_list_ledger(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM story_ledger_entries WHERE night_id = ? "
+            "ORDER BY COALESCE(order_key, seq) ASC, id ASC",
+            params,
+        ).fetchall()
+
+    def read_commit_late_night_approved(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT DISTINCT n.id FROM audience_nights n "
+            "JOIN pending_actions pa ON pa.night_id=n.id "
+            "WHERE n.turn=? AND n.status=? AND "
+            "pa.status='pending' AND pa.night_approved=1 ORDER BY n.id",
+            params,
+        ).fetchall()
+
+    def read_update_summon_travel_tone_story_ledger_entries(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "SELECT origin_chat_turn_id FROM story_ledger_entries WHERE id=?", params
+        ).fetchone()
+
+    def write_set_meta_flag(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT INTO metrics(key, value) VALUES(?, 1) "
+            "ON CONFLICT(key) DO UPDATE SET value=1",
+            params,
+        )
+
+    def write_create_chat_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                INSERT INTO chat_turns
+                    (minister_name, turn, year, period, agno_session_id, agno_runs_before,
+                     night_id, night_seq, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+            params,
+        )
+
+    def write_record_chat_turn_rollback_diffs(self, params: Any = ()) -> Any:
+        return self._conn.executemany(
+            """
+                INSERT INTO chat_turn_rollback_items
+                    (chat_turn_id, kind, target_table, target_id, before_json, after_json, rollback_strategy)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+            params,
+        )
+
+    def write_apply_authority_cost(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "INSERT INTO metrics(key,value) VALUES('皇威',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params,
+        )
+
+    def write_record_issue_economy_move(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                INSERT INTO economy_ledger
+                (turn, year, period, account, delta, balance_after, category, reason,
+                 event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id,
+                 origin_ref, beyond_intent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, NULL, ?, ?)
+                """,
+            params,
+        )
+
+    def write_ensure_opening_ledger(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                    INSERT INTO economy_ledger
+                    (turn, year, period, account, delta, balance_after, category, reason, actor)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+            params,
+        )
+
+    def write_restore_interrupted_after_failed_retry(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "DELETE FROM story_ledger_entries "
+            "WHERE source_chat_turn_id = ? OR origin_chat_turn_id = ?",
+            params,
+        )
+
+    def write_restore_interrupted_after_failed_retry_chat_turn_rollback_items(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "DELETE FROM chat_turn_rollback_items WHERE chat_turn_id = ?", params
+        )
+
+    def write_restore_interrupted_after_failed_retry_chat_turns(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            "UPDATE chat_turns SET status = 'interrupted' WHERE id = ?", params
+        )
+
+    def write_fail_chat_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "UPDATE chat_turns SET status = 'failed' WHERE id = ?", params
+        )
+
+    def write_persist_minister_reply(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                    UPDATE chat_turns
+                    SET minister_message_id = ?,
+                        error_pack_path = '',
+                        status = CASE WHEN status = 'generating' THEN 'active' ELSE status END
+                    WHERE id = ?
+                    """,
+            params,
+        )
+
+    def write_undo_chat_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+                    UPDATE chat_turns
+                    SET status = 'undone', undone_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+            params,
+        )
+
+    def read_build_chat_projection(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, user_message_id, minister_message_id FROM chat_turns "
+            "WHERE minister_name=? AND night_id=?",
+            params,
+        ).fetchall()
+
+    def read_restore_interrupted_after_failed_retry_chat_turn_rollback_items(
+        self, params: Any = ()
+    ) -> Any:
+        return self._conn.execute(
+            """
+                SELECT * FROM chat_turn_rollback_items
+                WHERE chat_turn_id = ?
+                ORDER BY id DESC
+                """,
+            params,
+        ).fetchall()
+
+    def read_build_chat_projection_audience_nights(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM audience_nights WHERE status='open' ORDER BY id DESC LIMIT 1",
+            params,
+        ).fetchone()
+
+    def read_undo_chat_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status FROM audience_nights WHERE id = ?", params
+        ).fetchone()
+
+    def read_treasury_report_economy_ledger(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT id, origin_ref, dossier_id FROM economy_ledger ORDER BY id", params
+        )
+
+    def read_source_user_message_id(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT user_message_id FROM chat_turns "
+            "WHERE id=? AND turn=? AND status='active' AND user_message_id IS NOT NULL",
+            params,
+        ).fetchone()
+
+    def read_dispatch_commissions(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT 1 FROM chat_turns earlier JOIN chat_turns current "
+            "ON earlier.night_id=current.night_id AND earlier.turn=current.turn "
+            "WHERE earlier.id=? AND current.id=? AND earlier.id<current.id "
+            "AND earlier.minister_name=? AND current.minister_name=? "
+            "AND earlier.minister_message_id IS NOT NULL "
+            "AND earlier.status='active' AND current.status='active' "
+            "AND earlier.undone_at IS NULL AND current.undone_at IS NULL",
+            params,
+        ).fetchone()
+
+
+    def read_fail_audience_chat_turn(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
+            params,
+        ).fetchone()
+
+    def read_apply_scene_turn_translation(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT minister_name FROM chat_turns WHERE id=?", params
+        ).fetchone()
+
+    def ledger_archive_rows_for_nights(self, night_ids: list[int]) -> Any:
+        if not night_ids:
+            return []
+        placeholders = ",".join("?" for _ in night_ids)
+        return self._conn.execute(
+            f"SELECT night_id,person_names,tags,source_chat_turn_id "
+            f"FROM story_ledger_entries WHERE night_id IN ({placeholders}) "
+            "ORDER BY night_id,COALESCE(order_key,seq),id",
+            night_ids,
+        ).fetchall()
+
+    def chat_turn_archive_rows_for_nights(self, night_ids: list[int]) -> Any:
+        if not night_ids:
+            return []
+        placeholders = ",".join("?" for _ in night_ids)
+        return self._conn.execute(
+            f"SELECT night_id,minister_name FROM chat_turns "
+            f"WHERE night_id IN ({placeholders}) "
+            f"AND status NOT IN ('undone', 'failed', 'consumed') "
+            "ORDER BY night_id,night_seq,id",
+            night_ids,
+        ).fetchall()
+
+    def ledger_totals(self, turn: int, excluded_ids: Iterable[int]) -> Any:
+        ids = tuple(excluded_ids)
+        clause = " AND id NOT IN (" + ",".join("?" for _ in ids) + ")" if ids else ""
+        return self._conn.execute(
+            "SELECT account, SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END) AS income, "
+            "SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS expense "
+            f"FROM economy_ledger WHERE turn=?{clause} GROUP BY account ORDER BY account DESC",
+            (turn, *ids),
+        ).fetchall()
+
+    def recent_ledger(self, excluded_ids: Iterable[int], limit: int | None) -> Any:
+        ids = tuple(excluded_ids)
+        sql = (
+            "SELECT year,period,account,delta,category,reason,actor FROM economy_ledger"
+        )
+        params = list(ids)
+        if ids:
+            sql += " WHERE id NOT IN (" + ",".join("?" for _ in ids) + ")"
+        sql += " ORDER BY id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return self._conn.execute(sql, params).fetchall()
+
+    def chat_turns_for_messages(self, message_ids: Iterable[int]) -> Any:
+        ids = tuple(message_ids)
+        placeholders = ",".join("?" for _ in ids)
+        return self._conn.execute(
+            f"SELECT id,user_message_id,minister_message_id FROM chat_turns "
+            f"WHERE user_message_id IN ({placeholders}) OR minister_message_id IN ({placeholders}) "
+            "ORDER BY id DESC",
+            [*ids, *ids],
+        ).fetchall()

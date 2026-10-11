@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from ming_sim.applier import coerce_beyond_intent_flag
-from ming_sim.entities.issue.store import IssueStore
 
 from typing import Any, Dict, List, Mapping
 
@@ -62,7 +61,7 @@ def stopped_covert_effect(
 
 
 def _issue_for_dossier(db: Any, dossier_id: int) -> int:
-    row = IssueStore(db.conn).read_issue_for_dossier((f"dossier:{int(dossier_id)}",))
+    row = db.issues.read_issue_for_dossier((f"dossier:{int(dossier_id)}",))
     return int(row["id"]) if row is not None else 0
 
 
@@ -171,7 +170,7 @@ def write_exposure_todos(db: Any, state: Any, applied: Any = None) -> int:
         if is_actual_population_transfer(item)
     ]
     written = 0
-    for row in db.conn.execute("SELECT id FROM decree_dossiers ORDER BY id").fetchall():
+    for row in db.dossiers.read_write_exposure_todos():
         did = int(row["id"])
         fork = db.read_dossier_fork_state(did)
         # #651's covert channel is narrower than the shared #622/#627 fork:
@@ -185,15 +184,14 @@ def write_exposure_todos(db: Any, state: Any, applied: Any = None) -> int:
         ):
             continue
         channels: List[str] = []
-        if db.conn.execute(
-            "SELECT 1 FROM decree_dossier_links WHERE target_dossier_id=? AND relation_type='稽核' LIMIT 1",
-            (did,),
-        ).fetchone() is not None:
+        if (
+            db.dossiers.read_write_exposure_todos_decree_dossier_links((did,))
+            is not None
+        ):
             channels.append("稽核")
         from ming_sim.supervision import ORIGIN_MARK_DENUNCIATION_TRUE, origin_has_mark
-        denunciations = db.conn.execute(
-            "SELECT origin FROM faction_denunciations WHERE target_dossier_id=?", (did,)
-        ).fetchall()
+
+        denunciations = db.dossiers.read_write_exposure_todos_faction_denunciations((did,))
         if any(origin_has_mark(row["origin"], ORIGIN_MARK_DENUNCIATION_TRUE) for row in denunciations):
             channels.append("检举")
         origin = f"dossier:{did}"

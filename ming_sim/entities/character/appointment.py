@@ -115,10 +115,7 @@ def _displace_duplicate_offices(
     new_seat = str(region_id or "").strip()
     displaced: List[str] = []
     displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
-    rows = db.conn.execute(
-        "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
-        (new_holder,),
-    ).fetchall()
+    rows = db.characters.read_displace_duplicate_offices((new_holder,))
     for row in rows:
         holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
         # Seat-aware exclusive collision: resolved local seat only bumps the
@@ -139,8 +136,7 @@ def _displace_duplicate_offices(
         # 剔掉一个分项后,保留官职对应的 office_type 可能变了(如剔「兵部尚书」后只剩「左都御史」=都察院)。
         # 若独占实职被完全腾空,旧任仍 active,但其名分必须落入人才池的「听用候铨」,
         # 不能留下 active + 空 office 的半身份（ADR 0009 S5）。
-        old_type_row = db.conn.execute(
-            "SELECT office_type FROM characters WHERE name=?", (row["name"],)).fetchone()
+        old_type_row = db.characters.read_displace_duplicate_offices_office_type((row["name"],))
         old_type = old_type_row["office_type"] if old_type_row else ""
         new_type = (
             "身名分"
@@ -154,15 +150,19 @@ def _displace_duplicate_offices(
             db.characters.office_region(row["name"]) or ""
         ).strip()
         if fully_displaced:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
-                (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
+            db.characters.update(
+                row["name"],
+                {
+                    "office": new_holder_office,
+                    "office_type": new_type,
+                    "status_reason": "被顶替",
+                    "reason_code": "被顶替",
+                },
             )
             db.set_character_transit(str(row["name"]), content=content, commit=False)
         else:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=? WHERE name=?",
-                (new_holder_office, new_type, row["name"]),
+            db.characters.update(
+                row["name"], {"office": new_holder_office, "office_type": new_type}
             )
         db._record_character_office(
             row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
@@ -183,9 +183,7 @@ def _displace_duplicate_offices(
     # 绝对幂等（非白名单 return、重复无害）。去重后逐派系各调一次。
     displaced_factions = set()
     for dn in displaced_names:
-        frow = db.conn.execute(
-            "SELECT faction FROM characters WHERE name=?", (dn,)
-        ).fetchone()
+        frow = db.characters.read_displace_duplicate_offices_faction((dn,))
         # 空/None faction 提前滤掉（recompute_faction_leverage("") 虽被白名单校验 no-op，
         # 但提前过滤免去无意义调用，集合也不残留空串。线上 R5 gemini medium。
         if frow is not None and frow["faction"]:
@@ -312,9 +310,8 @@ def apply_office_appointment(
                 region_id=seat,
             )
         if cur_status == "active":
-            db.conn.execute(
-                "UPDATE characters SET status_reason='', reason_code='' WHERE name=?",
-                (name,),
+            db.characters.update(
+                name, {"status_reason": "", "reason_code": ""}
             )
             if content is not None and name in content.characters:
                 content.characters[name].status_reason = ""
