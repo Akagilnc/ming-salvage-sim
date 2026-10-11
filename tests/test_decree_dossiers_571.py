@@ -1113,34 +1113,6 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
     assert db.list_directives(state) == []
     assert db.list_decree_dossiers() == []
 
-def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
-    game, monkeypatch,
-):
-    """#1902：CLI 拟诏台手写入口退役后，成案草案只剩「不可见、不可删」一条护栏。"""
-    import ming_sim.cli.terminal as terminal
-
-    db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "着修河工", "手动新增",
-        dossier_payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue", "target_id": "river-works",
-        },
-    )
-    db.ensure_dossiers_for_draft_directives(state)
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.enter_review = lambda: None
-    session.back_to_summoning = lambda: None
-    answers = iter([f"del {directive_id}", "back"])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-
-    assert session.list_directives() == []
-    assert terminal.review_directives(session) == "back"
-    assert db.get_dossier_for_directive(directive_id) is not None
-    assert db.list_directives(state)[0]["text"] == "着修河工"
-
 # #1902：拟诏台手写改稿（Web PATCH /api/directives、CLI edit）随整条入口退役，
 # 「手改旨文并重抽 mechanics」这条能力不再存在，本用例随之退役；改稿入口不再
 # 注册的回归由 tests/test_web_entry_1902.py 钉。

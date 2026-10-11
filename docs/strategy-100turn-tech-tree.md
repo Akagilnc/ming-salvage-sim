@@ -140,21 +140,6 @@
 
 ---
 
-## 六、复现命令
-
-```bash
-# 跑这套攻略（CLI 自动玩，崇祯 agent 按上述目标行动）
-.venv/bin/python scripts/play_as_emperor.py \
-  --goal "100月内解决户部亏空/辽东索饷/陕西流寇：先打阉党提皇威，再查隐田+开海+办工厂(玻璃肥皂化肥)开源，招徐光启/袁可立/郑芝龙/宋应星，国库转正后足饷解辽东、赈抚解陕西" \
-  --turns 100 \
-  --db data/strat100.db --agno-db data/strat100_agno.db \
-  --log scripts/runs/strat100_$(date +%s).log
-```
-
-验证看：四指标曲线、三 bar 是否单调上行、国库月净何时转正、有无单指标飞天/崩盘。
-
----
-
 ## 七、实跑验证结论（2026-05，qwen3.6-plus 跑游戏侧+玩家侧）
 
 > 以下为历史实跑报告（旧 extractor 时代 CLI 自动局），仅作证据；现行操作以第五、二节改写后的月链声明接法为准。
@@ -177,12 +162,3 @@ CLI 自动跑局（崇祯 agent=qwen）实测，攻略**三线全部跑通并落
   「挪垫/预估」推满，开源收益始终没真盖过支出。纸面繁荣 > 实账。
 - **内库须显式守**：goal 不写「内库别透支」时，agent 把内库当钱包填窟窿，10 回合烧穿（440→0）；
   goal 加「守住实账」后稳守 460-518。**复现时 goal 务必带这句**。
-
-### CLI 自动跑局已修的脚本 bug（`scripts/play_as_emperor.py`，与攻略无关）
-qwen 弱模型驱动 CLI 暴露一串历史坑，已修：① 退朝判断要覆盖「朕问：」界面（agent 用「传X」换人不回主菜单）
-② 草案界面强制颁布兜底 ③ payload 喂本月进度（num_history_runs=8 太短会盲凑）④ issue 颁布须先 confirm pending
-⑤ confirm N 的 N 是 directive **id** 不是序号 ⑥ TIMEOUT 试探重试 ⑦ step 上限 500→turns×60+300
-⑧ 草案空发 back 逼拟旨 + 超长输入截断（防 CLI 卡死）。
-
-> 残留：草案审议界面 qwen 仍偶发 confirm/issue/yes 循环（弱模型与复杂状态机不匹配）。
-> 跑满 100 月建议**游戏侧换 deepseek**（更守 prompt），或用 `decree-probe` 跳过对话直接喂诏书序列验结算。

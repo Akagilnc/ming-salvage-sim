@@ -5,10 +5,6 @@ from __future__ import annotations
 from typing import Dict, NamedTuple, Tuple
 
 
-class ExitGame(Exception):
-    pass
-
-
 class DependencyMismatch(Exception):
     """Installed Python package does not satisfy requirements.txt."""
 

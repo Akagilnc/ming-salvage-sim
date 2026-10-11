@@ -431,8 +431,7 @@ def llm_config_from_runtime(
 def resolve_api_key(api_key: str = "") -> str:
     """入参/env 都没有真实 key 时当面索要一次；仍无则 SystemExit。
 
-    唯一「向人要 key」的地方（#1902）：API-only 直调路（闸脚本）与游戏 CLI 入口
-    在 API 通道缺 key 时共用此缝，禁各自再写一份 getpass。
+    唯一「向人要 key」的地方（#1902）：API-only 直调路（闸脚本）共用此缝。
     """
     key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
     if not is_real_api_key(key):
@@ -461,8 +460,8 @@ def load_llm_config(
     """按 OpenAI 兼容参数构一份 API 通道配置（闸脚本等 API-only 直调用）。
 
     #1902：本函数不再按 MING_SIM_LLM_BACKEND 选宿主，也不读运行档——CLI 通道的
-    配置一律走运行档投影（load_runtime_llm + llm_config_from_runtime），游戏
-    CLI 入口与 Web 建局共用那条路；这里只服务「明确只跑 API」的直调。
+    配置一律走运行档投影（load_runtime_llm + llm_config_from_runtime），Web 建局
+    使用那条路；这里只服务「明确只跑 API」的直调。
     """
     api_key = resolve_api_key(api_key)
     adv_base = (advanced_base_url or "").strip()

@@ -2,7 +2,7 @@
 
 ## 这是什么
 `wangwei-ying3/ming-salvage-sim` 的 fork（GPLv3）。明末崇祯 LLM 政略模拟器。
-本仓库目的 = 做一个**探针**：把游戏的 LLM 后端从「外部 api key 调商业模型」换成 agent / 真实模型后端，验证「这游戏好不好玩」。**目前 web 版本是第一个尝试方向**（走真实 LLM 后端：codex / agy / hermes，见下）；**CLI 文字沉浸版（agent session 直接当后端：当前对话的 Claude / subagent）待后续开发**。
+本仓库目的 = 做一个**探针**：把游戏的 LLM 后端从「外部 api key 调商业模型」换成 agent / 真实模型后端，验证「这游戏好不好玩」。**目前 web 版本是第一个尝试方向**（走真实 LLM 后端：codex / agy / hermes，见下）。
 
 ## 📚 工作手册（每回合开始前必查，别凭"我以为"）
 - **[docs/DELTA_SCHEMA.md](docs/DELTA_SCHEMA.md)** — 我产 delta JSON 的格式契约：顶层字段、字段约束、白名单、踩过的坑。**产 delta 前查。**
@@ -18,7 +18,7 @@
 - **第一刀切片**：单回合透明闭环，目标**第一年（~12 回合）**，每步确定性计算摊开打印，让玩家边玩边摸清机制。
 - **月末产出形态**：我每回合产 = 邸报叙事（给玩家看）+ 原 extractor schema 的**稀疏 delta JSON** → 喂 `apply_score_extraction` 落库。把原 simulator + extractor 两个 LLM 步**合并成我一次出**，省掉二次翻译。
 - **形态分层（先甲后乙）**：
-  - **step1（验证）**：形态(1) 我在对话里直接当 runtime+LLM，玩家当皇帝，`terminal.py` 当流程蓝本（不另起进程）。最快、零基建。
+  - **step1（验证）**：形态(1) 我在对话里直接当 runtime+LLM，玩家当皇帝（不另起进程）。最快、零基建。
   - **step2（跑完第一年）**：形态(3) subagent 当各 LLM 角色（主对话=引擎调度，subagent=大臣/裁判），解决 context 污染、走订阅额度。见 GitHub issue。
   - 形态(2) 独立进程+桥：搁置到「换模型/分发」阶段。`claude -p` 走单独额度不划算；codex / agy(gemini) 订阅可行。
 
@@ -37,12 +37,12 @@
 - **P6 LLM 输出不可篡改（owner 2026-08-20 逐字拍；违者=违宪）**：「llm 想怎么写就怎么写。写出来什么就是什么。别在那去扣文字、改词。有些东西不想 AI 说，**要从它能看见的东西入手，而不是去篡改它的输出**。」——引擎/呈现层对 LLM 产出的自由文本**零删改**（禁 regex/词表/裁剪/替换，ADR 0142）；要改效果只有两条合法路：改**输入**（prompt 正向表述、喂的材料，ADR 0143）或改**呈现结构**（UI 布局，不碰字）。判官核任何触 LLM 输出显示的处方先问一句「这是在改它写的字吗？」——是即驳回。实证：#1473 曾有判官处方开 regex 剥「叩答」前缀、fixer 已落词表，r6 庭依 0142 拦于 merge 前（2026-08-20）。
 
 ## 关键技术事实（已挖过，省得重来）
-- **启动脱 key**：`GameSession` 构造即不连 LLM（连通校验只在设置页主动提交配置时跑），CLI 无 api key 能起。
+- **启动脱 key**：`GameSession` 构造即不连 LLM（连通校验只在设置页主动提交配置时跑）。
 - **delta 落库单一入口**：`apply_score_extraction(db, state, extracted, …)`（经 `declaration_dispatch` 由月链调用），内部分发到 region/army/building/economy/issue 各 apply。
 - **schema 契约**（#1843 reopen 后）：`EMPTY_EXTRACTION`（C0 声明形状真源）、`ITEM_FIELD_ALIASES` / `_canonical_item_fields`（条目字段规范化）、`read_beyond_intent_raw`（超出旨意读取）。五模块 extractor 别名/MODULE_FIELDS/清洗函数已删。
 - **接口层（确定性↔LLM，别让 LLM 自己数数）**：材料目录（#1834）与月链供料；逐旨预推与世界段按需读取同一材料目录，不再拼装旧 simulator 盘面。
-- **结算编排骨架**：玩家颁诏与退朝共用 `decree.resolve_directives → month_chain.run_player_month_chain`（ADR 0157）：收夜与 `pre_settle` 后，按旨序消费夜里暂存声明，推演／转译／提交世界段；未完成请旨先停批红，邸报归档后才判结局、推进月份。恢复从暂存声明及落账状态续跑；章节记忆退役。对话探针 `driver.py` 与旧核 `settle_with_delta` 已删（#1843 reopen）；CLI 沉浸版将来直接接新月链。调用顺序与边界见 `docs/SETTLEMENT_FLOW.md`，规则真源见 ADR 0157。
-- **运行形态（web 第一，CLI 沉浸版后续）**：**目前 web 版本是第一个尝试方向**，走真实 LLM 后端（codex / agy / hermes，见下）。**「agent session 直接当后端」属后续的 CLI 文字沉浸版**——session 串行（一次一个 LLM 调用）使它在 web 月末并发轰多个 extractor 时会死锁，故那条路留给 CLI 沉浸版、不用在 web。⚠️ 别再凭「探针走 CLI」判 web 路 bug「够不着玩家」：web 是当前真实运行形态，web 路的问题就是真问题。
+- **结算编排骨架**：玩家颁诏与退朝共用 `decree.resolve_directives → month_chain.run_player_month_chain`（ADR 0157）：收夜与 `pre_settle` 后，按旨序消费夜里暂存声明，推演／转译／提交世界段；未完成请旨先停批红，邸报归档后才判结局、推进月份。恢复从暂存声明及落账状态续跑；章节记忆退役。对话探针 `driver.py` 与旧核 `settle_with_delta` 已删（#1843 reopen）。调用顺序与边界见 `docs/SETTLEMENT_FLOW.md`，规则真源见 ADR 0157。
+- **运行形态**：web 是当前真实运行形态，web 路的问题就是真问题；走真实 LLM 后端（codex / agy / hermes，见下）。
 - **6 文件三向处置**（agents/simulation/registry/decree/memories/llm_model）：🟢 保留契约/骨架 🟡 提炼成我的玩法说明书 🔴 扔纯 agno 管道（`llm_model.py` 整扔）。**领域金矿本体在 `content/prompts/*.md`（含 `gazette_author.md` 邸报作者提示）**。
 
 ## LLM 后端（换模型时查，非每回合）

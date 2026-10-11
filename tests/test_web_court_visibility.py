@@ -392,26 +392,3 @@ def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
     roster_names = {v.name for v in sess.list_ministers()}
     for name in ("温体仁", "毕自严", "张瑞图"):
         assert name in roster_names, f"{name} 被挡出 list_ministers"
-
-
-
-
-def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeypatch):
-    """#1317 r2：CLI choose_minister 真入口与可召谓词同口径（排未仕，留真臣）。"""
-    from ming_sim.cli import terminal as term
-
-    db, state, content = game
-    sess = _session_stub(db, content)
-    sess.state = state
-
-    # Active status must not bypass the real CLI admission gate.
-    db.conn.execute(
-        "UPDATE characters SET status='active',location='beizhili',transit_to='' "
-        "WHERE name IN (?,?)", ("史可法", "温体仁"),
-    )
-    db.conn.commit()
-
-    answers = iter(("史可法", "温体仁"))
-    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    chosen = term.choose_minister(sess)
-    assert chosen is content.characters["温体仁"]

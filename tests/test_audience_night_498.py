@@ -537,59 +537,6 @@ def test_bad_audibility_and_append_after_close(game):
     assert ei2.value.code == "night_closed"
 
 
-def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
-    """CLI 真实输入入口 terminal.minister_chat 起聊 → 对话轮挂夜（非 night_id=0 旁路）。"""
-    import ming_sim.cli.terminal as term
-    from types import SimpleNamespace
-
-    db, state, content = game
-    character = next(c for c in content.characters.values()
-                     if db.get_character_status(c.name)[0] == "active"
-                     and getattr(c, "power_id", "ming") == "ming"
-                     and getattr(c, "office_type", "") != "后宫")
-
-    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
-        assert chat_turn_id > 0  # 挂夜轮以 generating 起笔，回话须带 chat_turn_id
-        return SimpleNamespace(
-            answer="臣有本奏。", court_action="",
-        )
-
-    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        # #1842：CLI 殿上口令外问话走 scene_chat；替身委托既有 chat 同形。
-        del stream_emit
-        return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
-
-    session = SimpleNamespace(
-        db=db, state=state, content=content,
-        chat=chat, scene_chat=scene_chat,
-        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
-        schedule_pending_scene_translation=lambda result: None,
-        # #1902 F2：中断重试取数已下沉会话层，入口不再自带查询；真会话方法在
-        # 轻壳上按「无中断可重试」返回空（与无夜/无 conn 同形）。
-        pending_audience_reply_retries=lambda: [],
-        # 导航收夜：轻壳只承接 CLI 退朝口令。
-        schedule_close_night_after_chat_if_needed=lambda *a, **k: None,
-    )
-    answers = iter(["朕问卿边事如何？", "quit"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-
-    assert term.minister_chat(session, character) == "court_break"
-
-    open_n = an.get_open_night(db)
-    assert open_n is not None
-    turns = an.list_chat_turns_for_night(db, int(open_n["id"]))
-    assert turns
-    assert int(turns[-1]["night_id"]) == int(open_n["id"]) > 0
-    # #1902 T1：建轮归属恒为「殿上」——殿上历史投影/撤回只按它取
-    # （db.list_hall_chat_turns 硬取 minister_name='殿上'）。写成大臣名会让 CLI
-    # 这一轮对 list_hall_chat_turns 及依赖它的 can_undo_last_chat / 撤回不可见，
-    # 同库换 Web 打开即丢出殿上历史，两端事实不一致。
-    assert turns[-1]["minister_name"] == "殿上", turns[-1]
-    assert db.list_hall_chat_turns(int(open_n["id"])), (
-        "CLI 召对轮须能被殿上轮读取侧看到"
-    )
-
-
 def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):
     """已提交、尚未成案的旨不得落明发账，也不得写空 provenance。"""
     db, state, content = game

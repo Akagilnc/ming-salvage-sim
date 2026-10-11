@@ -2409,12 +2409,6 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
     return triggered
 
 
-def _bar_ascii(value: int, width: int = 20) -> str:
-    value = max(0, min(100, int(value)))
-    pos = int(round(value / 100 * (width - 1)))
-    return "●" + ("━" * pos) + "○" + ("━" * (width - 1 - pos))
-
-
 def _format_issue_ongoing(ongoing_raw: str) -> str:
     """简短描述每月固定影响。"""
     eff = loads_effect_dict(ongoing_raw)  # 非 dict/解析失败→{}（#117 统一守）
@@ -2434,45 +2428,6 @@ def _format_issue_ongoing(ongoing_raw: str) -> str:
             if isinstance(delta, (int, float)) and delta and acc:
                 parts.append(f"{acc}{'+' if delta > 0 else ''}{int(delta)}万")
     return "、".join(parts)
-
-
-def _format_inertia(inertia: int) -> str:
-    if inertia > 0:
-        return f"自然推进 +{inertia}/{TURN_UNIT}"
-    if inertia < 0:
-        return f"自然恶化 {inertia}/{TURN_UNIT}"
-    return "势均力敌"
-
-
-def show_active_issues(db: GameDB) -> None:
-    issues = db.list_active_issues()
-    if not issues:
-        return
-    state = db.load_state()
-    initiatives = [i for i in issues if i["kind"] == "initiative"]
-    situations = [i for i in issues if i["kind"] == "situation"][:12]
-    print(f"─── 待办事项 (系统 {len(situations)}/12  玩家 {len(initiatives)}) ───")
-
-    def _print_row(row, label: str) -> None:
-        bar = _bar_ascii(int(row["bar_value"]))
-        print(f"{label} #{row['id']} {row['title']}")
-        print(f"  {row['bar_bad_meaning']:6s} {bar} {row['bar_good_meaning']:6s}  bar={int(row['bar_value']):3d}  {row['stage_text']}")
-        inertia = int(row["inertia"])
-        ongoing_txt = _format_issue_ongoing(row["ongoing_effects"] or "{}")
-        line_parts = [_format_inertia(inertia)]
-        progress = commitment_progress_payload(db, state, row)
-        if progress is not None:
-            line_parts.append(commitment_display_text(progress, row))
-        if ongoing_txt:
-            line_parts.append(f"每{TURN_UNIT}固定：{ongoing_txt}")
-        print(f"  {' | '.join(line_parts)}")
-
-    for row in situations:
-        cancel_tag = "不可撤" if row["cancellable"] == "never" else ("唯由进度" if row["cancellable"] == "by_progress" else "可撤旨")
-        _print_row(row, f"[系统/{cancel_tag}]")
-    for row in initiatives:
-        _print_row(row, "[玩家/可撤旨]")
-    print()
 
 
 def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = True) -> Optional[int]:
