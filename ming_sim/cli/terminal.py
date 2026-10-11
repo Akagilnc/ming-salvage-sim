@@ -239,11 +239,16 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             )
         from ming_sim.audience_night import write_audience_error_pack
 
+        detail = {"chat_turn_id": chat_turn_id, "error_type": type(exc).__name__}
         pack_path = write_audience_error_pack(
             kind="cli_retry", message=str(exc), exc=exc,
-            detail={"chat_turn_id": chat_turn_id, "error_type": type(exc).__name__},
+            detail=detail,
         )
-        print(f"{type(exc).__name__}: {exc}\n错误包：{pack_path}\n")
+        print(f"{type(exc).__name__}: {exc}")
+        if pack_path:
+            print(f"错误包：{pack_path}\n")
+        else:
+            print(f"{detail['diagnostic_error']}\n诊断写入路径：{detail['diagnostic_path']}\n")
         return None
     # #1716/#1842：与 Web retry 同缝——回话已落库后消费 court_action 收夜。
     # 前台先返回 court_break；既有队列随后 FIFO 转译 join→封夜（不挡回话返回）。

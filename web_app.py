@@ -784,9 +784,9 @@ class WebGame:
                     session.close()
                 except Exception as _caught_failure:
                     logger.exception(
-                        "WebGame init failed; session.close failed path=%s diagnostic=%s",
+                        "WebGame init failed; session.close failed path=%s error=%s",
                         db_path,
-                        _exception_detail(_caught_failure),
+                        _caught_failure,
                     )
                     _handback_failed_runtime(self, db_path)
             raise
@@ -850,9 +850,9 @@ class WebGame:
                     _drain_and_close_session(residual, entry=entry, close_op=op)
                 except Exception as _caught_failure:
                     logger.exception(
-                        "dispose rebuild residual drain failed path=%s diagnostic=%s",
+                        "dispose rebuild residual drain failed path=%s error=%s",
                         path,
-                        _exception_detail(_caught_failure),
+                        _caught_failure,
                     )
                 ok = bool(op.done.is_set() and op.close_ok)
             elif role == "released_ok":
@@ -869,9 +869,9 @@ class WebGame:
                     ok = True
                 except Exception as _caught_failure:
                     logger.exception(
-                        "dispose rebuild residual close failed path=%s diagnostic=%s",
+                        "dispose rebuild residual close failed path=%s error=%s",
                         path,
-                        _exception_detail(_caught_failure),
+                        _caught_failure,
                     )
                     _handback_failed_runtime(residual, path or self.db_path)
                     ok = False
@@ -929,7 +929,7 @@ class WebGame:
                 except Exception as recovery_exc:
                     if recovery_exc is replace_exc:
                         raise
-                    logger.exception('hot replace recovery failed diagnostic=%s', _exception_detail(recovery_exc))
+                    logger.exception('hot replace recovery failed error=%s', recovery_exc)
                     raise replace_exc from recovery_exc
                 raise
             finally:
@@ -1001,8 +1001,8 @@ class WebGame:
                     residual.close()
                 except Exception as _caught_failure:
                     logger.exception(
-                        "failed to close rejected replacement session diagnostic=%s",
-                        _exception_detail(_caught_failure),
+                        "failed to close rejected replacement session error=%s",
+                        _caught_failure,
                     )
                     wrapper = SimpleNamespace(
                         db_path=self.db_path,
@@ -2302,9 +2302,9 @@ class WebGame:
                             self.db.set_chat_turn_error_pack(chat_turn_id, pack)
                 except Exception as _caught_failure:
                     logger.exception(
-                        "retry cleanup: restore_interrupted failed chat_turn_id=%s diagnostic=%s",
+                        "retry cleanup: restore_interrupted failed chat_turn_id=%s error=%s",
                         chat_turn_id,
-                        _exception_detail(_caught_failure),
+                        _caught_failure,
                     )
                 raise
             # #1353：若无尾随仍须放行整轮票后再收夜。
@@ -2675,8 +2675,8 @@ class WebGame:
                     write_gate.release()
                 except RuntimeError as release_error:
                     logger.exception(
-                        "stream prologue gate release failed diagnostic=%s",
-                        _exception_detail(release_error),
+                        "stream prologue gate release failed error=%s",
+                        release_error,
                     )
                 gate_held = False
             # ADR 0005 / #1408：清理二次失败记日志不宽吞；abandon / 终态写分 try，
@@ -2686,9 +2686,9 @@ class WebGame:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
             except Exception as _caught_failure:
                 logger.exception(
-                    "stream prologue cleanup: fail_chat_turn/reload failed chat_turn_id=%s diagnostic=%s",
+                    "stream prologue cleanup: fail_chat_turn/reload failed chat_turn_id=%s error=%s",
                     chat_turn_id,
-                    _exception_detail(_caught_failure),
+                    _caught_failure,
                 )
             self._complete_pending_write(pending_ticket)
             raise
@@ -2719,9 +2719,9 @@ class WebGame:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
             except Exception as _caught_failure:
                 logger.exception(
-                    "stream identity cleanup: fail_chat_turn/reload failed chat_turn_id=%s diagnostic=%s",
+                    "stream identity cleanup: fail_chat_turn/reload failed chat_turn_id=%s error=%s",
                     chat_turn_id,
-                    _exception_detail(_caught_failure),
+                    _caught_failure,
                 )
             self._complete_pending_write(pending_ticket)
             yield {"type": "error", **_exception_detail(error), **identity}
@@ -2850,9 +2850,9 @@ class WebGame:
                                 )
                     except Exception as _caught_failure:
                         logger.exception(
-                            "stream worker cleanup: record persisted reply failure failed chat_turn_id=%s diagnostic=%s",
+                            "stream worker cleanup: record persisted reply failure failed chat_turn_id=%s error=%s",
                             chat_turn_id,
-                            _exception_detail(_caught_failure),
+                            _caught_failure,
                         )
                         # 相位取证失败绝不可推定回话未落，进而删问话/回话。
                         reply_persisted = True
@@ -2862,9 +2862,9 @@ class WebGame:
                                 self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
                         except Exception as _caught_failure:
                             logger.exception(
-                                "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s diagnostic=%s",
+                                "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s error=%s",
                                 chat_turn_id,
-                                _exception_detail(_caught_failure),
+                                _caught_failure,
                             )
                         # #1465 ④：回话未成终失败 — 与重试起手同形无条件 replace，再 error
                         # （禁「只 put error 不 replace」；客户端已处理空 replace）
@@ -2898,9 +2898,9 @@ class WebGame:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
             except Exception as _caught_failure:
                 logger.exception(
-                    "stream start cleanup: fail_chat_turn/reload failed chat_turn_id=%s diagnostic=%s",
+                    "stream start cleanup: fail_chat_turn/reload failed chat_turn_id=%s error=%s",
                     chat_turn_id,
-                    _exception_detail(_caught_failure),
+                    _caught_failure,
                 )
             self._complete_pending_write(pending_ticket)
             raise
@@ -3161,8 +3161,8 @@ def _spawn_startup_catch_up_nonfatal(game) -> None:
         game._spawn_startup_extraction_catch_up()
     except Exception as _caught_failure:
         logger.exception(
-            "startup extraction catch-up scheduling failed diagnostic=%s",
-            _exception_detail(_caught_failure),
+            "startup extraction catch-up scheduling failed error=%s",
+            _caught_failure,
         )
 
 
@@ -3324,9 +3324,9 @@ def _read_active_db_path() -> str:
             return f.read().strip()
     except Exception as _caught_failure:
         logger.exception(
-            "read active_db path failed path=%s diagnostic=%s",
+            "read active_db path failed path=%s error=%s",
             active_file,
-            _exception_detail(_caught_failure),
+            _caught_failure,
         )
         raise
 
@@ -3344,9 +3344,9 @@ def _atomic_write_text(path: str, text: str) -> None:
                 os.remove(tmp_file)
             except Exception as _caught_failure:
                 logger.exception(
-                    "cleanup atomic write tmp failed path=%s diagnostic=%s",
+                    "cleanup atomic write tmp failed path=%s error=%s",
                     tmp_file,
-                    _exception_detail(_caught_failure),
+                    _caught_failure,
                 )
 
 
@@ -3365,9 +3365,9 @@ def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
                 active_value = f.read()
         except Exception as _caught_failure:
             logger.exception(
-                "snapshot active_db read failed path=%s diagnostic=%s",
+                "snapshot active_db read failed path=%s error=%s",
                 active_file,
-                _exception_detail(_caught_failure),
+                _caught_failure,
             )
             raise
     return (
@@ -3393,9 +3393,9 @@ def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
             os.remove(active_file)
         except Exception as _caught_failure:
             logger.exception(
-                "restore: remove stale active_db failed path=%s diagnostic=%s",
+                "restore: remove stale active_db failed path=%s error=%s",
                 active_file,
-                _exception_detail(_caught_failure),
+                _caught_failure,
             )
             raise
 
@@ -3694,9 +3694,9 @@ def _c7_try_fulfill_archive(path: str) -> bool:
                 moved_ok = bool(_archive_move_db_files(norm))
         except Exception as _caught_failure:
             logger.exception(
-                "C7 archive execute failed path=%s diagnostic=%s",
+                "C7 archive execute failed path=%s error=%s",
                 norm,
-                _exception_detail(_caught_failure),
+                _caught_failure,
             )
             moved_ok = False
         if not moved_ok:
@@ -3789,9 +3789,9 @@ def _settle_close_result(
                     _note_close_result(registered, False, norm)
     except Exception as _caught_failure:
         logger.exception(
-            "settle close note failed path=%s diagnostic=%s",
+            "settle close note failed path=%s error=%s",
             path,
-            _exception_detail(_caught_failure),
+            _caught_failure,
         )
     finally:
         if op is not None:
@@ -3813,9 +3813,9 @@ def _close_unregistered(
         close_ok = True
     except Exception as _caught_failure:
         logger.exception(
-            "private close failed path=%s diagnostic=%s",
+            "private close failed path=%s error=%s",
             norm,
-            _exception_detail(_caught_failure),
+            _caught_failure,
         )
         close_ok = False
     finally:
@@ -3852,17 +3852,17 @@ def _discard_unpublished_candidate(
                     )
                 except Exception as _caught_failure:
                     logger.exception(
-                        "discard unpublished candidate drain failed path=%s diagnostic=%s",
+                        "discard unpublished candidate drain failed path=%s error=%s",
                         path,
-                        _exception_detail(_caught_failure),
+                        _caught_failure,
                     )
         else:
             _close_unregistered(runtime, path)
     except Exception as _caught_failure:
         logger.exception(
-            "discard unpublished candidate failed path=%s diagnostic=%s",
+            "discard unpublished candidate failed path=%s error=%s",
             path,
-            _exception_detail(_caught_failure),
+            _caught_failure,
         )
 
 
@@ -3908,8 +3908,8 @@ def _runtime_restorable(game: Any) -> bool:
         db.conn.execute("SELECT 1")
     except Exception as _caught_failure:
         logger.exception(
-            "runtime restorable probe: db.conn failed diagnostic=%s",
-            _exception_detail(_caught_failure),
+            "runtime restorable probe: db.conn failed error=%s",
+            _caught_failure,
         )
         return False
     agno = getattr(session, "agno_db", None)
@@ -3923,8 +3923,8 @@ def _runtime_restorable(game: Any) -> bool:
             c.exec_driver_sql("SELECT 1")
     except Exception as _caught_failure:
         logger.exception(
-            "runtime restorable probe: agno engine failed diagnostic=%s",
-            _exception_detail(_caught_failure),
+            "runtime restorable probe: agno engine failed error=%s",
+            _caught_failure,
         )
         return False
     return True
@@ -3943,9 +3943,9 @@ def _archive_move_db_files(old_db_path: str) -> bool:
         os.makedirs(saves_dir, exist_ok=True)
     except Exception as _caught_failure:
         logger.exception(
-            "archive prep makedirs failed dir=%s diagnostic=%s",
+            "archive prep makedirs failed dir=%s error=%s",
             saves_dir,
-            _exception_detail(_caught_failure),
+            _caught_failure,
         )
         return False
     target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
@@ -3953,10 +3953,10 @@ def _archive_move_db_files(old_db_path: str) -> bool:
         shutil.move(old_db_path, target)
     except Exception as _caught_failure:
         logger.exception(
-            "archive move failed path=%s → %s diagnostic=%s",
+            "archive move failed path=%s → %s error=%s",
             old_db_path,
             target,
-            _exception_detail(_caught_failure),
+            _caught_failure,
         )
         return False
     wal_path = old_db_path + "-wal"
@@ -3965,17 +3965,17 @@ def _archive_move_db_files(old_db_path: str) -> bool:
             shutil.move(wal_path, target + "-wal")
         except Exception as _caught_failure:
             logger.exception(
-                "archive wal move failed path=%s diagnostic=%s",
+                "archive wal move failed path=%s error=%s",
                 wal_path,
-                _exception_detail(_caught_failure),
+                _caught_failure,
             )
             try:
                 shutil.move(target, old_db_path)
             except Exception as _caught_failure:
                 logger.exception(
-                    "archive rollback failed path=%s diagnostic=%s",
+                    "archive rollback failed path=%s error=%s",
                     old_db_path,
-                    _exception_detail(_caught_failure),
+                    _caught_failure,
                 )
             return False
     shm_path = old_db_path + "-shm"
@@ -3984,9 +3984,9 @@ def _archive_move_db_files(old_db_path: str) -> bool:
             shutil.move(shm_path, target + "-shm")
         except Exception as _caught_failure:
             logger.exception(
-                "archive shm move failed path=%s diagnostic=%s",
+                "archive shm move failed path=%s error=%s",
                 shm_path,
-                _exception_detail(_caught_failure),
+                _caught_failure,
             )
             # shm 失败不回滚主库（与既有行为一致：仅 log）；主库已进 saves。
     return True
@@ -4006,16 +4006,16 @@ def _drain_close_body(game: Any) -> None:
     except Exception as _caught_failure:
         # #1740 / ADR 0005：排空关库失败不得无痕 return——保留原异常上抛。
         logger.exception(
-            "drain/close session failed diagnostic=%s",
-            _exception_detail(_caught_failure),
+            "drain/close session failed error=%s",
+            _caught_failure,
         )
         if _runtime_restorable(game):
             try:
                 q.unseal()
             except Exception as _caught_failure:
                 logger.exception(
-                    "unseal after drain/close failure failed diagnostic=%s",
-                    _exception_detail(_caught_failure),
+                    "unseal after drain/close failure failed error=%s",
+                    _caught_failure,
                 )
         raise
 
@@ -4078,9 +4078,9 @@ def _spawn_drain_close(
             close_ok = True
         except Exception as _caught_failure:
             logger.exception(
-                "drain/close worker failed path=%s diagnostic=%s",
+                "drain/close worker failed path=%s error=%s",
                 path,
-                _exception_detail(_caught_failure),
+                _caught_failure,
             )
             close_ok = False
         finally:
@@ -4096,8 +4096,8 @@ def _spawn_drain_close(
         threading.Thread(target=_run, daemon=True).start()
     except Exception as _caught_failure:
         logger.exception(
-            "spawn drain/close thread failed diagnostic=%s",
-            _exception_detail(_caught_failure),
+            "spawn drain/close thread failed error=%s",
+            _caught_failure,
         )
         _settle_close_result(
             op=op, close_ok=False, entry=entry,
@@ -4765,8 +4765,8 @@ async def api_menu_shutdown() -> Dict[str, Any]:
             await asyncio.get_running_loop().run_in_executor(None, _shutdown_close)
         except Exception as _caught_failure:
             logger.exception(
-                "shutdown drain/close failed; continuing process exit diagnostic=%s",
-                _exception_detail(_caught_failure),
+                "shutdown drain/close failed; continuing process exit error=%s",
+                _caught_failure,
             )
     # 先返回响应，再异步终止进程。SIGTERM 在 *nix 走优雅退出；
     # Windows 无完整 SIGTERM 语义（pywebview 主线程也不收信号），直接 os._exit 兜底。

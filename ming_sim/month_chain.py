@@ -382,8 +382,6 @@ def run_gazette_text(
 
 def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
     """核账期恢复投影只读：本月链上未消费的调用失败（无则 None）。"""
-    from ming_sim.db import GameDB
-
     chain = _load_chain(db, int(turn))
     return chain.get("call_failure")
 
@@ -682,8 +680,6 @@ def _consume_call_failure_for_retry(
     db: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
 ) -> None:
     """玩家点「重试」再入主链：按需丢段，然后清失败标记，只续未完成步。"""
-    from ming_sim.db import GameDB
-
     failure = chain.get("call_failure")
     if failure is None:
         return
@@ -1637,11 +1633,10 @@ def world_question_event_bindings(
 ) -> Dict[str, str]:
     """读推送时钉死的「案头行身份 → 事件身份」。缺表时补钉一次，已钉的不再重算。
 
-    形检与补钉只在 ``_pin_world_question_event_bindings`` 一次完成；本读口委托
-    该入口后直接消费其保证的对象（含合法空 {}），不再重验。
+    缺表由 ``_pin_world_question_event_bindings`` 补钉；本读口直接消费绑定对象。
     """
     _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
-    pinned = chain.get("world_question_event_bindings") or {}
+    pinned = chain["world_question_event_bindings"]
     return {
         str(key): str(value)
         for key, value in pinned.items()
@@ -1660,10 +1655,8 @@ def _pin_world_question_event_bindings(
     id 不是这份快照。没有这份身份的请旨保持非事件身份：剩余数量不能证明它属于
     某一到期事项，也不按标题猜配。钉完之后快照再变也不改这张表。
 
-    本入口是绑定表形状的唯一必要读取：缺键/None 补钉；合法 {} 已钉不重算；
-    错形响亮且不覆盖原值。读口与其它调用方均委托此处，不平行再验。
+    缺键/None 补钉；已有绑定（含合法 {}）不重算，读取时直接消费。
     """
-    from ming_sim.db import GameDB
     from ming_sim.issues import gather_fiscal_levy_petitions
 
     if chain.get("world_question_event_bindings") is not None:
@@ -1896,19 +1889,17 @@ def _advance_after_gazette(
     from ming_sim.decree import TIMEOUT_TURN, atomic_and_reload
     from ming_sim.rescript_actions import clear_return_revise_choice_anchors
 
-    from ming_sim.db import GameDB
-
     settled_year, settled_period = int(state.year), int(state.period)
     ending_outcome: Optional[Dict[str, object]] = None
 
     def _coalesce_declaration_outcome(
         *candidates: object,
     ) -> Optional[Dict[str, object]]:
-        """形状校验后保留合法空对象回落：``a or b or …``（{} 不抢下一位真源）。"""
+        """合并对象，合法空对象不抢下一位真源。"""
         for value in candidates:
             if value is None:
                 continue
-            checked = value
+            checked = {**value}
             if checked:  # 合法 {} 继续回落
                 return checked
         return None
@@ -1999,15 +1990,12 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
-    from ming_sim.db import GameDB
-
-    # get_resolve_context 已由 parse_engine_payload_json 保证 simulator_payload 为对象。
     ctx = db.get_resolve_context(turn) or {}
-    payload = ctx.get("simulator_payload") or {}
+    payload = ctx.get("simulator_payload", {})
     chain = payload.get(_CHAIN_KEY)
     if chain is None:
         return {}
-    return dict(chain or {})
+    return {**chain}
 
 
 def _save_chain(
@@ -2015,7 +2003,7 @@ def _save_chain(
     decree_text: str = "", source: Provenance = Provenance.system_simulation,
 ) -> None:
     ctx = db.get_resolve_context(turn) or {}
-    payload = dict(ctx.get("simulator_payload") or {})
+    payload = {**ctx.get("simulator_payload", {})}
     payload[_CHAIN_KEY] = chain
     stored_source = ctx.get("source") or source
     source_value = stored_source.value if isinstance(stored_source, Provenance) else str(stored_source)

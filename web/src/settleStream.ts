@@ -1,5 +1,6 @@
 // 颁诏/续裁/菜单继续共用：消费 SSE 推演流。
 // #1852：结算流只认终态 done/decisions/error；菜单继续仍可走 stage 更新 busy 标签。
+import { ApiRequestError, normalizeApiError } from "./api";
 export type SettleStreamOutcome = { kind: "done" | "decisions" | "error"; data: any };
 
 /** Stage SSE payload（菜单继续等读档路径用 content 标签；结算进度已退役）。 */
@@ -52,15 +53,8 @@ export async function consumeSettleStream(
     } catch {
       body = null;
     }
-    const raw = body?.detail ?? body;
-    const serverMsg =
-      typeof raw === "string"
-        ? raw.trim()
-        : raw && typeof raw === "object"
-          ? String(raw.message || raw.detail || "").trim()
-          : "";
-    if (serverMsg) throw new Error(serverMsg);
-    throw new Error(`${httpErrorLabel}：HTTP ${response.status}`);
+    const fallback = `${httpErrorLabel}：HTTP ${response.status}`;
+    throw new ApiRequestError(normalizeApiError(body, fallback), fallback);
   }
   if (!response.body) {
     throw new Error(`${httpErrorLabel}：HTTP ${response.status}`);

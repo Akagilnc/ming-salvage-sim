@@ -196,7 +196,7 @@ class StagedDeclarationStore:
                 continue
             from ming_sim.db import _load_durable_json
             parsed = _load_durable_json(raw, default='[]')
-            questions.extend(parsed)
+            questions = questions + parsed
         return questions
 
     def forecast_text_for(self, decree_ref: str) -> str:
@@ -254,8 +254,7 @@ class StagedDeclarationStore:
 
 def _row_to_staged(row: Any) -> StagedDeclaration:
     from ming_sim.db import GameDB, _load_durable_json
-    # 可选列：仅 SQL NULL = 合法缺省；其余值复用既有持久 list/object 权威
-    # （JSON 文本 null/空串/非形一律响亮，禁平行 json.loads + 洗缺席，#1897 E1）。
+    # SQL NULL 是缺省；其它值原样解码，留给真实消费，不洗成缺席。
     decree_ref = str(row["decree_ref"])
     if "verdict_json" not in row.keys() or row["verdict_json"] is None:
         verdict = None

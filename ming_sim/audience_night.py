@@ -240,30 +240,42 @@ def write_audience_error_pack(
     db: Any = None,
     exc: Optional[BaseException] = None,
 ) -> str:
-    """落一份夜域错误包到 user-data error_packs（响亮、可发包）。"""
-    root = error_packs_root()
-    root.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    pack_dir = Path(tempfile.mkdtemp(dir=root, prefix=f"audience_{kind}_{stamp}_"))
-    payload = {
-        "kind": kind,
-        "message": message,
-        "detail": detail or {},
-        "written_at": _now_iso(),
-    }
-    (pack_dir / "manifest.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    (pack_dir / "message.txt").write_text(message + "\n", encoding="utf-8")
-    if exc is not None:
-        (pack_dir / "traceback.txt").write_text(
-            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+    """诊断尽力落盘；失败另记日志及 detail，返回空路径，不截断原报错或善后。"""
+    location = "user-data/error_packs"
+    try:
+        root = error_packs_root()
+        location = str(root)
+        root.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        pack_dir = Path(tempfile.mkdtemp(dir=root, prefix=f"audience_{kind}_{stamp}_"))
+        location = str(pack_dir)
+        payload = {
+            "kind": kind,
+            "message": message,
+            "detail": detail or {},
+            "written_at": _now_iso(),
+        }
+        (pack_dir / "manifest.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    if db is not None:
-        db.backup_to(str(pack_dir / "save_backup.db"))
-    return str(pack_dir.resolve())
+        (pack_dir / "message.txt").write_text(message + "\n", encoding="utf-8")
+        if exc is not None:
+            (pack_dir / "traceback.txt").write_text(
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                encoding="utf-8",
+            )
+        if db is not None:
+            db.backup_to(str(pack_dir / "save_backup.db"))
+        return str(pack_dir.resolve())
+    except Exception as diagnostic_exc:
+        logger.exception("diagnostic write failed path=%s original=%s", location, message)
+        if detail is not None:
+            detail.update(
+                diagnostic_path=location,
+                diagnostic_error=f"{type(diagnostic_exc).__name__}: {diagnostic_exc}",
+            )
+        return ""
 
 
 def resolve_standing_roster(db: Any) -> List[str]:

@@ -12,7 +12,10 @@ export class ApiRequestError extends Error {
     chatIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number },
   ) {
     const reason = detail.reason || detail.provider_message || detail.message || fallback;
-    super(detail.error_pack_path ? `${reason}\n错误包：${detail.error_pack_path}` : reason);
+    const diagnostic = detail.diagnostic_error
+      ? `\n${detail.diagnostic_error}\n诊断写入路径：${detail.diagnostic_path}`
+      : "";
+    super((detail.error_pack_path ? `${reason}\n错误包：${detail.error_pack_path}` : reason) + diagnostic);
     this.name = "ApiRequestError";
     this.detail = detail;
     this.chatIdentity = chatIdentity;
