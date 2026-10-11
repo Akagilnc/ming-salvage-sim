@@ -2132,3 +2132,4 @@ def mark_actions_night_approved(
     return int(db.mark_pending_night_approved(
         action_ids, night_id=nid, source_chat_turn_id=ctid,
     ) or 0)
+

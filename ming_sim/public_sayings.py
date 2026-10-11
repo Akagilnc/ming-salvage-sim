@@ -7,24 +7,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
 
 SOURCE_PREFIX = "public_saying:"
 LAYER_TITLE = "有此说法"
-
-
-def public_layer_prose(item: Mapping[str, object]) -> str:
-    """公开层读到的是「有此说法」，不是实况。"""
-    # #1812 P6：title/body 是自由正文，判空只用局部 stripped 副本，写出用原文。
-    title = str(item.get("title") or LAYER_TITLE)
-    if not title.strip():
-        title = LAYER_TITLE
-    body = str(item.get("body") or "")
-    if body.strip():
-        return f"{title}：{body}"
-    return title
 
 
 def _character_names(names: Iterable[str] | None) -> list[str]:

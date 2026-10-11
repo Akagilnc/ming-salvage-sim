@@ -196,3 +196,4 @@ export function SituationDetailModal({ issue, onClose }: { issue: Issue; onClose
     document.body
   );
 }
+

@@ -634,13 +634,6 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     )
     db.transition_decree_dossier(grant_id, "promulgated")
     db.transition_decree_dossier(grant_id, "executing")
-    db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-        "VALUES (?, ?, 'user', '公开奏对', 'held')",
-        (minister, int(state.turn)),
-    )
-    message_id = int(db.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
-    db.conn.commit()
     reports = [
         {
             "dossier_id": int(item["dossier_id"]),
@@ -698,9 +691,6 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         turn=int(state.turn), target_dossier_id=dossier_id,
     )
     assert len(denunciations) == 1
-    assert db.conn.execute(
-        "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
-    ).fetchone()["knowledge_status"] == "released"
 def _stage_region_unrest_edict(db, state, minister, delta):
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister,

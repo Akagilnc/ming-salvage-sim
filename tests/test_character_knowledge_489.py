@@ -9,26 +9,6 @@ from ming_sim.materials import (
 )
 from tests.dossier_test_helpers import create_test_secret_order
 
-def test_role_roster_only_lists_current_active_ming_people(game):
-    db, state, content = game
-    reader = next(c for c in content.characters.values() if c.office_type == "礼部")
-    names = [c.name for c in content.characters.values() if c.name != reader.name][:4]
-    for name, status, debut_year, power_id in zip(
-        names, ("dismissed", "offstage", "active", "active"),
-        (0, 0, state.year + 1, 0), ("ming", "ming", "ming", "houjin"),
-    ):
-        db.conn.execute("UPDATE characters SET office_type='礼部', status=?, debut_year=?, power_id=? WHERE name=?",
-                        (status, debut_year, power_id, name))
-    db.conn.commit()
-    db.get_character_knowledge(state, reader.name)
-    listed = {
-        row["name"]
-        for row in db.current_court_roster_rows(state)
-        if row["office_type"] == reader.office_type
-    }
-    assert set(names).isdisjoint(listed)
-
-
 def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatch):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")

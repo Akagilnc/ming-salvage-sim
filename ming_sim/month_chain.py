@@ -1452,8 +1452,6 @@ def _run_month_drift(
         clear_gated_legacies(db, state)
         apply_pending_due_reviews(db, state, commit=False)
         settle_due_secret_orders(db, state, commit=False)
-        # 密令分类与到期结算已完成；全局放行须在邸报供料之前，withheld 密源钉不放。
-        db.release_held_audience_knowledge(commit=False)
         expire_breach_pleas_on_due(db, state, commit=False)
         consume_pending_urge_audience_todos(db, state, commit=False)
         write_due_staged_commitment_todos(db, state, commit=False)

@@ -1002,7 +1002,7 @@ def _person_audience_experience(db: Any, name: str) -> list[dict]:
 
 def _secret_order_chat_turn_ids(db: Any) -> set[int]:
     """Use durable oral pins, including later approvals and updates, not only issuance."""
-    message_ids = list(db._secret_origin_message_protection())
+    message_ids = list(db._secret_origin_message_ids())
     if not message_ids:
         return set()
     placeholders = ",".join("?" for _ in message_ids)

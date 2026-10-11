@@ -73,3 +73,4 @@ def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
     )
     with pytest.raises(ValueError):
         cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
+

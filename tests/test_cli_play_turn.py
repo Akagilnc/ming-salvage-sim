@@ -473,3 +473,4 @@ def test_play_turn_hitl_awaits_without_auto_proxy(game, monkeypatch, action):
 
     assert int(session.state.turn) == turn_before
     assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
+

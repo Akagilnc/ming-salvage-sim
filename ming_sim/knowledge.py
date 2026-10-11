@@ -11,10 +11,7 @@ import re
 from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
-from ming_sim.public_sayings import (
-    public_layer_events,
-    public_layer_prose,
-)
+from ming_sim.public_sayings import public_layer_events
 
 
 def _prose(text: object) -> str:
@@ -107,13 +104,8 @@ def origin_visible_to(
         if participants and character_name not in participants:
             return False
     oral = re.match(r"chat_message:(\d+)$", source)
-    if oral:
-        message_id = int(oral.group(1))
-        for brief in db.conn.execute("SELECT order_id FROM secret_order_briefs"):
-            order_id = int(brief["order_id"])
-            if message_id in db._brief_origin_chat_message_ids(order_id):
-                if not origin_visible_to(db, f"secret_order:{order_id}", character_name):
-                    return False
+    if oral and int(oral.group(1)) in db._secret_origin_message_ids(character_name):
+        return False
     match = re.match(r"secret_order(?:_brief)?:(\d+)(?:[:/]|$)", source)
     order_id = int(match.group(1)) if match else 0
     from ming_sim.materials import dossier_id_in_origin, inquiry_source_order_id
@@ -185,32 +177,6 @@ def _appointment_register(db: Any, state: Any) -> str:
     )
 
 
-def _role_roster(db: Any, office_type: str, state: Any) -> str:
-    """Return only the current roster for this office type.
-
-    The role rail is intentionally queried from the current DB rather than
-    copied from the character's event history.  It is therefore a real
-    position-scoped fact set and updates automatically after appointments or
-    restore, while the qualitative rendering keeps machine values out of the
-    audience prompt.
-    """
-    rows = db.conn.execute(
-        """SELECT name, office FROM characters
-           WHERE office_type = ? AND status = 'active' AND power_id = 'ming'
-             AND (debut_year = 0 OR debut_year < ?
-                  OR (debut_year = ? AND debut_month <= ?))
-           ORDER BY name""",
-        (office_type, int(state.year), int(state.year), int(state.period)),
-    ).fetchall()
-    if not rows:
-        return f"{office_type}本职在册：暂无。"
-    # The roster is a membership fact, not a second free-text office report.
-    # Including office strings here can name people outside this role (for
-    # example a kinship note in an office title), defeating the role boundary.
-    roster = "、".join(str(row["name"]) for row in rows)
-    return f"{office_type}本职在册：{roster}。"
-
-
 def _household_ledger(db: Any, state: Any, character_name: str) -> str:
     """户部太仓账：保留密支数额，按 typed 密令关联裁去案情语义。"""
     balance = db.conn.execute(
@@ -247,10 +213,7 @@ def _world(
     db: Any, state: Any, character_name: str, office_name: str, office_type: str,
 ) -> tuple[Dict[str, str], Dict[str, tuple[str, ...]]]:
     """Project current truth only through exact durable person relationships."""
-    result: Dict[str, str] = {
-        "public": "登基伊始，朝廷暂无前回合奏报。",
-        "role": _role_roster(db, office_type, state),
-    }
+    result: Dict[str, str] = {}
     scope: Dict[str, tuple[str, ...]] = {"region_ids": (), "army_ids": ()}
 
     if office_type == "户部":
@@ -396,15 +359,7 @@ def build_character_knowledge(
             character_name,
         )
     ]
-    public_bodies = [
-        _prose(item.get("body") or item.get("title") or "")
-        for item in visible_public
-        if (item.get("body") or item.get("title"))
-        and not str(item.get("source_id") or "").startswith("opening:")
-    ]
-    public_bodies.extend(public_layer_prose(item) for item in public_saying_events)
     visible_public.extend(public_saying_events)
-    world["public"] = "\n".join(public_bodies) or world["public"]
     visible_issues = []
     for issue in db.list_active_issues():
         if not origin_visible_to(db, issue["origin_ref"], character_name):

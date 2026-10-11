@@ -1412,8 +1412,6 @@ class GameDB:
                 turn INTEGER NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                -- #976: held|released|withheld|private (audience knowledge dual-track)
-                knowledge_status TEXT NOT NULL DEFAULT 'held',
                 -- #544 / ADR 0045：高亮判官短语清单（JSON 数组）；空=无高亮/降级
                 highlights_json TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -7472,14 +7470,11 @@ class GameDB:
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
         """召对聊天单条消息落库（chat_messages）。
 
-        正文只存本表；分类只更新 knowledge_status，不复制知识正文。
-
-        Empty ``minister_name`` is allowed for non-audience bookkeeping rows but
-        cannot be projected (release parks them as withheld — see N2).
+        正文只存本表；密令来源按消息身份读取，不复制知识正文。
         """
         cur = self.conn.execute(
-            "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-            "VALUES (?, ?, ?, ?, 'held')",
+            "INSERT INTO chat_messages (minister_name, turn, role, content) "
+            "VALUES (?, ?, ?, ?)",
             (minister_name, turn, role, content),
         )
         self.conn.commit()
@@ -8207,14 +8202,13 @@ class GameDB:
         """**一个事务**内插入大臣回话、链接到 turn 并升为 active，返回 message_id。
 
         消息插入、turn 链接和状态升级同成同败，避免留下未关联的持久回话。
-        知识轨纪律同 append_chat_message：insert 即 'held'，投轨唯一出口是 release（#976）。
         status 升级同 update_chat_turn_messages（#498 挂夜轮以 generating 起笔，回话落库后升 active）——
         本函数是 update_chat_turn_messages(minister_message_id=...) 的原子替代，须同做该升级。
         """
         with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）；外层 atomic 内 commit 暂停
             cur = self.conn.execute(
-                "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-                "VALUES (?, ?, 'minister', ?, 'held')",
+                "INSERT INTO chat_messages (minister_name, turn, role, content) "
+                "VALUES (?, ?, 'minister', ?)",
                 (minister_name, int(turn), content),
             )
             message_id = int(cur.lastrowid)
@@ -9247,7 +9241,7 @@ class GameDB:
 
         Explicit stage/API pins and already-durable brief pins only.
         Explicit empty ``origin_chat_message_ids=[]`` means pin-mode with no new
-        oral.  No last-held auto-capture (#1897 J820-E2).
+        oral.  No implicit source capture (#1897 J820-E2).
         """
         explicit: List[object] = []
         if origin_chat_message_ids is not None:
@@ -9280,19 +9274,17 @@ class GameDB:
         title: str,
         body: str,
         *,
-        origin_minister_name: Optional[str] = None,
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         commit: bool = True,
     ) -> None:
-        """Brief upsert + pin-mode oral withhold/release (create and non-create isomorphic)."""
+        """Brief upsert with exact oral provenance for create and non-create actions."""
         pins = self._resolve_secret_oral_pins(
             origin_chat_message_id=origin_chat_message_id,
             origin_chat_message_ids=origin_chat_message_ids,
         )
         self.upsert_secret_order_brief(
             state, int(order_id), minister_name, title, body,
-            origin_minister_name=origin_minister_name,
             origin_chat_message_ids=pins,
             commit=commit,
         )
@@ -15923,7 +15915,6 @@ class GameDB:
                 )
                 # pa["minister_name"] = audience speaker who captured the oral
                 # decree; may differ from final assignee (跨人承办).
-                # Stage-time pin: do not re-guess max(held) after confirm utterance.
                 # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
                 origin_mid = self._parse_origin_chat_message_id(
                     payload, durable=True,
@@ -15945,7 +15936,6 @@ class GameDB:
                     ) from exc
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
-                    origin_minister_name=str(pa.get("minister_name") or "") or None,
                     origin_chat_message_id=origin_mid,
                     origin_chat_message_ids=[] if origin_mid is None else None,
                     pending_action_id=int(pa["id"]),
@@ -15964,15 +15954,11 @@ class GameDB:
                 return order_id is not None
             if oid is None:
                 return False
-            # Non-create: consume explicit stage/API pin only.  No auto-pin of
-            # latest held (pure public must not become secret-origin withheld).
-            # No pin → skip classify (do not invent bloodline; pure public stays
-            # held until settle release, never withheld).
+            # Non-create actions consume only explicit source pins.
             # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
             origin_mid = self._parse_origin_chat_message_id(
                 payload, durable=True,
             )
-            origin_speaker = str(pa.get("minister_name") or "") or None
             if action == "更新":
                 deadline = _coerce_deadline_months(
                     payload.get("deadline_months"), default=0, durable=True,
@@ -15990,7 +15976,6 @@ class GameDB:
                     new_title,
                     new_content,
                     tags=None, deadline_months=deadline,
-                    origin_minister_name=origin_speaker,
                     origin_chat_message_id=origin_mid,
                 )
             if action == "催办":
@@ -16009,7 +15994,6 @@ class GameDB:
                         self._classify_secret_order_audience(
                             state, int(oid), str(order["minister_name"]),
                             str(order.get("title") or ""), str(order.get("content") or ""),
-                            origin_minister_name=origin_speaker,
                             origin_chat_message_id=origin_mid,
                         )
                 return True
@@ -16026,7 +16010,6 @@ class GameDB:
                         self._classify_secret_order_audience(
                             state, int(oid), str(order["minister_name"]),
                             str(order.get("title") or ""), str(order.get("content") or ""),
-                            origin_minister_name=origin_speaker,
                             origin_chat_message_id=origin_mid,
                         )
                 return ok
@@ -16043,7 +16026,6 @@ class GameDB:
                         self._classify_secret_order_audience(
                             state, int(oid), str(order["minister_name"]),
                             str(order.get("title") or ""), str(order.get("content") or ""),
-                            origin_minister_name=origin_speaker,
                             origin_chat_message_id=origin_mid,
                         )
                 return ok
@@ -18890,168 +18872,54 @@ class GameDB:
                 out.append(item)
         return out
 
-    def _secret_origin_message_protection(self) -> Dict[int, bool]:
-        """Canonical release-ban map for oral-decree chat-turn messages.
+    def _secret_origin_message_ids(self, character_name: str = "") -> set[int]:
+        """Secret oral pins inaccessible to this reader, including paired replies.
 
-        Pending and failed secret actions retain the stage-time pin
-        until they are committed or explicitly dropped.  The brief takes over
-        that pin once classification succeeds.  A
-        completed ``chat_turns`` row is the structural provenance for the full
-        exchange, so its paired minister reply belongs to the same secret
-        bloodline.  Release must never project either side into shared tracks.
-
-        ``True`` means a durable brief owns the bloodline; ``False`` means a
-        pending/failed stage pin still owns it.  This distinction is load-bearing for
-        replies bound to a chat turn after classification: release is the first
-        seam that can see and park those durable descendants as ``withheld``.
+        Briefs and pending/failed declarations own the same message provenance.
+        Empty reader selects all secret pins for the public author.
         """
-        out: Dict[int, bool] = {}
+        from ming_sim.knowledge import origin_visible_to
+
+        out: set[int] = set()
         brief_rows = self.conn.execute(
-            "SELECT origin_chat_message_ids FROM secret_order_briefs"
+            "SELECT order_id, origin_chat_message_ids FROM secret_order_briefs"
         ).fetchall()
         pending_rows = self.conn.execute(
-            "SELECT payload_json FROM pending_actions "
+            "SELECT minister_name, payload_json FROM pending_actions "
             "WHERE kind='secret_order' AND status IN ('pending','failed')"
         ).fetchall()
         for row in brief_rows:
-            # 源身份损坏不得静默跳过致 release 泄密（#1897 E1 P1）。
+            # Durable source identities keep their existing fail-loud decoding.
             pins = self._load_durable_origin_message_ids(
                 row["origin_chat_message_ids"] if row is not None else None,
                 surface="secret_order_briefs.origin_chat_message_ids",
             )
-            for mid in pins:
-                out[mid] = True
+            if not origin_visible_to(self, f"secret_order:{int(row['order_id'])}", character_name):
+                out.update(pins)
         for row in pending_rows:
             payload = self.parse_engine_payload_json(
                 row["payload_json"], surface="pending_actions.payload_json",
             )
-            # 已持久 pending 源钉与 brief 同严；坏身份不得视作无源致 release 泄密。
             mid = self._parse_origin_chat_message_id(payload, durable=True)
-            if mid is not None:
-                out.setdefault(mid, False)
+            if mid is not None and (not character_name or character_name != row["minister_name"]):
+                out.add(mid)
         if out:
             placeholders = ",".join("?" for _ in out)
             turns = self.conn.execute(
                 f"SELECT user_message_id, minister_message_id FROM chat_turns "
-                f"WHERE user_message_id IN ({placeholders})",
-                tuple(sorted(out)),
+                f"WHERE user_message_id IN ({placeholders}) "
+                f"OR minister_message_id IN ({placeholders})",
+                [*sorted(out), *sorted(out)],
             ).fetchall()
             for turn in turns:
-                durable = any(
-                    out.get(int(raw), False)
-                    for raw in (turn["user_message_id"], turn["minister_message_id"])
-                    if raw is not None
-                )
                 for raw in (turn["user_message_id"], turn["minister_message_id"]):
                     try:
                         mid = int(raw)
                     except (TypeError, ValueError):
                         continue
                     if mid > 0:
-                        out[mid] = bool(out.get(mid, False) or durable)
+                        out.add(mid)
         return out
-
-    def _withhold_origin_chat_messages(
-        self,
-        origin_chat_message_ids: Optional[Iterable[int]] = None,
-        *,
-        commit: bool = True,
-    ) -> List[int]:
-        """Withhold exact oral-decree message ids (#976 message-level provenance).
-
-        Structural rule (id bloodline, never content matching): only the pinned
-        chat_message rows are secret-origin.  Follows the message wherever it
-        lives (speaker vs assignee, 跨人承办).  Confirmation user lines and
-        pure-public same-window users are not guessed via (assignee, role=user).
-
-        Already released pinned messages become withheld in the original ledger.
-        """
-        pins = self._coerce_positive_message_ids(origin_chat_message_ids)
-        if not pins:
-            if commit:
-                self.conn.commit()
-            return []
-        placeholders = ",".join("?" for _ in pins)
-        rows = self.conn.execute(
-            f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
-            pins,
-        ).fetchall()
-        live_ids = [int(row["id"]) for row in rows]
-        for mid in live_ids:
-            self.conn.execute(
-                "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                (mid,),
-            )
-        if commit:
-            self.conn.commit()
-        return live_ids
-
-    def release_held_audience_knowledge(
-        self,
-        *,
-        minister_name: Optional[str] = None,
-        minister_names: Optional[Iterable[str]] = None,
-        exclude_message_ids: Optional[Iterable[int]] = None,
-        commit: bool = True,
-    ) -> int:
-        """Update original message visibility after classification or settlement.
-
-        Secret-origin pins stay held or withheld; no prose is copied.
-        """
-        name_filter = str(minister_name or "").strip()
-        name_set = {
-            str(n).strip() for n in (minister_names or ()) if str(n or "").strip()
-        }
-        if name_filter:
-            name_set.add(name_filter)
-        explicit_exclude = set(self._coerce_positive_message_ids(exclude_message_ids))
-        protection = self._secret_origin_message_protection()
-        exclude = explicit_exclude | set(protection)
-        if name_set:
-            placeholders = ",".join("?" for _ in name_set)
-            rows = self.conn.execute(
-                f"SELECT id, minister_name FROM chat_messages "
-                f"WHERE knowledge_status='held' AND minister_name IN ({placeholders}) "
-                f"ORDER BY id",
-                tuple(sorted(name_set)),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT id, minister_name FROM chat_messages "
-                "WHERE knowledge_status='held' ORDER BY id",
-            ).fetchall()
-        if not rows:
-            return 0
-        released = 0
-        for row in rows:
-            mid = int(row["id"])
-            if mid in exclude:
-                # Live pending/failed pins stay held so drop can make a later
-                # release eligible. Durable descendants and caller-explicit
-                # exclusions park permanently.
-                if mid in explicit_exclude or protection.get(mid, False):
-                    self.conn.execute(
-                        "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                        (mid,),
-                    )
-                continue
-            minister = str(row["minister_name"] or "").strip()
-            if not minister:
-                # N2: empty minister_name cannot be projected; park as withheld
-                # so the row does not remain stuck in held forever.
-                self.conn.execute(
-                    "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                    (mid,),
-                )
-                continue
-            self.conn.execute(
-                "UPDATE chat_messages SET knowledge_status='released' WHERE id=?",
-                (mid,),
-            )
-            released += 1
-        if commit:
-            self.conn.commit()
-        return released
 
     def register_character_knowledge_source(
         self, state: GameState, participant_roster: Iterable[Mapping[str, object]],
@@ -19091,20 +18959,11 @@ class GameDB:
 
     def upsert_secret_order_brief(
         self, state: GameState, order_id: int, minister_name: str, title: str, body: str,
-        *, origin_minister_name: Optional[str] = None,
+        *,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         commit: bool = True,
     ) -> None:
-        """Write the assignee-only secret-order brief (#883 isolation seam).
-
-        #976 classification (message-level provenance):
-        1. Persist exact oral-decree ``origin_chat_message_ids`` on the brief.
-        2. Withhold those message ids only (not (assignee, role=user) bulk).
-        3. Scoped release: only pure-public held rows of the assignee and the
-           origin audience speaker — **never** global unfiltered release that
-           would project another minister's still-unclassified secret oral line
-           into the shared ledger (disease root 1).
-        """
+        """Persist the assignee's brief and exact oral source identities."""
         pins = self._coerce_positive_message_ids(origin_chat_message_ids)
         # Keep earlier oral provenance when a later approval/update names another pin.
         pins = list(dict.fromkeys([*self._brief_origin_chat_message_ids(int(order_id)), *pins]))
@@ -19121,17 +18980,6 @@ class GameDB:
                 int(order_id), state.turn, state.year, state.period,
                 minister_name, title, body, pins_json,
             ),
-        )
-        # Message-level withhold: exact ids only (speaker or assignee owned).
-        self._withhold_origin_chat_messages(pins, commit=False)
-        assignee = str(minister_name or "").strip()
-        origin = str(origin_minister_name or "").strip()
-        # Scoped release — only ministers touched by this classification.
-        # Other ministers' held rows stay held until their own classify/settle.
-        self.release_held_audience_knowledge(
-            minister_names=[n for n in (assignee, origin) if n],
-            exclude_message_ids=pins,
-            commit=False,
         )
         if commit:
             self.conn.commit()
@@ -19195,7 +19043,6 @@ class GameDB:
         tags: List[str],
         importance: int = 4,
         deadline_months: int = 0,
-        origin_minister_name: Optional[str] = None,
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         pending_action_id: int = 0,
@@ -19299,7 +19146,6 @@ class GameDB:
             # Classification event and dossier identity share the issuance transaction.
             self._classify_secret_order_audience(
                 state, order_id, minister_name, title, content,
-                origin_minister_name=origin_minister_name,
                 origin_chat_message_id=origin_chat_message_id,
                 origin_chat_message_ids=origin_chat_message_ids,
                 commit=False,
@@ -19382,7 +19228,6 @@ class GameDB:
         tags: Optional[List[str]] = None,
         deadline_months: int = 0,
         *,
-        origin_minister_name: Optional[str] = None,
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
     ) -> bool:
@@ -19392,9 +19237,9 @@ class GameDB:
         tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。
 
         Oral-decree pins (stage ``origin_chat_message_id`` / speaker) feed the same
-        classification seam as create so non-create audience updates withhold口谕.
+        provenance seam as create for non-create audience updates.
         When no pin intent is provided, preserve brief pins (do not auto-capture
-        pure-public held as new secret-origin bloodline).
+        pure-public messages as new secret-origin bloodline).
         """
         row = self.conn.execute(
             "SELECT status, tags, minister_name FROM secret_orders WHERE id=?", (int(order_id),)
@@ -19442,7 +19287,6 @@ class GameDB:
                 )
             self._classify_secret_order_audience(
                 state, int(order_id), str(row["minister_name"]), persisted_title, content,
-                origin_minister_name=origin_minister_name,
                 origin_chat_message_id=origin_chat_message_id,
                 origin_chat_message_ids=classify_ids,
                 commit=False,
