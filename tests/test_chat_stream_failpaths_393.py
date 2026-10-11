@@ -27,27 +27,13 @@ from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _assert_write_path_free(runtime) -> None:
-    """After failpath cleanup, a subsequent gated write must not block and queue is idle.
-
-    Hang → CI job final line; no fixed wall-clock probe (#1723).
-    Does not seal/close the session — fixture teardown owns lifecycle honesty.
-    """
-    entered = threading.Event()
-
-    def _try_serialized_write() -> None:
-        with web_app._serialized_web_write(runtime):
-            entered.set()
-
-    t = threading.Thread(target=_try_serialized_write, daemon=True)
-    t.start()
-    entered.wait(timeout=30)
-    t.join(timeout=30)
-    assert entered.is_set() and not t.is_alive(), "serialized write path still blocked"
-
+    """Drain admitted background writes before probing failpath gate cleanup."""
     queue = runtime._runtime_write_queue()
     assert queue.wait_idle(timeout_s=5), (
         f"write queue still busy after failpath (inflight={queue.inflight_count()})"
     )
+    with web_app._serialized_web_write(runtime):
+        pass
 
 
 def _inject_prologue_append_failure(runtime, monkeypatch) -> None:
