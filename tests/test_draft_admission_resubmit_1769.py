@@ -143,6 +143,9 @@ def admission_game(web_game, monkeypatch):
         game.session.llm_config.channel = "cli"
     _set_guanning_arrears(game.db, 60, central=60, province=0)
     game.state.metrics["国库"] = max(int(game.state.metrics.get("国库") or 0), 100)
+    # 非首回合区分相对月数与绝对期限，也保住正值已过期的拒收边界。
+    game.state.turn = 7
+    game.db.save_state(game.state)
     return game
 
 
@@ -351,6 +354,8 @@ def _write_decree_capture_payloads(monkeypatch, game) -> list[dict]:
         "拟旨意图": "拟旨", "动作类型": "pay_order_override", "目标类型": "account",
         "目标ID": "pay_order", "颁布方式": "普通",
         "entries": [{"key": "due_priority_军饷@shaanxi", "value": 40,
+                     "duration_months": 3},
+                    {"key": "due_priority_官俸@shaanxi", "value": 10,
                      "duration_months": 3}],
     }], "ordinary", {"target_kind": "account", "target_id": "pay_order"}, []),
 ])
@@ -410,6 +415,7 @@ def test_draft_admission_resubmit_success_advances_month(
     elif dossier["action_type"] == "pay_order_override":
         assert projected["entries"] == [
             {"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": turn + 2},
+            {"key": "due_priority_官俸@shaanxi", "value": 10, "until_turn": turn + 2},
         ]
     assert not _rejection_rows(game, draft_id)
     _finish_month_after_gazette(game, turn)
@@ -432,7 +438,7 @@ def test_draft_admission_resubmit_success_advances_month(
     )],
     ({"拟旨意图": "拟旨", "动作类型": "pay_order_override",
       "目标类型": "account", "目标ID": "pay_order",
-      "entries": [{"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": -1}]},
+      "entries": [{"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": 3}]},
      "ValueError"),
 ])
 def test_draft_admission_mixed_good_and_bad_independent(
