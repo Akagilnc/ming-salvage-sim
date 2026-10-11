@@ -7775,12 +7775,6 @@ class GameDB:
     def _json_dump_row(self, row: Dict[str, Any]) -> str:
         return json.dumps(row, ensure_ascii=False, sort_keys=True)
 
-    def _json_load_row(self, raw: str) -> Dict[str, Any]:
-        if not raw:
-            return {}
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
-
     def _table_exists(self, table: str) -> bool:
         row = self.conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -8577,7 +8571,9 @@ class GameDB:
                     self._discard_deleted_directive_forecast(target_id)
                 self._delete_row_in_tx(table, target_id)
             elif strategy in {"restore_row", "restore_deleted_row"}:
-                before_row = self._json_load_row(item["before_json"])
+                before_row = self.parse_engine_payload_json(
+                    item["before_json"], surface="chat_turn_rollback_items.before_json",
+                )
                 if table == "pending_actions" and before_row.get("kind") == "directive":
                     pending_id = int(before_row["id"])
                     restored_directive_ids.add(pending_id)
@@ -8714,8 +8710,12 @@ class GameDB:
         for item in items:
             if str(item["target_table"]) != "pending_actions":
                 continue
-            after_data = self._json_load_row(item["after_json"] or "") or {}
-            before_data = self._json_load_row(item["before_json"] or "") or {}
+            after_data = self.parse_engine_payload_json(
+                item["after_json"], surface="chat_turn_rollback_items.after_json",
+            )
+            before_data = self.parse_engine_payload_json(
+                item["before_json"], surface="chat_turn_rollback_items.before_json",
+            )
             pa_id = after_data.get("id")
             if pa_id is None:
                 pa_id = before_data.get("id")
@@ -17872,25 +17872,15 @@ class GameDB:
         """
         out: List[Dict[str, object]] = []
         for r in self.conn.execute(
-            "SELECT rowid, event_id, turn, year, period, terminal_state, terminal_reason, choice_json "
+            "SELECT event_id, turn, year, period, terminal_state, terminal_reason, choice_json "
             "FROM event_triggers"
         ).fetchall():
-            raw = str(r["choice_json"] or "").strip()
-            if not raw:
+            raw = r["choice_json"]
+            if raw in (None, ""):
                 continue
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                from ming_sim.exceptions import SettlementAbort
-
-                raise SettlementAbort(
-                    "event_triggers.choice_json 解析失败 "
-                    f"event_id={r['event_id']!r} rowid={r['rowid']}",
-                    turn=int(r["turn"] or 0),
-                    stage="petition_records",
-                ) from exc
-            if not isinstance(payload, dict):
-                continue
+            payload = self.parse_engine_payload_json(
+                raw, surface="event_triggers.choice_json",
+            )
             petition = payload.get("petition")
             if not isinstance(petition, dict):
                 continue

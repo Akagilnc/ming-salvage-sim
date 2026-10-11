@@ -674,11 +674,6 @@ def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
     assert an.TAG_SUMMON_SETTLED not in before_tags
 
 
-def test_inactive_person_skips_continuation_and_retires_on_month(game, monkeypatch):
-    """#670：非 active 不投续程；玩家过月退役结清 origin。"""
-    from tests.test_due_review_621 import _settle_empty_month
-
-
 def test_fresh_summon_omitted_content_syncs_db_and_rolls_back_together(game):
     """#672：省略 content 时 runtime_content 同步 DB/content；批内失败两侧同撤。"""
     db, state, content = game
