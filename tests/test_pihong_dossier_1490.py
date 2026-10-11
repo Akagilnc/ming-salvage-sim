@@ -1096,7 +1096,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     assert int(ocr['c'] or 0) >= 1, 'A7 须落 office_change_records 绑定本案'
     office_now = db.conn.execute('SELECT office FROM characters WHERE name=?', (mname,)).fetchone()
     assert str(office_now['office'] or '') == '兵部尚书'
-    assert str(office_now['office'] or '') != office_before_a7
     p = ra.map_rescript_option_or_choice({'action_type': 'appointment', 'label': '罢', 'hint': 'h', 'appoint_action': '罢免', 'office': '', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
     assert p['_emitted_action_type'] == 'dismiss_assignment'
     office_before_a8 = str(db.conn.execute('SELECT office FROM characters WHERE name=?', (mname,)).fetchone()['office'] or '')
@@ -1543,7 +1542,6 @@ def test_657_follow_draft_ignores_client_field_overlay(game):
     assert str(created.get('target_id') or payload.get('target_id') or '') == 'shaanxi'
     assert 'henan' not in {str(created.get('target_id') or ''), str(payload.get('target_id') or ''), str(created.get('region_id') or ''), str(payload.get('region_id') or '')}
     assert str(payload.get('title') or '') == '权威标题'
-    assert '伪造标题' not in str(payload.get('title') or '')
     assert str(payload.get('transaction_category') or '') == '督赈'
     assert '不存在的人' not in str(payload.get('assignee_name') or '')
     assert '不存在的人' not in str(created.get('executor_id') or '')

@@ -181,9 +181,8 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
         "VALUES (?,?,?,?,NULL,NULL)",
         (holder, "便宜行事", "边饷", state.turn),
     )
-    bare = int(db.conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
     # Informed-only roster member must not count as actor.
-    informed_only = _grant(
+    _grant(
         db, state, content, other, "尚方剑密授", domain,
         _eligible_dossier(db, state, other, target_id="informed-projection"),
         effective_turn=state.turn,
@@ -207,20 +206,12 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     dossier = db.get_decree_dossier(dossier_id)
     projected = db.project_applicable_authorities(state.turn, dossier)
     assert [row["id"] for row in projected] == [typed]
-    assert bare not in {row["id"] for row in projected}
-    assert informed_only not in {row["id"] for row in projected}
 
     context = decree_mod.build_promulgation_judge_context(db, state, [dossier])
     assert context["dossiers"][0]["held_authorities"] == projected
     assert context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
         str(typed),
     ]
-    assert "payload-auth" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
-    assert "payload-list" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
 
 def test_same_dossier_grant_replay_is_idempotent(game):
     """同源案卷重放按 dossier origin 幂等，不插第二行。"""

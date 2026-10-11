@@ -105,13 +105,12 @@ def test_empty_ledger_projects_empty(ledger):
 
 def test_updated_at_period_is_era_label_not_bare_turn(r3_guard):
     """updated_at_period＝更新纪年语义标识（天启七年十月式），非裸 turn 数。"""
-    db, state = r3_guard
+    db, _ = r3_guard
     wei_yang = next(
         d for d in project_relation_ledger(db, viewer=None)
         if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
     )
     assert wei_yang["updated_at_period"] == "天启七年十月"
-    assert wei_yang["updated_at_period"] != str(state.turn)
 
 @pytest.fixture
 def r3_guard(game):

@@ -72,7 +72,6 @@ def test_baked_content_covers_all_regions_and_three_golden_anchors():
     assert matrix["henan"]["beizhili"] == 1.0
     assert matrix["nanzhili"]["beizhili"] == 1.6
     assert matrix["guangdong"]["beizhili"] == 3.0
-    assert matrix["guangdong"]["beizhili"] > matrix["nanzhili"]["beizhili"] > matrix["henan"]["beizhili"]
     dongjiang = DistanceMatrix(matrix)
     assert dongjiang.travel_time("dongjiang_area", "liaodong") <= 2.0
     assert dongjiang.travel_time("dongjiang_area", "liaodong") < dongjiang.travel_time("dongjiang_area", "guangdong")

@@ -400,7 +400,6 @@ def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeyp
         future.result()
         turns.append(ctid)
     rows = [row for row in list_unsettled_summons(db) if row["person_name"] == person]
-    assert len(rows) == 2
     assert [row["travel_tone"] for row in rows] == ["星夜兼程", "加急"]
     db.fail_chat_turn(turns[0])
     rows = [row for row in list_unsettled_summons(db) if row["person_name"] == person]

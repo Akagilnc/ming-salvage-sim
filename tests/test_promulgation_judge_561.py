@@ -156,9 +156,6 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     assert fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
         str(authority_id),
     ]
-    assert "fresh-authorization" not in (
-        fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
 
 def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
     """Non-awaiting arms must read applied history at the pre-resolve turn."""

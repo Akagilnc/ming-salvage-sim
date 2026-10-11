@@ -478,7 +478,6 @@ def test_for_role_advanced_drops_placeholder_key():
     adv = for_role(cfg, "simulator")
 
     assert adv.api_key == "sk-main"
-    assert adv.api_key != "cli-backend"
 
 
 def test_load_llm_config_api_mode_clears_placeholder(monkeypatch):

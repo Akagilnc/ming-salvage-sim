@@ -48,7 +48,6 @@ def test_retired_legacy_person_keys_are_rejected_per_section_not_silently_droppe
     assert [item["name"] for item in result] == [name]
     assert result[0]["动作"] == "评定" and result[0]["new_loyalty"] > 0
     # 旧键不回流进人物流：既无 dismissed 处置也无 power/office 变化。
-    assert all(item.get("动作") != "处置" for item in result)
     assert db.get_character_status(name)[0] == "active"
     # 旧键恒空：不再作为恒空响应键回显（ADR 0150）。
     # ADR 0015：validate 层逐段拒收留痕，report_section 即原 section 名。
@@ -1814,7 +1813,6 @@ def test_yizhu_clears_status_reason_in_db(game):
         "SELECT status, status_reason, status_changed_turn, reason_code FROM characters WHERE name=?", (name,)
     ).fetchone()
     assert row["status"] == "active"
-    assert row["status_reason"] != "松山兵败被执", "易主后 DB 仍滞留旧下狱缘由"
     assert row["status_reason"] == "剃发降清", "易主须把 status_reason 换成本次易主缘由（非任意非空残值即过）"
     assert row["status_changed_turn"] == state.turn, "易主即状态变更，status_changed_turn 须记本回合（docstring 称验却漏断言=F2 半漏）"
     assert row["reason_code"] == ""

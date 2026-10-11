@@ -488,7 +488,6 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
 
 
 def _assert_structured_llm_http(response) -> dict:
-    assert response.status_code != 500, response.text
     assert response.status_code == 400, response.text
     body = response.json()
     detail = body.get("detail") if isinstance(body, dict) else None

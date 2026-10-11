@@ -53,7 +53,6 @@ def test_force_land_survey_charges_three_costs_without_eunuch_reaction(game):
         ("authority", "metric", "皇威"), ("satisfaction", "class", "士绅"),
         ("satisfaction", "faction", "东林"),
     }
-    assert all(x["target_id"] != "阉党" for x in events)
 
 
 def test_signed_reactions_use_typed_direction_not_narrative_words(game):

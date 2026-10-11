@@ -80,9 +80,6 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
                 assert set(item.keys()) == {"name", "amount"}, (
                     f"玩家预算行键集须恰为 name+amount：{item!r}"
                 )
-                assert "note" not in item
-                assert "internal" not in item
-                assert "budget_key" not in item
 
 
 

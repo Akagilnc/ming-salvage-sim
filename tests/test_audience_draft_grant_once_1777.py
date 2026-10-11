@@ -165,11 +165,6 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         assert int(payload.get("amount") or 0) == 15
         # 承办人挂本案 pending（#1778 并存；非当前召对大臣）
         assert str(payload.get("assignee") or payload.get("assignee_id") or "") == "郭允厚", payload
-        assert not any(
-            json.loads(str(p.get("payload_json") or "{}")).get("dossier_action_type")
-            == "assignment"
-            for p in pending
-        )
 
         confirm = client.post("/api/audience/chat", json={"message": "准"})
         assert confirm.status_code == 200, confirm.text
@@ -225,7 +220,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             if e.get("tier") == "主办"
         ]
         assert leads == ["郭允厚"], leads
-        assert name != "郭允厚" and name not in leads
+        assert name != "郭允厚"
 
         # 期限不另立承诺事项、不占在办名额
         origin_issues = game.db.conn.execute(

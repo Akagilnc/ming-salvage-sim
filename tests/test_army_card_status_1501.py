@@ -108,8 +108,6 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
             f" extra={set(card.keys()) - _ARMY_PAYLOAD_KEYS!r}"
             f" missing={_ARMY_PAYLOAD_KEYS - set(card.keys())!r}"
         )
-        assert "status" not in card
-        assert {"morale", "loyalty", "arrears"}.isdisjoint(card.keys())
         for key in ("morale_text", "arrears_text", "mutiny_tier"):
             assert isinstance(card[key], str) and card[key].strip()
 

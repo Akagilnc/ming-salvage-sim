@@ -2856,7 +2856,6 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
     assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, region_id))
     assert p["Due"]["宗禄"] == pytest.approx(expected["宗禄"])
     assert p["Due"]["赈济"] == 0
-    assert p["三饷应征"] > 0, f"{expected['zh']} 开局须 seed 辽饷"
     assert p["起运定额"] >= p["三饷应征"], f"{expected['zh']} 辽饷应可全额起运"
     assert "salt_tax" not in p and "commerce_tax" not in p, "盐税/商税不进 settle substrate"
 

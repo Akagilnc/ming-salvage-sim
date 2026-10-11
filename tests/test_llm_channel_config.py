@@ -631,7 +631,6 @@ def test_for_role_advanced_empty_cli_model_no_api_model_leak(monkeypatch):
     assert derived.cli_model == ""           # cli_model 仍空
     chat = create_chat_model(derived)
     assert chat.id == "gpt-5.5"              # runner 默认,不是 api-advanced
-    assert chat.id != "api-advanced"
 
 def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
     """RT2(Red Team)：channel=cli + cli_model 空时，不许把 API model 名（llm_config.model）
@@ -649,11 +648,9 @@ def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
 
     m_codex = _cli("codex")
     assert m_codex.id == "gpt-5.5"
-    assert m_codex.id != "api-fallback-model"
 
     m_claude = _cli("claude")
     assert m_claude.id == "claude-opus-4-8"
-    assert m_claude.id != "api-fallback-model"
 
     m_agy = _cli("agy")
     assert m_agy.id != "api-fallback-model"   # agy 无 --model，空 id 即可，关键是不漏 API 名
