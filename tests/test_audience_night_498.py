@@ -2,7 +2,7 @@
 
 一条贯穿：web/CLI 会话 seam 与 GameSession 公开颁诏/过回合入口，断言 DB 可观察
 结果。覆盖 AC1–10 核心：账本骨架、多夜隔离、完成态与 night_seq 对齐、死账、
-员额、AC8 顺势收夜顺序、AC9 崩溃续跑真实任免/候选、AC10 完成等待与超时、旧档迁移。
+员额、AC8 顺势收夜顺序、AC9 崩溃续跑真实任免/候选、AC10 完成等待与超时。
 
 不锁 LLM 叙事正文；不接受 failed 当成功。
 """
@@ -151,7 +151,6 @@ def test_chat_completion_via_attach(game):
     minister = _active_minister(db, content)
     night_id, chat_id = open_hall_turn(
         db, state, minister, agno_session_id="s1", agno_runs_before=0,
-        location="便殿", time_of_day="申时",
     )
     row = db.conn.execute("SELECT * FROM chat_turns WHERE id=?", (chat_id,)).fetchone()
     assert int(row["night_id"]) == night_id
@@ -451,7 +450,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
 # 拟诏 preview 不收夜，均走真实 WebGame.chat_stream + 真实 ASGI 路由验证（只 fake LLM）。
 
 
-# ── 开夜原子 + 旧档迁移 ──────────────────────────────────────────────
+# ── 开夜原子 ──────────────────────────────────────────────────
 
 
 def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):

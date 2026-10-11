@@ -126,10 +126,9 @@ PROMULGATION_VERDICT_HEAL_RETRIES = 3
 
 
 def stub_promulgation_verdicts(
-    dossiers: Sequence[Dict[str, object]], state: GameState,
+    dossiers: Sequence[Dict[str, object]],
 ) -> List[Dict[str, object]]:
     """Deterministic auto-promulgation for exempt dossiers and explicit test fixtures."""
-    del state
     return [
         {"dossier_id": int(row["id"]), "decision": "promulgated"}
         for row in dossiers
@@ -199,6 +198,8 @@ def build_promulgation_judge_context(
             from ming_sim.materials import revoke_target_facts
             entry["revoke_target"] = revoke_target_facts(db, payload, row)
         dossier_rows.append(entry)
+    # Exact roster office identities + closed office_type enum — no LIKE stem vocabulary.
+    _GATEKEEPER_OFFICE_TITLES = ("内阁首辅", "司礼监掌印太监")
     gatekeepers = [
         {
             **dict(row),
@@ -208,8 +209,11 @@ def build_promulgation_judge_context(
         for row in db.conn.execute(
             "SELECT name,office,office_type,faction,courage,integrity FROM characters "
             "WHERE status='active' AND power_id='ming' AND "
-            "(office LIKE '%首辅%' OR office LIKE '%掌印%' OR office LIKE '%给事中%' "
-            "OR office_type='六科') ORDER BY office_type,office,name"
+            "(office IN ({placeholders}) OR office_type='六科') "
+            "ORDER BY office_type,office,name".format(
+                placeholders=",".join("?" for _ in _GATEKEEPER_OFFICE_TITLES),
+            ),
+            _GATEKEEPER_OFFICE_TITLES,
         ).fetchall()
     ]
     history = []
@@ -259,13 +263,11 @@ def build_promulgation_judge_context(
 
 
 def _require_promulgation_verdict_list(
-    generated: object, *, raw_value: object = None,
+    generated: object,
 ) -> List[Dict[str, object]]:
     """Canonical top-level shape authority for every promulgation verdict batch."""
     if not isinstance(generated, list):
-        raise LLMContractError(
-            "颁布判官 verdicts 必须为列表", raw_value=raw_value,
-        )
+        raise LLMContractError("颁布判官 verdicts 必须为列表")
     return generated
 
 
@@ -342,9 +344,7 @@ def llm_promulgation_verdicts(
         transport_policy=transport_policy,
     )
     parsed = parse_agent_json(raw, "颁布判官")
-    return _require_promulgation_verdict_list(
-        parsed.get("verdicts"), raw_value=parsed,
-    )
+    return _require_promulgation_verdict_list(parsed.get("verdicts"))
 
 
 def _validate_promulgation_verdict_item(
@@ -575,7 +575,6 @@ def _rescript_decisions(
 
 def write_decree_with_agno(
     llm_config: LLMConfig,
-    agno_db: SqliteDb,
     state: GameState,
     directives: List[sqlite3.Row],
     db: Optional[GameDB] = None,
@@ -608,7 +607,7 @@ def write_decree_with_agno(
                        "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
     }
     try:
-        agent = create_decree_writer_agent(llm_config, agno_db)
+        agent = create_decree_writer_agent(llm_config)
         # 经 bind 记 typed/代码故障原件，供 extract 在 SDK 吞成 ERROR 后还原（#1902）。
         from ming_sim.llm_transport import bind_transport_sdk_budget, resolve_transport_policy
         with bind_transport_sdk_budget(
@@ -657,20 +656,15 @@ def resolve_directives(
     db: GameDB,
     agno_db: SqliteDb,
     llm_config: LLMConfig,
-    directives: List[sqlite3.Row],
     decree_text: str,
-    deaths_this_turn: Optional[List[Dict[str, str]]] = None,
-    debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     content=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
 ) -> ResolveResult:
     """玩家过月入口：前括号之后走 ADR 0157 主链，不再用 extractor 落账。
 
-    source（#146 cmr r2）：本回合结算 delta 的来源。默认 player_decree——正常皇帝下旨路
-    行为不变。崩溃恢复 fallthrough（SETTLING 非 ready ctx 重走本函数）须把存档 ctx['source']
-    经 _provenance_from_stored 还原后传入，使 provenance 按构造保真（system_simulation 重跑仍
-    记 system、对玩家静默），不依赖「非 ready SETTLING ctx 恒 player」这一脆弱不变式。
+    source：本回合结算声明的来源，默认 player_decree。恢复时由 resolve context 的
+    source 经 _provenance_from_stored 还原后传入，保持 system_simulation 等来源不变。
 
     cheat_directive: 作弊控制台（Ctrl+~）下的强制结算指令。非空时交给本月世界段，
     按字面当既成事实，不另开 extractor。
@@ -680,10 +674,6 @@ def resolve_directives(
     # #1274 / ADR 0157：无旨不再分流快路。有旨、无旨都走同一过月主链：
     # 前括号之后按旨序核算，再跑世界段。批红、邸报与推进是后续阶段的交接，
     # 不在本入口用 extractor 落账。
-
-    before_turn = state.turn
-
-    # 草案内容已由拟诏合并进 decree_text；月链沿已保存的旨意继续。
 
     # 1) 前括号确定性结算：玩家月链的唯一准备入口。
     prepare_resolve_front_half(
@@ -697,7 +687,6 @@ def resolve_directives(
     return run_player_month_chain(
         state, db, agno_db, llm_config,
         decree_text=decree_text,
-        before_turn=before_turn,
         content=content,
         source=source,
         cheat_directive=cheat_directive,
@@ -762,16 +751,6 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
     return state
 
 
-class _AtomicOutcome:
-    """atomic_and_reload yield 出的结果句柄（cmr PR2 R1 sourcery）：取代把
-    `_reload_failed` 动态属性挂到任意 BaseException 上（slotted/复用异常时脆弱）。
-    专用对象、固定字段——settle 用 `as` 接、外层 except 读 `.reload_failed`。"""
-    __slots__ = ("reload_failed",)
-
-    def __init__(self) -> None:
-        self.reload_failed = False
-
-
 @contextmanager
 def atomic_and_reload(
     db: GameDB,
@@ -779,7 +758,7 @@ def atomic_and_reload(
     *,
     content=None,
     on_error: Optional[Callable[[BaseException], None]] = None,
-) -> "Iterator[_AtomicOutcome]":
+) -> "Iterator[None]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
 
     供 pre_settle 与玩家月链中需要事务回滚并重载内存状态的步骤使用。
@@ -796,10 +775,9 @@ def atomic_and_reload(
     内存缓冲须同步清场）。settle 的中断透传 / 错误包 / SettlementAbort 包装等**特殊** except
     逻辑不属公共内核，仍由调用方在本助手之外的外层 try/except 处理。
     """
-    outcome = _AtomicOutcome()
     try:
         with atomic(db):
-            yield outcome
+            yield
     except BaseException as exc:
         if on_error is not None:
             on_error(exc)
@@ -807,10 +785,6 @@ def atomic_and_reload(
             try:
                 reload_state_from_db(db, state, content=content)
             except BaseException as reload_exc:
-                # reload 失败标记落在专用句柄上（不挂异常属性）：settle 的外层 except
-                # 凭 `as` 句柄裸传播原异常,不包 SettlementAbort 不写错误包（内存仍脏时
-                # 宣传可重试/基于脏态写包都是误导;b12a60e 原语义保真,cmr S4 r1）。
-                outcome.reload_failed = True
                 raise exc from reload_exc
         raise
 
@@ -878,13 +852,9 @@ def prepare_resolve_front_half(
     content=None,
     source: object = Provenance.player_decree,
 ) -> List[Dict[str, object]]:
-    """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
+    """Commit pre_settle, its phase and the monthly context in one transaction.
 
-    玩家月链通过 resolve_directives 调用此 helper。外层 atomic 使 settling 相位与
-    ready=0 context 同生共死。已有 context 的 FRONT_HALF_DONE 重入只读返回既有
-    transit_arrivals，禁止 placeholder upsert 覆写 durable 真源（ready=0 原诏/source
-    ），不二次 tick/财政。返回本回合 `transit_arrivals`
-    （无抵达 = `[]`）。
+    A completed front half is read back, never applied twice.
     """
     # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
     # 默认空字段会冲掉已有原诏/source。
@@ -894,13 +864,7 @@ def prepare_resolve_front_half(
             from ming_sim.month_chain import transit_arrivals_from_payload
             return transit_arrivals_from_payload(existing.get("simulator_payload"))
 
-    # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
-    # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
-    # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。后续同键 upsert 保留本月上下文。
-    #
-    # 占位与 settling 相位同事务可见（PR #90 R1 codex P2）：外层 atomic 把 pre_settle
-    # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
-    # ——要么两者都见，要么整段回滚重来。
+    # Preserve the decree across reload, together with pre_settle's phase.
     try:
         transit_arrivals_box: List[Dict[str, object]] = []
         with atomic_and_reload(db, state, content=content):
@@ -909,14 +873,16 @@ def prepare_resolve_front_half(
                 content=content,
                 transit_arrivals_out=transit_arrivals_box,
             )
-            # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
-            placeholder_payload = {
-                "transit_arrivals": list(transit_arrivals_box),
-                "open_affairs": db.affairs.input_brief(db.textual_facts),
-            }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（同 turn 占位重入时尤甚）。
             prior_placeholder = db.get_resolve_context(int(state.turn))
+            placeholder_payload = dict(
+                prior_placeholder.get("simulator_payload") or {}
+            ) if prior_placeholder is not None else {}
+            placeholder_payload.update({
+                "transit_arrivals": list(transit_arrivals_box),
+                "open_affairs": db.affairs.input_brief(db.textual_facts),
+            })
             preserved_attendant = (
                 str(prior_placeholder.get("attendant_message") or "")
                 if isinstance(prior_placeholder, dict)

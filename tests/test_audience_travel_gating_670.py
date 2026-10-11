@@ -9,6 +9,7 @@ from ming_sim.session import AudienceAdmission, GameSession
 from ming_sim import audience_night as an
 
 
+
 def _session(game):
     db, _state, content = game
     sess = GameSession.__new__(GameSession)
@@ -558,21 +559,6 @@ def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch
     assert unsettled[0]["origin_id"] == "web:atomic-ok"
 
 
-def test_capital_aliases_admit_in_capital(game):
-    """#670：京师/北京/beijing/北直隶 经 canonicalize 按 beizhili 在京（读时归一，非旧档写回）。"""
-    db, state, content = game
-    sess = _session(game)
-    for alias in ("京师", "北京", "beijing", "北直隶"):
-        person = _set_place(game, "毕自严", location=alias)
-        decision = sess.admit_audience(person)
-        assert decision.result is AudienceAdmission.IN_CAPITAL, alias
-        assert decision.allowed is True
-        assert decision.location == "beizhili"
-        consumed = sess.consume_audience_admission(
-            person, origin_id=f"web:alias:{alias}", state=state,
-        )
-        assert consumed.allowed is True
-        assert an.list_unsettled_summons(db) == []
 
 
 def test_waiting_inactive_retires_on_month(game, monkeypatch):

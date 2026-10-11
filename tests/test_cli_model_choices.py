@@ -2,7 +2,7 @@
 
 CLI Model 从自由文本框改成 per-runner 策展下拉，清单在后端单点定义、经
 config 端点暴露给前端。这里测清单结构 + 默认档语义 + 与默认常量的一致性
-（不重写字面量），以及两个 config 端点确实把清单带出去。
+（不重写字面量），以及 menu/status 确实把清单带出去。
 """
 
 from __future__ import annotations
@@ -25,13 +25,11 @@ def _patch_status_io(monkeypatch, runtime):
     monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
     return web_app
 
-
 def test_menu_status_exposes_choices(monkeypatch):
     web_app = _patch_status_io(monkeypatch, {})
     data = asyncio.run(web_app.api_menu_status())
     assert data["llm"]["cli_model_choices"] == cb.cli_model_choices()
     assert data["llm"]["cli_runners"] == cb.cli_runner_choices()
-
 
 def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch):
     """空 saved model（=用户选「默认」档）→ menu-status 须暴露 raw cli_model_saved=''，
@@ -45,7 +43,6 @@ def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch):
     assert llm["cli_model_saved"] == ""        # raw 留空 = 默认档（表单用）
     assert llm["cli_model"] == "gpt-5.5"        # resolved 仍供「当前后端」展示
 
-
 def test_menu_status_cli_model_saved_passes_explicit(monkeypatch):
     """显式存了某档 → raw 原样回传（表单选中该档）。"""
     web_app = _patch_status_io(monkeypatch, {
@@ -54,20 +51,3 @@ def test_menu_status_cli_model_saved_passes_explicit(monkeypatch):
     })
     llm = asyncio.run(web_app.api_menu_status())["llm"]
     assert llm["cli_model_saved"] == "gpt-5.3-codex-spark"
-
-
-def test_get_llm_config_exposes_choices(monkeypatch):
-    import web_app
-    from ming_sim.models import LLMConfig
-
-    fake_cfg = LLMConfig(
-        api_key="", base_url="https://x/v1", model="m",
-        channel="cli", cli_runner="codex", cli_model="",
-    )
-    monkeypatch.setattr(
-        web_app, "get_game",
-        lambda: type("G", (), {"session": type("S", (), {"llm_config": fake_cfg})()})(),
-    )
-    data = asyncio.run(web_app.api_get_llm_config())
-    assert data["cli_model_choices"] == cb.cli_model_choices()
-    assert data["cli_runners"] == cb.cli_runner_choices()

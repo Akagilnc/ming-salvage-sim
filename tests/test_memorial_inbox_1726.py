@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from tests.dossier_test_helpers import executing_subject_policy, executing_rostered_policy
+
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 
@@ -18,22 +20,10 @@ def _unread_count(db) -> int:
 
 
 def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
-    did = db.create_decree_dossier(
-        state,
-        action_type="policy",
+    return executing_subject_policy(
+        db, state, owner=owner, token=token,
         decree_text=f"着{owner}从国库拨银{token}",
-        target_kind="issue",
-        target_id=f"land-{token}",
-        executor_kind="character",
-        executor_id=owner,
-        participants=[{"character_id": owner, "tier": "主办"}],
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,),
-    )
-    db.conn.commit()
-    return did
 
 
 def test_new_game_memorial_inbox_empty(game):
@@ -213,14 +203,9 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
 def test_progress_without_owner_uses_diegetic_fallback(game):
     """无可解析承办人时不得裸露 id。"""
     db, state, _content = game
-    did = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text="清丈无主名",
-        target_kind="issue",
-        target_id="land-orphan-1726",
+    did = executing_rostered_policy(
+        db, state, token="land-orphan-1726", decree_text="清丈无主名", roster=[],
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing', executor_id='', executor_kind='', "
         "participant_roster='[]' WHERE id=?",

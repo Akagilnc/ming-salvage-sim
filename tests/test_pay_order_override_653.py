@@ -137,8 +137,8 @@ def test_arrears_order_resolution_default_and_override():
 
 # ═══════════════ F1.6 验收表 golden ①–⑦ ═══════════════
 
-def test_golden1_pay_order_reversal_breakdown_tsv():
-    """①「边饷居末、官俸优先」：省内池不足时军饷先欠、官俸足付；实付分账可 TSV 断言。"""
+def test_golden1_pay_order_reversal_breakdown():
+    """①「边饷居末、官俸优先」：省内池不足时军饷先欠、官俸足付；实付分账读 breakdown。"""
     st, p = _board(gross=0.0)  # 省内可支＝实征 10，祖制序下全被军饷吃光
     base = settle_tick(copy.deepcopy(st), copy.deepcopy(p), [])
     assert base.breakdown["实付分账"]["军饷"] == pytest.approx(10.0)
@@ -148,10 +148,9 @@ def test_golden1_pay_order_reversal_breakdown_tsv():
     p2 = dict(p)
     p2["due_order"] = ["官俸", "宗禄", "赈济", "军饷"]
     res = settle_tick(st, p2, [])
-    tsv = "\n".join(f"{k}\t{res.breakdown['实付分账'][k]}" for k in p2["due_order"])
-    assert tsv.splitlines()[0] == "官俸\t3.0"       # 官俸足付
-    last_cell = float(tsv.splitlines()[-1].split("\t")[1])
-    assert last_cell == pytest.approx(1.93)          # 边饷居末只捡残池
+    paid = res.breakdown["实付分账"]
+    assert paid["官俸"] == pytest.approx(3.0)       # 官俸足付
+    assert paid["军饷"] == pytest.approx(1.93)      # 边饷居末只捡残池
     assert res.breakdown["NewDebt"]["军饷欠"] == pytest.approx(16.07)
     assert res.breakdown["NewDebt"]["官俸欠"] == 0.0
     assert res.new_st["军饷欠"] == pytest.approx(36.07)  # 旧欠20 + 新欠16.07
@@ -236,6 +235,8 @@ def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
     assert expired.breakdown == expected_default.breakdown
     # 键与 provenance 保留不删
     assert "due_priority_军饷@shaanxi_until_turn" in db.get_fiscal_config()
+    # 撤销路径归 test_real_revoke_decree_*（revoke_decree 真入口）；
+    # 已退役 revoke_pay_order_decree API 不得复活。
 
     # 撤销旨路径：在位永久旨撤销＝写回默认值的新旨（r2：old/new provenance 链即审计账）
     db.conn.execute("UPDATE game_state SET turn = ? WHERE id = 1", (turn,))
@@ -690,6 +691,53 @@ def test_materialize_requires_real_promulgated_dossier(game):
 # ═══════════════ 中央侧折发消费者（flows 读端）═══════════════
 
     # 免除不入欠：欠发只按折后应得计（shortfall 上界即折后 due）
+
+def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
+    """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
+    from ming_sim.flows import (
+        _central_dues_with_haircut,
+        apply_fixed_period_flows,
+        army_needed,
+    )
+
+    db, state, _content = game
+    army = db.conn.execute(
+        "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "
+        "province_pay_share, pay_source_region, central_pay_arrears, arrears "
+        "FROM armies WHERE id = 'jingying'"
+    ).fetchone()
+    assert float(army["province_pay_share"] or 0) <= 0
+    assert float(army["central_pay_share"] or 0) > 0
+    old_central_arrears = float(army["central_pay_arrears"] or 0)
+    assert old_central_arrears > 0
+    old_arrears = float(army["arrears"] or 0)
+    assert old_arrears > 0
+
+    db.conn.execute(
+        "UPDATE armies SET consecutive_pay_shortfall_months = 3 WHERE id = 'jingying'"
+    )
+    db.conn.commit()
+
+    did = _override_dossier(
+        db, state, [{"key": "due_haircut_bp_军饷#central", "value": 1}],
+    )
+    db.apply_dossier_promulgation(state, did, "promulgated")
+
+    dues, _exempt = _central_dues_with_haircut(db, state, [army])
+    raw_due = army_needed(army) * float(army["central_pay_share"] or 0)
+    assert raw_due > 0
+    assert dues["jingying"] == pytest.approx(0.0)
+
+    apply_fixed_period_flows(db, state)
+
+    after = db.conn.execute(
+        "SELECT consecutive_pay_shortfall_months, central_pay_arrears, arrears "
+        "FROM armies WHERE id = 'jingying'"
+    ).fetchone()
+    assert int(after["consecutive_pay_shortfall_months"] or 0) == 0
+    # 中央旧欠不因零 Due 月自动偿还（ADR 0023 D7③ / #653 边界）
+    assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
+    assert float(after["arrears"] or 0) == pytest.approx(old_arrears)
 
 # ═══════════════ 独立 oracle 宪制 mutation 自验 ═══════════════
 

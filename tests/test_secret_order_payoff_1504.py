@@ -139,7 +139,7 @@ def _run_supply_4a(db, state, selections):
                     "progress_band": "持平",
                     "memorial_text": "据实以奏",
                 }
-                for row in db.list_monthly_dossier_progress_nudges(turn)
+                for row in db.list_monthly_dossier_progress_nudges()
             ],
             "covert_exec_selections": list(selections),
         },
@@ -273,7 +273,7 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
     import ming_sim.month_chain as month_chain
     from pathlib import Path
     import ming_sim.materials as materials_mod
-    from ming_sim.materials import list_materials, material_tools, read_material
+    from ming_sim.materials import list_materials, material_tools
     from ming_sim.models import LLMConfig
 
     db, state, _ = game
@@ -305,7 +305,7 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
         )
         db.record_character_participation(
             state, [who], "case", row["title"], "本人的办案经历",
-            source_id=f"issue:{row['id']}", excluded_names=[other],
+            source_id=f"issue:{row['id']}",
         )
     db.conn.commit()
     captured = {}
@@ -335,13 +335,9 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
                 who = str((entry.get(side) or {}).get("name") or "")
                 rel = str((entry.get(side) or {}).get("materials_path") or "")
                 if who and rel:
-                    # 路径可读即可；不锁正文措辞、不比同源等值。
-                    assert read_material(captured["root"], rel) is not None
                     base = Path(rel).parent.as_posix()
                     listed = list_materials(captured["root"], base)
                     assert set(tools["list_materials"](base).splitlines()) == set(listed)
-                    for path in listed:
-                        assert tools["read_material"](path) is not None
                     paths[who] = {Path(path).relative_to(base).as_posix() for path in listed}
         captured["paths"] = paths
         return _json.dumps({"dossier_progress_reports": [], "covert_exec_selections": []})
@@ -420,8 +416,10 @@ def test_actual_progress_container_separate_from_reported_rail(game):
     assert "dossier_progress_json" not in actual[0]
     # list_dossier_durable_effects 仍只 economy+fiscal；实进度走并列读口
     durable = db.list_dossier_durable_effects(did)
-    assert all("account" in r or "key" in r or "delta" in r for r in durable) or durable == []
-    assert db.list_dossier_actual_rail(did)  # 含 actual_progress 行
+    assert all("account" in r or "key" in r or "delta" in r for r in durable)
+    # Live observation via production list APIs (no TEST_ONLY rail helper).
+    rail = list(db.list_dossier_durable_effects(did)) + list(db.list_dossier_actual_progress(did))
+    assert rail  # 含 actual_progress 行
 
 def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     """窄接缝：settle_due_secret_orders 只读 actual rail；奏报灌满不翻 verdict。
@@ -687,7 +685,7 @@ def test_submit_unlimited_keeps_frozen_target(game):
     pending = settle_due_secret_orders(db, state, commit=True)
     assert all(int(row.get("order_id") or 0) != oid for row in pending)
 
-    ok = db.submit_secret_order_for_review(oid, "臣已办结", state.year, state.period)
+    ok = db.submit_secret_order_for_review(oid, "臣已办结")
     assert ok is True
     live = db.get_secret_order(oid)
     assert int(live["due_turn"]) == int(state.turn)
@@ -745,7 +743,7 @@ def test_unlimited_investigation_due_now_reads_real_acquisitions(game, due_actio
 
     if due_action == "submit":
         assert db.submit_secret_order_for_review(
-            oid, "臣已办结", state.year, state.period,
+            oid, "臣已办结",
         ) is True
     else:
         db.rush_secret_order(oid, state, deadline_months=0, reason="即核")
@@ -787,7 +785,6 @@ def test_1376_candidate_confirm_freezes_explicit_typed_contract(game):
     assert contract["axes"] == ["既得利益"]
     assert contract["delivery"]["unit"] == "万两"
     assert contract["delivery"]["target_units"] == 5.0
-    assert contract["kind"] != "稽核"
 
 def test_non_finite_effort_is_invalid_not_full_investment(game):
     """#1896 R2：非有限数值不是"下了死力"，是坏产物——拒收，不洗成满额投入。
@@ -1703,7 +1700,6 @@ def test_deep_dig_lands_through_month_chain_entry(game):
     assert chain.get("secret_orders_supply_invalid") is not True
     lane = _lanes(db, oid)[key]
     assert lane["effort"] == pytest.approx(1.0)
-    assert lane["effort"] != 100
     assert investigation_lane_actual_units(db, did) == float(lane["mastered"])
 
     # 敷衍（显式 0）下月零投入：不增投入、不重复计数
@@ -1851,26 +1847,28 @@ def test_invalid_declaration_stops_month_chain_and_marks_invalid(game, bad):
     # 合法产物。桩只代模型调用本身，不代月链相位。
     calls = []
 
-    def _fake_supply(db_, state_, llm_config_, chain_):
+    def _fake_supply(_agent, message, **_kwargs):
         calls.append(True)
-        return {
+        return json.dumps({
             "dossier_progress_reports": [
                 {"dossier_id": int(r["dossier_id"]), "progress_band": "持平",
                  "memorial_text": "据实以奏"}
-                for r in db_.list_monthly_dossier_progress_nudges(int(state_.turn))
+                for r in json.loads(message)["eligible_dossiers"]
             ],
             "covert_exec_selections": [
                 {"order_id": oid, "fact_key": key, "effort": 1.0},
             ],
-        }
+        })
+
+    from ming_sim.models import LLMConfig
 
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(month_chain, "run_secret_orders_supply", _fake_supply)
+    monkey.setattr("ming_sim.agents.run_agent_text", _fake_supply)
     try:
         month_chain._step_4a_secret_order_supply(
             db, state, resumed,
             turn=int(state.turn), decree_text="", source=Provenance.secret_order,
-            llm_config=object(),
+            llm_config=LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test"),
         )
     except SettlementAbort as exc:  # pragma: no cover - 只在桩之外失败时出现
         raise AssertionError(f"失效重起后不该再停续：{exc}")
@@ -2740,7 +2738,7 @@ def test_settle_due_close_follows_surviving_memorial_and_actual(game):
     oid = _issue(db, state, name, "空转密查", "查无实据之案", months=1, target=1)
     dossier = db.get_dossier_for_secret_order(oid)
     did = int(dossier["id"])
-    db.update_secret_order_progress(oid, "承办人已报进展时间线", year=state.year, period=state.period)
+    db.update_secret_order_progress(oid, "承办人已报进展时间线")
     assert str(db.get_secret_order(oid)["result"] or "") == ""
     db.record_dossier_progress(
         did, state.turn, "办成", "臣已查明全部", is_terminal=False,

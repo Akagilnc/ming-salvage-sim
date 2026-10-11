@@ -1,189 +1,28 @@
 from __future__ import annotations
 
+
 import pytest
 from tests.wait_utils import wait_until
+from tests.conftest import wait_for_background_jobs
 
 import asyncio
 import threading
-from types import SimpleNamespace
 
 import web_app
-from tests.web_audience_test_doubles import (
-    HallAdmissionSessionMixin, open_audience_night_conn,
-)
-from ming_sim.session_write_queue import SessionWriteQueue
+from tests.test_web_audience_night_498 import _FakeAgent
+from tests.conftest import stub_scene_agent
 
 
 pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
 
-class _RunContent:
-    event = "RunContent"
-
-    def __init__(self, content: str):
-        self.content = content
-
-
-class RunCompletedEvent:
-    content = ""
-    tools = []
-
-
-class _FakeAgent:
-    def __init__(self, allow_finish: threading.Event):
-        self.allow_finish = allow_finish
-
-    def run(self, *args, **kwargs):
-        yield _RunContent("臣已知悉。")
-        self.allow_finish.wait()
-        yield RunCompletedEvent()
-
-
-class _FakeSession(HallAdmissionSessionMixin):
-    temporary_characters = set()
-
-    def __init__(self, character, agent: _FakeAgent, state, db):
-        self.state = state
-        self.db = db
-        self.content = SimpleNamespace(characters={character.name: character})
-        self._agent = agent
-
-    def _character(self, minister_name: str):
-        return self.content.characters[minister_name]
-
-    def pending_count(self):
-        return 0
-
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
-        # #1849 reopen：殿上入口不绑单人 character；轻壳直接驱动假 agent。
-        from ming_sim.session import ChatTurnResult
-
-        agent = self._agent
-        parts: list[str] = []
-        for event in agent.run():
-            content = getattr(event, "content", None)
-            if content:
-                parts.append(str(content))
-                if stream_emit is not None:
-                    stream_emit(str(content))
-        return ChatTurnResult(answer="".join(parts))
-
-    def schedule_pending_scene_translation(self, result):
-        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op（与生产同形入口）。
-        from ming_sim.session import GameSession
-        return GameSession.schedule_pending_scene_translation(self, result)
-    def can_summon(self, character):
-        # 召见资格真源 session.can_summon——假壳挂真方法，禁自造文案表
-        from ming_sim.session import GameSession
-        return GameSession.can_summon(self, character)
-
-
-class _RecordingDB:
-    def __init__(self, settlement_holding: threading.Event):
-        self.settlement_holding = settlement_holding
-        self.messages = []
-        self.overlapped_minister_commit = False
-        self._next_id = 1
-        self.conn = open_audience_night_conn()
-
-    def agno_runs_length(self, session_id: str) -> int:
-        return 0
-
-    def capture_chat_rollback_snapshot(self):
-        return {}
-
-    def create_chat_turn(self, *_a, **_k):
-        return 7
-
-    def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
-        if role == "minister" and self.settlement_holding.is_set():
-            self.overlapped_minister_commit = True
-        self.messages.append({"minister": minister_name, "turn": int(turn), "role": role, "content": content})
-        row_id = self._next_id
-        self._next_id += 1
-        return row_id
-
-    def update_chat_turn_messages(self, *args, **kwargs):
-        return None
-
-    def persist_minister_reply(
-        self, minister_name: str, turn: int, content: str, chat_turn_id: int, **_kw,
-    ):
-        # 同事务回话；stub 只记账 message id
-        return self.append_chat_message(minister_name, turn, "minister", content)
-
-    def fail_chat_turn(self, *_a, **_k):
-        # 流式失败尾声 / identity 失败路径会调此口
-        return None
-
-    def record_chat_turn_rollback_diffs(self, *args, **kwargs):
-        return None
-
-    def get_last_active_chat_turn(self, minister_name: str, turn: int):
-        return None
-
-    def list_in_flight_chat_turns(self, *, night_id=None, minister_name=None, turn=None):
-        return []
-
-    def list_hall_chat_turns(self, _night_id):
-        return []
-
-    def build_chat_projection(self, minister_name: str, _night_id: int = 0):
-        # #499 单一投影出口（无读心记录的最小实现，供 done payload 装配）
-        return [
-            {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
-            for m in self.messages
-            if m["minister"] == minister_name
-        ]
-
-    def set_message_highlights(self, message_id: int, phrases):
-        # #544 生产接口；chat_stream 尾随高亮会调此口（#567 r3 替身补齐）
-        return None
-
-    def get_character_status(self, *_a, **_k):
-        # #1402 can_summon 真源依赖：轻壳默认 active
-        return ("active", "")
-
-    def resolve_power_id(self, character):
-        # #1402 can_summon 真源依赖：轻壳无 characters 表，回落同真源默认 ming
-        return getattr(character, "power_id", "ming") or "ming"
-
-    def list_pending_actions(self, turn, *a, **k):
-        # #1716：_chat_payload 经 pending_directive_count 读此口；轻壳无拟旨暂存
-        return []
-
-    def load_all_chat_history(self):
-        out: dict[str, list] = {}
-        for m in self.messages:
-            out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
-        return out
-
-    def kv_get(self, _key):
-        return ""
-
-    def list_secret_orders(self):
-        return []
-
-
-def _runtime_for_stream_race():
+def _runtime_for_stream_race(web_game, monkeypatch):
     allow_finish = threading.Event()
     settlement_attempting = threading.Event()
     settlement_holding = threading.Event()
     settlement_release = threading.Event()
-    character = SimpleNamespace(name="测试大臣")
-    agent = _FakeAgent(allow_finish)
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-    db = _RecordingDB(settlement_holding)
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _FakeSession(character, agent, state, db)
-    runtime.chat_history = {character.name: [], "殿上": []}
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.can_undo_last_chat = lambda minister_name: False
-    runtime.pending_directive_count = lambda: 0
+    runtime = web_game
+    stub_scene_agent(monkeypatch, _FakeAgent(allow=allow_finish, answer="臣已知悉。"))
 
     def settlement():
         settlement_attempting.set()
@@ -195,11 +34,11 @@ def _runtime_for_stream_race():
 
     settlement.holding = settlement_holding  # type: ignore[attr-defined]
     settlement.release_event = settlement_release  # type: ignore[attr-defined]
-    return runtime, character.name, allow_finish, settlement_attempting, settlement
+    return runtime, "殿上", allow_finish, settlement_attempting, settlement
 
 
-def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn():
-    runtime, minister_name, allow_finish, settlement_attempting, settlement = _runtime_for_stream_race()
+def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn(web_game, monkeypatch):
+    runtime, minister_name, allow_finish, settlement_attempting, settlement = _runtime_for_stream_race(web_game, monkeypatch)
 
     stream = runtime.chat_stream("殿上", "请奏")
     accepted = next(stream)
@@ -233,6 +72,7 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
         allow_finish.set()
         assert settlement.holding.is_set(), "settlement released before epilogue"
         assert not done_collected.is_set(), "done arrived before settlement released gate"
+        assert runtime.db.conn.execute("SELECT COUNT(*) FROM chat_messages WHERE role='minister'").fetchone()[0] == 0
     finally:
         allow_finish.set()
         settlement.release_event.set()
@@ -244,42 +84,34 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     done = done_box[0]
 
     assert done["type"] == "done"
-    assert runtime.db.overlapped_minister_commit is False
-    minister_messages = [msg for msg in runtime.db.messages if msg["role"] == "minister"]
+    minister_messages = runtime.db.conn.execute("SELECT turn, content FROM chat_messages WHERE role='minister'").fetchall()
     assert minister_messages and minister_messages[-1]["turn"] == 1
     assert runtime.state.turn == 2
 
 
-def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
-    runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
-    failed = []
-    runtime.db.kv_get = lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed"))
-    runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot, error: failed.append((turn_id, snapshot, error))
+def test_identity_setup_failure_preserves_question_and_releases_pending_owner(web_game, monkeypatch):
+    runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race(web_game, monkeypatch)
+    monkeypatch.setattr(runtime.db, "kv_get", lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed")))
 
     events = list(runtime.chat_stream("殿上", "请奏"))
 
-    assert events[0]["type"] == "error"
-    assert events[0]["chat_turn_id"] == 7
-    assert events[0]["campaign_id"] == "" and events[0]["night_id"] == 0
-    assert failed[0][:2] == (7, {})
-    user_msgs = [m for m in runtime.db.messages if m["role"] == "user"]
-    assert len(user_msgs) == 1  # 失败仍保留问话轮；角色条数结构，不锁问话散文
-    assert runtime._runtime_write_queue().inflight_count() == 0  # 失败放行领票
+    assert len(events) == 1 and events[0]["type"] == "error"
+    assert events[0]["message"] == "identity read failed"
+    row = runtime.db.conn.execute("SELECT * FROM chat_turns ORDER BY id DESC LIMIT 1").fetchone()
+    assert events[0]["chat_turn_id"] == row["id"]
+    assert row["status"] == "interrupted"
+    assert row["error_pack_path"]
+    assert [r["content"] for r in runtime.db.conn.execute("SELECT content FROM chat_messages WHERE role='user'")] == ["请奏"]
+    wait_for_background_jobs(runtime.db)
+    assert runtime._runtime_write_queue().inflight_count() == 0
 
 
-def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
+def test_chat_stream_sse_waits_for_sync_generator_in_executor(web_game, monkeypatch):
     events: list[str] = []
     entered = threading.Event()
     release = threading.Event()
 
-    class _BlockingGame:
-        def chat_stream(self, minister_name: str, message: str):
-            entered.set()
-            release.wait()  # block until tick observed entry (no wall clock)
-            events.append("stream")
-            yield {"type": "done", "payload": {"ok": True}}
-
-    monkeypatch.setattr(web_app, "get_game", lambda: _BlockingGame())
+    stub_scene_agent(monkeypatch, _FakeAgent(started=entered, allow=release, answer="臣已知悉。"))
 
     async def drive_first_event():
         response = await web_app.api_audience_chat_stream( web_app.ChatRequest(message="请奏"))
@@ -290,37 +122,30 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
             events.append("tick")
             release.set()
 
+        watcher = asyncio.create_task(tick())
         try:
-            first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
+            chunks = [chunk async for chunk in iterator]
+            events.append("stream")
         finally:
-            entered.set()
             release.set()
-        return first_event
+            entered.set()
+            await watcher
+        return "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
 
     first = asyncio.run(drive_first_event())
 
     assert events == ["tick", "stream"]
-    assert "event: done" in first
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    parsed = _parse_sse(str(first))
+    assert next(payload for kind, payload in parsed if kind == "done")["answer"] == "臣已知悉。"
 
 
-# #1902：非流式召对路由（POST /api/audience/chat）退役，其「不冻结事件循环」用例的被测对象随之不存在，随路由同退；同一性质的流式端点用例在本文件上方（test_stream_first_event_does_not_freeze_loop 一族）继续咬着。
 
 
-def test_nonstream_chat_rejects_when_session_draining():
-    """drain 已开始时非流式 chat 不得再登记 pending——对齐 stream 拒绝路，HTTP 503。"""
-
-    character = SimpleNamespace(name="测试大臣")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-    db = _RecordingDB(threading.Event())
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _FakeSession(character, _FakeAgent(threading.Event()), state, db)
-    runtime.chat_history = {character.name: [], "殿上": []}
-    runtime._write_queue = SessionWriteQueue()
+def test_nonstream_chat_rejects_when_session_draining(web_game):
+    """drain 已开始时 chat 不得再登记 pending。"""
+    runtime = web_game
     runtime._write_queue.seal()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
 
     events = list(runtime.chat_stream("殿上", "边饷如何？"))
     assert events and events[0].get("type") == "error"

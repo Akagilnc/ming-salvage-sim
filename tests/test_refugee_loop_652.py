@@ -15,8 +15,14 @@ import sqlite3
 import pytest
 
 from ming_sim.applier import atomic
+from ming_sim.constants import (
+    BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
+    RECOVERY_OUTCOME_FACTORS,
+    RECOVERY_PERSONS_PER_WAN,
+)
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
+from tests.dossier_test_helpers import promulgated_policy_origin
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
 from tests.readback_helpers import class_population as _pop
 
@@ -82,15 +88,11 @@ def test_standalone_absorption_is_durable_to_second_connection(game):
 
 def test_standalone_surcharge_is_durable_to_second_connection(game):
     db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="陕西加派",
-        target_kind="region", target_id="shaanxi",
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    origin = promulgated_policy_origin(db, state, "陕西加派")
     applied = apply_score_extraction(db, state, {
         "surcharge_decrees": [{
             "region_id": "shaanxi", "monthly_amount": 10.0,
-            "origin_ref": f"dossier:{dossier_id}",
+            "origin_ref": origin,
         }],
     }, content, None)
     expected = applied["surcharge_decrees"][0]["加派基线"]
@@ -107,17 +109,13 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
     before_fiscal = db.conn.execute(
         "SELECT fiscal FROM regions WHERE id='shaanxi'"
     ).fetchone()[0]
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="陕西加派",
-        target_kind="region", target_id="shaanxi",
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    origin = promulgated_policy_origin(db, state, "陕西加派")
     with pytest.raises(RuntimeError):
         with atomic(db):
             apply_score_extraction(db, state, {
                 "surcharge_decrees": [{
                     "region_id": "shaanxi", "monthly_amount": 10.0,
-                    "origin_ref": f"dossier:{dossier_id}",
+                    "origin_ref": origin,
                 }],
                 "bandit_absorptions": [{
                     "region_id": "shaanxi", "power_id": "bandit_li_zicheng",
@@ -135,6 +133,7 @@ def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
     """超池 clamp；实力按 actual；触 100 上界；空池拒收无正增。"""
     db, state, content = game
     pid = "bandit_li_zicheng"
+    before = _strength(db, pid)
     applied = apply_score_extraction(db, state, {
         "bandit_absorptions": [{
             "region_id": "shaanxi", "power_id": pid,
@@ -144,7 +143,10 @@ def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
     assert not applied["bandit_absorptions_rejections"]
     rec = applied["bandit_absorptions"][0]
     assert rec["actual_count"] == DISPLACED_SHAANXI
+    delta = DISPLACED_SHAANXI // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
+    assert rec["strength_delta"] == delta
     assert _pop(db, "流民", "shaanxi") == 0
+    assert _strength(db, pid) == min(100, before + delta)
 
     # 空池再吸 → 拒、实力不动
     empty_str = _strength(db, pid)
@@ -160,15 +162,15 @@ def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
 
     # 0–100 上界：从 99 吸足量仍停在 100
     db.conn.execute("UPDATE powers SET military_strength=99 WHERE id='bandits'")
+    need = 5 * BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
     db.conn.execute(
-        "UPDATE classes SET population=? WHERE name='流民' AND region_id='henan'",
-        (100_000,),
+        "UPDATE classes SET population=? WHERE name='流民' AND region_id='henan'", (need,),
     )
     db.conn.commit()
     apply_score_extraction(db, state, {
         "bandit_absorptions": [{
             "region_id": "henan", "power_id": "bandits",
-            "requested_count": 100_000, "origin_ref": "盘面自发",
+            "requested_count": need, "origin_ref": "盘面自发",
         }],
     }, content, None)
     assert _strength(db, "bandits") == 100
@@ -201,6 +203,7 @@ def test_bandit_absorption_rejects_unknown_fields_keeps_clean_sibling(game):
     assert len(applied["bandit_absorptions"]) == 1
     rec = applied["bandit_absorptions"][0]
     assert rec["actual_count"] == clean_req
+    assert rec["strength_delta"] == clean_req // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
     assert _pop(db, "流民", "shaanxi") == before_pool - clean_req
     assert _strength(db, pid) == before_str + rec["strength_delta"]
 
@@ -243,7 +246,7 @@ def test_llm_free_回流_rejected(game):
 
 def _advance_canned_month(db, state, content, monkeypatch):
     """Only external LLM calls are canned; settlement and advancement remain real."""
-    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    canned_full_settlement(monkeypatch)
     session = make_light_session(db, state, content)
     waiting = session.advance_without_decree()
     wait_for_background_jobs(db)
@@ -367,7 +370,6 @@ def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls):
         monkeypatch,
         narrative=narrative,
         simulator_calls=sim_calls,
-        skip_fixed_flows=True,
     )
 
 
@@ -411,7 +413,7 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
     _recovery_grant(db, state, amount=30)
     _recovery_grant(db, state, amount=30)
     before_farmers = _pop(db, "农民", "shaanxi")
-    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    canned_full_settlement(monkeypatch)
     session = make_light_session(db, state, content)
     waiting = session.advance_without_decree()
     wait_for_background_jobs(db)
@@ -466,9 +468,6 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
             (f"dossier:{dossier_id}", turn),
         ).fetchone()[0]
         assert paid > 0
-        # #652/0087：每月回流人数＝本回合实付万两×RECOVERY_PERSONS_PER_WAN×fulfilled。
-        from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
-        expected_transfer = int(round(int(paid) * RECOVERY_PERSONS_PER_WAN * 1.0))
         db.conn.execute(
             "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
             (turn, state.year, state.period, "邸报已成"),
@@ -477,10 +476,7 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
         assert session.advance_without_decree().advanced is True
         wait_for_background_jobs(db)
         after = _pop(db, "流民", "shaanxi")
-        assert after == before - expected_transfer, (
-            f"每月回流应按实付 {paid} 万两转移 {expected_transfer} 人；"
-            f"before={before} after={after}"
-        )
+        assert before - after == paid * RECOVERY_PERSONS_PER_WAN
         before = after
 
 
@@ -496,7 +492,7 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     from ming_sim.models import LLMConfig
 
     real_world = month_chain.run_world_segment_text
-    real_translate = month_translate.translate_month_segment
+    real_translate_runner = month_translate._default_month_translate_runner
 
     db, state, content = game
     amount = 40
@@ -515,7 +511,7 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
         sim_calls=sim_calls,
     )
     monkeypatch.setattr(month_chain, "run_world_segment_text", real_world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", real_translate)
+    monkeypatch.setattr(month_translate, "_default_month_translate_runner", real_translate_runner)
 
     def _world_model(_agent, _message, tag, **_kwargs):
         if tag == "gazette":

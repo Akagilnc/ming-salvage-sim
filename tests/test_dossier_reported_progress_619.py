@@ -11,7 +11,7 @@ import json
 import pytest
 
 from ming_sim.db import GameDB
-from tests.dossier_test_helpers import create_test_secret_order
+from tests.dossier_test_helpers import create_test_secret_order, executing_rostered_policy
 
 
 DOSSIER_REPORT_MONTHLY = "dossier-report:monthly_errand"
@@ -19,14 +19,9 @@ DOSSIER_REPORT_MONTHLY = "dossier-report:monthly_errand"
 
 def _executing_assignment(db, state, *, text="清丈畿辅田亩", target="land-survey-619"):
     """Non-secret execution-surface dossier (policy = narrative in_transit)."""
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=text,
-        target_kind="issue",
-        target_id=target,
+    dossier_id = executing_rostered_policy(
+        db, state, token=target, decree_text=text, roster=[],
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "executing"
     assert row.get("secret_order_id") in (None, 0)

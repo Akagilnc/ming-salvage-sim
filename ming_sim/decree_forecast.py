@@ -11,6 +11,7 @@ import json
 import logging
 import threading
 import weakref
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -57,15 +58,36 @@ def _owner_for(db: Any) -> Any:
     return None if ref is None else ref()
 
 
-def _call_exhausted(exc: BaseException) -> bool:
-    """夜里预算用尽：typed 不可用，或提供方 HTTP 429。不读错误散文。"""
-    if isinstance(exc, LLMUnavailable):
-        return True
+def _rate_limited(exc: BaseException) -> bool:
+    """Only HTTP 429 leaves a night decree unforecasted without stopping."""
     status = getattr(exc, "status_code", None)
     try:
         return int(status) == 429
     except (TypeError, ValueError):
         return False
+
+
+def _current_forecast_ref(session: Any, key: tuple) -> Optional[str]:
+    """Resolve the queue's existing identity against the saved directive."""
+    if key[0] == "decree_forecast":
+        _, action_id, version, night_id = key
+        row = session.db.conn.execute(
+            "SELECT status,kind,action,night_approved,night_id,version "
+            "FROM pending_actions WHERE id=?", (action_id,),
+        ).fetchone()
+        if row is not None and (
+            row["status"] == "pending" and row["kind"] == "directive"
+            and row["action"] == "拟旨" and int(row["night_approved"] or 0) == 1
+            and int(row["night_id"] or 0) == night_id
+            and int(row["version"] or 0) == version
+        ):
+            return pending_action_decree_ref(action_id, version)
+    else:
+        _, _night_id, dossier_id = key
+        row = session.db.get_decree_dossier(dossier_id)
+        if row is not None and _is_held_for_rejudgment(row, int(session.state.turn)):
+            return held_dossier_decree_ref(dossier_id)
+    return None
 
 
 def _payload_dict(candidate: Dict[str, Any]) -> Dict[str, Any]:
@@ -146,7 +168,7 @@ def forecast_snapshot(
     dest_parent = Path(world_materials_root(db, state)).parent / "decree-forecast"
     prepared = prepare_world_materials(db, state, dest_root=dest_parent)
     try:
-        grounding, refs = _frozen_effect_refs(db, turn, payload)
+        grounding, refs = _frozen_effect_refs(db, turn)
         # 夜里拨银还没有案卷。目录与本旨身份用这道暂存自己的 decree_ref，
         # 不用 MAX(id)+1 猜号——两道同夜预推会猜到同一个未来号，落账时串路。
         # 猜号只留在判官候选的整数 id 上（批红契约要正整数），不进护送目录。
@@ -182,16 +204,12 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
     if row is None:
         return None
     pending = dict(row)
-    if (
-        pending.get("kind") != "directive"
-        or pending.get("action") != "拟旨"
-        or pending.get("status") != "pending"
-        or int(pending.get("night_approved") or 0) != 1
-        or int(pending.get("night_id") or 0) != int(night_id)
-    ):
-        return None
     version = int(pending.get("version") or 0)
-    decree_ref = pending_action_decree_ref(int(pending_action_id), version)
+    decree_ref = _current_forecast_ref(
+        session, ("decree_forecast", int(pending_action_id), version, int(night_id)),
+    )
+    if decree_ref is None:
+        return None
     prepared_directive = db._prepare_pending_directive(
         state, pending, content=getattr(session, "content", None),
     )
@@ -300,10 +318,10 @@ def _append_this_decree_escort_grounding(
 
 
 def _frozen_effect_refs(
-    db: Any, turn: int, payload: Dict[str, Any],
+    db: Any, turn: int,
 ) -> tuple[str, dict]:
     """#1840：转译输入与暂存落账共用这一份可见引用，不另建账。"""
-    refs = _visible_effect_refs(db, turn, payload)
+    refs = _visible_effect_refs(db, turn)
     return build_translation_target_grounding(db) + _effect_ref_grounding(refs), refs
 
 
@@ -356,7 +374,7 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
                 transport_policy=audience_transport_policy(),
             )
         else:
-            raw = decree.stub_promulgation_verdicts([candidate], session.state)
+            raw = decree.stub_promulgation_verdicts([candidate])
         verdicts = decree.validate_promulgation_verdicts(
             raw, [candidate], session.db, prepared_context=snapshot["context"],
         )
@@ -408,9 +426,11 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
 def _forecast(
     session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
 ) -> None:
-    # 同一 decree_ref（记录号+版本，或留中案卷 id）已有暂存则不再跑模型链。
+    # 同一 decree_ref（记录号+版本，或留中案卷 id）当月已有暂存则不再跑模型链。
     try:
-        if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
+        if session.db.staged_declarations.staged_for(
+            str(snapshot["decree_ref"]), turn=int(snapshot["turn"]),
+        ):
             return
         product = produce_forecast_product(session, snapshot)
         verdict = product["verdict"]
@@ -419,48 +439,28 @@ def _forecast(
         forecast_text = product["forecast_text"]
 
         def stage_if_current() -> None:
-            if "pending_action_id" in snapshot:
-                row = session.db.conn.execute(
-                    "SELECT status,kind,action,night_approved,night_id,version "
-                    "FROM pending_actions WHERE id=?",
-                    (snapshot["pending_action_id"],),
-                ).fetchone()
-                if row is None or (
-                    row["status"] != "pending"
-                    or row["kind"] != "directive"
-                    or row["action"] != "拟旨"
-                    or int(row["night_approved"] or 0) != 1
-                    or int(row["night_id"] or 0) != snapshot["night_id"]
-                    or int(row["version"] or 0) != snapshot["version"]
-                ):
-                    return
-            else:
-                current = session.db.get_decree_dossier(snapshot["dossier_id"])
-                if current is None or not _is_held_for_rejudgment(current, int(session.state.turn)):
-                    return
-            if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
+            ref = _current_forecast_ref(session, snapshot["forecast_key"])
+            if ref != snapshot["decree_ref"]:
                 return
-            stage_declaration(
-                session.db,
-                decree_ref=str(snapshot["decree_ref"]),
-                declaration=declaration,
-                turn=int(snapshot["turn"]),
-                verdict=verdict,
-                questions=questions,
-                forecast_text=forecast_text,
-                visible_refs=snapshot.get("visible_refs"),
-            )
+            from ming_sim.applier import Provenance, atomic
+            from ming_sim.month_chain import _load_chain, _consume_call_failure_for_retry
+            with atomic(session.db):
+                if not session.db.staged_declarations.staged_for(ref, turn=int(snapshot["turn"])):
+                    stage_declaration(
+                        session.db, decree_ref=ref, declaration=declaration,
+                        turn=int(snapshot["turn"]), verdict=verdict,
+                        questions=questions, forecast_text=forecast_text,
+                        visible_refs=snapshot.get("visible_refs"),
+                    )
+                chain = _load_chain(session.db, int(snapshot["turn"]))
+                failure = chain.get("call_failure")
+                if failure and failure.get("step") == "edict_forecast" and failure.get("decree_ref") == ref:
+                    _consume_call_failure_for_retry(
+                        session.db, chain, int(snapshot["turn"]), "", Provenance.system_simulation,
+                    )
 
-        def stage() -> None:
+        with write_lock if write_lock is not None else nullcontext():
             get_session_write_queue(session).run(snapshot["ticket"], stage_if_current)
-
-        if write_lock is None:
-            stage()
-        else:
-            # One night-start ticket orders the month barrier. Parallel legs must
-            # not enter that ticket's write turn together.
-            with write_lock:
-                stage()
     finally:
         # produce 已释放则 no-op；早退未 produce 时在此释放。
         release_forecast_materials(snapshot)
@@ -471,6 +471,7 @@ def _submit_snapshot_job(
     *,
     snapshot_fn: Any,
     ticket: Any,
+    forecast_key: tuple,
     write_lock: Optional[threading.Lock] = None,
 ) -> bool:
     """Run one already-claimed forecast ticket on the audience executor."""
@@ -480,18 +481,32 @@ def _submit_snapshot_job(
         snapshot: Optional[Dict[str, Any]] = None
         try:
             try:
-                if write_lock is None:
+                with write_lock if write_lock is not None else nullcontext():
                     snapshot = queue.run(ticket, snapshot_fn)
-                else:
-                    with write_lock:
-                        snapshot = queue.run(ticket, snapshot_fn)
                 if snapshot is None:
                     return
                 snapshot["ticket"] = ticket
+                snapshot["forecast_key"] = forecast_key
                 _forecast(session, snapshot, write_lock=write_lock)
             except Exception as exc:
-                if _call_exhausted(exc):
+                if isinstance(exc, LLMUnavailable) and _rate_limited(exc):
                     return
+
+                def stop_if_current(failure=exc) -> None:
+                    from ming_sim.applier import Provenance
+                    from ming_sim.month_chain import _abort_month_call, _load_chain
+                    ref = _current_forecast_ref(session, forecast_key)
+                    if ref is None:
+                        return
+                    _abort_month_call(
+                        session.db, session.state, _load_chain(session.db, int(session.state.turn)),
+                        decree_text="", source=Provenance.system_simulation,
+                        step="edict_forecast", exc=failure, decree_ref=ref,
+                        kind="model_exhausted" if isinstance(failure, LLMUnavailable) else "code_exception",
+                    )
+
+                with write_lock if write_lock is not None else nullcontext():
+                    queue.run(ticket, stop_if_current)
                 raise
         finally:
             release_forecast_materials(snapshot)
@@ -523,26 +538,19 @@ def schedule_pending_decree_forecast(
     action_id = int(pending_action_id)
     nid = int(night_id)
     row = session.db.conn.execute(
-        "SELECT version, status, kind, action, night_approved, night_id "
-        "FROM pending_actions WHERE id=?",
+        "SELECT version FROM pending_actions WHERE id=?",
         (action_id,),
     ).fetchone()
-    if row is None or (
-        row["status"] != "pending"
-        or row["kind"] != "directive"
-        or row["action"] != "拟旨"
-        or int(row["night_approved"] or 0) != 1
-        or int(row["night_id"] or 0) != nid
-    ):
+    if row is None:
         return False
     version = int(row["version"] or 1)
-    if session.db.staged_declarations.staged_for(
-        pending_action_decree_ref(action_id, version),
-    ):
+    key = ("decree_forecast", action_id, version, nid)
+    ref = _current_forecast_ref(session, key)
+    if ref is None or session.db.staged_declarations.staged_for(ref, turn=int(session.state.turn)):
         return False
     queue = get_session_write_queue(session)
     ticket = queue.claim_if_absent(
-        [("decree_forecast", action_id, version, nid)],
+        [key],
     )[0]
     if ticket is None:
         return False
@@ -550,6 +558,7 @@ def schedule_pending_decree_forecast(
         session,
         snapshot_fn=lambda: _pending_snapshot(session, action_id, nid),
         ticket=ticket,
+        forecast_key=key,
     )
 
 
@@ -570,6 +579,50 @@ def schedule_restored_decree_forecasts(owner_or_db: Any, pending_action_ids: lis
             schedule_pending_decree_forecast(
                 session, int(action_id), night_id=int(row["night_id"]),
             )
+
+
+def _failed_forecast_key(session: Any, failure: Dict[str, Any]) -> Optional[tuple]:
+    if failure.get("step") != "edict_forecast":
+        return None
+    ref = failure.get("decree_ref")
+    for row in session.db.conn.execute(
+        "SELECT id,version,night_id FROM pending_actions WHERE turn=?",
+        (int(session.state.turn),),
+    ).fetchall():
+        key = ("decree_forecast", int(row["id"]), int(row["version"] or 1), int(row["night_id"] or 0))
+        if pending_action_decree_ref(key[1], key[2]) == ref and _current_forecast_ref(session, key) == ref:
+            return key
+    for row in session.db.list_decree_dossiers_for_simulation(int(session.state.turn)):
+        key = ("held_decree_forecast", 0, int(row["id"]))
+        if held_dossier_decree_ref(key[2]) == ref and _current_forecast_ref(session, key) == ref:
+            return key
+    return None
+
+
+def failed_decree_forecast(session: Any) -> Optional[Dict[str, Any]]:
+    """The existing failure row, only while its saved directive is still current."""
+    from ming_sim.month_chain import month_chain_call_failure
+    failure = month_chain_call_failure(session.db, int(session.state.turn))
+    return failure if failure and _failed_forecast_key(session, failure) is not None else None
+
+
+def retry_failed_decree_forecast(session: Any) -> bool:
+    """Retry the saved night directive, without submitting a player utterance."""
+    from ming_sim.month_chain import month_chain_call_failure
+    failure = month_chain_call_failure(session.db, int(session.state.turn))
+    key = _failed_forecast_key(session, failure) if failure else None
+    if key is None:
+        return False
+    if key[0] == "decree_forecast":
+        return schedule_pending_decree_forecast(session, key[1], night_id=key[3])
+    queue = get_session_write_queue(session)
+    ticket = queue.claim_if_absent([key])[0]
+    if ticket is None:
+        return False
+    return _submit_snapshot_job(
+        session, snapshot_fn=lambda: _held_snapshot(session, key[2]),
+        ticket=ticket, forecast_key=key,
+    )
 
 
 def schedule_approved_from_dispatch(db: Any, result: Any, night_id: int) -> None:
@@ -643,6 +696,7 @@ def schedule_held_decree_forecasts(session: Any) -> bool:
                         session, dossier_id,
                     ),
                     ticket=retained,
+                    forecast_key=("held_decree_forecast", night_id, int(dossier_id)),
                     write_lock=write_lock,
                 )
         finally:

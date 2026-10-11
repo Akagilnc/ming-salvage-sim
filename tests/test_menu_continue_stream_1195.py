@@ -10,62 +10,43 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import web_app
-from tests.sse_helpers import parse_sse_event_pairs
+from tests.test_chat_stream_failpaths_393 import _parse_sse
 from tests.wait_utils import reset_menu_path_leases, wait_until
 
 # 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
 _reset_path_leases = reset_menu_path_leases
 
 
-# #1902 F7：SSE 解析真源在 tests.sse_helpers（仓内只此一份，含 tuple 投影）。
-# 本文件不再自带第二份实现。
-_parse_sse = parse_sse_event_pairs
-
-
-pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
-
-
-def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
+def test_menu_continue_streams_stage_labels_then_done_state(web_game, monkeypatch):
     """继续路径：先推 stage 事件，再 done 带 state（结构化终态；不锁阶段措辞）。"""
-    stages_from_ctor: list[str] = []
-
-    class FakeWebGame:
-        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
-            assert fresh is False
-            labels = ["stage-a", "stage-b", "stage-c"]
-            for label in labels:
-                stages_from_ctor.append(label)
-                if on_stage:
-                    on_stage(label)
-            self._state = {"turn": {"turn": 2, "year": 1627, "period": 11}}
-
-        def state_payload(self) -> dict:
-            return self._state
-
     _reset_path_leases()
-    monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
-    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: "/tmp/continue-main.db")
-    monkeypatch.setattr(web_app, "WebGame", FakeWebGame)
+    turn = int(web_game.state.turn)
+    web_game.db.save_state(web_game.state)
+    web_game.session.close()
     monkeypatch.setattr(web_app, "web_game", None)
 
-    response = TestClient(web_app.app).post("/api/menu/continue")
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
+    try:
+        response = TestClient(web_app.app).post("/api/menu/continue")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
 
-    events = _parse_sse(response.text)
-    assert events, "应至少有 SSE 事件"
-    kinds = [name for name, _ in events]
-    assert kinds[-1] == "done"
-    assert "error" not in kinds
-    # 契约：存在 stage 事件且 content 为 str；不比较生成/阶段措辞正文
-    stage_events = [(name, payload) for name, payload in events if name == "stage"]
-    assert stage_events, "应推送至少一条 stage"
-    assert all(isinstance(payload.get("content"), str) for _, payload in stage_events)
+        events = _parse_sse(response.text)
+        assert events, "应至少有 SSE 事件"
+        kinds = [name for name, _ in events]
+        assert kinds[-1] == "done"
+        assert "error" not in kinds
+        # 契约：存在 stage 事件且 content 为 str；不比较生成/阶段措辞正文
+        stage_events = [(name, payload) for name, payload in events if name == "stage"]
+        assert stage_events, "应推送至少一条 stage"
+        assert all(isinstance(payload.get("content"), str) for _, payload in stage_events)
 
-    done_payload = events[-1][1]
-    assert done_payload["state"]["turn"]["turn"] == 2
-    assert web_app.web_game is not None
-    assert stages_from_ctor
+        done_payload = events[-1][1]
+        assert done_payload["state"]["turn"]["turn"] == turn
+        assert web_app.web_game is not None
+        assert web_app.web_game.db.load_state().turn == turn
+    finally:
+        if web_app.web_game is not None:
+            web_app.web_game.session.close()
 
 
 def test_menu_continue_streams_error_when_llm_unavailable(monkeypatch):

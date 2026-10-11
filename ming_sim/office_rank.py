@@ -1,7 +1,6 @@
 """明制品级带与任命破格标记的确定性领域函数。"""
 from __future__ import annotations
 
-import re
 from typing import Any, Optional
 
 from ming_sim.assets import load_json_asset
@@ -16,9 +15,6 @@ _NON_OFFICES = frozenset({
     "进士", "举人", "生员", "贡生", "监生", "秀才", "诸生", "庠生", "国子监生",
 })
 _UNOFFICED_TYPES = frozenset({"", "未仕", "生员", "乡绅", "富商", "布衣", "待铨"})
-_TITLE_NOISE_SUFFIXES = (
-    "革职候勘", "革职", "候勘", "闲住", "罢居", "致仕", "赋闲",
-)
 
 
 def _table() -> dict[str, Any]:
@@ -27,29 +23,17 @@ def _table() -> dict[str, Any]:
 
 
 def concurrent_office_titles(office: object) -> list[str]:
-    """Canonical tokenizer shared by rank, leverage, and archive cleanup."""
+    """Split concurrent office titles by formal conjunction / comma separators.
+
+    No prefix/suffix vocabulary peel: polluted free-text office strings are not
+    rewritten into status or cleaned titles here.
+    """
     text = str(office or "").strip()
     if not text:
         return []
-    text = re.sub(r"^(?:前|原任|原)", "", text).strip()
     text = (text.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
             .replace("，", ",").replace("、", ","))
-    titles: list[str] = []
-    for segment in text.split(","):
-        part = segment.strip()
-        if not part:
-            continue
-        pollution_at = min(
-            (part.find(noise) for noise in _TITLE_NOISE_SUFFIXES if noise in part),
-            default=-1,
-        )
-        if pollution_at >= 0:
-            clean = part[:pollution_at].strip()
-            if clean:
-                titles.append(clean)
-            break
-        titles.append(part)
-    return titles
+    return [part.strip() for part in text.split(",") if part.strip()]
 
 
 def canonical_office_title(office: object) -> str:
@@ -115,13 +99,12 @@ def office_rank_band(office: object, office_type: object = "") -> int:
     return int((table.get("fallback") or {}).get("rank_band", 9))
 
 
-def office_leverage_multiplier(office: object, already_normalized: bool = False) -> float:
+def office_leverage_multiplier(office: object) -> float:
     """Map an office title to the faction-leverage rank multiplier via offices.json.
 
     Comma-separated concurrent titles take the highest recognized multiplier. Titles with
     no leverage-bearing stem keep the historical conservative default 1.0.
     """
-    del already_normalized  # retained for the historical caller contract
     parts = concurrent_office_titles(office)
     if not parts:
         return DEFAULT_LEVERAGE_MULTIPLIER
@@ -186,12 +169,11 @@ def appointment_break_rank(
     if row is not None:
         current_title = str(row["office"] or "").strip()
         current_type = str(row["office_type"] or "").strip()
+        # History archive lookup is gated only by closed status / reason enums —
+        # never by free-text office prefixes or status-word substrings.
         may_have_history = (
             str(row["status"] or "") in _INACTIVE_STATUSES
             or (current_title == "听用候铨" and str(row["reason_code"] or "") == "被顶替")
-            or (current_title.startswith(("前", "原")) and any(
-                marker in current_title for marker in ("罢居", "革职", "致仕", "闲住")
-            ))
         )
         if may_have_history:
             archived = db.conn.execute(

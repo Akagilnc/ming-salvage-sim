@@ -8,6 +8,8 @@ Seams:
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
+
 import json
 from types import SimpleNamespace
 
@@ -21,10 +23,7 @@ from ming_sim.audience_night import (
     open_night,
 )
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.session import GameSession
-from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
-    note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
@@ -32,19 +31,10 @@ from tests.conftest import (
 
 
 def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None):
-    from ming_sim.session_write_queue import SessionWriteQueue
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
+    from tests.month_chain_helpers import make_light_session
+    sess = make_light_session(db, state, content)
     sess.llm_config = llm_config or SimpleNamespace(channel="api")
     sess.temporary_characters = {}
-    sess.agno_db = None
-    sess._write_queue = SessionWriteQueue()
-    sess._write_gate = sess._write_queue.write_gate
-    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
-    note_queue_until_game_teardown(db, sess._write_queue)
     stub_audience_translate(monkeypatch, translate_fn)
     return sess
 
@@ -98,14 +88,14 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
     """把一轮皇帝/回话落到 chat_messages + chat_turns（真表形）。"""
     speaker = "殿上"
     cur = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-        "VALUES (?, ?, 'user', ?, 'held')",
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'user', ?)",
         (speaker, int(state.turn), user_text),
     )
     uid = int(cur.lastrowid)
     cur = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-        "VALUES (?, ?, 'minister', ?, 'held')",
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'minister', ?)",
         (speaker, int(state.turn), reply),
     )
     mid = int(cur.lastrowid)
@@ -284,7 +274,11 @@ def test_translation_entry_preserves_unknown_rejection(
     pending = db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE status='pending' ORDER BY id"
     ).fetchall()
-    assert any("拟旨赈济" in str(row["payload_json"]) for row in pending)
+    pending_payloads = [json.loads(row["payload_json"]) for row in pending]
+    assert any(
+        isinstance(payload, dict) and payload.get("text") == "拟旨赈济"
+        for payload in pending_payloads
+    )
     rejected = db.conn.execute(
         "SELECT section, category FROM rejection_reports WHERE turn=?",
         (int(state.turn),),
@@ -747,10 +741,16 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
 
 
 def test_appointment_without_text_is_rejected_not_templated(game):
-    """P7：任免缺正文拒收，不拼「任命X为Y」。"""
+    """P7：任免缺正文拒收；坏项不入 pending 账。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     person = _hong_name(db, content)
+    before_pending = {
+        int(r["id"])
+        for r in db.conn.execute(
+            "SELECT id FROM pending_actions WHERE status='pending'"
+        ).fetchall()
+    }
     result = dispatch_declaration(
         db, state,
         {"commissions": [{
@@ -762,6 +762,13 @@ def test_appointment_without_text_is_rejected_not_templated(game):
     )
     assert result.commissions.applied == []
     assert result.commissions.rejected
+    after_pending = {
+        int(r["id"])
+        for r in db.conn.execute(
+            "SELECT id FROM pending_actions WHERE status='pending'"
+        ).fetchall()
+    }
+    assert after_pending == before_pending
 
 
 def _active_chat_turn(db, state, night_id: int) -> int:
@@ -808,12 +815,15 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     # #1902 T6：ChatTurnResult 不再挂 pending_action_id；前台不等后台转译由落库后查证。
     persist_and_schedule_scene(sess, db, r)
     sess._write_queue.barrier(lambda: None)
-    created = db.conn.execute(
-        "SELECT id FROM pending_actions WHERE payload_json LIKE ? ORDER BY id DESC LIMIT 1",
-        (f"%{create_text}%",),
-    ).fetchone()
-    assert created is not None
-    created_id = int(created["id"])
+    created_id = None
+    for row in db.conn.execute(
+        "SELECT id, payload_json FROM pending_actions ORDER BY id DESC",
+    ).fetchall():
+        payload = json.loads(row["payload_json"] or "{}")
+        if payload.get("text") == create_text:
+            created_id = int(row["id"])
+            break
+    assert created_id is not None
     assert db.conn.execute(
         "SELECT COUNT(*) n FROM pending_actions WHERE id=? AND status='pending'",
         (created_id,),

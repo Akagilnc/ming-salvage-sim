@@ -23,14 +23,14 @@ import pytest
 from ming_sim.audience_translation import list_pending_translations
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.session import GameSession, TurnPhase
+from ming_sim.session import TurnPhase
 from tests.test_audience_extraction_501 import (
     _minister,
     _open_night_with_persisted_reply,
 )
 from ming_sim.session_write_queue import SessionWriteQueue
 from tests.test_no_edict_full_settlement_1274 import _canned_full_settlement
-from tests.conftest import stub_audience_translate
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
@@ -46,15 +46,6 @@ def _pending_api(db) -> dict:
 
     rows = list_pending_translations(db)
     return {"pending": rows, "count": len(rows)}
-
-@pytest.fixture
-def web_game(tmp_path, monkeypatch):
-    """真实 WebGame（temp DB）；r9 工人终态钉用。"""
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    return web_app.WebGame(fresh=False)
 
 def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypatch):
     """#1353 负向 + #1898：收夜不得 fail 掉挡夜的回话 turn，且**同次只调一次模型**。
@@ -317,53 +308,45 @@ def test_ticketed_write_gate_rejects_none(web_game):
         game._ticketed_write_gate(None)  # type: ignore[arg-type]
 
 def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(web_game, monkeypatch):
-    from ming_sim.session import ChatTurnResult
+    from tests.test_web_audience_night_498 import _FakeAgent
     from tests.web_audience_test_doubles import install_hall_admission
 
     game = web_game
-    next(iter(game.content.characters))
     install_hall_admission(game.session)
-    game.session.schedule_pending_scene_translation = lambda *_a, **_k: None
-    game._spawn_pending_write_thread = lambda *_a, **_k: None
-    calls = []
-
-    def scene_chat(message, **_kw):
-        calls.append(message)
-        return ChatTurnResult(answer="臣遵旨。", court_action="court_break")
-
-    game.session.scene_chat = scene_chat
-    game.session.close_night_after_chat_if_needed = lambda *_a, **_k: (_ for _ in ()).throw(
-        RuntimeError("close failed"))
+    # 真实 scene 链：只桩外部模型边界（成功的退朝回话）；收夜失败为注入的故障。
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣告退。"))
+    real_close = an.close_night
+    monkeypatch.setattr(an, "close_night", lambda *_a, **_k: (_ for _ in ()).throw(
+        RuntimeError("close failed")))
     events = list(game.chat_stream("殿上", "退朝"))
     assert [ev["type"] for ev in events][-3:] == ["done", "error", "end"]
     chat_turn_id = int(next(ev for ev in events if ev["type"] == "accepted")["chat_turn_id"])
     retries = game.reply_retries("殿上")
     assert [(r["chat_turn_id"], r["recovery_phase"]) for r in retries] == [(chat_turn_id, "court_break")]
     assert retries[0]["error_pack_path"]
-    game.session.close_night_after_chat_if_needed = lambda action, **_kw: calls.append(action)
+    monkeypatch.setattr(an, "close_night", real_close)
+    persisted = [
+        (r["role"], r["content"]) for r in game.db.conn.execute(
+            "SELECT role, content FROM chat_messages WHERE minister_name=? ORDER BY id", ("殿上",)
+        )
+    ]
     game.retry_interrupted_reply("殿上", chat_turn_id)
-    assert calls == ["退朝", "court_break"]
     assert game.reply_retries("殿上") == []
-    # 回话行水位：chat_turns.minister_message_id 挂接；不锁 content 正文（#1897 T1）。
-    mid = game.db.conn.execute(
-        "SELECT minister_message_id FROM chat_turns WHERE id=?", (int(chat_turn_id),),
-    ).fetchone()["minister_message_id"]
-    assert mid is not None
-    assert game.db.conn.execute(
-        "SELECT COUNT(*) c FROM chat_messages WHERE role='minister' AND minister_name=? AND id=?",
-        ("殿上", int(mid)),
-    ).fetchone()["c"] == 1
+    assert [
+        (r["role"], r["content"]) for r in game.db.conn.execute(
+            "SELECT role, content FROM chat_messages WHERE minister_name=? ORDER BY id", ("殿上",)
+        )
+    ] == persisted
 
 def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monkeypatch):
     """#1849 reopen：唯一入口 stream——旧「stream/nonstream」入口轴随非流式路退役
     折叠为同路，函数本就不读该轴，故不再参数化。"""
-    from ming_sim.session import ChatTurnResult
+    from tests.test_web_audience_night_498 import _FakeAgent
     from tests.web_audience_test_doubles import install_hall_admission
 
     game = web_game
-    next(iter(game.content.characters))
     install_hall_admission(game.session)
-    game.session.scene_chat = lambda *_a, **_k: ChatTurnResult(answer="臣遵旨。")
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣遵旨。"))
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: (_ for _ in ()).throw(
         RuntimeError("translation dispatch failed"))
     events = list(game.chat_stream("殿上", "边饷如何？"))
@@ -372,42 +355,30 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     retries = game.pending_translation_retries(chat_turn_id=chat_turn_id)
     assert [r["chat_turn_id"] for r in retries] == [chat_turn_id]
     assert retries[0]["error_pack_path"]
-    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection("殿上")] == [
+    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection()] == [
         ("user", chat_turn_id), ("minister", chat_turn_id)]
     stub_audience_translate(monkeypatch)
     game.retry_pending_translation(chat_turn_id)
     assert game.pending_translation_retries(chat_turn_id=chat_turn_id) == []
-    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection("殿上")] == [
+    assert [(m["role"], m["chat_turn_id"]) for m in game.chat_projection()] == [
         ("user", chat_turn_id), ("minister", chat_turn_id)]
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 
 def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monkeypatch):
     """#1353 fold-in r8：外层已持闸时 resolve 不得再抢同一把非重入锁。"""
+    from ming_sim.session import TurnPhase
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     state.turn_phase = TurnPhase.REVIEWING.value
 
-    from ming_sim.session_write_queue import SessionWriteQueue
-    queue = SessionWriteQueue()
-    gate = queue.write_gate
-    assert gate.acquire(blocking=False)
-
-    sess = object.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
+    from tests.month_chain_helpers import make_light_session
+    from ming_sim.session_write_queue import get_session_write_queue
+    sess = make_light_session(db, state, content)
     sess.llm_config = object()
-    sess._write_queue = queue
-    sess._write_gate = gate
-    sess.agno_db = None
-    sess.last_decree = ""
-    sess._decree_draft_fingerprint = ()
-    sess.deaths_this_turn = []
-    sess.debuts_this_turn = []
-    sess.auto_save = lambda *_a, **_k: None
+    gate = get_session_write_queue(sess).write_gate
+    assert gate.acquire(blocking=False)
 
     # 合法真实前置：无旨月 + 外部 LLM 缝 canned；不替 resolve_directives（被测持闸在其后）。
     _canned_full_settlement(monkeypatch, narrative="持闸落相位探针邸报。")

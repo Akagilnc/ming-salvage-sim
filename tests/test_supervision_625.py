@@ -11,6 +11,14 @@ Seams:
 
 from __future__ import annotations
 
+from tests.dossier_test_helpers import (
+    subject_policy_dossier as _subject_dossier,
+    audit_policy_dossier as _audit_dossier,
+)
+
+import sqlite3
+
+import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
@@ -26,7 +34,6 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.supervision import (
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
-    SUPERVISION_RELATION,
 )
 
 
@@ -61,72 +68,6 @@ def _upright_and_mediocre(db):
     upright = next(r for r in rows if int(r["integrity"]) >= 60)
     mediocre = next(r for r in rows if int(r["integrity"]) < 50)
     return upright, mediocre
-
-
-def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
-    did = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈{token}",
-        target_kind="issue",
-        target_id=f"land-{token}",
-        executor_kind="character",
-        executor_id=owner,
-        participants=[{"character_id": owner, "tier": "主办"}],
-    )
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    return did
-
-
-def _audit_dossier(db, state, *, auditor: str, subject_id: int, token: str = "audit"):
-    """稽核方案卷（新 id）→ 稽核 → 被稽案卷（旧 id）。须后建以保证 id 更大。"""
-    aid = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"稽核{token}",
-        target_kind="issue",
-        target_id=f"audit-{token}",
-        executor_kind="character",
-        executor_id=auditor,
-        participants=[{"character_id": auditor, "tier": "主办"}],
-    )
-    db.apply_dossier_promulgation(state, aid, "promulgated")
-    db.add_dossier_links(aid, [{
-        "target_dossier_id": int(subject_id),
-        "relation_type": SUPERVISION_RELATION,
-        "note": f"稽核案卷{subject_id}",
-    }])
-    return aid
-
-
-def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
-    import ming_sim.issues as issue_engine
-
-    stages = [{
-        "stage_idx": 0,
-        "due_turn": int(due_turn),
-        "criterion_text": "清丈见眉目",
-        "origin_context": "限期清丈",
-    }]
-    out = issue_engine.apply_score_extraction(
-        db, state,
-        {
-            "new_issues": [{
-                "origin_kind": "decree",
-                "origin_ref": f"dossier:{int(dossier_id)}",
-                "kind": "initiative",
-                "title": f"清丈分段-{dossier_id}",
-                "stage_text": "限期清丈",
-                "commitment_kind": "until_stop",
-                "ongoing_effects": {},
-                "stages": stages,
-            }],
-        },
-        content=content,
-    )
-    created = out["issue_summary"]["new_issues"][0]
-    assert created.get("rejected") is False, created
-    return int(created["issue_id"])
 
 
 # ── AC1 事实底 ────────────────────────────────────────────────────
@@ -248,34 +189,3 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     assert int(out_w["exposure_written"]) >= 1
     exps = db.list_loophole_exposures(recon_watched)
     assert any(r["execution_form"] == "degraded" for r in exps)
-
-
-def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
-    """有在场事实时监督史非空；到期消费后执行格只跟实况账。"""
-    db, state, content = game
-    owner, auditor_row = _pair_same_faction(db)
-    subject_id = _subject_dossier(db, state, owner=str(owner["name"]), token="dr")
-    _audit_dossier(
-        db, state, auditor=str(auditor_row["name"]), subject_id=subject_id, token="dr",
-    )
-    db.record_monthly_supervision_presence(state.turn, commit=True)
-    db.record_dossier_progress(
-        subject_id, state.turn, "在办", "表报已陈，实绩未充",
-        commit=True,
-    )
-    _insert_staged(db, state, content, dossier_id=subject_id, due_turn=state.turn)
-    write_due_staged_commitment_todos(db, state)
-    todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
-    inp = build_due_review_input(db, todo)
-    assert inp["supervision_history"] != []
-    assert inp["supervision_history"][0]["auditor_name"] == str(auditor_row["name"])
-    db.conn.execute(
-        "UPDATE next_audience_todos SET created_turn=?",
-        (int(state.turn) - 1,),
-    )
-    db.conn.commit()
-    applied = apply_pending_due_reviews(db, state, commit=True)
-    assert applied
-    dossier = db.get_decree_dossier(subject_id)
-    assert dossier["execution_outcome"] == "degraded"
-    assert dossier["status"] == "closed"

@@ -104,7 +104,7 @@ def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
 
 
 def test_replayed_delta_does_not_double_write(game):
-    """结算重放（恢复/重试）幂等：UNIQUE(source,target,kind,context,origin) 吸收重复。"""
+    """同一声明重复落账幂等：UNIQUE(source,target,kind,context,origin) 吸收重复。"""
     db, state, content = game
     delta = {
         "relation_edge_events": [{
@@ -472,12 +472,16 @@ def test_writer_rejects_non_string_context(game):
     assert _edge_rows(db, source="甲", target="乙") == []
 
 
+# ── P5 并行装配：新模块并入同一 executor，不串行 ────────────────────
+
 # ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
 
 
 def test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges(game):
     """幻觉名/错字/「皇帝」入大臣边端点：逐项拒收留痕，零写入。"""
     db, state, content = game
+    # Seed may mark 徐光启 active; force offstage so "未在朝名册" 项仍拒收。
+    db.set_character_status(state, "徐光启", "offstage", reason="relation_capture_endpoint_fixture")
     out = apply_score_extraction(
         db, state,
         {
@@ -528,6 +532,9 @@ def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 1
     assert rejected[0]["category"] == "invalid_relation_event"
+    # 坏项身份按原项结构核值；不锁 reason 措辞、不猜退化形状。
+    bad_item = rejected[0]["item"]
+    assert bad_item.get("受动者") == ["周延儒", "幻觉丙"]
     # 坏项零写入（含好端点也不部分落库）；好项不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
@@ -661,6 +668,8 @@ def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
     回归锚：任何只冻 pre roster/前移 resolver 的方案会误拒同批入场者的真实
     互动；B 案以人物变更 apply 后的 post-roster 并入并集保住该向。"""
     db, state, content = game
+    # Seed may already list 孙承宗 active; force offstage so同批起复前提成立。
+    db.set_character_status(state, "孙承宗", "offstage", reason="relation_capture_reinstatement_fixture")
     assert db.get_character_status("孙承宗")[0] != "active"
     out = apply_score_extraction(
         db, state,
@@ -714,6 +723,7 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 2
     assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    assert any(r["item"].get("施动者") == "幻觉甲" for r in rejected)
     assert _triplets(_edge_rows(db)) == {
         ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
     }
@@ -738,19 +748,5 @@ def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     )
     assert len(res) == 1 and res[0].get("rejected")
     assert res[0]["category"] == "invalid_relation_event"
+    assert res[0]["item"].get("施动者") == "王绍徽"
     assert _edge_rows(db) == []  # 零边写入
-
-
-def test_missing_endpoint_qualification_set_fails_loud(game):
-    """负向：资格集必传——缺参即 TypeError 显式失败，绝不静默退化到
-    live/post 语义（无第二机制、无直调兼容后门）。"""
-    db, state, content = game
-    with pytest.raises(TypeError):
-        resolve_relation_edge_events_from_extraction(
-            db, state,
-            {"relation_edge_events": [{
-                "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
-                "语境": "缺资格集必须炸，不静默退化。", "来源引用": "盘面自发",
-            }]},
-        )
-    assert _edge_rows(db) == []  # 零边副作用

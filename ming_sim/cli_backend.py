@@ -12,7 +12,7 @@
 这是探针的预期，不是缺陷。
 
 调用约定来自 wiki/concepts/codex-bot-conventions.md + cross-model-review.md：
-- agy：先暖 keychain（auth 是 race），Agy 1.2.0 用 `--print=<prompt>`。
+- agy：Agy 1.2.0 用 `--print=<prompt>`；失败只看宿主退出码／原生异常，不扫正文词表。
 - codex：`codex exec -` 必须 stdin pipe，绝不 positional；始终 2>&1。
 """
 
@@ -343,18 +343,6 @@ def _trace(record: Dict[str, Any]) -> None:
         logger.exception("LLM trace write failed path=%s", _TRACE_PATH)
 
 
-def _warm_keychain() -> None:
-    """暖 macOS keychain 路径，缓解 agy headless auth 的 1s race（见 wiki）。"""
-    try:
-        # 硬规9：禁 timeout=（subprocess.run 超时会 SIGKILL）。keychain 暖探无期限杀。
-        subprocess.run(
-            ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        logger.exception("keychain warm failed")
-
-
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
 _CLI_POLL_SECONDS = 0.05
 
@@ -366,14 +354,18 @@ def _cli_process_clock() -> float:
 
 @dataclass
 class _CliProcessOutcome:
-    """子进程收尾事实（退出码 / stderr 诊断 / stdin·管道·终止错），由增量读循环回填。"""
+    """子进程收尾事实（退出码 / stderr 诊断 / stdin 与输出读取错误），由增量读循环回填。
+
+    Soft-terminate failure is raised to the caller (cause-chained with any
+    in-flight body error) and mirrored on stderr as
+    ``[soft terminate failed: ...]`` — no parallel unused field (#1847 N13).
+    """
 
 
     returncode: Optional[int] = None
     stderr: str = ""
     stdin_error: Optional[BaseException] = None
     stream_error: Optional[BaseException] = None
-    terminate_error: Optional[BaseException] = None
 
 
 def _cli_idle_seconds() -> float:
@@ -388,25 +380,17 @@ def _cli_idle_seconds() -> float:
     return float(resolve_transport_policy().idle_timeout_seconds)
 
 
-def _terminate_cli_process(proc: Any, *, outcome: Optional[_CliProcessOutcome] = None) -> None:
-    """收尾子进程：已退时 no-op；否则只 terminate + 有界 wait。
+def _terminate_cli_process(proc: Any) -> None:
+    """收尾子进程：SIGTERM only. Never escalate to SIGKILL (shared #9 / #1847 N13).
 
-    禁 SIGKILL 升级（共享硬规 #9 / #1834 F47）。终止真异常记入 outcome，
-    交调用方响亮失败（#1834 F48），不在此处吞掉。
+    Soft lifecycle only: terminate → wait. TimeoutExpired and other failures
+    propagate so callers can leave a real diagnostic; never kill()/SIGKILL,
+    never swallow the failure.
     """
-    if getattr(proc, "poll", lambda: None)() is not None:
+    if proc.poll() is not None:
         return
-    try:
-        proc.terminate()
-        proc.wait(timeout=5)
-    except Exception as exc:
-        # 终止真异常必须留痕；调用方是否另有 stream/stdin 错，不得吞掉本因（F48）。
-        logger.warning("CLI 子进程终止失败：%s", exc)
-        if outcome is not None:
-            if outcome.terminate_error is None:
-                outcome.terminate_error = exc
-            return
-        raise
+    proc.terminate()
+    proc.wait(timeout=5)
 
 
 def _iter_cli_process_lines(
@@ -428,7 +412,7 @@ def _iter_cli_process_lines(
     - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀；收尾禁 SIGKILL。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
     - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
-    - 活动期 stdout/stderr 真异常与终止真异常记入 outcome，调用方响亮失败（#1834 F48）。
+    - 活动期 stdin/stdout/stderr 真异常记入 outcome；终止真异常原样上抛（#1834 F48）。
     所有 runner 共用本读法；禁各自复制一套 idle 循环。clock 可注入（受控推进）。
     """
     from ming_sim.llm_transport import TransportPolicy, check_idle_budget
@@ -542,12 +526,11 @@ def _iter_cli_process_lines(
                 )
                 raise cli_runner_unavailable(host_exc, backend=host) from err
             raise err
-        if result.terminate_error is not None:
-            raise result.terminate_error
 
     def _has_recorded_thread_fault() -> bool:
         return result.stream_error is not None or result.stdin_error is not None
 
+    body_err: Optional[BaseException] = None
     try:
         while open_streams > 0:
             # 已知线程故障立刻升格：不等另一管道 EOF，也不让后续 idle 改写成可重试分类。
@@ -597,15 +580,33 @@ def _iter_cli_process_lines(
                 last_activity_at=last_activity, policy=policy, clock=tick,
             )
             time.sleep(_CLI_POLL_SECONDS)
+    except BaseException as exc:
+        body_err = exc
+        raise
     finally:
-        # 收尾接缝在「任何离开路径」执行：stdin/stream/terminate 一并消费。
-        # 并存故障全部留痕；主因上抛，其余不得只停在无人读的字段（#1834 F48）。
         shutting_down.set()
-        _terminate_cli_process(proc, outcome=result)
+        cleanup_err: Optional[BaseException] = None
+        try:
+            _terminate_cli_process(proc)
+        except BaseException as exc:
+            # Soft-stop failure must surface. Never raise-from-finally over an
+            # in-flight body failure; never logger-only when cleanup is sole fail.
+            cleanup_err = exc
         for worker in workers:
             worker.join(timeout=5)
         result.stderr = "".join(stderr_parts)
+        if cleanup_err is not None:
+            result.stderr = (
+                result.stderr + f"\n[soft terminate failed: {cleanup_err}]"
+            ).lstrip("\n")
         result.returncode = proc.poll()
+        if cleanup_err is not None:
+            # Composite cleanup must reach transport consumers as the raised
+            # error (PEP 3134 cause chain). Notes on the idle alone are not
+            # str(error) and get washed by a later successful retry (#1847 N13).
+            if body_err is not None:
+                raise cleanup_err from body_err
+            raise cleanup_err
         _raise_recorded_thread_fault()
 
 
@@ -702,7 +703,7 @@ def _cli_runner_command(
     """runner → (argv, stdin 文本, env)。各 runner 调用约定单真源；执行读法共用 helper。
 
     实测约定（docs/LLM_BACKEND_BENCH.md §9 / #1256 / #1274-qa-y1）：
-    - agy 1.2.0：`--print=<prompt>` 单参数；调用前先暖 keychain（auth race）。
+    - agy 1.2.0：`--print=<prompt>` 单参数；失败只看退出码与原生异常。
     - codex：`exec -` 必须 stdin pipe（绝不 positional）；`--skip-git-repo-check`
       （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
     - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
@@ -834,8 +835,6 @@ def _iter_cli_runner_text(
     """
     from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
 
-    if runner == "agy":
-        _warm_keychain()  # 操作步骤（缓解 headless auth race），不是重试策略
     kimi_agent_path: Optional[str] = None
     if materials_dir and runner == "kimi":
         handle = tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False)
@@ -1027,12 +1026,9 @@ def _run_backend_for_config(
         attempts = len(attempt_records)
         return text, attempts
     except Exception as exc:
-        # typed 出口：trace 留 provider_message 原诊断，不写玩家面文案。
-        from ming_sim.exceptions import LLMUnavailable as _LLMUnavailable
-        if isinstance(exc, _LLMUnavailable) and exc.provider_message:
-            error = str(exc.provider_message)
-        else:
-            error = str(exc)
+        # Persist cause chain on the existing trace.error exit (#1847 N13).
+        from ming_sim.llm_transport import _exception_text_with_causes
+        error = _exception_text_with_causes(exc)
         raise
     finally:
         _trace({
@@ -1199,93 +1195,6 @@ def _messages_to_prompt(
 # #1902 T4：拟旨抽取 / 名册自愈 / 国策补全等现役领域编排已迁至 ming_sim.draft_intent。
 # 本文件只保留 CLI 传输与 runner 适配；禁止在此再挂领域编排副本或兼容转发。
 
-
-def _scan_outside_strings(text: str, handle) -> str:
-    """逐字扫描 text，字符串内部（含转义）原样输出；字符串外的字符交给
-    handle(text, i, out, n) -> next_i 处理（append 想保留的到 out、返回下一位置）。
-    JSONC 清洗的共享底座：字符串/转义态只在此一处维护，避免每趟各写一份状态机。"""
-    out: List[str] = []
-    in_str = esc = False
-    i, n = 0, len(text)
-    while i < n:
-        ch = text[i]
-        if in_str:
-            out.append(ch)
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            i += 1
-        elif ch == '"':
-            in_str = True
-            out.append(ch)
-            i += 1
-        else:
-            i = handle(text, i, out, n)
-    return "".join(out)
-
-
-def _strip_jsonc(body: str) -> str:
-    """quote-aware 清洗 JSONC：剥 // 行注释、去结构尾逗号，但字符串内部一律不动——
-    串值里的 //、,}、:// （如 "x,}" / "a//b" / "http://..."）全保留。
-    旧实现用裸正则非 quote-aware，会把串内 // 当注释、串内 ,} 当尾逗号误伤（#6）。
-    两趟扫描：先剥注释（避免「逗号到右括号之间夹注释」漏判尾逗号），再去尾逗号。"""
-    def _strip_comment(t: str, i: int, out: List[str], n: int) -> int:
-        if t[i] == "/" and i + 1 < n and t[i + 1] == "/":
-            nl = t.find("\n", i)
-            return n if nl == -1 else nl  # 跳到行尾（换行本身保留，由下一轮 append）
-        out.append(t[i])
-        return i + 1
-
-    def _strip_trailing_comma(t: str, i: int, out: List[str], n: int) -> int:
-        if t[i] == ",":
-            k = i + 1
-            while k < n and t[k] in " \t\r\n":
-                k += 1
-            if k < n and t[k] in "}]":
-                return i + 1  # 丢弃结构尾逗号
-        out.append(t[i])
-        return i + 1
-
-    return _scan_outside_strings(_scan_outside_strings(body, _strip_comment), _strip_trailing_comma)
-
-
-def _loads_lenient(
-    raw: str, *, accepted_types: tuple[type, ...] = (dict,),
-) -> Optional[Any]:
-    """容错解析 JSON：剥代码围栏并截取首个受理容器。失败返回 None。"""
-    t = (raw or "").strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
-        t = re.sub(r"\s*```$", "", t).strip()
-    starts = []
-    if dict in accepted_types:
-        starts.append((t.find("{"), "}"))
-    if list in accepted_types:
-        starts.append((t.find("["), "]"))
-    starts = [(index, closer) for index, closer in starts if index >= 0]
-    if not starts:
-        return None
-    i, closer = min(starts, key=lambda item: item[0])
-    j = t.rfind(closer)
-    if j <= i:
-        return None
-    body = t[i:j + 1]
-    try:
-        obj = json.loads(body)
-    except (ValueError, TypeError):
-        # 严格解析失败才做 JSONC 容错（CMR F8）：模型照 prompt 模板回带 // 行注释或尾逗号时救回。
-        # 先严格、失败才清洗 —— 合法 JSON 不经清洗器。清洗器 quote-aware：串值里的 //、,}、://
-        # 一律不动（#6，旧裸正则会误伤 "x,}"→"x}"、"a//b"→截断）。
-        try:
-            obj = json.loads(_strip_jsonc(body))
-        except (ValueError, TypeError):
-            return None
-    return obj if isinstance(obj, accepted_types) else None
-
-
 def _fake_completion(text: str, model_id: str) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
     msg = ChatCompletionMessage(role="assistant", content=text)
@@ -1349,7 +1258,8 @@ class CliChat(OpenAIChat):
             # 已确证宿主 I/O／退出失败在 runner 接缝已翻 typed LLMUnavailable；
             # 未知代码异常原样上浮——不得套成 llm_cli_* 当「模型不可用」
             # （#1902 CLI-UNKNOWN-CODE-FAULTS；失败诚实宪法）。trace 仍记原文。
-            error = str(exc)
+            from ming_sim.llm_transport import _exception_text_with_causes
+            error = _exception_text_with_causes(exc)
             raise
         finally:
             dt = round(time.monotonic() - t0, 1)

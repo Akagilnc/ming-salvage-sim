@@ -129,8 +129,7 @@ def test_liao_levy_rise_approved_by_emperor_updates_settle_before_fiscal_tick(ga
 
 def test_liao_levy_rise_approved_lands_on_no_edict_advance_before_fiscal_tick(game, monkeypatch):
     """#1274：无旨完整结算 pre_settle 内历史饷率事件仍在 fiscal tick 前触发。"""
-    import ming_sim.month_chain as month_chain
-    from ming_sim.session import GameSession
+    from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
     db, state, content = game
     issues.bind_content(content)
@@ -142,15 +141,8 @@ def test_liao_levy_rise_approved_lands_on_no_edict_advance_before_fiscal_tick(ga
     target_liao = seed_liao * 4.0 / 3.0
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已准"))
 
-    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = sess.llm_config = sess.agno_db = None
-    sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = sess.last_report = ""
-    sess._decree_draft_fingerprint = ()
-    sess.auto_save = lambda *a, **k: None
+    canned_full_settlement(monkeypatch, narrative="")
+    sess = make_light_session(db, state, content)
     sess.advance_without_decree()
 
     row = db.conn.execute(
@@ -1211,19 +1203,23 @@ _CONTINUATION_SEGMENT = "world-continuation-segment"
 
 
 def _install_liao_month_stubs(monkeypatch, *, world_text: str, translate):
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     import ming_sim.month_chain as month_chain
-    import ming_sim.month_translate as month_translate
     from tests.test_month_chain_1843 import _forbid_extractor
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: world_text)
-    monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "本月已过。"))
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k:
+        json.dumps({"title": "邸报", "report": "本月已过。"})
+        if k["tag"] == "gazette" else _CONTINUATION_SEGMENT)
+    from tests.test_faction_brew_637 import _dual_brew_fn_factory
     monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text",
-        lambda *a, **k: _CONTINUATION_SEGMENT,
+        "ming_sim.mechanical_tail._brew_fn_for_session",
+        lambda _session: _dual_brew_fn_factory([]),
     )
-    monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
 
 
 def _liao_world_question() -> str:
@@ -1265,8 +1261,8 @@ def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(g
     before = _settle_payload(db, "shaanxi")["p"]
     seen = []
 
-    def translate(*_a, **kwargs):
-        segment = str(kwargs.get("segment") or "")
+    def translate(request, _config):
+        segment = request.segment
         seen.append(segment)
         if segment == _CONTINUATION_SEGMENT:
             return {"effects": [{
@@ -1436,9 +1432,7 @@ def test_rejected_levy_identity_does_not_write_a_terminal_from_a_sibling_envelop
 
 
 def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monkeypatch):
-    """留中走案头：不写终态，已呈原文与原批语进入后续世界材料。"""
-
-    from ming_sim import materials as materials_mod
+    """真实案头留中：原疏与原批语持久，不落终态、不改三饷，仍待亲裁。"""
     from ming_sim.models import LLMConfig
     from tests.month_chain_helpers import make_light_session
 
@@ -1478,13 +1472,10 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
     assert dict(led)["terminal_reason"] == ""
     assert _settle_payload(db, "shaanxi")["p"] == before["p"]
 
-    petitions = materials_mod._world_fiscal_levy_petitions(db, state)
-    item = next(entry for entry in petitions if entry["id"] == "liao_levy_rise_1631")
-    presented = item["presented"]
-    assert presented["held"] is True
-    assert "liao_levy_rise_1631" in {
-        ev.id for ev in issues.gather_fiscal_levy_petitions(state, db)
-    }
+    presented = next(item for item in db.list_event_petition_records()
+                     if item["event_id"] == "liao_levy_rise_1631")
+    assert presented["petition"]["context"] == "边饷急迫，请旨定夺。"
+    assert presented["note"] == "姑候户部再核"
 
 
 def _present_liao_petition(db, state):

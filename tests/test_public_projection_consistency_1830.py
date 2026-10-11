@@ -49,12 +49,6 @@ def _seed_public_world(db, state):
         turn=max(1, int(state.turn)), year=int(state.year) - 1,
         period=max(1, int(state.period) - 1), metrics=dict(state.metrics),
     )
-    # 邸报的公开层来源是已入档的公开说法载体（turn_report:<turn>:public），
-    # 与归档标题（turn_reports.title）各司其职——与 #1830 人物目录同一条真源。
-    db.record_public_knowledge_event(
-        past_state, "邸报", "邸报探针正文",
-        source_id=f"turn_report:{past_state.turn}:public",
-    )
     db.save_turn_report(past_state, "邸报探针正文", title="辽东告急")
     return saying_state, past_state
 

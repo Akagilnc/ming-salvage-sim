@@ -52,7 +52,7 @@ def _save_idle_threshold_via_settings_api(monkeypatch, tmp_path, seconds: float)
 
 @pytest.mark.parametrize("idle_seconds", [45.0, 120.0])
 def test_minister_chat_idle_death_time_follows_settings_threshold(
-    monkeypatch, tmp_path, game, idle_seconds,
+    monkeypatch, tmp_path, web_game, idle_seconds,
 ):
     """设置页写下的静默阈值就是召对判死的时点：改这一格，判死时点随之变。
 
@@ -80,9 +80,9 @@ def test_minister_chat_idle_death_time_follows_settings_threshold(
         return scripted_popen(cmd, **kwargs)
 
     monkeypatch.setattr(cb.subprocess, "Popen", _recording_popen)
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events

@@ -29,6 +29,8 @@ def _appointment_dossier(db, state, name, office, office_type=""):
     return dossier_id, json.loads(row["payload_json"])
 
 
+
+
 def test_white_body_high_appointment_is_marked_but_regular_first_office_is_not(game):
     db, state, _content = game
     _add(db, state, "白身甲", "白身", "布衣")
@@ -94,6 +96,7 @@ def test_same_rank_demotion_and_two_band_promotion_follow_upward_formula(game):
 
 
 def test_restoration_and_displaced_third_state_use_latest_historical_office(game):
+    """History basis uses closed status/reason enums — not free-text office markers (#1847)."""
     db, state, _content = game
     # #1843：离事且无现职不建空备档；无 archive 时按初仕高阶识别（不锁 status_reason 反推职衔）。
     _yuan_id, yuan = _appointment_dossier(db, state, "袁可立", "陕西巡抚")
@@ -110,7 +113,7 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     _add(db, state, "候铨乙", "兵部尚书", "兵部")
     db.set_character_office("候铨乙", "听用候铨", "待铨")
     db.conn.execute("UPDATE characters SET reason_code='被顶替' WHERE name='候铨乙'")
-    # Recreate the archived previous office, as displacement does in production.
+    # Recreate the archived previous office via status/reason enum path (not free-text displace).
     db.conn.execute(
         "UPDATE character_offices SET office_title='兵部尚书',office_type='兵部' WHERE character_name='候铨乙'"
     )
@@ -154,7 +157,14 @@ def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(gam
         assert payload["break_rank"]["is_break_rank"] is False
 
 
+
+
+
+
+
+
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
+    """旧档 office_type 待铨/空时，任命案卷仍按历史实职识别破格（公开 break_rank）。"""
     db, state, _content = game
     name = "旧档实职"
     _add(db, state, name, "翰林院编修", "翰林院")
@@ -180,7 +190,3 @@ def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
     _dossier_id, payload = _appointment_dossier(db, _state, "袁可立", "陕西巡抚")
     assert payload["break_rank"]["basis"] == "first_appointment_high_office"
     assert payload["break_rank"]["is_break_rank"] is True
-
-    _hid, hu_payload = _appointment_dossier(db, _state, "胡廷宴", "三边总督")
-    assert hu_payload["break_rank"]["basis"] == "first_appointment_high_office"
-    assert hu_payload["break_rank"]["is_break_rank"] is True

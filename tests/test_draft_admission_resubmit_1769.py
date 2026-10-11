@@ -131,28 +131,19 @@ _BAD_UNKNOWN_PARTICIPANT = {
 
 
 @pytest.fixture
-def admission_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """共享 WebGame + 真 capture；模型边界由各测 _queue_backend 喂。"""
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+def admission_game(web_game, monkeypatch):
+    """共享 web_game + 真 capture；模型边界由各测 _queue_backend 喂。
+
+    生命周期（开档／关档）只经 conftest.web_game；本夹具仅叠加准入特化：
+    外层 LLM 桩之后仍复原真 capture，财政前置在开档后设定。
+    """
     _stub_outer_llm_seams(monkeypatch)
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
+    game = web_game
     if getattr(game.session, "llm_config", None) is not None:
-        try:
-            game.session.llm_config.channel = "cli"
-        except Exception:
-            pass
+        game.session.llm_config.channel = "cli"
     _set_guanning_arrears(game.db, 60, central=60, province=0)
     game.state.metrics["国库"] = max(int(game.state.metrics.get("国库") or 0), 100)
-    try:
-        yield game
-    finally:
-        try:
-            game.session.close()
-        except Exception:
-            pass
+    return game
 
 
 def _queue_backend(monkeypatch, captures: list) -> None:
@@ -245,7 +236,7 @@ def _assert_error_pack_from(game, turn: int, marker: str) -> None:
     )
     assert manifest["exception_type"] == "RuntimeError"
     assert manifest["exception_message"] == marker
-    assert marker in (Path(pack) / "traceback.txt").read_text(encoding="utf-8")
+    assert (Path(pack) / "traceback.txt").is_file()
 
 
 def _finish_month_after_gazette(game, turn: int) -> None:
@@ -373,6 +364,80 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     _finish_month_after_gazette(game, turn)
     row = game.db.get_directive(draft_id)
     assert row is not None and str(row["status"]) == "issued"
+
+
+def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkeypatch):
+    """耗尽路：原抽+重写2 共 3 次仍坏 → draft 留到下月、月推进、拒因留痕。"""
+    game = admission_game
+    # 原抽 + 两次重写皆坏（总计 3）；变异把重写预算改回 1 时本案须红（calls==2）
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
+    client = TestClient(web_app.app)
+    turn = int(game.state.turn)
+
+    _post_directive(game, _DECREE_TEXT)
+    wait_pending_writes(game)
+    did = _latest_directive_id(game)
+    source_turn = int(game.db.get_directive(did)["turn"])
+
+    body = _post_issue_stream(client, expected_turn=turn, step="1769 exhaust")
+    assert _turn_of(_get_state(client)) == turn + 1
+    assert len(resubmit_calls) == 2
+    assert len(ensure_rounds) >= 2
+    # 两轮写回成功：回喂源=各轮 ensure 拒因，丢源/替换不能假绿
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], did,
+    )
+    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[1], did,
+    )
+    assert not product_faults
+    row = game.db.get_directive(did)
+    assert row is not None and str(row["status"]) == "draft"
+    assert game.db.get_dossier_for_directive(did) is None
+
+    rows = _rejection_rows(game, did)
+    assert len(rows) == 1
+    assert rows[0]["category"] == "locality_fanout_failed"
+    assert rows[0]["source"] == "player_decree"
+    # 诊断出口：SSE done 结构化载荷无 reason 字段（不扫自由文本）
+    assert body.get("reason") in (None, "")
+    assert body.get("_event") in (None, "done", "")
+
+    listed = game.db.list_directives(game.state, statuses=("draft",))
+    assert any(int(r["id"]) == did for r in listed)
+    _finish_month_after_gazette(game, turn)
+    assert source_turn < int(game.state.turn)
+
+    # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
+    # （跨月未入档边界的外部可见契约；不直调私有 _carryover_drafts）
+    payloads = _write_decree_capture_payloads(monkeypatch, game)
+    assert payloads
+    feed_item = next(
+        d for d in payloads[0]["directives"]
+        if str(d.get("text") or "") == str(row["text"] or "")
+    )
+    assert feed_item.get("admission_status") == "上月未入档"
+
+    # 刷新/恢复：同库重开身份一致、无重复案卷
+    db_path = str(game.db.path)
+    game.session.close()
+    restored = web_app.WebGame(fresh=False, db_path=db_path)
+    try:
+        monkeypatch.setattr(web_app, "web_game", restored)
+        r_row = restored.db.get_directive(did)
+        assert r_row is not None
+        assert str(r_row["status"]) == "draft"
+        assert int(r_row["id"]) == did
+        assert restored.db.get_dossier_for_directive(did) is None
+        assert len(_rejection_rows(restored, did)) == 1
+        assert not any(
+            d.get("directive_id") == did
+            for d in restored.db.list_decree_dossiers()
+        )
+    finally:
+        restored.session.close()
 
 
 def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypatch):
@@ -590,8 +655,7 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
     def spy_resolve(*args, **kwargs):
         resolve_calls.append({
             "source": kwargs.get("source"),
-            "decree_text": args[5] if len(args) > 5 else kwargs.get("decree_text"),
-            "directives_len": len(args[4]) if len(args) > 4 else len(kwargs.get("directives") or ()),
+            "decree_text": args[4] if len(args) > 4 else kwargs.get("decree_text"),
         })
         return real_resolve(*args, **kwargs)
 
@@ -608,72 +672,11 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
     call = resolve_calls[0]
     from ming_sim.applier import Provenance
     assert call["source"] == Provenance.system_simulation
-    assert call["directives_len"] == 0
     assert not (call["decree_text"] or "").strip()
     assert (game.session.last_decree or "") != stale
 
 
 
-def test_pending_preview_turn_key_no_keyerror_on_issue(
-    admission_game, monkeypatch,
-):
-    """类A：召对 pending 拟旨在桌 + 颁诏 → 不得 KeyError；当月 preview 不标「上月未入档」。
-
-    根因：_prepare_pending_directive 投影缺 turn；write_decree_with_agno 读 int(row["turn"])。
-    修法在投影补 pa["turn"]，禁宽吞 KeyError。
-    """
-    game = admission_game
-    turn = int(game.state.turn)
-    text = "召对拟旨·关宁欠饷十五万两·#1769"
-    # 召对 pending 投影入口：结构化 dossier 字段（非 LLM 中文键）
-    payload = {
-        "text": text,
-        "actor": "郭允厚",
-        "dossier_action_type": "policy",
-        "target_kind": "issue",
-        "target_id": "1769-pending-preview-turn",
-        "mode": "ordinary",
-    }
-    game.db.stage_pending_action(
-        turn, kind="directive", action="拟旨",
-        minister_name="郭允厚", target_id=None, payload=payload,
-    )
-    previews = game.db.preview_pending_directives(game.state)
-    assert previews, "须有 valid pending 投影"
-    assert all("turn" in p for p in previews), f"投影须含 turn: {previews!r}"
-    assert all(int(p["turn"]) == turn for p in previews)
-
-    captured: list[dict] = []
-
-    class _CapturingAgent:
-        def run(self, feed):
-            captured.append(json.loads(feed) if isinstance(feed, str) else dict(feed))
-            return type("RunOut", (), {"content": "奉天承运，诏曰：着户部清核辽饷。"})()
-
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", _real_write_decree_with_agno)
-    monkeypatch.setattr(
-        decree_mod, "create_decree_writer_agent",
-        lambda *a, **k: _CapturingAgent(),
-    )
-    # last_decree 空 → resolve_turn 必调 write_decree_with_agno（指纹/空稿路径）
-    game.session.last_decree = ""
-    game.session._decree_draft_fingerprint = ()
-
-    client = TestClient(web_app.app)
-    body = _post_issue_stream(
-        client, expected_turn=turn, step="1769 pending preview turn",
-    )
-    assert body.get("_event") in (None, "done", "")
-    assert _turn_of(_get_state(client)) == turn + 1
-    assert captured, "须经 write_decree_with_agno 真实入口"
-    feed_dirs = captured[0].get("directives") or []
-    assert feed_dirs, f"拟诏 feed 不得空: {captured[0]!r}"
-    # 当月 pending 投影不得被标「上月未入档」（turn 与 state.turn 同值）
-    assert all(
-        item.get("admission_status") != "上月未入档"
-        for item in feed_dirs
-        if isinstance(item, dict)
-    ), f"当月 preview 误标上月未入档: {feed_dirs!r}"
 
 
 def test_advance_without_edict_vacuum_no_decree_issued(

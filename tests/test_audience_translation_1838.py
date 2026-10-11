@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-from ming_sim.session_write_queue import get_session_write_queue
 
 from types import SimpleNamespace
 
@@ -27,8 +26,6 @@ from ming_sim.audience_translation import apply_audience_round_translation
 from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relations import summon_edge_origin
-from ming_sim.session import GameSession
-from tests.conftest import note_queue_until_game_teardown, persist_and_schedule_scene
 
 
 def _night_protagonist(db, night_id: int) -> str:
@@ -185,129 +182,14 @@ def _scene_session(db, state, content, monkeypatch):
 
     stub_scene_agent(monkeypatch, FakeAgent())
     stub_audience_translate(monkeypatch)
-    monkeypatch.setattr(
-        "ming_sim.llm_model.extract_agent_text",
-        lambda out: str(getattr(out, "content", "") or ""),
-    )
-    monkeypatch.setattr("ming_sim.session._dump_llm_messages", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "ming_sim.session.prepare_scene_materials",
-        lambda *a, **k: SimpleNamespace(opening="开场", root=None),
-    )
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
+    from tests.month_chain_helpers import make_light_session
+    sess = make_light_session(db, state, content)
     sess.llm_config = SimpleNamespace(channel="")
     sess.temporary_characters = {}
-    sess.agno_db = None
-    sess._write_gate = get_session_write_queue(sess).write_gate
-    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
-    note_queue_until_game_teardown(db, get_session_write_queue(sess))
     return sess
 
 
-def _drain_scene_owner(sess, db, *, timeout_s: float = 5.0) -> None:
-    """persist+schedule 后经会话唯一写队列排空。"""
-    del db, timeout_s
-    sess._write_queue.barrier(lambda: None)
-
-
-def _active_chat_turn(db, state, night_id: int) -> int:
-    """建可撤回的存活轮（status=active；挂夜默认 generating 不可 undo）。"""
-    return int(db.create_chat_turn(
-        state, "殿上", "s", 0, night_id=int(night_id), status="active",
-    ))
-
-
-def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
-    """AC3：御前主角随转译声明变化；宣 X 经 scene_chat 真入口当场先切并绑源轮。"""
-    db, state, content = game
-    _activate(db, state, "王绍徽", "王承恩")
-    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    assert _night_protagonist(db, nid) == ""
-
-    sess = _scene_session(db, state, content, monkeypatch)
-    t1 = _active_chat_turn(db, state, nid)
-    # 真入口：scene_chat("宣王绍徽", chat_turn_id=t1) 当场先切并绑源轮
-    cuts = []
-    r_xuan = sess.scene_chat(
-        "宣王绍徽", chat_turn_id=t1,
-        on_protagonist_changed=lambda: cuts.append(_night_protagonist(db, nid)),
-    )
-    persist_and_schedule_scene(sess, db, r_xuan)
-    _drain_scene_owner(sess, db)
-    assert _night_protagonist(db, nid) == "王绍徽"
-    assert cuts == ["王绍徽"]
-    assert db.conn.execute(
-        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
-    ).fetchone()["protagonist_name"] == "王绍徽"
-
-    # 王承恩独自回奏一轮 → 转译声明主角是他
-    ctid = _active_chat_turn(db, state, nid)
-    result = apply_audience_round_translation(
-        db, state,
-        {"protagonist": {"person_name": "王承恩"}},
-        night_id=nid, chat_turn_id=ctid,
-    )
-    assert result.protagonist.validated == {"person_name": "王承恩"}
-    assert _night_protagonist(db, nid) == "王承恩"
-    assert db.conn.execute(
-        "SELECT protagonist_name FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()["protagonist_name"] == "王承恩"
-
-
-def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
-    """御前主角夜当前值：宣 X → 转译覆盖 → undo 真入口按存活最近轮重投影。"""
-    db, state, content = game
-    _activate(db, state, "王绍徽", "王承恩")
-    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    sess = _scene_session(db, state, content, monkeypatch)
-
-    t1 = _active_chat_turn(db, state, nid)
-    r_xuan = sess.scene_chat("宣王绍徽", chat_turn_id=t1)
-    persist_and_schedule_scene(sess, db, r_xuan)
-    _drain_scene_owner(sess, db)
-    assert _night_protagonist(db, nid) == "王绍徽"
-    assert db.conn.execute(
-        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
-    ).fetchone()["protagonist_name"] == "王绍徽"
-
-    t2 = _active_chat_turn(db, state, nid)
-    apply_audience_round_translation(
-        db, state,
-        {"protagonist": {"person_name": "王承恩"}},
-        night_id=nid, chat_turn_id=t2,
-    )
-    assert _night_protagonist(db, nid) == "王承恩"
-
-    # 全局最后存活轮先撤 t2 → 夜主角回到 t1 的王绍徽
-    db.undo_chat_turn(t2)
-    assert _night_protagonist(db, nid) == "王绍徽"
-
-    # 再撤 t1 → 无存活声明，夜主角回初态空值
-    db.undo_chat_turn(t1)
-    assert _night_protagonist(db, nid) == ""
-
-
-def test_retry_older_round_keeps_newer_protagonist(game):
-    db, state, _ = game
-    _activate(db, state, "王绍徽", "王承恩")
-    nid = int(open_night(db, state, location="乾清宫", time_of_day="戌时")["id"])
-    older = _active_chat_turn(db, state, nid)
-    newer = _active_chat_turn(db, state, nid)
-    apply_audience_round_translation(
-        db, state, {"protagonist": {"person_name": "王承恩"}},
-        night_id=nid, chat_turn_id=newer,
-    )
-    apply_audience_round_translation(
-        db, state, {"protagonist": {"person_name": "王绍徽"}},
-        night_id=nid, chat_turn_id=older,
-    )
-    assert _night_protagonist(db, nid) == "王承恩"
+from tests.test_audience_translate_1837 import _active_chat_turn
 
 
 def test_edge_event_and_public_saying_attach_affair(game):

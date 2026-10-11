@@ -21,6 +21,7 @@ from ming_sim.constants import (
     BUILDING_TEXT_FIELDS,
     ECONOMY_ACCOUNTS,
     FISCAL_SCORE_FIELDS,
+    GATE_METRIC_KEYS,
     POWER_FIELD_ALIASES,
     REGION_FIELD_ALIASES,
     REGION_QUANTITY_FIELDS,
@@ -253,7 +254,7 @@ def _legacy_effect_has_work(raw: object) -> bool:
     modifiers = raw.get("modifiers")
     if not isinstance(modifiers, dict):
         return False
-    for key in ("国库", "内库", "民心", "皇威"):
+    for key in GATE_METRIC_KEYS:  # #14 same source as db.legacy_modifiers
         if _nonzero_int(modifiers.get(key)):
             return True
     if _entity_delta_has_work(
@@ -736,5 +737,5 @@ def reign_period_label(year: int, month: int) -> str:
 
 
 def monthly_amount(amount: int) -> int:
-    # 全盘已按月度：base/maint/tax 都是月值，不再除 3。保留函数仅为兼容旧调用点（恒等）。
+    # 全盘已按月度：base/maint/tax 都是月值；本函数只做非负整钳，供盘面展示读端共用。
     return max(0, int(amount))

@@ -578,7 +578,7 @@ def load_powers() -> Dict[str, Power]:
             supply=int_field(entry, "supply", "powers.json::powers[item].supply"),
             agenda=str_field(entry, "agenda", "powers.json::powers[item].agenda"),
             status=str_field(entry, "status", "powers.json::powers[item].status"),
-            last_action=str(entry.get("last_action") or "尚无新动").strip() or "尚无新动",
+            last_action=str(entry.get("last_action") or "尚无新动"),
             aliases="，".join(string_list(entry.get("aliases", []), "powers.json::powers[item].aliases")),
         )
     return powers
@@ -698,6 +698,7 @@ class GameContent:
     decree_writer_prompt: str = ""
     gazette_author_prompt: str = ""
     ending_summary_prompt: str = ""
+    rescript_draft_prompt: str = ""
     relation_brew_prompt: str = ""
     faction_brew_prompt: str = ""
 
@@ -735,6 +736,7 @@ class GameContent:
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             gazette_author_prompt=load_text_asset("prompts/gazette_author.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
+            rescript_draft_prompt=load_text_asset("prompts/rescript_draft.md"),
             relation_brew_prompt=load_text_asset("prompts/relation_brew.md"),
             faction_brew_prompt=load_text_asset("prompts/faction_brew.md"),
         )

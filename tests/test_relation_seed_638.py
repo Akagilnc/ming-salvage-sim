@@ -248,6 +248,8 @@ def test_invalid_bundled_seed_rolls_back_new_save_and_can_retry(tmp_path, monkey
         sess.close()
 
 
+
+
 def test_seed_failure_rolls_back_new_save_and_retry_imports(tmp_path, monkeypatch):
     """seed 初始化失败不得烧掉 fresh 判据；修复故障后同 DB 可正常重开。"""
     import ming_sim.cli_backend as cli_backend

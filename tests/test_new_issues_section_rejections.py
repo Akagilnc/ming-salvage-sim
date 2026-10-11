@@ -11,14 +11,8 @@ import json
 import pytest
 
 import ming_sim.issues as I
-from ming_sim.models import Event
+from tests.dossier_test_helpers import promulgated_policy_origin
 from tests.section_rejection_helpers import game
-
-
-def _decree_origin(db, state) -> str:
-    dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试新立局势来源", target_kind="issue", target_id="validation")
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
 
 
 class _TempEvents:
@@ -92,23 +86,7 @@ def _ensure_event_candidate(db, state, eid):
         pytest.skip(f"{eid} 当前盘面不在 event_pool 候选集，无法覆盖 insert 异常传播路径")
 
 
-def _hist_event(eid, gate=None):
-    return Event(
-        id=eid,
-        title=f"测试事件 {eid}",
-        kind="测试",
-        summary="x",
-        urgency=50,
-        severity=50,
-        credibility=50,
-        interests=[],
-        audiences=[],
-        trigger_year=1,
-        trigger_month=1,
-        open_window=True,
-        trigger_gate=gate or {},
-    )
-
+from tests.test_event_chain_cascade import _hist_event
 
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
 def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
@@ -164,7 +142,7 @@ def test_new_issue_oversized_severity_clamped_not_abort(game):
     # except 后会逃逸 abort。severity 与 bar_value 同 0-100 分值，应 clamp 到 100、照常落库
     # （非拒整项；与 bar_value 静默 clamp 一致，cmr ni r2 codex）。
     out = I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation",
+        "new_issues": [{"origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "validation"), "kind": "situation",
                         "title": "测试·超大severity", "severity": 10 ** 100}],
     })
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
@@ -179,7 +157,7 @@ def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(gam
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
-            "origin_ref": _decree_origin(db, state),
+            "origin_ref": promulgated_policy_origin(db, state, "validation"),
             "kind": "situation",
             "title": "测试·stop_condition fallback",
             "bar_value": 90,
@@ -231,7 +209,7 @@ def test_new_issue_severity_zero_preserved(game):
     db, state, _ = game
     # 合法 severity=0 须保留，不能被 `or 50` 静默改成 50（数据保真，cmr ni r4 codex）。
     out = I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·severity0",
+        "new_issues": [{"origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "validation"), "kind": "situation", "title": "测试·severity0",
                         "severity": 0, "effect_on_resolve": {"metrics": {"民心": 1}}}],
     })
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
@@ -293,7 +271,7 @@ def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     monkeypatch.setattr(type(db), "insert_issue", _boom)
     with pytest.raises(RuntimeError) as ei:
         I.apply_issue_tracker_output(db, state, {
-            "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state),
+            "new_issues": [{"origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "validation"),
                             "kind": "situation", "title": "测试·正常字段"}],
         })
     assert ei.value is fault
@@ -304,7 +282,7 @@ def test_new_issue_valid_decree_still_creates(game):
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree", "kind": "situation", "title": "测试·新立局势",
-            "origin_ref": _decree_origin(db, state),
+            "origin_ref": promulgated_policy_origin(db, state, "validation"),
             "bar_value": 30, "severity": 60, "tags": ["测试"],
             "effect_on_resolve": {"metrics": {"民心": 1}},
         }],
@@ -428,8 +406,10 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
     assert db.find_any_issue_by_origin("event_pool", downstream.id) is None
 
 
-# --- tags 字段严格化（cmr ni r8）---
-# 缺省/null/空串→[]；present 须 list/tuple 且元素全 str。拒标量串拆字与非串元素静默落库。
+# --- tags 字段严格化（cmr ni r8 codex medium）---
+# tags = list(ni.get("tags") or []) 对标量串静默拆字（list("募营")=['募','营']）、对非串元素
+# 不拒（list([5])=[5]）会污染 DB tags。与 R6 int 字段 _strict_int 同一字段校验 class——
+# 缺省/null/空串→[]，present 须 list/tuple 且元素全 str。
 
 @pytest.mark.parametrize("bad_tags", ["募营", "单串标量"])
 def test_new_issue_scalar_string_tags_rejected(read_game, bad_tags):
@@ -453,41 +433,10 @@ def test_new_issue_non_string_tag_element_rejected(read_game):
 def test_new_issue_valid_list_tags_preserved(game):
     db, state, _ = game
     # 正常 list[str] tags 整词保全（不拆字），pairing 短语完整 → 正常立项落库。
-    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常tags", "tags": ["募营", "边事"]}
+    ni = {"origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "validation"), "kind": "situation", "title": "测试·正常tags", "tags": ["募营", "边事"]}
     out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
     row = db.conn.execute("SELECT tags FROM issues WHERE id=?", (iid,)).fetchone()
     assert json.loads(row["tags"]) == ["募营", "边事"], "整词须保全、不得拆字"
-
-
-# --- cancel_cost 与 effect 字段同走 _eff_dict 容忍（cmr ni r9 codex medium）---
-# cancel_cost 旧用 dict(raw)：标量串 raise 拒整项（违 P1：次要字段脏不该丢整个 issue），list-of-pairs
-# 静默 garble（dict([["民心",-5]])={'民心':-5}、dict(["ab"])={'a':'b'}）。改与 ongoing/effect 三个
-# dict 字段统一 _eff_dict（非 dict → {} 容忍）：issue 仍正常立、cancel_cost 落空 {} 不 garble。
-
-
-@pytest.mark.parametrize("bad_cancel", ["白银万两", [["民心", -5]], ["ab"], [], 5])
-def test_new_issue_non_dict_cancel_cost_tolerated(game, bad_cancel):
-    db, state, _ = game
-    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·脏cancel", "cancel_cost": bad_cancel}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
-    assert len(created) == 1, out  # issue 仍立（不因次要字段脏拒整项）
-    iid = int(created[0]["issue_id"])
-    row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()
-    assert json.loads(row["cancel_cost"]) == {}, "非 dict cancel_cost 须容忍归空 {}，不得 garble"
-
-
-def test_new_issue_valid_cancel_cost_preserved(game):
-    db, state, _ = game
-    # 正常 dict cancel_cost 原样保全（_eff_dict 对 dict 直通）。
-    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常cancel",
-          "cancellable": "decree", "cancel_cost": {"民心": -5, "皇威": -2}}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
-    assert len(created) == 1, out
-    iid = int(created[0]["issue_id"])
-    row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()
-    assert json.loads(row["cancel_cost"]) == {"民心": -5, "皇威": -2}

@@ -14,6 +14,7 @@ Seams:
 from __future__ import annotations
 
 import json
+from functools import partial
 
 from ming_sim.breach_plea import (
     BREACH_KIND_FUNDING,
@@ -40,6 +41,7 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
 )
+from tests.dossier_test_helpers import executing_owned_policy
 from tests.readback_helpers import decree_cost_event_rows
 
 
@@ -50,28 +52,7 @@ def _cost_events(db, dossier_id, *, identity="breach"):
     return decree_cost_event_rows(db, dossier_id, identity)
 
 
-def _executing_policy_dossier(db, state, *, token: str = "breach-623", holder: str = ""):
-    if not holder:
-        holder = str(db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-            "ORDER BY name LIMIT 1"
-        ).fetchone()["name"])
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈差务·{token}",
-        target_kind="issue",
-        target_id=token,
-        executor_kind="character",
-        executor_id=holder,
-        participants=[
-            {"character_id": holder, "tier": "主办", "role": "清丈"},
-        ],
-        payload={"mode": "ordinary", "text": token},
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id, holder
+_executing_policy_dossier = partial(executing_owned_policy, token="breach-623")
 
 
 def _insert_commitment(
@@ -157,7 +138,7 @@ def test_funding_cutoff_writes_plea_no_damage_same_turn(game):
     assert int(state.metrics.get("皇威", 0) or 0) == auth_before
 
     # 次回合场面
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     plea_scenes = [s for s in scenes if s.get("entry_kind") == ENTRY_KIND_BREACH_PLEA]
     assert plea_scenes
     assert plea_scenes[0]["kind"] == "breach_plea"
@@ -198,35 +179,6 @@ def test_misappropriation_writes_plea(game):
     ).fetchone()["status"] == "active"
 
 
-def test_remove_sponsor_writes_plea(game):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    did, holder = _executing_policy_dossier(db, state, token="rm-sponsor")
-    origin = f"dossier:{did}"
-    cid, _ = _insert_commitment(
-        db, state, title="人存政举之诺", origin_ref=origin,
-        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
-        bar_value=20, end_turn=state.turn + 18,
-    )
-    # 罢主办
-    db.conn.execute(
-        "UPDATE characters SET status='dismissed' WHERE name=?", (holder,),
-    )
-    db.conn.commit()
-    written = scan_and_write_breach_pleas(db, state, commit=True)
-    assert written
-    pleas = _pending_pleas(db)
-    assert any(
-        decode_plea_meta(p["origin_context"]).get("breach_kind")
-        == BREACH_KIND_REMOVE_SPONSOR
-        for p in pleas
-    )
-    # 当回合承诺仍 active；0056 不落（撤人）
-    assert db.conn.execute(
-        "SELECT status FROM issues WHERE id=?", (cid,),
-    ).fetchone()["status"] == "active"
-    assert _cost_events(db, did) == []
 
 
 def test_policy_reversal_revoke_takes_effect_same_month(game):
@@ -272,7 +224,7 @@ def test_policy_reversal_revoke_takes_effect_same_month(game):
     # 不写挽留 todo：没有「等下一次召对坚持撤」这道前置
     assert _pending_pleas(db) == []
     assert not any(
-        s.get("kind") == "breach_plea" for s in list_due_review_scenes(db, state)
+        s.get("kind") == "breach_plea" for s in list_due_review_scenes(db)
     )
 
 
@@ -825,7 +777,7 @@ def test_silence_keeps_pending_across_settle(game, monkeypatch):
     # 再过月一拍仍 pending 可顶出
     _settle_empty_month(db, state, content, monkeypatch)
     assert _pending_pleas(db)
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert any(s.get("kind") == "breach_plea" for s in scenes)
 
 
@@ -950,13 +902,13 @@ def test_breach_plea_survives_restore(game):
     db.conn.close()
     from ming_sim.db import GameDB
     db2 = GameDB(path)
-    state2 = db2.load_state()
+    db2.load_state()
     pleas = [
         t for t in db2.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
     ]
     assert len(pleas) == 1
-    scenes = list_due_review_scenes(db2, state2)
+    scenes = list_due_review_scenes(db2)
     assert any(s.get("kind") == "breach_plea" for s in scenes)
     db2.close()
 

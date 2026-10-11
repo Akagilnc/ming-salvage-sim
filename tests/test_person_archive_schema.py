@@ -57,6 +57,8 @@ def test_add_character_persists_transit_to(game):
     ).fetchone()
     assert dict(row) == {"location": "beizhili", "transit_to": "liaodong"}
 
+
+
 def test_north_star_named_figures_are_seeded_with_identity_metadata():
     """ADR 0009 can reject no named target used by north-star scenes/prompts."""
     _factions, characters = load_character_content()

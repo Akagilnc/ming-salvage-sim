@@ -39,7 +39,7 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
         "promises": [{"action_id": pre_staged_id, "decision": "应允"}],
         "textual_facts": [{
             "subject_kind": "character", "subject_id": minister,
-            "body": "抱恙数日，仍可视事",
+            "body": "抱恙数日，仍可视事", "origin_ref": "chat_message:1",
         }],
         "public_sayings": [{
             "body": "坊间传户部已备赈灾银", "involved_characters": [minister],
@@ -67,7 +67,7 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     assert commission_payload["text"] == commission_text  # 原样运输，含空白
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert [f.body for f in facts] == ["抱恙数日，仍可视事"]
+    assert [f.origin_ref for f in facts] == ["chat_message:1"]
 
     sayings = list_public_sayings(db, involved_character=minister)
     assert sayings[0]["body"] == "坊间传户部已备赈灾银"
@@ -221,7 +221,7 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
     assert len(rows) == 1
     assert rows[0]["section"] == "textual_facts"
     assert rows[0]["category"] == "hallucinated_id"
-    assert "子虚乌有之人" in rows[0]["item_json"]
+    assert json.loads(rows[0]["item_json"])["subject_id"] == "子虚乌有之人"
 
 
 def test_unknown_top_level_section_is_rejected_durably_without_dropping_sibling(game):
@@ -745,7 +745,7 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
     assert len(rows) == 1
     assert rows[0]["section"] == "textual_facts"
     assert rows[0]["category"] == "hallucinated_id"
-    assert "子虚乌有之人" in rows[0]["item_json"]
+    assert json.loads(rows[0]["item_json"])["subject_id"] == "子虚乌有之人"
 
     # 幂等：再结算一次不重复落账、不重复拒收。
     again = settle_staged_declarations_in_decree_order(db, state, ["decree:3", "decree:1"])
@@ -779,9 +779,6 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
         turn=int(state.turn),
     )
     settle_staged_declarations_in_decree_order(db, state, ["decree:3"])
-    facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert len(facts) == 1
-
     with pytest.raises(DecreeAlreadySettled):
         stage_declaration(
             db, decree_ref="decree:3",

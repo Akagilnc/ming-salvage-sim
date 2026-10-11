@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from pathlib import Path
@@ -18,10 +17,9 @@ import web_app
 from ming_sim.session import GameSession
 from tests.test_month_loop_tracer_1468 import (
     _assert_not_bare_500,
-    _pick_active_minister,
-    tracer_client,  # noqa: F401 pytest fixture import
+    tracer_client,
 )
-from tests.sse_helpers import parse_sse_events as _parse_sse
+from tests.sse_helpers import parse_sse_event_pairs as _parse_sse
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
@@ -153,7 +151,7 @@ def _empty_translate_fn(prompt, cfg):
     }
 
 
-def _install_canned_scene_double(game, monkeypatch) -> None:
+def _install_canned_scene_double(monkeypatch) -> None:
     """#1842：殿上 stream 走 scene_chat；经 create_scene_agent / translate runner 缝注入。"""
     stub_scene_agent(monkeypatch, _canned_scene_agent())
     stub_audience_translate(monkeypatch, _empty_translate_fn)
@@ -190,9 +188,7 @@ def _player_write_via_chat(client: TestClient, label: str) -> dict:
     玩家写入抛 409，两条恢复可写测试照样 2 passed（PLAYER_WRITE_GATE_CALLS 0）。
     此处走真实 SSE 入口，故玩家写路径真被堵时该用例必红。
     """
-    st = client.get("/api/game/state")
-    minister = _pick_active_minister(st.json())
-    return _chat_stream(client, minister, f"边饷如何？{label}")
+    return _chat_stream(client, f"边饷如何？{label}")
 
 
 def _assert_player_write_accepted(chat: dict) -> None:
@@ -202,7 +198,7 @@ def _assert_player_write_accepted(chat: dict) -> None:
     assert int(chat["minister_message_id"]) >= 1
 
 
-def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
+def _chat_stream(client: TestClient, msg: str) -> dict:
     """真实 chat/stream：须 SSE accepted + done；done 带 typed minister_message_id。
 
     生成 answer 正文只观察（带回），不作非空/相等契约。
@@ -213,14 +209,13 @@ def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
     _assert_not_bare_500(r, step="chat/stream")
     assert r.status_code == 200, r.text
     events = _parse_sse(r.text)
-    assert not any(e.get("event") == "error" for e in events), r.text
-    acc = next(e for e in events if e.get("event") == "accepted")
-    acc_data = json.loads(acc["data"])
+    assert not any(name == "error" for name, _ in events), r.text
+    acc_data = next(data for name, data in events if name == "accepted")
+    assert isinstance(acc_data, dict), acc_data
     assert acc_data.get("campaign_id") and int(acc_data.get("night_id") or 0) >= 1
     assert int(acc_data.get("chat_turn_id") or 0) >= 1
-    done = next((e for e in events if e.get("event") == "done"), None)
-    assert done is not None, f"chat/stream missing done; events={events!r}"
-    done_data = json.loads(done["data"]) if isinstance(done.get("data"), str) else done.get("data")
+    done_data = next((data for name, data in events if name == "done"), None)
+    assert done_data is not None, f"chat/stream missing done; events={events!r}"
     assert isinstance(done_data, dict), done_data
     mid = int(done_data.get("minister_message_id") or 0)
     assert mid >= 1, f"done missing minister_message_id: {done_data!r}"
@@ -255,13 +250,11 @@ def _write_and_verify_live(
     client: TestClient, game, monkeypatch, *, label: str,
 ) -> dict:
     """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/回话终态。"""
-    _install_canned_scene_double(game, monkeypatch)
+    _install_canned_scene_double(monkeypatch)
     d_text = f"着户部清核辽饷（{label}）。"
     _directive(d_text)
     _wait_pending_writes(game)
-    st = client.get("/api/game/state")
-    minister = _pick_active_minister(st.json())
-    chat = _chat_stream(client, minister, f"边饷如何？{label}")
+    chat = _chat_stream(client, f"边饷如何？{label}")
     camp = _campaign(game)
     assert chat["campaign_id"] == camp
     _wait_pending_writes(game)
@@ -397,8 +390,8 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     _assert_not_bare_500(cont, step="continue")
     assert cont.status_code == 200
     events = _parse_sse(cont.text)
-    terminal = events[-1] if events else {}
-    assert terminal.get("event") == "done", cont.text
+    terminal_name = events[-1][0] if events else ""
+    assert terminal_name == "done", cont.text
     g3 = web_app.web_game
     assert g3 is not None and g3 is not g2
     assert _campaign(g3) == c2
@@ -451,7 +444,7 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
     assert seed.status_code == 200
     g0 = web_app.web_game
     assert g0 is not None
-    _install_canned_scene_double(g0, monkeypatch)
+    _install_canned_scene_double(monkeypatch)
     p0 = g0.db_path
     c0 = _campaign(g0)
     _player_write_via_chat(client, "pre-fail")
@@ -524,7 +517,7 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
     assert seed.status_code == 200
     g0 = web_app.web_game
     assert g0 is not None
-    _install_canned_scene_double(g0, monkeypatch)
+    _install_canned_scene_double(monkeypatch)
     old_path = g0.db_path
     c0 = _campaign(g0)
     g0.save_to("snap1749")
@@ -597,7 +590,7 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
         assert all(
             _db_snapshot(str(p))["campaign_id"] != c0
             for p in _drained(Path(web_app.user_data_path()))
-        ) or _drained(Path(web_app.user_data_path())) == []
+        )
         assert marker in _db_snapshot(old_path)["directive_texts"]
         # 新局可写且 campaign 不同于失败旧局
         assert _campaign(g1) != c0

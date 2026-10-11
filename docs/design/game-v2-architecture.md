@@ -281,7 +281,7 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 2026-09-09，wayfinder 决策票 [过月怎样接续多件事务并补完单件模型调用失败](https://github.com/Akagilnc/ming-salvage-sim/issues/1822) 两轮 grill 加时间问题与转译追问，owner 答复原文：第一轮「a 但是2-4分钟有点太慢了 / a / a / a」；runner 摆出缩短手段与 Q6 / Q7 后，owner 追问「我没懂你的这个 转译 是干嘛的。怎么还要持久化了？」，runner 解释转译（读推演段、把要记的账说成引擎能记的形状的那次 LLM，现状 = extractor）并提出删「转译产出持久化」、Q2 改一段一个事务，owner「可以」；Q5 / Q6 简版重摆后「可以」；对稿后「嗯」。resolution 全文与题面在该票评论；这里只留取舍与依据。
 
-代码事实（只读调查）：现状每月 1 次全世界 simulator（走流式入口、不套 transport 重试闭环，单次尝试）+ 5 个并行 extractor 模块（各 3 次尝试）+ 章节记忆 + 关系酿制；`settle_with_delta` 整段原子、ready=1 delta 重放；耗尽后无专门「补」入口，玩家重新点颁布 / 退朝；`economy_moves` 按 list 顺序先到先得、见底再扣的那条静默消失；军队 / 人物同 id 双改无冲突检测；月初快照与核账期已实现；HTTP 入口同步阻塞到结算返回。
+重构前代码调查（2026-09-09，非现行实现）：当时每月 1 次全世界 simulator（走流式入口、不套 transport 重试闭环，单次尝试）+ 5 个并行 extractor 模块（各 3 次尝试）+ 章节记忆 + 关系酿制；`settle_with_delta` 整段原子、ready=1 delta 重放；耗尽后无专门「补」入口，玩家重新点颁布 / 退朝；`economy_moves` 按 list 顺序先到先得、见底再扣的那条静默消失；军队 / 人物同 id 双改无冲突检测；月初快照与核账期已实现；HTTP 入口同步阻塞到结算返回。
 
 规则真源：过月形状、落账、收尾与恢复见 [0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)。2026-09-10 owner grill 重定形状，见下节「过月与邸报再定」。
 
@@ -299,7 +299,7 @@ owner 2026-09-10 就「邸报到底有哪些内容，哪些强烈依赖引擎，
 
 2026-09-09，wayfinder 决策票 [独立前端怎样接住召对、过月和恢复过程](https://github.com/Akagilnc/ming-salvage-sim/issues/1823) 一轮 grill 八题加 mock 三轮，owner 答复原文：八题「可以。没意见」（全取推荐）；第一版 mock 后「你这样。我准备的大图立绘咋办」→ runner 认错、把真立绘放回并加立绘开关荐甲 → owner「问题是左下角立绘显示谁呢？」「你的意思是一直不变是吗？还是根据宣的人变。那同时两三个人在场呢？」→ runner 用洪承畴段逐时点列甲 / 乙 / 丁三表改荐丁 → owner「不用。丁看起来可以」；两屏「A吧 / A」；「加背景色太丑了。能不能换字体/粗体/字色？」。resolution 全文、题面与代码事实在该票评论；mock 冻结副本进仓 `archive/1823-frontend-mock-召对A-核账期A-立绘丁.html`（同北极星卡片先例）；来源 throwaway 分支 `prototype/1823-frontend-mock` 已推送。
 
-代码事实（只读调查）：`web/src` 无路由，单一 `App` 用 `ModalName` 切「页面」；召对按大臣开面板（URL 带大臣名，一人一 agent），后端已按角色切成多条消息逐条渲染，读心 / 高亮按归属轮补挂；结算等待面 `SettlementLock`（进度条 + 推敲 + 奏章流）只挂在会话忙碌上、刷新即丢，完成整页 reload；核账期 = 月初快照谓词（`_month_open_snapshot()` 一身两职）+ 王承恩固定递话条（前端字串）+ 逐面门控；失败 = HUD 横幅两钮（续跑结算 / 重新推演）+ 拟诏台 error；召对崩溃 = 「重新生成回话」钮；密令失败 = 只列不修的「未落库政务」面板；重开靠 `GameState` 字段门控同一棵树；HTTP = 结算 SSE 同步到终态、`GET /api/game/state` 1 秒轮询在飞标记、无 WebSocket；立绘资产 `web/public/portraits/minister_*.png`（682×1024）。
+重构前代码调查（2026-09-09，非现行实现）：`web/src` 无路由，单一 `App` 用 `ModalName` 切「页面」；召对按大臣开面板（URL 带大臣名，一人一 agent），后端已按角色切成多条消息逐条渲染，读心 / 高亮按归属轮补挂；结算等待面 `SettlementLock`（进度条 + 推敲 + 奏章流）只挂在会话忙碌上、刷新即丢，完成整页 reload；核账期 = 月初快照谓词（`_month_open_snapshot()` 一身两职）+ 王承恩固定递话条（前端字串）+ 逐面门控；失败 = HUD 横幅两钮（续跑结算 / 重新推演）+ 拟诏台 error；召对崩溃 = 「重新生成回话」钮；密令失败 = 只列不修的「未落库政务」面板；重开靠 `GameState` 字段门控同一棵树；HTTP = 结算 SSE 同步到终态、`GET /api/game/state` 1 秒轮询在飞标记、无 WebSocket；立绘资产 `web/public/portraits/minister_*.png`（682×1024）。
 
 规则真源：前端呈现与恢复入口见 [0158](../adr/0158-v2-frontend-receives-audience-month-and-recovery.md)。
 

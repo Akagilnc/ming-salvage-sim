@@ -17,7 +17,6 @@ def make_light_session(db, state, content):
     session.db = db
     session.state = state
     session.content = content
-    session.registry = None
     session.llm_config = None
     session.agno_db = None
     session.deaths_this_turn = []
@@ -33,12 +32,18 @@ def make_light_session(db, state, content):
     return session
 
 
+def empty_rescript_response(session, *, officers, backlog, answer=None):
+    import json
+    return json.dumps({"actor_name": officers[-1]["name"], "items": [], "revisions": []}) if answer is None else json.dumps({
+        "disposition": "settled", "text": "", "decree": None,
+    })
+
+
 def canned_full_settlement(
     monkeypatch,
     *,
     narrative: str = "本月边情邸报：辽饷催征，流寇未息。",
     simulator_calls: Optional[list] = None,
-    skip_fixed_flows: bool = False,
 ) -> list:
     """Replace only external LLM seams; keep production settlement spine."""
     simulator_calls = simulator_calls if simulator_calls is not None else []
@@ -53,19 +58,20 @@ def canned_full_settlement(
     monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", _promulgate)
 
     def _world(*_a, **_k):
-        simulator_calls.append({"world": True, "narrative": narrative})
+        import json
+
+        if _k.get("tag") == "gazette":
+            return json.dumps({"title": "邸报", "report": narrative})
+        if _k.get("tag") in (None, "world-segment"):
+            simulator_calls.append({"world": True, "narrative": narrative})
         return narrative
 
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _world)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", _world)
     monkeypatch.setattr(
-        "ming_sim.month_chain.run_gazette_text",
-        lambda *_a, **_k: ("邸报", narrative),
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_translate.translate_month_segment",
+        "ming_sim.month_translate._default_month_translate_runner",
         lambda *_a, **_k: {"effects": {}},
     )
-    if skip_fixed_flows:
-        monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
 
     return simulator_calls

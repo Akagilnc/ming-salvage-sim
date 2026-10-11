@@ -1,14 +1,7 @@
 
 import ming_sim.issues as I
+from tests.dossier_test_helpers import promulgated_policy_origin
 
-
-def _promulgated_commitment_origin(db, state) -> str:
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="测试辽饷承诺",
-        target_kind="army", target_id="guanning", payload={"purpose": "补饷"},
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
 
 
 def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
@@ -88,7 +81,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
-            "origin_ref": _promulgated_commitment_origin(db, state),
+            "origin_ref": promulgated_policy_origin(db, state, "测试辽饷承诺"),
             "kind": "initiative",
             "title": "每月补辽饷直到补齐",
             "end_turn": state.turn + 4,

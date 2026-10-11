@@ -54,6 +54,7 @@ def test_required_dig_7_seed_roster_entries_are_persisted(game):
             assert set(guilt) == {"crime", "severity"}
             assert guilt["severity"] in {"无", "轻", "中", "重"}
 
+
 def test_roster_has_no_cross_faction_aliases():
     _, characters = load_character_content()
     by_alias = {}

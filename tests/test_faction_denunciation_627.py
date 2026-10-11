@@ -13,6 +13,7 @@ Seams:
 from __future__ import annotations
 
 from ming_sim.db import GameDB
+from tests.dossier_test_helpers import executing_subject_policy as _subject_dossier
 from ming_sim.supervision import (
     ORIGIN_MARK_DENUNCIATION_FALSE,
     ORIGIN_MARK_DENUNCIATION_TRUE,
@@ -54,23 +55,6 @@ def _enemy_accuser(db, subject_faction: str) -> str:
             return str(rows[0]["name"])
     raise AssertionError("无敌对派系在朝人物")
 
-def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
-    did = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"清丈{token}",
-        target_kind="issue",
-        target_id=f"land-{token}",
-        executor_kind="character",
-        executor_id=owner,
-        participants=[{"character_id": owner, "tier": "主办"}],
-    )
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,),
-    )
-    db.conn.commit()
-    return did
 
 def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     """奏报 + 旨外实况 → fork 单源读端为真。"""
@@ -89,7 +73,7 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     db.conn.commit()
 
 
-def _make_transformed_no_fork(db, state, dossier_id: int):
+def _make_transformed_no_fork(db, dossier_id: int):
     """变形但无奏报分叉（无私货/无旨外）——fork 读端为假。"""
     db.conn.execute(
         "UPDATE decree_dossiers SET execution_outcome='transformed' WHERE id=?",
@@ -183,7 +167,7 @@ def test_ac3_veracity_true_and_false_from_fork(game):
     assert db.read_dossier_fork_state(did_true)["fork"] is True
 
     did_false = _subject_dossier(db, state, owner=subject_name, token="vf")
-    _make_transformed_no_fork(db, state, did_false)
+    _make_transformed_no_fork(db, did_false)
     assert db.read_dossier_fork_state(did_false)["fork"] is False
 
     hits = db.accept_faction_denunciations(

@@ -4,6 +4,7 @@ import { ArmyPaySection, MinisterPlaceOffice, MinisterPortrait, PortraitUploadBu
 import { formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
 import { settlementClosedReason } from "../settlementPresentation";
 import type { Army, Building, GameState, MapNode, Minister, Region } from "../types";
+import { COURT_OFFICE_TYPE_ORDER } from "./ministerFilters";
 
 export function MinisterCardList({
   list,
@@ -630,7 +631,7 @@ export function AppointmentDrawer({
   onClose: () => void;
 }) {
   const [q, setQ] = React.useState("");
-  const offices = ["内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"];
+  const offices = COURT_OFFICE_TYPE_ORDER;
   const byOffice = new Map<string, Minister[]>();
   for (const office of offices) byOffice.set(office, []);
   byOffice.set("其他", []);

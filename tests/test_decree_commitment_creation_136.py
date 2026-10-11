@@ -1,21 +1,13 @@
 import json
+from pathlib import Path
 
 import pytest
 
 import ming_sim.issues as I
+from tests.dossier_test_helpers import promulgated_policy_origin
 
 
-def _promulgated_commitment_origin(db, state, token: str) -> str:
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"测试承诺：{token}",
-        target_kind="issue",
-        target_id=token,
-        payload={"token": token},
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _issue_by_title(db, title: str):
@@ -34,7 +26,7 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-guanning-arrears"),
+                    "origin_ref": promulgated_policy_origin(db, state, "pay-guanning-arrears"),
                     "kind": "initiative",
                     "title": "每月补关宁军饷直到补齐",
                     "bar_value": 20,
@@ -245,7 +237,7 @@ def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, mo
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "sunchengzong-review"),
+                    "origin_ref": promulgated_policy_origin(db, state, "sunchengzong-review"),
                     "kind": "initiative",
                     "title": "三月后复试孙承宗",
                     "stage_text": "孙承宗暂听候政，三月后复试军国大计。",
@@ -280,7 +272,7 @@ def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(gam
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "open-ended-appeasement"),
+                    "origin_ref": promulgated_policy_origin(db, state, "open-ended-appeasement"),
                     "kind": "initiative",
                     "title": "长期安抚毛文龙",
                     "stage_text": "遣臣常驻皮岛安抚，未设硬时限。",
@@ -455,7 +447,7 @@ def test_until_stop_commitment_supports_character_loyalty_condition(game, monkey
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "appease-mao"),
+                    "origin_ref": promulgated_policy_origin(db, state, "appease-mao"),
                     "kind": "initiative",
                     "title": "安抚毛文龙直到效顺",
                     "stage_text": "遣臣赴皮岛安抚",
@@ -699,7 +691,7 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-close-guard"),
+                    "origin_ref": promulgated_policy_origin(db, state, "pay-liao-close-guard"),
                     "kind": "initiative",
                     "title": "每月补辽饷直到补齐防误结案",
                     "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
@@ -737,7 +729,7 @@ def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game,
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-fail-guard"),
+                    "origin_ref": promulgated_policy_origin(db, state, "pay-liao-fail-guard"),
                     "kind": "initiative",
                     "title": "每月补辽饷直到补齐防失败误结案",
                     "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
@@ -780,7 +772,7 @@ def test_until_stop_commitment_advance_to_full_stays_active(game, monkeypatch):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-advance-guard"),
+                    "origin_ref": promulgated_policy_origin(db, state, "pay-liao-advance-guard"),
                     "kind": "initiative",
                     "title": "每月补辽饷直到补齐防推进误结案",
                     "bar_value": 90,

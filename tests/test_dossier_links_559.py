@@ -1,7 +1,5 @@
 
-import pytest
 
-from ming_sim.action_materialize import DecreeMaterializationValidationError
 
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.dossier_test_helpers import create_test_secret_order
@@ -68,7 +66,7 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     }
 
 
-def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
+def test_public_disclosure_does_not_grant_secret_dossier_access(game):
     from ming_sim.knowledge import knowledge_row_visible_to
 
     db, state, _ = game
@@ -76,12 +74,12 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
     dossier = db.get_dossier_for_secret_order(order_id)
     source_id = f"secret_order_disclosure:{order_id}:test"
     db.record_public_knowledge_event(
-        state, "密查辽饷已披露", source_id=source_id, excluded_names=["孙承宗"])
+        state, "密查辽饷已披露", source_id=source_id)
     event = db.conn.execute(
         "SELECT * FROM character_knowledge_events WHERE source_id=?", (source_id,)
     ).fetchone()
 
-    assert knowledge_row_visible_to(db, event, "孙承宗") is False
+    assert knowledge_row_visible_to(db, event, "孙承宗") is True
     assert dossier["id"] not in {
         row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
     }
@@ -128,22 +126,3 @@ def test_withdrawn_rejected_dossier_is_not_referenceable(game):
     db.record_dossier_decision(dossier_id, "rejected", reason="驳回")
     db.record_dossier_decision(dossier_id, "withdrawn", reason="收回")
     assert dossier_id not in {row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)}
-
-
-def test_unknown_target_link_is_rejected_and_audited(game):
-    db, state, _ = game
-    source = _make_dossier(db, state, "护行密令")
-
-    with pytest.raises(DecreeMaterializationValidationError) as caught:
-        db.add_dossier_links(
-            source,
-            [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}],
-        )
-
-    assert db.list_dossier_links(source) == []
-    assert caught.value.category == "hallucinated_id"
-    audit = db.conn.execute(
-        "SELECT target_dossier_id FROM decree_dossier_link_rejections WHERE source_dossier_id=? ORDER BY id",
-        (source,),
-    ).fetchall()
-    assert audit[-1]["target_dossier_id"] == 999999

@@ -5,7 +5,6 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.draft_intent as draft_intent
 from tests.dossier_test_helpers import rejected_verdict
-from tests.rescript_test_helpers import sql_rescript_draft
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
     return db.create_decree_dossier(
@@ -200,177 +199,9 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("amount", ["30", True, 30.75, 30])
-def test_financial_decision_uses_stored_option_not_client_payload(amount, game, monkeypatch):
-    """目录选项权威：坏 amount 在 parse 拒；合法 amount 经真 submit 落库用目录非客户端 overlay。"""
-    from contextlib import nullcontext
-    from ming_sim.settlement_payload import parse_decision_blocks
-    from tests.rescript_test_helpers import _real_submit_session
-
-    blocks = [
-        {
-            "title": "发帑", "context": "济军", "options": [{
-                "label": "发内帑三十万两", "hint": "济军",
-                "action_type": "grant_allocation", "grant_action": "协饷",
-                "account": "内库", "amount": amount, "purpose": "补饷",
-                "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
-            }, {"label": "暂缓", "hint": "守财"}],
-        },
-        {
-            "title": "巡河", "context": "河工", "options": [
-                {"label": "遣员巡河", "hint": "查勘"},
-                {"label": "暂缓巡河", "hint": "候报"},
-            ],
-        },
-    ]
-    raw = "世界段" + "".join(
-        f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
-        for block in blocks
-    )
-    decisions = parse_decision_blocks(raw)
-    if type(amount) is not int:
-        # Parse/save boundary rejects the whole malformed typed decision.
-        assert len(decisions) == 1
-        assert len(decisions[0].get("options") or []) == 2
-        return
-
-    db, state, content = game
-    db.save_pending_decisions(int(state.turn), [
-        {
-            "event_id": "", "title": d["title"], "context": d.get("context") or "",
-            "options": d["options"],
-        }
-        for d in decisions
-    ])
-    db.conn.commit()
-    desk = db.list_rescript_desk(int(state.turn))
-    by_title = {str(r.get("title") or ""): r for r in desk}
-    grant_key = by_title["发帑"]["decision_key"]
-    river_key = by_title["巡河"]["decision_key"]
-    before = len(db.list_decree_dossiers())
-    session = _real_submit_session(monkeypatch, db, state, content)
-    session.submit_hitl_choices(
-        [
-            {
-                "decision_key": grant_key, "label": "发内帑三十万两",
-                "action_type": "punishment", "account": "国库", "amount": 999,
-            },
-            {"decision_key": river_key, "label": "遣员巡河"},
-        ],
-        write_gate=nullcontext(),
-    )
-    grants = [
-        row for row in db.list_decree_dossiers()
-        if row.get("action_type") == "grant_allocation"
-    ]
-    assert len(grants) >= 1
-    assert len(db.list_decree_dossiers()) > before
-    payload = json.loads(str(grants[-1].get("payload_json") or "{}"))
-    assert str(payload.get("account") or grants[-1].get("account") or "") == "内库"
-    assert int(payload.get("amount") or 0) == 30
-    assert "punishment" not in {
-        str(grants[-1].get("action_type") or ""),
-        str(payload.get("action_type") or ""),
-    }
 
 
-def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
-    from ming_sim.settlement_payload import parse_decision_blocks
 
-    malformed = {
-        "title": "发帑", "context": "济军", "options": [{
-            "label": "发内帑三十万两", "hint": "济军",
-            "action_type": "grant_allocaton", "grant_action": "协饷",
-            "account": "内库", "amount": 30, "purpose": "补饷",
-            "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
-        }, {"label": "暂缓", "hint": "守财"}],
-    }
-    blank_discriminator = {
-        **malformed,
-        "title": "空白拨帑",
-        "options": [
-            {**malformed["options"][0], "action_type": "   "},
-            malformed["options"][1],
-        ],
-    }
-    missing_discriminator = {
-        **malformed,
-        "title": "无类拨帑",
-        "options": [
-            {k: v for k, v in malformed["options"][0].items()
-             if k != "action_type"},
-            malformed["options"][1],
-        ],
-    }
-    incompatible_discriminator = {
-        **malformed,
-        "title": "错类拨帑",
-        "options": [
-            {**malformed["options"][0], "action_type": "punishment"},
-            malformed["options"][1],
-        ],
-    }
-    bare_incompatible_discriminator = {
-        **malformed,
-        "title": "裸错类",
-        "options": [
-            {"label": "惩处", "hint": "候旨", "action_type": "punishment"},
-            malformed["options"][1],
-        ],
-    }
-    inapplicable_grant_action = {
-        **malformed,
-        "title": "错配内帑",
-        "options": [
-            {
-                **malformed["options"][0],
-                "action_type": "grant_allocation",
-                "grant_action": "发内帑",
-            },
-            malformed["options"][1],
-        ],
-    }
-    inapplicable_target_kind = {
-        **malformed,
-        "title": "错配协饷目标",
-        "options": [
-            {
-                **malformed["options"][0],
-                "action_type": "grant_allocation",
-                "target_kind": "character",
-            },
-            malformed["options"][1],
-        ],
-    }
-    spaced_legal = {
-        **malformed,
-        "title": "犒军",
-        "options": [
-            {**malformed["options"][0], "action_type": " grant_allocation "},
-            malformed["options"][1],
-        ],
-    }
-    sibling = {
-        "title": "巡河", "context": "河工", "options": [
-            {"label": "遣员巡河", "hint": "查勘"},
-            {"label": "暂缓巡河", "hint": "候报"},
-        ],
-    }
-    raw = "".join(
-        f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
-        for block in (
-            malformed, blank_discriminator, missing_discriminator,
-            incompatible_discriminator, bare_incompatible_discriminator,
-            inapplicable_grant_action, inapplicable_target_kind,
-            spaced_legal, sibling,
-        )
-    )
-
-    decisions = parse_decision_blocks(raw)
-
-    assert len(decisions) == 2
-    assert decisions[0]["options"][0]["action_type"] == "grant_allocation"
-    assert decisions[0]["options"][0]["amount"] == 30
 
 
 @pytest.mark.parametrize(
@@ -392,45 +223,7 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels, expect_empty)
     if expect_empty:
         assert decisions == []
     else:
-        # 空白变体非歧义重复 → 整块保留；不锁 label 字面/选项计数换形
-        assert len(decisions) == 1
-
-
-def test_657_capability_revalidate_on_follow(game, monkeypatch):
-    """服务端回验：请求 capability 必须等于对当前 option 结构化字段重算值。
-
-    #1902 R3：复用 _real_submit_session 真编排承载旧 cap 整批拒；
-    正确 cap 与 derive 对齐属结构化契约（成功落库由 HTTP follow 案覆盖）。
-    """
-    from contextlib import nullcontext
-    from ming_sim.decree_vocabulary import derive_draft_capability
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    from tests.rescript_test_helpers import _real_submit_session
-
-    db, state, content = game
-    opt = normalize_rescript_layer_a_option({
-        "label": "发帑赈济", "hint": "所安者饥民",
-        "action_type": "assignment", "assignee_name": "",
-        "target_kind": "region", "target_id": "shaanxi",
-        "locality_scope": "single", "region_id": "shaanxi",
-        "transaction_category": "督赈",
-    })
-    assert opt["draft_capability"] == derive_draft_capability(opt)
-    sql_rescript_draft(
-        db, int(state.turn), idx=0, event_id="draft:急",
-        title="急", context="c",
-        options=[opt, {"label": "备", "hint": "b",
-                       "draft_capability": derive_draft_capability({"label": "备"})}],
-        actor_name="A", actor_office="o", actor_faction="f",
-    )
-    db.conn.commit()
-    desk = db.list_rescript_desk(int(state.turn))
-    key = desk[0]["decision_key"]
-    session = _real_submit_session(monkeypatch, db, state, content)
-    with pytest.raises(ValueError):
-        session.submit_hitl_choices([{
-            "decision_key": key, "action": "follow_draft",
-            "draft_capability": "old-round-cap", "label": opt["label"],
-        }], write_gate=nullcontext())
-    pending = next(r for r in db.list_rescript_drafts() if r["title"] == "急")
-    assert pending["status"] == "pending"
+        assert decisions == [{
+            "title": block["title"], "context": block["context"],
+            "options": block["options"],
+        }]

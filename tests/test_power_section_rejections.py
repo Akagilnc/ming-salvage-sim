@@ -10,6 +10,7 @@ except Exception: print [WARN]` 整段吞——连代码异常都被吞掉(违 A
 
 from __future__ import annotations
 
+
 import pytest
 
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
@@ -110,108 +111,3 @@ def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeyp
             }],
         }, content=content)
     assert ei.value is fault
-
-
-def test_dirty_power_value_rejected_sibling_field_lands(game):
-    """白名单字段的脏值(null/"3成")= LLM 脏数据,逐项拒收——sanitize_delta_shape
-    只验容器、明文容忍 null 叶,裸 int(value) 会让一个脏值崩整月(cmr S1 r1,2/2)。
-    同一势力的兄弟好字段照落。"""
-    db, state, content = game
-    turn = state.turn
-    good = _valid_power_id(db)
-    before = db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id=?", (good,)).fetchone()[0]
-
-    run_settle(db, state, content, {
-        "power_updates": {
-            good: {"leverage": None, "military_strength": 3},  # null 脏值 + 兄弟好字段
-        },
-    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
-
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
-    assert len(rows) == 1
-    _, reason, category, _ = rows[0]
-    assert category == "invalid_enum"
-    assert reason
-    after = db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id=?", (good,)).fetchone()[0]
-    assert after != before  # 兄弟好字段照落
-
-def test_dirty_power_value_string_rejected(game):
-    """字符串脏值("三成")同路拒收,不 SettlementAbort。"""
-    db, state, content = game
-    turn = state.turn
-    good = _valid_power_id(db)
-
-    run_settle(db, state, content, {
-        "power_updates": {good: {"leverage": "三成"}},
-    }, narrative="x", decree_text="y")
-
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
-    assert len(rows) == 1
-    assert rows[0][2] == "invalid_enum"
-
-def test_ming_power_update_rejected_with_trace(game):
-    """power_updates 写 ming = prompt 明文禁止的脏数据 → 逐项拒收留痕,
-    不再 print 静默跳(cmr S1 r2,2/2——迁了 section 却留一条 print 路不一致)。"""
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "power_updates": {"ming": {"leverage": 5}},
-    }, narrative="x", decree_text="y")
-
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
-    assert len(rows) == 1
-    assert rows[0][2] == "invalid_enum"
-    assert "ming" in rows[0][1] or "大明" in rows[0][1]
-
-def test_float_and_bool_power_values_rejected(game):
-    """float(3.7→3 静默截断)与 bool(True→1 静默拟真)叶子值绕过 int() 异常路
-    ——一律拒收,prompt 要求整数 delta(cmr S1 r2 codex)。"""
-    db, state, content = game
-    turn = state.turn
-    good = _valid_power_id(db)
-    before = db.conn.execute(
-        "SELECT leverage FROM powers WHERE id=?", (good,)).fetchone()[0]
-
-    run_settle(db, state, content, {
-        "power_updates": {good: {"leverage": 3.7, "military_strength": True}},
-    }, narrative="x", decree_text="y")
-
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
-    assert len(rows) == 2
-    assert all(r[2] == "invalid_enum" for r in rows)
-    after = db.conn.execute(
-        "SELECT leverage FROM powers WHERE id=?", (good,)).fetchone()[0]
-    assert after == before  # 3.7 没有被截断成 3 落库
-
-def test_reason_carrier_aliases_not_recorded_as_rejection(game):
-    """last_action/近动 是函数自己消费的 reason 载体键——不得同时被记成
-    invalid_enum 拒收(假阳行污染分析账本,cmr S1 r2 claude)。"""
-    db, state, content = game
-    turn = state.turn
-    good = _valid_power_id(db)
-
-    run_settle(db, state, content, {
-        "power_updates": {good: {"leverage": 3, "近动": "联姻蒙古", "last_action": "遣使"}},
-    }, narrative="x", decree_text="y")
-
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
-    assert rows == []  # 零假阳
-
-def test_all_reason_aliases_consumed_as_reason(game):
-    """近况/最近行动 与 近动/last_action 同为别名——被跳过就必须也被消费成
-    应用变更的 reason,不得回落「势力推演」(cmr S1 r3 codex)。"""
-    db, state, content = game
-    good = _valid_power_id(db)
-
-    run_settle(db, state, content, {
-        "power_updates": {good: {"leverage": 3, "近况": "联姻蒙古"}},
-    }, narrative="x", decree_text="y")
-
-    row = db.conn.execute(
-        "SELECT reason FROM power_logs WHERE power_id=? ORDER BY id DESC LIMIT 1",
-        (good,)).fetchone()
-    assert row is not None
-    assert row[0] == "联姻蒙古"

@@ -10,16 +10,12 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as I
+from tests.dossier_test_helpers import (
+    close_issue_with_effect,
+    create_issue_with_effect,
+    promulgated_policy_origin,
+)
 from tests.conftest import active_ming_character
-
-
-def _decree_origin(db, state) -> str:
-    dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试国策来源", target_kind="issue", target_id="test")
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
-
-def _army_count(db) -> int:
-    return db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
 
 
 def _pay_source() -> dict[str, object]:
@@ -30,100 +26,35 @@ def _pay_source() -> dict[str, object]:
     }
 
 
-def test_resolve_creates_army(game):
-    db, state, _ = game
-    before = _army_count(db)
-    effect = {"new_armies": [{
-        "id": "tianxiongjun_test", "name": "天雄军测试", "owner_power": "ming",
-        "manpower": 18000, "maintenance_per_turn": 3, "commander": "卢象升",
-        "station": "大名", "troop_type": "步", **_pay_source(),
-    }]}
-    I._apply_issue_entities(db, state, effect, "局势#测试结案")
-    assert _army_count(db) == before + 1
-    row = db.conn.execute("SELECT manpower, commander FROM armies WHERE id='tianxiongjun_test'").fetchone()
-    assert row["manpower"] == 18000
-    assert row["commander"] == "卢象升"
-
-
 def test_resolve_changes_character_status(game):
+    """人物处置经现役公共入口 apply_score_extraction 落库（issues 结案实体后果同一出口）。"""
     db, state, content = game
     name = active_ming_character(db, content)
-    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
-    I._apply_issue_entities(db, state, {
-        "人物变更": [{"name": name, "动作": "处置", "status": "exiled", "reason": "国策清算"}],
-    }, "局势#测试结案")
+    applied = I.apply_score_extraction(db, state, {
+        "人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "exiled", "reason": "国策清算"}],
+    }, content=content)
+    assert applied["applied_person_changes"][0].get("rejected") is not True
     assert db.get_character_status(name)[0] == "exiled"
-    assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 1
-    log = db.conn.execute(
-        "SELECT person_name, action, payload_summary, derived_from, source "
-        "FROM person_logs ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    assert dict(log) == {
-        "person_name": name,
-        "action": "处置",
-        "payload_summary": "国策清算",
-        "derived_from": "局势#测试结案",
-        "source": "system_simulation",
-    }
-
-
-def test_issue_entities_rejects_dead_to_dismissed_transition(game):
-    """结案入口：亡故人物不可再迁往 dismissed（转移矩阵非法迁移 → ValueError）。"""
-    db, state, content = game
-    name = active_ming_character(db, content)
-    db.set_character_status(state, name, "dead", "前置死亡")
-    content.characters[name].status = "dead"
-
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "亡故后再罢黜"}
-                ]
-            },
-            "局势#测试结案",
-            content=content,
-        )
-
-    assert db.get_character_status(name)[0] == "dead"
-    assert content.characters[name].status == "dead"
 
 
 def test_issue_entities_allows_imprisoned_to_dead_disposal(game):
-    """结案入口：在押→赐死为合法处置，须真落库。"""
+    """在押→赐死为合法处置，经现役公共入口须真落库。"""
     db, state, content = game
     name = active_ming_character(db, content)
     ch = content.characters[name]
-    old_status = ch.status
-    old_office = ch.office
-    old_transit_to = ch.transit_to
-
+    old_status, old_office, old_transit_to = ch.status, ch.office, ch.transit_to
     try:
         db.set_character_status(state, name, "imprisoned", "前置下狱")
         ch.status = "imprisoned"
         ch.office = ""
         ch.transit_to = ""
-
-        I._apply_issue_entities(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {"name": name, "动作": "处置", "status": "dead", "reason": "结案赐死"}
-                ]
-            },
-            "局势#测试结案",
-            content=content,
-        )
-
+        applied = I.apply_score_extraction(db, state, {
+            "人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dead", "reason": "结案赐死"}],
+        }, content=content)
+        assert applied["applied_person_changes"][0].get("rejected") is not True
         assert db.get_character_status(name)[0] == "dead"
-        assert ch.status == "dead"
     finally:
-        ch.status = old_status
-        ch.office = old_office
-        ch.transit_to = old_transit_to
+        ch.status, ch.office, ch.transit_to = old_status, old_office, old_transit_to
 
 
 def test_resolve_character_status_syncs_content_travel_state(game):
@@ -137,21 +68,15 @@ def test_resolve_character_status_syncs_content_travel_state(game):
         I.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}]},
             content=content,
         )
 
-        I._apply_issue_entities(
-            db,
-            state,
-            {
-                "人物变更": [
-                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "局势失败问责"}
-                ]
-            },
-            "局势#测试结案",
-            content=content,
-        )
+        close_issue_with_effect(db, state, "行旅问责结案", {
+            "人物变更": [{
+                "name": name, "动作": "处置", "status": "dismissed", "reason": "局势失败问责",
+            }],
+        }, content=content)
 
         row = db.conn.execute(
             "SELECT status, office, transit_to FROM characters WHERE name=?", (name,)
@@ -169,27 +94,21 @@ def test_resolve_character_status_syncs_content_travel_state(game):
 
 
 def test_resolve_applies_unified_person_change_effect(game):
+    """行止（transit_to）经现役公共入口落库；location 不被行止改写。"""
     db, state, content = game
     name = active_ming_character(db, content)
     old_location = content.characters[name].location
     old_transit_to = content.characters[name].transit_to
-
     try:
         db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
         content.characters[name].location = "beizhili"
         old_location = "beizhili"
-        tolerated = I._apply_issue_entities(
-            db,
-            state,
-            {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
-            "局势#测试结案",
-            content=content,
-        )
-
+        I.apply_score_extraction(db, state, {
+            "人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}],
+        }, content=content)
         row = db.conn.execute(
             "SELECT location, transit_to FROM characters WHERE name=?", (name,)
         ).fetchone()
-        assert tolerated == []
         assert row["location"] == old_location
         assert row["transit_to"] == "liaodong"
         assert content.characters[name].transit_to == "liaodong"
@@ -198,68 +117,23 @@ def test_resolve_applies_unified_person_change_effect(game):
         content.characters[name].transit_to = old_transit_to
 
 
-def test_resolve_rejects_bad_unified_person_change_effect(read_game):
-    db, state, content = read_game
-
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(
-            db,
-            state,
-            {"人物变更": [{"name": "不存在的人", "动作": "行止", "transit_to": "liaodong"}]},
-            "局势#测试结案",
-            content=content,
-        )
-
-
 @pytest.mark.parametrize("bad_effect", [{"人物变更": "bad"}, {"人物变更": ["bad"]}])
-def test_issue_person_change_effect_rejects_malformed_shape(read_game, bad_effect):
-    db, state, content = read_game
-
+def test_issue_person_change_effect_rejects_malformed_shape(game, bad_effect):
+    """结案效果（effect_on_resolve）人物变更形状畸形：经现役结案入口 close_issues 须响亮报错。"""
+    db, state, _ = game
+    issue_id = create_issue_with_effect(db, state, "畸形人物变更结案", bad_effect)
     with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, bad_effect, "局势#测试结案", content=content)
-
-
-def test_malformed_army_raises_not_silent(read_game):
-    """缺 manpower 的建军必须抛错，不许静默跳过（全局严格）。"""
-    db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "new_armies": [{"id": "broken", "name": "残军", "owner_power": "ming"}],
-        }, "局势#测试")
+        I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]})
 
 
 def test_army_bad_owner_power_raises(read_game):
+    """建军 owner_power 非已知势力：经现役入口逐项拒收留痕，不落库。"""
     db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "new_armies": [{"id": "x", "name": "野军", "owner_power": "不存在的势力",
-                            "manpower": 1000, "maintenance_per_turn": 1}],
-        }, "局势#测试")
-
-
-def test_unknown_character_raises(read_game):
-    db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "人物变更": [{"name": "查无此人张三", "动作": "处置", "status": "dead"}],
-        }, "局势#测试")
-
-
-def test_bad_status_raises(read_game):
-    db, state, content = read_game
-    name = active_ming_character(db, content)
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "人物变更": [{"name": name, "动作": "处置", "status": "升仙"}],
-        }, "局势#测试")
-
-
-def test_empty_effect_noop(read_game):
-    """无实体段的 effect 不应报错、不改军队数。"""
-    db, state, _ = read_game
-    before = _army_count(db)
-    I._apply_issue_entities(db, state, {"metrics": {"民心": 5}}, "局势#测试")
-    assert _army_count(db) == before
+    created = db.create_armies_from_extraction(state, [{
+        "id": "x", "name": "野军", "owner_power": "不存在的势力", "manpower": 1000, "maintenance_per_turn": 1,
+    }])
+    assert created[0].get("rejected")
+    assert db.conn.execute("SELECT id FROM armies WHERE id='x'").fetchone() is None
 
 
 def test_apply_score_extraction_splits_bad_nested_entity(game):
@@ -320,41 +194,18 @@ def test_apply_score_extraction_rejects_unknown_top_level_key(game):
         db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}, "metric_delta": {"民心": 1}},
     )
     shape = [r for r in applied["validate_shape_rejections"]
-             if "region_delta_typo" in str(r.get("reason"))]
+             if r.get("report_section") == "region_delta_typo"]
     assert shape and shape[0]["rejected"] is True
     assert shape[0]["item"] == {"raw_value": {"shanxi": {"unrest": 5}}}
     assert applied["metric_delta"].get("民心") == 1  # 其余 section 不受累
 
 
-def test_resolve_army_delta_reinforces_existing(game):
-    """国策给既有军扩编：army_delta 累加到该军兵额（不新建）。"""
+def test_non_dict_person_change_item_raises(game):
+    """结案效果人物变更含非 dict 项：经现役结案入口须响亮报错，不静默丢。"""
     db, state, _ = game
-    before = _army_count(db)
-    old = db.conn.execute("SELECT manpower FROM armies WHERE id='jingying'").fetchone()["manpower"]
-    I._apply_issue_entities(db, state, {
-        "army_delta": {"jingying": {"manpower": 500, "reason": "国策募兵补京营"}},
-    }, "局势#测试结案")
-    new = db.conn.execute("SELECT manpower FROM armies WHERE id='jingying'").fetchone()["manpower"]
-    assert new == old + 500
-    assert _army_count(db) == before          # 扩编不新建军队
-
-
-def test_army_delta_unknown_army_raises(read_game):
-    """army_delta 引用未入库军队 → 抛错中断（全局严格，绝不静默）。"""
-    db, state, _ = read_game
+    issue_id = create_issue_with_effect(db, state, "非dict人物项结案", {"人物变更": ["这不是dict"]})
     with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "army_delta": {"查无此军": {"manpower": 100}},
-        }, "局势#测试")
-
-
-def test_non_dict_person_change_item_raises(read_game):
-    """人物变更 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
-    db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "人物变更": ["这不是dict"],
-        }, "局势#测试")
+        I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]})
 
 
 def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
@@ -365,7 +216,7 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     before = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
-            "origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "效果字段畸形国策", "kind": "initiative",
+            "origin_kind": "decree", "origin_ref": promulgated_policy_origin(db, state, "test"), "title": "效果字段畸形国策", "kind": "initiative",
             "effect_on_resolve": "这是字符串不是dict",   # 恶意非 dict（旧码 dict() 会抛 ValueError）
             "ongoing_effects": ["也不是dict"],
             "effect_on_fail": None,

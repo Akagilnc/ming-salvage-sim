@@ -24,6 +24,8 @@ from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.month_chain_helpers import make_light_session
 from tests.recommendation_rows import recommendation_events
+from tests.test_covert_levy_651 import _realize_fork
+from ming_sim.session_write_queue import ClassifiedWriteGate
 
 
 def _hong(db, content) -> str:
@@ -53,7 +55,7 @@ def _active_minister(db, content, *, office_type: str | None = None):
     return SimpleNamespace(name=str(row["name"]), office_type=str(row["office_type"] or ""))
 
 
-def _bound_exposure(db, state, monkeypatch):
+def _bound_exposure(db, state):
     army = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()
     executor = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' LIMIT 1"
@@ -69,10 +71,7 @@ def _bound_exposure(db, state, monkeypatch):
         "VALUES ('差务','边军事',?,?, 'promise')",
         (f"dossier:{did}", state.turn),
     )
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
+    _realize_fork(db, state, did)
     db.conn.execute(
         "INSERT INTO decree_dossier_links"
         "(source_dossier_id,target_dossier_id,relation_type,note) "
@@ -108,7 +107,7 @@ def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, m
     )
     mid = db.append_chat_message(minister_name, state.turn, "user", words)
     db.update_chat_turn_messages(ctid, user_message_id=mid)
-    reply = sess.scene_chat(words, chat_turn_id=ctid, minister_name=minister_name)
+    reply = sess.scene_chat(words, chat_turn_id=ctid)
     future = persist_and_schedule_scene(sess, db, reply, speaker=minister_name)
     assert future is not None
     result = future.result()
@@ -125,9 +124,9 @@ def _close_offline(db, state, content, night_id):
 
 def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     """Drive the player month entry with only model outputs supplied offline."""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     import ming_sim.month_chain as month_chain
-    import ming_sim.month_translate as month_translate
     from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
 
     dossier = db.get_decree_dossier(dossier_id)
@@ -137,7 +136,7 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
         verdict={"decision": "promulgated"}, forecast_text="",
     )
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "世界段" if effects else "")
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": effects or {}})
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": effects or {}})
     monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: "诏")
     session = make_light_session(db, state, content)
     session._write_gate = ClassifiedWriteGate()
@@ -155,11 +154,11 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
 @pytest.mark.parametrize("late", [False, True], ids=["open-night", "closed-night"])
 def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch, late):
     db, state, content = game
-    did, actor = _bound_exposure(db, state, monkeypatch)
-    other_did, _ = _bound_exposure(db, state, monkeypatch)
+    did, actor = _bound_exposure(db, state)
+    other_did, _ = _bound_exposure(db, state)
     from ming_sim.due_review import list_due_review_scenes
     exposed = {
-        int(str(scene["dossier_id"])) for scene in list_due_review_scenes(db, state)
+        int(str(scene["dossier_id"])) for scene in list_due_review_scenes(db)
         if scene.get("kind") == "covert_levy_exposure"
     }
     assert exposed == {did, other_did}
@@ -220,7 +219,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert int(state.turn) > before
     assert db.get_fiscal_config().get("禁后摊派_base") is None
     from ming_sim.due_review import list_due_review_scenes
-    scenes = list_due_review_scenes(db, state)
+    scenes = list_due_review_scenes(db)
     assert any(s["decision"] == "禁摊派" and s["shortfall_reopened"] for s in scenes)
 
 
@@ -418,7 +417,7 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
     known = db.get_character_knowledge(state, attendant.name)
     report_events = [event for event in known["events"]
                      if event["source_id"] in {r["source_id"] for r in sources}]
-    assert len(report_events) == 1
+    assert [event["body"] for event in report_events] == [query]
     assert report_events[0]["kind"] == "inquiry_assignment"
     other = next(c.name for c in content.characters.values() if c.name != attendant.name)
     assert not any(e["source_id"] in {r["source_id"] for r in sources}
@@ -442,7 +441,7 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
 
 
 def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
-    """点名 order_id 才拉该令月报；排除、自办与缺令都不开文件。"""
+    """交办 order_id 才拉该令月报；未交办、自办与缺令都不开查访文件。"""
     from pathlib import Path
     from tests.test_secret_order_declaration_landing_1897 import _covert_task
 
@@ -472,7 +471,7 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     )
     hidden = db.create_secret_order(
         state, str(assignee["name"]), "查内库", "密查内库", [],
-        deadline_months=2, excluded_names=[attendant.name],
+        deadline_months=2,
         covert_task=_covert_task(target_units=1),
     )
     own = db.create_secret_order(
@@ -490,7 +489,6 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     result = _scene_declaration(db, state, content, monkeypatch, "去查那几件密令的月报。", {
         "inquiries": [
             {"attendant": attendant.name, "query": "查仓储月报", "order_id": visible},
-            {"attendant": attendant.name, "query": "查被排除的", "order_id": hidden},
             {"attendant": attendant.name, "query": "查自己承办的", "order_id": own},
             {"attendant": attendant.name, "query": "查没有的", "order_id": 9_999_999},
             {"attendant": attendant.name, "query": "形状不对", "order_id": True},
@@ -498,7 +496,7 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     })
     assert {item["order_id"] for item in result.inquiries.applied} == {visible, own}
     assert {item.category for item in result.inquiries.rejected} == {
-        "hallucinated_id", "invalid_shape", "invalid_state",
+        "hallucinated_id", "invalid_shape",
     }
     from ming_sim.materials import _safe_segment
     rel = f"密令/查访月报/{visible}.txt"

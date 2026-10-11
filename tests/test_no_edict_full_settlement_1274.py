@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import threading
 
 import pytest
 
@@ -27,9 +26,11 @@ def _issue_bars(db):
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
+def test_no_edict_advance_runs_full_settlement_chain(web_game, monkeypatch):
     """无旨退朝：turn+1 + 邸报落库 + simulator 被调用 + 局势惯性有机会推进。"""
-    db, state, content = game
+    import web_app
+
+    db, state = web_game.db, web_game.state
     closed_turn = int(state.turn)
     bars_before = _issue_bars(db)
     # 至少保证有一条带非零惯性的 active issue，便于观察惯性推进
@@ -47,16 +48,14 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
         simulator_calls=sim_calls,
     )
 
-    result = _session(db, state, content).advance_without_decree()
+    result = web_app.api_advance_without_edict()
 
-    assert result is not None
-    assert result.awaiting is False
-    assert result.advanced is False
-    assert result.stage == "gazette"
-    assert int(state.turn) == closed_turn
+    assert result["awaiting_decision"] is False
+    assert result["advanced"] is True
+    assert int(state.turn) == closed_turn + 1
     # 世界段必经（负向：快路已死，也不再走 extractor）
     assert len(sim_calls) == 1
-    assert not db.get_turn_report(closed_turn)
+    assert db.get_turn_report(closed_turn)
     # 局势 bar：惯性推进后至少有一条变化，或 inertia 路径已跑过（空盘面也允许全不变）
     bars_after = _issue_bars(db)
     # 有 inertia≠0 的 issue 时 bar 应动；无则仅要求链跑通（上面 turn/report/sim 已锁）
@@ -85,7 +84,7 @@ def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
         simulator_calls=sim_calls,
     )
     result = resolve_directives(
-        state, db, None, None, [], "",
+        state, db, None, None, "",
         content=content,
         source=Provenance.system_simulation,
     )
@@ -142,48 +141,6 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
     result = _session(db, state, content).resolve_turn()
     assert result.awaiting is False
     assert result.advanced is False
-    assert len(sim_calls) == 1
-    assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_web_no_edict_endpoint_routes_to_full_settlement(game, monkeypatch):
-    """Web 退朝端点：无草案时不再走 16ms 快路，必经 simulator。"""
-    from contextlib import contextmanager
-    from types import SimpleNamespace
-
-    import web_app
-
-    db, state, content = game
-    closed_turn = int(state.turn)
-    sim_calls = []
-    _canned_full_settlement(
-        monkeypatch,
-        narrative="Web 无旨月邸报。",
-        simulator_calls=sim_calls,
-    )
-    session = _session(db, state, content)
-    web_game = SimpleNamespace(
-        _write_gate=threading.Lock(),
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: [],
-        refresh_turn=lambda: None,
-        state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-    )
-
-    @contextmanager
-    def unlocked(_game):
-        yield
-
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
-    # 端点不应再依赖 advance_without_edict 快路返回 True
-    response = web_app.api_advance_without_edict()
-
-    assert response.get("awaiting_decision") is False
-    assert response["advanced"] is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
     assert not db.get_turn_report(closed_turn)

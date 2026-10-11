@@ -155,31 +155,6 @@ def _materials_invocation_dir(db: Any, state: Any) -> Path:
     )
 
 
-class MaterialsRoot:
-    """Mutable live materials root shared by API tools and optional CLI cwd.
-
-    Independent of whether the concrete model declares ``materials_dir``.
-    """
-
-    __slots__ = ("_root",)
-
-    def __init__(self, root: Optional[Path | str] = "") -> None:
-        self._root = str(root or "")
-
-    @property
-    def root(self) -> str:
-        return self._root
-
-    def set(self, root: Optional[Path | str]) -> str:
-        previous = self._root
-        self._root = str(root or "")
-        return previous
-
-    def clear(self) -> str:
-        return self.set("")
-
-    def __call__(self) -> str:
-        return self._root
 
 
 def _empty_uuid_invocation_parent(path: Path) -> Optional[Path]:
@@ -300,7 +275,7 @@ def material_tools(root: Any) -> list:
         value = root() if callable(root) else root
         text = str(value or "").strip()
         if not text:
-            # Empty/cleared MaterialsRoot must not resolve Path("") → CWD.
+            # Empty/cleared materials root must not resolve Path("") → CWD.
             raise ValueError("材料目录未就绪")
         return Path(text)
 
@@ -391,16 +366,23 @@ def _own_affair_lines(
     closed rows remain readable, and this projection does not invent a
     natural-close algorithm.
     """
-    from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience
+    from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience, origin_visible_to
     from ming_sim.participant_roster import participant_roster_names
 
     store = db.affairs
 
     dossier_participant_ids: set[int] = set()
     for row in db.conn.execute(
-        "SELECT affair_id, participant_roster FROM decree_dossiers WHERE affair_id != 0",
+        "SELECT id, affair_id, secret_order_id, participant_roster "
+        "FROM decree_dossiers WHERE affair_id != 0",
     ).fetchall():
-        if character_name in participant_roster_names(row["participant_roster"]):
+        if (
+            row["secret_order_id"] is not None
+            and origin_visible_to(db, f"dossier:{row['id']}", character_name)
+        ) or (
+            row["secret_order_id"] is None
+            and character_name in participant_roster_names(row["participant_roster"])
+        ):
             dossier_participant_ids.add(int(row["affair_id"]))
 
     linked_material: dict[int, list[str]] = {}
@@ -473,7 +455,8 @@ def _own_affair_lines(
             affair = store.get(affair_id)
         except KeyError:
             continue
-        facts = store.current_situation(textual_facts, affair_id)
+        facts = tuple(fact for fact in store.current_situation(textual_facts, affair_id)
+                      if origin_visible_to(db, fact.origin_ref, character_name))
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         extra_lines = linked_material.get(affair_id) or []
         directory_lines = [*fact_lines, *extra_lines]
@@ -762,6 +745,8 @@ def _write_textual_fact_files(
     tmp: Path, db: Any, character: Any, knowledge: dict,
     matter_lines: Sequence[tuple[str, str, str, str, bool]],
 ) -> list[str]:
+    from ming_sim.knowledge import origin_visible_to
+
     readable = db.textual_facts.readable_materials
     subjects: list[tuple[str, str, str]] = []
     name = str(getattr(character, "name", "") or "")
@@ -801,7 +786,8 @@ def _write_textual_fact_files(
         if key in seen:
             continue
         seen.add(key)
-        facts = readable(subject_kind=kind, subject_id=subject_id)
+        facts = tuple(fact for fact in readable(subject_kind=kind, subject_id=subject_id)
+                      if origin_visible_to(db, fact.origin_ref, name))
         if not facts:
             continue
         body = "\n".join(
@@ -991,7 +977,7 @@ def _person_audience_experience(db: Any, name: str) -> list[dict]:
 
 def _secret_order_chat_turn_ids(db: Any) -> set[int]:
     """Use durable oral pins, including later approvals and updates, not only issuance."""
-    message_ids = list(db._secret_origin_message_protection())
+    message_ids = list(db._secret_origin_message_ids())
     if not message_ids:
         return set()
     placeholders = ",".join("?" for _ in message_ids)
@@ -1015,30 +1001,18 @@ def _omit_secret_order_audience(entries: Sequence[dict], secret_turn_ids: set[in
     ]
 
 
-def _is_gazette_public_event(item: dict) -> bool:
-    """Turn-report gazette rows have their own directory carrier; exclude from 公开说法."""
-    source_id = str(item.get("source_id") or "")
-    return (
-        source_id.startswith("projection:turn_report:")
-        or (source_id.startswith("turn_report:") and source_id.endswith(":public"))
-        or (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
-    )
-
-
 def _write_public_by_month(
     tmp: Path, public_events: list, *, base: str = _PUBLIC_DIR,
 ) -> list[str]:
     """公开说法按月分文件（#1830 既有形态，人物目录／场景人物子树／推演者目录共用）。
 
-    邸报有独立目录载体，不在此再复制同一份 turn_report。``base`` 是目录内
+    邸报直接读归档表，使用独立目录载体。``base`` 是目录内
     相对前缀——场景人物私有子树把同一份材料写在自己名下，准入与人读呈现
     仍走这一个函数（#1830 共用读侧契约）。
     """
     index: list[str] = []
     public_by_month: dict[tuple[int, int], list[str]] = {}
     for item in public_events or []:
-        if _is_gazette_public_event(item):
-            continue
         year = int(item.get("year") or 0)
         period = int(item.get("period") or 0)
         # #1812 P6：title/body 是自由正文，判空只用局部 stripped 副本，写出用原文。
@@ -1069,7 +1043,7 @@ def _write_character_public_layer(
     )
     index.extend(_write_gazette_index(
         tmp,
-        _with_archived_gazette_titles(_character_gazette_rows(public_events), db),
+        db.list_turn_reports(),
         prefix=f"{base}/{_CHARACTER_GAZETTE_DIR}" if base else _CHARACTER_GAZETTE_DIR,
     ))
     return index
@@ -1104,50 +1078,6 @@ def prepare_character_materials(
         _spoken_this_scene(db, character),
     )
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
-
-
-def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, object]]:
-    """Person gazette rows come only from that person's typed public projection.
-
-    Raw ``turn_reports`` aggregates are not an authorization boundary (#883 / #1832).
-    """
-    rows: list[dict[str, object]] = []
-    for item in public_events or []:
-        source_id = str(item.get("source_id") or "")
-        if not (
-            source_id.startswith("projection:turn_report:")
-            or (source_id.startswith("turn_report:") and source_id.endswith(":public"))
-        ):
-            continue
-        body = str(item.get("body") or "")
-        if not body.strip():
-            continue
-        rows.append({
-            "year": int(item.get("year") or 0),
-            "period": int(item.get("period") or 0),
-            "turn": int(item.get("turn") or 0),
-            "body": body,
-        })
-    return rows
-
-
-def _with_archived_gazette_titles(
-    rows: Sequence[dict[str, object]], db: Any,
-) -> list[dict[str, object]]:
-    """标题只取 turn_reports 已入档字段。缺标题留空，不读正文。"""
-    archived: dict[int, str] = {}
-    for item in db.list_turn_reports():
-        archived[int(item.get("turn") or 0)] = str(item.get("title") or "")
-    stamped: list[dict[str, object]] = []
-    for row in rows:
-        current = str(row.get("title") or "")
-        if current.strip():
-            stamped.append(row)
-            continue
-        copy = dict(row)
-        copy["title"] = archived.get(int(row.get("turn") or 0), "")
-        stamped.append(copy)
-    return stamped
 
 
 def _gazette_index_line(rel: str, year: int, period: int, title: str) -> str:
@@ -1210,17 +1140,6 @@ def secret_order_dossier_ids(db: Any) -> set[int]:
     }
 
 
-def affair_ids_for_dossiers(db: Any, dossier_ids: set[int]) -> set[int]:
-    """由已过滤的案卷 id 派生关联事务 id；不再平行重判 secret_order_id。"""
-    if not dossier_ids:
-        return set()
-    return {
-        int(row["affair_id"])
-        for row in db.list_decree_dossiers()
-        if int(row["id"]) in dossier_ids and int(row.get("affair_id") or 0) > 0
-    }
-
-
 # 密令来源 origin / source_id 唯一前缀（#1862 reopen）。拼接与判定都走这里。
 SECRET_ORDER_ORIGIN_PREFIX = "secret_order:"
 
@@ -1236,13 +1155,8 @@ def secret_order_origin(order_id: object) -> str:
 
 
 def dossier_id_in_origin(origin: object) -> Optional[int]:
-    text = str(origin or "")
-    if not text.startswith("dossier:"):
-        return None
-    raw = text[len("dossier:"):].split(":", 1)[0]
-    if not raw.isdigit():
-        return None
-    return int(raw)
+    match = re.match(r"(?:decree_)?dossier:(\d+)(?:[:/]|$)", str(origin or ""))
+    return int(match.group(1)) if match else None
 
 
 def _candidate_event_fact(ev: Any) -> dict[str, object]:
@@ -1303,8 +1217,7 @@ def candidate_supply(
 
 def _world_board_text(
     db: Any, state: Any, *,
-    ledger_origin_prefix_excluded: str = "",
-    exclude_dossier_ids: Optional[set[int]] = None,
+    public_only: bool = False,
     roster_text: str | None = None,
 ) -> str:
     """盘面全量：未按职位裁切的实况账本（0034 后出注记：仅人物按职位读衙门底账，
@@ -1315,8 +1228,7 @@ def _world_board_text(
     sections = (
         ("朝臣", roster_text if roster_text is not None else _world_roster_text(db, state)),
         ("国库", db.treasury_report(
-            state, limit=None, exclude_origin_prefix=ledger_origin_prefix_excluded,
-            exclude_dossier_ids=exclude_dossier_ids,
+            state, limit=None, public_only=public_only,
         )),
         ("军务", db.army_report(limit=None)),
         ("地方", db.region_report(limit=None)),
@@ -1361,7 +1273,7 @@ def _world_affair_lines(
     db: Any,
     include_fact: Any = None,
     *,
-    exclude_affair_ids: set[int] | None = None,
+    public_only: bool = False,
 ) -> tuple[
     list[tuple[str, str, str, str]], list[tuple[str, str, str, str]],
 ]:
@@ -1369,21 +1281,25 @@ def _world_affair_lines(
 
     Each line is (dir_key, title, directory_text, opening_text). The directory
     retains origin and every dated fact; the opening uses the latest fact only.
-    ``exclude_affair_ids`` drops whole matters (name/origin included) so public
-    feeds cannot bypass the secret-dossier boundary via metadata alone.
+    Public readers follow each origin; a linked secret dossier does not hide
+    an otherwise public mixed affair.
     """
     store = db.affairs
     textual_facts = db.textual_facts
-    excluded = exclude_affair_ids or set()
+    from ming_sim.knowledge import origin_visible_to
     lines: list[tuple[str, str, str, str]] = []
     opening_lines: list[tuple[str, str, str, str]] = []
     for affair in store.list_all():
-        if int(affair.id) in excluded:
-            continue
         facts = tuple(
             fact for fact in store.current_situation(textual_facts, affair.id)
             if _keep_fact(fact, include_fact)
         )
+        # Metadata follows durable dossier links, never the free-prose origin.
+        # A public fact or ordinary dossier keeps a mixed affair available.
+        if public_only and not facts:
+            dossier_refs = store.origin_refs(affair.id)[1:]
+            if dossier_refs and not any(origin_visible_to(db, ref) for ref in dossier_refs):
+                continue
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         directory_text = "\n".join([
             f"起因：{affair.origin}", f"状态：{affair.status}", *fact_lines,
@@ -1628,31 +1544,30 @@ def _person_history_fields(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _world_history_row_visible(
-    row: Mapping[str, Any], exclude_dossier_ids: set[int], secret_turn_ids: set[int],
-    exclude_origin_prefix: str,
+    db: Any, row: Mapping[str, Any], secret_turn_ids: set[int], public_only: bool,
 ) -> bool:
-    """Use durable origin pins for every history rail, including attached records."""
+    """History pins use the shared provenance boundary, not affair publicity."""
+    if not public_only:
+        return True
+    from ming_sim.knowledge import origin_visible_to
     from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
 
     if int(row.get("source_chat_turn_id") or 0) in secret_turn_ids:
         return False
-    if any(row.get(field) in exclude_dossier_ids for field in (
-        "source_dossier_id", "audit_dossier_id", "escort_source_dossier_id",
-    )):
+    if any(not origin_visible_to(db, "", linked_dossier_id=int(row.get(field) or 0))
+           for field in ("source_dossier_id", "audit_dossier_id", "escort_source_dossier_id")):
         return False
-    return not any(
-        dossier_id_in_origin(source) in exclude_dossier_ids
-        or (exclude_origin_prefix and str(source or "").startswith(exclude_origin_prefix))
-        or any(str(source or "").startswith(f"{prefix}|chat_turn:{cid}|")
-               for cid in secret_turn_ids
-               for prefix in (SUMMON_EDGE_ORIGIN_PREFIX, "转译声明"))
+    return all(
+        origin_visible_to(db, source)
+        and not any(str(source or "").startswith(f"{prefix}|chat_turn:{cid}|")
+                    for cid in secret_turn_ids
+                    for prefix in (SUMMON_EDGE_ORIGIN_PREFIX, "转译声明"))
         for source in (row.get("origin_ref"), row.get("origin"), row.get("source_id"))
     )
 
 
 def _world_effect_materials(
-    db: Any, origin: str, exclude_dossier_ids: set[int], secret_turn_ids: set[int],
-    exclude_origin_prefix: str,
+    db: Any, origin: str, secret_turn_ids: set[int], public_only: bool,
 ) -> dict[str, Any]:
     """Landed history crosses the same input/source boundary as the world board."""
     from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS
@@ -1662,7 +1577,7 @@ def _world_effect_materials(
         allowed = []
         for row in rows:
             if not _world_history_row_visible(
-                row, exclude_dossier_ids, secret_turn_ids, exclude_origin_prefix,
+                db, row, secret_turn_ids, public_only,
             ):
                 continue
             if table == "issues":
@@ -1702,11 +1617,11 @@ def _write_world_tree(
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
     exclude_dossier_ids: set[int] | None = None,
-    exclude_origin_prefix: str = "",
+    public_only: bool = False,
 ) -> list[str]:
     def visible_history(rows):
         return [row for row in rows if _world_history_row_visible(
-            row, exclude_dossier_ids or set(), secret_turn_ids or set(), exclude_origin_prefix,
+            db, row, secret_turn_ids or set(), public_only,
         )]
 
     index: list[str] = []
@@ -1782,8 +1697,7 @@ def _write_world_tree(
             continue
         affair_materials[key].append(_material_facts_text({
             "直挂事务实况": _world_effect_materials(
-                db, db.affairs.origin_ref(affair.id), exclude_dossier_ids or set(),
-                secret_turn_ids or set(), exclude_origin_prefix,
+                db, db.affairs.origin_ref(affair.id), secret_turn_ids or set(), public_only,
             ),
         }))
     # All linked dossiers remain available, regardless of dossier/affair status.
@@ -1821,8 +1735,7 @@ def _write_world_tree(
             },
             "实况": {
                 "已落效果": _world_effect_materials(
-                    db, f"dossier:{dossier_id}", exclude_dossier_ids or set(),
-                    secret_turn_ids or set(), exclude_origin_prefix,
+                    db, f"dossier:{dossier_id}", secret_turn_ids or set(), public_only,
                 ),
                 "对账": visible_history(db.list_dossier_reconciliations(dossier_id)),
             },
@@ -1843,7 +1756,7 @@ def _write_world_tree(
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
         tmp,
-        _with_archived_gazette_titles(db.list_turn_reports(), db),
+        db.list_turn_reports(),
         prefix=_WORLD_GAZETTE_DIR,
     ))
 
@@ -1994,7 +1907,7 @@ def scene_materials_root(db: Any, state: Any) -> Path:
     return _materials_campaign_dir(db) / key / "scene"
 
 
-def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
+def _scene_present_rows(db: Any) -> list[tuple[str, str]]:
     """在场诸人（含常在员额）→ (name, office) 列表，按姓名排序。"""
     from ming_sim.audience_night import get_open_night, present_names_at, resolve_standing_roster
 
@@ -2138,7 +2051,7 @@ def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
     from ming_sim.urge_lever import list_urge_audience_scenes
 
     lines: list[str] = []
-    for scene in list(list_due_review_scenes(db, state)) + list(
+    for scene in list(list_due_review_scenes(db)) + list(
         list_urge_audience_scenes(db, state)
     ):
         if not isinstance(scene, dict):
@@ -2201,7 +2114,6 @@ def _write_one_present_person(
     character: Any,
     knowledge: dict,
     matter_lines: list[tuple[str, str, str, str, bool]],
-    night_id: int = 0,
 ) -> list[str]:
     """把一人的可读材料全部写在 人物/<名>/ 之下，不与他人共享路径。
 
@@ -2242,6 +2154,8 @@ def _write_one_present_person(
     _write_text(tmp / exp_rel, _experience_text(knowledge, audible))
     index.append(exp_rel)
 
+    from ming_sim.knowledge import origin_visible_to
+
     # #1839 / ADR 0156：文字事实当场落账后须进本夜场景目录（下一句可见）。
     # 与世界目录同形（按月实况），投影复用 _textual_facts_text，不另造读口。
     facts_rel = f"{base}/按月实况.txt"
@@ -2250,6 +2164,7 @@ def _write_one_present_person(
         _textual_facts_text(
             db.textual_facts,
             subject_kind="character", subject_id=name,
+            include_fact=lambda fact: origin_visible_to(db, fact.origin_ref, name),
         ),
     )
     index.append(facts_rel)
@@ -2301,9 +2216,7 @@ def _write_scene_tree(
     tmp: Path,
     db: Any,
     state: Any,
-    present_rows: Sequence[tuple[str, str]],
     person_payloads: Sequence[tuple[Any, dict, list]],
-    night_id: int = 0,
 ) -> list[str]:
     """为每位在场人物写入互不覆盖的私有材料子树，合并 INDEX。"""
     index: list[str] = []
@@ -2317,7 +2230,6 @@ def _write_scene_tree(
     for character, knowledge, matter_lines in person_payloads:
         for rel in _write_one_present_person(
             tmp, db, state, character, knowledge, matter_lines,
-            night_id,
         ):
             _add(rel)
 
@@ -2338,11 +2250,7 @@ def prepare_scene_materials(
     开场最小集 = 在场身份职位、日期、各人正经手事务一句、本场已说的话。
     CLI cwd / API list-read 同树。
     """
-    from ming_sim.audience_night import get_open_night
-
-    present_rows = _scene_present_rows(db, state)
-    night = get_open_night(db)
-    night_id = int(night["id"]) if night is not None else 0
+    present_rows = _scene_present_rows(db)
     spoken = _scene_spoken_text(db)
     characters = dict(getattr(db.content, "characters", None) or {})
 
@@ -2361,7 +2269,7 @@ def prepare_scene_materials(
     dest, index = _publish_material_tree(
         dest_root,
         scene_materials_root(db, state),
-        lambda tmp: _write_scene_tree(tmp, db, state, present_rows, person_payloads, night_id),
+        lambda tmp: _write_scene_tree(tmp, db, state, person_payloads),
     )
     pending_facts = _scene_pending_audience_facts(db, state)
     opening = _scene_opening_text(
@@ -2410,7 +2318,6 @@ def prepare_world_materials(
     dest_root: Optional[Path] = None,
     include_fact: Any = None,
     include_event: Any = None,
-    ledger_origin_prefix_excluded: str = "",
     exclude_secret_order_dossiers: bool = False,
     exclude_secret_order_audience: bool = False,
     public_feed: bool = False,
@@ -2422,24 +2329,21 @@ def prepare_world_materials(
     目录事实文件为人读字段清单，不承担解析契约。
     有终态的事件不回填候选；逐件候选材料共用同一份资格快照。
 
-    `public_feed=True` 只给公共供料方（公共邸报作者）：受显式排除的公开说法
-    不进其目录（#1829 C1）。世界段、逐旨预推、整月密报是全量推演者，按
-    ADR 0155 三层全看，不传该参数（#1829 F1）。"""
+    `public_feed=True` selects the public author; world simulation and private
+    reports retain the full read surface.
+    """
     from ming_sim.knowledge import build_character_knowledge
     from ming_sim.issues import _event_terminal_records
 
-    # public_events 的既有投影与具体 character_name 无关（build_character_knowledge
-    # 里 public_events 恒取 `_character_knowledge_events("", ...)`）——借用同一投影，
-    # 不另建一套「世界公开说法」查询。排除边界按调用职责落，不按有无姓名落。
-    knowledge = build_character_knowledge(db, state, "", public_feed=public_feed)
+    # Reuse the public-version read projection. Full world facts and each
+    # person's own experiences are read independently below.
+    knowledge = build_character_knowledge(db, state, "")
     public_events = knowledge.get("public_events") or []
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
     secret_dossiers = secret_order_dossier_ids(db) if exclude_secret_order_dossiers else set()
-    # 公共元数据旁路：关联事务从已排除案卷 id 派生，不平行重跑 secret_order_id 判断。
-    secret_affairs = affair_ids_for_dossiers(db, secret_dossiers)
     affair_lines, opening_affair_lines = _world_affair_lines(
-        db, include_fact, exclude_affair_ids=secret_affairs or None,
+        db, include_fact, public_only=public_feed,
     )
     dossier_facts = continuing_dossier_facts(db, int(state.turn))
     if secret_dossiers:
@@ -2449,9 +2353,7 @@ def prepare_world_materials(
         ]
     roster_text = _world_roster_text(db, state)
     board_text = _world_board_text(
-        db, state, roster_text=roster_text,
-        ledger_origin_prefix_excluded=ledger_origin_prefix_excluded,
-        exclude_dossier_ids=secret_dossiers or None,
+        db, state, public_only=public_feed, roster_text=roster_text,
     )
     denunciation_facts = db.build_faction_denunciation_facts(
         exclude_dossier_ids=secret_dossiers,
@@ -2471,7 +2373,7 @@ def prepare_world_materials(
             tmp, db, state, public_events, affair_lines, board_text,
             roster_text, world_facts, include_fact, include_event,
             _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
-            secret_dossiers, ledger_origin_prefix_excluded,
+            secret_dossiers, public_feed,
         ),
     )
 
@@ -2493,7 +2395,7 @@ def _inquiry_monthly_report_rels(
     """查访声明点名的密令，只拉该令当前月度非终值奏报。
 
     见闻里没有 order 标记的委派不打开任何密令。承办人自己的在办令已在进行中.txt。
-    排除看密令当前字段，不看委派当时的快照。没有月报正文就不写文件。
+    委派是经手授权，与官职无关。没有月报正文就不写文件。
     """
     from ming_sim.knowledge import knowledge_row_visible_to
 
@@ -2519,17 +2421,7 @@ def _inquiry_monthly_report_rels(
         order = by_id.get(order_id)
         if order is None:
             continue
-        visible_row = {
-            "source_id": event.get("source_id"),
-            "kind": event.get("kind"),
-            "excluded_names": json.dumps(
-                list(order.get("excluded_names") or []), ensure_ascii=False,
-            ),
-            "excluded_targets": json.dumps(
-                order.get("excluded_targets") or {}, ensure_ascii=False,
-            ),
-        }
-        if not knowledge_row_visible_to(db, visible_row, name):
+        if not knowledge_row_visible_to(db, {"source_id": f"secret_order:{order_id}"}, name):
             continue
         texts = _secret_order_memorials(order)
         if not texts:

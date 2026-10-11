@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 
-
-
 def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
     """流寇头目与股分层：人物所属股的 leader 是单一 canonical 人名。"""
     db, _state, _content = read_game

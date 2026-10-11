@@ -275,7 +275,7 @@ def _select_second_verdict(
     return verdict
 
 
-def _arm_pool_size(_cfg: LLMConfig, job_count: int) -> int:
+def _arm_pool_size(job_count: int) -> int:
     """All runners concurrent — no per-model serial fallback."""
     return int(job_count)
 
@@ -355,9 +355,8 @@ def _plant_dossiers(db: GameDB, state, kinds: tuple[str, ...] | list[str]) -> di
     return ids
 
 
-def _mutate_leader_only(db: GameDB, state) -> None:
+def _mutate_leader_only(db: GameDB) -> None:
     """TD-9 leader arm: only 东林 agenda expresses leader appeasement."""
-    del state
     db.conn.execute(
         "UPDATE factions SET agenda=? WHERE name='东林'",
         (LEADER_APPEASED_AGENDA,),
@@ -365,9 +364,8 @@ def _mutate_leader_only(db: GameDB, state) -> None:
     db.conn.commit()
 
 
-def _mutate_gatekeeper_replace(db: GameDB, state) -> None:
+def _mutate_gatekeeper_replace(db: GameDB) -> None:
     """TD-9 gatekeeper arm: dismiss 许誉卿 and seat a registered successor in-office."""
-    del state
     db.conn.execute("UPDATE characters SET status='dismissed' WHERE name='许誉卿'")
     db.conn.execute(
         "UPDATE characters SET status='active', office=?, office_type=? WHERE name=?",
@@ -393,14 +391,14 @@ def _run_resolve_arm(
         _apply_base_board(db, state, authority=authority)
         ids = _plant_dossiers(db, state, kinds)
         if mutation is not None:
-            mutation(db, state)
+            mutation(db)
         proposed = db.list_decree_dossiers(status="proposed")
         context = build_promulgation_judge_context(db, state, proposed)
         label = decree_label or name
         # Capture turn before resolve: non-awaiting settlement advances state.turn.
         resolve_turn = state.turn
         result = resolve_directives(
-            state, db, agno, cfg, [object()], label, content=content,
+            state, db, agno, cfg, label, content=content,
         )
         awaiting = bool(result.awaiting)
         verdicts = _resolve_arm_verdicts(
@@ -429,7 +427,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
             db, state, db.list_decree_dossiers(status="proposed"),
         )
         first_result = resolve_directives(
-            state, db, agno, cfg, [object()], "四旨并下", content=content,
+            state, db, agno, cfg, "四旨并下", content=content,
         )
         if not first_result.awaiting:
             raise RuntimeError("real gate expected rejected dossiers to reach rescript")
@@ -448,7 +446,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         )
         second_turn = state.turn
         second_result = resolve_directives(
-            state, db, agno, cfg, [], "留中案下月重判", content=content,
+            state, db, agno, cfg, "留中案下月重判", content=content,
         )
         second_pending = _judgments_at_turn(db, second_turn, ids)
         second_history = _judgments_at_turn(db, second_turn, [ids["hostile"]])
@@ -554,7 +552,7 @@ def main() -> int:
             "low_hold_rail": lambda: _run_low_hold_rail(tmp, content, cfg),
         }
         results: dict[str, dict] = {}
-        with ThreadPoolExecutor(max_workers=_arm_pool_size(cfg, len(arm_jobs))) as executor:
+        with ThreadPoolExecutor(max_workers=_arm_pool_size(len(arm_jobs))) as executor:
             futures = {executor.submit(job): name for name, job in arm_jobs.items()}
             for future in as_completed(futures):
                 name = futures[future]

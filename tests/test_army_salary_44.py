@@ -71,7 +71,7 @@ def test_defected_army_to_ming_owes_salary_not_free(read_game):
     """#44 ship-pre cmr R1（codex high）：原非明军经 owner_power 翻成 ming（倒戈/招安，军务 extractor
     prompt 明确要求写归属）后，salary_rate<=0（非明军 content 默认 0）不得让 army_needed 返 0 =
     零饷白嫖军——这正是 #44 已经募兵入口（_coerce_new_salary_rate 默认 1.5）+ 迁移入口
-    （_backfill_salary_rate）堵住、但经 runtime 易主漏网的同一 exploit。army_needed 对
+    （旧档 salary_rate 回填已退役）；runtime 易主漏网的同一 exploit。army_needed 对
     ming + manpower>0 + rate<=0 锚定 1.5 → 应发>0。"""
     db, state, _ = read_game
     src = db.conn.execute(
@@ -174,30 +174,22 @@ def test_manpower_true_noop_no_log(game):
 
 
 def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
-    # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。
-    from ming_sim.army_pay import _auto_pay_arrears_by_priority
+    """#287 PR R2：空 scope 是「不允许任何军」，不能回落全局池。经公共 commitment 路径：
+    门中无有效军 id（仅空白）→ 池范围为空 → 不得拨饷给任何军。"""
+    import json
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
     db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
-    spent = _auto_pay_arrears_by_priority(
-        db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
+    db.insert_issue(
+        state, kind="initiative", title="空范围补饷承诺", origin_kind="decree",
+        origin_ref="decree:turn-44:empty", bar_value=0, inertia=0,
+        ongoing_effects={"economy": [{"account": "国库", "delta": -5, "reason": "空范围补饷", "purpose": "补饷"}]},
+        stop_condition=json.dumps({"army. .arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
     )
-    row = _army_row(db, aid)
-    assert spent == 0, "allowed_army_ids=[] 应明确支付 0，不得回落全军池"
-    assert row["arrears"] == pytest.approx(10)
-
-
-def test_non_finite_salary_rate_anchored_not_crash():
-    """#44 ship-pre 线上 gemini high + coderabbit inf 探针：非有限 salary_rate（inf/-inf/nan）
-    须落锚点、不得崩。inf>0 为真会漏过 coerce、经 army_needed 的 ceil(manpower×inf/10000) 抛
-    OverflowError 崩整月结算。两道防线：_coerce_new_salary_rate（建军入口）+ army_needed（结算咽喉）。"""
-    from ming_sim.army_pay import army_needed
-
-    # army_needed 咽喉对非有限 rate 防御性归锚点、不抛 OverflowError。
-    for bad in (float("inf"), float("-inf"), float("nan")):
-        row = {"owner_power": "ming", "manpower": 5000, "salary_rate": bad}
-        needed = army_needed(row)
-        assert needed == math.ceil(5000 * 1.5 / 10000), f"非有限 rate({bad}) 应锚点应发，得 {needed}"
+    apply_situation_monthly_drift(db, state)
+    assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (aid,)).fetchone()[0] == pytest.approx(10)

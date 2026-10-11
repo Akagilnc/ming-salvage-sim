@@ -196,9 +196,16 @@ def test_consort_excluded_from_court(read_game):
     assert visible_in_court(content.characters[consort], db) is False
 
 
+
+
+
+
+
+
 def test_zongfan_cannot_be_summoned_via_can_summon(game):
     """summon_minister 工具链（session 召对 + web 流式两路）共用 session.can_summon 闸——宗藩须在此拒，
-    否则裁判可绕朝堂列表按名召宗室（cmr R4）。集中守 can_summon 一处覆盖两路；后宫不受此闸影响。"""
+    否则裁判可绕朝堂列表按名召宗室（cmr R4：summon 工具走
+    can_summon）。集中守 can_summon 一处覆盖两路；后宫不受此闸影响。"""
     import pytest
     from ming_sim.session import GameSession
     db, state, content = game
@@ -305,6 +312,8 @@ def test_list_ministers_uses_db_power_id(game):
     # 外藩 active（DB 非 ming）不入册
     enemy = _enemy_active_name(db, content)
     assert enemy not in {v.name for v in sess.list_ministers()}
+
+
 
 
 def test_db_resolve_power_id_authoritative(game):

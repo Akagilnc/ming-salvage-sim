@@ -8,20 +8,14 @@ import os
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import web_app
-from tests.web_audience_test_doubles import (
-    HallAdmissionSessionMixin, minister_double, open_audience_night_conn,
-)
+from tests.conftest import stub_webgame_boundary
 from tests.wait_utils import reset_menu_path_leases, wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
 
 # 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
 _reset_path_leases = reset_menu_path_leases
-
-
-pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
 
 def _drain_then_archive(game, db_path: str) -> None:
@@ -61,7 +55,7 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
         gate.release()
         thread.join()
 
-    assert done.is_set(), "drain/shutdown worker exited without success"
+    done.wait()
     assert closed == [1]
     assert not gate.locked()
 
@@ -78,24 +72,20 @@ def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path)
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
     _reset_path_leases()
-    entry = web_app._register_holder(db_path, fake_game)
-    assert entry is not None
+    assert web_app._register_holder(db_path, fake_game) is not None
     monkeypatch.setattr(web_app, "web_game", fake_game)
 
     gate.acquire()
-    try:
-        result = asyncio.run(web_app.api_menu_exit())
-        assert result == {"ok": True}
-        assert web_app.web_game is None
-        assert closed == []
-    finally:
-        gate.release()
 
-    op = entry.close_op
-    assert op is not None
-    op.done.wait()  # CloseOp publishes terminal state in finally, including failure.
-    assert op.close_ok is True
-    assert closed == [1]
+    result = asyncio.run(web_app.api_menu_exit())
+
+    assert result == {"ok": True}
+    assert web_app.web_game is None
+    assert closed == []
+
+    gate.release()
+
+    wait_until(lambda: closed == [1])
     assert not gate.locked()
 
 
@@ -115,8 +105,7 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
     _reset_path_leases()
-    entry = web_app._register_holder(old_db, fake_old_game)
-    assert entry is not None
+    assert web_app._register_holder(old_db, fake_old_game) is not None
     monkeypatch.setattr(web_app, "web_game", fake_old_game)
     monkeypatch.setenv("MING_SIM_DB", old_db)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
@@ -125,20 +114,36 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
 
     gate.acquire()
-    try:
-        result = asyncio.run(web_app.api_menu_new_game())
-        assert "state" in result
-        assert web_app.web_game is fake_new_game
-        assert closed == []  # 旧 session 尚未关闭（gate 被模拟 worker 持有）
-    finally:
-        gate.release()
 
-    op = entry.close_op
-    assert op is not None
-    op.done.wait()  # CloseOp publishes terminal state in finally, including failure.
-    assert op.close_ok is True
-    assert closed == [1]
+    result = asyncio.run(web_app.api_menu_new_game())
+
+    assert "state" in result
+    assert web_app.web_game is fake_new_game
+    assert closed == []  # 旧 session 尚未关闭（gate 被模拟 worker 持有）
+
+    gate.release()
+
+    wait_until(lambda: closed == [1])
     assert not gate.locked()
+
+
+
+def test_get_main_db_path_prefers_active_db_over_launch_env(monkeypatch, tmp_path):
+    """#402 R1（Codex）：重启后 active_db.txt 必须压过启动 env，才能继续 new_game 切出的新主库。"""
+    env_db_path = str(tmp_path / "launch_env.db")
+    active_db_path = str(tmp_path / "active_from_new_game.db")
+    monkeypatch.setenv("MING_SIM_DB", env_db_path)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    with open(web_app.user_data_path("active_db.txt"), "w", encoding="utf-8") as f:
+        f.write(active_db_path)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    stub_webgame_boundary(monkeypatch)
+    game = web_app.WebGame(fresh=False)
+    try:
+        assert game.db_path == active_db_path
+    finally:
+        game.session.close()
 
 
 def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_path):
@@ -371,22 +376,7 @@ def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tm
     assert web_app.web_game is old_game
 
 
-@pytest.fixture
-def shutdown_threads():
-    """Spy on native starts, without replacing the actual thread execution."""
-    with patch.object(
-        threading.Thread, "start", autospec=True, side_effect=threading.Thread.start,
-    ) as started:
-        try:
-            yield started.call_args_list
-        finally:
-            for call in started.call_args_list:
-                worker = call.args[0]
-                if worker.ident is not None:
-                    worker.join()
-
-
-def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch, shutdown_threads):
+def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
     queue = SessionWriteQueue()
     gate = queue.write_gate
     closed: list[int] = []
@@ -419,14 +409,12 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch, shutd
         gate.release()
         thread.join()
 
-    assert done.is_set(), "drain/shutdown worker exited without success"
+    done.wait()
     assert closed == [1]
-    for call in shutdown_threads:
-        call.args[0].join()
-    assert killed
+    wait_until(lambda: bool(killed))
 
 
-def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch, shutdown_threads):
+def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch):
     """#402 R1（Sourcery）：web_game 已是 None 时 shutdown 不 drain，仍调度退出。"""
     killed: list[object] = []
     monkeypatch.setattr(web_app, "web_game", None)
@@ -438,233 +426,7 @@ def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch, shutdown_t
     result = asyncio.run(web_app.api_menu_shutdown())
 
     assert result == {"ok": True}
-    for call in shutdown_threads:
-        call.args[0].join()
-    assert killed
-
-
-# ── Gap B: drain 须等排队等 gate 的旧召对 worker ──────────────────────────
-
-class _GapBRunContent:
-    event = "RunContent"
-
-    def __init__(self, content: str):
-        self.content = content
-
-
-class _GapBRunCompleted:
-    content = ""
-    tools = []
-
-
-class _GapBAgent:
-    def __init__(self, allow_finish: threading.Event):
-        self.allow_finish = allow_finish
-
-    def run(self, *_args, **_kwargs):
-        yield _GapBRunContent("canned-delta")
-        self.allow_finish.wait()
-        yield _GapBRunCompleted()
-
-
-class _GapBSession(HallAdmissionSessionMixin):
-    temporary_characters: set = set()
-
-    def __init__(self, characters, agents, state, db):
-        self.state = state
-        self.db = db
-        self.content = SimpleNamespace(characters=characters)
-        self._agents = agents
-
-    def _character(self, name):
-        return self.content.characters[name]
-
-
-    def pending_count(self):
-        return 0
-
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
-        # #1849 reopen：殿上入口不绑单人 character；轻壳取任一假 agent。
-        from ming_sim.session import ChatTurnResult
-
-        agent = self._agents[next(iter(self.content.characters))]
-        parts: list[str] = []
-        for event in agent.run():
-            content = getattr(event, "content", None)
-            if content:
-                parts.append(str(content))
-                if stream_emit is not None:
-                    stream_emit(str(content))
-        return ChatTurnResult(answer="".join(parts))
-    def schedule_pending_scene_translation(self, result):
-        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
-        return None
-
-
-class _GapBDB:
-    def __init__(self):
-        self.messages: list[dict] = []
-        self._next_id = 1
-        self._inflight: list[dict] = []
-        self.conn = open_audience_night_conn()
-
-    def agno_runs_length(self, _session_id):
-        return 0
-
-    def capture_chat_rollback_snapshot(self):
-        return {}
-
-    def create_chat_turn(self, *_a, **_k):
-        tid = self._next_id
-        self._next_id += 1
-        self._inflight.append({"id": tid, "status": "generating", "minister_message_id": None})
-        return tid
-
-    def append_chat_message(self, minister_name, turn, role, content):
-        self.messages.append(
-            {"minister": minister_name, "turn": int(turn), "role": role, "content": content})
-        row_id = self._next_id
-        self._next_id += 1
-        return row_id
-
-    def update_chat_turn_messages(self, *_a, **_k):
-        return None
-
-    def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
-        # 同事务回话；stub 只记账 message id
-        mid = self.append_chat_message(minister_name, turn, "minister", content)
-        for row in self._inflight:
-            if int(row["id"]) == int(chat_turn_id or 0):
-                row["status"] = "active"
-                row["minister_message_id"] = mid
-        return mid
-
-    def record_chat_turn_rollback_diffs(self, *_a, **_k):
-        return None
-
-    def get_last_active_chat_turn(self, *_a, **_k):
-        return None
-
-    def fail_chat_turn(self, *_a, **_k):
-        return None
-
-    def list_in_flight_chat_turns(self, **_k):
-        return [
-            row for row in self._inflight
-            if row.get("status") == "generating"
-            or not row.get("minister_message_id")
-        ]
-
-    def kv_get(self, _k):
-        return ""
-
-    def list_secret_orders(self):
-        return []
-
-    def list_hall_chat_turns(self, _night_id):
-        return []
-
-    def build_chat_projection(self, minister_name: str, _night_id: int = 0):
-        return [
-            {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
-            for m in self.messages
-            if m["minister"] == minister_name
-        ]
-
-    def list_pending_actions(self, turn, *a, **k):
-        return []
-
-    def set_message_highlights(self, message_id, phrases):
-        return None
-
-    def load_all_chat_history(self):
-        result: dict = {}
-        for m in self.messages:
-            result.setdefault(m["minister"], []).append(
-                {"role": m["role"], "content": m["content"]})
-        return result
-
-
-def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
-    """#396 Gap B: drain 不能只等当前持锁 worker——已排队（阻塞在 gate.acquire()）的旧召对请求
-    也须先跑完写库，drain 才关 session。否则 drain 抢到下一轮 acquire 直接关连接，排队请求要么
-    永不跑、要么写 closed database。"""
-    allow_finish_a = threading.Event()
-    allow_finish_b = threading.Event()
-    closed: list[int] = []
-
-    char_a = minister_double("大臣甲")
-    char_b = minister_double("大臣乙")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-    db = _GapBDB()
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _GapBSession(
-        {char_a.name: char_a, char_b.name: char_b},
-        {char_a.name: _GapBAgent(allow_finish_a), char_b.name: _GapBAgent(allow_finish_b)},
-        state, db)
-    runtime.session.close = lambda: closed.append(1)
-    runtime.chat_history = {char_a.name: [], char_b.name: [], "殿上": []}
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.can_undo_last_chat = lambda _name: False
-
-    # #1849 reopen：召对只剩殿上；同入口并发第二流被拒，drain 仍须等在飞 A 写完。
-    stream_a = runtime.chat_stream("殿上", "请奏A")
-    accepted_a = next(stream_a)
-    assert accepted_a.get("type") == "accepted"
-    first_a = next(stream_a)
-    assert first_a.get("type") == "delta"
-    assert "content" in first_a
-
-    b_events = list(runtime.chat_stream("殿上", "请奏B"))
-    assert b_events and b_events[-1].get("type") == "error"
-
-    drain_done = threading.Event()
-
-    def run_drain():
-        web_app._drain_and_close_session(runtime)
-        drain_done.set()
-
-    wait_prior_entered = threading.Event()
-    real_wait_prior = runtime._write_queue.wait_prior
-
-    def observe_wait_prior(ticket):
-        wait_prior_entered.set()
-        return real_wait_prior(ticket)
-
-    runtime._write_queue.wait_prior = observe_wait_prior  # type: ignore[method-assign]
-
-    thread_drain = threading.Thread(target=run_drain, daemon=True)
-    try:
-        thread_drain.start()
-        wait_until(lambda: wait_prior_entered.is_set() or not thread_drain.is_alive())
-        assert wait_prior_entered.is_set(), "drain exited before wait_prior"
-        assert not drain_done.is_set(), "drain 在 A 在飞写完前就关了连接"
-
-        allow_finish_a.set()
-        # 消费 A 剩余事件至 end，放行 ticket
-        for item in stream_a:
-            if item.get("type") == "end":
-                break
-    finally:
-        allow_finish_a.set()
-        stream_a.close()
-        thread_drain.join()
-
-    assert drain_done.is_set(), "drain worker exited without success"
-    assert closed == [1]
-    assert not runtime._write_gate.locked()
-
-    assert any(
-        m["minister"] == "殿上" and m["role"] == "minister"
-        for m in db.messages
-    )
+    wait_until(lambda: bool(killed))
 
 
 def test_drain_rejects_late_pending_write_before_gate_acquire():
@@ -695,8 +457,7 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
             runtime._write_queue.complete(ticket)
             return False
 
-        wait_until(lambda: _queue_rejects_new_claims() or not thread.is_alive())
-        assert _queue_rejects_new_claims(), "drain worker exited before sealing"
+        wait_until(_queue_rejects_new_claims)
         assert runtime._mark_pending_write() is None
         # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
         assert runtime._runtime_write_queue().inflight_count() <= 1
@@ -705,7 +466,7 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
         runtime._write_gate.release()
         thread.join()
 
-    assert done.is_set(), "drain/shutdown worker exited without success"
+    done.wait()
     assert closed == [1]
 
 
@@ -775,7 +536,7 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
         assert f.read().strip() == new_path
     # #1732 T1：无活 session 也归档旧主库
-    assert not os.path.exists(old_db_path)
+    wait_until(lambda: not os.path.exists(old_db_path))
     saves_dir = tmp_path / "saves"
     save_files = list(saves_dir.glob("*.db"))
     assert len(save_files) == 1

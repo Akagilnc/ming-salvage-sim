@@ -47,7 +47,7 @@ def raise_fixed_period_flow_abort_if_needed(
         return
     if not db.owns_transaction():
         return
-    pack_path = write_error_pack(db, state, exc=exc, extracted=None, resolve_ctx=None)
+    pack_path = write_error_pack(db, state, exc=exc)
     raise SettlementAbort(
         settlement_abort_message(pack_path),
         turn=int(getattr(state, "turn", 0)),
@@ -643,7 +643,9 @@ def _apply_economy_list(
         raw_purpose = str(move.get("purpose") or "").strip()
         raw_target_kind = str(move.get("target_kind") or "").strip()
         raw_target_id = str(move.get("target_id") or "").strip()
-        # 校验枚举；非法值退化为"其它"常规扣账
+        # Closed enum membership KEEP（判词：形式标识/封闭枚举不作一律删除）.
+        # #1847 N10：非法 purpose 不得再经 purpose or "其它" 静默改写成常规扣账；
+        # 不为本票新增 invalid_enum 拒收护栏（无关非法输入契约维持既有落账路径）.
         purpose = raw_purpose if raw_purpose in ECONOMY_PURPOSES else None
         target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
         if "transfer_to" in move:
@@ -794,9 +796,13 @@ def _apply_economy_list(
                     account=leg_account, delta=leg_delta, reason=reason,
                 ))
             continue
+        # 空缺 purpose 的支出仍默认「其它」；非法 purpose（membership 未命中）保持 None，不改写。
+        recorded_purpose = purpose
+        if recorded_purpose is None and delta < 0 and not raw_purpose:
+            recorded_purpose = "其它"
         actual = db.record_issue_economy_move(
             state, account, delta, category, reason,
-            purpose=purpose or "其它" if delta < 0 else None,
+            purpose=recorded_purpose,
             target_kind=None, target_id=None, origin_ref=effective_origin_ref,
             beyond_intent=beyond_raw,
             commit=commit,
@@ -1078,7 +1084,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     try:
         remittance_total = _advance_province_fiscal_substrate(
             db,
-            state,
             hub_outbound.jingyun_paid_by_region,
         )
         try:
@@ -1176,7 +1181,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
 def _advance_province_fiscal_substrate(
     db: GameDB,
-    state: GameState,
     jingyun_paid_gross_by_region: Optional[Dict[str, float]] = None,
 ) -> float:
     """#66/#266：月末固定财政相位推进省级 settle_tick 基座。
@@ -1237,7 +1241,7 @@ class DeltaApplyResult(NamedTuple):
 
 def _value_reject(key: str, raw: object, item: object, field: str = "") -> Dict[str, object]:
     """构造 faction/class 值级 invalid_enum 拒收项（坏值留痕，#14 模式 A）。
-    item 载原始 delta 项（供恢复重放/诊断，ADR 决定 5「原 item 原样保留」）。"""
+    item 载原始 delta 项（供拒收诊断，ADR 决定 5「原 item 原样保留」）。"""
     where = f"{field} " if field else ""
     out: Dict[str, object] = {
         "name": str(key), "rejected": True,
@@ -1335,7 +1339,6 @@ def _apply_population_transfers(
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
     items = transfers if isinstance(transfers, list) else []
-    population_unit = db.population_unit
     for item in items:
         if not isinstance(item, dict):
             rejected.append({
@@ -1483,8 +1486,6 @@ def _apply_population_transfers(
             # #649 F2（判词）：省名随 applied 记录入摘要——applied 记录省名
             # 而非裸 region_id；真源＝既有 regions 表，不另建映射。
             "region_name": region_name,
-            # 落档口径随存档持久标（F3）：下游对账以此为唯一单位解释。
-            "population_unit": population_unit,
         })
     if commit:
         db.conn.commit()

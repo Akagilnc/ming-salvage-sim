@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def test_fresh_seed_contains_sourced_six_sciences_censors(game):
-    """许誉卿开局在朝；韩一良至 1628 年才以户科给事中登场。"""
+    """许誉卿开局在朝；韩一良至 1628 年才以户科给事中登场（派系权势经现役公共读口断言）。"""
     db, state, content = game
     names = {"许誉卿", "韩一良"}
 
@@ -31,17 +31,14 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     ).fetchone()["status_reason"]
     assert "给事中" in reason
 
+    before = db.faction_leverage("中立")
     assert state.year == 1627
     assert db.apply_historical_debuts(state) == []
+    assert db.faction_leverage("中立") == before
 
-    before = db._faction_office_weight_sum("中立")
+    before = db.faction_leverage("中立")
     state.year = 1628
     debuted = db.apply_historical_debuts(state)
     assert any(item["name"] == "韩一良" for item in debuted)
     assert db.get_character_status("韩一良")[0] == "active"
-    # 登场只改 status；不把 status_reason 写回 office，故派系职权重不变。
-    assert db._faction_office_weight_sum("中立") == before
-    office = db.conn.execute(
-        "SELECT office FROM characters WHERE name='韩一良'"
-    ).fetchone()["office"]
-    assert office == ""
+    assert db.faction_leverage("中立") == before

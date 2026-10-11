@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
 from typing import Dict, List
 
 from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT
@@ -37,13 +36,6 @@ def load_json_asset(relative_path: str) -> object:
         raise SystemExit(f"设定文件缺失或不可读：{path} ({error})") from error
     except json.JSONDecodeError as error:
         raise SystemExit(f"设定文件 JSON 格式错误：{path} ({error})") from error
-
-
-def strip_json_fence(text: str) -> str:
-    match = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
-    if match:
-        return match.group(1).strip()
-    return text.strip()
 
 
 def format_money(value: int) -> str:

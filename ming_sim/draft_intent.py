@@ -1049,7 +1049,10 @@ def extract_draft_intent(
     # 一律响亮拒收（同 _coerce_draft_target_kind / 动作类型非法的既有契约），
     # 禁再消解成合法无意图让写入口覆盖原草稿。
     from ming_sim.action_materialize import DecreeMaterializationValidationError
-    obj = _cli_backend._loads_lenient(raw)
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        obj = None
     if not isinstance(obj, dict):
         raise DecreeMaterializationValidationError("拟旨抽取产物不可解析为 JSON 对象")
     if "拟旨意图" not in obj:

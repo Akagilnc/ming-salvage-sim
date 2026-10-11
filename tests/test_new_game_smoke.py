@@ -56,10 +56,7 @@ def fresh_game_dir(tmp_path, monkeypatch):
     try:
         yield sess, dbp, content
     finally:
-        try:
-            sess.close()
-        except Exception:
-            pass
+        sess.close()
 
 
 def test_new_game_has_fiscal_substrate(fresh_game_dir):

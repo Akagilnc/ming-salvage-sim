@@ -289,7 +289,7 @@ def project_due_review_scene(
 
 
 def list_due_review_scenes(
-    db: Any, state: Any = None, *, status: str = TODO_STATUS_PENDING,
+    db: Any, *, status: str = TODO_STATUS_PENDING,
 ) -> List[Dict[str, object]]:
     """次回合召对顶出序：复用 (due_turn, commitment_ref, stage_idx, id)。
 
@@ -304,7 +304,7 @@ def list_due_review_scenes(
         if lane in (_AUDIENCE_LANE_STAGED, _AUDIENCE_LANE_COVERT_LEVY):
             scenes.append(project_due_review_scene(db, todo))
         elif lane == _AUDIENCE_LANE_BREACH_PLEA:
-            scenes.append(project_breach_plea_scene(db, todo))
+            scenes.append(project_breach_plea_scene(todo))
         # urge / unknown：不投影为 due-review 场面
     return scenes
 
@@ -393,12 +393,10 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     origin = str(review_input.get("origin_context") or "")
 
     if mid:
-        note = f"中段复核：{criterion}仍在办理"
-        if origin.strip():
-            note = f"中段复核（{origin}）：{criterion}仍在办理"
+        # 中段只保机械执行态；不代写人物奏报/复核陈词（缺原奏不造）。
         return {
             "outcome": "executing",
-            "note": note,
+            "note": "",
             "close": False,
             "is_terminal": False,
             "mid_stage": True,
