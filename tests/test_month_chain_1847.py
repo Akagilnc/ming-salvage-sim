@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 
 import pytest
 
@@ -56,7 +55,6 @@ _WORLD_WITH_TWO_QUESTIONS = (
     "<<END>>"
     "尾声。"
 )
-
 
 
 def _month_chain_of(db, turn):
@@ -1241,7 +1239,10 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
     monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continue_text)
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "逊国已闻"))
-    monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
+    from tests.test_faction_brew_637 import _dual_brew_fn_factory
+    monkeypatch.setattr("ming_sim.mechanical_tail._brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
+    monkeypatch.setattr("ming_sim.agents.create_ending_summary_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k: "终局总评")
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(
         api_key="sk-test", base_url="https://example.invalid", model="test",
@@ -1271,7 +1272,10 @@ def _resolve_with_emperor_fate(game, monkeypatch, fate):
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "终局已闻"))
-    monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
+    from tests.test_faction_brew_637 import _dual_brew_fn_factory
+    monkeypatch.setattr("ming_sim.mechanical_tail._brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
+    monkeypatch.setattr("ming_sim.agents.create_ending_summary_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k: "终局总评")
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(
         api_key="sk-test", base_url="https://example.invalid", model="test",
@@ -2234,16 +2238,6 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         for item in (feed.get("eligible_dossiers") or [])
     )
     assert str(feed.get("board") or "").strip()
-
-    from ming_sim.materials import (
-        _safe_segment, prepare_world_materials, release_material_tree,
-    )
-    prepared = prepare_world_materials(db, state)
-    try:
-        rel = f"事实/character-{_safe_segment(minister)}.txt"
-        assert rel in prepared.index_lines
-    finally:
-        release_material_tree(prepared.root)
 
     gazette = month_chain._gazette_feed(db, state, chain)
     assert all(

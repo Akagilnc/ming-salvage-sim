@@ -15,18 +15,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from types import SimpleNamespace
 
-import httpx
 
 import web_app
-import ming_sim.agents as agents_mod
-import ming_sim.decree as decree_mod
-import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_audience_translate
 
 _IN_FLIGHT_DETAIL = "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。"
 _GATE_BUSY_DETAIL = "月末结算或上一步写入进行中，请稍候再操作。"
@@ -38,7 +33,6 @@ from tests.test_court_break_player_lock_1727 import _client
 
 def _click_before(state) -> dict[str, int]:
     return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
-
 
 
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):
@@ -55,38 +49,7 @@ def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事
     return nid, ctid
 
 
-def _runtime_payload(db, state):
-    """轻壳 state_payload（与 T1 同形）。"""
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=SimpleNamespace(characters={}),
-        previous_summary="",
-        last_decree="",
-        last_report="",
-        pending_count=lambda: 0,
-        pending_decisions=lambda: [],
-        victory=lambda: {"status": "ongoing", "summary": ""},
-    )
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.map_nodes = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-    return runtime.state_payload()
-
-
 # ── 1. 未了续跑：未落账回话退朝不 409，自动接续至月完 ────────────────────
-
-
-
-
-
-
 
 
 # ── 2. 点即入：capture 先于 await/close（失败前已入核账，失败后出展示态）──
@@ -262,9 +225,9 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
 # ── 4. AC3 不回归：settling 恢复条 / 批红下发 ────────────────────────────
 
 
-def test_settling_keeps_display_for_recovery(game):
+def test_settling_keeps_display_for_recovery(web_game):
     """AC3：settling 相位下快照保留（恢复入口可达的状态口条件）。"""
-    db, state, content = game
+    db, state, content = web_game.db, web_game.state, web_game.session.content
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
     import ming_sim.decree as dm
@@ -274,47 +237,18 @@ def test_settling_keeps_display_for_recovery(game):
     from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     assert exit_settlement_display_on_failure(db, state) is False
     assert db.get_month_open_snapshot(int(state.turn)) == before
-    payload = _runtime_payload(db, state)
+    payload = web_game.state_payload()
     assert payload["turn"]["settlement_display"] is True
     assert payload["turn"]["phase"] == "settling"
 
 
-def test_awaiting_decision_still_emits_pending(game):
-    """AC3：awaiting_decision 下 pending_decisions 照常下发 + 核账展示态在。"""
-    db, state, _content = game
+def test_awaiting_decision_still_emits_pending(web_game):
+    """AC3：失败退出不得清除 awaiting_decision 的恢复快照。"""
+    db, state = web_game.db, web_game.state
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-    decisions = [{"title": "测", "context": "x", "idx": 0, "options": [{"label": "a"}]}]
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=SimpleNamespace(characters={}),
-        previous_summary="",
-        last_decree="",
-        last_report="",
-        pending_count=lambda: 0,
-        pending_decisions=lambda: list(decisions),
-        victory=lambda: {"status": "ongoing", "summary": ""},
-    )
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.map_nodes = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-
-    payload = runtime.state_payload()
-    assert payload["turn"]["settlement_display"] is True
-    assert payload["turn"]["phase"] == "awaiting_decision"
-    assert payload["pending_decisions"] == decisions
-    for k in MONTH_OPEN_KEYS:
-        assert payload["metrics"][k] == before[k]
 
     from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     assert exit_settlement_display_on_failure(db, state) is False

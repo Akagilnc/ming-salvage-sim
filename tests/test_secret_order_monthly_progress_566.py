@@ -25,19 +25,6 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
 
 
-def _production_session(db, state, content):
-    from ming_sim.session import GameSession
-
-    session = GameSession.__new__(GameSession)
-    session.db, session.state, session.content = db, state, content
-    session.registry = session.llm_config = session.agno_db = None
-    session.deaths_this_turn, session.debuts_this_turn = [], []
-    session.last_decree = session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session.auto_save = lambda *args, **kwargs: None
-    return session
-
-
 def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 
@@ -315,7 +302,8 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
             str(item["text"]) for item in directives
         ),
     )
-    session = _production_session(db, state, content)
+    from tests.month_chain_helpers import make_light_session
+    session = make_light_session(db, state, content)
 
     if entry == "web":
         web_game = SimpleNamespace(
@@ -353,4 +341,3 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     reloaded = db.load_state()
     assert (reloaded.turn, reloaded.year, reloaded.period, reloaded.turn_phase) == before["clock"]
     assert reloaded.metrics == before["metrics"]
-

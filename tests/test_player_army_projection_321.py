@@ -1,21 +1,10 @@
 """#321 — 玩家军心/士气/欠饷投影：复用 derive + qualitative/arrears helper，四链去 raw。"""
 from __future__ import annotations
 
-import sqlite3
 from types import SimpleNamespace
 
 import pytest
 
-import web_app
-from ming_sim.db import (
-    GameDB,
-    _player_army_situation,
-    mutiny_loyalty_cap,
-)
-from ming_sim.army_pay import derive_army_mutiny_state
-from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from tests.army_pay_helpers import configure_guanning_army
 ARMY = "guanning"
 
@@ -74,40 +63,6 @@ def _payload_by_id(db):
     return {p["id"]: p for p in db.army_payload()}
 
 
-
-
-
-
-
-def _web_runtime(db, state, content):
-    """轻壳 WebGame：走真实 state_payload / map_nodes（session 属性代理 db/state）。"""
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        pending_count=lambda: 0,
-        pending_decisions=lambda: [],
-        victory=lambda: {"status": "ongoing", "summary": ""},
-        previous_summary="",
-        last_decree="",
-        last_report="",
-    )
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.budget_payload = lambda: {}
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-    runtime._month_open_snapshot = lambda: None
-    runtime._display_metrics = lambda: dict(state.metrics)
-    runtime.map_nodes = lambda: web_app.WebGame.map_nodes(runtime)
-    runtime._theater_label = lambda tid: web_app.WebGame._theater_label(runtime, tid)
-    return runtime
-
-
 def _find_army_in_map_nodes(nodes, army_id: str = ARMY):
     for node in nodes:
         for army in node.get("armies") or []:
@@ -116,24 +71,23 @@ def _find_army_in_map_nodes(nodes, army_id: str = ARMY):
     raise AssertionError(f"map_nodes 未挂载军队 {army_id}")
 
 
-def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
+def _assert_structured_situation(card: dict, expected: str, label: str) -> None:
     assert _SIT_KEYS <= set(card.keys()), f"{label} 缺 situation 三键: {sorted(card)}"
     assert _RAW_KEYS.isdisjoint(card.keys()), f"{label} 泄漏 raw 轴: {sorted(_RAW_KEYS & set(card.keys()))}"
     assert _MUTINY_ORDINAL_KEYS.isdisjoint(card.keys()), (
         f"{label} 泄漏 mutiny ordinal/五持久列: {sorted(_MUTINY_ORDINAL_KEYS & set(card.keys()))}"
     )
-    assert card["mutiny_tier"] == sit["mutiny_tier"], f"{label}.mutiny_tier"
-    assert card["morale_text"] == sit["morale_text"], f"{label}.morale_text"
+    assert card["mutiny_tier"] == expected, f"{label}.mutiny_tier"
     assert isinstance(card["mutiny_tier"], str)
     assert isinstance(card["morale_text"], str)
     assert isinstance(card["arrears_text"], str)
 
 
-def test_structured_situation_on_payload_and_map_nodes(game):
+def test_structured_situation_on_payload_and_map_nodes(web_game):
     """结构化 ABI：army_payload / state_payload.armies / map_nodes 携带 situation 三键。"""
     # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
     is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
-    db, state, content = game
+    db, state = web_game.db, web_game.state
     configure_guanning_army(db)
     arrears = 12.5
     _write_mutiny_fixture(
@@ -159,23 +113,18 @@ def test_structured_situation_on_payload_and_map_nodes(game):
         (ARMY,),
     )
     db.conn.commit()
-    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    sit = _player_army_situation(row, db._army_pay(row))
-    assert sit["mutiny_tier"] == expected
-
     card = _payload_by_id(db)[ARMY]
-    _assert_structured_situation(card, sit, "army_payload")
+    _assert_structured_situation(card, expected, "army_payload")
 
-    runtime = _web_runtime(db, state, content)
-    payload = web_app.WebGame.state_payload(runtime)
+    payload = web_game.state_payload()
     armies = {a["id"]: a for a in (payload.get("armies") or [])}
     assert ARMY in armies
-    _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
+    _assert_structured_situation(armies[ARMY], expected, "state_payload.armies")
+    assert {k: armies[ARMY][k] for k in _SIT_KEYS} == {k: card[k] for k in _SIT_KEYS}
 
     map_army = _find_army_in_map_nodes(payload.get("map_nodes") or [])
-    _assert_structured_situation(map_army, sit, "map_nodes.armies")
-    map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
-    _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
+    _assert_structured_situation(map_army, expected, "map_nodes.armies")
+    assert {k: map_army[k] for k in _SIT_KEYS} == {k: card[k] for k in _SIT_KEYS}
 
 @pytest.mark.parametrize(
     "field",

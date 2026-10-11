@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from tests.test_relation_brew_636 import _script as _relation_script
+
 import json
 import sqlite3
 import threading
@@ -65,10 +67,6 @@ def _dual_brew_fn_factory(calls, *, stance="朝局如常。"):
         return json.dumps(script, ensure_ascii=False)
 
     return _brew
-
-
-def _relation_script(foundings=None, recent="近况重酿。"):
-    return {FOUNDINGS_KEY: list(foundings or []), RECENT_KEY: recent}
 
 
 def _faction_rows(db):

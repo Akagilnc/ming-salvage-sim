@@ -1,6 +1,6 @@
 """#1797：DeepSeek 全系按模型 id 关思考；llm_dump 记 reasoning/usage/finish_reason。
 
-真实入口 create_chat_model / _dump_llm_messages；不跑真实 LLM。
+真实入口 create_chat_model / run_agent_text；不跑真实 LLM。
 """
 
 from __future__ import annotations
@@ -188,16 +188,13 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
         reasoning_tokens=42,
     )
 
-    # 生产形缺席：agno 不写 finish_reason 进实有容器 → null
-    agents_mod._dump_llm_messages(
-        SimpleNamespace(
-            messages=[msg],
-            reasoning_content=None,
-            metrics=metrics,
-            model_provider_data=None,
-        ),
-        "test-tag",
+    output = SimpleNamespace(
+        content=msg.content, messages=[msg], reasoning_content=None,
+        metrics=metrics, model_provider_data=None,
     )
+    monkeypatch.setattr(agents_mod.Agent, "run", lambda self, message: output)
+    agent = agents_mod.Agent()
+    agents_mod.run_agent_text(agent, "probe", tag="test-tag")
     record = _last_record()
     assert record["tag"] == "test-tag"
     assert record["messages"][0]["content"] == msg.content
@@ -211,38 +208,11 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
     assert usage["reasoning_tokens"] == 42
     assert record["finish_reason"] is None
 
-    # 有值演练：只种 RunOutput.model_provider_data 字面键（bounce 明示允许）
-    dump_path.write_text("", encoding="utf-8")
-    agents_mod._dump_llm_messages(
-        SimpleNamespace(
-            messages=[msg],
-            reasoning_content=None,
-            metrics=metrics,
-            model_provider_data={"finish_reason": "stop"},
-        ),
-        "test-tag-mpd",
-    )
+    output.model_provider_data = {"finish_reason": "stop"}
+    agents_mod.run_agent_text(agent, "probe", tag="test-tag-mpd")
     assert _last_record()["finish_reason"] == "stop"
 
-    # 有值演练：只种 Message.provider_data 字面键
-    dump_path.write_text("", encoding="utf-8")
-    agents_mod._dump_llm_messages(
-        SimpleNamespace(
-            messages=[
-                SimpleNamespace(
-                    role="assistant",
-                    content="x",
-                    reasoning_content=None,
-                    reasoning=None,
-                    reasoning_details=None,
-                    tool_calls=None,
-                    provider_data={"finish_reason": "length"},
-                )
-            ],
-            reasoning_content=None,
-            metrics=metrics,
-            model_provider_data=None,
-        ),
-        "test-tag-pd",
-    )
+    output.model_provider_data = None
+    msg.provider_data = {"finish_reason": "length"}
+    agents_mod.run_agent_text(agent, "probe", tag="test-tag-pd")
     assert _last_record()["finish_reason"] == "length"

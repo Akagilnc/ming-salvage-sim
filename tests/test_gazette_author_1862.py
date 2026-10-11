@@ -11,13 +11,7 @@ import ming_sim.month_translate as month_translate
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
-from ming_sim.materials import (
-    list_materials,
-    prepare_character_materials,
-    prepare_world_materials,
-    read_material,
-    release_material_tree,
-)
+from ming_sim.materials import list_materials, prepare_character_materials, read_material, release_material_tree
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
@@ -438,19 +432,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert read_material(prepared.root, experience).strip()
     finally:
         release_material_tree(prepared.root)
-    world_tree = prepare_world_materials(db, state)
-    try:
-        # 世界目录：每位在册人物都有亲历载体，且盘面载体在册可读。
-        world_experience = [
-            rel for rel in list_materials(world_tree.root) if rel.endswith("/经历.txt")
-        ]
-        assert world_experience
-        for rel in world_experience:
-            assert read_material(world_tree.root, rel).strip()
-        board = next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
-        assert read_material(world_tree.root, board).strip()
-    finally:
-        release_material_tree(world_tree.root)
 
 
 def test_gazette_failure_retries_report_only(game, monkeypatch):

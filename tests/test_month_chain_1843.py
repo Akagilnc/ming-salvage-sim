@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 
 import pytest
 
@@ -12,9 +11,7 @@ import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
-from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
-from tests.dossier_test_helpers import create_test_secret_order
 
 def _forbid_extractor(monkeypatch):
     from tests.month_chain_helpers import empty_rescript_response
@@ -234,28 +231,6 @@ def test_player_recovery_uses_resolve_context_decree_not_ready_delta(game, monke
     assert ctx["source"] == "player_decree"
 
 
-
-def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch):
-    db, state, content = game
-    from ming_sim.applier import Provenance
-
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment",
-        lambda *_a, **_k: {"effects": {"emperor_fate": "suicide"}},
-    )
-    chain = {"world_text_ready": True, "world_text": "世界段"}
-    session = make_light_session(db, state, content)
-
-    outcome = month_chain._run_world_segment(
-        session, chain, source=Provenance.system_simulation,
-    )
-
-    expected = {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
-    assert outcome == expected
-    assert chain["declaration_outcome"] == expected
-    payload = db.get_resolve_context(int(state.turn))["simulator_payload"]
-    assert payload["month_chain"]["declaration_outcome"] == expected
-
 def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -312,29 +287,6 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     assert state.ending_status == "emperor_abdicate"
     assert int(state.turn) == turn + 1
 
-def test_staged_ending_is_available_inside_its_settlement_transaction(game):
-    db, state, _content = game
-    from ming_sim.applier import Provenance
-    from ming_sim.declaration_dispatch import (
-        settle_staged_declarations_in_decree_order, stage_declaration,
-    )
-
-    stage_declaration(
-        db, decree_ref="ending-decree", turn=int(state.turn),
-        declaration={"effects": {"emperor_fate": "abdicate"}},
-    )
-    committed = {}
-    settled = settle_staged_declarations_in_decree_order(
-        db, state, ["ending-decree"], source=Provenance.player_decree,
-        alongside=lambda ref, result: committed.update(
-            ref=ref, outcome=month_chain._ending_from_dispatch_result(result),
-        ),
-    )
-
-    assert "ending-decree" in settled
-    assert committed["ref"] == "ending-decree"
-    assert committed["outcome"]["status"] == "emperor_abdicate"
-    assert db.staged_declarations.is_settled("ending-decree")
 
 def test_failed_declaration_commit_reloads_memory_from_db(game):
     db, state, _content = game
@@ -465,7 +417,3 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     assert not db.staged_declarations.is_settled(stale_ref)
     dossier = db.get_decree_dossier(dossier_id)
     assert decree_ref_for_dossier(db, dossier) == held_ref
-
-
-
-

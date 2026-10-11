@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-from ming_sim.session_write_queue import get_session_write_queue
 
 from types import SimpleNamespace
 
@@ -27,8 +26,6 @@ from ming_sim.audience_translation import apply_audience_round_translation
 from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relations import summon_edge_origin
-from ming_sim.session import GameSession
-from tests.conftest import note_queue_until_game_teardown, persist_and_schedule_scene
 
 
 def _activate(db, state, *names: str) -> None:
@@ -177,36 +174,14 @@ def _scene_session(db, state, content, monkeypatch):
 
     stub_scene_agent(monkeypatch, FakeAgent())
     stub_audience_translate(monkeypatch)
-    monkeypatch.setattr(
-        "ming_sim.llm_model.extract_agent_text",
-        lambda out: str(getattr(out, "content", "") or ""),
-    )
-    monkeypatch.setattr("ming_sim.session._dump_llm_messages", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "ming_sim.session.prepare_scene_materials",
-        lambda *a, **k: SimpleNamespace(opening="开场", root=None),
-    )
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
+    from tests.month_chain_helpers import make_light_session
+    sess = make_light_session(db, state, content)
     sess.llm_config = SimpleNamespace(channel="")
     sess.temporary_characters = {}
-    sess.agno_db = None
-    sess._write_gate = get_session_write_queue(sess).write_gate
-    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
-    note_queue_until_game_teardown(db, get_session_write_queue(sess))
     return sess
 
 
-
 from tests.test_audience_translate_1837 import _active_chat_turn
-
-
-
-
-
 
 
 def test_edge_event_and_public_saying_attach_affair(game):

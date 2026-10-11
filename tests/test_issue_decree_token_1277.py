@@ -8,58 +8,14 @@
 
 from __future__ import annotations
 
-from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
 import web_app
 from ming_sim.decree import ResolveResult
 from ming_sim.models import TurnPhase
-from ming_sim.session import GameSession
-
-
-def _session(db, state, content):
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.content = content
-    session.registry = None
-    session.llm_config = None
-    session.agno_db = None
-    session.deaths_this_turn = []
-    session.debuts_this_turn = []
-    session.last_decree = ""
-    session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session.auto_save = lambda *a, **k: None
-    return session
-
-
-def _web_runtime(db, state, content, *, monkeypatch):
-    session = _session(db, state, content)
-    runtime = SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=session,
-        directive_rows=lambda: [],
-        refresh_turn=lambda: None,
-        state_payload=lambda: {
-            "turn": {
-                "turn": int(state.turn),
-                "year": int(state.year),
-                "period": int(state.period),
-                "phase": state.turn_phase,
-            }
-        },
-        _write_gate=ClassifiedWriteGate(),
-    )
-
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    return runtime
 
 
 def _body(expected_turn: int | None, *, cheat: str = ""):
@@ -81,12 +37,12 @@ async def _issue_stream_terminal(body: web_app.IssueDecreeRequest) -> tuple[str,
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_double_issue_same_token_second_is_409_turn_plus_one(game, monkeypatch):
+def test_double_issue_same_token_second_is_409_turn_plus_one(web_game, monkeypatch):
     """同 expected_turn 连发两次：第二次 SSE 409，月份只进一格；resolve 不二次执行。"""
-    db, state, content = game
+    db, state = web_game.db, web_game.state
     assert state.turn_phase == TurnPhase.SUMMONING.value
     start = int(state.turn)
-    runtime = _web_runtime(db, state, content, monkeypatch=monkeypatch)
+    runtime = web_game
 
     def _fake_resolve(**_k):
         # 模拟 resolve_turn 成功推进一格（与生产同向副作用）。

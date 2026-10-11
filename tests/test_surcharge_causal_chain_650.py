@@ -214,10 +214,6 @@ def test_repeated_delta_apply_does_not_consume_levy_ledger(game):
     assert _pop(db, "流民", "shaanxi") == before
 
 
-
-
-
-
 # ── AC1 后半：明选有明账——加派基线折入三饷底座（钱真被征上来）───────────────
 
 def test_levy_pass_folds_jiapai_into_sanxiang_targets(game):
@@ -242,7 +238,6 @@ def test_levy_pass_folds_jiapai_into_sanxiang_targets(game):
 # ── AC2：结算按账入池，口径确定性可断言 ───────────────────────────────────────
 
 
-
 def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     """玩家月链消费月初旧加派账，邸报前重入不重复搬迁人口。"""
     import ming_sim.month_chain as month_chain
@@ -258,8 +253,8 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     pre_settle(state, db, content=content)
     db.save_resolve_context(turn, "测试诏", {})
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    import ming_sim.rescript_draft as rescript_draft
-    monkeypatch.setattr(rescript_draft, "produce_memorials", lambda *a, **k: None)
+    from tests.month_chain_helpers import empty_rescript_response
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     session = _recovery_session(db, state, content, monkeypatch)
     result = session.resolve_turn()
     assert result.stage == "gazette"
@@ -323,8 +318,6 @@ def test_zero_base_province_gets_no_transfer(game):
     assert _pop(db, "流民", "henan") == pool_before
 
 
-
-
 # ── 持久累积账损坏须 fail-loud，月效来源不得伪归最后一道旨 ───────────────────
 
 @pytest.mark.parametrize("corruption", ["bad_json", "bad_base", "missing_pool"])
@@ -348,8 +341,6 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
 
     with pytest.raises((ValueError, SettlementAbort)):
         _settle_month(state, db, {}, before_turn=state.turn, content=content, monkeypatch=monkeypatch)
-
-
 
 
 # ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────

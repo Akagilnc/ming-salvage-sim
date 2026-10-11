@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 
 from ming_sim import cli_backend
@@ -377,7 +378,7 @@ def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch)
     )
 
     model = create_chat_model(cfg)
-    model._call_cli("p")
+    model.invoke([Message(role="user", content="p")], Message(role="assistant"))
 
     assert isinstance(model, CliChat)
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == cli_backend._CODEX_MODEL
@@ -762,14 +763,13 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         def run(self, prompt):
             return FakeRun()
 
-    # _run_api_for_config 在函数内 from-import create_chat_model / Agent
+    # 真实人物查无回禀入口经 API 调用面创建模型；仅替外部 Agent 出口。
     import ming_sim.llm_model as lm
 
     monkeypatch.setattr(lm, "create_chat_model", spy)
-    monkeypatch.setattr(lm, "extract_agent_text", lambda output: "{}")
     monkeypatch.setattr("agno.agent.Agent", FakeAgent)
     before_gate = len(seen)
-    cb._run_api_for_config("输出 {}", cfg, tag="gate")
+    cb.compose_unknown_participant_inworld_report(["未在册之人"], llm_config=cfg)
     assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
     assert "max_tokens" not in seen[-1], seen[-1]
 

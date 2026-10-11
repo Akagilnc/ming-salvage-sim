@@ -1440,10 +1440,6 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
 
 
-
-
-
-
 def test_person_core_static_backfill_preserves_relocated_mao(game):
     """#191 CMR R4：旧档静态补丁不能覆盖玩家已落库的调离规避状态。"""
     db, _state, content = game
@@ -1871,7 +1867,7 @@ def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     assert after["manpower"] == before["manpower"] - 51000
     assert after["morale"] == before["morale"] - 16
 
-def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
+def test_huangtaiji_chengdi_lands_only_when_model_picks_it(web_game):
     """#1893/#192：称帝不选不落、选中一次落定——两向都走真实接缝。
 
     旧断链有两处，且都在本用例须穿过的接缝上：月初 ``GameSession.begin_turn``
@@ -1881,10 +1877,7 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
     """
     from ming_sim.month_translate import dispatch_month_segment
     from ming_sim.decree import prepare_resolve_front_half
-    from ming_sim.session import GameSession
-    import ming_sim.session as session_mod
-
-    db, state, content = game
+    db, state, content = web_game.db, web_game.state, web_game.session.content
     issues.bind_content(content)
     state.year, state.period = 1636, 4
     db.save_state(state)
@@ -1897,13 +1890,8 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
     assert _power_name()["name"] == "后金", "本用例以未选中的后金为起点，起点已变则本用例空转"
 
     # 不选：经真实 begin_turn 入口，日期到了也不改名、不发终态，候选仍在池里可挑。
-    # 用 __new__ 跳过重型 __init__（agno/registry/LLM），只装 begin_turn 需要的协作者。
-    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
-    monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.content, sess.llm_config, sess.agno_db = db, content, None, None
-    sess.begin_turn()
-    state = sess.state
+    web_game.session.begin_turn()
+    state = web_game.state
     prepare_resolve_front_half(state, db, decree_text="", content=content)
 
     assert _power_name()["name"] == "后金"
@@ -3350,9 +3338,6 @@ def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
-
-
 
 
 def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game):

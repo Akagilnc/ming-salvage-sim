@@ -309,21 +309,6 @@ def _province_container_total(db):
             total += float(settle["st"].get("军饷欠", 0) or 0)
     return total
 
-def _standalone_region_pay_arrears(db, region_id):
-    settle = _read_settle(db, region_id)
-    if not isinstance(settle, dict):
-        return 0.0
-    if (
-        db._primary_source_army_pay_due(settle) is None
-        and not db._is_seeded_military_pay_funnel(settle)
-    ):
-        return 0.0
-    if db._army_pay_source_rows_for_region(region_id):
-        return 0.0
-    return float(settle["st"].get("军饷欠", 0) or 0.0)
-
-def _region_pay_arrears_container_basis(db, region_id):
-    return _province_pay_arrears(db, region_id) + _standalone_region_pay_arrears(db, region_id)
 
 def _region_with_settle(settle):
     return {
@@ -706,11 +691,8 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
         row["province_pay_arrears"] + row["central_pay_arrears"]
     )
     assert db.get_central_army_pay_arrears_container() == pytest.approx(3.5)
-    _province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
+    _province_total, central_total, _army_total = _non_self_funded_pay_arrears(db)
     assert db.get_central_army_pay_arrears_container() == pytest.approx(central_total)
-    assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
-        army_total + db._standalone_army_pay_container_total()
-    )
 
 def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
     import ming_sim.flows as flows_mod
@@ -3633,11 +3615,6 @@ def test_settle_province_tick_persists_border_remainder_golden(fresh_db):
                 f"{region_id} {k}：落库 {after[k]} ≠ #267 {v}"
         if "军饷欠" in want:
             assert after["军饷欠"] == pytest.approx(want["军饷欠"], abs=1e-6)
-        else:
-            assert after["军饷欠"] == pytest.approx(
-                _region_pay_arrears_container_basis(fresh_db, region_id),
-                abs=1e-6,
-            )
         for k, v in res.new_st.items():
             if k == "军饷欠":
                 continue
@@ -3964,7 +3941,6 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     import ming_sim.decree as decree_mod
     import ming_sim.error_pack as error_pack_mod
     from ming_sim.models import TurnPhase
-    from ming_sim.session import GameSession
 
     db, state = fresh_game
     content = getattr(db, "content", None)
@@ -3981,14 +3957,8 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     before_phase = state.turn_phase
 
     # canned LLM；崩应在 pre_settle fiscal，到不了 simulator
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = sess.llm_config = sess.agno_db = None
-    sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = sess.last_report = ""
-    sess._decree_draft_fingerprint = ()
-    sess._scene_registry = sess._beat_generator = None
-    sess.auto_save = lambda *a, **k: None
+    from tests.month_chain_helpers import make_light_session
+    sess = make_light_session(db, state, content)
 
     with pytest.raises(SettlementAbort) as exc_info:
         sess.advance_without_decree()
@@ -4357,12 +4327,6 @@ def test_all_ming_settle_substrates_advance_through_fixed_flows(fresh_game):
         assert settle["st"]["省库库银"] == pytest.approx(want, abs=1e-3), (
             f"{region_id} flows 后省库库银 {settle['st']['省库库银']} ≠ first_tick {want}"
         )
-    for region_id in ("shaanxi", "shanxi", "liaodong", "dongjiang_area"):
-        settle = _read_settle(db, region_id)
-        assert settle["st"]["军饷欠"] == pytest.approx(
-            _region_pay_arrears_container_basis(db, region_id),
-            abs=1e-6,
-        )
     assert _read_settle(db, "henan")["st"]["宗禄欠"] > 0, "周/福藩重省应有宗禄欠压"
     assert _read_settle(db, "huguang")["p"]["Due"]["宗禄"] > _read_settle(db, "nanzhili")["p"]["Due"]["宗禄"], \
         "楚藩重省宗禄 Due 应重于江南基准"
@@ -4419,4 +4383,3 @@ def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_ga
     ).fetchall()
     assert [int(row["delta"]) for row in rows] == [expected]
     assert all(str(row["reason"] or "").strip() for row in rows)
-

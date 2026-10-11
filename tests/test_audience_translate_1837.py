@@ -9,47 +9,30 @@ Seams:
 from __future__ import annotations
 
 import json
-import threading
 from types import SimpleNamespace
 
 import pytest
 
-import ming_sim.agents as agents_mod
 import ming_sim.audience_translate as audience_translate
 from ming_sim.audience_night import (
-    AudienceNightError,
     close_night,
     engine_command_mingfa_publication_ids,
-    list_chat_turns_for_night,
     list_ledger,
     open_night,
 )
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.session import GameSession
-from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
-    note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
-    stub_scene_agent,
 )
 
 
 def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None):
-    from ming_sim.session_write_queue import SessionWriteQueue
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
+    from tests.month_chain_helpers import make_light_session
+    sess = make_light_session(db, state, content)
     sess.llm_config = llm_config or SimpleNamespace(channel="api")
     sess.temporary_characters = {}
-    sess.agno_db = None
-    sess._write_queue = SessionWriteQueue()
-    sess._write_gate = sess._write_queue.write_gate
-    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
-    note_queue_until_game_teardown(db, sess._write_queue)
     stub_audience_translate(monkeypatch, translate_fn)
     return sess
 
@@ -582,7 +565,6 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     ).fetchone() is not None
 
 
-
 def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     """AC3：CLI 与 API 通道产出同一形状，不再前缀+二次分类两套路。"""
     db, state, content = game
@@ -644,7 +626,6 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
 
     assert len(payloads) == 2
     assert payloads[0] == payloads[1]
-
 
 
 def test_unhandleable_commission_rejected_as_fact_no_forced_ask(game):

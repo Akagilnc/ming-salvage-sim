@@ -2,27 +2,21 @@
 
 from __future__ import annotations
 
-from ming_sim.session_write_queue import get_session_write_queue
 
 import json
-import threading
 
 import pytest
 
 import ming_sim.decree as decree_mod
-import ming_sim.issues as I
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 # ---------------------------------------------------------------------------
 # B. 恢复入口消费：由玩家月链接续已保存的结算进度
 # ---------------------------------------------------------------------------
 
 def _recovery_session(db, state, content, monkeypatch):
-    """装一个最小 GameSession（__new__ 跳过重型 __init__），供真实恢复入口。"""
-    import ming_sim.session as session_mod
-    from ming_sim.session import GameSession
+    """复用现有轻 session；真实恢复入口与办公室同步不替换。"""
+    from tests.month_chain_helpers import make_light_session
 
-    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",
         lambda dossiers, _state, **_kwargs: [
@@ -30,25 +24,8 @@ def _recovery_session(db, state, content, monkeypatch):
             for row in dossiers
         ],
     )
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    sess.llm_config = None
-    sess.agno_db = None
-    sess.deaths_this_turn = []
-    sess.debuts_this_turn = []
-    sess.last_decree = ""
-    sess.last_report = ""
-    sess._beat_generator = None
-    sess._scene_registry = None
-    sess._decree_draft_fingerprint = ()
-    sess._write_gate = get_session_write_queue(sess).write_gate
-    monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
+    sess = make_light_session(db, state, content)
     return sess
-
-
 
 
 def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):

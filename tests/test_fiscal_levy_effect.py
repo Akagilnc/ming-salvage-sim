@@ -5,7 +5,6 @@ import pytest
 
 from ming_sim.decree import pre_settle
 from ming_sim.exceptions import SettlementAbort
-from ming_sim.flows import army_needed
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 from ming_sim.models import Event
@@ -60,7 +59,6 @@ def _emperor_decides(db, state, *event_labels):
         if event is None or not _event_window_open(event, state):
             continue
         issues.apply_petition_event_outcome(state, db, event_id, label)
-
 
 
 def _expected_land_share_levy(settle, national_monthly, total_land):
@@ -251,12 +249,6 @@ def test_fiscal_levy_capstone_golden_all_seeded_provinces(
         assert settle["p"]["起运定额"] >= 0
 
 
-
-
-
-
-
-
 def test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game):
     db, state, content = game
     issues.bind_content(content)
@@ -384,8 +376,6 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game):
     )
 
 
-
-
 @pytest.mark.parametrize("bad_shape", ["land", "p", "st", "settle"])
 def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
     game, monkeypatch, bad_shape
@@ -442,8 +432,6 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
     assert math.isclose(restored["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
 
 
-
-
 @pytest.mark.parametrize("bad_meta_key", ["剿饷基线", "练饷基线", "饷率田亩分母基线"])
 def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     game, bad_meta_key
@@ -487,10 +475,6 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     restored = _settle_payload(db, "huguang")
     assert "剿饷基线" in restored["_meta"]
     assert restored["p"]["三饷应征"] > expected_liao
-
-
-
-
 
 
 def test_fiscal_levy_is_not_auto_approved_without_emperor_decision(game):
@@ -721,8 +705,6 @@ def test_fiscal_levy_outcome_label_outside_closed_set_aborts(game):
     ).fetchone() is None
 
 
-
-
 def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
     db, state, content = game
     issues.bind_content(content)
@@ -794,10 +776,6 @@ def test_fiscal_levy_pending_choice_waits_for_event_window(game):
         ("lian_levy_start_1639",),
     ).fetchone()
     assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已准"}
-
-
-
-
 
 
 def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_p(game):
@@ -1268,7 +1246,11 @@ def _install_liao_month_stubs(monkeypatch, *, world_text: str, translate):
         month_chain, "_run_world_continuation_text",
         lambda *a, **k: _CONTINUATION_SEGMENT,
     )
-    monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
+    from tests.test_faction_brew_637 import _dual_brew_fn_factory
+    monkeypatch.setattr(
+        "ming_sim.mechanical_tail._brew_fn_for_session",
+        lambda _session: _dual_brew_fn_factory([]),
+    )
 
 
 def _liao_world_question() -> str:
@@ -1480,8 +1462,7 @@ def test_rejected_levy_identity_does_not_write_a_terminal_from_a_sibling_envelop
 
 
 def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monkeypatch):
-    """留中走案头：不写终态，已呈原文与原批语进入后续世界材料。"""
-    from ming_sim import materials as materials_mod
+    """真实案头留中：原疏与原批语持久，不落终态、不改三饷，仍待亲裁。"""
     from ming_sim.models import LLMConfig
     from tests.month_chain_helpers import make_light_session
 
@@ -1521,12 +1502,10 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
     assert dict(led)["terminal_reason"] == ""
     assert _settle_payload(db, "shaanxi")["p"] == before["p"]
 
-    petitions = materials_mod._world_fiscal_levy_petitions(db, state)
-    item = next(entry for entry in petitions if entry["id"] == "liao_levy_rise_1631")
-    presented = item["presented"]
-    assert presented["presented_context"] == "边饷急迫，请旨定夺。"
-    assert presented["emperor_note"] == "姑候户部再核"
-    assert presented["held"] is True
+    presented = next(item for item in db.list_event_petition_records()
+                     if item["event_id"] == "liao_levy_rise_1631")
+    assert presented["petition"]["context"] == "边饷急迫，请旨定夺。"
+    assert presented["note"] == "姑候户部再核"
     assert "liao_levy_rise_1631" in {
         ev.id for ev in issues.gather_fiscal_levy_petitions(state, db)
     }

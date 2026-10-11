@@ -7,11 +7,7 @@ import json
 import pytest
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
-from ming_sim.execution_pressure import (
-    TARGET_KINDS as EP_TARGET_KINDS,
-    normalize_locality_scope,
-    resolve_dossier_region_ids,
-)
+from ming_sim.execution_pressure import normalize_locality_scope, resolve_dossier_region_ids
 
 
 # ── 词表 / scope 归一 ──────────────────────────────────────────────
@@ -132,42 +128,19 @@ def test_create_decree_dossier_int_abi_single_row(game):
 
 
 def test_normalize_payload_locality_and_target_kind(game):
-    db, _, _ = game
-    out = db._normalize_directive_dossier_payload({
-        "dossier_action_type": "policy",
-        "target_kind": "policy",
-        "target_id": "x",
-        "locality_scope": "全国",
-        "mode": "ordinary",
-    })
-    assert out["locality_scope"] == "national"
-    # owner A：dossier 为 canonical 八值成员，合法 none 归一
-    dossier_out = db._normalize_directive_dossier_payload({
-        "dossier_action_type": "revoke_decree",
-        "target_kind": "dossier",
-        "target_id": "42",
-        "revoke_target_dossier_id": 42,
-        "locality_scope": "无",
-        "mode": "ordinary",
-    })
-    assert dossier_out["target_kind"] == "dossier"
-    assert dossier_out["locality_scope"] == "none"
-    assert int(dossier_out["revoke_target_dossier_id"]) == 42
-    with pytest.raises(ValueError):
-        db._normalize_directive_dossier_payload({
-            "dossier_action_type": "policy",
-            "target_kind": "not_a_kind",
-            "target_id": "x",
-            "mode": "ordinary",
-        })
-    with pytest.raises(ValueError):
-        db._normalize_directive_dossier_payload({
-            "dossier_action_type": "policy",
-            "target_kind": "policy",
-            "target_id": "x",
-            "locality_scope": "全省",
-            "mode": "ordinary",
-        })
+    """非法目标与属地经真实旨稿成案口拒收，不旁路调用归一 helper。"""
+    db, state, _ = game
+    ids = [db.add_directive(
+        state, None, "测试旨稿", source="manual", dossier_payload=payload,
+    ) for payload in (
+        {"dossier_action_type": "policy", "target_kind": "not_a_kind", "target_id": "x", "mode": "ordinary"},
+        {"dossier_action_type": "policy", "target_kind": "policy", "target_id": "x", "locality_scope": "全省", "mode": "ordinary"},
+    )]
+    rejected = db.ensure_dossiers_for_draft_directives(state)
+    assert {r["directive_id"] for r in rejected} == set(ids)
+    assert all(db.get_dossier_for_directive(did) is None for did in ids)
+    assert {row["status"] for row in db.list_directives(state)} == {"draft"}
+
 
 # ── #654 断根 tracer（外部行为）────────────────────────────────────
 
@@ -374,15 +347,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(game):
     assert int(pending["revoke_target_dossier_id"]) == int(target_id)
     assert pending["target_kind"] in TARGET_KINDS
 
-    # 2) durable normalization 闭集直校验（无 dossier 暗例外）
-    normalized = db._normalize_directive_dossier_payload(
-        pending, content=content, current_turn=int(state.turn),
-    )
-    assert normalized["target_kind"] == "dossier"
-    assert normalized["locality_scope"] == "none"
-    assert int(normalized["revoke_target_dossier_id"]) == int(target_id)
-
-    # 3) 真实收夜成案入口（commit_pending_actions → normalize → create_decree_dossiers）
+    # 2) 真实收夜成案入口（commit_pending_actions → normalize → create_decree_dossiers）
     before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     revoke_rows = [
@@ -401,7 +366,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(game):
     assert int(stored.get("revoke_target_dossier_id") or 0) == int(target_id)
     assert stored.get("target_kind") == "dossier"
 
-    # 4) dossier 三格 + unknown 拒绝（与矩阵同契约）
+    # 3) dossier 目标的负向边界（不因消除成功重复证明而删除拒收）
     assert resolve_dossier_region_ids(
         db.conn,
         payload={"target_kind": "dossier", "target_id": str(target_id),
@@ -425,13 +390,6 @@ def test_revoke_decree_523_producer_durable_oracle_chain(game):
             payload={"target_kind": "not_a_kind", "target_id": "x",
                      "locality_scope": "none"},
         )
-    with pytest.raises(ValueError):
-        db._normalize_directive_dossier_payload({
-            "dossier_action_type": "policy",
-            "target_kind": "not_a_kind",
-            "target_id": "x",
-            "mode": "ordinary",
-        })
 
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 

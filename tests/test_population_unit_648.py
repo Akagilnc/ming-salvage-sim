@@ -12,7 +12,6 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双�
 
 from __future__ import annotations
 
-import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.issues import (
@@ -43,8 +42,6 @@ def _displaced_rows(db: GameDB):
         "SELECT name, region_id, population, satisfaction, leverage, agenda "
         "FROM classes WHERE name='流民' ORDER BY region_id"
     ).fetchall()
-
-
 
 
 # ── 新档 classes seed（F3/r2 冻结表 + ×10⁴）─────────────────────────────────
@@ -106,15 +103,10 @@ def test_new_save_regions_seed_persons_scale(game):
 # ── 旧档双口径（F4）───────────────────────────────────────────────────────
 
 
-
 # ── 五项 mutation 验收矩阵（AC4+AC8 合并，逐项钉新旧档期望口径）──────────────
 
 
-
 # ── prompt 契约（④ new-save / ⑤ old-save）＋ F2 机面/玩家面拆分 ────────────
-
-
-
 
 
 # ── F1：class 写面只收 satisfaction/leverage（流民行含内）───────────────────
@@ -153,17 +145,11 @@ def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
 
 # ── web 玩家面：UI 直显模板已删（P7），机面 population 单一真源 ───────────────
 
-def test_web_region_payload_has_no_population_wan_projection(game):
+def test_web_region_payload_has_no_population_wan_projection(web_game):
     """W1（P7）：web 地区载荷不再有 population_wan 直显投影——玩家面人口
     呈现走 simulator seam featured input + LLM 长出叙事，UI 无固定模板；
     地图节点与地区载荷同源 db.region_payload()（机面 population 原样）。"""
-    from types import SimpleNamespace
-
-    import web_app
-
-    new_db, new_state, content = game
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(db=new_db, state=new_state, content=content)
+    runtime = web_game
 
     regions = runtime.db.region_payload()
     assert all("population_wan" not in row for row in regions)

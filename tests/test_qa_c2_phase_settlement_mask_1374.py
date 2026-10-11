@@ -8,51 +8,16 @@
 
 from __future__ import annotations
 
-from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import asyncio
 import threading
-from contextlib import contextmanager
-from types import SimpleNamespace
 
-import pytest
 
 import web_app
 from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
 from tests.test_chat_stream_failpaths_393 import _parse_sse
 from tests.test_enter_settlement_period_1235 import _click_before
-
-def _runtime(db, state):
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=SimpleNamespace(characters={}),
-        previous_summary="",
-        last_decree="诏曰测试",
-        last_report="",
-        pending_count=lambda: 0,
-        pending_decisions=lambda: db.list_pending_decisions(int(state.turn)),
-        victory=lambda: {"status": "ongoing", "summary": ""},
-        current_phase=lambda: TurnPhase(state.turn_phase),
-        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
-    )
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.map_nodes = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-    runtime.actions = []
-    runtime.session.end_turn = lambda: runtime.actions.append("end_turn")
-    runtime.refresh_turn = lambda: runtime.actions.append("refresh")
-    runtime._write_gate = ClassifiedWriteGate()
-    runtime._settlement_entry_lock = threading.Lock()
-    runtime._settlement_entry_inflight = 0
-    return runtime
 
 
 async def _drain_resolve_sse(choices):
@@ -66,9 +31,9 @@ async def _drain_resolve_sse(choices):
     return "".join(chunks)
 
 
-def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
+def test_resolve_stream_uses_settlement_period_entry(web_game, monkeypatch):
     """#1374：resolve/stream worker 必入 _settlement_period_entry（对照三入口样板）。"""
-    db, state, _content = game
+    db, state = web_game.db, web_game.state
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
@@ -80,13 +45,12 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
         "options": [{"label": "发", "hint": "发内帑"}],
     }])
 
-    runtime = _runtime(db, state)
+    runtime = web_game
     phase2_started = threading.Event()
     release_phase2 = threading.Event()
 
     def _submit_hitl(choices, *, write_gate, cheat_directive=""):
         # 生产协议：submit_hitl_choices；纯 decision 路径持 write_gate。
-        runtime.actions.append("submit")
         with write_gate:
             # 模拟 decided 先写（崩溃安全时序）——本刀不改 session 真写序，仅证展示态窗口。
             db.conn.execute(
@@ -155,10 +119,10 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     assert db.get_month_open_snapshot(int(state.turn)) == before
 
 
-def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, monkeypatch):
+def test_resolve_stream_entry_failure_exits_display_when_not_front_half(web_game, monkeypatch):
     """异常路径走受理样板 finally：非常态前半段时清展示态。"""
-    db, state, _content = game
-    runtime = _runtime(db, state)
+    db, state = web_game.db, web_game.state
+    runtime = web_game
     # 非 awaiting：accept 会新建快照；submit 拒 → 失败 exit 须清。
     # gate 须为真锁：exit 路径 gate.acquire，禁 null cm 替身。
     state.turn_phase = TurnPhase.SUMMONING.value
@@ -177,10 +141,10 @@ def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, mo
     assert runtime.state_payload()["turn"]["settlement_display"] is False
 
 
-def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
+def test_resolve_stream_clear_throw_emits_error_not_done(web_game, monkeypatch):
     """负向：stream __done__ 须在 clear 成功后入队——clear 抛不得先推 done。"""
-    db, state, _content = game
-    runtime = _runtime(db, state)
+    db, state = web_game.db, web_game.state
+    runtime = web_game
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     db.capture_month_open_snapshot(state)
@@ -192,7 +156,6 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
     }])
 
     def _submit_hitl(choices, *, write_gate, cheat_directive=""):
-        runtime.actions.append("submit")
         with write_gate:
             # 回 summoning 常态，使成功支 clear_orphan 真触发
             state.turn_phase = TurnPhase.SUMMONING.value

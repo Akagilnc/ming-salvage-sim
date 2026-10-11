@@ -10,7 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ming_sim.flows import _apply_economy_list, apply_fixed_period_flows
+from ming_sim.flows import apply_fixed_period_flows
+from tests.dossier_test_helpers import promulgated_policy_origin
 from ming_sim import issues as issue_engine
 from tests.army_pay_helpers import configure_guanning_army
 
@@ -384,21 +385,20 @@ def test_pay_clear_via_economy_moves_next_tick_loyalty_plus_5(game):
     assert float(_row(db, "arrears")["arrears"]) > 0
 
     state.metrics["国库"] = 10**9
-    applied = _apply_economy_list(
-        db,
-        state,
-        [{
+    from ming_sim.issues import apply_score_extraction
+
+    apply_score_extraction(
+        db, state, {"economy_moves": [{
             "account": "国库",
             "delta": -8,
             "category": "补饷",
             "reason": "诏拨清欠",
+            "origin_ref": promulgated_policy_origin(db, state, "mutiny-pay-319"),
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": ARMY,
-        }],
-        commit=True,
+        }]},
     )
-    assert any(m.get("applied") for m in applied if isinstance(m, dict))
 
     mid = _row(db, "arrears", "loyalty", "is_mutinied")
     assert float(mid["arrears"]) == pytest.approx(0)

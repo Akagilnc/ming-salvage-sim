@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from tests.test_relation_brew_636 import _add_edge
+
 
 import pytest
 
@@ -25,12 +27,6 @@ from ming_sim.relations import EMPEROR_NODE
 # 冻结票面 r3 白名单本体——独立真源（票面原文照抄），不从生产代码重推导。
 FROZEN_DTO_WHITELIST = {"source", "target", "summary", "recent_context", "updated_at_period"}
 
-def _add_edge(db, state, *, source, target, kind, context, origin):
-    return db.record_relation_edge_event(
-        source=source, target=target, event_kind=kind, context=context,
-        origin=origin, turn=int(state.turn),
-        year=int(state.year), period=int(state.period),
-    )
 
 @pytest.fixture
 def ledger(game):

@@ -20,19 +20,9 @@ from ming_sim.audience_night import (
 from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.session import GameSession
 from tests.month_chain_helpers import make_light_session
+from tests.test_covert_levy_651 import _realize_fork
 
-
-
-def _realize_fork(db, state, did):
-    """经现役写口造真实分叉（不替换读端）：有奏报『有成』、执行格 transformed、旨外 durable 经济效果。"""
-    db.record_dossier_progress(int(did), int(state.turn), "有成", "奏报有成")
-    db.conn.execute("UPDATE decree_dossiers SET execution_outcome='transformed' WHERE id=?", (int(did),))
-    db.record_issue_economy_move(
-        state, "国库", -3, "旨外", "旨外测试", origin_ref=f"dossier:{int(did)}", beyond_intent=1,
-    )
-    db.conn.commit()
 
 def _hong(db, content) -> str:
     if "洪承畴" in getattr(content, "characters", {}):

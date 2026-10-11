@@ -5,62 +5,25 @@
 验收：
   · 并发 A 成功未推月 + B 进 atomic 时 DELETE 不落 B 事务
   · clear 抛错后 inflight 归零
-  · 真实入口成功回 summoning 清残留（见 test_month_open_snapshot_1234 退朝入口）
+  · 真实入口成功回 summoning 清残留（见 test_month_chain_1847 玩家月链）
 """
 
 from __future__ import annotations
 
-from ming_sim.session_write_queue import ClassifiedWriteGate
 
-import threading
-from types import SimpleNamespace
-
-import web_app
 from ming_sim.models import TurnPhase
-from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
 
 
 from tests.test_enter_settlement_period_1235 import _click_before
 
-def _shell(db, state, content):
-    """轻壳 WebGame：真 db/state + 真 write_gate。"""
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        begin_turn=lambda: None,
-        previous_summary="",
-        last_decree="",
-        last_report="",
-        pending_count=lambda: 0,
-        pending_decisions=lambda: [],
-        victory=lambda: {"status": "ongoing", "summary": ""},
-        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
-    )
-    runtime._write_gate = ClassifiedWriteGate()
-    runtime._settlement_entry_lock = threading.Lock()
-    runtime._settlement_entry_inflight = 0
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.map_nodes = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-    return runtime
 
-
-def test_refresh_turn_no_longer_clears_orphan(game):
+def test_refresh_turn_no_longer_clears_orphan(web_game):
     """F3：refresh_turn 不再是清理点——直调不得清残留（清理只在受理样板成功支）。"""
-    db, state, content = game
+    db, state = web_game.db, web_game.state
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
     state.turn_phase = TurnPhase.SUMMONING.value
     db.save_state(state)
 
-    runtime = _shell(db, state, content)
-    # 绑定真实方法（轻壳无实例绑定）
-    web_app.WebGame.refresh_turn(runtime)
+    web_game.refresh_turn()
     assert db.get_month_open_snapshot(int(state.turn)) == before
