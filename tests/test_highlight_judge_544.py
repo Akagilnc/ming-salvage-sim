@@ -27,9 +27,12 @@ from ming_sim.highlight_judge import (
 
 def test_run_highlight_judge_timeout_and_exception_degrade_silently():
     release = threading.Event()
+    slow_worker = None
 
     class _Slow:
         def run(self, *_a, **_k):
+            nonlocal slow_worker
+            slow_worker = threading.current_thread()
             release.wait()
             return SimpleNamespace(content='{"highlights": ["迟到"]}')
 
@@ -47,6 +50,8 @@ def test_run_highlight_judge_timeout_and_exception_degrade_silently():
     finally:
         # 断言失败不得扣住 _Slow.run；释放归本测 finally。
         release.set()
+        if slow_worker is not None:
+            slow_worker.join()
 
     assert run_highlight_judge(
         minister_reply="臣陈辽饷。",

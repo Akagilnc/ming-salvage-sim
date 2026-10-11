@@ -45,13 +45,14 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
         daemon=True,
     )
     thread.start()
-    # While the live queue gate is held, drain must not close the session.
-    assert not done.is_set()
-    assert closed == []
+    try:
+        # While the live queue gate is held, drain must not close the session.
+        assert not done.is_set()
+        assert closed == []
+    finally:
+        gate.release()
+        thread.join()
 
-    gate.release()
-
-    done.wait()
     assert closed == [1]
     assert not gate.locked()
 
@@ -68,18 +69,22 @@ def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path)
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
     _reset_path_leases()
-    assert web_app._register_holder(db_path, fake_game) is not None
+    entry = web_app._register_holder(db_path, fake_game)
+    assert entry is not None
     monkeypatch.setattr(web_app, "web_game", fake_game)
 
     gate.acquire()
 
-    result = asyncio.run(web_app.api_menu_exit())
+    try:
+        result = asyncio.run(web_app.api_menu_exit())
 
-    assert result == {"ok": True}
-    assert web_app.web_game is None
-    assert closed == []
-
-    gate.release()
+        assert result == {"ok": True}
+        assert web_app.web_game is None
+        assert closed == []
+    finally:
+        gate.release()
+        if entry.close_op is not None:
+            entry.close_op.archive_settled.wait()
 
     wait_until(lambda: closed == [1])
     assert not gate.locked()
@@ -101,7 +106,8 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
     _reset_path_leases()
-    assert web_app._register_holder(old_db, fake_old_game) is not None
+    entry = web_app._register_holder(old_db, fake_old_game)
+    assert entry is not None
     monkeypatch.setattr(web_app, "web_game", fake_old_game)
     monkeypatch.setenv("MING_SIM_DB", old_db)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
@@ -111,13 +117,16 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
 
     gate.acquire()
 
-    result = asyncio.run(web_app.api_menu_new_game())
+    try:
+        result = asyncio.run(web_app.api_menu_new_game())
 
-    assert "state" in result
-    assert web_app.web_game is fake_new_game
-    assert closed == []  # 旧 session 尚未关闭（gate 被模拟 worker 持有）
-
-    gate.release()
+        assert "state" in result
+        assert web_app.web_game is fake_new_game
+        assert closed == []  # 旧 session 尚未关闭（gate 被模拟 worker 持有）
+    finally:
+        gate.release()
+        if entry.close_op is not None:
+            entry.close_op.archive_settled.wait()
 
     wait_until(lambda: closed == [1])
     assert not gate.locked()
@@ -390,13 +399,14 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
 
     thread = threading.Thread(target=lambda: asyncio.run(run_shutdown()), daemon=True)
     thread.start()
-    assert not done.is_set()
-    assert closed == []
-    assert killed == []
+    try:
+        assert not done.is_set()
+        assert closed == []
+        assert killed == []
+    finally:
+        gate.release()
+        thread.join()
 
-    gate.release()
-
-    done.wait()
     assert closed == [1]
     wait_until(lambda: bool(killed))
 
@@ -434,15 +444,15 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
         daemon=True,
     )
     thread.start()
+    try:
+        wait_until(lambda: runtime._write_queue.is_sealed())
+        assert runtime._mark_pending_write() is None
+        # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
+        assert runtime._pending_writes_count <= 1
+    finally:
+        runtime._write_gate.release()
+        thread.join()
 
-    wait_until(lambda: runtime._write_queue.is_sealed())
-    assert runtime._mark_pending_write() is None
-    # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
-    assert runtime._pending_writes_count <= 1
-
-    runtime._write_gate.release()
-
-    done.wait()
     assert closed == [1]
 
 

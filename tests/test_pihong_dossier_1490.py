@@ -1855,10 +1855,12 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
         return asyncio.run(_post_resolve(body))
     with ThreadPoolExecutor(max_workers=2) as pool:
         f1 = pool.submit(_post)
-        started.wait()
-        f2 = pool.submit(_post)
-        second_arrived.wait()
-        release.set()
+        try:
+            started.wait()
+            f2 = pool.submit(_post)
+            second_arrived.wait()
+        finally:
+            release.set()
         results = [f.result() for f in (f1, f2)]
     assert all((r.status_code == 200 for r in results)), [r.status_code for r in results]
     kind, turn_s, idx_s = key.split(':')
