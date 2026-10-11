@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -115,11 +116,12 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     game = _ResolveGame(TurnPhase.SETTLING.value, gate)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
 
-    try:
-        # gate held: precheck must finish without acquiring it (hang → CI final line)
-        events = asyncio.run(_consume_resolve_sse())
-    finally:
-        gate.release()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            pending = executor.submit(lambda: asyncio.run(_consume_resolve_sse()))
+            events = pending.result(timeout=1)
+        finally:
+            gate.release()
 
     assert events, "expected at least one SSE event"
     event, payload = events[-1]
@@ -142,7 +144,6 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     tail_sessions: list[object] = []
     body_ready = threading.Event()
     release_body = threading.Event()
-    resolve_done = threading.Event()
 
     def _submit_hitl(choices, *, write_gate, cheat_directive=""):
         with write_gate:
@@ -170,25 +171,22 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
 
     def _run_resolve():
-        try:
-            asyncio.run(_consume_resolve_sse())
-        finally:
-            resolve_done.set()
+        asyncio.run(_consume_resolve_sse())
 
     t_resolve = threading.Thread(target=_run_resolve, daemon=True)
     t_resolve.start()
-    body_ready.wait()
-
-    try:
-        with pytest.raises(HTTPException) as ei:
-            asyncio.run(web_app.api_load_save("存档"))
-        assert ei.value.status_code == 409
-        assert replacements == []
-        assert game.session is old_session
-    finally:
-        release_body.set()
-        resolve_done.wait()
-        t_resolve.join()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            assert body_ready.wait(1)
+            with pytest.raises(HTTPException) as ei:
+                pending = executor.submit(lambda: asyncio.run(web_app.api_load_save("存档")))
+                pending.result(timeout=1)
+            assert ei.value.status_code == 409
+            assert replacements == []
+            assert game.session is old_session
+        finally:
+            release_body.set()
+            t_resolve.join()
 
     assert game.actions == ["submit", "end_turn", "refresh"]
     assert tail_sessions == [old_session]

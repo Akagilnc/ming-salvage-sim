@@ -7,6 +7,7 @@ import pytest
 
 from ming_sim.session import GameSession
 from tests.wait_utils import wait_until
+from tests.test_session_write_queue_1353 import wait_pending_writes
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 from tests.conftest import (
@@ -138,7 +139,7 @@ def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
     """等本局唯一写队列进入 idle。"""
     q = getattr(web_game, "_write_queue", None)
     if q is not None and hasattr(q, "wait_idle"):
-        q.wait_idle()  # unlimited; CI job final line owns hang
+        wait_pending_writes(web_game)
     else:
         wait_until(lambda: int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0)
 

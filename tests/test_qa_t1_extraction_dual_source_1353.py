@@ -221,13 +221,18 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
         target=_worker_terminal, name="worker-terminal-1353", daemon=True,
     )
     wt.start()
-    # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
-    # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
-    an.wait_in_flight_clear(db, nid)
-    worker_published.wait()
-    wt.join()
-    assert not wt.is_alive()
-    assert an.list_in_flight_chat_turns(db, nid) == []
+    try:
+        # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
+        # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
+        an.wait_in_flight_clear(db, nid)
+        assert worker_published.wait(1)
+        wt.join()
+        assert not wt.is_alive()
+        assert an.list_in_flight_chat_turns(db, nid) == []
+    finally:
+        waiter_polling.set()
+        wt.join()
+
 
 def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypatch):
     """生产钉：seal 后现役高亮尾随拒绝 → 零 LLM、零写。"""

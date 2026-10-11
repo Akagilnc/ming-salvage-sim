@@ -70,7 +70,7 @@ class _FakeAgent:
         if self.started is not None:
             self.started.set()
         if self.allow is not None:
-            self.allow.wait()
+            assert self.allow.wait(1)
         yield RunCompletedEvent()
 
     def get_last_run_output(self):
@@ -259,17 +259,17 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
         async with _client() as client:
             return (await client.get("/api/audience/scroll")).json()
 
-    response = asyncio.run(send())
-    assert response.status_code == 200
-    if failure in {"503", "timeout"}:
-        try:
+    try:
+        response = asyncio.run(send())
+        assert response.status_code == 200
+        if failure in {"503", "timeout"}:
             assert retry_waiting.wait(3)
             early = asyncio.run(inspect_scroll())
             assert len(early["translation_retries"]) == 1
             assert all(not row["retryable"] for row in early["translation_retries"])
-        finally:
-            resume_retry.set()
-    assert game._runtime_write_queue().wait_idle()
+    finally:
+        resume_retry.set()
+        assert game._runtime_write_queue().wait_idle(timeout_s=3)
 
     failed = asyncio.run(inspect_scroll())
     failed_chat = asyncio.run(inspect_chat())
@@ -406,8 +406,9 @@ async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
 
     事件与 task 同时终态时仍消费 task 异常——不得因 ev 先置位而吞掉 worker 失败。
     """
-    while not ev.is_set() and not task.done():
-        await asyncio.sleep(0)
+    async with asyncio.timeout(1):
+        while not ev.is_set() and not task.done():
+            await asyncio.sleep(0)
     if task.done():
         exc = task.exception()
         if exc is not None:
@@ -436,9 +437,10 @@ async def _drain_tasks(*tasks: asyncio.Task) -> None:
 
 
 async def _wait_for(pred) -> None:
-    """轮询真实状态直至成立；永久不成立 → CI job 终线。"""
-    while not pred():
-        await asyncio.sleep(0)
+    """Bound a test observation; callers still release and drain owned work."""
+    async with asyncio.timeout(1):
+        while not pred():
+            await asyncio.sleep(0)
 
 
 async def _start_hanging_chat(game, client, minister, monkeypatch):

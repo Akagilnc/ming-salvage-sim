@@ -1,20 +1,19 @@
-"""Shared unbounded poll helper and lock observer for concurrency tests (#1723).
-
-Permanent hang is owned by the CI job final line — not by a test-local deadline.
-"""
+"""Test-owned rendezvous polling and lock observer for concurrency tests (#1723)."""
 from __future__ import annotations
 
 import threading
+import time
 from typing import Callable
 
 
 def wait_until(predicate: Callable[[], bool]) -> None:
-    """Poll until predicate is true. Backoff only; not a correctness deadline."""
+    """Bound test observations without changing production waiting semantics."""
     poll = threading.Event()
-    while True:
-        if predicate():
-            return
-        poll.wait(0.01)
+    deadline = time.monotonic() + 1
+    while not predicate():
+        remaining = deadline - time.monotonic()
+        assert remaining > 0, "test rendezvous was not reached"
+        poll.wait(min(0.01, remaining))
 
 
 def reset_menu_path_leases() -> None:

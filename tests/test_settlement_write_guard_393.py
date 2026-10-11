@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import MethodType, SimpleNamespace
 
 import pytest
@@ -230,14 +231,16 @@ def test_direct_db_write_refused_by_phase(monkeypatch, phase, hold_gate, name, c
     monkeypatch.setattr(web_app, "get_game", lambda: game)
     if hold_gate:
         game._write_gate.acquire()
-    try:
-        with pytest.raises(HTTPException) as ei:
-            _invoke(call())
-        assert ei.value.status_code == 409
-        assert game.db.writes == [], f"{name} wrote during settlement: {game.db.writes}"
-    finally:
-        if hold_gate:
-            game._write_gate.release()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            pending = executor.submit(lambda: _invoke(call()))
+            with pytest.raises(HTTPException) as ei:
+                pending.result(timeout=1)
+            assert ei.value.status_code == 409
+            assert game.db.writes == [], f"{name} wrote during settlement: {game.db.writes}"
+        finally:
+            if hold_gate:
+                game._write_gate.release()
 
 
 def test_advance_without_edict_refused_by_phase(monkeypatch):
@@ -285,7 +288,7 @@ def test_advance_without_edict_refused_when_gate_held(game, monkeypatch):
     worker = threading.Thread(target=_run_call)
     worker.start()
     try:
-        worker.join()
+        worker.join(timeout=1)
         assert result.get("done") is True, "advance_without_edict blocked waiting for the write gate"
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)

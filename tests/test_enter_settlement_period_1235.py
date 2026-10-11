@@ -15,6 +15,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
 
@@ -207,10 +208,12 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch, e
         assert g.db.month_open_snapshots.get(turn) == before
         assert g.state_payload()["turn"]["settlement_display"] is True
         assert g.session._write_gate.acquire(blocking=False)
-        try:
-            return close(g, **kw)
-        finally:
-            g.session._write_gate.release()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                pending = executor.submit(lambda: close(g, **kw))
+                return pending.result(timeout=1)
+            finally:
+                g.session._write_gate.release()
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", acquire_late)
     async def go():
         async with _client() as client:

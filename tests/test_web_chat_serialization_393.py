@@ -113,46 +113,54 @@ def _runtime_for_stream_race(monkeypatch, game):
 def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn(monkeypatch, game):
     runtime, minister_name, allow_finish, settlement_attempting, settlement = _runtime_for_stream_race(monkeypatch, game)
 
-    accepted_turn = int(runtime.state.turn)
-    stream = runtime.chat_stream("殿上", "请奏")
-    first = next(stream)
-    assert first["type"] == "accepted"
-    assert next(stream)["type"] == "delta"
-
     settlement_thread = threading.Thread(target=settlement)
-    settlement_thread.start()
-    assert settlement_attempting.wait(timeout=5)
-    assert settlement.holding.wait(timeout=5)
-
-    done_box: list = []
-    done_collected = threading.Event()
-
-    def _take_done() -> None:
-        while True:
-            item = next(stream)
-            if item.get("type") == "done":
-                done_box.append(item)
-                done_collected.set()
-                return
-
-    threading.Thread(target=_take_done, daemon=True).start()
-    allow_finish.set()
+    collector = None
+    accepted_turn = int(runtime.state.turn)
     try:
+        stream = runtime.chat_stream("殿上", "请奏")
+        first = next(stream)
+        assert first["type"] == "accepted"
+        assert next(stream)["type"] == "delta"
+
+        settlement_thread.start()
+        assert settlement_attempting.wait(timeout=5)
+        assert settlement.holding.wait(timeout=5)
+
+        done_box: list = []
+        done_collected = threading.Event()
+
+        def _take_done() -> None:
+            while True:
+                item = next(stream)
+                if item.get("type") == "done":
+                    done_box.append(item)
+                    done_collected.set()
+                    return
+
+        collector = threading.Thread(target=_take_done, daemon=True)
+        collector.start()
+        allow_finish.set()
         assert settlement.holding.is_set(), "settlement released before epilogue"
         assert not done_collected.is_set(), "done arrived before settlement released gate"
         assert runtime.db.reign.read_chat_turn(first["chat_turn_id"])["minister_message_id"] is None
-    finally:
         settlement.release_event.set()
-    assert done_collected.wait(timeout=5)
-    done = done_box[0]
-    settlement_thread.join(timeout=5)
-    assert not settlement_thread.is_alive()
+        assert done_collected.wait(timeout=5)
+        done = done_box[0]
+        settlement_thread.join(timeout=5)
+        assert not settlement_thread.is_alive()
 
-    assert done["type"] == "done"
-    replied = runtime.db.reign.read_chat_turn(first["chat_turn_id"])
-    reply = runtime.db.conn.execute("SELECT turn FROM chat_messages WHERE id=?", (replied["minister_message_id"],)).fetchone()
-    assert reply["turn"] == accepted_turn
-    assert runtime.state.turn == 2
+        assert done["type"] == "done"
+        replied = runtime.db.reign.read_chat_turn(first["chat_turn_id"])
+        reply = runtime.db.conn.execute("SELECT turn FROM chat_messages WHERE id=?", (replied["minister_message_id"],)).fetchone()
+        assert reply["turn"] == accepted_turn
+        assert runtime.state.turn == 2
+    finally:
+        allow_finish.set()
+        settlement.release_event.set()
+        if settlement_thread.ident is not None:
+            settlement_thread.join()
+        if collector is not None and collector.ident is not None:
+            collector.join()
 
 
 def test_identity_setup_failure_preserves_question_and_releases_pending_owner(monkeypatch, game):
@@ -187,7 +195,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
 
         def chat_stream(self, minister_name: str, message: str):
             chat_entered.set()
-            allow_finish.wait()
+            assert allow_finish.wait(1)
             events.append("chat")
             yield {"type": "done", "payload": {"answer": "臣已知悉。"}}
 
@@ -199,8 +207,8 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
 
     async def drive_concurrent_state_probe():
         async def state_probe():
-            await asyncio.to_thread(chat_entered.wait)
             try:
+                assert await asyncio.to_thread(chat_entered.wait, 1)
                 payload = await web_app.api_state()
                 # 先落成功标记再放行：set() 先执行则 chat 线程可先记 "chat"，
                 # 与外部断言的严格顺序无 happens-before（#1722 判牒）。

@@ -28,15 +28,6 @@ def _drain_then_archive(game, db_path: str) -> None:
     web_app._path_request_archive(db_path)
 
 
-
-
-
-
-
-
-
-
-
 @pytest.mark.parametrize("config_remove_fault", [False, True])
 def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_path, config_remove_fault):
     """#402 R1（Codex/CodeRabbit）：新局初始化失败时，不退休旧局、不丢旧主库指针。"""
@@ -100,8 +91,6 @@ def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_pa
     with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
         assert f.read().strip() == old_db_path
     assert drain_spawns == []
-
-
 
 
 def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
@@ -211,8 +200,6 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     assert not (tmp_path / "saves").exists()
 
 
-
-
 def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tmp_path):
     """#402 R2（CodeRabbit）：active_db.txt 写失败也必须回滚已改的 MING_SIM_DB。"""
     old_db_path = str(tmp_path / "old_main.db")
@@ -262,14 +249,16 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
         done.set()
 
     thread = threading.Thread(target=lambda: asyncio.run(run_shutdown()), daemon=True)
-    thread.start()
-    assert not done.is_set()
-    assert closed == []
-    assert killed == []
+    try:
+        thread.start()
+        assert not done.is_set()
+        assert closed == []
+        assert killed == []
 
-    gate.release()
-
-    done.wait()
+    finally:
+        gate.release()
+        thread.join()
+    assert done.is_set()
     assert closed == [1]
     wait_until(lambda: bool(killed))
 
@@ -439,12 +428,6 @@ class _GapBDB:
             result.setdefault(m["minister"], []).append(
                 {"role": m["role"], "content": m["content"]})
         return result
-
-
-
-
-
-
 
 
 # ── #396 Step5 R4: web_game is None 时 new_game 仍须切换库路径 ───────────
