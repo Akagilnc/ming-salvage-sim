@@ -82,18 +82,21 @@ def _restore_yuan_as_guanning_commander(db, content):
         db.conn.commit()
 
 
-@pytest.mark.parametrize("gate, support, calendar, trigger, included", [
-    ({"民心": "<=5"}, 3, None, (1, 1), True),
-    (None, 60, None, (1, 1), True),
-    ({}, 60, None, (1, 1), True),
-    ({"民心": "<=5"}, 60, None, (1, 1), False),
-    ({}, None, (1627, 10), (1629, 6), False),
+@pytest.mark.parametrize("gate, support, calendar, trigger, open_window, included", [
+    ({"民心": "<=5"}, 3, None, (1, 0), False, True),
+    (None, 60, None, (1, 0), False, True),
+    ({}, 60, None, (1, 0), False, True),
+    ({"民心": "<=5"}, 60, None, (1, 0), False, False),
+    ({}, None, (1627, 10), (1629, 6), True, False),
 ])
-def test_gated_historical_event_included_when_satisfied(game, gate, support, calendar, trigger, included):
+def test_gated_historical_event_included_when_satisfied(
+    game, gate, support, calendar, trigger, open_window, included,
+):
     db, state, content = game
     issues.bind_content(content)
     ev = _hist_event("__test_gated_hist2__", gate)
     ev.trigger_year, ev.trigger_month = trigger
+    ev.open_window = open_window
     content.events.append(ev)
     try:
         if support is not None:
