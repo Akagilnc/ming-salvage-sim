@@ -24,11 +24,11 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_scene_agent
 
 def _query_conn_no_user_message():
-    """生产 _fail_chat_turn_and_reload 直调 db.conn SELECT；负向夹具只给查询协作面。
-    fetchone=None → 走 fail_chat_turn（无问话 id），不复制回滚业务。"""
+    """负向夹具的 conn 查询面；无用户问话的清理由 reign 查询替身承接。
+    只提供空查询结果，不复制回滚业务。"""
     return SimpleNamespace(
         execute=lambda *_a, **_k: SimpleNamespace(fetchone=lambda: None, fetchall=lambda: []),
     )
@@ -37,7 +37,7 @@ def _query_conn_no_user_message():
 def _assert_write_path_free(runtime) -> None:
     """After failpath cleanup, a subsequent gated write and drain must not block.
 
-    Hang → CI job final line; no fixed wall-clock probe (#1723).
+    Bound each handshake and join so a broken gate fails this test, not CI exit.
     """
     entered = threading.Event()
 
@@ -47,8 +47,10 @@ def _assert_write_path_free(runtime) -> None:
 
     t = threading.Thread(target=_try_serialized_write, daemon=True)
     t.start()
-    entered.wait()
-    t.join()
+    try:
+        assert entered.wait(timeout=5), "serialized write path still blocked"
+    finally:
+        t.join(timeout=5)
     assert entered.is_set() and not t.is_alive(), "serialized write path still blocked"
 
     drained = threading.Event()
@@ -61,8 +63,10 @@ def _assert_write_path_free(runtime) -> None:
 
     td = threading.Thread(target=_try_drain, daemon=True)
     td.start()
-    drained.wait()
-    td.join()
+    try:
+        assert drained.wait(timeout=5), "drain still blocked (pending write leak)"
+    finally:
+        td.join(timeout=5)
     assert drained.is_set() and not td.is_alive(), "drain still blocked (pending write leak)"
 
 
@@ -70,6 +74,7 @@ class _FailingPrologueDB:
     def __init__(self):
         self.failed_turns: list[int] = []
         self.conn = _query_conn_no_user_message()
+        self.reign = SimpleNamespace(chat_turn_user_message_id=lambda _id: None)
 
     def kv_get(self, _key):
         return ""
@@ -98,8 +103,9 @@ class _FailingPrologueDB:
 
     def fail_chat_turn(self, chat_turn_id):
         self.failed_turns.append(int(chat_turn_id))
+        return []
 
-    def load_all_chat_history(self):
+    def history_by_minister(self):
         return {}
 
     def get_last_active_chat_turn(self, *a, **k):
@@ -208,7 +214,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         try:
             with web_app._serialized_web_write(runtime):
                 other_entered.set()
-                allow_other_exit.wait()
+                assert allow_other_exit.wait(timeout=5), "foreign holder was not released"
             other_completed_ok.append(True)
         except Exception:
             other_completed_ok.append(False)
@@ -221,24 +227,27 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
-        other_entered.wait()
+        assert other_entered.wait(timeout=5), "foreign writer did not enter write path"
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
     gen = runtime.chat_stream("殿上", "辽东军情如何？")
-    with pytest.raises(RuntimeError):
-        next(gen)
+    try:
+        with pytest.raises(RuntimeError):
+            next(gen)
 
-    assert db.failed_turns == [7]
-    # Foreign holder must still own the serialized write path after prologue finally.
-    assert other_entered.is_set()
-    assert other_completed_ok == [], (
-        "foreign holder's critical section was broken by prologue finally"
-    )
-    allow_other_exit.set()
-    assert other_thread_holder, "foreign writer thread was not started"
-    other_thread_holder[0].join()
-    assert not other_thread_holder[0].is_alive()
+        assert db.failed_turns == [7]
+        # Foreign holder must still own the serialized write path after prologue finally.
+        assert other_entered.is_set()
+        assert other_completed_ok == [], (
+            "foreign holder's critical section was broken by prologue finally"
+        )
+        assert other_thread_holder, "foreign writer thread was not started"
+    finally:
+        allow_other_exit.set()
+        for other in other_thread_holder:
+            other.join(timeout=5)
+            assert not other.is_alive(), "foreign writer did not exit"
     assert other_completed_ok == [True], (
         "foreign holder could not complete its own serialized write"
     )
@@ -251,6 +260,7 @@ class _DoubleFailDB:
     write path + pending ownership are still released (R3 self-check)."""
     def __init__(self):
         self.conn = _query_conn_no_user_message()
+        self.reign = SimpleNamespace(chat_turn_user_message_id=lambda _id: None)
 
     def kv_get(self, _key):
         return ""
@@ -424,8 +434,11 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog,
     with caplog.at_level(logging.ERROR, logger="web_app"):
         th = threading.Thread(target=consume, daemon=True)
         th.start()
-        done.wait()
-        th.join()
+        try:
+            assert done.wait(timeout=5), "consumer did not reach terminal event"
+        finally:
+            th.join(timeout=5)
+        assert not th.is_alive(), "consumer did not exit"
 
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
@@ -490,8 +503,11 @@ def test_worker_postprocess_exception_emits_error_end(monkeypatch):
     # 施工席自选：Thread + Event 确定性等实际 worker 结束（非新增框架）
     th = threading.Thread(target=consume, daemon=True)
     th.start()
-    done.wait()
-    th.join()
+    try:
+        assert done.wait(timeout=5), "consumer did not reach terminal event"
+    finally:
+        th.join(timeout=5)
+    assert not th.is_alive(), "consumer did not exit"
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
     assert "done" in types, events  # 回话已可见

@@ -10,7 +10,7 @@ from typing import Any, Mapping, Sequence
 from ming_sim.entities.column_write import upsert_by_pk
 
 FACTION_COLUMNS = frozenset({
-    "name", "satisfaction", "leverage", "agenda", "edict_overdraw", "leverage_offset",
+    "name", "satisfaction", "leverage", "agenda", "leverage_offset",
 })
 
 
@@ -81,62 +81,6 @@ class FactionStore:
             [(row["leverage"], row["leverage_offset"], row["name"]) for row in rows],
         )
 
-    def reset_edict_overdraw(self) -> None:
-        self._conn.execute("UPDATE factions SET edict_overdraw = 0")
-
-    def set_edict_overdraw(self, name: str, value: object) -> None:
-        self._conn.execute(
-            "UPDATE factions SET edict_overdraw = ? WHERE name = ?",
-            (value, name),
-        )
-
-    def add_edict_overdraw(self, name: str, delta: object) -> None:
-        self._conn.execute(
-            "UPDATE factions SET edict_overdraw = edict_overdraw + ? WHERE name = ?",
-            (delta, name),
-        )
-
-    def clear_axis_debt(self) -> None:
-        self._conn.execute('DELETE FROM faction_axis_debt')
-
-    def centrifuge_axis_totals(self, kind: str) -> Any:
-        return self._conn.execute(
-            'SELECT faction, axis, COALESCE(SUM(amount), 0) AS total FROM centrifuge_log '
-            'WHERE kind=? GROUP BY faction, axis', (kind,),
-        ).fetchall()
-
-    def insert_axis_debt(self, params: Any) -> None:
-        self._conn.execute(
-            'INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness) VALUES (?, ?, ?, ?)', params,
-        )
-
-    def centrifuge_overdraw_totals(self) -> Any:
-        return self._conn.execute(
-            "SELECT faction, COALESCE(SUM(amount), 0) AS total FROM centrifuge_log "
-            "WHERE kind='overdraw' GROUP BY faction",
-        ).fetchall()
-
-    def centrifuge_namespace(self, keys: Any) -> Any:
-        placeholders = ','.join('?' for _ in keys)
-        return self._conn.execute(
-            'SELECT turn, faction, axis, kind, base, legitimacy_pct, amount, '
-            'source_name, reason_code, source, idem_key FROM centrifuge_log '
-            f'WHERE idem_key IN ({placeholders})', keys,
-        ).fetchall()
-
-    def append_centrifuge_log(self, params: Any) -> None:
-        self._conn.execute(
-            'INSERT INTO centrifuge_log(turn, faction, axis, kind, base, legitimacy_pct, '
-            'amount, source_name, reason_code, source, idem_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', params,
-        )
-
-    def add_axis_debt(self, faction: str, axis: str, *, blood: int = 0, wary: int = 0) -> None:
-        self._conn.execute(
-            'INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness) VALUES (?, ?, ?, ?) '
-            'ON CONFLICT(faction, axis) DO UPDATE SET blood_debt=blood_debt+excluded.blood_debt, '
-            'wariness=wariness+excluded.wariness', (faction, axis, blood, wary),
-        )
-
     def read_snapshot_person_write_state(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name, leverage, leverage_offset FROM factions', params).fetchall()
 
@@ -182,6 +126,3 @@ class FactionStore:
 
     def read_get_faction_stance_summaries(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM faction_stance_summaries ORDER BY faction', params).fetchall()
-
-    def read_resolve_target_faction_identity(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT 1 FROM factions WHERE name = ?', params).fetchone()

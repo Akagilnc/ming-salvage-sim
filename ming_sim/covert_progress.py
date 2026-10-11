@@ -22,10 +22,45 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from ming_sim.applier import StoredDocumentError, durable_float, durable_int, load_stored_object, load_stored_object_list
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
-from ming_sim.value_matrix import (
-    normalize_axes,
-    normalize_direction,
-)
+
+# Closed vocabulary for covert-task direction, independent of retired faction ledgers.
+_VALUE_AXES = frozenset({
+    "礼法名节", "既得利益", "实务事功", "皇权依附", "华夷战和", "民本恤民",
+})
+
+
+def normalize_axis(raw: object) -> str | None:
+    text = str(raw or "").strip()
+    return text if text in _VALUE_AXES else None
+
+
+def normalize_axes(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        items: list[object] = [raw]
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        axis = normalize_axis(item)
+        if axis is None or axis in seen:
+            continue
+        seen.add(axis)
+        out.append(axis)
+    return out
+
+
+def normalize_direction(raw: object, *, default: int = 1) -> int:
+    """动作方向：+1 顺轴护向，−1 逆轴护向。非法回 default。"""
+    try:
+        value = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return int(default)
+    return 1 if value >= 0 else -1
 
 FIDELITY_STATES: tuple[str, ...] = ("忠实", "打折", "阳奉阴违", "反噬")
 _FIDELITY_INDEX = {name: idx for idx, name in enumerate(FIDELITY_STATES)}

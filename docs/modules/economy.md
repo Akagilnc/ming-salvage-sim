@@ -39,7 +39,7 @@
 | `salt_tax` | 万两/月 | 盐税月基数，hub 旁路汇总 |
 | `commerce_tax` | 万两/月 | 商税月基数，hub 旁路汇总 |
 | `corruption` | 0-100 | 腐败度；region_delta 可写，材料可读；**不**自动映射进 settle tick |
-| `settle` | object | 省级财政基座 `st`/`p`；`settle_province_tick` 只读这里（及现役覆盖参数），与顶层士绅/民变/corruption 无自动耦合 |
+| `settle` | object | 省级财政基座 `st`/`p`；`settle_ming_province_substrate_ticks` 只读这里（及现役覆盖参数），与顶层士绅/民变/corruption 无自动耦合 |
 
 ---
 
@@ -47,7 +47,7 @@
 
 现行月度国库收入不再走省级 flat 系数公式，而由 **substrate hub** 统一投影与落账：
 
-1. **省级 settle tick**（`db.settle_province_tick` / `flows._advance_province_fiscal_substrate`）：明控且已 seed `settle` 基座的省推进三饷、火耗、起运、逋赋等账本。
+1. **省级 settle tick**（`db.settle_ming_province_substrate_ticks` / `flows._advance_province_fiscal_substrate`）：明控且已 seed `settle` 基座的省推进三饷、火耗、起运、逋赋等账本。
 2. **起运到京** → 国库；太仓人类/沉没漏损按 `fiscal_config` 中央损耗率拆分。
 3. **盐税 / 商税** 仍从各省 `fiscal` 旁路汇总入中央（hub 侧通道）。
 4. **京运补 / 中央军饷** 按饷源份额拟拨，经 hub outbound 扣账，不预演未来转运损耗。
@@ -129,7 +129,7 @@ apply 时：
 |------|------|---------|
 | 月度财政落账 | `ming_sim/flows.py` | `apply_fixed_period_flows` |
 | 预算同源 | `ming_sim/flows.py` | `compute_budget_lines` |
-| 省级 settle 桥 | `ming_sim/db.py` | `settle_province_tick` |
+| 省级 settle 桥 | `ming_sim/db.py` | `settle_ming_province_substrate_ticks` |
 | 腐败度 delta 落库 | `ming_sim/db.py` | `apply_region_deltas` → FISCAL_SCORE_FIELDS 分支 |
 | 省级字段白名单 | `ming_sim/constants.py` | `FISCAL_SCORE_FIELDS` |
 | fiscal_config 初始值 | `ming_sim/db.py` | `init_fiscal_config` |

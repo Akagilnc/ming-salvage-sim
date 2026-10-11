@@ -5,7 +5,7 @@ Seams:
 - grant_arrival_bounds 中位（护行界严于无护行）
 - list_dossier_reconciliations（被护案卷×回合键控，restore 无损）
 - 玩家月链对账与案卷月度写口
-- dossier_executions 适配器经 merge_execution_note 合并对账说明（S10 单写）
+- 对账不增补 dossier_executions 的执行原文
 - 不改 economy_moves / 国库二次扣
 """
 

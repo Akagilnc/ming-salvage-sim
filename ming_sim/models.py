@@ -1,7 +1,4 @@
-"""数据类：游戏实体与状态容器。L0 叶子模块。
-
-CourtContext 的 state/db 注解用字符串前向引用，避免 import db.py。
-"""
+"""数据类：游戏实体与状态容器。L0 叶子模块。"""
 
 from __future__ import annotations
 

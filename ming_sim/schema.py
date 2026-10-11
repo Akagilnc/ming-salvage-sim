@@ -136,7 +136,6 @@ CORE_SCHEMA_SQL = """
         satisfaction INTEGER NOT NULL,
         leverage INTEGER NOT NULL,
         agenda TEXT NOT NULL,
-        edict_overdraw INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0),
         leverage_offset REAL NOT NULL DEFAULT 0
     );
 
@@ -1002,43 +1001,6 @@ CORE_SCHEMA_SQL = """
         last_brewed_year INTEGER NOT NULL DEFAULT 0,
         last_brewed_period INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    -- #690 / ADR 0011-2：血债棘轮 substrate（log 真源 + sparse 缓存）
-    CREATE TABLE IF NOT EXISTS faction_axis_debt (
-        faction TEXT NOT NULL REFERENCES factions(name),
-        axis TEXT NOT NULL CHECK (axis IN (
-            '礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民'
-        )),
-        blood_debt INTEGER NOT NULL DEFAULT 0 CHECK (blood_debt >= 0),
-        wariness INTEGER NOT NULL DEFAULT 0 CHECK (wariness >= 0),
-        PRIMARY KEY (faction, axis)
-    );
-
-    CREATE TABLE IF NOT EXISTS centrifuge_log (
-        id INTEGER PRIMARY KEY,
-        turn INTEGER NOT NULL,
-        faction TEXT NOT NULL REFERENCES factions(name),
-        axis TEXT CHECK (
-            axis IS NULL OR axis IN (
-                '礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民'
-            )
-        ),
-        kind TEXT NOT NULL CHECK (kind IN ('direct','kinship','overdraw')),
-        base INTEGER,
-        legitimacy_pct INTEGER,
-        amount INTEGER NOT NULL CHECK (amount > 0),
-        source_name TEXT,
-        reason_code TEXT,
-        source TEXT,
-        idem_key TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        CHECK (
-            (kind = 'overdraw' AND axis IS NULL AND base IS NULL
-             AND legitimacy_pct IS NULL)
-            OR (kind IN ('direct','kinship') AND axis IS NOT NULL
-                AND base IS NOT NULL AND legitimacy_pct IS NOT NULL)
-        )
     );
 
     -- #1896 / ADR 0099：毁证可查性账（harder/gone）；真相底不动。

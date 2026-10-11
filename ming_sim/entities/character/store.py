@@ -521,9 +521,6 @@ class CharacterStore:
     def read_list_recommendation_candidates(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name, office, office_type, faction, status, reason_code, status_reason FROM characters WHERE name != ? AND power_id='ming' AND faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') AND status IN ('active','offstage','retired','dismissed') AND NOT (debut_year > 0 AND (debut_year > ? OR (debut_year = ? AND debut_month > ?))) ORDER BY name", params).fetchall()
 
-    def read_resolve_target_faction_identity(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT faction, identity FROM characters WHERE name = ?', params).fetchall()
-
     def write_seed_opening_world(self, params: Any = ()) -> Any:
         return self._conn.executemany('\n            INSERT INTO office_slots\n                (office_title, office_type, region_id, jurisdiction, sort_order)\n            VALUES (?, ?, ?, ?, ?)\n            ', params)
 
