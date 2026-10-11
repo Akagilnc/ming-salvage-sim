@@ -85,7 +85,13 @@ def test_dossier_link_rejection_stays_business_refusal_not_loud(game, monkeypatc
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "failed"
-    audit = db.list_dossier_link_rejections(pending_action_id=action_id)
+    # 审计落在 durable 表；不另造 test-only list API（#1834 F22 / M4）。
+    audit = db.conn.execute(
+        "SELECT pending_action_id, target_dossier_id, relation_type "
+        "FROM decree_dossier_link_rejections WHERE pending_action_id=? "
+        "ORDER BY rowid",
+        (int(action_id),),
+    ).fetchall()
     assert audit
     assert int(audit[-1]["pending_action_id"]) == int(action_id)
     assert int(audit[-1]["target_dossier_id"]) == 999999

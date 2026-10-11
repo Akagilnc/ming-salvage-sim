@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
+from tests.readback_helpers import non_ming_power_id as _valid_power_id
 
 def run_settle(db, state, content, extracted, **kwargs):
     """These rejection tests model canonical spontaneous extractor envelopes."""
@@ -273,12 +274,6 @@ def test_dirty_army_value_rejected_sibling_lands(game, bad_value):
 
 # ---- new_armies：建军脏项 ----
 
-def _valid_power_id(db):
-    row = db.conn.execute(
-        "SELECT id FROM powers WHERE id != 'ming' LIMIT 1").fetchone()
-    assert row is not None
-    return row[0]
-
 def test_unknown_owner_power_army_rejected_good_builds(game):
     """new_armies owner_power 不在 powers 表 → 原 raise ValueError 崩整月,改为逐项
     拒收留痕(hallucinated_id),同信封里合法 owner 的新军照建(ADR 决定 1)。"""
@@ -471,7 +466,6 @@ def test_army_firearm_over_100_clamps_not_rejected(game):
     assert after == 100  # clamp 后照落
 
 
-
 def test_duplicate_army_noninteger_manpower_rejected(game):
     """new_armies 命中已有 id 但 manpower 非整数 → 原 print 静默跳,改为逐项
     拒收留痕(invalid_enum)(ADR 决定 1)。"""
@@ -575,7 +569,7 @@ def test_issue_path_still_strict_for_historically_fatal(read_game):
 
 def test_nondict_new_army_item_recorded_not_silent(read_game):
     """new_armies 非 dict 项不再静默 continue——留拒收记录(issue 路容忍不升级,
-    历史即静默;season 路本就被 validate_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""
+    历史即静默;season 路本就被 sanitize_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""
     db, state, _ = read_game
     created = db.create_armies_from_extraction(state, ["不是dict的项"], actor="测试")
     rej = [c for c in created if c.get("rejected")]

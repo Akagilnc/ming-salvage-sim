@@ -31,6 +31,7 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
     write_due_staged_commitment_todos,
 )
+from tests.readback_helpers import decree_cost_event_rows
 
 
 # ── fixtures ──────────────────────────────────────────────────────────
@@ -108,13 +109,7 @@ def _settle_empty_month(db, state, content, monkeypatch):
 
 
 def _cost_events(db, dossier_id, *, identity="连坐"):
-    return [
-        dict(row)
-        for row in db.conn.execute(
-            "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-            (int(dossier_id), identity),
-        ).fetchall()
-    ]
+    return decree_cost_event_rows(db, dossier_id, identity)
 
 
 # ── P3 待办消费 ───────────────────────────────────────────────────────

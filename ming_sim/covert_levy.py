@@ -93,7 +93,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
     for todo in db.list_next_audience_todos(status="pending"):
         if todo.get("entry_kind") != ENTRY_KIND:
             continue
-        payload = todo.get("payload_json") or {}
+        payload = todo["payload_json"]
         did = int(payload.get("dossier_id") or 0)
         # The same row remains the durable reminder only while the real gap exists.
         if payload.get("decision") == "禁摊派":

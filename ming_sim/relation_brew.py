@@ -171,10 +171,10 @@ def parse_brew_output(raw: str, stage: str = "关系酿制") -> Dict[str, Any]:
     不截断不 clamp；new_foundings 逐句原样追加。
 
     酿制专用严格解析边界（庭裁 Z1）：raw 必须本身就是唯一、完整、合法的 JSON
-    object——不复用 parse_agent_json 的 fence 剥离/控制字节正则清洗/首对象截取
-    等任何修补。重复对象拼接、未转义控制字节、前后杂文等畸形产出一律契约错
-    拒收（LLMContractError），沿单条降级保旧摘要与 pending；绝不把改写/择取后
-    的散文当模型产出落库（ADR 0142 零删改）。其它调用方不受影响。"""
+    object——不复用 parse_agent_json 的 fence 剥离/外围截取/首对象截取等任何
+    修补。重复对象拼接、未转义控制字节、前后杂文等畸形产出一律契约错拒收
+    （LLMContractError），沿单条降级保旧摘要与 pending；绝不把改写/择取后的
+    散文当模型产出落库（ADR 0142 零删改）。其它调用方不受影响。"""
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as error:

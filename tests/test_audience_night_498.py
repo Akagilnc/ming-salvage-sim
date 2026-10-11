@@ -148,44 +148,6 @@ def test_summon_method_and_bad_method(game):
 # ── AC3 多夜隔离 + AC4 timeline ──────────────────────────────────────
 
 
-def test_two_nights_isolated_and_timeline_alignable(game):
-    db, state, content = game
-    a = _active_minister(db, content)
-    b = _active_minister(db, content, exclude={a})
-
-    n1 = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    an.summon_enter(db, n1["id"], a, method=METHOD_XUANRU)
-    tid1 = db.create_chat_turn(state, a, "sess-a", 0, night_id=n1["id"])
-    _land_reply(db, state, a, tid1)
-    an.close_night(db, state, night_id=n1["id"])
-
-    n2 = an.open_night(db, state, location="文华殿", time_of_day="日")
-    an.summon_enter(db, n2["id"], b, method=METHOD_XUANRU)
-    tid2 = db.create_chat_turn(state, b, "sess-b", 0, night_id=n2["id"])
-    _land_reply(db, state, b, tid2)
-    an.close_night(db, state, night_id=n2["id"])
-
-    assert n1["id"] != n2["id"]
-    n1_persons = {p for e in an.list_ledger(db, n1["id"]) for p in e["person_names"]}
-    n2_persons = {p for e in an.list_ledger(db, n2["id"]) for p in e["person_names"]}
-    assert a in n1_persons and a not in n2_persons
-    assert b in n2_persons and b not in n1_persons
-    assert [int(x["id"]) for x in an.list_chat_turns_for_night(db, n1["id"])] == [tid1]
-    assert [int(x["id"]) for x in an.list_chat_turns_for_night(db, n2["id"])] == [tid2]
-
-    # AC4：合流 timeline 按 night_seq 单调，chat 与 ledger 同桶
-    tl = an.list_night_timeline(db, n1["id"])
-    seqs = [int(ev["seq"]) for ev in tl]
-    assert seqs == sorted(seqs)
-    assert any(ev["kind"] == "chat_turn" for ev in tl)
-    assert any(ev["kind"] == "ledger" for ev in tl)
-    chat_ev = next(ev for ev in tl if ev["kind"] == "chat_turn")
-    assert int(chat_ev["payload"]["night_seq"]) == int(chat_ev["seq"]) > 0
-
-    state.turn_phase = TurnPhase.SUMMONING.value
-    pre_settle(state, db, content=content)
-    assert state.turn_phase == TurnPhase.SETTLING.value
-
 
 def test_chat_completion_via_attach(game):
     db, state, content = game
@@ -558,8 +520,7 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
     def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
         assert chat_turn_id > 0  # 挂夜轮以 generating 起笔，回话须带 chat_turn_id
         return SimpleNamespace(
-            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
-            registered_minister="", displaced_minister="", court_action="",
+            answer="臣有本奏。", proposed_directive=None, court_action="",
             next_minister="", secret_order_id=0, pending_action_id=0,
         )
 

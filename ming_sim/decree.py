@@ -39,7 +39,6 @@ from ming_sim.error_pack import (
 from ming_sim.exceptions import (
     LLMContractError,
     LLMUnavailable,
-    PromulgationHealEvidence,
     SettlementAbort,
 )
 from ming_sim.faction_brew import VIEW_FACTION_STANCE
@@ -50,6 +49,7 @@ from ming_sim.issues import (
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
+from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,
 )
@@ -68,6 +68,7 @@ TIMEOUT_TURN = 240
 from ming_sim.settlement_payload import (  # noqa: E402
     _DECISION_RE,
     bind_decision_options,
+    bind_decisions_to_candidate_events,
     parse_decision_blocks,
 )
 
@@ -153,19 +154,16 @@ def stub_promulgation_verdicts(
 
 
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
-    payload = row.get("payload")
-    if isinstance(payload, dict):
-        return payload
-    # 与 GameDB.parse_engine_payload_json 同一权威；腐坏响亮，不 catch-to-{}（#1897 E1）。
-    from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(
-        row.get("payload_json"), surface="decree.dossier.payload_json",
-    )
+    # 规范案卷行（get_decree_dossier／list_decree_dossiers）已解码 payload。
+    return row["payload"]  # type: ignore[return-value]
 
 
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
     """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
     return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
+
+
+
 
 
 def build_promulgation_judge_context(
@@ -517,13 +515,7 @@ def validate_promulgation_verdicts(
         }
     proposed_modes: Dict[int, str] = {}
     for dossier in proposed_dossiers:
-        payload = dossier.get("payload")
-        if not isinstance(payload, dict):
-            from ming_sim.db import GameDB
-            payload = GameDB.parse_engine_payload_json(
-                dossier.get("payload_json"),
-                surface="decree.proposed.payload_json",
-            )
+        payload = dossier["payload"]
         action_type = dossier.get("action_type")
         external_review = (
             dossier_action_policy(action_type, payload)["external_review"]
@@ -572,7 +564,8 @@ def _rescript_decisions(
             "event_id": f"dossier:{dossier_id}",
             "title": "批红待裁",
             "context": str(dossier.get("decree_text") or ""),
-            "rejection_reason": str(verdict.get("reason") or "").strip(),
+            # Free prose rejection reason: preserve raw (#1834 F16 / ADR 0142).
+            "rejection_reason": str(verdict.get("reason") or ""),
             "opposition": opposition,
             # hint（非 note）：前端 isPendingDecision / DecisionOption 认 hint；
             # dossier_id/dossier_decision 是批红能力字段，点选必须原样回传（#1490）。
@@ -598,6 +591,9 @@ def _rescript_decisions(
             ],
         })
     return decisions
+
+
+
 
 
 def write_decree_with_agno(
@@ -645,7 +641,8 @@ def write_decree_with_agno(
         raise llm_unavailable_from_error(error, "拟诏") from error
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")
-    return text.strip()
+    # #1834 F16 / #671：判空用副本；拟诏正文保原文进入 last_decree / 供料链。
+    return text
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
@@ -658,13 +655,7 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     """
     executing_work = False
     for row in db.list_decree_dossiers(status="executing"):
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            from ming_sim.db import GameDB
-            payload = GameDB.parse_engine_payload_json(
-                row.get("payload_json"),
-                surface="decree.executing.payload_json",
-            )
+        payload = row["payload"]
         # Non-terminal executing dossiers remain simulator continuation context.
         if dossier_action_policy(row.get("action_type"), payload)["execution_surface"] != "terminal":
             executing_work = True
@@ -675,20 +666,6 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
         row.get("kind") == "directive"
         for row in db.list_pending_actions(state.turn)
     )
-
-
-def _carry_pending_clarification_actions(
-    db: GameDB, state: GameState, before_turn: int, *, content=None,
-) -> None:
-    """Keep unresolved pre-edict drafts discoverable in the new month."""
-    for pending_action in db.list_pending_actions(before_turn):
-        prepared = db._prepare_pending_directive(state, pending_action, content=content)
-        if prepared["classification"] == "needs_clarification":
-            db.conn.execute(
-                "UPDATE pending_actions "
-                "SET turn=?, night_id=0, night_approved=0 WHERE id=?",
-                (int(state.turn), int(pending_action["id"])),
-            )
 
 
 def resolve_directives(
@@ -746,16 +723,15 @@ def resolve_directives(
 def _provenance_from_stored(value: object) -> Provenance:
     """从 ctx 持久值还原 Provenance（#146 恢复路）。
 
-    接受 Provenance 实例与已存的枚举值字符串；非法/缺失回落 system_simulation。
+    接受 Provenance 实例与已存的枚举值字符串；空/缺省回落 system_simulation。
+    非空非法持久值保留真实解析失败，不冒称系统来源、不做历史误序列化适配。
     写库侧见 db.save_resolve_context：一律落枚举值字符串，不落 str(member)。
     """
     if isinstance(value, Provenance):
         return value
-    text = str(value or "system_simulation")
-    try:
-        return Provenance(text)
-    except ValueError:
+    if value is None or value == "":
         return Provenance.system_simulation
+    return Provenance(str(value))
 
 
 # 同源恢复刷新的标量字段（与 db.load_state 读盘列对齐）。metrics 单独深刷。
@@ -931,10 +907,8 @@ def prepare_resolve_front_half(
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         existing = db.get_resolve_context(int(state.turn))
         if existing is not None:
-            payload = existing.get("simulator_payload")
-            if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
-                return list(payload["transit_arrivals"])
-            return []
+            from ming_sim.month_chain import transit_arrivals_from_payload
+            return transit_arrivals_from_payload(existing.get("simulator_payload"))
 
     # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
     # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
@@ -973,10 +947,11 @@ def prepare_resolve_front_half(
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
 
+    from ming_sim.month_chain import transit_arrivals_from_payload
     ctx = db.get_resolve_context(int(state.turn))
-    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
-    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
-        return list(payload["transit_arrivals"])
+    payload = ctx["simulator_payload"] if ctx is not None else {}
+    if "transit_arrivals" in payload and payload.get("transit_arrivals") is not None:
+        return transit_arrivals_from_payload(payload)
     return list(transit_arrivals_box)
 
 
@@ -1108,8 +1083,8 @@ def _collect_inline_rejections(
     一层 dict-of-list（issue_summary 的 new_issues/cancels 等）也要下探——new_issues
     正是实测最常被拒的段，跳过它聚合就失明（cmr S0 r1）。
     item_json 的取值（ship-pre r3/r4）：迁约 producer（S1-S3 已迁全部）在 wrapper 里
-    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 section
-    （secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
+    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 legacy section
+    （office_changes/secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
     """
     def _scan(section: str, items: list) -> None:
         for item in items:

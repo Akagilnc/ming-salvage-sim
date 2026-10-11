@@ -152,7 +152,8 @@ _DEBT_SEVERITIES = frozenset({"轻", "中", "重"})
 def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
     """真相底只收结构化罪情。severity ∈ {轻, 中, 重} 才入罪谱。
 
-    crime 是说明散文，不承重。解析失败、非对象、severity 为空或「无」，都不造罪。
+    crime 是说明散文，不承重。解析失败、非对象、severity 为空或「无」，都不造罪
+    （W4/#1896：裸散文／解析失败不造罪）。
     """
     if isinstance(seed_guilt, Mapping):
         guilt: object = seed_guilt
@@ -650,20 +651,7 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
 def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[Dict[str, object]]:
     if not isinstance(dossier, Mapping):
         return None
-    payload = dossier.get("payload")
-    if not isinstance(payload, Mapping):
-        raw_json = dossier.get("payload_json")
-        if raw_json is None:
-            payload = None
-        else:
-            # 与 parse_engine 同权威：空串/腐坏响亮，不 catch-to-缺席（#1897 E1）。
-            from ming_sim.db import GameDB
-            loaded = GameDB.parse_engine_payload_json(
-                raw_json, surface="covert_task.dossier.payload_json",
-            )
-            payload = loaded
-    if not isinstance(payload, Mapping):
-        return None
+    payload = dossier["payload"]
     # CONTRACT_KEY 缺席 → None；present 坏值由 coerce 响亮。
     if CONTRACT_KEY not in payload:
         return None
@@ -694,6 +682,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
     has_reports = bool(review_input.get("has_reports"))
+    # Free prose origin_context: preserve raw; strip only emptiness (#1834 F16).
     origin = str(review_input.get("origin_context") or "")
 
     delivered = target > 0.0 and actual + 1e-9 >= target
@@ -707,7 +696,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
         note = f"machine_settle gap Σ={actual:g}/{target:g}"
         if has_reports:
             note = f"{note};表报有之、不翻实账"
-    if origin:
+    if origin.strip():
         note = f"{note} ({origin})"
     return {
         "status": status,
@@ -797,8 +786,7 @@ def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
     dossier = db.get_decree_dossier(int(dossier_id))
     if dossier is None:
         return {}
-    payload = dossier.get("payload")
-    return dict(payload) if isinstance(payload, Mapping) else {}
+    return dict(dossier["payload"])
 
 
 def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
@@ -828,6 +816,8 @@ def _is_seed_guilt_fact_key(target: str, fact_key: str) -> bool:
 
 
 def _seed_guilt_severity(db: Any, target: str) -> str:
+    from ming_sim.db import GameDB
+
     row = db.conn.execute(
         "SELECT seed_guilt FROM characters WHERE name=?",
         (str(target),),
@@ -840,13 +830,10 @@ def _seed_guilt_severity(db: Any, target: str) -> str:
     text = str(raw or "").strip()
     if not text:
         return ""
-    try:
-        parsed = json.loads(text)
-    except (TypeError, ValueError):
-        return ""
-    if isinstance(parsed, Mapping):
-        return str(parsed.get("severity") or "").strip()
-    return ""
+    parsed = GameDB.parse_engine_payload_json(
+        text, surface="characters.seed_guilt",
+    )
+    return str(parsed.get("severity") or "").strip()
 
 
 def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]]:
@@ -953,9 +940,7 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
         dossier = db.get_decree_dossier(did)
         if dossier is None:
             continue
-        payload = dossier.get("payload")
-        if not isinstance(payload, Mapping):
-            raise ValueError(f"案卷#{did} payload_json 非对象")
+        payload = dossier["payload"]
         for lane in _lanes_from_payload(payload):
             if lane.get("mastered"):
                 used.add(str(lane["fact_key"]))

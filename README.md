@@ -338,7 +338,6 @@ scripts\build_release.bat       # Windows（朋友代打 win 包时用）
 启动：macOS 双击 `Ming_LLM.app`、Windows/Linux 双击或命令行跑根目录可执行，自动开 webview 原生窗口；`MING_USE_BROWSER=1` 改用系统浏览器，`MING_DEBUG=1` 开 devtools + uvicorn 日志（日志也写 `~/.ming_sim/launcher.log`）。零配置文件：LLM 后端在游戏内「设置」面板自理。
 
 - **金手指不入包**：`content/buildings.json` 末尾三个本地实验建筑（皇家天佑金矿 / 大明中央银行 / 帝国航空）只活在开发工作区的未提交改动里，**发行包从 main 打、自动不含**；需要的群友单独找作者拿。
-- **`/admin` 慎用**：内置 `/admin` 是**无鉴权的 DB 全表编辑器**——自部署下是玩家自己的存档，改坏自负，当「修档工具」用即可，别拿它当玩法。
 
 ## 许可（GPLv3）
 

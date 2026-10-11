@@ -12,24 +12,13 @@ from __future__ import annotations
 
 from ming_sim.db import GameDB
 from ming_sim.models import Event
+from tests.readback_helpers import class_population as _pop
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
 JUNHU_LIAODONG = 230000
 JUNHU_DONGJIANG = 95000
 LIUMIN_LIAODONG = 0
 LIUMIN_DONGJIANG = 0
-
-
-def _pop(db: GameDB, name: str, region_id: str) -> int:
-    row = db.conn.execute(
-        "SELECT population FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    return int(row[0]) if row else 0
-
-
-def _global_population(db: GameDB) -> int:
-    return int(db.conn.execute("SELECT COALESCE(SUM(population),0) FROM classes").fetchone()[0])
 
 
 def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
@@ -103,7 +92,6 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     assert row["station"] == "山东 / 登州"
     assert row["station_region"] == "shandong"
     assert row["pay_source_region"] == pay_src == "liaodong"
-
 
 def test_station_region_rejects_unknown_region_id(game):
     """非空 station_region 必须是已入库 regions.id；不从 station 反推。"""

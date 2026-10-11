@@ -503,7 +503,7 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
                 chat_task = asyncio.create_task(
                     client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
-                await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
+                await _wait_for(lambda: game._runtime_write_queue().inflight_count() > 0)
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
             finally:
                 game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
@@ -595,7 +595,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
                 # 持久化行确认在飞
                 assert game.db.conn.execute(
                     "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
-                assert int(game._pending_writes_count) >= 1
+                assert int(game._runtime_write_queue().inflight_count()) >= 1
                 # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
                 # 不触发确认抽取 LLM。
                 game.db.stage_directive_candidate(

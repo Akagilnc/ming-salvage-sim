@@ -4,10 +4,11 @@ import type { CasedDirective, Directive, GameState, LocalDirectiveItem } from ".
 
 /** #1764：source/actor 结构化字段直接并列（P7/0142；非角色台词模板）。 */
 function sourceLabel(source: string, actor: string): string {
-  const src = (source || "").trim();
-  const who = (actor || "").trim();
-  if (who && src) return `${src} · ${who}`;
-  return who || src;
+  // #1834 F16：判空用 trim 副本；展示取值保原文。
+  const src = source || "";
+  const who = actor || "";
+  if (who.trim() && src.trim()) return `${src} · ${who}`;
+  return who.trim() ? who : src;
 }
 
 /** 权威 source 写入值（session/db）；不猜测 chat/legacy/子串。 */

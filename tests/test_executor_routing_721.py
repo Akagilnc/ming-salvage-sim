@@ -10,7 +10,6 @@ from ming_sim.action_materialize import (
     stage_assignment_candidate,
     stage_punishment_candidate)
 from ming_sim.db import atomic
-from ming_sim.decree import pre_settle
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -223,7 +222,8 @@ def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env
     ).fetchone()["payload_json"])
     assert "assignee" not in bare_payload
     assert bare_payload.get("actor") == "陈新甲"
-    db.commit_pending_actions(state, content=content, action_ids=[bare_id])
+    with pytest.raises(ValueError):
+        db.commit_pending_actions(state, content=content, action_ids=[bare_id])
     assert db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (bare_id,),
     ).fetchone() is None
@@ -244,7 +244,6 @@ def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env
         if item["tier"] == "主办"
     ]
     assert leads == ["毕自严"]
-    assert "陈新甲" not in leads
 
 
 def test_real_punishment_stage_preserves_category(env):
@@ -297,16 +296,25 @@ def _bad_directive_payload():
     }
 
 
+@pytest.mark.parametrize("bad_case", ["missing_target", "unknown_roster", "contradictory_locality"])
 def test_pending_routing_rejection_lands_on_ensure_batch_seam(
-    env, monkeypatch, tmp_path,
+    env, monkeypatch, tmp_path, bad_case,
 ):
     """#1769：confirm 只翻 draft；路由拒收落 ensure 批缝（坏旨 draft 留、好旨成案）。"""
     db, state, _ = env
     mirror = tmp_path / "ensure-routing.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
+    bad_payload = _bad_directive_payload()
+    if bad_case == "unknown_roster":
+        bad_payload = {**_directive_payload("清丈"), "participant_roster": [
+            {"character_id": "查无此人", "tier": "主办"},
+        ]}
+    elif bad_case == "contradictory_locality":
+        bad_payload = {**_directive_payload("清丈"), "target_kind": "region",
+                       "target_id": "shaanxi", "locality_scope": "none"}
     bad = db.add_directive(
-        state, None, "缺目标", "test", status="pending",
-        dossier_payload=_bad_directive_payload(),
+        state, None, "坏旨", "test", status="pending",
+        dossier_payload=bad_payload,
     )
     good = db.add_directive(
         state, None, "清丈", "test", status="pending",

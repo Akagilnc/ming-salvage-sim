@@ -244,7 +244,6 @@ def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeyp
         (turn,)).fetchone()
     assert row is not None
     item = _json.loads(row[0])
-    assert "rejected" not in item  # 不是 wrapper
     assert item == {"power_id": "查无此势力", "changes": {"leverage": 5}}  # 原件
 
 
@@ -272,7 +271,6 @@ def test_person_change_rejection_item_json_keeps_original_delta_item(game, monke
     ).fetchone()
     assert row is not None
     item = _json.loads(row[0])
-    assert "rejected" not in item
     assert item == raw_item
 
 
@@ -308,7 +306,6 @@ def test_power_move_rejection_item_json_keeps_original_person_delta_item(game, m
     ).fetchone()
     assert row is not None
     item = _json.loads(row[0])
-    assert "rejected" not in item
     assert item == raw_item
 
 
@@ -339,7 +336,6 @@ def test_office_change_rejection_item_json_keeps_original_person_delta_item(game
     assert row is not None
     assert row["category"] == "missing_field"
     item = _json.loads(row["item_json"])
-    assert "rejected" not in item
     assert item == raw_item
 
 
@@ -377,7 +373,6 @@ def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, m
         assert row is not None
         assert row["category"] == "invalid_transition"
         item = _json.loads(row["item_json"])
-        assert "rejected" not in item
         assert item == raw_item
     finally:
         ch.power_id = old_power

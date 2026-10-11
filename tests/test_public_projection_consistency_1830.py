@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from ming_sim.audience_night import get_open_night, open_night, present_names_at, summon_enter
 from ming_sim.materials import (
+    _safe_segment,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -106,7 +107,7 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
     world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
 
     scene_by_month, scene_gazette = _public_layer(
-        scene.root, f"人物/{character.name}/公开说法/",
+        scene.root, f"人物/{_safe_segment(character.name)}/公开说法/",
     )
     solo_by_month, solo_gazette = _public_layer(solo.root, "公开说法/")
     world_by_month, _unused = _public_layer(world.root, "公开说法/")
@@ -157,7 +158,7 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
     originals = ("陕西赈务", "河南赈务", shared)
     month_name = f"{shared_year}年{shared_period}月.txt"
     for root, prefix in (
-        (scene.root, f"人物/{character.name}/公开说法/"),
+        (scene.root, f"人物/{_safe_segment(character.name)}/公开说法/"),
         (solo.root, "公开说法/"),
         (world.root, "公开说法/"),
     ):

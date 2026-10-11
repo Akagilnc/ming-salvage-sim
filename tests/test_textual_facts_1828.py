@@ -67,6 +67,7 @@ def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
         turn=state.turn,
     )
 
+    # append 固定 body → readable_materials 原样回读（透明传输）
     assert [f.body for f in db.textual_facts.readable_materials(subject_kind="army", subject_id=army_id)] == [
         "该营火器受潮，铳手暂不能齐放",
     ]

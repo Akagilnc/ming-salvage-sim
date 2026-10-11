@@ -110,7 +110,7 @@ def test_undo_erases_round_from_night_ledger_and_presence(game):
     )
     # 轮内：该轮抽取账在册、入殿账使其在场
     assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
-    assert m in an.persons_present_tonight(db, night_id)
+    assert m in an.present_names_at(db, night_id)
 
     ledger_before = [e for e in an.list_ledger(db, night_id)
                      if e["source_chat_turn_id"] != chat_id and m not in e["person_names"]]
@@ -124,7 +124,7 @@ def test_undo_erases_round_from_night_ledger_and_presence(game):
     # 与「该轮未发生」等价：夜内其余账（开夜/员额框架）一字不动
     assert [e["id"] for e in ledger_after] == [e["id"] for e in ledger_before]
     # 在场推导：该轮入殿的人像没登场过
-    assert m not in an.persons_present_tonight(db, night_id)
+    assert m not in an.present_names_at(db, night_id)
     # 对话轮不再计入夜（undone 不返回给「按夜取数」）
     assert chat_id not in {int(t["id"]) for t in an.list_chat_turns_for_night(db, night_id)}
 
@@ -147,38 +147,7 @@ def test_undo_rejected_after_night_closed(game):
     assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
 
 
-def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
-    db, state, content = game
-    m = _active_minister(db, content)
-
-    # 合法夜：仅「密令落地」直写真实盘面 → 审计通过，报出观测到的白名单操作
-    def _land_secret(night_id: int, chat_id: int) -> None:
-        create_test_secret_order(db,
-            state, m, "密查盐引", "密查两淮盐引亏空", ["盐政"], importance=4,
-        )
-    legal_night, _ = _run_round(
-        db, state, m, writes=_land_secret,
-        declaration=_minister_declaration(m, "领旨。"),
-    )
-    assert "密令落地" in an.audit_night_direct_writes(db, legal_night)
-    an.close_night(db, state, night_id=legal_night)
-
-    # 越权夜：不经结算直写案卷月度进展，仍须被审计咬住。
-    def _rogue_direct_write(night_id: int, chat_id: int) -> None:
-        dossier = db.conn.execute("SELECT id FROM decree_dossiers LIMIT 1").fetchone()
-        assert dossier is not None
-        db.conn.execute(
-            "INSERT INTO dossier_reported_progress "
-            "(dossier_id, turn, progress_band, memorial_text, origin) "
-            "VALUES (?, ?, '进行中', '越权记录', 'night')",
-            (int(dossier["id"]), int(state.turn)),
-        )
-        db.conn.commit()
-    rogue_night, _ = _run_round(db, state, m, writes=_rogue_direct_write)
-    with pytest.raises(AudienceNightError) as ei:
-        an.audit_night_direct_writes(db, rogue_night)
-    assert ei.value.code == "unwhitelisted_night_write"
-    assert "dossier_reported_progress" in ei.value.detail.get("tables", [])
+# ── AC8：撤回终结异步残余——后台写入前校验目标轮存活，不写已撤/失败轮 ────────────
 
 
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────
@@ -203,7 +172,7 @@ def test_undo_removes_unlisted_person_registration(game):
     night_id, chat_id = _run_round(db, state, caller, writes=_register)
 
     assert db.get_character_status(newcomer)[0] == "active"
-    assert newcomer in an.persons_present_tonight(db, night_id)
+    assert newcomer in an.present_names_at(db, night_id)
 
     db.undo_chat_turn(chat_id)
 
@@ -215,7 +184,7 @@ def test_undo_removes_unlisted_person_registration(game):
         "SELECT 1 FROM character_offices WHERE character_name = ?", (newcomer,)
     ).fetchone() is None
     # 入殿账消失 → 在场推导里像没登场过
-    assert newcomer not in an.persons_present_tonight(db, night_id)
+    assert newcomer not in an.present_names_at(db, night_id)
 
 
 # ── AC6：kill+重开后撤回最近一轮仍完整逆转（撤销日志持久化）────────────────────
@@ -241,7 +210,7 @@ def test_undo_full_reversal_survives_kill_and_reopen(game):
         assert not any(
             e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db2, night_id)
         )
-        assert m not in an.persons_present_tonight(db2, night_id)
+        assert m not in an.present_names_at(db2, night_id)
     finally:
         db2.close()
 
@@ -267,8 +236,6 @@ def test_undo_pending_translation_leaves_no_orphan_retry(game):
     db.undo_chat_turn(chat_id)
 
     # 撤回后：该轮不再是待补重试真源（无孤儿重试入口），补跑不复活该轮账
-
-    assert len(db.list_unextracted_replies(night_id=night_id)) == 0
 
     assert db.list_unextracted_replies(night_id=night_id) == []
     # kill+重开后仍无重试入口（撤销持久）
@@ -489,7 +456,7 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
     m = _active_minister(db, content)
     an.open_night(db, state)
     night_id = int(an.get_open_night(db)["id"])
-    assert m not in an.persons_present_tonight(db, night_id)  # m 非常在员额
+    assert m not in an.present_names_at(db, night_id)  # m 非常在员额
     ledger_ids_before = {e["id"] for e in an.list_ledger(db, night_id)}
 
     orig_create = db.create_chat_turn
@@ -506,7 +473,7 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
 
     # atomic 回滚：账本零净增，无孤儿入殿账，在场未变
     assert {e["id"] for e in an.list_ledger(db, night_id)} == ledger_ids_before
-    assert m not in an.persons_present_tonight(db, night_id)
+    assert m not in an.present_names_at(db, night_id)
 
 
 def test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes(game):

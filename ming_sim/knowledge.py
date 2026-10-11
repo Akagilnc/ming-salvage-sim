@@ -59,6 +59,8 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
         raw = getattr(ev, "audiences", None)
 
     if isinstance(raw, str):
+        # Content/event audience supplement: keep JSONDecodeError/TypeError surface
+        # already locked by material-entry fail-loud cases (not an empty-facts wash).
         raw = json.loads(raw)
     if not isinstance(raw, list):
         raise TypeError(
@@ -205,53 +207,6 @@ def knowledge_row_visible_to(
     return True
 
 
-def project_issue_materials(
-    db: Any, character_name: str, knowledge: Dict[str, object],
-) -> list[Dict[str, object]]:
-    """Canonical materials projection: knowledge issues ∪ audience-named grant.
-
-    Base visibility is exactly ``knowledge["issues"]``.  ``events.audiences``
-    only adds originating issues that name this reader; it never removes a
-    knowledge-visible issue.  A legitimate empty audience list is an empty
-    supplement.
-    """
-    projected: dict[int, Dict[str, object]] = {}
-
-    for issue in knowledge.get("issues") or []:
-        issue_id = int(issue["id"])
-        audiences = _issue_audience_names(db, issue)
-        row = dict(issue)
-        row["source_id"] = str(row.get("source_id") or f"issue:{issue_id}")
-        row["audience_names"] = tuple(sorted(audiences or ()))
-        projected[issue_id] = row
-
-    active_issues = db.list_active_issues()
-    for issue in active_issues:
-        issue_id = int(issue["id"])
-        if issue_id in projected:
-            continue
-        audiences = _issue_audience_names(db, issue)
-        if not audiences or character_name not in audiences:
-            continue
-        row = {
-            "id": issue_id,
-            "kind": issue["kind"],
-            "origin_kind": issue["origin_kind"],
-            "origin_ref": issue["origin_ref"],
-            "title": issue["title"],
-            "stage_text": issue["stage_text"],
-            "resolve_condition": issue["resolve_condition"],
-            "fail_condition": issue["fail_condition"],
-            "affair_id": int(issue["affair_id"] or 0),
-            "participant_roster": issue["participant_roster"],
-            "source_id": f"issue:{issue_id}",
-            "audience_names": tuple(sorted(audiences)),
-        }
-        projected[issue_id] = row
-
-    return list(projected.values())
-
-
 def project_court_roster_rows(
     rows: list[Any], knowledge: Dict[str, object], office_type: str,
 ) -> list[Any]:
@@ -259,20 +214,16 @@ def project_court_roster_rows(
 
     The complete roster remains an internal query result.  A personnel-domain
     capability may expose it; otherwise only the reader's current role roster
-    and people named in already-authorized events cross the output boundary.
+    crosses the output boundary. Free-prose name hits in event bodies are not
+    an admission grant (ADR 0142 / #1834 F46).
     """
     world = knowledge.get("world") or {}
     if "personnel" in world:
         return list(rows)
     current_office_type = str(knowledge.get("office_type") or office_type or "")
-    visible_event_text = "\n".join(
-        "：".join(str(value) for value in (item.get("title"), item.get("body")) if value)
-        for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
-    )
     return [
         row for row in rows
         if str(row["office_type"] or "") == current_office_type
-        or str(row["name"] or "") in visible_event_text
     ]
 
 
@@ -747,17 +698,13 @@ def build_character_knowledge(
         if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         else:
-            try:
-                target_roster = json.loads(str(issue["target_roster"] or "[]"))
-            except (TypeError, ValueError) as exc:
-                # 已持久 target_roster 腐坏响亮，不洗成空名单改准入（#1897 E1）。
-                raise ValueError(
-                    f"弹劾潮#{int(issue['id'])} target_roster 腐坏"
-                ) from exc
-            if not isinstance(target_roster, list):
-                raise ValueError(
-                    f"弹劾潮#{int(issue['id'])} target_roster 须为列表"
-                )
+            # 已持久 target_roster 腐坏响亮，不洗成空名单改准入（#1897 E1）。
+            from ming_sim.db import _load_durable_json_list
+
+            target_roster = _load_durable_json_list(
+                issue["target_roster"],
+                surface=f"弹劾潮#{int(issue['id'])}.target_roster",
+            )
             target_roster = [
                 str(target).strip() for target in target_roster if str(target).strip()
             ]
@@ -789,3 +736,4 @@ def build_character_knowledge(
         "public_events": visible_public,
         "issues": visible_issues,
     }
+

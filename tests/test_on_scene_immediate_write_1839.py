@@ -17,8 +17,9 @@ import json
 
 from ming_sim import audience_night as an
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.materials import list_materials, prepare_scene_materials
+from ming_sim.materials import list_materials, prepare_scene_materials, read_material
 from ming_sim.public_sayings import list_public_sayings
+
 
 def _active_minister(db, *, exclude: set[str] | None = None) -> str:
     skip = exclude or set()
@@ -32,6 +33,7 @@ def _active_minister(db, *, exclude: set[str] | None = None) -> str:
         if name not in skip:
             return name
     raise AssertionError("no active minister")
+
 
 def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, night_id: int = 0):
     """一轮窗口：搭建对话轮 → 公开入口分派（入口自记前像）→ 标抽取水位。"""
@@ -63,6 +65,7 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     db.conn.commit()
     return int(night_id), int(chat_id), result
 
+
 def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
     """AC1：当场落生死，下一句目录里已是实况。"""
     db, state, _ = game
@@ -92,6 +95,7 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
     court = {row["name"] for row in db.current_court_roster_rows(state)}
     assert victim not in court
 
+
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):
     """AC2：孙传庭伤臂 → 文字事实；袁崇焕对外死讯 → 公开说法；目录可见。"""
     db, state, _ = game
@@ -120,11 +124,18 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-facts")
     listed = list_materials(prepared.root)
-    # 文字事实进场景目录 人物/<名>/按月实况.txt
-    facts_rel = f"人物/{sun}/按月实况.txt"
-    assert facts_rel in listed
-    public_rel = f"人物/{sun}/公开说法/{state.year}年{state.period}月.txt"
-    assert public_rel in listed
+    # 文字事实进场景目录 人物/<safe_segment>/按月实况.txt（#1830 safe path）
+    from ming_sim.materials import _safe_segment
+    person_seg = _safe_segment(sun)
+    facts_rel = next(p for p in listed if p.startswith(f"人物/{person_seg}/") and p.endswith("按月实况.txt"))
+    assert arm_injury in read_material(prepared.root, facts_rel)
+    public_rel = next(
+        p for p in listed
+        if p.startswith(f"人物/{person_seg}/公开说法/") and p.endswith(".txt")
+    )
+    assert death_rumour in read_material(prepared.root, public_rel)
+
+
 
 def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     """#1839 AC3：夜上下文第四类全部 section 须带属本夜的正源轮；缺失或不属
@@ -222,6 +233,7 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     assert db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
     ).fetchone() is before_listed
+
 
 def test_commission_stays_staged_not_bypassing_promulgation(game):
     """AC4：任洪承畴、拨三十万仍是暂存交办，不因「当场」绕过颁布关。"""

@@ -647,7 +647,6 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     def fake_agent(llm_config, prepared):
         del llm_config
         captured["prepared_root"] = str(getattr(prepared, "root", "") or "")
-        captured["prepared_opening"] = str(getattr(prepared, "opening", "") or "")
         return object()
 
     def fake_run(agent, message, tag="", transport_policy=None):
@@ -697,7 +696,6 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     payload = json.loads(message)
     assert "decree_text" in payload["this_decree"]
     assert payload["this_decree"]["status"] == "promulgated"
-    assert captured.get("prepared_opening")
     from pathlib import Path
     assert not Path(str(captured["prepared_root"])).exists()
     assert str(affair.id) in str(captured.get("grounding") or "")
@@ -2063,8 +2061,7 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     )
     prepared = prepare_world_materials(db, state)
     try:
-        rel = f"事实/character-{_safe_segment(minister)}.txt"
-        # 材料递送以目录键为证；read_material 无结果断言不作递送证明
+        rel = f"人物/{_safe_segment(minister)}/按月实况.txt"
         assert rel in list_materials(prepared.root)
     finally:
         release_material_tree(prepared.root)

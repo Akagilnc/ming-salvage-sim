@@ -13,22 +13,14 @@ from __future__ import annotations
 
 import pytest
 
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import POPULATION_UNIT_PERSONS
 from ming_sim.issues import apply_score_extraction
+from tests.readback_helpers import class_population as _pop
+from tests.readback_helpers import global_population as _global_population
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
 DISPLACED_SHAANXI = 150000    # 流民@shaanxi
-
-def _pop(db: GameDB, name: str, region_id: str) -> int:
-    row = db.conn.execute(
-        "SELECT population FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    return int(row[0]) if row else 0
-
-def _global_population(db: GameDB) -> int:
-    return int(db.conn.execute("SELECT COALESCE(SUM(population),0) FROM classes").fetchone()[0])
 
 def _transfer(**kw):
     base = {"origin_ref": "盘面自发"}

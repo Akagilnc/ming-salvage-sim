@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import wait
+
 import json
 from pathlib import Path
 
@@ -31,6 +33,15 @@ from ming_sim.audience_translation import (
     run_turn_translation_job,
 )
 from ming_sim.session_write_queue import ClassifiedWriteGate
+
+
+def _link_rejections(db, pending_action_id):
+    """待确认动作的案卷挂接拒收行（读端直查；单读口已退休）。"""
+    rows = db.conn.execute(
+        "SELECT * FROM decree_dossier_link_rejections WHERE pending_action_id=? ORDER BY id",
+        (int(pending_action_id),),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def _minister(db) -> str:
@@ -138,19 +149,22 @@ def _emit_late_pair(db, state, content, monkeypatch, first, second, *, minister,
     night = an.open_night(db, state)
     night_id["v"] = int(night["id"])
     futures = []
-    for text in words:
-        ctid = db.create_chat_turn(
-            state, minister, "s", 0, night_id=night_id["v"], status="active",
-        )
-        mid = db.append_chat_message(minister, state.turn, "user", text)
-        db.update_chat_turn_messages(ctid, user_message_id=mid)
-        reply = sess.scene_chat(text, chat_turn_id=int(ctid), minister_name=minister)
-        fut = persist_and_schedule_scene(sess, db, reply, speaker=minister)
-        assert fut is not None
-        futures.append(fut)
-        if len(futures) == 1:
-            assert entered.wait(8)
-    release.set()
+    try:
+        for text in words:
+            ctid = db.create_chat_turn(
+                state, minister, "s", 0, night_id=night_id["v"], status="active",
+            )
+            mid = db.append_chat_message(minister, state.turn, "user", text)
+            db.update_chat_turn_messages(ctid, user_message_id=mid)
+            reply = sess.scene_chat(text, chat_turn_id=int(ctid), minister_name=minister)
+            fut = persist_and_schedule_scene(sess, db, reply, speaker=minister)
+            assert fut is not None
+            futures.append(fut)
+            if len(futures) == 1:
+                assert entered.wait(8)
+    finally:
+        release.set()
+        wait(futures)
     return (
         futures[0].result(timeout=10),
         futures[1].result(timeout=10),
@@ -330,29 +344,34 @@ def _late_revision_and_approval(
     revision_fut = persist_and_schedule_scene(
         sess, db, revision_reply, speaker=minister,
     )
-    assert revision_fut is not None
-    assert entered.wait(8)
-    approval_ctid, approval_reply = _turn("应允此任。")
-    db.persist_minister_reply(
-        minister, int(state.turn), str(approval_reply.answer or ""), approval_ctid,
-    )
-
-    def _finish_revision():
-        release.set()
-        return revision_fut.result(timeout=10)
-
-    def _close(on_closing=None):
-        # #1838 reopen：收夜不再接夜级背书 extractor；背书随转译走。
-        an.close_night(
-            db, state, night_id=night_id, content=content,
-            on_closing=on_closing,
+    try:
+        assert revision_fut is not None
+        assert entered.wait(8)
+        approval_ctid, approval_reply = _turn("应允此任。")
+        db.persist_minister_reply(
+            minister, int(state.turn), str(approval_reply.answer or ""), approval_ctid,
         )
 
-    if seal == "closing":
-        _close(on_closing=_finish_revision)
-    else:
-        _close()
-        _finish_revision()
+        def _finish_revision():
+            release.set()
+            return revision_fut.result(timeout=10)
+
+        def _close(on_closing=None):
+            # #1838 reopen：收夜不再接夜级背书 extractor；背书随转译走。
+            an.close_night(
+                db, state, night_id=night_id, content=content,
+                on_closing=on_closing,
+            )
+
+        if seal == "closing":
+            _close(on_closing=_finish_revision)
+        else:
+            _close()
+            _finish_revision()
+    finally:
+        release.set()
+        if revision_fut is not None:
+            wait([revision_fut])
     assert an.get_open_night(db) is None
 
     def _approve_held():
@@ -772,7 +791,7 @@ def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_cas
     assert statuses == ["failed", "committed"]
     assert len(_rejection_rows(db, state.turn, "promises")) == 1
     if "dossier_links" in bad:
-        assert len(db.list_dossier_link_rejections(pending_action_id=ids[0])) == 1
+        assert len(_link_rejections(db, ids[0])) == 1
     ctid = db.conn.execute("SELECT MAX(id) FROM chat_turns").fetchone()[0]
     assert db.get_story_extract_status(ctid) == "done"
 

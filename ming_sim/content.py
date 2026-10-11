@@ -105,7 +105,8 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         if not crime_raw.strip() and seed_guilt_fields["severity"] != "无":
             raise SystemExit(f"设定字段应为非空字符串：{seed_guilt_context}.crime")
         seed_guilt = {
-            "crime": crime_raw.strip(),
+            # Free prose crime: preserve raw; strip only emptiness above (#1834 F16).
+            "crime": crime_raw,
             "severity": str_field(seed_guilt_fields, "severity", seed_guilt_context),
         }
         if seed_guilt["severity"] not in {"无", "轻", "中", "重"}:
@@ -147,9 +148,9 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             historical_death_month=int(item.get("historical_death_month") or 0),
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
-            status=status,
-            status_reason=status_reason,
-            reason_code=str(item.get("reason_code") or "").strip(),
+            status=str(item.get("status") or "active"),
+            # Free prose status_reason: preserve raw (#1834 F16).
+            status_reason=str(item.get("status_reason") or ""),            reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
@@ -601,26 +602,14 @@ def load_opening_legacies() -> List[OpeningLegacy]:
             modifiers=modifiers,
             narrative_hint=str_field(entry, "narrative_hint", path),
             clear_gate={str(k): str(v) for k, v in clear_gate.items()},
-            clear_narrative=str(entry.get("clear_narrative") or "").strip(),
+            # Free prose clear_narrative: preserve raw (#1834 F16).
+            clear_narrative=str(entry.get("clear_narrative") or ""),
         ))
     if not out:
         raise SystemExit("opening_legacies.json 必须至少定义一条开局负面修正。")
     return out
 
 
-def dict_of_string_lists(value: object, path: str) -> Dict[str, List[str]]:
-    data = require_dict(value, path)
-    return {str(key): string_list(item, f"{path}.{key}") for key, item in data.items()}
-
-
-def dict_of_strings(value: object, path: str) -> Dict[str, str]:
-    data = require_dict(value, path)
-    output: Dict[str, str] = {}
-    for key, item in data.items():
-        if not isinstance(item, str):
-            raise SystemExit(f"设定字段应为字符串：{path}.{key}")
-        output[str(key)] = item
-    return output
 
 
 def load_office_definitions() -> Dict[str, Dict[str, object]]:

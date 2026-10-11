@@ -20,6 +20,7 @@ from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
 
+
 class _RecordingDB:
     def __init__(self):
         self.writes: list[str] = []
@@ -56,13 +57,13 @@ class _RecordingDB:
     def set_character_status(self, *a, **k):
         self.writes.append("set_character_status")
 
-    def admin_upsert(self, *a, **k):
-        self.writes.append("admin_upsert")
-        return {"key": "x", "value": "1"}
+    def capture_month_open_snapshot(self, *a, **k):
+        self.writes.append("capture_month_open_snapshot")
+        return True
 
-    def admin_delete(self, *a, **k):
-        self.writes.append("admin_delete")
-        return 1
+    def get_month_open_snapshot(self, *a, **k):
+        return None
+
 
 class _FakeGame:
     def __init__(self, turn_phase: str):
@@ -122,8 +123,10 @@ class _FakeGame:
         self.db.writes.append("mark_memorials_read")
         return {"memorials": [], "unread_memorial_count": 0}
 
+
 def _invoke(coro):
     return asyncio.run(coro)
+
 
 # #1849 / ADR 0152：独立手拟新增口退役后，drafts 唯一仍会跑拟旨抽取的 Web 写端点是
 # PATCH /api/directives/{id}（改稿）；create 用例随入口一并删除。
@@ -160,6 +163,7 @@ def test_directive_capture_runs_outside_write_gate(monkeypatch):
     assert captured_context[0]["existing_mode"] == "midzhi"
     assert game.db.writes == ["unrelated-write"]
 
+
 def test_directive_capture_result_is_rejected_after_turn_changes(monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
@@ -187,14 +191,13 @@ def test_directive_capture_result_is_rejected_after_turn_changes(monkeypatch):
     assert exc.value.status_code == 409
     assert calls == []
 
+
 # 端点（无 file 参数的）→ 触发可调用。守门命中即 409、db.writes 为空。
 def _endpoint_cases():
     return [
         ("favorite_add", lambda: web_app.api_add_favorite("某大臣")),
         ("favorite_remove", lambda: web_app.api_remove_favorite("某大臣")),
         ("court_layout", lambda: web_app.api_set_court_layout({"layout": "{}"})),
-        ("admin_upsert", lambda: web_app.api_admin_upsert("metrics", {"key": "国库", "value": "1"})),
-        ("admin_delete", lambda: web_app.api_admin_delete("metrics", {"pk_value": "国库"})),
         ("portrait_delete", lambda: web_app.api_delete_portrait("某大臣")),
         # 会话层写端点（cmr Gate2 Finding1 残面：也须走 _write_gate，否则 _refuse_if_settling
         # 的相位检查守不住 pre_settle 窗口）。守门先于 session 调用触发，故 fake session 无需实现这些方法。
@@ -214,6 +217,7 @@ def _endpoint_cases():
         ("memorials_read", lambda: web_app.api_memorials_read({"keys": ["progress:1"]})),
     ]
 
+
 @pytest.mark.parametrize("phase", [TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value])
 @pytest.mark.parametrize("name,call", _endpoint_cases(), ids=lambda c: c if isinstance(c, str) else "")
 def test_direct_db_write_refused_by_phase(monkeypatch, phase, name, call):
@@ -224,6 +228,7 @@ def test_direct_db_write_refused_by_phase(monkeypatch, phase, name, call):
         _invoke(call())
     assert ei.value.status_code == 409
     assert game.db.writes == [], f"{name} wrote DB during settlement: {game.db.writes}"
+
 
 @pytest.mark.parametrize("name,call", _endpoint_cases(), ids=lambda c: c if isinstance(c, str) else "")
 def test_direct_db_write_refused_when_gate_held(monkeypatch, name, call):
@@ -240,6 +245,35 @@ def test_direct_db_write_refused_when_gate_held(monkeypatch, name, call):
         assert game.db.writes == [], f"{name} wrote while gate held: {game.db.writes}"
     finally:
         game._write_gate.release()
+
+
+def test_serialized_web_write_cm_contract():
+    """集中守门 CM 的负向契约：相位拒 / 非阻塞抢锁拒 / 体内抛异常也释放锁（正向进出由真实写入口案承接）。"""
+    # 相位拒
+    for phase in FRONT_HALF_DONE_PHASES:
+        g = _FakeGame(phase)
+        with pytest.raises(HTTPException) as ei:
+            with web_app._serialized_web_write(g):
+                pass
+        assert ei.value.status_code == 409
+        assert not g._write_gate.locked(), "相位拒不应留下持锁"
+    # 锁被他人持有 → 非阻塞 409
+    g2 = _FakeGame(TurnPhase.SUMMONING.value)
+    g2._write_gate.acquire()
+    try:
+        with pytest.raises(HTTPException) as ei:
+            with web_app._serialized_web_write(g2):
+                pass
+        assert ei.value.status_code == 409
+    finally:
+        g2._write_gate.release()
+    # 体内抛异常也释放锁（finally）
+    g3 = _FakeGame(TurnPhase.SUMMONING.value)
+    with pytest.raises(RuntimeError):
+        with web_app._serialized_web_write(g3):
+            raise RuntimeError("boom")
+    assert not g3._write_gate.locked(), "异常路径也须释放锁"
+
 
 def test_advance_without_edict_refused_by_phase(monkeypatch):
     """退朝默认提交也会写 pending_actions，必须和写诏一样先过统一 web 写闸。"""
@@ -258,6 +292,7 @@ def test_advance_without_edict_refused_by_phase(monkeypatch):
 
     assert ei.value.status_code == 409
     assert game.db.writes == []
+
 
 def test_advance_without_edict_refused_when_gate_held(monkeypatch):
     """相位尚未落定但结算 worker 已持锁时，退朝端点不得阻塞事件循环等锁。"""
@@ -289,10 +324,12 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)
         assert exc.status_code == 409
-        assert game.db.writes == []
+        # #1235 点即入：409 前可已 capture；不得再跑 advance_without_decree 写盘。
+        assert "advance_without_decree" not in game.db.writes
     finally:
         game._write_gate.release()
         worker.join()
+
 
 def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
     """#1353 r12：删预探后，真实短持接缝被占 → 409 不挂死。
@@ -347,12 +384,14 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
         exc = result.get("exc")
         assert isinstance(exc, HTTPException), result
         assert exc.status_code == 409
-        assert game.db.writes == []
+        # #1235 点即入：409 前可已 capture；不得再跑 advance_without_decree 写盘。
+        assert "advance_without_decree" not in game.db.writes
     finally:
         gate_held_by_peer.set()  # 解 worker 侧 wait，避免 finally 再挂
         if game._write_gate.locked():
             game._write_gate.release()
         worker.join()
+
 
 def test_direct_db_write_succeeds_when_free(monkeypatch):
     """守门不破坏正常流：相位正常 + 锁空 → 直写端点照常落库，且事后锁已释放。"""
