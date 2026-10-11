@@ -151,10 +151,9 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     # Reading must not turn absent fields into saved explicit defaults.
     api = _api_runtime_slot(api_raw)
     cli = _cli_runtime_slot(cli_raw)
-    active_slot = cli if channel == "cli" else api
-    active_strength = normalize_reasoning_strength(
-        active_slot.get("reasoning_strength", legacy_reasoning_strength(api) if channel != "cli" else "")
-    )
+    active_strength = effective_reasoning_strengths({"api": api, "cli": cli})[
+        "cli" if channel == "cli" else "api"
+    ]
     return {
         "channel": channel,
         "api": api,
@@ -306,6 +305,35 @@ def _api_runtime_value(runtime: Dict[str, object], key: str, fallback: str) -> s
     return text
 
 
+def effective_reasoning_strengths(
+    runtime: Dict[str, object],
+    *,
+    thinking_level: str = "",
+    advanced_model: Optional[str] = None,
+    advanced_thinking_level: str = "",
+) -> Dict[str, str]:
+    """Resolve both slots without turning derived values into saved choices."""
+    api = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
+    cli = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    legacy = legacy_reasoning_strength({
+        "thinking_level": _api_runtime_value(
+            runtime, "thinking_level", thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", ""),
+        ),
+        "advanced_model": _api_runtime_value(
+            runtime, "advanced_model",
+            advanced_model if advanced_model is not None else os.environ.get("OPENAI_ADVANCED_MODEL", ""),
+        ),
+        "advanced_thinking_level": _api_runtime_value(
+            runtime, "advanced_thinking_level",
+            advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
+        ),
+    })
+    return {
+        "api": normalize_reasoning_strength(api.get("reasoning_strength", legacy)),
+        "cli": normalize_reasoning_strength(cli.get("reasoning_strength", "")),
+    }
+
+
 def llm_config_from_runtime(
     runtime: Dict[str, Any],
     *,
@@ -361,19 +389,13 @@ def llm_config_from_runtime(
     advanced_model = _api_runtime_value(runtime, "advanced_model", advanced_model)
     advanced_base_url = _api_runtime_value(runtime, "advanced_base_url", advanced_base_url)
     advanced_api_key = _api_runtime_value(runtime, "advanced_api_key", advanced_api_key)
-    legacy_reasoning = (
-        legacy_reasoning_strength({
-            "advanced_model": advanced_model,
-            "advanced_thinking_level": advanced_thinking_level,
-            "thinking_level": thinking_level,
-        })
-        if channel != "cli"
-        else ""
-    )
+    reasoning_strength = effective_reasoning_strengths(
+        runtime,
+        thinking_level=thinking_level,
+        advanced_model=advanced_model,
+        advanced_thinking_level=advanced_thinking_level,
+    )[channel]
     strength_slot = cli_slot if channel == "cli" else api_slot
-    reasoning_strength = normalize_reasoning_strength(
-        strength_slot.get("reasoning_strength", legacy_reasoning)
-    )
     if "reasoning_strength" in strength_slot:
         # The unified selector owns both tiers, including the explicit default.
         thinking_level = advanced_thinking_level = ""

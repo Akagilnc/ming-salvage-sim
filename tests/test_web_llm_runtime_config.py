@@ -401,6 +401,7 @@ def test_menu_status_reports_inactive_cli_reasoning_strength(monkeypatch):
     assert status["llm"]["reasoning_strength"] == "low"
     assert status["llm"]["api_reasoning_strength"] == "low"
     assert status["llm"]["cli_reasoning_strength"] == "high"
+    assert status["llm"]["effective_reasoning_strengths"] == {"api": "low", "cli": "high"}
 
 
 def test_menu_status_uses_advanced_model_for_api_reasoning_capability(monkeypatch):
@@ -775,6 +776,7 @@ def test_game_llm_config_reports_inactive_cli_reasoning_strength(monkeypatch):
     assert result["reasoning_strength"] == ""
     assert result["persisted"]["api_reasoning_strength"] == "low"
     assert result["persisted"]["cli_reasoning_strength"] == "high"
+    assert result["effective_reasoning_strengths"] == {"api": "low", "cli": "high"}
 
 
 def test_game_llm_config_uses_advanced_model_for_api_reasoning_capability(monkeypatch):

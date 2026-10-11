@@ -424,10 +424,16 @@ export function LLMConfigTab() {
         setAdvancedBaseUrl(data.advanced_base_url || "");
         setTimeoutSeconds(String(data.timeout_seconds));
         setApiReasoningStrength(
-          data.persisted?.api_reasoning_strength ?? (data.channel === "api" ? data.reasoning_strength ?? "" : "")
+          data.persisted?.api_reasoning_strength
+            ?? (data.channel === "api" ? data.reasoning_strength : undefined)
+            ?? data.effective_reasoning_strengths?.api
+            ?? ""
         );
         setCliReasoningStrength(
-          data.persisted?.cli_reasoning_strength ?? (data.channel === "cli" ? data.reasoning_strength ?? "" : "")
+          data.persisted?.cli_reasoning_strength
+            ?? (data.channel === "cli" ? data.reasoning_strength : undefined)
+            ?? data.effective_reasoning_strengths?.cli
+            ?? ""
         );
         setChannel(data.channel === "cli" ? "cli" : "api");
         // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被

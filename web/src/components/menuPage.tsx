@@ -4,7 +4,7 @@ import { api, normalizeApiError } from "../api";
 import { cliRunnerOptions } from "../cliRunners";
 import { resolveReasoningSupported } from "../reasoningSupport";
 import { consumeSettleStream } from "../settleStream";
-import type { CliModelChoices, CliRunnerChoice, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
+import type { MenuCampaign, MenuStatus } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { slotNumber } from "../slotNumber";
 import { CliModelField } from "./cliModelField";
@@ -185,32 +185,7 @@ export function ApiSettingsModal({
   onClose,
   onSaved,
 }: {
-  initial?: {
-    base_url: string;
-    model: string;
-    has_api_key: boolean;
-    timeout_seconds?: number;
-    thinking_level?: string;
-    advanced_model?: string;
-    advanced_base_url?: string;
-    has_advanced_api_key?: boolean;
-    advanced_thinking_level?: string;
-    reasoning_strength?: string;
-    api_reasoning_strength?: string | null;
-    cli_reasoning_strength?: string | null;
-    reasoning_supported?: boolean;
-    reasoning_strengths?: ReasoningStrengthChoice[];
-    cli_reasoning_runners?: string[];
-    cli_reasoning_floor_runners?: string[];
-    channel?: "api" | "cli";
-    cli_runner?: string;
-    cli_model?: string;
-    cli_model_saved?: string;
-    cli_model_choices?: CliModelChoices;
-    cli_runners?: CliRunnerChoice[];
-    cli_timeout_seconds?: number;
-    default_headers?: Record<string, string>;
-  };
+  initial?: MenuStatus["llm"];
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -227,10 +202,16 @@ export function ApiSettingsModal({
   const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState(initial?.advanced_base_url || "");
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
   const [apiReasoningStrength, setApiReasoningStrength] = React.useState(
-    initial?.api_reasoning_strength ?? (initial?.channel === "api" ? initial?.reasoning_strength ?? "" : "")
+    initial?.api_reasoning_strength
+      ?? (initial?.channel === "api" ? initial?.reasoning_strength : undefined)
+      ?? initial?.effective_reasoning_strengths?.api
+      ?? ""
   );
   const [cliReasoningStrength, setCliReasoningStrength] = React.useState(
-    initial?.cli_reasoning_strength ?? (initial?.channel === "cli" ? initial?.reasoning_strength ?? "" : "")
+    initial?.cli_reasoning_strength
+      ?? (initial?.channel === "cli" ? initial?.reasoning_strength : undefined)
+      ?? initial?.effective_reasoning_strengths?.cli
+      ?? ""
   );
   const [apiKey, setApiKey] = React.useState("");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds ?? ""));
@@ -280,8 +261,7 @@ export function ApiSettingsModal({
           model: model.trim(),
           api_key: apiKey.trim(),
           timeout_seconds: slotNumber(timeoutSeconds, initial?.timeout_seconds ?? 0),
-          // 统一选择器已在初始化时把旧 thinking_level 迁进 reasoningStrength；保存清掉旧字段，
-          // 否则它仍作隐藏旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
+          // The backend resolves each slot; the explicit selector owns the saved choice.
           thinking_level: "",
           reasoning_strength: reasoningStrength,
           advanced_model: advancedModel.trim(),

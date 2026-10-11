@@ -67,6 +67,7 @@ from ming_sim.llm_config import (
     normalize_openai_base_url,
     normalize_thinking_level,
     normalize_reasoning_strength,
+    effective_reasoning_strengths,
     save_runtime_llm,
     _slot_header_table,
 )
@@ -3971,6 +3972,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "reasoning_strength": cfg.reasoning_strength,
             "api_reasoning_strength": api_slot.get("reasoning_strength"),
             "cli_reasoning_strength": cli_slot.get("reasoning_strength"),
+            "effective_reasoning_strengths": effective_reasoning_strengths(runtime),
             "reasoning_supported": reasoning_supported,
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
             # #1271：能力名单自 cli_backend 单源导出，供前端 fallback 消费（禁前端硬编码）。
@@ -5333,6 +5335,12 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "cli_timeout_seconds": cfg.cli_timeout_seconds,
         # #1794：设置页读回附加请求头表。
         "default_headers": dict(cfg.default_headers or {}),
+        "effective_reasoning_strengths": effective_reasoning_strengths(
+            saved,
+            thinking_level=cfg.thinking_level,
+            advanced_model=cfg.advanced_model,
+            advanced_thinking_level=cfg.advanced_thinking_level,
+        ),
         "persisted": {
             "channel": saved.get("channel", ""),
             "base_url": saved_api.get("base_url", ""),
