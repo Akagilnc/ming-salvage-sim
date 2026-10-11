@@ -827,6 +827,11 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
 
     assert db.turn_reports.report_text(state.turn) == public
+    own_ids = {
+        item.get("source_id")
+        for item in db.get_character_knowledge(state, participant)["events"]
+    }
+    assert "restricted:test-write-boundary" in own_ids
 
 def test_character_added_after_archive_cannot_read_old_participant_source(game):
     """The durable participant roster, not an archival deny-list snapshot, grants access."""
@@ -1144,10 +1149,14 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
 
 
 def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
-    """数额仍在流水；姓名排除的实际账目投影不得泄漏输入案情。"""
+    """私源案情按读者排除；独立公开同文流水不受私源排除影响。"""
 
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
+    other = next(
+        c for c in content.characters.values()
+        if c.office_type == "户部" and c.name != clerk.name
+    )
     order_id = create_test_secret_order(
         db, state, "毕自严", "密查太仓", "不可见案卷语义", [],
         excluded_names=[clerk.name],
@@ -1165,6 +1174,14 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
     assert move is not None and int(move["delta"]) == -1
     ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
     assert case_cat not in ledger and case_reason not in ledger
+    assert case_reason in db.get_character_knowledge(state, other.name)["world"]["treasury"]
+
+    # An independently public row keeps its input text, even when identical to the private case.
+    db.record_issue_economy_move(
+        state, "国库", -3, case_cat, case_reason, origin_ref="",
+    )
+    ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
+    assert case_reason in ledger
 
 
 def test_household_secret_ledger_hides_case_by_excluded_office(game):
