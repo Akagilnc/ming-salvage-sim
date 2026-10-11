@@ -1235,17 +1235,15 @@ def _install_liao_month_stubs(monkeypatch, *, world_text: str, translate):
     from tests.month_chain_helpers import empty_rescript_response
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     import ming_sim.month_chain as month_chain
-    import ming_sim.month_translate as month_translate
     from tests.test_month_chain_1843 import _forbid_extractor
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: world_text)
-    monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "本月已过。"))
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text",
-        lambda *a, **k: _CONTINUATION_SEGMENT,
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k:
+        json.dumps({"title": "邸报", "report": "本月已过。"})
+        if k["tag"] == "gazette" else _CONTINUATION_SEGMENT)
     from tests.test_faction_brew_637 import _dual_brew_fn_factory
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._brew_fn_for_session",
@@ -1292,8 +1290,8 @@ def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(g
     before = _settle_payload(db, "shaanxi")["p"]
     seen = []
 
-    def translate(*_a, **kwargs):
-        segment = str(kwargs.get("segment") or "")
+    def translate(request, _config):
+        segment = request.segment
         seen.append(segment)
         if segment == _CONTINUATION_SEGMENT:
             return {"effects": [{

@@ -59,17 +59,19 @@ def canned_full_settlement(
     monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", _promulgate)
 
     def _world(*_a, **_k):
-        simulator_calls.append({"world": True, "narrative": narrative})
+        import json
+
+        if _k.get("tag") == "gazette":
+            return json.dumps({"title": "邸报", "report": narrative})
+        if _k.get("tag") in (None, "world-segment"):
+            simulator_calls.append({"world": True, "narrative": narrative})
         return narrative
 
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _world)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", _world)
     monkeypatch.setattr(
-        "ming_sim.month_chain.run_gazette_text",
-        lambda *_a, **_k: ("邸报", narrative),
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_translate.translate_month_segment",
+        "ming_sim.month_translate._default_month_translate_runner",
         lambda *_a, **_k: {"effects": {}},
     )
 

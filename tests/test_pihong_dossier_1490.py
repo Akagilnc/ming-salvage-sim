@@ -214,7 +214,8 @@ def test_1589_keyless_batch_rejected_without_writes(game, monkeypatch, desk_kind
             json.dumps({"actor_name": officers[-1]["name"], "revisions": [],
                         "items": [{"title": "急务", "context": "c", "options": [{"label": "准"}]}]})
             if answer is None else json.dumps({"disposition": "settled", "text": ""}))
-    monkeypatch.setattr("ming_sim.month_chain._run_world_continuation_text", lambda *a, **k: "")
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)

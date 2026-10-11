@@ -101,6 +101,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder(web_game, monkeyp
     stub_audience_translate(monkeypatch)
     stub_scene_agent(monkeypatch, _StreamCrashAgent())
     _inject_prologue_append_failure(runtime, monkeypatch)
+    # 独立锁归属负向案：隔离旁支预推争闸，不为成功收夜或回复恢复铺路。
     monkeypatch.setattr(
         "ming_sim.decree_forecast.schedule_held_decree_forecasts", lambda *_a, **_k: None,
     )
@@ -407,8 +408,6 @@ def _transport_web_game(web_game, agent, monkeypatch):
 
     stub_scene_agent(monkeypatch, agent)
     stub_audience_translate(monkeypatch)
-    # 成功路径会 spawn 尾随；空操作避免额外 LLM/线程噪音
-    web_game._spawn_pending_write_thread = lambda *_a, **_k: None  # type: ignore[method-assign]
     return web_game, "殿上"
 
 
@@ -514,8 +513,11 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     db = web_game.db
     night_closed = {"n": 0}
 
+    real_close = web_game.session.close_night_after_chat_if_needed
+
     def _close(*_a, **_k):
         night_closed["n"] += 1
+        return real_close(*_a, **_k)
 
     web_game.session.close_night_after_chat_if_needed = _close
 

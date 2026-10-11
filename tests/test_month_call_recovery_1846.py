@@ -275,7 +275,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
         )
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate_fail)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate_fail)
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
 
@@ -298,7 +298,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
         translate_calls.append("ok")
         return {"effects": {}}
 
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate_ok)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate_ok)
     monkeypatch.setattr(
         month_chain, "run_world_segment_text",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not repush world")),
@@ -352,7 +352,7 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
         return item
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
 
@@ -517,7 +517,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
         }]}}
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     failed = {"done": False}
     original_commit = db.conn.commit
 
@@ -597,7 +597,7 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
     monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}},
+        "ming_sim.month_translate._default_month_translate_runner", lambda *_a, **_k: {"effects": {}},
     )
     real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
     calls = {"n": 0}
@@ -653,7 +653,7 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
     monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}},
+        "ming_sim.month_translate._default_month_translate_runner", lambda *_a, **_k: {"effects": {}},
     )
     real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
     calls = {"n": 0}

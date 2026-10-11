@@ -7,7 +7,6 @@ import json
 import pytest
 
 import ming_sim.month_chain as month_chain
-import ming_sim.month_translate as month_translate
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
@@ -44,7 +43,7 @@ def _llm() -> LLMConfig:
 
 def _session(db, state, content, monkeypatch):
     _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *_a, **_k: {"effects": {}})
     session = make_light_session(db, state, content)
     session.llm_config = _llm()
     session._write_gate = session._write_queue.write_gate
@@ -69,8 +68,8 @@ def test_author_waits_until_rescript_is_done(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
     # 外部 LLM 边界：挡邸报作者；可见结果是请旨台阶段，不锁调用次数。
     monkeypatch.setattr(
-        month_chain, "run_gazette_text",
-        lambda *_a, **_k: (_TITLE, _REPORT),
+        "ming_sim.agents.run_agent_text",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("未批红不得调用邸报模型")),
     )
     session = _session(db, state, content, monkeypatch)
     held = session.resolve_turn(allow_empty_decree=True)
@@ -453,10 +452,10 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
         gazette_calls["n"] += 1
         if gazette_calls["n"] == 1:
             raise LLMUnavailable("邸报写失败", stage="gazette")
-        return _TITLE, _REPORT
+        return json.dumps({"title": _TITLE, "report": _REPORT})
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_chain, "run_gazette_text", gazette)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", gazette)
     session = _session(db, state, content, monkeypatch)
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)

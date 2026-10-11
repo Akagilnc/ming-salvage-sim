@@ -35,7 +35,7 @@ def _archive_and_stub_world(db, state, monkeypatch):
     db.save_turn_report(state, "本月邸报正文·公开")
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr(
-        "ming_sim.month_translate.translate_month_segment",
+        "ming_sim.month_translate._default_month_translate_runner",
         lambda *a, **k: {"effects": {}},
     )
     monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))

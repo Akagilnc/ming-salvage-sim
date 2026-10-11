@@ -169,9 +169,13 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     web_game, minister = _cli_web_game(web_game, monkeypatch)
     db = web_game.db
     night_closed = {"n": 0}
-    web_game.session.close_night_after_chat_if_needed = (
-        lambda *_a, **_k: night_closed.__setitem__("n", night_closed["n"] + 1)
-    )
+    real_close = web_game.session.close_night_after_chat_if_needed
+
+    def close(*args, **kwargs):
+        night_closed["n"] += 1
+        return real_close(*args, **kwargs)
+
+    web_game.session.close_night_after_chat_if_needed = close
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text

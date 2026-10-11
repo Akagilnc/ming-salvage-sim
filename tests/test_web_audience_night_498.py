@@ -22,7 +22,6 @@ import asyncio
 import json
 import threading
 
-import httpx
 import pytest
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.audience_translate import _default_translate_runner as _real_audience_translate_runner
@@ -36,7 +35,6 @@ _POLICY_FIELDS = {
 
 import web_app
 import ming_sim.agents as agents_mod
-import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
@@ -86,8 +84,7 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     canned_full_settlement(monkeypatch, narrative=narrative)
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(agents_mod, "create_decree_forecast_agent", lambda *a, **k: SimpleNamespace())
-    monkeypatch.setattr(agents_mod, "run_agent_text", lambda *a, **k: narrative)
-    monkeypatch.setattr("ming_sim.decree_forecast.translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
 
 
 # web_game 夹具权威在 tests/conftest.py（#1847 消费者闭包复用，禁平行装配）。

@@ -1938,26 +1938,28 @@ def test_invalid_declaration_stops_month_chain_and_marks_invalid(game, bad):
     # 合法产物。桩只代模型调用本身，不代月链相位。
     calls = []
 
-    def _fake_supply(db_, state_, llm_config_, chain_):
+    def _fake_supply(_agent, message, **_kwargs):
         calls.append(True)
-        return {
+        return json.dumps({
             "dossier_progress_reports": [
                 {"dossier_id": int(r["dossier_id"]), "progress_band": "持平",
                  "memorial_text": "据实以奏"}
-                for r in db_.list_monthly_dossier_progress_nudges(int(state_.turn))
+                for r in json.loads(message)["eligible_dossiers"]
             ],
             "covert_exec_selections": [
                 {"order_id": oid, "fact_key": key, "effort": 1.0},
             ],
-        }
+        })
+
+    from ming_sim.models import LLMConfig
 
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(month_chain, "run_secret_orders_supply", _fake_supply)
+    monkey.setattr("ming_sim.agents.run_agent_text", _fake_supply)
     try:
         month_chain._step_4a_secret_order_supply(
             db, state, resumed,
             turn=int(state.turn), decree_text="", source=Provenance.secret_order,
-            llm_config=object(),
+            llm_config=LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test"),
         )
     except SettlementAbort as exc:  # pragma: no cover - 只在桩之外失败时出现
         raise AssertionError(f"失效重起后不该再停续：{exc}")

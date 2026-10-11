@@ -9,7 +9,6 @@ import pytest
 import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
-import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from tests.month_chain_helpers import make_light_session
 
@@ -43,7 +42,7 @@ def _stage_edict(db, state, minister, text, category, delta, affair_id):
     )
     return pending_id, ref
 
-def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None, secret_orders_supply=None):
+def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None):
     """换掉世界段与转译的模型缝，返回尚未过月的 session。不含在飞屏障。"""
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(
@@ -51,11 +50,9 @@ def _prepare_player_month(db, state, content, monkeypatch, *, world=None, transl
         world if world is not None else (lambda *_a, **_k: ""),
     )
     monkeypatch.setattr(
-        month_translate, "translate_month_segment",
+        "ming_sim.month_translate._default_month_translate_runner",
         translate if translate is not None else (lambda *_a, **_k: {"effects": {}}),
     )
-    if secret_orders_supply is not None:
-        monkeypatch.setattr(month_chain, "run_secret_orders_supply", secret_orders_supply)
     session = make_light_session(db, state, content)
     return session
 
@@ -84,7 +81,7 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     from tests.test_web_audience_night_498 import _fake_settlement_llm
     _fake_settlement_llm(monkeypatch, narrative="补跑不可见")
     from ming_sim.decree_forecast import produce_forecast_product as real_product
-    monkeypatch.setattr("ming_sim.decree_forecast.translate_month_segment", lambda *_a, **_k: {
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *_a, **_k: {
         "effects": {"economy_moves": [{"origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -1, "category": "大凌河", "reason": "补跑"}]},
     })
 
@@ -147,9 +144,8 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
     session.llm_config = object()
-    monkeypatch.setattr(
-        month_chain, "_run_decree_continuation_text", lambda *a, **k: "",
-    )
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k: '')
     held = session.resolve_turn(allow_empty_decree=True)
     assert held.stage == "rescript"
     assert held.awaiting is True
@@ -256,7 +252,7 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *_a, **_k: {"effects": {}})
     session = make_light_session(db, state, content)
 
     from ming_sim.exceptions import SettlementAbort
@@ -341,7 +337,6 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     from types import SimpleNamespace
     from ming_sim.decree_forecast import decree_ref_for_dossier
     from ming_sim.month_chain import _settle_edicts
-    import ming_sim.month_chain as mc
 
     minister = next(iter(content.characters.values()))
     pending_id = db.stage_pending_action(

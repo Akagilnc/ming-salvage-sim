@@ -15,7 +15,7 @@ import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
-from ming_sim.models import TurnPhase
+from ming_sim.models import LLMConfig, TurnPhase
 from tests.month_chain_helpers import make_light_session
 from tests.rescript_test_helpers import sql_rescript_draft
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
@@ -82,9 +82,7 @@ def test_world_question_opens_rescript_desk_and_awaits(game, monkeypatch):
     monkeypatch.setattr(
         month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
     )
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
@@ -109,9 +107,7 @@ def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
         month_chain, "run_world_segment_text",
         lambda *a, **k: _WORLD_WITH_TWO_QUESTIONS,
     )
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
@@ -145,9 +141,7 @@ def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypa
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
     result = session.resolve_turn(allow_empty_decree=True)
 
@@ -197,9 +191,7 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch, d
     pending_id = _stage_rejected_edict(db, state, minister)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
@@ -260,13 +252,14 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch,
             raise LLMUnavailable("转译用尽", stage="world_translate")
         return {"effects": {}}
 
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
 
-    def fake_continuation(session, chain, answers):
-        continuation_calls.append(list(answers))
+    def fake_continuation(_agent, message, **kwargs):
+        continuation_calls.append(json.loads(message)["answers"])
         return "准调关宁，关宁增戍。"
 
-    monkeypatch.setattr(month_chain, "_run_world_continuation_text", fake_continuation)
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", fake_continuation)
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -331,7 +324,7 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
 
     dispatch_count = []
 
-    def fake_decree_text(session, dossier, answers):
+    def fake_decree_text(_agent, message, **kwargs):
         return "加赈落实，仓廪出十万。"
 
     real_dispatch = month_translate.dispatch_declaration
@@ -342,9 +335,10 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", fake_decree_text)
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", fake_decree_text)
     monkeypatch.setattr(
-        month_translate, "translate_month_segment",
+        "ming_sim.month_translate._default_month_translate_runner",
         lambda *a, **k: {"effects": {"economy_moves": [{
             "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -10,
             "category": "加赈", "reason": "批红后续推",
@@ -407,7 +401,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
     dispatch_count = []
     fail_once = {"armed": True}
 
-    def flaky_decree_text(session, dossier, answers):
+    def flaky_decree_text(_agent, message, **kwargs):
         llm_calls.append(1)
         if fail_at != "translation" and fail_once["armed"]:
             fail_once["armed"] = False
@@ -433,7 +427,8 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", flaky_decree_text)
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", flaky_decree_text)
     monkeypatch.setattr(month_translate, "dispatch_declaration", spy_dispatch)
 
     session = make_light_session(db, state, content)
@@ -446,7 +441,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         "label": choice["label"],
         "hint": choice.get("hint") or "",
     }]
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
 
     with pytest.raises(SettlementAbort):
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
@@ -496,9 +491,7 @@ def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):
         month_chain, "run_world_segment_text",
         lambda *a, **k: "边警。" + _decision_block("是否增援宁远", "准调", "暂缓"),
     )
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
@@ -542,9 +535,7 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     db.conn.commit()
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
     session.llm_config = None
     session.resolve_turn(allow_empty_decree=True)
@@ -562,11 +553,12 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
 
     calls = []
 
-    def continuation(session_, dossier, answers):
-        calls.append(answers)
+    def continuation(_agent, message, **kwargs):
+        calls.append(json.loads(message)["answers"])
         return "问后无新账。"
 
-    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continuation)
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", continuation)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
     assert calls
@@ -582,9 +574,7 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     monkeypatch.setattr(
         month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
     )
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
     session.llm_config = None
     session.resolve_turn(allow_empty_decree=True)
@@ -602,10 +592,8 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     assert chain.get("world_questions")
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 
-    monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text",
-        lambda *a, **k: "准调关宁，关宁增戍。",
-    )
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k: '准调关宁，关宁增戍。')
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
     chain = _month_chain_of(db, closed_turn)
@@ -629,9 +617,7 @@ def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
     db.conn.commit()
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
@@ -668,7 +654,7 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
             "category": "急务办理", "reason": "办理",
         }]}}
 
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     calls, answers = [], []
     failures = {"triage": True, "answer": True}
     raw_note = "  发回\n查清后再呈  "
@@ -826,8 +812,8 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
             continued["on"] = True
         return "问后续推已发生。"
 
-    def translate(*_a, **kwargs):
-        captured["grounding"] = kwargs.get("target_grounding") or ""
+    def translate(request, _config):
+        captured["grounding"] = request.target_grounding
         if not continued["on"]:
             return {"effects": {}}
         return {"effects": {"economy_moves": [{
@@ -842,7 +828,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", fake_agent)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", fake_run)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
@@ -914,8 +900,8 @@ def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
     )
     segments = []
 
-    def translate(*_a, **kwargs):
-        segments.append(str(kwargs.get("segment") or ""))
+    def translate(request, _config):
+        segments.append(request.segment)
         return {"effects": {}}
 
     _forbid_extractor(monkeypatch)
@@ -928,9 +914,7 @@ def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
         "ming_sim.decree_forecast.agents.run_agent_text",
         lambda *a, **k: narrative,
     )
-    monkeypatch.setattr(
-        "ming_sim.decree_forecast.translate_month_segment", translate,
-    )
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     session = make_light_session(db, state, content)
     session.llm_config = object()
 
@@ -973,16 +957,15 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
     db.conn.commit()
     answers = []
 
-    def continuation(_session, _dossier, got):
-        answers.append(list(got))
+    def continuation(_agent, message, **kwargs):
+        answers.append(json.loads(message)["answers"])
         return ""
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continuation)
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", continuation)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
@@ -1116,7 +1099,7 @@ def test_fatal_midzhi_rejection_hides_force_option(game, monkeypatch):
     _stage_fatal_midzhi(db, state, content)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
     session = make_light_session(db, state, content)
 
     session.resolve_turn(allow_empty_decree=True)
@@ -1226,6 +1209,10 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
     continued = {"on": False}
 
     def continue_text(*_a, **_k):
+        if _k["tag"] == "gazette":
+            return json.dumps({"title": "邸报", "report": "逊国已闻"})
+        if _k["tag"] != "decree-forecast-continue":
+            return "终局总评"
         continued["on"] = True
         return "问后续推已发生。"
 
@@ -1236,13 +1223,12 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continue_text)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "逊国已闻"))
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", continue_text)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     from tests.test_faction_brew_637 import _dual_brew_fn_factory
     monkeypatch.setattr("ming_sim.mechanical_tail._brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
     monkeypatch.setattr("ming_sim.agents.create_ending_summary_agent", lambda *a, **k: object())
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k: "终局总评")
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(
         api_key="sk-test", base_url="https://example.invalid", model="test",
@@ -1270,12 +1256,13 @@ def _resolve_with_emperor_fate(game, monkeypatch, fate):
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "终局已闻"))
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     from tests.test_faction_brew_637 import _dual_brew_fn_factory
     monkeypatch.setattr("ming_sim.mechanical_tail._brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
     monkeypatch.setattr("ming_sim.agents.create_ending_summary_agent", lambda *a, **k: object())
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k: "终局总评")
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k:
+        json.dumps({"title": "邸报", "report": "本月已闻"})
+        if k["tag"] == "gazette" else "终局总评")
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(
         api_key="sk-test", base_url="https://example.invalid", model="test",
@@ -1332,10 +1319,9 @@ def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
     monkeypatch.setattr(
         month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
     )
-    monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text", continue_text,
-    )
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", continue_text)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     paused = session.resolve_turn(allow_empty_decree=True)
@@ -1364,7 +1350,7 @@ def test_step_4a_no_eligible_objects_skips_run_and_completes(game, monkeypatch):
     db, state, content = game
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
 
     def forbidden_supply(*a, **k):
         raise AssertionError("没有合资格对象时不应调用整月供料 run")
@@ -1377,116 +1363,6 @@ def test_step_4a_no_eligible_objects_skips_run_and_completes(game, monkeypatch):
     assert result.stage == "gazette"
     chain = _month_chain_of(db, int(state.turn))
     assert chain.get("secret_orders_supply_done") is True
-
-
-def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch):
-    """问后续推落下的 origin 效果进入步骤 4a 供料，且能驱动密令实际进度。"""
-    db, state, content = game
-    turn = int(state.turn)
-    minister = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
-    ).fetchone()[0]
-    order_id = db.create_secret_order(
-        state, minister, "辽饷清核", "查清兵部饷银", [],
-        deadline_months=2,
-        covert_task={
-            "kind": "差务", "axes": ["实务事功"], "direction": 1,
-            "delivery": {
-                "unit": "万两", "target_units": 5.0, "effect_sign": -1,
-                "purpose": "其它", "category": "密令差务", "account": "内库",
-            },
-        },
-    )
-    db.conn.execute(
-        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
-        (turn - 1, order_id),
-    )
-    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
-    db.conn.commit()
-
-    captured_feed = {}
-
-    def supply_run(db_, state_, llm_config, chain):
-        feed = month_chain.build_secret_orders_supply_feed(db_, state_, chain)
-        captured_feed.update(feed)
-        return {
-            "dossier_progress_reports": [{
-                "dossier_id": dossier_id,
-                "progress_band": "顺利",
-                "memorial_text": "关外饷银如数盘点，实支有据。",
-            }],
-            "covert_exec_selections": [{
-                "order_id": order_id,
-                "fidelity": "忠实",
-                "note": "实办尽职",
-            }],
-        }
-
-    continued = {"on": False}
-
-    def continue_text(*_a, **_k):
-        continued["on"] = True
-        return "问后续推已发生。"
-
-    def translate(*_a, **kwargs):
-        if not continued["on"]:
-            return {"effects": {}}
-        return {"effects": {
-            "economy_moves": [{
-                "account": "内库", "delta": -5, "category": "密令差务",
-                "purpose": "其它", "reason": "问后实办内库出银",
-                "origin_ref": f"dossier:{dossier_id}",
-            }],
-        }}
-
-    _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(
-        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
-    )
-    monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text", continue_text,
-    )
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
-
-    session = make_light_session(db, state, content)
-    session.llm_config = object()
-
-    # Step 1: Pauses at rescript question
-    paused = session.resolve_turn(allow_empty_decree=True)
-    assert paused.awaiting is True
-    assert captured_feed == {}
-
-    # Step 2: Answer question, resumes
-    session.submit_hitl_choices(
-        [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
-    )
-    result = session.resolve_turn(allow_empty_decree=True)
-    assert result.stage == "gazette"
-
-    # Verify Step 4a saw continuation facts (landed ledger), not code-assembled effects
-    assert captured_feed.get("turn") == turn
-    assert "origin_effects" not in captured_feed
-    assert any(
-        str(row.get("origin_ref") or "") == f"dossier:{dossier_id}"
-        and int(row.get("delta") or 0) == -5
-        for row in (captured_feed.get("landed") or [])
-    )
-    eligible = captured_feed.get("eligible_dossiers") or []
-    assert any(
-        int(item.get("dossier_id") or 0) == dossier_id
-        and str(item.get("decree_text") or "").strip()
-        and isinstance(item.get("payload"), dict)
-        and item.get("covert_task_contract") is not None
-        for item in eligible
-    )
-    assert str(captured_feed.get("board") or "").strip()
-
-    # Verify 0058 structured落库与实况单位（禁盯密奏正文）
-    reports = db.list_dossier_progress(dossier_id)
-    assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
-    actual_units = db.sum_dossier_actual_progress_units(dossier_id)
-    assert actual_units == 5.0
 
 
 def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch):
@@ -1515,7 +1391,9 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
         }}
 
     def supply_run(*_a, **_k):
-        return {
+        if _k["tag"] == "gazette":
+            return json.dumps({"title": "邸报", "report": "本月纪事。"})
+        return json.dumps({
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
                 "progress_band": "顺利",
@@ -1525,17 +1403,18 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
                 "order_id": order_id,
                 "fidelity": "忠实",
             }],
-        }
+        }, ensure_ascii=False)
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "世界段推演。")
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", supply_run)
 
     session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
 
     result = session.resolve_turn(allow_empty_decree=True)
-    assert result.stage == "gazette"
+    assert result.stage == "advanced"
 
     # Disclosure event exists after 0058；只验结构化落库与事件存在，不盯生成正文
     rows = db.conn.execute(
@@ -1571,10 +1450,12 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
 
     def supply_run(*_a, **_k):
         nonlocal call_count
+        if _k["tag"] == "gazette":
+            return json.dumps({"title": "邸报", "report": "本月纪事。"})
         call_count += 1
         if call_count == 1:
             # First call: incomplete! Only reports dossier_1, missing dossier_2
-            return {
+            return json.dumps({
                 "dossier_progress_reports": [{
                     "dossier_id": dossier_1,
                     "progress_band": "持平",
@@ -1584,9 +1465,9 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
                     {"order_id": order_1, "fidelity": "忠实"},
                     {"order_id": order_2, "fidelity": "忠实"},
                 ],
-            }
+            }, ensure_ascii=False)
         # Second call (after retry): complete!
-        return {
+        return json.dumps({
             "dossier_progress_reports": [
                 {"dossier_id": dossier_1, "progress_band": "持平", "memorial_text": "密奏一"},
                 {"dossier_id": dossier_2, "progress_band": "持平", "memorial_text": "密奏二"},
@@ -1595,14 +1476,15 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
                 {"order_id": order_1, "fidelity": "忠实"},
                 {"order_id": order_2, "fidelity": "忠实"},
             ],
-        }
+        }, ensure_ascii=False)
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
-    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", supply_run)
 
     session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
 
     # First attempt: incomplete report fails loud
     with pytest.raises(SettlementAbort) as caught:
@@ -1616,7 +1498,7 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
 
     # Retry: discards invalid product, re-calls supply run
     result = session.resolve_turn(allow_empty_decree=True)
-    assert result.stage == "gazette"
+    assert result.stage == "advanced"
     assert call_count == 2
     assert len(db.list_dossier_progress(dossier_1)) == 1
     assert len(db.list_dossier_progress(dossier_2)) == 1
@@ -1640,8 +1522,10 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
 
     def supply_run(*_a, **_k):
         nonlocal call_count
+        if _k["tag"] == "gazette":
+            return json.dumps({"title": "邸报", "report": "本月纪事。"})
         call_count += 1
-        return {
+        return json.dumps({
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
                 "progress_band": "顺利",
@@ -1651,12 +1535,12 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
                 "order_id": order_id,
                 "fidelity": "忠实",
             }],
-        }
+        }, ensure_ascii=False)
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
-    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", supply_run)
 
     crash_once = True
     from ming_sim import covert_progress
@@ -1673,6 +1557,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     monkeypatch.setattr(covert_progress, "apply_monthly_covert_actual_progress", buggy_apply)
 
     session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
 
     # First pass: lands Phase 1 (reports), but crashes on Phase 3
     with pytest.raises(SettlementAbort):
@@ -1687,7 +1572,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
 
     # Resume turn: supply run must NOT be called again
     result = session.resolve_turn(allow_empty_decree=True)
-    assert result.stage == "gazette"
+    assert result.stage == "advanced"
     assert call_count == 1  # Not re-run!
     # Reports not duplicated
     assert len(db.list_dossier_progress(dossier_id)) == 1
@@ -1765,23 +1650,25 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
 
     def supply_run(*_a, **_k):
         nonlocal call_count
+        if _k["tag"] == "gazette":
+            return json.dumps({"title": "邸报", "report": "本月纪事。"})
         call_count += 1
         if call_count == 1:
-            return {
+            return json.dumps({
                 "dossier_progress_reports": [{
                     "dossier_id": dossier_id,
                     "progress_band": "持平",
                     "memorial_text": "按期奏报",
                 }],
                 "covert_exec_selections": [],
-            }
+            }, ensure_ascii=False)
         if call_count == 2:
             # 替换后的产物：执行态合法，月报却是空的。旧完成相不得放它过关。
-            return {
+            return json.dumps({
                 "dossier_progress_reports": [],
                 "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
-            }
-        return {
+            }, ensure_ascii=False)
+        return json.dumps({
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
                 "progress_band": "持平",
@@ -1789,14 +1676,15 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
                 "origin": "same_faction_blind+private_goods+不是行动",
             }],
             "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
-        }
+        }, ensure_ascii=False)
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
-    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", supply_run)
 
     session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
 
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
@@ -1839,7 +1727,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     ).fetchone()[0] == 0
 
     result = session.resolve_turn(allow_empty_decree=True)
-    assert result.stage == "gazette"
+    assert result.stage == "advanced"
     assert call_count == 3
     assert len(db.list_dossier_progress(dossier_id)) == 1
     declared_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
@@ -1988,15 +1876,17 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
 
     def supply_run(*_a, **_k):
         nonlocal call_count
+        if _k["tag"] == "gazette":
+            return json.dumps({"title": "邸报", "report": "本月纪事。"})
         call_count += 1
-        return {
+        return json.dumps({
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
                 "progress_band": "持平",
                 "memorial_text": "完整密奏",
             }],
             "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
-        }
+        }, ensure_ascii=False)
 
     real_presence = db.record_monthly_supervision_presence
     fail_once = True
@@ -2010,11 +1900,12 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
-    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", supply_run)
     monkeypatch.setattr(db, "record_monthly_supervision_presence", flaky_presence)
 
     session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
 
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
@@ -2025,7 +1916,7 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     assert call_count == 1
 
     result = session.resolve_turn(allow_empty_decree=True)
-    assert result.stage == "gazette"
+    assert result.stage == "advanced"
     assert call_count == 1  # 保留产物，不重跑 supply
     assert len(db.list_dossier_progress(dossier_id)) == 1
 
@@ -2066,7 +1957,9 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
         }}
 
     def supply_run(*_a, **_k):
-        return {
+        if _k["tag"] == "gazette":
+            return json.dumps({"title": "邸报", "report": "本月纪事。"})
+        return json.dumps({
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
                 "progress_band": "顺利",
@@ -2076,18 +1969,19 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
                 "order_id": order_id,
                 "fidelity": "忠实",
             }],
-        }
+        }, ensure_ascii=False)
 
     _forbid_extractor(monkeypatch)
     # 空世界段文会跳过转译；须有非空段文才能落下问前 origin 效果供 4a 结案。
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", supply_run)
 
     session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
 
     result = session.resolve_turn(allow_empty_decree=True)
-    assert result.stage == "gazette"
+    assert result.stage == "advanced"
 
     # Secret order should be settled to 'done' (delivered 2.0 / target 2.0)
     assert db.get_secret_order(order_id)["status"] == "done"
@@ -2096,7 +1990,7 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
     assert chain.get("secret_orders_supply_done") is True
 
 
-def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effects(game):
+def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effects(game, monkeypatch):
     """4a 供料沿邸报作者本月材料读口（含密令来源），不接收代码拼的生效效果清单。"""
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
@@ -2198,7 +2092,20 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
             "rejections": [],
         }],
     }
-    feed = month_chain.build_secret_orders_supply_feed(db, state, chain)
+    feeds = {}
+
+    def model_text(_agent, message, **kwargs):
+        feeds[kwargs["tag"]] = json.loads(message)
+        return json.dumps({"title": "邸报", "report": "本月纪事。"}
+                          if kwargs["tag"] == "gazette" else {
+                              "dossier_progress_reports": [], "covert_exec_selections": [],
+                          })
+
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", model_text)
+    config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
+    month_chain.run_secret_orders_supply(db, state, config, chain)
+    month_chain.run_gazette_text(db, state, config, chain)
+    feed = feeds["secret_orders_supply"]
     assert "origin_effects" not in feed
     assert "origin_rejections" not in feed
     assert "segment_applied_results" not in feed
@@ -2237,7 +2144,7 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     )
     assert str(feed.get("board") or "").strip()
 
-    gazette = month_chain._gazette_feed(db, state, chain)
+    gazette = feeds["gazette"]
     assert all(
         str(row.get("origin_ref") or "") != f"dossier:{dossier_id}"
         for row in (gazette.get("landed") or [])
@@ -2279,10 +2186,15 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
 
     captured_feed = {}
 
-    def supply_run(db_, state_, llm_config, chain):
-        feed = month_chain.build_secret_orders_supply_feed(db_, state_, chain)
+    def supply_run(agent, message, **_k):
+        if _k["tag"] == "gazette":
+            return json.dumps({"title": "邸报", "report": "本月纪事。"})
+        if _k["tag"] == "world-segment-continue":
+            continued["on"] = True
+            return "问后续推已发生。"
+        feed = json.loads(message)
         captured_feed.update(feed)
-        return {
+        return json.dumps({
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
                 "progress_band": "顺利",
@@ -2291,13 +2203,9 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
             "covert_exec_selections": [{
                 "order_id": order_id, "fidelity": "忠实", "note": "实办",
             }],
-        }
+        }, ensure_ascii=False)
 
     continued = {"on": False}
-
-    def continue_text(*_a, **_k):
-        continued["on"] = True
-        return "问后续推已发生。"
 
     def translate(*_a, **kwargs):
         if not continued["on"]:
@@ -2319,23 +2227,29 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
     monkeypatch.setattr(
         month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
     )
-    monkeypatch.setattr(
-        month_chain, "_run_world_continuation_text", continue_text,
-    )
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", supply_run)
 
     session = make_light_session(db, state, content)
-    session.llm_config = object()
+    session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
 
     paused = session.resolve_turn(allow_empty_decree=True)
     assert paused.awaiting is True
+    assert captured_feed == {}
     session.submit_hitl_choices(
         [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
     )
-    result = session.resolve_turn(allow_empty_decree=True)
-    assert result.stage == "gazette"
+    assert state.turn == turn + 1
+    assert state.turn_phase == TurnPhase.ISSUED.value
 
+    assert captured_feed["turn"] == turn
+    assert any(
+        int(item["dossier_id"]) == dossier_id
+        and item["decree_text"] and isinstance(item["payload"], dict)
+        and item["covert_task_contract"] is not None
+        for item in captured_feed["eligible_dossiers"]
+    )
+    assert captured_feed["board"]
     assert "origin_effects" not in captured_feed
     assert "origin_rejections" not in captured_feed
     assert any(

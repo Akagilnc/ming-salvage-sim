@@ -492,7 +492,7 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     from ming_sim.models import LLMConfig
 
     real_world = month_chain.run_world_segment_text
-    real_translate = month_translate.translate_month_segment
+    real_translate_runner = month_translate._default_month_translate_runner
 
     db, state, content = game
     amount = 40
@@ -511,7 +511,7 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
         sim_calls=sim_calls,
     )
     monkeypatch.setattr(month_chain, "run_world_segment_text", real_world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", real_translate)
+    monkeypatch.setattr(month_translate, "_default_month_translate_runner", real_translate_runner)
 
     def _world_model(_agent, _message, tag, **_kwargs):
         if tag == "gazette":

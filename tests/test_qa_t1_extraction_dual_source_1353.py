@@ -21,10 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import ming_sim.audience_translation as audience_translation
 from ming_sim.audience_translation import list_pending_translations
-import ming_sim.cli.terminal as term
-import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.exceptions import ExitGame
@@ -290,8 +287,6 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
 
     game = web_game
     install_hall_admission(game.session)
-    game.session.schedule_pending_scene_translation = lambda *_a, **_k: None
-    game._spawn_pending_write_thread = lambda *_a, **_k: None
     # 真实 scene 链：只桩外部模型边界（成功的退朝回话）；收夜失败为注入的故障。
     stub_scene_agent(monkeypatch, _FakeAgent(answer="臣告退。"))
     real_close = game.session.close_night_after_chat_if_needed
