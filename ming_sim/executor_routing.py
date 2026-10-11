@@ -63,10 +63,11 @@ def _duty_table() -> Mapping[str, Any]:
 
 def duty_route_categories() -> frozenset[str]:
     """职司路由事务类别闭集唯一派生（offices.json duty_routes；禁手抄第二份）。"""
+    from ming_sim.assets import require_dict, require_list
+
     cats: set[str] = set()
-    for entry in _duty_table().get("routes", []) or []:
-        if not isinstance(entry, dict):
-            continue
+    for raw in require_list(_duty_table().get("routes", []), "offices.json.duty_routes.routes"):
+        entry = require_dict(raw, "offices.json.duty_routes.routes[]")
         token = str(entry.get("category") or "").strip()
         if token:
             cats.add(token)

@@ -1831,7 +1831,7 @@ def compose_unknown_participant_inworld_report(
 
     产文失败 → typed LLMUnavailable（#1299/#1310/#1452
     失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
-    speaker_role：大臣口吻时接 minister_speaker_role 客观档料（0033）；不在此复制档料。
+    speaker_role：大臣口吻的客观身份档料；不在此复制档料。
     """
     cleaned = _normalize_unknown_participant_names(names)
     if voice == "minister":

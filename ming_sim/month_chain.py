@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
 from ming_sim.applier import Provenance, atomic
+from ming_sim.models import loads_persistent_json_list, loads_persistent_json_object
 
 _CHAIN_KEY = "month_chain"
 _TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate", "world_continue", "decree_continue"})
@@ -392,7 +393,7 @@ def _month_fact_materials(
     for row in db.list_pending_decisions(turn):
         if str(row.get("status") or "") != "decided":
             continue
-        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        choice = row["choice"] or {}
         answers.append({
             "title": row.get("title") or "",
             "label": choice.get("label") or "",
@@ -443,12 +444,9 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _persisted_transit_arrivals(db: Any, turn: int) -> list:
-    """过月前半段已写入 resolve context 的本月抵达。缺键与非列表按该读口视为无抵达。"""
-    ctx = db.get_resolve_context(int(turn)) or {}
-    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
-    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
-        return list(payload["transit_arrivals"])
-    return []
+    """过月前半段已写入本月抵达；形状由 get_resolve_context 核对。"""
+    ctx = db.get_resolve_context(int(turn))
+    return list(ctx["simulator_payload"].get("transit_arrivals") or []) if ctx is not None else []
 
 
 def prepare_gazette_author_materials(db: Any, state: Any):
@@ -517,7 +515,7 @@ def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
     """核账期恢复投影只读：本月链上未消费的调用失败（无则 None）。"""
     chain = _load_chain(db, int(turn))
     failure = chain.get("call_failure")
-    return dict(failure) if isinstance(failure, dict) else None
+    return dict(failure) if failure is not None else None
 
 
 def continue_world_after_answers(
@@ -639,15 +637,14 @@ def _continue_decree_after_answers(
         chain = _load_chain(db, turn)
     if not db.staged_declarations.questions_for(decree_ref):
         return
-    saved = chain.get("decree_continuations")
-    if not isinstance(saved, dict) or decree_ref not in saved:
+    saved = loads_persistent_json_object(chain.get("decree_continuations"), surface="month_chain.decree_continuations")
+    if decree_ref not in saved:
         if session.llm_config is None:
             raise LLMUnavailable("旨意续推缺少模型配置", stage="decree-forecast-continue")
         dossier = _dossier_for_decree_ref(db, decree_ref)
         if dossier is None:
             return
         produced = _run_decree_continuation_text(session, dossier, answers)
-        saved = dict(saved) if isinstance(saved, dict) else {}
         saved[decree_ref] = str(produced or "")
         chain["decree_continuations"] = saved
         # 续推全文先落链，转译失败重入只补转译／清问，不重跑这段已完成的模型调用。
@@ -661,7 +658,7 @@ def _continue_decree_after_answers(
     questions = _number_followup_questions(
         db, turn, questions, f"{_DECREE_QUESTION_PREFIX}{decree_ref}:",
     )
-    payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
+    payload = dossier["payload"]
 
     def consume(result: Any) -> None:
         candidate = _ending_from_dispatch_result(result)
@@ -680,7 +677,7 @@ def _continue_decree_after_answers(
         return
     dispatch_month_segment(
         db, state, segment=prefix,
-        decree_payload=payload if isinstance(payload, dict) else {},
+        decree_payload=payload,
         llm_config=session.llm_config,
         source=source,
         alongside=consume,
@@ -885,7 +882,7 @@ def _consume_call_failure_for_retry(
 ) -> None:
     """玩家点「重试」再入主链：按需丢段，然后清失败标记，只续未完成步。"""
     failure = chain.get("call_failure")
-    if not isinstance(failure, dict):
+    if failure is None:
         return
     step = str(failure.get("step") or "")
     if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
@@ -1061,8 +1058,8 @@ def _settle_edicts(
     outcome = None
     # 同月任免的快照均以首案物化前盘面为准。未判案只记录校验结果，
     # 直到判官实际顺颁才消费；中断重开仍认这一批的原始盘面。
-    prevalidated = set(chain.get("recommendation_prevalidated_ids") or [])
-    invalid = set(chain.get("recommendation_invalid_ids") or [])
+    prevalidated = set(loads_persistent_json_list(chain.get("recommendation_prevalidated_ids"), surface="month_chain.recommendation_prevalidated_ids"))
+    invalid = set(loads_persistent_json_list(chain.get("recommendation_invalid_ids"), surface="month_chain.recommendation_invalid_ids"))
     if "recommendation_prevalidated_ids" not in chain:
         appointments = [row for row in db.list_decree_dossiers(status="proposed")
                         if row.get("action_type") == "appointment"
@@ -1260,7 +1257,7 @@ def _run_world_segment(
         # 生成之后、本段转译之前的一步，未成即本段未完成——故按既有失败通道登记
         # （call_failure + 错误包），由 #1846 的持久相位续未成，而非静默放行。
         return _pin_world_question_identities(
-            chain.get("levy_petitions") or [], questions, turn,
+            loads_persistent_json_list(chain.get("levy_petitions"), surface="month_chain.levy_petitions"), questions, turn,
             world_text=str(chain.get("world_text") or ""),
         )
 
@@ -1307,7 +1304,7 @@ def _run_world_segment(
 def _apply_deferred_disclosures(
     db: Any, state: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
 ) -> None:
-    pending = chain.get("pending_disclosures") or []
+    pending = loads_persistent_json_list(chain.get("pending_disclosures"), surface="month_chain.pending_disclosures")
     from ming_sim.issues import record_secret_order_disclosure
     with atomic(db):
         for item in pending:
@@ -1331,8 +1328,7 @@ def _enrich_eligible_dossiers_for_supply(
         dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
         if dossier is not None:
             row["decree_text"] = str(dossier.get("decree_text") or "")
-            payload = dossier.get("payload")
-            row["payload"] = payload if isinstance(payload, dict) else {}
+            row["payload"] = dossier["payload"]
             row["status"] = str(dossier.get("status") or "")
             contract = read_covert_task_contract(dossier)
             if contract is not None:
@@ -1757,9 +1753,7 @@ def _open_rescript_items(
         if questions:
             # 未答请旨不论案卷创建回合，均须本回合收口（#1847 / 留中回流同审）。
             decree_questions.append((ref, questions))
-    world_questions = [
-        q for q in (chain.get("world_questions") or []) if isinstance(q, dict)
-    ]
+    world_questions = loads_persistent_json_list(chain.get("world_questions"), surface="month_chain.world_questions")
     return {
         "triad": triad,
         "decree_questions": decree_questions,
@@ -1889,14 +1883,11 @@ def _number_followup_questions(
 
 
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
-    options = question.get("options") if isinstance(question.get("options"), list) else []
+    from ming_sim.settlement_payload import bind_decision_options
+
+    options = question.get("options", [])
     cleaned = []
-    for opt in options:
-        if not isinstance(opt, dict):
-            continue
-        label = str(opt.get("label") or "")
-        if not label.strip():
-            continue
+    for label, opt in bind_decision_options(options).items():
         cleaned.append({
             "label": label,
             "hint": str(opt.get("hint") or ""),
@@ -1929,7 +1920,7 @@ def _consume_rescript_answers(
         return
 
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
-        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        choice = row["choice"] or {}
         event_id = str(row.get("event_id") or "")
         # #1891：请饷／议停请旨交续推的是真实事件身份——案头前缀只是批红页身份，
         # 不该让推演方看到（ADR 0115）。御批原话（label/hint/note）原样带出。
@@ -1948,7 +1939,7 @@ def _consume_rescript_answers(
         event_id = str(row.get("event_id") or "")
         if not event_id.startswith("dossier:"):
             continue
-        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        choice = row["choice"] or {}
         _apply_decided_triad(db, state, row, choice, content=session.content)
 
     # #1891：请饷／议停请旨与世界段请旨同源（都由世界段 run 发出），答复后走同一次
@@ -1957,7 +1948,7 @@ def _consume_rescript_answers(
         str(q["event_id"])
         if str(q.get("event_id") or "").startswith(_LEVY_PETITION_PREFIX)
         else f"{_WORLD_QUESTION_PREFIX}{turn}:{q.get('idx', idx)}"
-        for idx, q in enumerate(chain.get("world_questions") or [])
+        for idx, q in enumerate(loads_persistent_json_list(chain.get("world_questions"), surface="month_chain.world_questions"))
     }
     world_rows = [r for r in rows if r.get("event_id") in world_ids]
     if (
@@ -2189,10 +2180,15 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
-    ctx = db.get_resolve_context(turn) or {}
-    payload = ctx.get("simulator_payload") or {}
-    chain = payload.get(_CHAIN_KEY) if isinstance(payload, dict) else None
-    return dict(chain) if isinstance(chain, dict) else {}
+    ctx = db.get_resolve_context(turn)
+    if ctx is None:
+        return {}
+    payload = ctx["simulator_payload"]
+    chain = loads_persistent_json_object(payload.get(_CHAIN_KEY), surface="month_chain")
+    failure = chain.get("call_failure")
+    if failure is not None and not isinstance(failure, dict):
+        raise ValueError("month_chain.call_failure 须为对象")
+    return chain
 
 
 def _save_chain(
@@ -2200,7 +2196,7 @@ def _save_chain(
     decree_text: str = "", source: Provenance = Provenance.system_simulation,
 ) -> None:
     ctx = db.get_resolve_context(turn) or {}
-    payload = dict(ctx.get("simulator_payload") or {})
+    payload = loads_persistent_json_object(ctx.get("simulator_payload"), surface="simulator_payload")
     payload[_CHAIN_KEY] = chain
     stored_source = ctx.get("source") or source
     source_value = stored_source.value if isinstance(stored_source, Provenance) else str(stored_source)

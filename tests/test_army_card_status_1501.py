@@ -119,13 +119,6 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
                 f"{army_id}.{key}: payload={card[key]!r} expected={value!r}"
             )
 
-    from ming_sim.db import _player_army_situation
-
-    guanning = by_id[_GUANNING_ID]
-    g_row = rows_by_id[_GUANNING_ID]
-    expected_arr = _player_army_situation(g_row, db._army_pay(g_row))["arrears_text"]
-    assert guanning["arrears_text"] == expected_arr
-    assert isinstance(g_row["status"], str) and str(g_row["status"]).strip()
 
 
 def test_shared_army_readers_keep_status_field_and_card_omission(read_game):

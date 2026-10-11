@@ -2679,7 +2679,7 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
 def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 fiscal_creates/removes 不得由财政 helper 提前提交。"""
     db, state, content = game
-    remove_key = next(iter(db.get_fiscal_config()))
+    remove_key = next(key for key in db.get_fiscal_config() if key.endswith("_base"))
     created_key = "__test_fiscal_txn_r7_base"
     created_rate_key = "__test_fiscal_txn_r7_rate"
     db.conn.commit()
@@ -2703,7 +2703,7 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
         },
         content=content,
     )
-    assert out["fiscal_removes"][0]["key"] == f"{db._stem_of(remove_key)}_base"
+    assert out["fiscal_removes"][0]["key"] == remove_key
     assert out["fiscal_creates"][0]["key"] == created_key
     db.conn.rollback()
 

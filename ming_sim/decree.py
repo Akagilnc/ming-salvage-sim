@@ -855,10 +855,7 @@ def prepare_resolve_front_half(
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         existing = db.get_resolve_context(int(state.turn))
         if existing is not None:
-            payload = existing.get("simulator_payload")
-            if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
-                return list(payload["transit_arrivals"])
-            return []
+            return list(existing["simulator_payload"].get("transit_arrivals") or [])
 
     # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
     # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
@@ -898,9 +895,8 @@ def prepare_resolve_front_half(
         raise
 
     ctx = db.get_resolve_context(int(state.turn))
-    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
-    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
-        return list(payload["transit_arrivals"])
+    if ctx is not None:
+        return list(ctx["simulator_payload"].get("transit_arrivals") or [])
     return list(transit_arrivals_box)
 
 

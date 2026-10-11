@@ -41,7 +41,7 @@ from ming_sim.issues import (
     _ctx,
     _gate_passed,
     _monthly_economy_items,
-    _monthly_mapping_effect,
+    _merged_mapping_effect,
     _monthly_ongoing_effects_has_work,
     _monthly_person_rating_changes,
     _spawn_legacy_from_effect,
@@ -178,18 +178,11 @@ def _apply_monthly_ongoing_entities(
     applied: Dict[str, object] = {}
     rejections: List[Dict[str, object]] = []
 
-    factions, faction_shape_rejections = _monthly_mapping_effect(effect, "factions", "faction_delta")
-    classes, class_shape_rejections = _monthly_mapping_effect(effect, "classes", "class_delta")
-    region_delta, region_shape_rejections = _monthly_mapping_effect(effect, "region_delta", "regions")
-    army_delta, army_shape_rejections = _monthly_mapping_effect(effect, "army_delta", "armies")
-    power_updates, power_shape_rejections = _monthly_mapping_effect(effect, "power_updates")
-    rejections.extend(
-        faction_shape_rejections
-        + class_shape_rejections
-        + region_shape_rejections
-        + army_shape_rejections
-        + power_shape_rejections
-    )
+    factions = _merged_mapping_effect(effect, "factions", "faction_delta")
+    classes = _merged_mapping_effect(effect, "classes", "class_delta")
+    region_delta = _merged_mapping_effect(effect, "region_delta", "regions")
+    army_delta = _merged_mapping_effect(effect, "army_delta", "armies")
+    power_updates = _merged_mapping_effect(effect, "power_updates")
 
     if factions:
         faction_result = _apply_faction_dict(db, factions)

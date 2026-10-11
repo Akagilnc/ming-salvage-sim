@@ -133,17 +133,15 @@ def resolve_due_review_branch(
 
 def _todo_origin_ref(todo: Dict[str, object], meta_origin: str = "") -> str:
     """#1783：案卷 due todo（commitment_ref=0）origin 在 payload；承诺 todo 仍读 issue。"""
-    payload = todo.get("payload_json") or {}
-    if isinstance(payload, dict):
-        raw = str(payload.get("origin_ref") or "").strip()
-        if raw:
-            return raw
-        did = payload.get("dossier_id")
-        try:
-            if int(did or 0) > 0:
-                return f"dossier:{int(did)}"
-        except (TypeError, ValueError):
-            pass
+    from ming_sim.models import loads_persistent_json_object
+
+    payload = loads_persistent_json_object(todo.get("payload_json"), surface="turn_todos.payload_json")
+    raw = str(payload.get("origin_ref") or "").strip()
+    if raw:
+        return raw
+    did = payload.get("dossier_id")
+    if did is not None and int(did) > 0:
+        return f"dossier:{int(did)}"
     return str(meta_origin or "").strip()
 
 

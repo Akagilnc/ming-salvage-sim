@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from ming_sim.applier import Provenance
+from ming_sim.models import loads_persistent_json_object
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.session_write_queue import get_session_write_queue
 
@@ -55,7 +56,7 @@ def _set_tail_status(
     from ming_sim import month_chain
 
     chain = month_chain._load_chain(db, int(closed_turn))
-    tail = dict(chain.get("mechanical_tail") or {})
+    tail = loads_persistent_json_object(chain.get("mechanical_tail"), surface="mechanical_tail")
     if not tail:
         return
     tail["status"] = status
@@ -275,11 +276,8 @@ def _submit_tail(
 
         def still_pending() -> bool:
             chain = month_chain._load_chain(session.db, int(closed_turn))
-            tail = chain.get("mechanical_tail")
-            return (
-                isinstance(tail, dict)
-                and tail.get("status") == _TAIL_STATUS_PENDING
-            )
+            tail = loads_persistent_json_object(chain.get("mechanical_tail"), surface="mechanical_tail")
+            return tail.get("status") == _TAIL_STATUS_PENDING
 
         try:
             # 扫描见到 pending 之后，上一张票可能已经终结。写闸内再读，
@@ -386,8 +384,8 @@ def _pending_mechanical_tails(
     pending: list[tuple[int, Dict[str, Any]]] = []
     for turn in _resolve_context_turns(db, current_turn):
         chain = month_chain._load_chain(db, turn)
-        tail = chain.get("mechanical_tail")
-        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_PENDING:
+        tail = loads_persistent_json_object(chain.get("mechanical_tail"), surface="mechanical_tail")
+        if tail.get("status") == _TAIL_STATUS_PENDING:
             pending.append((turn, tail))
     return pending
 
@@ -397,8 +395,10 @@ def failed_mechanical_tail(db: Any, state: Any) -> Optional[tuple[int, Dict[str,
     from ming_sim import month_chain
 
     for turn in _resolve_context_turns(db, int(getattr(state, "turn", 0) or 0)):
-        tail = month_chain._load_chain(db, turn).get("mechanical_tail")
-        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_FAILED:
+        tail = loads_persistent_json_object(
+            month_chain._load_chain(db, turn).get("mechanical_tail"), surface="mechanical_tail",
+        )
+        if tail.get("status") == _TAIL_STATUS_FAILED:
             return turn, tail
     return None
 
@@ -412,9 +412,9 @@ def retry_failed_mechanical_tail(session: Any) -> bool:
                      source=Provenance.system_simulation)
     return _submit_tail(
         session, closed_turn=turn,
-        settled_year=int(tail.get("settled_year") or 0),
-        settled_period=int(tail.get("settled_period") or 0),
-        ending_outcome=tail.get("ending_outcome") if isinstance(tail.get("ending_outcome"), dict) else None,
+        settled_year=int(tail["settled_year"]),
+        settled_period=int(tail["settled_period"]),
+        ending_outcome=loads_persistent_json_object(tail.get("ending_outcome"), surface="ending_outcome"),
         source=Provenance.system_simulation,
     )
 
@@ -425,8 +425,8 @@ def ending_summary_pending(db: Any, state: Any) -> bool:
         return False
     current = int(getattr(state, "turn", 0) or 0)
     for _turn, tail in _pending_mechanical_tails(db, current_turn=current):
-        outcome = tail.get("ending_outcome")
-        if isinstance(outcome, dict) and outcome.get("status"):
+        outcome = loads_persistent_json_object(tail.get("ending_outcome"), surface="ending_outcome")
+        if outcome.get("status"):
             return True
     return False
 
@@ -447,9 +447,8 @@ def ensure_mechanical_tails(session: Any) -> None:
         _submit_tail(
             session,
             closed_turn=turn,
-            settled_year=int(tail.get("settled_year") or 0),
-            settled_period=int(tail.get("settled_period") or 0),
-            ending_outcome=tail.get("ending_outcome")
-            if isinstance(tail.get("ending_outcome"), dict) else None,
+            settled_year=int(tail["settled_year"]),
+            settled_period=int(tail["settled_period"]),
+            ending_outcome=loads_persistent_json_object(tail.get("ending_outcome"), surface="ending_outcome"),
             source=source,
         )

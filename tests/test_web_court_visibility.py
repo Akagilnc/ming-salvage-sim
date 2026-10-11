@@ -101,7 +101,7 @@ def test_vassal_prince_excluded_from_court(game):
     db.set_character_status(state, name, "active", "测试：在世")
     # 物化后 setup 真生效：DB 确为 active+ming（否则仅 office_type 短路，测不出 gate 优先于状态）
     assert db.get_character_status(name)[0] == "active"
-    assert web_app._character_power_id(ch, db) == "ming"
+    assert db.conn.execute("SELECT power_id FROM characters WHERE name=?", (name,)).fetchone()[0] == "ming"
     assert visible_in_court(ch, db) is False
 
 
@@ -336,14 +336,11 @@ def _session_stub(db, content):
 def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
     """#1317 r2 钉：身份归一认识未仕/宗藩——史宪之入仕不建重档；福王别名撞宗藩闸。"""
     from ming_sim import issues
-    from ming_sim.session import _find_existing_minister
 
     db, state, content = game
 
     assert "史可法" in content.characters
     assert "史宪之" in (content.characters["史可法"].aliases or [])
-    assert _find_existing_minister(content, "史可法", db) == "史可法"
-    assert _find_existing_minister(content, "史宪之", db) == "史可法"
 
     before = {
         r["name"]
@@ -373,7 +370,6 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         None,
     )
     assert prince is not None, "seed 须有福王别名宗藩（朱常洵）"
-    assert _find_existing_minister(content, "福王", db) == prince
     before_p = {
         r["name"]
         for r in db.conn.execute("SELECT name FROM characters").fetchall()

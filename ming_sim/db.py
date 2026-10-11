@@ -640,7 +640,7 @@ def _office_rank_multiplier(office: str, already_normalized: bool = False) -> fl
 
     text = office or ""
     normalized = text if already_normalized else normalize_office(text)
-    return office_leverage_multiplier(normalized, already_normalized=True)
+    return office_leverage_multiplier(normalized)
 
 def _member_office_weight(office_type: str, office: str) -> float:
     """单个在朝成员的官职权重 = 域权重 × 品级档 multiplier。
@@ -687,28 +687,25 @@ _OFFICES_TABLE: Optional[Dict[str, object]] = None
 _OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
 
 def _offices_table() -> Dict[str, object]:
-    """加载 content/offices.json（明代职官→office_type 参考表），缓存。失败返回空表。"""
+    """加载并缓存 content/offices.json；坏资产或代码异常按 ADR 0005 响亮。"""
     global _OFFICES_TABLE
     if _OFFICES_TABLE is None:
-        try:
-            from ming_sim.assets import load_json_asset
-            data = load_json_asset("offices.json")
-            _OFFICES_TABLE = data if isinstance(data, dict) else {}
-        except Exception as exc:
-            # 注：文件缺失 / JSON 损坏会在 load_json_asset 直接 SystemExit fail-loud（核心内容
-            # 不该静默回空表），不经此分支；这里只兜 import / 意外错误（gemini-code-assist cmr）。
-            tlog(f"[content] offices.json 意外加载失败，回空表：{exc}")  # #14 surface
-            _OFFICES_TABLE = {}
+        from ming_sim.assets import load_json_asset, require_dict, string_list
+        table = require_dict(load_json_asset("offices.json"), "offices.json")
+        allowed = table.get("allowed_types")
+        if allowed is not None:
+            string_list(allowed, "offices.json.allowed_types")
+        _OFFICES_TABLE = table
     return _OFFICES_TABLE
 
 def _office_type_from_table(text: str) -> str:
     """按 offices.json priority 顺序，首个命中词干者胜。无命中返回 ''。"""
-    for entry in _offices_table().get("priority", []) or []:
-        if not isinstance(entry, dict):
-            continue
-        for stem in entry.get("stems", []) or []:
+    from ming_sim.assets import require_dict, require_list, str_field, string_list
+    for raw in require_list(_offices_table().get("priority", []), "offices.json.priority"):
+        entry = require_dict(raw, "offices.json.priority[]")
+        for stem in string_list(entry.get("stems", []), "offices.json.priority[].stems"):
             if stem and stem in text:
-                return str(entry.get("type") or "")
+                return str_field(entry, "type", "offices.json.priority[]")
     return ""
 
 def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
@@ -9047,15 +9044,9 @@ class GameDB:
             r["options_json"], surface="pending_decisions.options_json",
         )
         choice_raw = (r["choice_json"] or "").strip()
-        if choice_raw:
-            try:
-                choice = json.loads(choice_raw)
-            except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise ValueError(
-                    f"pending_decisions.choice_json 腐坏 JSON：{choice_raw!r}"
-                ) from exc
-        else:
-            choice = None
+        choice = loads_persistent_json_object(
+            choice_raw, surface="pending_decisions.choice_json",
+        ) if choice_raw else None
         return {
             "decision_key": f"{kind}:{source_turn}:{idx}",
             "kind": kind,
@@ -14978,7 +14969,7 @@ class GameDB:
         night_approved，使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入
         源夜则盖源夜。返回该行 id（不存在/非 pending 则 0）。
         **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
-        静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
+        静默抹掉待澄清/夜内态闸（#502 L5）。
         #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
         声明路径传入源夜则盖源夜，不把既有候选迁到落账当下的开放夜。"""
         stamp = self._night_id_for_staged_write(night_id, what="改草")
@@ -16191,12 +16182,19 @@ class GameDB:
         if row is None:
             return None
         attendant_message = str(row["attendant_message"] or "")
+        payload = loads_persistent_json_object(
+            row["simulator_payload_json"],
+            surface="pending_resolve_context.simulator_payload_json",
+        )
+        arrivals = payload.get("transit_arrivals")
+        if arrivals is not None and (
+            not isinstance(arrivals, list)
+            or any(not isinstance(item, dict) for item in arrivals)
+        ):
+            raise ValueError("resolve context transit_arrivals 须为对象数组")
         return {
             "decree_text": row["decree_text"],
-            "simulator_payload": loads_persistent_json_object(
-                row["simulator_payload_json"],
-                surface="pending_resolve_context.simulator_payload_json",
-            ),
+            "simulator_payload": payload,
             "source": row["source"] or "system_simulation",
             "attendant_message": attendant_message,  # #671 王承恩独立递话
         }

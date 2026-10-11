@@ -63,6 +63,7 @@ from ming_sim.models import (
     Event,
     GameState,
     effect_dict_has_work,
+    effect_member_shape_error,
     is_vassal_prince,
     loads_effect_dict,
     loads_persistent_json_list,
@@ -689,38 +690,6 @@ def _commitment_arrears_gate_army_ids(row: sqlite3.Row) -> List[str]:
     return ids
 
 
-def _invalid_monthly_mapping_shape(
-    field: str,
-    entity_id: object,
-    raw_value: object,
-) -> Dict[str, object]:
-    return {
-        "rejected": True,
-        "category": "invalid_shape",
-        "reason": f"{field}.{entity_id} 须为对象(dict)",
-        "item": {"field": field, "id": entity_id, "value": raw_value},
-        "issue_strict": False,
-    }
-
-
-def _monthly_mapping_effect(
-    effect: Dict[str, object],
-    *keys: str,
-) -> tuple[Dict[str, Dict[str, object]], List[Dict[str, object]]]:
-    merged: Dict[str, Dict[str, object]] = {}
-    rejections: List[Dict[str, object]] = []
-    for key in keys:
-        raw = effect.get(key)
-        if not isinstance(raw, dict):
-            continue
-        for entity_id, raw_changes in raw.items():
-            if isinstance(raw_changes, dict):
-                merged[entity_id] = raw_changes
-                continue
-            rejections.append(_invalid_monthly_mapping_shape(key, entity_id, raw_changes))
-    return merged, rejections
-
-
 def _merged_mapping_effect(effect: Dict[str, object], *keys: str) -> Dict[str, object]:
     merged: Dict[str, object] = {}
     for key in keys:
@@ -730,32 +699,7 @@ def _merged_mapping_effect(effect: Dict[str, object], *keys: str) -> Dict[str, o
     return merged
 
 
-_MONTHLY_MEMBER_KEYS = ("economy", "economy_moves", PERSON_CHANGE_KEY)
-
-
-def _ongoing_member_shape_error(effect: Dict[str, object]) -> Optional[str]:
-    """月度效果列表键（economy/economy_moves/人物变更）的形状：缺省/null 合法；非数组或成员非对象返回原因。"""
-    for key in _MONTHLY_MEMBER_KEYS:
-        raw = effect.get(key)
-        if raw is None:
-            continue
-        if not isinstance(raw, list):
-            return f"ongoing_effects.{key} 须为数组，得 {type(raw).__name__}"
-        for index, item in enumerate(raw):
-            if not isinstance(item, dict):
-                return f"ongoing_effects.{key}[{index}] 须为对象，得 {type(item).__name__}"
-    return None
-
-
-def _assert_persisted_monthly_members(effect: Dict[str, object]) -> None:
-    """持久 ongoing_effects 的成员形状坏即响亮失败（ADR 0005）；LLM 新项不走此处。"""
-    error = _ongoing_member_shape_error(effect)
-    if error is not None:
-        raise ValueError(error)
-
-
 def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]:
-    _assert_persisted_monthly_members(effect)
     return [
         item
         for key in ("economy", "economy_moves")
@@ -765,7 +709,6 @@ def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]
 
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
     """Only the canonical 人物变更 stream; retired person_changes/character aliases stay closed."""
-    _assert_persisted_monthly_members(effect)
     return [
         item
         for item in normalize_person_changes(effect)
@@ -3158,6 +3101,7 @@ def _apply_issue_entities(
     # 走默认的案（army 非法字段/重复无 manpower/重复非整/可选脏值/非 dict 项）带
     # issue_strict=False 标——容忍不升级,否则历史可活的脏数据变成新的崩月路
     # （cmr S2 r1）。两类都留拒收记录,不无声丢。
+    effect = loads_effect_dict(effect)
     tolerated: List[Dict[str, object]] = []
     def effective_content():
         return content if content is not None else _ctx()
@@ -4525,12 +4469,16 @@ def apply_issue_tracker_output(
         ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
         resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
         fail_eff = _eff_dict(ni.get("effect_on_fail"))
-        # LLM 新项的月度列表形状坏：逐项拒收留痕（与 kind 预检同口径），不得让持久侧的响亮抛炸越过本项。
-        ongoing_shape_error = _ongoing_member_shape_error(ongoing_eff)
-        if ongoing_shape_error is not None:
+        # 同一效果形状规则：新模型的坏项拒收；不得先存坏事实再在月度消费时炸出。
+        effect_shape_error = None
+        for effect in (ongoing_eff, resolve_eff, fail_eff):
+            effect_shape_error = effect_member_shape_error(effect)
+            if effect_shape_error is not None:
+                break
+        if effect_shape_error is not None:
             applied_new.append({
                 "rejected": True, "category": "invalid_shape",
-                "reason": f"new_issue {ongoing_shape_error}",
+                "reason": f"new_issue {effect_shape_error}",
                 "item": ni, "title": title,
             })
             continue

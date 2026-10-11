@@ -369,44 +369,6 @@ def test_get_dossier_for_directive_existence_sentinel(env):
     assert len(listed_ids) == 1
     assert db.get_decree_dossier(listed_ids[0])["region_id"] == "shaanxi"
 
-def test_normalize_payload_locality_and_target_kind(env):
-    db, _, _ = env
-    out = db._normalize_directive_dossier_payload({
-        "dossier_action_type": "policy",
-        "target_kind": "policy",
-        "target_id": "x",
-        "locality_scope": "全国",
-        "mode": "ordinary",
-    })
-    assert out["locality_scope"] == "national"
-    # owner A：dossier 为 canonical 八值成员，合法 none 归一
-    dossier_out = db._normalize_directive_dossier_payload({
-        "dossier_action_type": "revoke_decree",
-        "target_kind": "dossier",
-        "target_id": "42",
-        "revoke_target_dossier_id": 42,
-        "locality_scope": "无",
-        "mode": "ordinary",
-    })
-    assert dossier_out["target_kind"] == "dossier"
-    assert dossier_out["locality_scope"] == "none"
-    assert int(dossier_out["revoke_target_dossier_id"]) == 42
-    with pytest.raises(ValueError):
-        db._normalize_directive_dossier_payload({
-            "dossier_action_type": "policy",
-            "target_kind": "not_a_kind",
-            "target_id": "x",
-            "mode": "ordinary",
-        })
-    with pytest.raises(ValueError):
-        db._normalize_directive_dossier_payload({
-            "dossier_action_type": "policy",
-            "target_kind": "policy",
-            "target_id": "x",
-            "locality_scope": "全省",
-            "mode": "ordinary",
-        })
-
 # ── #654 断根 tracer（外部行为）────────────────────────────────────
 
 def _insert_directive(db, state, *, text: str, payload: dict, status: str = "draft") -> int:
@@ -534,56 +496,6 @@ def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
     raw = next(r["item_json"] for r in rej if json.loads(r["item_json"]).get("directive_id") == did)
     assert "敕令陕西" not in raw
     assert "甲甲" not in raw
-
-def test_path1_conversational_draft_bad_roster_marks_failed(env):
-    """路 1 _commit_conversational_draft：成案零行 → pending failed、无案卷。"""
-    db, state, _ = env
-    payload = {
-        "text": "清丈天下田亩",
-        "actor": "毕自严",
-        "target_kind": "policy",
-        "target_id": "清丈天下田亩",
-        "locality_scope": "national",
-        "dossier_action_type": "assignment",
-        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
-        "mode": "ordinary",
-        "_canonical_pending_directive": True,
-        "_directive_status": "draft",
-    }
-    cur = db.conn.execute(
-        """
-        INSERT INTO pending_actions
-        (turn, minister_name, kind, action, target_id, payload_json, status)
-        VALUES (?,?,?,?,?,?,?)
-        """,
-        (
-            state.turn, "毕自严",
-            "directive", "拟旨", "清丈天下田亩",
-            json.dumps(payload, ensure_ascii=False), "pending",
-        ),
-    )
-    pa_id = int(cur.lastrowid)
-    db.conn.commit()
-    pa = dict(db.conn.execute(
-        "SELECT * FROM pending_actions WHERE id=?", (pa_id,),
-    ).fetchone())
-    from ming_sim.applier import RejectionCollector
-    result = db._commit_conversational_draft(
-        state, pa, payload, content=db.content,
-        rejection_collector=RejectionCollector(),
-    )
-    assert result is None
-    st = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (pa_id,),
-    ).fetchone()
-    assert st["status"] == "failed"
-    # 回滚后不应残留 directive 案卷
-    n = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
-    # 允许他用例无关行；本 pending 名下必须为空
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM decree_dossiers WHERE pending_action_id=?",
-        (pa_id,),
-    ).fetchone()["n"] == 0
 
 # ── 8×3 locality 矩阵（参数化）──────────────────────────────────
 
@@ -720,15 +632,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
     assert int(pending["revoke_target_dossier_id"]) == int(target_id)
     assert pending["target_kind"] in TARGET_KINDS
 
-    # 2) durable normalization 闭集直校验（无 dossier 暗例外）
-    normalized = db._normalize_directive_dossier_payload(
-        pending, content=content, current_turn=int(state.turn),
-    )
-    assert normalized["target_kind"] == "dossier"
-    assert normalized["locality_scope"] == "none"
-    assert int(normalized["revoke_target_dossier_id"]) == int(target_id)
-
-    # 3) 真实收夜成案入口（commit_pending_actions → normalize → create_decree_dossiers）
+    # 2) 真实收夜成案入口（commit_pending_actions → normalize → create_decree_dossiers）
     before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     revoke_rows = [
@@ -747,7 +651,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
     assert int(stored.get("revoke_target_dossier_id") or 0) == int(target_id)
     assert stored.get("target_kind") == "dossier"
 
-    # 4) dossier 三格 + unknown 拒绝（与矩阵同契约）
+    # 3) dossier 三格 + unknown 拒绝（与矩阵同契约）
     assert resolve_dossier_region_ids(
         db.conn,
         payload={"target_kind": "dossier", "target_id": str(target_id),
@@ -771,13 +675,6 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
             payload={"target_kind": "not_a_kind", "target_id": "x",
                      "locality_scope": "none"},
         )
-    with pytest.raises(ValueError):
-        db._normalize_directive_dossier_payload({
-            "dossier_action_type": "policy",
-            "target_kind": "not_a_kind",
-            "target_id": "x",
-            "mode": "ordinary",
-        })
 
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 

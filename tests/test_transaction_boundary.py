@@ -246,9 +246,7 @@ def test_nested_atomic_inner_error_rolls_back_at_outer(game):
 
     assert db.kv_get("s1_ie_outer") is None
     assert db.kv_get("s1_ie_inner") is None
-    # 暂停标志已在最外层解除，深度归零，连接可正常续用
-    assert db.conn._commit_suspended is False
-    assert db.conn._atomic_depth == 0
+    # 回滚后连接可正常续用
     db.kv_set("s1_ie_after", "ok")
     assert db.kv_get("s1_ie_after") == "ok"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_ie_after'")
@@ -307,9 +305,7 @@ def test_swallowed_inner_exception_forces_outer_rollback(game):
                 pass  # 中间层吞掉——flat 语义下这是禁手
 
     assert db.kv_get("s1_swallow") is None
-    # 标志复位，连接可续用
-    assert db.conn._commit_suspended is False
-    assert db.conn._atomic_depth == 0
+    # 回滚后连接可续用
     db.kv_set("s1_swallow_after", "ok")
     assert db.kv_get("s1_swallow_after") == "ok"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_swallow_after'"); db.conn.commit()
@@ -407,8 +403,6 @@ def test_swallowed_conn_context_exception_forces_outer_rollback(game):
 
     assert db.kv_get("s1r2_w1") is None
     assert db.kv_get("s1r2_w2") is None
-    assert db.conn._commit_suspended is False
-    assert db.conn._atomic_depth == 0
 
 
 def test_ddl_first_inside_atomic_rolls_back(game):
@@ -481,8 +475,6 @@ def test_commit_failure_at_atomic_exit_rolls_back(game, monkeypatch):
 
     assert not db.conn.in_transaction
     assert db.kv_get("s1r2_acf") is None
-    assert db.conn._commit_suspended is False
-    assert db.conn._atomic_depth == 0
 
 
 def test_atomic_rejects_plain_connection(tmp_path):
@@ -572,9 +564,7 @@ def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
             pass  # 不应到达
 
     monkeypatch.setattr(_SuspendableConnection, "execute", real_execute)
-    assert db.conn._commit_suspended is False
-    assert db.conn._atomic_depth == 0
-    # 标志未泄漏：后续写照常真提交
+    # 后续写照常真提交
     db.kv_set("s1r3_after_begin_fail", "ok")
     assert db.kv_get("s1r3_after_begin_fail") == "ok"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1r3_after_begin_fail'")

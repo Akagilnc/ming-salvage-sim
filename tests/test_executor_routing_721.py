@@ -222,7 +222,8 @@ def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env
     ).fetchone()["payload_json"])
     assert "assignee" not in bare_payload
     assert bare_payload.get("actor") == "陈新甲"
-    db.commit_pending_actions(state, content=content, action_ids=[bare_id])
+    with pytest.raises(ValueError):
+        db.commit_pending_actions(state, content=content, action_ids=[bare_id])
     assert db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (bare_id,),
     ).fetchone() is None
@@ -370,8 +371,6 @@ def test_rolled_back_collector_reuse_does_not_mirror_orphan(env, monkeypatch, tm
 
     rows = [json.loads(line) for line in mirror.read_text(encoding="utf-8").splitlines()]
     assert [json.loads(row["item_json"])["marker"] for row in rows] == ["committed"]
-    assert db.conn._runtime_commit_callbacks == []
-    assert db.conn._runtime_rollback_callbacks == []
 
 
 def test_directive_routing_rejection_rolls_back_with_outer_owner(

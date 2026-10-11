@@ -7,10 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import web_app
-from ming_sim.db import (
-    GameDB,
-    _player_army_situation,
-)
+from ming_sim.db import GameDB
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 
@@ -123,15 +120,13 @@ def _find_army_in_map_nodes(nodes, army_id: str = ARMY):
     raise AssertionError(f"map_nodes 未挂载军队 {army_id}")
 
 
-def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
+def _assert_structured_situation(card: dict, label: str, expected_tier: str) -> None:
     assert _SIT_KEYS <= set(card.keys()), f"{label} 缺 situation 三键: {sorted(card)}"
     assert _RAW_KEYS.isdisjoint(card.keys()), f"{label} 泄漏 raw 轴: {sorted(_RAW_KEYS & set(card.keys()))}"
     assert _MUTINY_ORDINAL_KEYS.isdisjoint(card.keys()), (
         f"{label} 泄漏 mutiny ordinal/五持久列: {sorted(_MUTINY_ORDINAL_KEYS & set(card.keys()))}"
     )
-    assert card["mutiny_tier"] == sit["mutiny_tier"], f"{label}.mutiny_tier"
-    assert card["morale_text"] == sit["morale_text"], f"{label}.morale_text"
-    assert isinstance(card["mutiny_tier"], str)
+    assert card["mutiny_tier"] == expected_tier
     assert isinstance(card["morale_text"], str)
     assert isinstance(card["arrears_text"], str)
 
@@ -166,23 +161,19 @@ def test_structured_situation_on_payload_and_map_nodes(game):
         (ARMY,),
     )
     db.conn.commit()
-    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    sit = _player_army_situation(row, db._army_pay(row))
-    assert sit["mutiny_tier"] == expected
-
     card = _payload_by_id(db)[ARMY]
-    _assert_structured_situation(card, sit, "army_payload")
+    _assert_structured_situation(card, "army_payload", expected)
 
     runtime = _web_runtime(db, state, content)
     payload = web_app.WebGame.state_payload(runtime)
     armies = {a["id"]: a for a in (payload.get("armies") or [])}
     assert ARMY in armies
-    _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
+    _assert_structured_situation(armies[ARMY], "state_payload.armies", expected)
 
     map_army = _find_army_in_map_nodes(payload.get("map_nodes") or [])
-    _assert_structured_situation(map_army, sit, "map_nodes.armies")
+    _assert_structured_situation(map_army, "map_nodes.armies", expected)
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
-    _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
+    _assert_structured_situation(map_army2, "WebGame.map_nodes", expected)
 
 
 def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
@@ -230,9 +221,6 @@ def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
         assert float(row["arrears"]) == pytest.approx(0)
         assert int(row["manpower"]) == 10000
         assert derive_army_mutiny_state(row) == "哗变"
-        pay = reopened._army_pay(row)
-        sit_before = _player_army_situation(row, pay)
-        assert sit_before["mutiny_tier"] == "哗变"
         card_before = _payload_by_id(reopened)[ARMY]
         assert card_before["mutiny_tier"] == "哗变"
 
@@ -252,8 +240,6 @@ def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
         assert float(after["arrears"]) == pytest.approx(0)
         assert int(after["manpower"]) == 10000
         assert derive_army_mutiny_state(after) == "不满"
-        sit_after = _player_army_situation(after, reopened._army_pay(after))
-        assert sit_after["mutiny_tier"] == "不满"
         assert _payload_by_id(reopened)[ARMY]["mutiny_tier"] == "不满"
     finally:
         reopened.close()

@@ -31,7 +31,7 @@ def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
         raise ValueError("decision options 须为 list")
     for option in options:
         if not isinstance(option, dict):
-            continue
+            raise ValueError("decision option 须为 object")
         label = str(option.get("label") or "")
         if not label.strip() or label in bound:
             raise ValueError(f"decision option label 为空或重复：{label!r}")

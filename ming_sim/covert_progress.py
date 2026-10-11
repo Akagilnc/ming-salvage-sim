@@ -20,6 +20,7 @@ from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 from ming_sim.value_matrix import (
+    normalize_axis,
     normalize_axes,
     normalize_direction,
 )
@@ -151,9 +152,6 @@ def _parse_seed_guilt(seed_guilt: object) -> dict:
     """Durable characters.seed_guilt object. Legal empty → {}. Corrupt raises."""
     if isinstance(seed_guilt, Mapping):
         return dict(seed_guilt)
-    text = str(seed_guilt or "").strip()
-    if not text or text == "{}":
-        return {}
     from ming_sim.models import loads_persistent_json_object
     return loads_persistent_json_object(seed_guilt, surface="characters.seed_guilt")
 
@@ -485,14 +483,22 @@ def build_covert_task_contract(
 
 def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
     """Validate a frozen contract without rebuilding or supplying read-time defaults."""
-    if not isinstance(raw, Mapping) or raw.get("version") != CONTRACT_VERSION:
+    if not isinstance(raw, Mapping) or isinstance(raw.get("version"), bool) or raw.get("version") != CONTRACT_VERSION:
         return None
     delivery = raw.get("delivery")
     if not isinstance(delivery, Mapping):
         return None
-    if not str(raw.get("kind") or "").strip() or not normalize_axes(raw.get("axes")):
+    kind, axes = raw.get("kind"), raw.get("axes")
+    if not isinstance(kind, str) or not kind.strip():
         return None
-    if raw.get("direction") not in (-1, 1):
+    if not isinstance(axes, list) or not axes or any(normalize_axis(axis) is None for axis in axes):
+        return None
+    if isinstance(raw.get("direction"), bool) or raw.get("direction") not in (-1, 1):
+        return None
+    if isinstance(delivery.get("effect_sign"), bool) or delivery.get("effect_sign") not in (-1, 1):
+        return None
+    fields = delivery.get("canonical_fields")
+    if fields is not None and not isinstance(fields, list):
         return None
     inv_target = str(
         raw.get("investigation_target") or delivery.get("investigation_target") or ""
@@ -504,8 +510,6 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
             return None
         if qty <= 0.0:
             return None
-        if delivery.get("effect_sign") not in (-1, 1):
-            return None
         if list(delivery.get("canonical_fields") or []):
             return None
         if str(delivery.get("investigation_target") or "") != inv_target:
@@ -516,8 +520,6 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
             delivery.get("unit"), delivery.get("target_units"),
         )
     except CovertContractError:
-        return None
-    if delivery.get("effect_sign") not in (-1, 1):
         return None
     if list(delivery.get("canonical_fields") or []) != canonical_fields_for_delivery(unit=unit):
         return None
@@ -538,17 +540,20 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
 def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[Dict[str, object]]:
     if not isinstance(dossier, Mapping):
         return None
+    from ming_sim.models import loads_persistent_json_object
+
     payload = dossier.get("payload")
-    if not isinstance(payload, Mapping):
-        raw_json = dossier.get("payload_json")
-        from ming_sim.models import loads_persistent_json_object
-        payload = (
-            loads_persistent_json_object(raw_json, surface="dossier.payload_json")
-            if isinstance(raw_json, str) else None
-        )
-    if not isinstance(payload, Mapping):
+    if payload is None:
+        payload = loads_persistent_json_object(dossier.get("payload_json"), surface="dossier.payload_json")
+    elif not isinstance(payload, Mapping):
+        raise CovertContractError("密令案卷 payload 须为对象")
+    raw = payload.get(CONTRACT_KEY)
+    if raw is None or raw == {}:
         return None
-    return coerce_covert_task_contract(payload.get(CONTRACT_KEY))
+    contract = coerce_covert_task_contract(raw)
+    if contract is None:
+        raise CovertContractError("密令案卷 typed covert-task contract 腐坏")
+    return contract
 
 
 def require_covert_task_contract(dossier: Mapping[str, object] | None) -> Dict[str, object]:

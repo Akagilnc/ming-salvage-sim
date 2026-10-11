@@ -21,7 +21,7 @@ from ming_sim.army_pay import (
     settle_hub_central_army_pay,
 )
 from ming_sim.assets import format_wanliang_amount
-from ming_sim.constants import TURN_UNIT
+from ming_sim.constants import SCORE_METRICS as ISSUE_METRIC_KEYS, TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
@@ -379,7 +379,6 @@ def compute_budget_lines(
     return budget
 
 
-ISSUE_METRIC_KEYS = {"民心", "皇威"}
 ISSUE_METRIC_LOCK_CAPS = {
     "民心": 8, "皇威": 5,
 }

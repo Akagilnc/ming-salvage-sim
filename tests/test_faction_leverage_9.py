@@ -325,8 +325,7 @@ def test_leverage_clamps_at_zero_no_negative(game):
     offset = db.conn.execute(
         "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
     ).fetchone()["leverage_offset"]
-    weight_sum = db._faction_office_weight_sum(faction)
-    raw = round(offset + weight_sum)
+    raw = round(offset)  # 所有在朝成员已退场，按无职不承权合同权重为零
     if raw >= 0:
         pytest.skip(f"{faction} 全退后未 clamp 值非负(raw={raw})，非下界触底场景")
     after = db.faction_leverage(faction)
@@ -349,51 +348,14 @@ def test_add_character_appointment_lifts_faction_leverage(game):
         "SELECT name FROM characters WHERE name=?", (new_name,)
     ).fetchone() is None, "测试用新人物不应已在册"
     before = db.faction_leverage(faction)
-    before_ws = db._faction_office_weight_sum(faction)
     result = apply_office_appointment(
         db, state, content, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
     )
     assert not result.get("rejected"), f"新大臣任命不应被拒：{result}"
     assert result.get("kind") == "appoint", f"应走新建档(appoint)路：{result}"
-    # 新成员确入册且 active/ming（add_character 落库成功），权重和随之上升。
-    after_ws = db._faction_office_weight_sum(faction)
-    assert after_ws > before_ws, f"新建大臣应使{faction}权重和上升(before={before_ws} after={after_ws})"
     after = db.faction_leverage(faction)
     assert after > before, (
         f"经 add_character 新建大臣加入{faction}后 leverage 应上升(before={before} after={after})"
-    )
-
-
-def test_active_member_empty_office_contributes_zero_weight(game):
-    """#9 cmr R2 finding#3：active + power_id='ming' + office='' + office_type 非空(理论可达边界)
-    对 faction 权重和贡献为 0（无实职=不贡献 leverage）。修前 _member_office_weight 会把
-    _office_rank_multiplier('') 的默认 1.0 × office_type 域权重算进去 → 误算满权重（红）。"""
-    db, state, content = game
-    faction = "东林"
-    # 取一个该派系在朝握官成员，裸 UPDATE 把 office 清空但保留 office_type='兵部'，制造边界态。
-    row = db.conn.execute(
-        "SELECT name, office_type FROM characters WHERE faction=? AND status='active' AND power_id='ming' "
-        "AND office_type NOT IN ('后宫','宗藩','未仕','') LIMIT 1",
-        (faction,),
-    ).fetchone()
-    if row is None:
-        pytest.skip(f"{faction} 无握官在朝成员（数据依赖）")
-    name = row["name"]
-    # 该成员单独的权重贡献：office 空、office_type='兵部' → 应为 0。
-    db.conn.execute(
-        "UPDATE characters SET office='', office_type='兵部' WHERE name=?", (name,)
-    )
-    db.conn.commit()
-    # 端到端：把其余在朝成员全退场后，仅剩该「空 office」成员，权重和应为 0。
-    others = db.conn.execute(
-        "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' AND name!=?",
-        (faction, name),
-    ).fetchall()
-    for o in others:
-        db.set_character_status(state, o["name"], "dismissed", reason="清场")
-    weight_sum = db._faction_office_weight_sum(faction)
-    assert weight_sum == 0.0, (
-        f"仅剩 active 空 office 成员时 faction 权重和应为 0(weight_sum={weight_sum})"
     )
 
 
@@ -421,6 +383,7 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
         if cur is None:
             continue
         db.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (SENTINEL, f))
+        db.conn.execute("UPDATE characters SET office='' WHERE faction=?", (f,))
         dirtied.append(f)
     db.conn.commit()
     assert dirtied, "白名单派系应至少有一个在 factions 表（数据前提）"
@@ -436,8 +399,7 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
     offset = db.conn.execute(
         "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
     ).fetchone()["leverage_offset"]
-    weight_sum = db._faction_office_weight_sum(faction)
-    expected = max(0, min(100, round(offset + weight_sum)))
+    expected = max(0, min(100, round(offset)))
     reconciled = db.faction_leverage(faction)
     assert reconciled == expected, (
         f"recompute_all 后{faction} leverage 应= 公式值(stale={stale} reconciled={reconciled} expected={expected})"
@@ -449,8 +411,7 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
         ).fetchone()
         if row is None:
             continue
-        ws = db._faction_office_weight_sum(f)
-        exp = max(0, min(100, round(float(row["leverage_offset"] or 0) + ws)))
+        exp = max(0, min(100, round(float(row["leverage_offset"] or 0))))
         assert row["leverage"] == exp, f"{f} 应被 recompute_all 重算到公式值(got={row['leverage']} exp={exp})"
 
 
@@ -680,10 +641,9 @@ def test_half_weight_odd_baseline_no_round_drift(game):
         db.set_character_status(state, m["name"], "dismissed", reason="清场")
     keeper = members[0]["name"]
     db.set_character_office(keeper, "礼部侍郎", "礼部")
-    assert db._faction_office_weight_sum(faction) == 2.5
-    # 设奇数基线 79，直接写 offset（不走已退役的老档反推校准）。
+    # 设奇数基线 79 与礼部侍郎的已声明权重 2.5，不以被测实现当 oracle。
     baseline = 79
-    weight = db._faction_office_weight_sum(faction)
+    weight = 2.5
     db.conn.execute(
         "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
         (baseline, baseline - weight, faction),
