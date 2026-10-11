@@ -71,11 +71,11 @@ def delete_sqlite_db_files_or_raise(db_path: str) -> None:
 
 
 def copy_sqlite_file(source: str, dest: str) -> None:
-    """把 ``source`` 的库内容整份覆盖到 ``dest``（SQLite backup API，两端共用）。
+    """把 ``source`` 的库内容整份覆盖到 ``dest``（SQLite backup API）。
 
     这是「读档 = 用存档覆盖主库」那一步的唯一实现（#1902 判词：此前
     ``WebGame.load_save`` 与 ``cli._cli_load`` 各带一份逐行相同的 sqlite backup
-    闭包——两份已删，两端都把本函数当 ``replace_database`` 的 destructive_replace）。
+    闭包——两份已删，Web 把本函数当 ``replace_database`` 的 destructive_replace）。
     两个连接都必须关（``finally``），否则 Windows/打包环境下源文件仍被占用。
     """
     import sqlite3

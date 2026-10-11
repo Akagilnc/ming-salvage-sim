@@ -367,7 +367,7 @@ def is_vassal_prince(character: "Character") -> bool:
     受守面清单（新增同类面时一并加，勿漏）：
     - web_app: visible_in_court / in_talent_pool / api_create_secret_order
     - materials: 人物/朝臣名册.txt
-    - session: can_summon（召对 choke，覆盖 session/web/CLI choose_minister 三路）/ list_ministers（召见阶段名册）
+    - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
     - db: create_secret_order（密令唯一 DB 写口 choke）/ _commit_office_action 罢免（玩家罢免）
     roster 类同时排 后宫/未仕，用 office_type in ('后宫','宗藩','未仕')；本 helper 只判宗藩这一面。
@@ -390,7 +390,6 @@ def is_weishi(character: "Character") -> bool:
     受守面清单（新增同类面时一并加，勿漏；形制同 is_vassal_prince）：
     - session: can_summon（朝臣支；后宫走专路）
     - web_app: visible_in_court
-    - cli: terminal.choose_minister
     - cli_backend: _draft_intent_character_roster_facts（拟诏事实块）
     - materials: 人物/朝臣名册.txt
     - db: current_court_roster_rows（已排）

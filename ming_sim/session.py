@@ -133,7 +133,7 @@ class DirectiveView:
 
 @dataclass
 class AudienceChatTurn:
-    """#1902：一轮召对的入口无关句柄（建轮/快照/问话 id），两端入口共用同一生命周期。"""
+    """#1902：一轮召对的入口无关句柄（建轮/快照/问话 id）。"""
 
     chat_turn_id: int
     accepted_turn: int
@@ -251,7 +251,7 @@ def _is_summonable_court_minister(
     """在朝可召资格 = 在册身份归一 ∧ 非宗藩 ∧ 非未仕（#1317 r2 单真源）。
 
     受守面清单见 models.is_weishi / is_vassal_prince；can_summon（朝臣支）/
-    visible_in_court / CLI choose_minister / 拟诏事实块共吃本谓词。禁另造过滤表。
+    visible_in_court / 拟诏事实块共吃本谓词。禁另造过滤表。
     resolve 成本规避走 resolve_power_id 惰性入参——类型短路不得与本谓词条件并存。
     """
     if character is None or is_vassal_prince(character) or is_weishi(character):
@@ -914,10 +914,10 @@ class GameSession:
         write_gate: Any = None,
         barrier_ticket: Any = None,
     ) -> None:
-        """#526：回话落库后由 Web/CLI epilogue 触发高置信收夜（收夜=封窗=提交）。
+        """#526：回话落库后由 Web epilogue 触发高置信收夜（收夜=封窗=提交）。
 
         失败按 ADR 0005 响亮上抛——不得静默当成已退朝；夜保持可恢复。
-        write_gate：既有 runtime 写锁（Web `_runtime_write_gate` / CLI `_cli_write_gate`）；
+        write_gate：既有 runtime 写锁（Web `_runtime_write_gate`）；
         未显式传入时回落 session._write_gate。禁第二锁；缺锁由 close_night 卫兵响亮。
 
         #1353：经 session 队列屏障入队——须等已领尾随票清零后再 close（调用方不得
@@ -1012,7 +1012,7 @@ class GameSession:
 
         mark_turn_translation_done(self.db, chat_turn_id, commit=True)
 
-    # ── 召对话轮生命周期（#1902：Web 与 CLI 入口共核，入口不再各编排一份）────────
+    # ── 召对话轮生命周期（#1902：入口只做适配，不持业务编排）────────
     # 入口只做输入／呈现适配；建轮、快照、问话与回话落库、回滚与失败终态全在
     # 这里。两端曾各写一份同形编排（WebGame._start_chat_turn/_fail_chat_turn_and_reload
     # 与 cli/terminal.py 内联的同一段），那份副本随本方法落地删除。
@@ -1069,7 +1069,7 @@ class GameSession:
     def assert_audience_chat_admission(self, *, what: str = "召对") -> None:
         """召对开轮/重试已有业务资格：月末相位、收夜冻结、本夜在飞未落。
 
-        #1902：资格真源在会话共核；Web/CLI 入口只映射呈现，不各持业务副本。
+        #1902：资格真源在会话共核；Web 入口只映射呈现，不持业务副本。
         不添加新状态、新拒绝理由或资源机制——承接既有规则原文。
         """
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
@@ -1207,7 +1207,7 @@ class GameSession:
     def pending_audience_reply_retries(
         self, *, night_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """本夜召对轮里待重试的中断回话（问话已落、回话未落）——两端共核取数。
+        """本夜召对轮里待重试的中断回话（问话已落、回话未落）。
 
         #1902 F2：建轮归属恒为「殿上」（见 begin_audience_chat_turn 的 T1 说明），
         而问话/回话挂被召大臣名。此前 CLI 拿大臣名去查 ``get_interrupted_reply_retries``
@@ -1238,7 +1238,7 @@ class GameSession:
     def pending_post_reply_retries(
         self, *, night_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """本夜殿上已落回话的尾随失败——两端共核取数（#1902 L1）。
+        """本夜殿上已落回话的尾随失败（#1902 L1）。
 
         与 ``pending_audience_reply_retries`` 同形：共用 ``_hall_turn_ids_for_night``
         夜域筛选；状态源仍是 ``get_post_reply_retries``，不与中断回话合并语义。
@@ -2343,7 +2343,7 @@ class GameSession:
         # pre_settle owning transaction 与财政等副作用一起物化。
         for pending in self.db.issues.list_directives(self.state.turn, statuses=('pending',)):
             self.db.issues.confirm_directive(int(pending["id"]))
-        # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
+        # #658：Web free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
         # #1769：产物错 → 告诉 LLM 失败事实与原产物后重交；耗尽保持 draft、月照过
         # （替代 #1591「产物错即整月不推进 + 引擎串透传」；真故障仍 SettlementAbort）。
@@ -2522,9 +2522,9 @@ class GameSession:
         return target
 
     def save_to(self, name: str) -> Dict[str, object]:
-        """手动存档到 ``saves/<name>.db``（#1902：两端共用；入口只管取名与呈现）。
+        """手动存档到 ``saves/<name>.db``（#1902：入口只管取名与呈现）。
 
-        存档名清洗与路径拼装真源在 ``paths.save_slot_path``，Web 菜单、CLI 入口与
+        存档名清洗与路径拼装真源在 ``paths.save_slot_path``，Web 菜单与
         会话层同用一份（Web 对外仍把自己的非法名翻成 400）。
         """
         from ming_sim.paths import safe_save_name, save_slot_path
