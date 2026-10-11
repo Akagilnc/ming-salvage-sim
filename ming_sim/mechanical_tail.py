@@ -308,7 +308,6 @@ def _submit_tail(
             def record_failure() -> None:
                 pack_path = write_error_pack(
                     session.db, session.state, exc=exc,
-                    extracted=None, resolve_ctx=None,
                 )
                 from ming_sim import month_chain
                 chain = month_chain._load_chain(session.db, closed_turn)

@@ -1558,15 +1558,18 @@ class WebGame:
                 and self.db.get_resolve_context(self.state.turn) is not None
                 and not pending_decisions
             )
-            # #1846 / ADR 0157：settling 恢复面只投影月链失败与错误包；无 ready 重放分流。
+            # One failure projection for night forecasts, settlement and rescript continuation.
             settlement_recovery = None
-            if turn_phase == TurnPhase.SETTLING.value:
+            from ming_sim.month_chain import month_chain_call_failure
+            month_failure = month_chain_call_failure(self.db, int(self.state.turn))
+            if month_failure is not None and month_failure.get("step") == "edict_forecast":
+                from ming_sim.decree_forecast import failed_decree_forecast
+                month_failure = failed_decree_forecast(self.session)
+            if turn_phase == TurnPhase.SETTLING.value or month_failure is not None:
                 from ming_sim.error_pack import (
                     latest_error_pack_for_turn,
                     settlement_abort_message,
                 )
-                from ming_sim.month_chain import month_chain_call_failure
-                month_failure = month_chain_call_failure(self.db, int(self.state.turn))
                 if month_failure is not None:
                     # 本次失败记录是诊断包真源；没有本次包就空着，不借同月旧包。
                     settlement_recovery = {

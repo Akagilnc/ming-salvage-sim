@@ -1372,8 +1372,7 @@ class GameSession:
         return state.turn_phase in FRONT_HALF_DONE_PHASES
 
     def _refuse_if_settling(self) -> None:
-        """FRONT_HALF_DONE 冻结诏稿变更：恢复窗口新增/确认的 draft 会被 settle 的
-        mark_directives_issued 连带标 issued，而重放 delta 不含它们=幽灵颁布（ship-pre r1）。"""
+        """Freeze decree changes once the month's front half has committed."""
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
             raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
 
@@ -1502,7 +1501,6 @@ class GameSession:
                 # 已持久载荷损坏：系统故障，不得跳过进补交空 carry（#1897 E1）。
                 pack_path = write_error_pack(
                     self.db, self.state, exc=durable_exc,
-                    extracted=None, resolve_ctx=None,
                 )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
@@ -1576,7 +1574,7 @@ class GameSession:
                     }
                     continue
                 pack_path = write_error_pack(
-                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                    self.db, self.state, exc=exc,
                 )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
@@ -1605,7 +1603,6 @@ class GameSession:
                     continue
                 pack_path = write_error_pack(
                     self.db, self.state, exc=write_exc,
-                    extracted=None, resolve_ctx=None,
                 )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
@@ -1645,6 +1642,14 @@ class GameSession:
         # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
         write_queue = get_session_write_queue(self)
         def _drain_catch_up_and_continue() -> None:
+            from ming_sim.decree_forecast import failed_decree_forecast
+            forecast_failure = failed_decree_forecast(self)
+            if forecast_failure is not None:
+                raise SettlementAbort(
+                    str(forecast_failure["message"]), turn=int(self.state.turn),
+                    stage=str(forecast_failure["step"]),
+                    error_pack_path=forecast_failure.get("error_pack_path"),
+                )
             # 票的完成只表示本次 worker 已终止，不代表机械尾已终结。
             # 屏障等完票后复查持久状态；非耗尽异常留下 pending 时不能过月。
             from ming_sim.mechanical_tail import _pending_mechanical_tails
@@ -1667,7 +1672,6 @@ class GameSession:
                     except RuntimeError as pending_exc:
                         pack_path = write_error_pack(
                             self.db, self.state, exc=pending_exc,
-                            extracted=None, resolve_ctx=None,
                         )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
@@ -1689,7 +1693,7 @@ class GameSession:
                     f"召对转译重试耗尽，待补 {len(still_pending)} 轮"
                 )
                 pack_path = write_error_pack(
-                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                    self.db, self.state, exc=exc,
                 )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),

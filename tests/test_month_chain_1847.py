@@ -445,8 +445,10 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
     }]
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    assert isinstance(blocked.value.__cause__, RuntimeError if fail_at == "unexpected" else LLMUnavailable)
+    assert blocked.value.error_pack_path
     assert month_chain.month_chain_call_failure(db, int(state.turn))["kind"] == (
         "code_exception" if fail_at == "unexpected" else "model_exhausted"
     )
@@ -546,12 +548,10 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     desk_row = session.pending_decisions()[0]
     payload = _hitl_payload(desk_row)
 
-    try:
+    with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-        raised = None
-    except SettlementAbort as exc:
-        raised = exc
-    assert raised is not None
+    assert isinstance(blocked.value.__cause__, LLMUnavailable)
+    assert blocked.value.error_pack_path
     assert db.staged_declarations.questions_for(ref)
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 
@@ -585,12 +585,10 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     desk_row = session.pending_decisions()[0]
     payload = _hitl_payload(desk_row)
 
-    try:
+    with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-        raised = None
-    except SettlementAbort as exc:
-        raised = exc
-    assert raised is not None
+    assert isinstance(blocked.value.__cause__, LLMUnavailable)
+    assert blocked.value.error_pack_path
     chain = _month_chain_of(db, closed_turn)
     assert chain.get("world_continued") is not True
     assert chain.get("world_questions")

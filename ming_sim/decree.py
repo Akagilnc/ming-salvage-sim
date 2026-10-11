@@ -676,10 +676,8 @@ def resolve_directives(
 ) -> ResolveResult:
     """玩家过月入口：前括号之后走 ADR 0157 主链，不再用 extractor 落账。
 
-    source（#146 cmr r2）：本回合结算 delta 的来源。默认 player_decree——正常皇帝下旨路
-    行为不变。崩溃恢复 fallthrough（SETTLING 非 ready ctx 重走本函数）须把存档 ctx['source']
-    经 _provenance_from_stored 还原后传入，使 provenance 按构造保真（system_simulation 重跑仍
-    记 system、对玩家静默），不依赖「非 ready SETTLING ctx 恒 player」这一脆弱不变式。
+    source：本回合结算声明的来源，默认 player_decree。恢复时由 resolve context 的
+    source 经 _provenance_from_stored 还原后传入，保持 system_simulation 等来源不变。
 
     cheat_directive: 作弊控制台（Ctrl+~）下的强制结算指令。非空时交给本月世界段，
     按字面当既成事实，不另开 extractor。
@@ -872,13 +870,9 @@ def prepare_resolve_front_half(
     content=None,
     source: object = Provenance.player_decree,
 ) -> List[Dict[str, object]]:
-    """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
+    """Commit pre_settle, its phase and the monthly context in one transaction.
 
-    玩家月链通过 resolve_directives 调用此 helper。外层 atomic 使 settling 相位与
-    ready=0 context 同生共死。已有 context 的 FRONT_HALF_DONE 重入只读返回既有
-    transit_arrivals，禁止 placeholder upsert 覆写 durable 真源（ready=0 原诏/source
-    ），不二次 tick/财政。返回本回合 `transit_arrivals`
-    （无抵达 = `[]`）。
+    A completed front half is read back, never applied twice.
     """
     # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
     # 默认空字段会冲掉已有原诏/source。
@@ -888,13 +882,7 @@ def prepare_resolve_front_half(
             from ming_sim.month_chain import transit_arrivals_from_payload
             return transit_arrivals_from_payload(existing.get("simulator_payload"))
 
-    # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
-    # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
-    # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。后续同键 upsert 保留本月上下文。
-    #
-    # 占位与 settling 相位同事务可见（PR #90 R1 codex P2）：外层 atomic 把 pre_settle
-    # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
-    # ——要么两者都见，要么整段回滚重来。
+    # Preserve the decree across reload, together with pre_settle's phase.
     try:
         transit_arrivals_box: List[Dict[str, object]] = []
         with atomic_and_reload(db, state, content=content):
@@ -903,14 +891,16 @@ def prepare_resolve_front_half(
                 content=content,
                 transit_arrivals_out=transit_arrivals_box,
             )
-            # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
-            placeholder_payload = {
-                "transit_arrivals": list(transit_arrivals_box),
-                "open_affairs": db.affairs.input_brief(db.textual_facts),
-            }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（同 turn 占位重入时尤甚）。
             prior_placeholder = db.get_resolve_context(int(state.turn))
+            placeholder_payload = dict(
+                prior_placeholder.get("simulator_payload") or {}
+            ) if prior_placeholder is not None else {}
+            placeholder_payload.update({
+                "transit_arrivals": list(transit_arrivals_box),
+                "open_affairs": db.affairs.input_brief(db.textual_facts),
+            })
             preserved_attendant = (
                 str(prior_placeholder.get("attendant_message") or "")
                 if isinstance(prior_placeholder, dict)

@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import shutil
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import ming_sim.decree as decree_mod
 import ming_sim.decree_forecast as forecast_mod
 import ming_sim.month_translate as month_translate
@@ -14,7 +16,7 @@ from ming_sim.audience_night import mark_actions_night_approved, open_night
 from ming_sim.declaration_dispatch import (
     held_dossier_decree_ref, pending_action_decree_ref, stage_declaration,
 )
-from ming_sim.exceptions import LLMUnavailable
+from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
@@ -361,7 +363,8 @@ def _policy_payload(actor: str, *, text: str, mode: str = "ordinary") -> dict:
     }
 
 
-def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypatch):
+@pytest.mark.parametrize("status_code", [429, 502, None])
+def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypatch, status_code):
     db, state, content = game
     night = open_night(db, state)
     minister = next(iter(content.characters.values()))
@@ -371,9 +374,24 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
     )
     calls = []
 
-    def judge(_agent, _prompt, **_kwargs):
+    def judge(_agent, prompt, **_kwargs):
         calls.append(1)
-        raise LLMUnavailable("rate limited", status_code=429)
+        if len(calls) == 1:
+            if status_code is None:
+                raise RuntimeError("forecast code fault")
+            raise LLMUnavailable("provider failure", status_code=status_code)
+        context = json.loads(prompt)
+        dossier = context["dossiers"][0]
+        faction = context["factions"][0]["name"]
+        return json.dumps({"verdicts": [{
+            "dossier_id": dossier["id"], "decision": "rejected",
+            "blocked_layer": "palace_rescript", "reason": "越制",
+            "primary_opponents": [{"kind": "faction", "key": faction}],
+            "gatekeeper_id": None,
+            "affected_parties": [{"kind": "faction", "key": faction,
+                                  "direction": "negative", "intensity": "weak"}],
+            "criteria_snapshot": dossier["criteria_snapshot_source"],
+        }]})
 
     def translate_fn(prompt, llm_config):
         return {
@@ -403,6 +421,26 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
     assert phases
     assert all(str(row["post_reply_recovery"] or "") == "" for row in phases)
     assert all(str(row["post_reply_error_pack_path"] or "") == "" for row in phases)
+    from ming_sim.month_chain import month_chain_call_failure
+    failure = month_chain_call_failure(db, state.turn)
+    if status_code == 429:
+        assert failure is None
+    else:
+        assert failure["kind"] == ("model_exhausted" if status_code else "code_exception")
+        assert failure["step"] == "edict_forecast"
+        assert failure["decree_ref"] == pending_action_decree_ref(pending_id, 1)
+        assert Path(failure["error_pack_path"]).is_dir()
+        with pytest.raises(SettlementAbort) as blocked:
+            sess.await_translations_before_month()
+        assert blocked.value.error_pack_path == failure["error_pack_path"]
+        assert calls == [1]
+        assert forecast_mod.retry_failed_decree_forecast(sess)
+        wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
+        assert calls == [1, 1]
+        assert month_chain_call_failure(db, state.turn) is None
+        stored = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
+        assert stored[0].verdict["decision"] == "rejected"
+        assert not forecast_mod.retry_failed_decree_forecast(sess)
 
 
 def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
