@@ -102,23 +102,6 @@ class PersonLogStore:
             self._conn.commit()
         return int(cur.lastrowid or 0)
 
-    def count_by_origin(
-        self, origin_ref: str, *, turn: int, action: str = "",
-    ) -> int:
-        """How many log lines this origin produced in one turn (optionally one action).
-
-        Counted in SQL so the origin/turn index applies — the caller asks "how
-        much of this origin landed", not "show me the rows".
-        """
-        sql = "SELECT COUNT(*) FROM person_logs WHERE origin_ref=? AND turn=?"
-        params: list[object] = [str(origin_ref or ""), int(turn)]
-        act = str(action or "").strip()
-        if act:
-            sql += " AND action=?"
-            params.append(act)
-        row = self._conn.execute(sql, params).fetchone()
-        return int(row[0]) if row is not None else 0
-
     def write_delete_relation_edge_events_for_chat_turn(self, params: Any = ()) -> Any:
         return self._conn.execute('DELETE FROM relation_edge_events WHERE origin LIKE ?', params)
 

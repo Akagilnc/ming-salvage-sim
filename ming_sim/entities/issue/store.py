@@ -32,19 +32,6 @@ ISSUE_COLUMNS = frozenset({
     "resolution_summary", "last_advance_turn", "closed_turn", "affair_id",
 })
 
-TURN_DIRECTIVE_COLUMNS = frozenset({
-    "source_pending_action_id",
-    "id", "turn", "year", "period", "event_id", "actor", "text", "source",
-    "status", "notes", "dossier_payload_json", "created_at", "updated_at",
-})
-
-_ADVANCE_COLUMNS = (
-    "issue_id", "turn", "trigger_kind", "trigger_ref", "delta_bar",
-    "from_value", "to_value", "from_stage_text", "to_stage_text",
-    "narrative", "metric_delta",
-)
-
-
 def _checked(values: Mapping[str, object]) -> list[str]:
     return checked_columns(values, ISSUE_COLUMNS, what="issues")
 
@@ -82,17 +69,6 @@ class IssueStore:
         )
         return int(cursor.rowcount or 0)
 
-    def append_advance(self, row: Mapping[str, object]) -> None:
-        checked_columns(row, set(_ADVANCE_COLUMNS), what="issue_advances")
-        columns = [column for column in _ADVANCE_COLUMNS if column in row]
-        if "issue_id" not in columns or "turn" not in columns or "trigger_kind" not in columns:
-            raise ValueError("issue_advances needs issue_id, turn, trigger_kind")
-        placeholders = ", ".join("?" for _ in columns)
-        self._conn.execute(
-            f"INSERT INTO issue_advances ({', '.join(columns)}) VALUES ({placeholders})",
-            [row[column] for column in columns],
-        )
-
     def affair_id_of(self, issue_id: int) -> int:
         row = self._conn.execute(
             "SELECT affair_id FROM issues WHERE id=?", (int(issue_id),),
@@ -114,9 +90,6 @@ class IssueStore:
 
     def read_event_issue_refs(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT origin_ref FROM issues WHERE origin_kind='event_pool'", params).fetchall()
-
-    def read_list_commitments_for_dossier(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM issues WHERE origin_ref=? ORDER BY id', params).fetchall()
 
     def read_list_closed_issues_at(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM issues WHERE closed_turn = ? AND status IN ('resolved','failed','dropped') ORDER BY id", params).fetchall()
@@ -203,30 +176,6 @@ class IssueStore:
             )
             return int(cursor.lastrowid)
 
-    def snapshot_directive_rows(self) -> Any:
-        return self._conn.execute("SELECT * FROM turn_directives").fetchall()
-
-    def restore_directive_row(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-        upsert_by_pk(
-            self._conn, "turn_directives", row, pk="id",
-            allowed=TURN_DIRECTIVE_COLUMNS, what="turn_directives",
-        )
-
-    def delete_directive_row(self, directive_id: object) -> None:
-        self._conn.execute("DELETE FROM turn_directives WHERE id=?", (directive_id,))
-
-    def directive_ids_for_pending_actions(self, pending_action_ids: list[int]) -> list[int]:
-        if not pending_action_ids:
-            return []
-        placeholders = ",".join("?" for _ in pending_action_ids)
-        rows = self._conn.execute(
-            "SELECT id FROM turn_directives "
-            f"WHERE source_pending_action_id IN ({placeholders}) ORDER BY id",
-            tuple(int(i) for i in pending_action_ids),
-        ).fetchall()
-        return [int(row["id"]) for row in rows]
-
     def directive(self, directive_id: int) -> Any:
         return self._conn.execute(
             "SELECT id, text, status, turn, dossier_payload_json FROM turn_directives WHERE id=?",
@@ -247,14 +196,6 @@ class IssueStore:
             row["dossier_payload_json"], directive_id=int(row["id"]),
         )
 
-    def set_directive_status(self, directive_id: int, status: str, *, expected: str | None = None) -> Any:
-        sql = "UPDATE turn_directives SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
-        params = [status, directive_id]
-        if expected is not None:
-            sql += " AND status=?"
-            params.append(expected)
-        return self._conn.execute(sql, params)
-
     def count_pending_directives(self, turn: int) -> Any:
         return self._conn.execute(
             "SELECT COUNT(*) AS n FROM turn_directives WHERE turn=? AND status='pending'", (turn,),
@@ -272,12 +213,6 @@ class IssueStore:
             f"UPDATE turn_directives SET status='issued', updated_at=CURRENT_TIMESTAMP "
             f"WHERE id IN ({placeholders}) AND status='draft'", ids,
         )
-
-    def delete_draft_directive(self, directive_id: int) -> None:
-        self._conn.execute("DELETE FROM turn_directives WHERE id=? AND status='draft'", (directive_id,))
-
-    def directive_archive_months(self) -> Any:
-        return self._conn.execute("SELECT turn, year, period FROM turn_directives WHERE status='issued'").fetchall()
 
     def read_list_directives_by_turn_owned(self, params: Any) -> Any:
         return self._conn.execute("\n            SELECT d.id, d.turn, d.year, d.period, d.event_id, d.actor,\n                   d.text, d.source, d.status, d.notes,\n                   d.created_at, d.updated_at,\n                   e.title AS event_title\n            FROM turn_directives d\n            LEFT JOIN events e ON e.id = d.event_id\n            WHERE d.turn = ? AND d.status = 'issued'\n            ORDER BY d.id\n            ", params)
@@ -519,57 +454,6 @@ class IssueStore:
             out.append(self._project_rescript_desk_row(r))
         return out
 
-    def cas_revise_pending_decision(
-        self,
-        *,
-        revision_round: int,
-        options_json: str,
-        prior_options_json: str,
-        choice_json: str,
-        turn: int,
-        idx: int,
-        kind: str,
-        expected_round: int,
-    ) -> int:
-        cur = self._conn.execute(
-            "UPDATE pending_decisions SET revision_round = ?, options_json = ?, "
-            "prior_options_json = ?, choice_json = ?, status = 'pending' "
-            "WHERE turn = ? AND idx = ? AND kind = ? AND revision_round = ? "
-            "AND status = 'pending'",
-            (
-                int(revision_round), options_json, prior_options_json, choice_json,
-                int(turn), int(idx), kind, int(expected_round),
-            ),
-        )
-        return int(cur.rowcount)
-
-    def cas_decide_pending_decision(
-        self, *, choice_json: str, turn: int, idx: int, kind: str,
-    ) -> int:
-        cur = self._conn.execute(
-            "UPDATE pending_decisions SET choice_json = ?, status = 'decided' "
-            "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
-            (choice_json, int(turn), int(idx), kind),
-        )
-        return int(cur.rowcount)
-
-    def clear_pending_choice_json(
-        self, *, turn: int, idx: int, kind: str,
-    ) -> None:
-        self._conn.execute(
-            "UPDATE pending_decisions SET choice_json = '{}' "
-            "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
-            (int(turn), int(idx), kind),
-        )
-
-    def list_pending_drafts_with_choice(self) -> Any:
-        return self._conn.execute(
-            "SELECT turn, idx, kind, status, choice_json, revision_round "
-            "FROM pending_decisions "
-            "WHERE status = 'pending' AND kind = 'rescript_draft' "
-            "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
-        ).fetchall()
-
     def list_directives_by_turn(self, turn: int) -> list[dict[str, object]]:
         """读某回合已颁诏（issued）草案，按 id 升序。"""
         rows = self.read_list_directives_by_turn_owned((int(turn),)).fetchall()
@@ -623,10 +507,6 @@ class IssueStore:
     def count_pending_directives_for_turn(self, turn: int) -> int:
         row = self.count_pending_directives(int(turn))
         return int(row["n"]) if row else 0
-
-    def list_commitments_for_dossier(self, dossier_id: int) -> list[dict[str, object]]:
-        rows = self.read_list_commitments_for_dossier((f"dossier:{int(dossier_id)}",))
-        return [dict(row) for row in rows]
 
     def has_event_triggered(self, event_id: str) -> bool:
         row = self.read_has_event_triggered((event_id,))

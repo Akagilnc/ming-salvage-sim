@@ -103,14 +103,6 @@ class ArmyStore:
     def row(self, army_id: str) -> Any:
         return self._conn.execute('SELECT * FROM armies WHERE id = ?', (army_id,)).fetchone()
 
-    def ordered_rows(self, *, limit: int | None = None) -> Any:
-        sql = "SELECT * FROM armies ORDER BY theater, name"
-        params = ()
-        if limit is not None:
-            sql += " LIMIT ?"
-            params = (limit,)
-        return self._conn.execute(sql, params).fetchall()
-
     def read_auto_pay_arrears_by_priority(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM armies WHERE owner_power='ming' AND arrears>0", params).fetchall()
 

@@ -26,12 +26,6 @@ CHARACTER_COLUMNS = frozenset({
 
 _MUTABLE_COLUMNS = CHARACTER_COLUMNS - {"name"}
 
-OFFICE_COLUMNS = frozenset({
-    "character_name", "office_title", "source", "dossier_id",
-    "appointment_tenure", "region_id", "updated_at",
-})
-
-
 def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
     return checked_columns(values, allowed, what="characters")
 
@@ -95,11 +89,6 @@ class CharacterStore:
     def delete(self, name: str) -> None:
         self._conn.execute("DELETE FROM characters WHERE name=?", (name,))
 
-    def delete_office(self, name: str) -> None:
-        self._conn.execute(
-            "DELETE FROM character_offices WHERE character_name=?", (name,),
-        )
-
     def upsert_office(
         self,
         *,
@@ -147,56 +136,6 @@ class CharacterStore:
             (name, office_title, office_type, source, dossier_id, appointment_tenure),
         )
 
-    def clear_office_archive(self) -> None:
-        """Drop every current-office row and every office-change row."""
-        self._conn.execute("DELETE FROM character_offices")
-        self._conn.execute("DELETE FROM office_change_records")
-
-    def insert_office_snapshots(self, rows: list[Mapping[str, object]]) -> None:
-        """Restore archive rows, including the stored ``updated_at``."""
-        if not rows:
-            return
-        self._conn.executemany(
-            "INSERT INTO character_offices "
-            "(character_name, office_title, source, dossier_id, "
-            "appointment_tenure, region_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    row["character_name"],
-                    row["office_title"],
-                    row["source"],
-                    row.get("dossier_id"),
-                    row["appointment_tenure"],
-                    str(row.get("region_id") or ""),
-                    row["updated_at"],
-                )
-                for row in rows
-            ],
-        )
-
-    def insert_office_change_snapshots(self, rows: list[Mapping[str, object]]) -> None:
-        """Restore change rows, including the stored id and ``created_at``."""
-        if not rows:
-            return
-        self._conn.executemany(
-            "INSERT INTO office_change_records "
-            "(id, character_name, office_title, office_type, source, dossier_id, "
-            "appointment_tenure, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    row["id"],
-                    row["character_name"],
-                    row["office_title"],
-                    row["office_type"],
-                    row["source"],
-                    row.get("dossier_id"),
-                    row["appointment_tenure"],
-                    row["created_at"],
-                )
-                for row in rows
-            ],
-        )
-
     def upsert(self, row: Mapping[str, object]) -> None:
         """Debug replace of one person. Caller commits."""
         upsert_by_pk(
@@ -207,12 +146,6 @@ class CharacterStore:
     def restore_row(self, row: Mapping[str, object]) -> None:
         """Undo writes the before-image through this store."""
         self.upsert(row)
-
-    def restore_office_row(self, row: Mapping[str, object]) -> None:
-        upsert_by_pk(
-            self._conn, "character_offices", row,
-            pk="character_name", allowed=OFFICE_COLUMNS, what="character_offices",
-        )
 
     def affair_id_of(self, name: str) -> int:
         row = self._conn.execute(

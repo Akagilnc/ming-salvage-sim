@@ -37,12 +37,6 @@ class BuildingStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
-    def count_in_region(self, region_id: str) -> int:
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM buildings WHERE region_id = ?", (region_id,),
-        ).fetchone()
-        return int(row[0])
-
     def has_any(self) -> bool:
         return self._conn.execute("SELECT 1 FROM buildings LIMIT 1").fetchone() is not None
 

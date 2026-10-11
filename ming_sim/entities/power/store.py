@@ -23,12 +23,6 @@ _LOG_COLUMNS = (
     "delta", "reason", "origin_ref",
 )
 
-_NAME_LOG_COLUMNS = (
-    "turn", "year", "period", "power_id", "old_name", "new_name",
-    "old_aliases", "new_aliases", "reason",
-)
-
-
 def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
     return checked_columns(values, allowed, what="powers")
 
@@ -81,15 +75,6 @@ class PowerStore:
             "(turn, year, period, power_id, field, old_value, new_value, delta, "
             "reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             tuple(row.get(column) for column in _LOG_COLUMNS),
-        )
-
-    def append_name_log(self, row: Mapping[str, object]) -> None:
-        checked_columns(row, set(_NAME_LOG_COLUMNS), what="power_name_logs")
-        self._conn.execute(
-            "INSERT INTO power_name_logs "
-            "(turn, year, period, power_id, old_name, new_name, old_aliases, "
-            "new_aliases, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            tuple(row.get(column) for column in _NAME_LOG_COLUMNS),
         )
 
     def display_name(self, power_id: str) -> str:

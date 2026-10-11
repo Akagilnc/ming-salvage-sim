@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 from ming_sim.entities.column_write import upsert_by_pk
 
@@ -36,33 +36,6 @@ class FactionStore:
             (name, satisfaction, leverage, agenda),
         )
 
-    def set_leverage(self, name: str, leverage: object) -> None:
-        self._conn.execute(
-            "UPDATE factions SET leverage=? WHERE name=?", (leverage, name),
-        )
-
-    def set_leverage_offset(self, name: str, offset: object) -> None:
-        self._conn.execute(
-            "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, name),
-        )
-
-    def set_satisfaction_and_leverage(
-        self, name: str, satisfaction: object, leverage: object,
-    ) -> None:
-        self._conn.execute(
-            "UPDATE factions SET satisfaction = ?, leverage = ? WHERE name = ?",
-            (satisfaction, leverage, name),
-        )
-
-    def add_leverage_offset(
-        self, name: str, satisfaction: object, offset_delta: object,
-    ) -> None:
-        self._conn.execute(
-            "UPDATE factions SET satisfaction = ?, leverage_offset = leverage_offset + ? "
-            "WHERE name = ?",
-            (satisfaction, offset_delta, name),
-        )
-
     def restore_row(self, row: Mapping[str, object]) -> None:
         upsert_by_pk(
             self._conn, "factions", row,
@@ -71,12 +44,6 @@ class FactionStore:
 
     def delete(self, name: str) -> None:
         self._conn.execute("DELETE FROM factions WHERE name=?", (name,))
-
-    def restore_leverage(self, rows: Sequence[Mapping[str, object]]) -> None:
-        self._conn.executemany(
-            "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
-            [(row["leverage"], row["leverage_offset"], row["name"]) for row in rows],
-        )
 
     def read_faction_satisfaction(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT satisfaction FROM factions WHERE name = ?', params).fetchone()

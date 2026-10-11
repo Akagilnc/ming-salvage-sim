@@ -41,45 +41,6 @@ class ClassStore:
             (name, region_id, population, satisfaction, leverage, agenda),
         )
 
-    def set_satisfaction_leverage(
-        self,
-        *,
-        name: str,
-        region_id: str,
-        satisfaction: object,
-        leverage: object,
-    ) -> None:
-        self._conn.execute(
-            "UPDATE classes SET satisfaction = ?, leverage = ?, "
-            "updated_at = CURRENT_TIMESTAMP WHERE name = ? AND region_id = ?",
-            (satisfaction, leverage, name, region_id),
-        )
-
-    def add_population(self, *, name: str, region_id: str, delta: object) -> None:
-        """Apply a signed population delta. The caller has already capped it."""
-        self._conn.execute(
-            "UPDATE classes SET population = population + ?, "
-            "updated_at = CURRENT_TIMESTAMP WHERE name = ? AND region_id = ?",
-            (delta, name, region_id),
-        )
-
-    def append_transfer(
-        self,
-        *,
-        turn: int,
-        source: str,
-        target: str,
-        amount: int,
-        reason: str,
-        origin_ref: str,
-    ) -> None:
-        self._conn.execute(
-            "INSERT INTO population_transfer_ledger "
-            "(turn, source, target, amount, reason, origin_ref) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (int(turn), source, target, int(amount), reason, origin_ref),
-        )
-
     def read_surcharge_population_pool_members(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')", params).fetchall()
 

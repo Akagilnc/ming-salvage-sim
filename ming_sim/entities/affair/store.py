@@ -11,13 +11,9 @@ from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from ming_sim.applier import (
-    connection_owns_transaction, load_stored_list,
-)
-from ming_sim.entities.character import CharacterStore
+from ming_sim.applier import connection_owns_transaction
 from ming_sim.entities.dossier import DossierStore
 from ming_sim.entities.issue import IssueStore
-from ming_sim.strict_types import strict_int
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
@@ -261,14 +257,6 @@ class AffairStore:
         """#1889 / ADR 0151：案卷表的读写一律经案卷 store，本模块只编排指针语义。"""
         return DossierStore(self._conn)
 
-
-    def point_character(self, name: str, affair_id: int) -> None:
-        self.get(affair_id)
-        CharacterStore(self._conn).set_affair_id_if_unbound(str(name), int(affair_id))
-
-    def point_issue_row(self, issue_id: int, affair_id: int) -> None:
-        self.get(affair_id)
-        IssueStore(self._conn).set_affair_id_if_unbound(int(issue_id), int(affair_id))
 
     def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)
