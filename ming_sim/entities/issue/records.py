@@ -3,8 +3,6 @@
 from __future__ import annotations
 from ming_sim.applier import parse_engine_payload_json
 
-from ming_sim.models import _load_durable_json_list
-
 import ming_sim.issues as issues
 import ming_sim.entities.issue.effects as issue_effects
 import ming_sim.entities.issue.event_terminal as event_terminal
@@ -23,7 +21,6 @@ from ming_sim.db import (
 from ming_sim.applier import Provenance, RejectionCollector
 from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.models import Event, GameState, effect_dict_has_work, loads_effect_dict
-from ming_sim.entities.character.normalize import normalize_person_changes
 
 
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
@@ -189,17 +186,6 @@ def _commitment_arrears_gate_army_ids(row: sqlite3.Row) -> List[str]:
             if army_id and army_id not in ids:
                 ids.append(army_id)
     return ids
-
-
-def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
-    """Only the canonical 人物变更 stream; retired person_changes/character aliases stay closed."""
-    return normalize_person_changes({"人物变更": [
-        item
-        for item in _load_durable_json_list(
-            effect.get("人物变更"), surface="ongoing_effects.人物变更",
-        )
-        if str(item["动作"] if "动作" in item else item["action"]).strip() == "评定"
-    ]})
 
 
 def _invalid_monthly_person_rating_reason(effect: Dict[str, object]) -> str:
