@@ -3603,7 +3603,7 @@ class GameDB:
             ("province_pay_arrears", province_arrears),
             ("central_pay_arrears", central_arrears),
         ):
-            if not math.isfinite(float(value)) or float(value) < 0:
+            if not math.isfinite(value) or value < 0:
                 raise ValueError(f"army {army_id} {label} 非法：{value!r}")
         exempt = owner_power != "ming" or is_tusi or self_funded
         if exempt:
@@ -9915,7 +9915,7 @@ class GameDB:
         band = item.get("progress_band")
         text = item.get("memorial_text")
         for field, value in (("progress_band", band), ("memorial_text", text)):
-            if not value.strip():
+            if not isinstance(value, str) or not value.strip():
                 raise TypeError(
                     f"dossier#{dossier_id}.progress#{report_id}.{field} "
                     f"must be nonempty text, got {value!r}"
@@ -15611,6 +15611,8 @@ class GameDB:
         actor_raw = payload.get("actor", pa.get("minister_name") or "")
         if actor_raw is None:
             actor_raw = ""
+        if not isinstance(actor_raw, str):
+            raise ValueError(f"持久字段 actor 须为字符串，得 {type(actor_raw).__name__}")
         actor = actor_raw.strip()
         payload["text"] = text
         payload["actor"] = actor

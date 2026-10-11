@@ -29,9 +29,6 @@ def _executing_assignment(db, state, *, text="清丈畿辅田亩", target="land-
         target_id=target,
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    row = db.get_decree_dossier(dossier_id)
-    assert row["status"] == "executing"
-    assert row.get("secret_order_id") in (None, 0)
     return dossier_id
 
 

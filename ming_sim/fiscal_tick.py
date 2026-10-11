@@ -76,11 +76,8 @@ def _resolve_haircut_param(p: Dict[str, Any]) -> Dict[str, int]:
 
 
 def _raw_due(p: Dict[str, Any], h: str) -> float:
-    """原始 Due 读数（坏 Due 验形归既有 ValueError，此处防 AttributeError 逃逸隔离）。"""
-    _due = p["Due"]
-    if not isinstance(_due, dict):
-        return 0.0
-    return float(_due.get(h, 0.0))
+    """原始 Due 读数；settle_tick 已逐项消费 Due。"""
+    return float(p["Due"].get(h, 0.0))
 
 
 def _effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
@@ -139,8 +136,7 @@ def _oracle_effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
                 haircuts[hk] = bp
     out: Dict[str, float] = {}
     for h in _DUE_KEYS:
-        _due = p["Due"]
-        d = float(_due.get(h, 0.0)) if isinstance(_due, dict) else 0.0
+        d = float(p["Due"].get(h, 0.0))
         bp = haircuts.get(h)
         out[h] = float(math.floor(d * bp / 10000)) if bp is not None else d
     return out
@@ -198,7 +194,6 @@ def settle_tick(
     # ── #653 偿还序 override ＋ Due 折发系数（ADR 0090）：缺省=祖制默认序、无折 ──
     due_order = _resolve_order_param(p, "due_order", _DUE_KEYS)
     arrears_order = _resolve_order_param(p, "arrears_order", _ARREARS_KEYS)
-    _haircut_bp = _resolve_haircut_param(p)  # 验形 fail-loud；实际折算走 _effective_dues
     eff_due = _effective_dues(p)
 
     r: Dict[str, Any] = dict(

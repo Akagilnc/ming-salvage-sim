@@ -3635,12 +3635,12 @@ def _strategic_event_result_preflight_error(
                                if ARMY_FIELD_ALIASES.get(key, key) == "cannon_equipment"]
                 if (target is None or target_id == army_id or len(cannon_keys) != 1
                         or _int_delta_error("army", army_id, cannon_keys[0], raw_changes[cannon_keys[0]])
-                        or _strict_int(raw_changes[cannon_keys[0]]) >= 0):
+                        or (cannon_delta := _strict_int(raw_changes[cannon_keys[0]])) >= 0):
                     return f"战略/外敌事件「{event_title or event_id}」随军炮转移目标或负数拟转量非法：{army_id}"
                 if int(target["cannon_equipment"]) >= 12:
                     return _noop_error("army", army_id, "cannon_transfer_to", target_id)
                 if bool(target["is_mutinied"]) and not latched_army_field_effect_permitted(
-                    "cannon_equipment", -_strict_int(raw_changes[cannon_keys[0]]),
+                    "cannon_equipment", -cannon_delta,
                 ):
                     return _noop_error("army", target_id, "cannon_transfer_to", target_id)
             # #320：loyalty 规范键/别名与写核同语义——先逐叶类型/字段校验，净合计后再一次

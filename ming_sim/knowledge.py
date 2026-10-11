@@ -65,6 +65,8 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
         )
     names: set[str] = set()
     for idx, name in enumerate(raw):
+        if not isinstance(name, str):
+            raise TypeError(f"event {origin_ref!r} audiences[{idx}] must be str, got {type(name).__name__}")
         stripped = name.strip()
         if stripped:
             names.add(stripped)

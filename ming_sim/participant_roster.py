@@ -83,8 +83,8 @@ def decode_durable_participant_roster(
             cid_raw = entry.get("name")
         if require_tier or cid_raw is not None:
             cid = cid_raw.strip()
-            if require_tier and not cid:
-                raise ValueError("参与人 character_id 不能为空")
+            if not isinstance(cid_raw, str) or (require_tier and not cid):
+                raise ValueError(f"参与人 character_id 须为字符串且主键非空，得 {cid_raw!r}")
             if cid:
                 entry["character_id"] = cid
         if "tier" not in entry or entry.get("tier") is None:
@@ -170,6 +170,8 @@ def project_execution_liability_parties(
         delegator_raw = item.get("delegator_id")
         if delegator_raw is None:
             continue
+        if not isinstance(delegator_raw, str):
+            raise ValueError(f"参与人 delegator_id 须为字符串，得 {type(delegator_raw).__name__}")
         delegator = delegator_raw.strip()
         if (
             delegator

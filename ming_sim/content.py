@@ -120,7 +120,6 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         status = str(item.get("status") or "active")
         office_type = str_field(item, "office_type", f"characters.json.characters[{idx}]")
-        status_reason = str(item.get("status_reason") or "").strip()
         # ADR 0009：在事者 office 必非空。离事者现职以 characters.json 为名分真源
         # （允许空 office 合法读取）；不在装载时二次洗职，也不解析 status_reason。
         if status in PERSON_OUSTED_STATUSES:

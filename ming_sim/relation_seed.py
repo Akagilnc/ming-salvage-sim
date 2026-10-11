@@ -51,8 +51,8 @@ def _as_int(value: Any, label: str) -> int:
 
 def _non_empty_str(value: Any, label: str) -> str:
     # strip 只作非空谓词；存储值原样（含首尾空白与换行，零归一零 clamp）。
-    if not value.strip():
-        raise ValueError(f"{label}不能为空")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label}须为非空字符串，得 {value!r}")
     return value
 
 
