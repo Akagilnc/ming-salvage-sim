@@ -34,11 +34,10 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     propagate unchanged.  Content fallback applies only when the events query
     succeeds with no row.
     """
-    try:
-        origin_kind = str(issue["origin_kind"] or "")
-        origin_ref = str(issue["origin_ref"] or "").strip()
-    except (KeyError, IndexError, TypeError):
-        return None
+    if "origin_kind" not in issue.keys():
+        return None  # Non-event projections need not select event origin fields.
+    origin_kind = str(issue["origin_kind"] or "")
+    origin_ref = str(issue["origin_ref"] or "").strip()
     if origin_kind != "event_pool":
         return None
     if not origin_ref:
@@ -289,10 +288,7 @@ def _issue_audience_case_events(
     synthesized: list[Dict[str, object]] = []
     active_issues = db.list_active_issues()
     for issue in active_issues:
-        try:
-            source_id = f"issue:{int(issue['id'])}"
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        source_id = f"issue:{int(issue['id'])}"
         if source_id in known:
             continue
         try:
@@ -309,10 +305,7 @@ def _issue_audience_case_events(
             character_name,
         ):
             continue
-        try:
-            origin_turn = int(issue["origin_turn"] or state.turn)
-        except (KeyError, IndexError, TypeError, ValueError):
-            origin_turn = int(state.turn)
+        origin_turn = int(issue["origin_turn"] or state.turn)
         synthesized.append({
             "turn": origin_turn,
             "year": int(state.year) if origin_turn == int(state.turn) else 0,

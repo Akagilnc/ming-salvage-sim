@@ -49,7 +49,7 @@ def _open_db(path, content, *, first: bool):
     if first:
         db.seed_static_data()
         state = db.load_state()
-        issues_mod.sync_opening_legacies(db, state)
+        issue_legacy.sync_opening_legacies(db, state)
     else:
         state = db.load_state()
     return db, state
@@ -502,6 +502,8 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
     _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
+    # 调用方持久化已接纳的轮；写口不再内部提交。
+    db.conn.commit()
     # 不 append 问话、不 link user_message_id：generating 且无 user_message。
     db.close()
 
@@ -569,3 +571,5 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
 # ---------------------------------------------------------------------------
 # #657 片3 S11–S15：同库三轮 + CAS + 空冲突
 # ---------------------------------------------------------------------------
+
+import ming_sim.entities.issue.legacy as issue_legacy

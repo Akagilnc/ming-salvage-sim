@@ -66,6 +66,7 @@ export function useEdictActions({
   const saveDirective = async (directive: Directive) => {
     // Free prose directive text: preserve raw; emptiness on local copy (#1834 F16).
     if (!editingDirectiveText.trim()) return;
+    // 旨文是自由正文：判空观察副本，提交与卡片传原串。
     const text = editingDirectiveText;
     const ownership = ownershipRef.current;
     const localKey = `save-${directive.id}-${++localSeq.current}`;

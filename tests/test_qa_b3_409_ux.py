@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from tests.month_chain_helpers import canned_full_settlement, empty_rescript_response
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +16,7 @@ from fastapi import HTTPException
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import ClassifiedWriteGate
-from ming_sim.models import TurnPhase
+from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
 
 
 # ── #1301 玩家面 409 去裸 night_id ──────────────────────────────────────────
@@ -46,46 +46,144 @@ def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
     assert other.value.detail == {"night_id": 42, "what": "阅折"}
 
 
+# ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
+
+def _front_half_detail(phase: str) -> str:
+    game = SimpleNamespace(
+        state=SimpleNamespace(turn_phase=phase),
+        _write_gate=ClassifiedWriteGate(),
+    )
+    with pytest.raises(HTTPException) as ei:
+        with web_app._serialized_web_write(game):
+            pass
+    assert ei.value.status_code == 409
+    detail = str(ei.value.detail)
+    assert detail
+    return detail
+
+
+def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
+    """#1306：settling 仍报月末结算进行中。"""
+    game = SimpleNamespace(
+        state=SimpleNamespace(turn_phase=TurnPhase.SETTLING.value),
+        _write_gate=ClassifiedWriteGate(),
+    )
+    with pytest.raises(HTTPException) as ei:
+        with web_app._serialized_web_write(game):
+            pass
+    assert ei.value.status_code == 409
+
+
+def test_serialized_web_write_phase_messages_cover_front_half_done():
+    """#1306 全 FRONT_HALF_DONE 相位均 409，详情只按 awaiting / 其余两支分叉。"""
+    awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)
+    other = _front_half_detail(TurnPhase.SETTLING.value)
+    assert awaiting != other
+    for phase in FRONT_HALF_DONE_PHASES:
+        game = SimpleNamespace(
+            state=SimpleNamespace(turn_phase=phase),
+            _write_gate=ClassifiedWriteGate(),
+        )
+        with pytest.raises(HTTPException) as ei:
+            with web_app._serialized_web_write(game):
+                pass
+        assert ei.value.status_code == 409
+        detail = str(ei.value.detail)
+
+
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────
 
+class _Row(dict):
+    def keys(self):
+        return super().keys()
 
-def test_directive_payload_authority_not_notes_alias(web_game):
-    """#1319(a)：真实状态口中 notes 备注不得投影成 authority。"""
-    did = web_game.db.add_directive(
-        web_game.state, None, "发帑辽东", source="manual", actor="袁崇焕",
-        notes="家赀约十万两", status="draft",
+
+def test_directive_payload_authority_not_notes_alias():
+    """#1319(a)：notes 备注不得投影成 authority；无真 authority 则空串。"""
+    game = web_app.WebGame.__new__(web_app.WebGame)
+    row = _Row(
+        id=9,
+        event_id="",
+        event_title="",
+        actor="袁崇焕",
+        text="发帑辽东",
+        source="manual",
+        status="draft",
+        notes="家赀约十万两",
     )
-    payload = next(d for d in web_game.state_payload()["directives"] if d["id"] == did)
+    payload = web_app.WebGame.directive_payload(game, row)
     assert payload["notes"] == "家赀约十万两"
     assert payload["authority"] == ""
 
 
 # ── #1322 resolve stream 相位预检在抢锁前 ───────────────────────────────────
 
+class _PhaseSession:
+    def __init__(self, phase: str):
+        self.state = SimpleNamespace(turn_phase=phase, turn=3, ended=False)
+        self.last_decree = ""
+        self._submit_called = False
+        self._gate_held_during_precheck = False
 
-async def _consume_resolve_sse(choices=None) -> list[tuple[str, object]]:
+    def current_phase(self):
+        return TurnPhase(self.state.turn_phase)
+
+    def await_translations_before_month(self, after_drain=None):
+        # #1842：过月入口在 auto_close 前闸外 join 转译；桩无在飞 Future。
+        if after_drain is not None:
+            after_drain()
+
+    def submit_hitl_choices(self, *_a, write_gate=None, **_k):
+        self._submit_called = True
+        raise AssertionError("wrong-phase must not reach submit_hitl_choices")
+
+
+class _ResolveGame:
+    def __init__(self, phase: str, gate: ClassifiedWriteGate):
+        self.state = SimpleNamespace(turn=3, ended=False, turn_phase=phase)
+        self.session = _PhaseSession(phase)
+        self.session.state = self.state
+        self.db = SimpleNamespace(list_pending_actions=lambda *_a, **_k: [])
+        self._write_gate = gate
+        self.actions = []
+        self.session.end_turn = lambda: self.actions.append("end_turn")
+
+    def refresh_turn(self):
+        self.actions.append("refresh")
+
+
+async def _consume_resolve_sse() -> list[tuple[str, object]]:
     """Drain the whole SSE; return [(event, payload), ...] in order."""
-    from tests.test_chat_stream_failpaths_393 import _parse_sse
     response = await web_app.api_resolve_decisions_stream(
-        web_app.ResolveDecisionsRequest(choices=choices if choices is not None else [{"label": "发帑"}])
+        web_app.ResolveDecisionsRequest(choices=[{"label": "发帑"}])
     )
     chunks = [
         chunk.decode() if isinstance(chunk, bytes) else chunk
         async for chunk in response.body_iterator
     ]
-    return _parse_sse("".join(chunks))
+    serialized = "".join(chunks)
+    events: list[tuple[str, object]] = []
+    for block in serialized.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        ev_name = ""
+        data_raw = ""
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                ev_name = line[len("event: "):].strip()
+            elif line.startswith("data: "):
+                data_raw += line[len("data: "):]
+        if not ev_name or not data_raw:
+            continue
+        events.append((ev_name, json.loads(data_raw)))
+    return events
 
 
-def test_resolve_decisions_stream_phase_precheck_before_lock(web_game, monkeypatch):
+def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     """#1322：非 awaiting 相位在抢锁前快速失败；持锁者不被卡住；submit 不进。"""
-    gate = web_game._write_gate
+    gate = ClassifiedWriteGate()
     gate.acquire()  # 模拟结算 worker 持锁；若预检在锁后，本测会阻塞至超时
-    game = web_game
-    game.state.turn_phase = TurnPhase.SETTLING.value
-    actions = []
-    monkeypatch.setattr(game.session, "submit_hitl_choices", lambda *a, **k: actions.append("submit"))
-    monkeypatch.setattr(game.session, "end_turn", lambda: actions.append("end_turn"))
-    monkeypatch.setattr(game, "refresh_turn", lambda: actions.append("refresh"))
+    game = _ResolveGame(TurnPhase.SETTLING.value, gate)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
 
     try:
@@ -97,31 +195,32 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(web_game, monkeypat
     assert events, "expected at least one SSE event"
     event, payload = events[-1]
     assert event == "error"
-    assert isinstance(payload, dict) and payload.get("message")
-    assert actions == []
+    message = payload["message"] if isinstance(payload, dict) else str(payload)
+    assert game.session._submit_called is False
+    assert game.actions == []
 
 
-def test_resolve_decisions_stream_awaiting_still_submits_under_lock(web_game, monkeypatch):
+def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch):
     """#1322：awaiting 相位仍经 submit_hitl 在 write_gate 内提交（权威复查保留）。"""
-    game = web_game
-    gate = game._write_gate
-    canned_full_settlement(monkeypatch)
-    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", lambda session, *, officers, backlog, answer=None: json.dumps({
-        "actor_name": officers[-1]["name"], "items": [{"title": "发帑", "context": "是否发帑", "options": [{"label": "发帑"}]}], "revisions": [],
-    }) if answer is None else empty_rescript_response(session, officers=officers, backlog=backlog, answer=answer))
-    waiting = game.session.advance_without_decree()
-    assert waiting.awaiting
+    gate = ClassifiedWriteGate()
+    game = _ResolveGame(TurnPhase.AWAITING_DECISION.value, gate)
     submitted = {"ok": False}
-    real_read = game.db.get_rescript_desk_rows_by_keys
 
-    def _submit_hitl(keys):
-        assert gate.locked(), "submit must run while write gate held"
-        submitted["ok"] = True
-        return real_read(keys)
+    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
+        with write_gate:
+            assert gate.locked(), "submit must run while write gate held"
+            game.actions.append("submit")
+            submitted["ok"] = True
+            return "邸报：已裁。"
 
-    monkeypatch.setattr(game.db, "get_rescript_desk_rows_by_keys", _submit_hitl)
-    events = asyncio.run(_consume_resolve_sse([{"decision_key": waiting.decisions[0]["decision_key"], "label": "发帑"}]))
+    game.session.submit_hitl_choices = _submit_hitl  # type: ignore[method-assign]
+    game.session.last_decree = "诏曰：发帑。"
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    events = asyncio.run(_consume_resolve_sse())
     assert submitted["ok"] is True
     kinds = [ev for ev, _ in events]
     assert "stage" not in kinds
     assert kinds[-1] == "done"
+    payload = events[-1][1]
+    assert payload["report"] == "邸报：已裁。"

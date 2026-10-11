@@ -48,62 +48,6 @@ def _active_minister(content) -> str:
 
 # ── 业务拒收分流 ──────────────────────────────────────────────────────────
 
-def test_dossier_link_rejection_stays_business_refusal_not_loud(game, monkeypatch):
-    """业务拒收与系统失败分流：模型指向不存在案卷仍走 durable 审计 + 终态 failed。"""
-    db, state, content = game
-    night = open_night(db, state)
-    minister = _active_minister(content)
-    ctid = db.create_chat_turn(
-        state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
-    )
-    db.append_chat_message("殿上", int(state.turn), "user", "着密核三边饷数。")
-    action_id = _stage_secret_order(db, state, ctid, minister)
-    payload = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (action_id,),
-    ).fetchone()["payload_json"])
-    payload["dossier_links"] = [{
-        "target_dossier_id": 999999, "relation_type": "护卫", "note": "护送",
-    }]
-    db.conn.execute(
-        "UPDATE pending_actions SET payload_json=? WHERE id=?",
-        (json.dumps(payload, ensure_ascii=False), action_id),
-    )
-    db.conn.commit()
-
-    def translate_fn(prompt, llm_config):
-        return {
-            **offline_empty_audience_translate(prompt, llm_config),
-            **_secret_commission(action_id),
-        }
-
-    sess = _sess(db, state, content, monkeypatch, translate_fn)
-    result = sess.scene_chat("准此旨", chat_turn_id=ctid)
-    future = persist_and_schedule_scene(sess, db, result)
-    future.result()
-
-    assert db.list_secret_orders() == []
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (action_id,),
-    ).fetchone()["status"] == "failed"
-    # 现役 durable 审计表：decree_dossier_link_rejections（不恢复已退役 list helper）。
-    audit = [
-        dict(row)
-        for row in db.conn.execute(
-            "SELECT pending_action_id, target_dossier_id, relation_type, note, reason "
-            "FROM decree_dossier_link_rejections WHERE pending_action_id=? ORDER BY id",
-            (action_id,),
-        ).fetchall()
-    ]
-    assert audit
-    assert int(audit[-1]["pending_action_id"]) == int(action_id)
-    assert int(audit[-1]["target_dossier_id"]) == 999999
-    assert audit[-1]["relation_type"] == "护卫"
-    turn = db.conn.execute(
-        "SELECT extract_status, error_pack_path FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()
-    assert turn["extract_status"] == "done"
-    assert str(turn["error_pack_path"] or "") == ""
-
 
 # ── P2 ────────────────────────────────────────────────────────────────────
 

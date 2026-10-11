@@ -5,5 +5,5 @@ from __future__ import annotations
 
 def is_actual_population_transfer(item: object) -> bool:
     """Applied feedback includes legal zero attempts; only positive amounts moved people."""
-    return (isinstance(item, dict) and not item.get("rejected")
+    return (isinstance(item, dict)
             and int(item.get("amount") or 0) > 0)

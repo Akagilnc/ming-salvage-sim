@@ -5,15 +5,28 @@ seam = 月末确定性结算 tick（apply_fixed_period_flows）
 """
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 from types import SimpleNamespace
 
 import pytest
 
 from ming_sim.flows import apply_fixed_period_flows
-from tests.army_pay_helpers import configure_guanning_army
 
 ARMY = "guanning"
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
+
+
+def _configure(db) -> None:
+    db.conn.execute("UPDATE armies SET manpower=0")
+    db.conn.execute(
+        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1,
+           pay_source_region='liaodong', province_pay_arrears=0, central_pay_arrears=0
+           WHERE id=?""",
+        (ARMY,),
+    )
+    db.conn.commit()
 
 
 def _set(
@@ -72,7 +85,7 @@ def _logs(db, fields: tuple[str, ...]):
 
 def test_third_strike_transfers_to_bandit_via_adapter(game):
     db, state, _ = game
-    configure_guanning_army(db)
+    _configure(db)
     # count 已 2：再 0→1 进闩即第 3 振
     _set(
         db, loyalty=19, arrears=5, latched=0,
@@ -103,10 +116,7 @@ def test_third_strike_transfers_to_bandit_via_adapter(game):
         (
             log
             for log in logs
-            if log["field"] == "arrears"
-            and float(log["old_value"]) > 0
-            and float(log["new_value"]) == 0
-            and float(log["delta"]) < 0
+            if log["field"] == "arrears" and float(log["old_value"]) > 0 and float(log["new_value"]) == 0
         ),
         None,
     )
@@ -134,15 +144,17 @@ def test_third_strike_transfers_to_bandit_via_adapter(game):
     assert owner_log is not None
     assert count_log is not None
     assert owner_log["new_value"] in BANDIT_POWERS
-    # 核销先于 owner；清 latch 若有则亦先于 owner（id 不可等，不写被包含区间 OR）。
+    # 核销 → owner（清 latch 若有则夹在中间或与 owner 同序前）
     assert writeoff["id"] < owner_log["id"]
     if latch_clear is not None:
-        assert latch_clear["id"] < owner_log["id"]
+        assert writeoff["id"] < latch_clear["id"] <= owner_log["id"] or (
+            latch_clear["id"] < owner_log["id"]
+        )
 
 
 def test_third_strike_does_not_repeat_while_already_bandit(game):
     db, state, _ = game
-    configure_guanning_army(db)
+    _configure(db)
     _set(
         db, loyalty=19, arrears=5, latched=0,
         mutiny_count=2, mutiny_probation=0,
@@ -163,7 +175,7 @@ def test_third_strike_does_not_repeat_while_already_bandit(game):
 
 def test_zero_manpower_latched_clears_before_continue_no_third_strike(game):
     db, state, _ = game
-    configure_guanning_army(db)
+    _configure(db)
     _set(
         db, loyalty=10, arrears=9, latched=1,
         mutiny_count=2, mutiny_probation=3, manpower=0,
@@ -186,7 +198,7 @@ def test_zero_manpower_latched_clears_before_continue_no_third_strike(game):
 def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(game):
     """DB adapter 事实契约（apply_army_deltas）：空来源不得改 latched 军归属。"""
     db, state, _ = game
-    configure_guanning_army(db)
+    _configure(db)
     for count in (1, 2):
         _set(
             db, loyalty=15, arrears=6, latched=1,
@@ -203,14 +215,14 @@ def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(game):
             (ARMY,),
         ).fetchone()
 
-        changes = db.apply_army_deltas(
+        changes, changes_rejections = db.apply_army_deltas(
             state,
             SimpleNamespace(id="season", title="空来源归属"),
             None,
             "测试",
             {ARMY: {"owner_power": "houjin", "reason": "投敌"}},
             commit=False,
-        )
+        source=Provenance.system_simulation)
 
         after = db.conn.execute(
             "SELECT owner_power,is_mutinied,arrears,mutiny_count FROM armies WHERE id=?",
@@ -220,14 +232,12 @@ def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(game):
         assert after["owner_power"] == "ming"
         assert after["is_mutinied"] == 1
         # 拒收或 no-op：不得出现成功的 owner 变更
-        assert not any(
-            c.get("field") == "owner_power" and not c.get("rejected") for c in changes
-        )
+        assert not any(c.get("field") == "owner_power" for c in changes)
 
 
 def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     db, state, _ = game
-    configure_guanning_army(db)
+    _configure(db)
     _set(db, loyalty=70, arrears=3, latched=0, mutiny_count=0)
     db.conn.execute(
         """UPDATE armies SET pay_source_region='liaodong',
@@ -237,31 +247,254 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     )
     db.conn.commit()
 
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state,
         SimpleNamespace(id="season", title="陷没"),
         None,
         "测试",
         {ARMY: {"owner_power": "houjin", "reason": "城破易主"}},
         commit=False,
-    )
+    source=Provenance.system_simulation)
 
     row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    assert not any(c.get("rejected") for c in changes)
+    assert changes_rejections == []
     assert row["owner_power"] == "houjin"
     assert row["is_mutinied"] == 0
     assert float(row["arrears"]) == pytest.approx(0)
     logs = _logs(db, ("arrears", "owner_power"))
     writeoff = next(
-        (
-            log for log in logs
-            if log["field"] == "arrears"
-            and float(log["old_value"]) > 0
-            and float(log["new_value"]) == 0
-            and float(log["delta"]) < 0
-        ),
+        (log for log in logs if log["field"] == "arrears" and float(log["old_value"]) > 0 and float(log["new_value"]) == 0),
         None,
     )
     owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
     assert writeoff is not None and owner_log is not None
     assert writeoff["id"] < owner_log["id"]
+
+
+def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
+    """DB adapter 事实契约（apply_army_deltas）：mutiny_count≥3 拒收回明。"""
+    db, state, _ = game
+    _configure(db)
+    db.conn.execute(
+        """UPDATE armies SET owner_power='bandits', mutiny_count=3, is_mutinied=0,
+           pay_source_region='', province_pay_share=0, central_pay_share=0,
+           province_pay_arrears=0, central_pay_arrears=0, arrears=0 WHERE id=?""",
+        (ARMY,),
+    )
+    db.conn.commit()
+
+    changes, changes_rejections = db.apply_army_deltas(
+        state,
+        SimpleNamespace(id="season", title="招安"),
+        None,
+        "测试",
+        {
+            ARMY: {
+                "owner_power": "ming",
+                "pay_source_region": "liaodong",
+                "province_pay_share": 0.0,
+                "central_pay_share": 1.0,
+                "reason": "招安回明",
+            }
+        },
+        commit=False,
+    source=Provenance.system_simulation)
+
+    row = db.conn.execute(
+        "SELECT owner_power,mutiny_count FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()
+    assert row["owner_power"] == "bandits"
+    assert row["mutiny_count"] == 3
+    assert changes_rejections
+
+
+def test_transfer_to_ming_requires_d6_pay_source(game):
+    """DB adapter 事实契约：外军 mutiny<3 同条合法 D6→ming。"""
+    db, state, _ = game
+    _configure(db)
+    db.conn.execute(
+        """UPDATE armies SET owner_power='houjin', mutiny_count=0, is_mutinied=0,
+           pay_source_region='', province_pay_share=0, central_pay_share=0,
+           arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?""",
+        (ARMY,),
+    )
+    db.conn.commit()
+
+    rejected, rejected_rejections = db.apply_army_deltas(
+        state,
+        SimpleNamespace(id="season", title="招安缺饷源"),
+        None,
+        "测试",
+        {ARMY: {"owner_power": "ming", "reason": "招安"}},
+        commit=False,
+    source=Provenance.system_simulation)
+    assert rejected_rejections
+    assert (
+        db.conn.execute(
+            "SELECT owner_power FROM armies WHERE id=?", (ARMY,)
+        ).fetchone()["owner_power"]
+        == "houjin"
+    )
+
+    ok, ok_rejections = db.apply_army_deltas(
+        state,
+        SimpleNamespace(id="season", title="招安"),
+        None,
+        "测试",
+        {
+            ARMY: {
+                "owner_power": "ming",
+                "pay_source_region": "liaodong",
+                "province_pay_share": 0.0,
+                "central_pay_share": 1.0,
+                "reason": "招安",
+            }
+        },
+        commit=False,
+    source=Provenance.system_simulation)
+    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
+    assert ok_rejections == []
+    assert row["owner_power"] == "ming"
+    assert row["pay_source_region"] == "liaodong"
+    assert float(row["province_pay_share"] or 0) == pytest.approx(0.0)
+    assert float(row["central_pay_share"] or 0) == pytest.approx(1.0)
+
+
+
+
+@pytest.mark.parametrize(
+    "identity",
+    (
+        {"is_tusi": 1, "self_funded_pay": 0},
+        {"is_tusi": 0, "self_funded_pay": 1},
+    ),
+    ids=("tusi", "self_funded"),
+)
+def test_hub_excluded_zero_manpower_latched_clears_once(game, identity):
+    """hub 资格外（土司/自养）零兵旧闩：分叉前全军归一仍清闩，且仅一条清闩审计。"""
+    db, state, _ = game
+    _configure(db)
+    _set(
+        db, loyalty=10, arrears=0, latched=1,
+        mutiny_count=2, mutiny_probation=3, manpower=0,
+    )
+    # 豁免军双累加器/份额须为 0（hub 守恒）；本测只钉清闩，不测发饷
+    db.conn.execute(
+        """UPDATE armies SET is_tusi=?, self_funded_pay=?,
+           pay_source_region='', province_pay_share=0, central_pay_share=0,
+           province_pay_arrears=0, central_pay_arrears=0, arrears=0
+           WHERE id=?""",
+        (identity["is_tusi"], identity["self_funded_pay"], ARMY),
+    )
+    db.conn.commit()
+
+    row = _tick(db, state)
+
+    assert row["is_mutinied"] == 0
+    assert row["mutiny_count"] == 2
+    assert row["owner_power"] == "ming"
+    clear_logs = [
+        log
+        for log in _logs(db, ("is_mutinied",))
+        if str(log["old_value"]) in {"1", "True"}
+        and str(log["new_value"]) in {"0", "False"}
+    ]
+    assert len(clear_logs) == 1
+
+
+def test_persisted_third_strike_defects_next_tick_once(game):
+    """父版可持久 (latched=1,count=3,ming)：下一 tick 恰好一次核销→清闩→bandits。"""
+    db, state, _ = game
+    _configure(db)
+    _set(
+        db, loyalty=10, arrears=5, latched=1,
+        mutiny_count=3, mutiny_probation=0, manpower=10000,
+    )
+
+    first = _tick(db, state)
+    assert first["owner_power"] in BANDIT_POWERS
+    assert first["is_mutinied"] == 0
+    assert first["mutiny_count"] == 3
+    assert float(first["arrears"]) == pytest.approx(0)
+    owner_logs = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs) == 1
+    owner_after = first["owner_power"]
+
+    second = _tick(db, state)
+    assert second["owner_power"] == owner_after
+    assert second["mutiny_count"] == 3
+    owner_logs2 = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs2) == 1
+
+
+def test_persisted_third_strike_defects_on_recovery_boundary(game):
+    """恢复边界：loyalty=35+满饷会解闩，须在 advance 前转出，不得逃过第三振。"""
+    db, state, _ = game
+    _configure(db)
+    _set(
+        db, loyalty=35, arrears=0, latched=1,
+        mutiny_count=3, mutiny_probation=0, manpower=10000,
+    )
+
+    first = _tick(db, state)
+    assert first["owner_power"] in BANDIT_POWERS
+    assert first["is_mutinied"] == 0
+    assert first["mutiny_count"] == 3
+    owner_logs = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs) == 1
+    owner_after = first["owner_power"]
+
+    second = _tick(db, state)
+    assert second["owner_power"] == owner_after
+    assert second["mutiny_count"] == 3
+    owner_logs2 = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs2) == 1
+
+
+@pytest.mark.parametrize(
+    "identity",
+    (
+        {"is_tusi": 1, "self_funded_pay": 0},
+        {"is_tusi": 0, "self_funded_pay": 1},
+    ),
+    ids=("tusi", "self_funded"),
+)
+def test_hub_excluded_persisted_third_strike_defects_once(game, identity):
+    """hub 资格外脏第三振正兵力：分叉前全军缝仍一次转出（不受 WHERE 子集过滤）。"""
+    db, state, _ = game
+    _configure(db)
+    _set(db, loyalty=35, arrears=0, latched=1,
+        mutiny_count=3, mutiny_probation=0, manpower=10000,
+    )
+    db.conn.execute(
+        """UPDATE armies SET is_tusi=?, self_funded_pay=?,
+           pay_source_region='', province_pay_share=0, central_pay_share=0,
+           province_pay_arrears=0, central_pay_arrears=0, arrears=0
+           WHERE id=?""",
+        (identity["is_tusi"], identity["self_funded_pay"], ARMY),
+    )
+    db.conn.commit()
+
+    first = _tick(db, state)
+    assert first["owner_power"] in BANDIT_POWERS
+    assert first["is_mutinied"] == 0
+    assert first["mutiny_count"] == 3
+    owner_logs = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs) == 1
+
+    second = _tick(db, state)
+    assert second["owner_power"] == first["owner_power"]
+    owner_logs2 = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs2) == 1

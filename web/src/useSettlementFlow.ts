@@ -323,7 +323,7 @@ export function useSettlementFlow({
     const expectedTurn = state?.turn?.turn;
     try {
       // 作弊强制结算项随颁诏一次性穿入；发出即清空，绝不跨回合。
-      // Free prose cheat: preserve raw; trim only emptiness (#1834 F16).
+      // 作弊项是自由正文：原串透传，判空由后端观察副本完成。
       const cheatPayload = cheatDirective;
       const body: Record<string, unknown> = { cheat: cheatPayload };
       if (expectedTurn != null && Number.isFinite(Number(expectedTurn))) {

@@ -34,6 +34,8 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
+from ming_sim.agents import bind_content as bind_agent_content
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -204,13 +206,10 @@ def _surface_capture(label: str, text: str) -> dict:
 
 
 def _auto_complete_hitl(session: GameSession) -> Optional[str]:
-    """真实结算若出 HITL：CLI/脚本缺亲裁能力，如实停在 awaiting（#1812 第9项）。"""
+    """真实结算推进；若 awaiting 则返回现报，不自动首选代选（#1812 已裁）。"""
     result = session.advance_without_decree()
     if result is None:
         return None
-    if result.awaiting:
-        print("[hitl] 脚本缺亲裁能力，停在 awaiting，不自动代裁。")
-        return result.report
     return result.report
 
 
@@ -225,6 +224,7 @@ def _first_month_gazette_via_production_settle(
     """
     db = session.db
     closed_turn = int(session.state.turn)
+    # 邸报是自由正文：判空观察副本，返回原串。
     existing = str(db.get_turn_report(closed_turn) or "")
     if existing.strip():
         return existing
@@ -313,7 +313,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         by_id = {int(v["dossier_id"]): v for v in verdicts}
 
         # Apply verdicts so force / stigma / costs can be exercised on structured path.
-        db.apply_dossier_verdicts(state, verdicts)
+        apply_dossier_verdicts(db, state, verdicts)
 
         cabinet_v = by_id[planted["cabinet"]]
         bare_v = by_id[planted["bare"]]
@@ -338,7 +338,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         if bare_reject_ok and bare_v.get("midzhi_unpromulgatable") is not True:
             bare_force_attempted = True
             try:
-                db.apply_dossier_promulgation(
+                apply_dossier_promulgation(db,
                     state, planted["bare"], "force_promulgated", content=content,
                 )
             except Exception as exc:  # noqa: BLE001 — evidence path; counted failed
@@ -372,7 +372,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         if midzhi_decision == "rejected" and not midzhi_unpromulgatable:
             midzhi_force_attempted = True
             try:
-                db.apply_dossier_promulgation(
+                apply_dossier_promulgation(db,
                     state, planted["midzhi"], "force_promulgated", content=content,
                 )
             except Exception as exc:  # noqa: BLE001 — counted failed

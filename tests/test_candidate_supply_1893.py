@@ -260,8 +260,9 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
         result = dispatch_month_segment(
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
         )
-        applied = result.effects.applied[0]["issue_summary"]["new_issues"]
-        assert [item.get("rejected") for item in applied] == [False]
+        applied = result.effects.applied[0].issue.new_issues
+        assert len(applied) == 1
+        assert result.effects.applied[0].issue.rejected == []
         assert db.conn.execute(
             "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -271,10 +272,8 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
         again = dispatch_month_segment(
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
         )
-        assert [
-            item.get("rejected")
-            for item in again.effects.applied[0]["issue_summary"]["new_issues"]
-        ] == [True]
+        assert again.effects.applied[0].issue.new_issues == []
+        assert len(again.effects.applied[0].issue.rejected) == 1
         assert db.conn.execute(
             "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -317,10 +316,8 @@ def test_non_strategic_candidate_effects_land_without_event_id_binding(game, con
         result = dispatch_month_segment(
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
         )
-        assert [
-            item.get("rejected")
-            for item in result.effects.applied[0]["issue_summary"]["new_issues"]
-        ] == [False]
+        assert len(result.effects.applied[0].issue.new_issues) == 1
+        assert result.effects.applied[0].issue.rejected == []
         assert int(state.metrics["民心"]) == before - 3
     finally:
         _drop_event(content, ev)
@@ -394,8 +391,9 @@ def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):
     result = dispatch_month_segment(
         db, state, segment="派系发难", translate_fn=lambda rq, cfg: declaration,
     )
-    applied = result.effects.applied[0]["issue_summary"]["new_issues"]
-    assert [item.get("rejected") for item in applied] == [False]
+    applied = result.effects.applied[0].issue.new_issues
+    assert len(applied) == 1
+    assert result.effects.applied[0].issue.rejected == []
     row = db.conn.execute(
         "SELECT origin_ref,faction_hint,target_roster FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()

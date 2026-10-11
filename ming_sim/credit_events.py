@@ -11,12 +11,15 @@
 
 语境=extraction 真叙事字段（note/reason/purpose/criterion_text），禁 CTX_* 模板（P7）。
 去重=origin+端点写前判重，不动表 UNIQUE 结构。
-识别只消费校验后未 rejected 的落格项（由 apply_score_extraction 后置传入）。
+识别只消费校验后未 rejected 的落格项（由 settle_delta / 声明分派后置传入）。
 """
 
 from __future__ import annotations
 
 import re
+
+from ming_sim.applier import Provenance
+
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ming_sim.breach_plea import _extract_ref_ids
@@ -75,9 +78,6 @@ def scapegoat_actor_kind_from_origin(origin: object) -> Optional[str]:
     return None
 
 
-def _parse_dossier_ref(ref: object) -> Optional[int]:
-    m = _DOSSIER_REF_RE.match(str(ref or "").strip())
-    return int(m.group(1)) if m else None
 
 
 def _credit_origin(scope: str, scope_id: int, *parts: str) -> str:
@@ -94,7 +94,9 @@ def _narrative_context(*parts: object) -> str:
     局部副本判空；返回原文（#1834 F21：自由正文不得 strip 后再写入链）。
     """
     for part in parts:
-        text = str(part or "")
+        if part is None:
+            continue
+        text = str(part)
         if text.strip():
             return text
     return ""
@@ -306,17 +308,16 @@ def _is_exposed_transformed(dossier: Dict[str, object]) -> bool:
 
 
 def _person_change_items(extracted: Dict[str, object]) -> List[Dict[str, object]]:
-    """消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在 apply_score_extraction）。"""
-    from ming_sim.person_delta_adapter import normalize_person_changes
-    return [
-        it for it in normalize_person_changes(extracted)
-        if isinstance(it, dict)
-    ]
+    """消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在 settle_delta）。"""
+    raw = extracted.get("人物变更") or []
+    if not isinstance(raw, list):
+        return []
+    return [it for it in raw if isinstance(it, dict)]
 
 
 def _item_dossier_id(item: Dict[str, object]) -> Optional[int]:
     for key in ("origin_ref", "来源引用"):
-        did = _parse_dossier_ref(item.get(key))
+        did = dossier_id_in_origin(item.get(key))
         if did is not None:
             return did
     raw = item.get("dossier_id")
@@ -528,7 +529,7 @@ def _collect_reject_issue_ids(extracted: Dict[str, object]) -> Set[int]:
     """拒/斥退：只认 cancels 显式信号；close_issues / 办砸终值不算。"""
     cancels = [
         it for it in (extracted.get("cancels") or [])
-        if isinstance(it, dict) and not it.get("rejected")
+        if isinstance(it, dict)
     ]
     return _extract_ref_ids(cancels, prefixes=("issue",))
 
@@ -550,7 +551,7 @@ def _host_person_for_commitment(db: Any, cid: int) -> str:
         "SELECT origin_ref FROM issues WHERE id=?", (cid,),
     ).fetchone()
     if row is not None:
-        did = _parse_dossier_ref(row["origin_ref"])
+        did = dossier_id_in_origin(row["origin_ref"])
         if did is not None:
             host = resolve_host_character(
                 db, commitment_ref=cid, dossier_id=did,
@@ -576,7 +577,7 @@ def _resolve_one_urge_todo(
     cid = int(todo["commitment_ref"])
     kind = str(todo.get("entry_kind") or "")
     person = _host_person_for_commitment(db, cid)
-    if not person:
+    if not person or cid not in reject_ids:
         return None
 
     if cid not in reject_ids:
@@ -617,7 +618,7 @@ def _resolve_one_urge_todo(
 
 
 def resolve_urge_credit_from_extraction(
-    db: Any, state: Any, extracted: Dict[str, object], *, commit: bool = False,
+    db: Any, state: Any, extracted: Dict[str, object],
 ) -> List[Dict[str, object]]:
     """谏处置：cancels 结构化拒→辜负。不从资金 purpose 散文派生准宽限撑腰。"""
     if not isinstance(extracted, dict):
@@ -636,8 +637,6 @@ def resolve_urge_credit_from_extraction(
         )
         if row is not None:
             out.append(row)
-    if commit and out:
-        db.conn.commit()
     return out
 
 
@@ -646,8 +645,8 @@ def resolve_fulfillment_credit_from_extraction(
 ) -> List[Dict[str, object]]:
     """dossier_executions outcome=fulfilled → 兑付/撑完。
 
-    消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在
-    apply_score_extraction 的 minus-rejections）。fulfilled 仍以 DB 终值为门。
+    只消费成功回执关联的源项（credit_event 段的 source_item），不对输入
+    做拒收求差；fulfilled 仍以 DB 终值为门。
     """
     if not isinstance(extracted, dict):
         return []
@@ -680,9 +679,9 @@ def resolve_credit_events_from_extraction(
     state: Any,
     extracted: Dict[str, object],
     *,
-    commit: bool = False,
+    source: Provenance = Provenance.system_simulation,
 ) -> Dict[str, List[Dict[str, object]]]:
-    """召对/结算 extraction 真入口同缝（resolve_breach_pleas_from_extraction 先例）。
+    """召对/结算 extraction 真入口同缝（与既有 credit 写口同批）。
 
     调用方须在 applier 校验之后传入未 rejected 落格项；本轴只写不读。
     不重复实现 #623 挽留回绝辜负。
@@ -692,16 +691,16 @@ def resolve_credit_events_from_extraction(
             "fulfillment": [],
             "dispositions": [],
             "urge": [],
-        }
+        }, []
     fulfillment = resolve_fulfillment_credit_from_extraction(db, state, extracted)
     dispositions = resolve_disposition_credit_from_extraction(db, state, extracted)
     urge = resolve_urge_credit_from_extraction(
-        db, state, extracted, commit=False,
+        db, state, extracted,
     )
-    if commit and (fulfillment or dispositions or urge):
-        db.conn.commit()
     return {
         "fulfillment": fulfillment,
         "dispositions": dispositions,
         "urge": urge,
-    }
+    }, []
+
+from ming_sim.materials import dossier_id_in_origin

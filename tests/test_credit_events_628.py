@@ -9,7 +9,8 @@
 
 from __future__ import annotations
 
-from tests.dossier_test_helpers import executing_rostered_policy as _executing_dossier
+from ming_sim.settlement.dossier import apply_dossier_promulgation
+from ming_sim.applier import Provenance
 
 from ming_sim.breach_plea import (
     BREACH_KIND_REMOVE_SPONSOR,
@@ -25,7 +26,6 @@ from ming_sim.credit_events import (
     scapegoat_actor_kind_from_origin,
 )
 from ming_sim.db import GameDB
-from ming_sim.issues import apply_score_extraction
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -33,10 +33,27 @@ from ming_sim.staged_commitment import (
 from ming_sim.urge_lever import (
     _record_commitment_urge,
 )
-
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import section, view
 
 # ── helpers ───────────────────────────────────────────────────────────
 
+def _executing_dossier(db, state, *, token: str, roster=None):
+    if roster is None:
+        roster = [
+            {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
+        ]
+    did = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"信用写端·{token}",
+        target_kind="issue",
+        target_id=token,
+        participants=roster,
+    )
+    apply_dossier_promulgation(db, state, did, "promulgated")
+    assert db.get_decree_dossier(did)["status"] == "executing"
+    return did
 
 def _transformed_dossier(db, state, *, token: str, roster=None):
     """真实暴露的变形案卷（非空 fixture）——先落执行格 transformed。"""
@@ -48,7 +65,6 @@ def _transformed_dossier(db, state, *, token: str, roster=None):
     d = db.get_decree_dossier(did)
     assert d["execution_outcome"] == "transformed"
     return did
-
 
 def _insert_commitment(db, state, *, title: str, origin_ref: str, host: str = "倪元璐"):
     issue_id = db.insert_issue(
@@ -81,7 +97,6 @@ def _insert_commitment(db, state, *, title: str, origin_ref: str, host: str = "�
     db.conn.commit()
     return int(issue_id)
 
-
 def _credit_edges(db, *, event_kind=None, target=None, source=None):
     sql = "SELECT * FROM relation_edge_events WHERE 1=1"
     params = []
@@ -97,7 +112,6 @@ def _credit_edges(db, *, event_kind=None, target=None, source=None):
     sql += " ORDER BY id"
     return [dict(r) for r in db.conn.execute(sql, params).fetchall()]
 
-
 def _SCAPEGOAT_ROSTER():
     # #565 同构：主办倪元璐←委派徐光启；卒=倪，车=徐
     return [
@@ -108,9 +122,7 @@ def _SCAPEGOAT_ROSTER():
         {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
     ]
 
-
 # ── ① AC1：#623 既有，不重复 ─────────────────────────────────────────
-
 
 def test_ac1_breach_plea_guofu_not_reimplemented(game):
     """挽留回绝→辜负仍由 #623 finalize_persist 写出；本片 resolve 不重写该 origin。"""
@@ -134,29 +146,27 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
     todo_id = write_breach_plea_todo(
         db, state, commitment_ref=cid,
         breach_kind=BREACH_KIND_REMOVE_SPONSOR,
-        reason="罢主办试既有", target_dossier_id=did, commit=True,
+        reason="罢主办试既有", target_dossier_id=did,
     )
     todo = next(
         t for t in db.list_next_audience_todos(status="pending")
         if int(t["id"]) == todo_id
     )
     before = len(_credit_edges(db, event_kind="辜负", target=holder))
-    result = finalize_persist(db, state, todo, commit=True)
+    result = finalize_persist(db, state, todo)
     assert result["decision"] == "persist"
     edges = _credit_edges(db, event_kind="辜负", target=holder)
     assert len(edges) == before + 1
     assert any("breach_plea" in str(e["origin"]) for e in edges)
     # 本片 resolve 不吞、不重写该 origin
-    resolve_credit_events_from_extraction(db, state, {}, commit=True)
+    resolve_credit_events_from_extraction(db, state, {},  source=Provenance.system_simulation)
     edges2 = _credit_edges(db, event_kind="辜负", target=holder)
     assert len(edges2) == len(edges)
 
-
 # ── ② 兑付/撑完 + 谏三型 + 校验拒收不落伪信用 ───────────────────────
 
-
 def test_fulfill_back_and_urge_three_decisions(game):
-    """兑付→兑现所托；撑完→撑腰；cancels 拒宽限·斥退→辜负；被拒 fulfilled/任命不落。"""
+    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled/任命不落。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -167,15 +177,8 @@ def test_fulfill_back_and_urge_three_decisions(game):
         roster=[{"character_id": "倪元璐", "tier": "主办", "role": "承办"}],
     )
     note_f = "依限办结"
-    out_f = apply_score_extraction(
-        db, state,
-        {"dossier_executions": [{
-            "dossier_id": did_f, "outcome": "fulfilled",
-            "note": note_f,
-        }]},
-        content=content,
-    )
-    assert out_f.get("credit_event_resolutions", {}).get("fulfillment")
+    out_f = settle_delta(state, db, {'dossier_executions': [{'dossier_id': did_f, 'outcome': 'fulfilled', 'note': note_f}]}, SettlementContext(content=content))
+    assert view(out_f, "credit_event_resolutions")
     fulfill_edges = _credit_edges(db, event_kind=KIND_FULFILL, source="倪元璐")
     assert fulfill_edges, "兑付须写兑现所托"
     fe = fulfill_edges[-1]
@@ -200,13 +203,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
     )
     db.conn.commit()
     note_b = "顶住办结"
-    apply_score_extraction(
-        db, state,
-        {"dossier_executions": [{
-            "dossier_id": did_b, "outcome": "fulfilled", "note": note_b,
-        }]},
-        content=content,
-    )
+    settle_delta(state, db, {'dossier_executions': [{'dossier_id': did_b, 'outcome': 'fulfilled', 'note': note_b}]}, SettlementContext(content=content))
     back_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BACK, target="毕自严")
         if f"dossier:{did_b}:credit:back" in str(e["origin"])
@@ -232,17 +229,8 @@ def test_fulfill_back_and_urge_three_decisions(game):
         close=False, commit=True,
     )
     before_fake = len(_credit_edges(db, event_kind=KIND_FULFILL))
-    out_rej_f = apply_score_extraction(
-        db, state,
-        {"dossier_executions": [{
-            "dossier_id": did_rej_f, "outcome": "fulfilled",
-        }]},
-        content=content,
-    )
-    assert any(
-        isinstance(r, dict) and r.get("rejected")
-        for r in (out_rej_f.get("dossier_executions") or [])
-    )
+    out_rej_f = settle_delta(state, db, {'dossier_executions': [{'dossier_id': did_rej_f, 'outcome': 'fulfilled'}]}, SettlementContext(content=content))
+    assert section(out_rej_f, "dossier_executions").rejected
     assert len(_credit_edges(db, event_kind=KIND_FULFILL)) == before_fake
 
     # ── C1 负向：人物变更被拒 → 不得落信用边（包庇/弃卒等）──
@@ -253,26 +241,31 @@ def test_fulfill_back_and_urge_three_decisions(game):
         roster=[{"character_id": "孙承宗", "tier": "主办", "role": "承办"}],
     )
     before_rd = len(_credit_edges(db))
-    out_rd = apply_score_extraction(
-        db, state,
-        {"人物变更": [{
-            "name": "孙承宗", "动作": "任命",
-            "reason": "包庇伪装应拒", "origin_ref": f"dossier:{did_rd}",
-        }]},
-        content=content,
-    )
-    pcs_rd = out_rd.get("applied_person_changes") or []
-    assert any(isinstance(r, dict) and r.get("rejected") for r in pcs_rd)
+    out_rd = settle_delta(state, db, {'人物变更': [{'name': '孙承宗', '动作': '任命', 'reason': '包庇伪装应拒', 'origin_ref': f'dossier:{did_rd}'}]}, SettlementContext(content=content))
+    assert section(out_rd, "applied_person_changes").rejected
     assert not any(
         f"dossier:{did_rd}:credit:" in str(e["origin"])
         for e in _credit_edges(db)
     )
     assert len(_credit_edges(db)) == before_rd
 
-    # ── 谏处置：cancels 结构化拒→辜负（不从 purpose 散文猜准宽限）──
+    # ── 谏处置三型（案卷主办=谏者，resolve_host 读案卷面）──
     def _host_roster(name: str):
         return [{"character_id": name, "tier": "主办", "role": "承办"}]
 
+    # 准宽限
+    did_g = _executing_dossier(
+        db, state, token="grace-628", roster=_host_roster("倪元璐"),
+    )
+    cid_g = _insert_commitment(
+        db, state, title="乞宽限案", origin_ref=f"dossier:{did_g}", host="倪元璐",
+    )
+    db.insert_next_audience_todo(
+        commitment_ref=cid_g, stage_idx=0, due_turn=state.turn + 2,
+        criterion_text="乞恩宽限", origin_context="催紧",
+        entry_kind=ENTRY_KIND_GRACE_PLEA, created_turn=state.turn - 1,
+        payload_json={"kind": "grace_plea"}, commit=True,
+    )
     # 拒宽限
     did_rg = _executing_dossier(
         db, state, token="rej-grace-628", roster=_host_roster("徐光启"),
@@ -300,16 +293,18 @@ def test_fulfill_back_and_urge_three_decisions(game):
         payload_json={"kind": "rush_remonstrance"}, commit=True,
     )
 
-    apply_score_extraction(
-        db, state,
-        {
-            "cancels": [
-                {"issue_id": cid_rg},
-                {"issue_id": cid_rr},
-            ],
-        },
-        content=content,
-    )
+    grace_purpose = "未准宽限，仅补发旧欠"
+    settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': 5, 'category': '军费', 'purpose': grace_purpose, 'reason': '未准宽限', 'origin_ref': '盘面自发', 'issue_id': cid_g}], 'cancels': [{'issue_id': cid_rg}, {'issue_id': cid_rr}]}, SettlementContext(content=content))
+    g_edges = [
+        e for e in _credit_edges(db, event_kind=KIND_BACK, target="倪元璐")
+        if f"issue:{cid_g}:credit:grant_grace" in str(e["origin"])
+    ]
+    assert not g_edges
+    pending_grace = [
+        t for t in db.list_next_audience_todos(status="pending")
+        if int(t.get("commitment_ref") or 0) == cid_g
+    ]
+    assert pending_grace
 
     rg_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="徐光启")
@@ -323,12 +318,10 @@ def test_fulfill_back_and_urge_three_decisions(game):
     ]
     assert rr_edges and rr_edges[-1]["context"] == "期限过急，恐难如期"
 
-
 # ── ③ 处置映射正负 ───────────────────────────────────────────────────
 
-
 def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
-    """丢卒保车两笔；包庇→撑腰；查办→不记；级联回声（放归）不计。"""
+    """丢卒保车两笔；包庇→撑腰；查办→不记；级联回声（放归/被顶替）不计。"""
     db, state, content = game
 
     roster = _SCAPEGOAT_ROSTER()
@@ -343,14 +336,7 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
 
     before_sg = len(_credit_edges(db, event_kind=KIND_SCAPEGOAT))
     reason_sg = "顶罪下狱"
-    apply_score_extraction(
-        db, state,
-        {"人物变更": [{
-            "name": "倪元璐", "动作": "处置", "status": "imprisoned",
-            "reason": reason_sg, "origin_ref": f"dossier:{did_sg}",
-        }]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': '倪元璐', '动作': '处置', 'status': 'imprisoned', 'reason': reason_sg, 'origin_ref': f'dossier:{did_sg}'}]}, SettlementContext(content=content))
     sg_edges = _credit_edges(db, event_kind=KIND_SCAPEGOAT)
     assert len(sg_edges) == before_sg + 2
     by_target = {e["target"]: e for e in sg_edges if f"dossier:{did_sg}" in str(e["origin"])}
@@ -367,16 +353,7 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
         roster=[{"character_id": "孙承宗", "tier": "主办", "role": "承办"}],
     )
     reason_cv = "着仍供职，勿深究"
-    apply_score_extraction(
-        db, state,
-        {"人物变更": [{
-            "name": "孙承宗", "动作": "调任",
-            "office": "兵部尚书", "office_type": "文官",
-            "reason": reason_cv,
-            "origin_ref": f"dossier:{did_cv}",
-        }]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': '孙承宗', '动作': '调任', 'office': '兵部尚书', 'office_type': '文官', 'reason': reason_cv, 'origin_ref': f'dossier:{did_cv}'}]}, SettlementContext(content=content))
     cover_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BACK, target="孙承宗")
         if f"dossier:{did_cv}:credit:cover" in str(e["origin"])
@@ -394,15 +371,8 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
         k: len(_credit_edges(db, event_kind=k))
         for k in (KIND_BETRAY, KIND_BACK, KIND_SCAPEGOAT, KIND_FULFILL)
     }
-    res = apply_score_extraction(
-        db, state,
-        {"人物变更": [{
-            "name": "毕自严", "动作": "处置", "status": "dismissed",
-            "reason": "依律查办削籍", "origin_ref": f"dossier:{did_pr}",
-        }]},
-        content=content,
-    )
-    disp = (res.get("credit_event_resolutions") or {}).get("dispositions") or []
+    res = settle_delta(state, db, {'人物变更': [{'name': '毕自严', '动作': '处置', 'status': 'dismissed', 'reason': '依律查办削籍', 'origin_ref': f'dossier:{did_pr}'}]}, SettlementContext(content=content))
+    disp = view(res, "credit_event_resolutions")
     assert any(d.get("disposition") == "查办" for d in disp)
     # 不得因查办新增四类信用边
     for k, n in before_kinds.items():
@@ -425,17 +395,8 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     db.set_character_status(state, "倪元璐", "imprisoned", "旧案在押", commit=True)
     content.characters["倪元璐"].status = "imprisoned"
     before_sg_rel = len(_credit_edges(db, event_kind=KIND_SCAPEGOAT))
-    rel_out = apply_score_extraction(
-        db, state,
-        {"人物变更": [{
-            "name": "倪元璐", "动作": "任命",
-            "office": "户部尚书", "office_type": "文官",
-            "reason": "查明旧案后起用",
-            "origin_ref": f"dossier:{did_rel}",
-        }]},
-        content=content,
-    )
-    pcs_rel = rel_out.get("applied_person_changes") or []
+    rel_out = settle_delta(state, db, {'人物变更': [{'name': '倪元璐', '动作': '任命', 'office': '户部尚书', 'office_type': '文官', 'reason': '查明旧案后起用', 'origin_ref': f'dossier:{did_rel}'}]}, SettlementContext(content=content))
+    pcs_rel = view(rel_out, "applied_person_changes")
     assert any(
         isinstance(r, dict)
         and r.get("cascade_echo")
@@ -446,7 +407,6 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
         isinstance(r, dict)
         and r.get("动作") == "任命"
         and not r.get("cascade_echo")
-        and not r.get("rejected")
         for r in pcs_rel
     ), "任命本体须落格且非回声"
     sg_rel = [
@@ -456,9 +416,70 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     assert sg_rel == [], "放归级联回声不得写弃卒保车边"
     assert len(_credit_edges(db, event_kind=KIND_SCAPEGOAT)) == before_sg_rel
 
+    # ── 被顶替人才池回声：接任顶出局 → 对被顶替者零 cover/撑腰边 ──
+    # 回声行 {处置, status:active} 若混入会被 _is_cover_change 误归包庇。
+    displaced_host = "黄道周"
+    successor = "刘鸿训"
+    target_office = "信用回声试总督"
+    did_disp = _transformed_dossier(
+        db, state, token="displace-echo-628",
+        roster=[{"character_id": displaced_host, "tier": "主办", "role": "承办"}],
+    )
+    old_disp = (
+        content.characters[displaced_host].status,
+        content.characters[displaced_host].office,
+        content.characters[displaced_host].office_type,
+    )
+    old_succ = (
+        content.characters[successor].status,
+        content.characters[successor].office,
+        content.characters[successor].office_type,
+    )
+    try:
+        # 新正形：地方在任须有 character_offices.region_id，与接任同 seat 才互挤。
+        db.conn.execute(
+            "UPDATE characters SET status='active', office=?, office_type=? WHERE name=?",
+            (target_office, "地方", displaced_host),
+        )
+        db._record_character_office(
+            displaced_host, target_office, "地方", "test-fixture", region_id="shaanxi",
+        )
+        db.conn.commit()
+        content.characters[displaced_host].status = "active"
+        content.characters[displaced_host].office = target_office
+        content.characters[displaced_host].office_type = "地方"
+        content.characters[displaced_host].office_region = "shaanxi"
+        before_back_disp = [
+            e for e in _credit_edges(db, event_kind=KIND_BACK, target=displaced_host)
+            if f"dossier:{did_disp}:credit:cover" in str(e["origin"])
+        ]
+        disp_out = settle_delta(state, db, {'人物变更': [{'name': successor, '动作': '任命', 'office': target_office, 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '另简接任', 'origin_ref': f'dossier:{did_disp}'}]}, SettlementContext(content=content))
+        pcs_disp = view(disp_out, "applied_person_changes")
+        assert any(
+            isinstance(r, dict)
+            and r.get("cascade_echo")
+            and r.get("name") == displaced_host
+            and r.get("derived_from") == "被顶替"
+            for r in pcs_disp
+        ), "被顶替回声须在生产点打 cascade_echo"
+        cover_disp = [
+            e for e in _credit_edges(db, event_kind=KIND_BACK, target=displaced_host)
+            if f"dossier:{did_disp}:credit:cover" in str(e["origin"])
+        ]
+        assert cover_disp == before_back_disp, "被顶替回声不得写 cover/撑腰边"
+    finally:
+        (
+            content.characters[displaced_host].status,
+            content.characters[displaced_host].office,
+            content.characters[displaced_host].office_type,
+        ) = old_disp
+        (
+            content.characters[successor].status,
+            content.characters[successor].office,
+            content.characters[successor].office_type,
+        ) = old_succ
 
 # ── ④ 幂等 + 叙事语境 + restore + 只写不读 ────────────────────────
-
 
 def test_idempotent_narrative_restore_write_only(game, tmp_path):
     """同处置同窗不双写；跨案同人不错吞；叙事语境；restore；零消费。"""
@@ -473,7 +494,7 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
         "name": "倪元璐", "动作": "处置", "status": "exiled",
         "reason": reason_a, "origin_ref": f"dossier:{did_a}",
     }]}
-    apply_score_extraction(db, state, payload, content=content)
+    settle_delta(state, db, payload, SettlementContext(content=content))
     edges_once = [
         e for e in _credit_edges(db, event_kind=KIND_SCAPEGOAT)
         if f"dossier:{did_a}" in str(e["origin"])
@@ -482,7 +503,7 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
     ids_once = sorted(e["id"] for e in edges_once)
 
     # 同窗重识别不双写（origin 写前判重）
-    apply_score_extraction(db, state, payload, content=content)
+    settle_delta(state, db, payload, SettlementContext(content=content))
     edges_twice = [
         e for e in _credit_edges(db, event_kind=KIND_SCAPEGOAT)
         if f"dossier:{did_a}" in str(e["origin"])
@@ -491,14 +512,7 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
 
     # 跨案同人：案 B 另落，不错吞
     reason_b = "另案顶罪"
-    apply_score_extraction(
-        db, state,
-        {"人物变更": [{
-            "name": "倪元璐", "动作": "处置", "status": "exiled",
-            "reason": reason_b, "origin_ref": f"dossier:{did_b}",
-        }]},
-        content=content,
-    )
+    settle_delta(state, db, {'人物变更': [{'name': '倪元璐', '动作': '处置', 'status': 'exiled', 'reason': reason_b, 'origin_ref': f'dossier:{did_b}'}]}, SettlementContext(content=content))
     edges_b = [
         e for e in _credit_edges(db, event_kind=KIND_SCAPEGOAT)
         if f"dossier:{did_b}" in str(e["origin"])

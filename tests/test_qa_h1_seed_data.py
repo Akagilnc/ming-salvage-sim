@@ -167,7 +167,7 @@ def test_deficit_stage_text_aligns_with_opening_treasury_and_hubu():
     assert "南京" in (bi.office or ""), bi.office
 
     ev = _deficit_seed()
-    # audiences 须含在任户部尚书，召对注入才对口
+    # 不盯 stage_text 散文措辞；结构化 audiences / 开局国库硬锚为准
     audiences = list(ev.audiences or [])
     assert "郭允厚" in audiences, audiences
 

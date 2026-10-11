@@ -254,7 +254,6 @@ def rush_staged_commitment_stage(
     stage_idx: int,
     deadline_months: int = 1,
     reason: str = "",
-    commit: bool = True,
     record_history: bool = True,
 ) -> Dict[str, object]:
     """分段承诺真加速唯一写口：缩 issues.stages_json[].due_turn。
@@ -350,8 +349,6 @@ def rush_staged_commitment_stage(
             reason=why,
         )
 
-    if commit:
-        db.conn.commit()
 
     return {
         "commitment_ref": int(commitment_ref),
@@ -406,7 +403,7 @@ def list_urge_audience_scenes(
 
 
 def consume_pending_urge_audience_todos(
-    db: Any, state: Any, *, commit: bool = False,
+    db: Any, state: Any,
 ) -> List[Dict[str, object]]:
     """消费路径：经召对窗后的 settle 将 created_turn < 当前 turn 的谏/宽限标 consumed。
 
@@ -428,6 +425,4 @@ def consume_pending_urge_audience_todos(
             "entry_kind": str(todo.get("entry_kind") or ""),
             "consumed": bool(ok),
         })
-    if commit and results:
-        db.conn.commit()
     return results

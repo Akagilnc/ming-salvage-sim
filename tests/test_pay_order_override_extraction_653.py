@@ -44,6 +44,7 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
     assert all("duration_months" not in entry for entry in staged_entries)
 
 
+
 def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypatch):
     db, _state, content = game
     db.conn.execute("UPDATE game_state SET turn=7 WHERE id=1")

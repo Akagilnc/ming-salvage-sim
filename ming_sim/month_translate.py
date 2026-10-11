@@ -21,7 +21,9 @@ from ming_sim.declaration_dispatch import (
 )
 
 
-def _visible_effect_refs(db: Any, turn: int) -> dict[str, list[int]]:
+def _visible_effect_refs(
+    db: Any, turn: int, decree_payload: Mapping[str, object] | None = None,
+) -> dict[str, list[int]]:
     """Freeze the same reference rosters supplied to this segment's translation."""
     from ming_sim.materials import secret_order_dossier_ids
 
@@ -39,7 +41,8 @@ def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
     只列事件账里已有请旨答复、终态仍空的事项。到期但尚未上疏的事项不在此列，
     转译器不得把它们写成已批。不声明结局即留中，引擎不写终态。只供事实，不代模型判断。
     """
-    from ming_sim.issues import _fiscal_levy_event_by_id, petition_outcome_is_admissible
+    from ming_sim.entities.fiscal.levy import _fiscal_levy_event_by_id
+    from ming_sim.issues import petition_outcome_is_admissible
 
     out: list[dict[str, object]] = []
     for row in db.list_event_petition_records():
@@ -59,9 +62,7 @@ def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
     return out
 
 
-def _petition_verdict_block(
-    db: Any, state: Any,
-) -> str:
+def _petition_verdict_block(db: Any, state: Any) -> str:
     if state is None:
         return ""
     items = petition_verdict_grounding(db, state)
@@ -107,9 +108,8 @@ MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
 
 def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
     """一段一份 C0 声明；不套召对轮次语义，也不按 section 拆多次调用。"""
-    # 目录原文零删改；判空只用局部归一，不把 strip 写回供料。
     grounding = str(request.target_grounding or "")
-    grounding_block = f"{grounding}\n" if grounding.strip() else ""
+    grounding_block = f"{grounding}\n" if grounding else ""
     candidates = request.candidates
     return (
         "你是过月段转译器。读完一整段已经落定的推演，一次声明其中所有可由 C0 "
@@ -149,7 +149,7 @@ def _candidate_contract_block(candidates: Mapping[str, object]) -> str:
         '在 effects.new_issues 声明 {"origin_kind": "event_pool", "id": 事件 id, '
         '"title": 该事件题名}。判定不发生、时机未到或前提已被玩家化解的候选一律不声明。\n'
         # #1893 + ADR 0014：只有 strategic_foreign 的 node/ending 战事有「世界状态主账
-        # ＋事件结局」这条既有归属契约（issues._preflight_declared_event_groups 只接这
+        # ＋事件结局」这条既有归属契约（settlement.preflight._preflight_declared_event_groups 只接这
         # 一类）。其余人物事件不绑 event_id，其战果按普通效果写，否则整份声明被拒。
         # 结局标签取该候选事实的 outcome_labels（空集即不写），不得自造标签。
         "- 候选事件里 event_type 不是 situation 且 trigger_class 是 strategic_foreign 的"
@@ -242,7 +242,8 @@ def _answered_levy_verdicts(
     已答行只读 ``_fiscal_levy_answered_rows``，从已交接的实际答复取本次供料。
     历史仍留账，不重标为新答复；不解析批语或在这里判准驳（ADR 0142 / P6）。
     """
-    from ming_sim.issues import _fiscal_levy_answered_rows, _fiscal_levy_event_by_id
+    from ming_sim.issues import _fiscal_levy_answered_rows
+    from ming_sim.entities.fiscal.levy import _fiscal_levy_event_by_id
 
     out: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -294,7 +295,6 @@ def _translate_month_segment_front(
         answered_verdicts=answered_verdicts,
     )
     return declaration, refs
-
 
 
 def dispatch_month_segment(

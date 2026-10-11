@@ -1,11 +1,17 @@
 """#566: production settlement owns the durable monthly progress rail."""
 
-from tests.material_helpers import prepare_identity_materials
 import threading
+from pathlib import Path
 
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
-from tests.readback_helpers import active_character_name as _actor
+from ming_sim.settlement import SettlementContext, settle_delta
+
+
+def _actor(db):
+    return str(db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"])
 
 
 def _order(db, state, title="护行辽饷", tags=None, deadline=4):
@@ -25,28 +31,24 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
 
 
+def _production_session(db, state, content):
+    from ming_sim.session import GameSession
+
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.registry = session.llm_config = session.agno_db = None
+    session.deaths_this_turn, session.debuts_this_turn = [], []
+    session.last_decree = ""
+    session._decree_draft_fingerprint = ()
+    session.auto_save = lambda *args, **kwargs: None
+    return session
+
+
 def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 
 
-def test_monthly_report_keeps_its_turn_and_text(game):
-    db, state, _content = game
-    order_id, dossier_id = _order(db, state)
-    marker = "首批饷车已验山海关关防566"
-    _record_monthly_report(db, state, {
-        "dossier_id": dossier_id, "progress_band": "在途核验",
-        "memorial_text": marker,
-    })
-
-    emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
-    report = emperor_order["dossier_progress"][-1]
-    assert report["memorial_text"] == marker
-    assert int(report["turn"]) == int(state.turn)
-    assert report.get("is_terminal") is False
-
-
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
-    from ming_sim.issues import apply_score_extraction
 
     db, state, content = game
     order_id, dossier_id = _order(db, state, title="稽核辽饷", tags=["稽核"])
@@ -55,14 +57,14 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         "dossier_id": dossier_id, "progress_band": "核账",
         "memorial_text": marker,
     })
-    assert not any(str(item.get("source_id") or "").startswith(
-        f"secret_order_disclosure:{order_id}:"
-    ) for item in db.get_character_knowledge(state, _actor(db))["public_events"])
+    assert not any(
+        str(item.get("source_id") or "").startswith(f"secret_order_disclosure:{order_id}:")
+        for item in db._character_knowledge_events("")
+    )
 
-    apply_score_extraction(db, state, {"secret_order_updates": [{
-        "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
-    }]}, content=content)
-    public = db.get_character_knowledge(state, _actor(db))["public_events"]
+    sim_note = "该案已经明发廷议"
+    settle_delta(state, db, {'secret_order_updates': [{'order_id': order_id, 'sim_note': sim_note, 'disclosed': True}]}, SettlementContext(content=content))
+    public = db._character_knowledge_events("")
     disclosure = next(
         item for item in public
         if str(item.get("source_id") or "").startswith(
@@ -70,7 +72,7 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         )
     )
     assert marker in disclosure["body"]
-    assert "该案已经明发廷议" in disclosure["body"]
+    assert sim_note in disclosure["body"]
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
@@ -95,7 +97,8 @@ def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game
     assert db.list_dossier_progress(short)
 
 
-def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
+def test_close_secret_order_keeps_model_reports_without_synthesizing_terminal(game):
+    """结案只落 result/执行格；不把结案正文写成人物终奏。"""
     db, state, content = game
     eligible_id, eligible = _order(db, state)
     ordinary_id, ordinary = _order(db, state, title="保护堤岸", tags=["河工"])
@@ -106,15 +109,23 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
         {"dossier_id": ordinary, "progress_band": "在办", "memorial_text": "河工并列密奏"},
     ]
     db.record_monthly_dossier_progress(state.turn, reports)
+    before_eligible = db.list_dossier_progress(eligible)
+    before_ordinary = db.list_dossier_progress(ordinary)
 
     db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
     db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
 
-    assert not any(row["is_terminal"] for row in db.list_dossier_progress(eligible))
-    assert db.list_dossier_progress(ordinary)
+    after_eligible = db.list_dossier_progress(eligible)
+    after_ordinary = db.list_dossier_progress(ordinary)
+    assert after_eligible == before_eligible
+    assert after_ordinary == before_ordinary
+    assert all(not row.get("is_terminal") for row in after_eligible)
+    assert db.get_decree_dossier(eligible)["status"] == "closed"
+    assert db.get_decree_dossier(ordinary)["status"] == "closed"
 
 
-def test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail(game):
+def test_character_terminal_status_closes_orders_without_synthetic_memorial(game):
+    """人物终态关密令/案卷；终态落账，不污染既有模型月报。"""
     db, state, content = game
     assignee = _actor(db)
     chained_id, chained_dossier = _order(db, state, title="护行辽饷")
@@ -136,6 +147,8 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
         },
     ]
     db.record_monthly_dossier_progress(state.turn, reports)
+    before_chained = db.list_dossier_progress(chained_dossier)
+    before_unchained = db.list_dossier_progress(unchained_dossier)
 
     db.set_character_status(state, assignee, "dead", "途中病故")
 
@@ -150,9 +163,12 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     assert orders[unchained_id]["status"] == "failed"
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
-    terminal = db.list_dossier_progress(chained_dossier)[-1]
-    assert terminal["is_terminal"] is False
-    assert db.list_dossier_progress(unchained_dossier)
+    chained_progress = db.list_dossier_progress(chained_dossier)
+    unchained_progress = db.list_dossier_progress(unchained_dossier)
+    assert chained_progress == before_chained
+    assert unchained_progress == before_unchained
+    assert all(not row.get("is_terminal") for row in chained_progress)
+    assert unchained_progress
 
 
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):
@@ -306,3 +322,28 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     reloaded = db.load_state()
     assert (reloaded.turn, reloaded.year, reloaded.period, reloaded.turn_phase) == before["clock"]
     assert reloaded.metrics == before["metrics"]
+
+
+def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
+    db, state, _content = game
+    _, dossier_id = _order(db, state)
+    import pytest
+    with pytest.raises(ValueError):
+        db.record_monthly_dossier_progress(state.turn, None)
+    with pytest.raises(ValueError):
+        db.record_monthly_dossier_progress(state.turn, {"dossier_id": dossier_id})
+    with pytest.raises(ValueError):
+        db.record_monthly_dossier_progress(state.turn, [
+        {"dossier_id": 999999, "progress_band": "伪", "memorial_text": "伪进展"},
+        {"dossier_id": dossier_id, "progress_band": "", "memorial_text": "缺档"},
+        {"dossier_id": dossier_id, "progress_band": "启程", "memorial_text": "首批出京"},
+            {"dossier_id": dossier_id, "progress_band": "重复", "memorial_text": "不得覆盖"},
+        ])
+    for invalid_id in (True, 1.0, 0, -1):
+        with pytest.raises(ValueError):
+            db.record_monthly_dossier_progress(state.turn, [{
+                "dossier_id": invalid_id,
+                "progress_band": "伪进展",
+                "memorial_text": "不得命中真实案卷",
+            }])
+    assert db.list_dossier_progress(dossier_id) == []

@@ -50,7 +50,8 @@
 ### 工厂科技（buildings 可挂 output_metric/output_amount）
 
 - 现有：京营火器局 / 佛山铸炮厂（火器）、御用监织造库 / 杭州织造库（→内库）
-- **玻璃/肥皂/化肥 工厂靠诏书现建**：诏书明文「设玻璃局/办肥皂坊/开化肥厂」→ 月链声明立一条 `new_issue` 带 `effect_on_resolve: buildings:create` → issue 推满后真建 building，产出落库。**无需先扩 buildings.json**。字段见 [`DELTA_SCHEMA`](DELTA_SCHEMA.md)。
+- **玻璃/肥皂/化肥 工厂靠诏书现建**：诏书明文「设玻璃局/办肥皂坊/开化肥厂」→ 声明立
+  一条 `new_issue`，`effect_on_resolve.buildings`（create）→ 推满结案后由 `entities.issue.effects._apply_issue_buildings` 真建 building，产出落库（详见 §五；旧 extractor/`issues.py:88` 路径已退役）。
 - 化肥→挂 regions 的 grain_security/民心；玻璃肥皂→挂国库（商品收入）。建厂是一条独立 bar（办不办得成），与情势线分开。
 
 ### 科技人才（`content/characters.json`，58 人）
@@ -115,11 +116,11 @@
 
 ---
 
-## 五、诏书招募 / 诏书建厂写法
+## 五、诏书招募 / 诏书建厂写法（须先有名册/声明契约）
 
-建厂与在册人物任免走**月链声明**（`declaration_dispatch` → `apply_score_extraction`）。册外新人**不能**靠任命声明自动建档。字段契约见 [`SETTLEMENT_FLOW`](SETTLEMENT_FLOW.md) / [`DELTA_SCHEMA`](DELTA_SCHEMA.md) / [`character-office-changes`](character-office-changes.md)。
+招人、建厂走**声明 → `declaration_dispatch` → `settlement.settle_delta`**。人物必须已在 `content.characters`（并已 seed 入 DB）；未知名 `人物变更` 任命/调任整项 `hallucinated_id` 拒收，**不**自动建档。
 
-### 招科技人才（不在 58 人名册也能招）
+### 招科技人才（名册内起复 / 在册授官）
 
 1. **在册者**：诏书明文「召/起/拜/授 某某 为 某官」，月链 `人物变更`（动作 `任命` 等）即可。
 2. **册外者**：先显式 `registrations` 入册（`declaration_dispatch` → `register_unlisted_person_record`）或史实人物补档，**再**任命。直接对陌生名写任命 → `hallucinated_id` 拒收（ADR 0009）。

@@ -9,16 +9,25 @@ population_transfers。禁止 station 文本解析、第二事实核、第二转
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 
 from ming_sim.db import GameDB
 from ming_sim.models import Event
-from tests.readback_helpers import class_population
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
 JUNHU_LIAODONG = 230000
 JUNHU_DONGJIANG = 95000
 LIUMIN_LIAODONG = 0
 LIUMIN_DONGJIANG = 0
+
+
+def _pop(db: GameDB, name: str, region_id: str) -> int:
+    row = db.conn.execute(
+        "SELECT population FROM classes WHERE name=? AND region_id=?",
+        (name, region_id),
+    ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
@@ -36,7 +45,6 @@ def _pseudo_event(title: str = "调防") -> Event:
     )
 
 
-
 def test_redeploy_moves_fact_region_keeps_pay_source(game):
     """真实调防写核：下一投影 region 跟随 station_region；pay_source_region 不变。"""
     db, state, _content = game
@@ -47,7 +55,7 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     pay_src = str(before["pay_source_region"])
     _pin_split_arrears(db, "dongjiang", province=40.0, central=10.0)
 
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state, _pseudo_event("东江调防登莱"), None, "兵部",
         {
             "dongjiang": {
@@ -56,8 +64,8 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
                 "reason": "移镇登莱",
             },
         },
-    )
-    assert not any(c.get("rejected") for c in changes if isinstance(c, dict))
+    source=Provenance.system_simulation)
+    assert changes_rejections == []
     row = db.conn.execute(
         "SELECT station, station_region, pay_source_region FROM armies WHERE id='dongjiang'"
     ).fetchone()
@@ -65,15 +73,16 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     assert row["station_region"] == "shandong"
     assert row["pay_source_region"] == pay_src == "liaodong"
 
+
 def test_station_region_rejects_unknown_region_id(game):
     """非空 station_region 必须是已入库 regions.id；不从 station 反推。"""
     db, state, _content = game
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state, _pseudo_event(), None, "test",
         {"dongjiang": {"station_region": "not_a_real_region", "reason": "坏 id"}},
-    )
-    rejected = [c for c in changes if c.get("rejected")]
-    assert rejected and rejected[0]["field"] == "station_region"
+    source=Provenance.system_simulation)
+    assert changes_rejections and changes_rejections[0].item.get("field") == "station_region"
+    assert changes_rejections[0].category == "invalid_enum"
     row = db.conn.execute(
         "SELECT station_region FROM armies WHERE id='dongjiang'"
     ).fetchone()
@@ -92,8 +101,8 @@ def test_fresh_seed_station_region_and_class_slices(game):
     assert rows["guanning"]["station_region"] == "liaodong"
     assert rows["dongjiang"]["station_region"] == "dongjiang_area"
     assert rows["guanning"]["pay_source_region"] == rows["dongjiang"]["pay_source_region"] == "liaodong"
-    assert class_population(db, "军户", "liaodong") == JUNHU_LIAODONG
-    assert class_population(db, "流民", "liaodong") == LIUMIN_LIAODONG
-    assert class_population(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
-    assert class_population(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
+    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG
+    assert _pop(db, "流民", "liaodong") == LIUMIN_LIAODONG
+    assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
+    assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
 

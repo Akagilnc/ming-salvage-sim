@@ -125,8 +125,8 @@ def test_force_promulgated_rejected_dossier_is_referenceable(game):
     db, state, _ = game
     dossier_id = _make_dossier(db, state, "中旨强颁的旧旨")
 
-    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_verdicts(db, state, [_rejected_verdict(dossier_id)])
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["promulgation_decision"] == "rejected"
@@ -141,3 +141,7 @@ def test_withdrawn_rejected_dossier_is_not_referenceable(game):
     db.record_dossier_decision(dossier_id, "rejected", reason="驳回")
     db.record_dossier_decision(dossier_id, "withdrawn", reason="收回")
     assert dossier_id not in {row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)}
+
+from ming_sim.settlement.dossier import apply_dossier_verdicts
+
+from ming_sim.settlement.dossier import apply_dossier_promulgation

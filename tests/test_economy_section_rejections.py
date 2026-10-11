@@ -3,9 +3,7 @@
 原先 `_clean_economy_moves`（cleaner，pre-apply）与 `_apply_economy_list`（applier）对
 非法 account（∉国库/内库）/非整数 delta（含 bool/float）都 `continue` 静默丢、零拒收留痕
 （#14 模式 A/C）。改为：统一在 applier 逐项拒收（invalid_enum），cleaner 不再丢、透传坏项
-给 apply 拒收；delta==0/缺额 仍按 no-op 静默跳。顶层拒收落独立 economy_moves_rejections 段
-（不污染玩家可见 economy_moves list、_player_visible pop）；issue-effect 路 economy 拒收经
-entity/inertia sink 达 rejection_reports，不蒸发。
+给 apply 拒收；delta==0/缺额 仍按 no-op 静默跳。拒收由 SectionResult.rejected 交给框架写入 rejection_reports。
 
 从现役原子声明入口验证 applier 的拒收契约。
 """
@@ -14,53 +12,70 @@ from __future__ import annotations
 
 from functools import partial
 
+import pytest
+
 from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows
 
-ECO_REJ = "economy_moves_rejections"
+ECO_REJ = "economy_moves"
 
 
 _rejection_rows = partial(rejection_rows, columns="section, reason, category")
 
 
+def _guoku(db):
+    return db.conn.execute(
+        "SELECT COALESCE(SUM(delta),0) FROM economy_ledger WHERE account='国库'").fetchone()[0]
 
-def test_top_level_bad_account_rejected_good_lands(game):
-    """顶层 economy_moves 账户非法 → invalid_enum 逐项拒收达 rejection_reports（applier 拒收），同信封合法项照落。"""
+
+@pytest.mark.parametrize("bad_items", [
+    [{"account": "金库", "delta": -5}],
+    [{"account": "国库", "delta": "很多"}],
+    [{"account": "国库", "delta": 3.7}, {"account": "国库", "delta": True}],
+])
+def test_economy_refusal_keeps_valid_sibling(game, bad_items):
+    db, state, content = game
+    from ming_sim.decree import pre_settle
+    pre_settle(state, db, content=content)
+    before = _guoku(db)
+    items = [{**item, "origin_ref": "盘面自发", "reason": "坏项"} for item in bad_items]
+    items.append({"origin_ref": "盘面自发", "account": "国库", "delta": 3, "reason": "好项"})
+    run_settle(db, state, content, {"economy_moves": items})
+    rows = _rejection_rows(db, state.turn, ECO_REJ)
+    assert len(rows) == len(bad_items)
+    assert all(row["category"] == "invalid_enum" and row["reason"] for row in rows)
+    assert _guoku(db) == before + 3
+
+
+def test_valid_economy_still_applies_no_reject(saved_game):
+    """合法 economy 照常落账、零拒收（不误伤）。
+    用 saved_game：断言依赖玩过存档的国库余额基线，fresh seed 不复现（#5）。"""
+    db, state, content = saved_game
+    turn = state.turn
+    before = _guoku(db)
+
+    run_settle(db, state, content, {
+        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -7, "reason": "正常"}],
+    }, narrative="x", decree_text="y")
+
+    assert _rejection_rows(db, turn, ECO_REJ) == []
+    assert _guoku(db) < before  # 确实扣账
+
+
+def test_zero_delta_economy_no_reject_no_apply(game):
+    """delta==0 是 no-op，不拒收也不落账（不误报）。"""
     db, state, content = game
     turn = state.turn
 
     run_settle(db, state, content, {
-        "economy_moves": [
-            {"origin_ref": "盘面自发", "account": "金库", "delta": -5, "reason": "非法账户"},
-            {"origin_ref": "盘面自发", "account": "国库", "delta": -3, "reason": "合法"},
-        ],
+        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": 0, "reason": "空动作"}],
     }, narrative="x", decree_text="y")
 
-    rows = _rejection_rows(db, turn, ECO_REJ)
-    assert len(rows) == 1, rows
-    assert rows[0][2] == "invalid_enum", rows
-    assert rows[0][1]
-
-
-def test_top_level_nonint_delta_rejected(game):
-    """顶层 economy_moves delta 非整数 → invalid_enum 逐项拒收。"""
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": "很多", "reason": "坏 delta"}],
-    }, narrative="x", decree_text="y")
-
-    rows = [r for r in _rejection_rows(db, turn, ECO_REJ) if r[2] == "invalid_enum"]
-    assert len(rows) == 1, rows
-
-
-
-
+    assert _rejection_rows(db, turn, ECO_REJ) == []
 
 
 def test_issue_effect_bad_account_economy_reaches_reports(game):
-    """局势 effect_on_resolve 的 economy 账户非法 → 拒收经 entity_rejections 达
+    """局势 effect_on_resolve 的 economy 账户非法 → 拒收经 issue_summary.rejected 达
     rejection_reports，不蒸发（与 faction issue-effect 同契约，#14）。"""
     db, state, content = game
     turn = state.turn
@@ -71,7 +86,7 @@ def test_issue_effect_bad_account_economy_reaches_reports(game):
         tags=[], ongoing_effects={},
         effect_on_resolve={"economy": [{"account": "金库", "delta": -9, "reason": "非法账户"}]},
         effect_on_fail={}, resolve_condition="", fail_condition="",
-        cancellable="decree", cancel_cost={},
+        cancellable="decree",
     )
     db.conn.commit()
 
@@ -79,32 +94,29 @@ def test_issue_effect_bad_account_economy_reaches_reports(game):
         "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = [r for r in _rejection_rows(db, turn, "issue_summary")
             if r[2] == "invalid_enum"]
     assert len(rows) == 1, rows
 
 
-def test_float_and_bool_delta_rejected(game):
-    """delta 为 float/bool（int() 不抛但非合法整数 delta）→ invalid_enum 逐项拒收，不静默落账
-    （与 faction/region/army _strict_int 同约，cmr r1 codex）。"""
+def test_noop_bad_account_skipped_not_rejected(game):
+    """no-op 空占位行（delta==0/缺额）即便 account 空/非法也静默跳，不拒收（免噪声+假提示，
+    codex r1 线上）；只有真有钱动（delta≠0）的非法 account 才拒。"""
     db, state, content = game
     turn = state.turn
 
     run_settle(db, state, content, {
         "economy_moves": [
-            {"origin_ref": "盘面自发", "account": "国库", "delta": 3.7, "reason": "float"},
-            {"origin_ref": "盘面自发", "account": "国库", "delta": True, "reason": "bool"},
+            {"origin_ref": "盘面自发", "account": "金库", "delta": 0, "reason": "空占位非法账户"},  # no-op → 跳
+            {"origin_ref": "盘面自发", "account": "", "reason": "缺 delta 空账户"},                # no-op → 跳
         ],
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn, ECO_REJ) if r[2] == "invalid_enum"]
-    assert len(rows) == 2, rows
-
-
+    assert _rejection_rows(db, turn, ECO_REJ) == []
 
 
 def test_issue_effect_cancel_economy_reaches_reports(game):
-    """撤局势 applied_cost 的 economy 账户非法 → 拒收经 entity_rejections 达 rejection_reports
+    """撤局势 applied_cost 的 economy 账户非法 → 拒收经 issue_summary.rejected 达 rejection_reports
     （issue-effect 第二条路 cancel，sourcery r1 覆盖；与 close 路同 sink）。"""
     db, state, content = game
     turn = state.turn
@@ -113,7 +125,7 @@ def test_issue_effect_cancel_economy_reaches_reports(game):
         origin_ref="", bar_value=50, bar_good_meaning="成", bar_bad_meaning="败",
         inertia=0, stage_text="", severity=50, region_hint="", faction_hint="",
         tags=[], ongoing_effects={}, effect_on_resolve={}, effect_on_fail={},
-        resolve_condition="", fail_condition="", cancellable="decree", cancel_cost={},
+        resolve_condition="", fail_condition="", cancellable="decree",
     )
     db.conn.commit()
 
@@ -123,6 +135,6 @@ def test_issue_effect_cancel_economy_reaches_reports(game):
                      "narrative": "撤"}],
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = [r for r in _rejection_rows(db, turn, "issue_summary")
             if r[2] == "invalid_enum"]
     assert len(rows) == 1, rows

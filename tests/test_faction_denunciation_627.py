@@ -12,8 +12,9 @@ Seams:
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
+
 from ming_sim.db import GameDB
-from tests.dossier_test_helpers import executing_subject_policy as _subject_dossier
 from ming_sim.supervision import (
     ORIGIN_MARK_DENUNCIATION_FALSE,
     ORIGIN_MARK_DENUNCIATION_TRUE,
@@ -21,7 +22,6 @@ from ming_sim.supervision import (
     origin_has_mark,
 )
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
-
 from tests.dossier_test_helpers import create_test_secret_order
 
 # ── helpers ───────────────────────────────────────────────────────
@@ -56,6 +56,23 @@ def _enemy_accuser(db, subject_faction: str) -> str:
             return str(rows[0]["name"])
     raise AssertionError("无敌对派系在朝人物")
 
+def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
+    did = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"清丈{token}",
+        target_kind="issue",
+        target_id=f"land-{token}",
+        executor_kind="character",
+        executor_id=owner,
+        participants=[{"character_id": owner, "tier": "主办"}],
+    )
+    apply_dossier_promulgation(db, state, did, "promulgated")
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,),
+    )
+    db.conn.commit()
+    return did
 
 def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     """奏报 + 旨外实况 → fork 单源读端为真。"""
@@ -73,8 +90,77 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     )
     db.conn.commit()
 
+def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path, monkeypatch):
+    """公开材料只列入有奏报且与旨外或执行格分叉的案；密令案与未分叉案不入。"""
+    import json
+    from ming_sim.materials import prepare_world_materials, read_material
 
-def _make_transformed_no_fork(db, dossier_id: int):
+    db, state, content = game
+    owner = next(iter(_chars_by_faction(db).values()))[0]["name"]
+
+    def _report(dossier_id: int, token: str) -> None:
+        db.record_dossier_progress(
+            dossier_id, state.turn, "已竣", f"奏称{token}已完",
+            is_terminal=False, commit=True,
+        )
+
+    def _beyond(dossier_id: int, token: str) -> None:
+        db.record_issue_economy_move(
+            state, "国库", 5, "浮收", f"借旨行私{token}",
+            origin_ref=f"dossier:{dossier_id}", beyond_intent=True, commit=True,
+        )
+
+    def _outcome(dossier_id: int, outcome: str) -> None:
+        db.conn.execute(
+            "UPDATE decree_dossiers SET execution_outcome=? WHERE id=?",
+            (outcome, dossier_id),
+        )
+        db.conn.commit()
+
+    beyond_executing = _subject_dossier(db, state, owner=owner, token="beyond-exec")
+    _report(beyond_executing, "beyond-exec")
+    _beyond(beyond_executing, "beyond-exec")
+    _outcome(beyond_executing, "executing")
+
+    report_transformed = _subject_dossier(db, state, owner=owner, token="report-xf")
+    _report(report_transformed, "report-xf")
+    _outcome(report_transformed, "transformed")
+
+    report_fulfilled = _subject_dossier(db, state, owner=owner, token="report-ok")
+    _report(report_fulfilled, "report-ok")
+    _outcome(report_fulfilled, "fulfilled")
+
+    silent_beyond = _subject_dossier(db, state, owner=owner, token="silent")
+    _beyond(silent_beyond, "silent")
+    _outcome(silent_beyond, "transformed")
+
+    order_id = create_test_secret_order(db, state, owner, "密查", "查账", [])
+    secret_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.execute("UPDATE decree_dossiers SET status='executing' WHERE id=?", (secret_id,))
+    db.conn.commit()
+    _make_forked(db, state, secret_id)
+
+    import ming_sim.materials as materials
+    captured = {}
+    write_world = materials._write_world_tree
+
+    def record_world(*args, **kwargs):
+        captured.update(args[7])
+        return write_world(*args, **kwargs)
+
+    monkeypatch.setattr(materials, "_write_world_tree", record_world)
+    prepared = prepare_world_materials(
+        db, state, dest_root=tmp_path / "gazette",
+        exclude_secret_order_dossiers=True,
+    )
+    facts = captured["denunciation"]
+    assert (prepared.root / "盘面/派系检举事实.txt").is_file()
+    assert {item["dossier_id"] for item in facts["forked_dossiers"]} == {
+        beyond_executing,
+        report_transformed,
+    }
+
+def _make_transformed_no_fork(db, state, dossier_id: int):
     """变形但无奏报分叉（无私货/无旨外）——fork 读端为假。"""
     db.conn.execute(
         "UPDATE decree_dossiers SET execution_outcome='transformed' WHERE id=?",
@@ -88,7 +174,6 @@ def _escalate_fork(db, state, dossier_id: int, *, token: str = "esc"):
         state, "国库", 3, "再浮收", f"升级{token}",
         origin_ref=f"dossier:{dossier_id}", beyond_intent=True, commit=True,
     )
-
 
 def _scripted_entry(
     *,
@@ -169,7 +254,7 @@ def test_ac3_veracity_true_and_false_from_fork(game):
     assert db.read_dossier_fork_state(did_true)["fork"] is True
 
     did_false = _subject_dossier(db, state, owner=subject_name, token="vf")
-    _make_transformed_no_fork(db, did_false)
+    _make_transformed_no_fork(db, state, did_false)
     assert db.read_dossier_fork_state(did_false)["fork"] is False
 
     hits = db.accept_faction_denunciations(

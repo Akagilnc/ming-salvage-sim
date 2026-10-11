@@ -440,6 +440,8 @@ def test_1271_menu_status_grok_reasoning_supported_and_capability_list(monkeypat
 
 
 
+
+
 def _count_llm_calls(monkeypatch):
     """#1228 行为验收：统计连通 smoke / CLI 后端真实调用次数（不断言墙钟）。"""
     import ming_sim.cli_backend as _cb

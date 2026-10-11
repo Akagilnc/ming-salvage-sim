@@ -71,14 +71,11 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     from ming_sim.db import GameDB
 
     for row in rows:
-        # 已持久 pending 载荷腐坏响亮，不静默成空摘要（#1897 E1 / ADR 0005）。
-        payload = GameDB.parse_engine_payload_json(
-            row["payload_json"],
-            surface="pending_actions.payload_json",
-        )
-        # #1897：pending 摘要供料保留 payload 自由正文，禁 strip。
+        payload = json.loads(str(row["payload_json"] or "{}"))
+        if not isinstance(payload, dict):
+            raise ValueError("持久待办载荷须为对象")
         text = str(payload.get("text") or row["action"] or "")
-        brief = text if text else str(row["kind"] or "")
+        brief = text if text.strip() else str(row["kind"] or "")
         approved = "已应允" if int(row["night_approved"] or 0) else "待应允"
         out.append(
             f"#{int(row['id'])} [{row['kind']}/{row['action']}] {approved} {brief}"
@@ -266,8 +263,8 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
 
 def build_c0_declaration_shape() -> str:
     """C0 唯一输出形状，召对与过月转译共用。"""
-    # 效果 delta 的形状真源是 simulation.EMPTY_EXTRACTION；声明层不另维护字段表。
-    from ming_sim.simulation import EMPTY_EXTRACTION
+    # 效果字段真源是 simulation.DECLARATION_EFFECT_FIELDS；声明层不另维护字段表。
+    from ming_sim.simulation import DECLARATION_EFFECT_FIELDS
 
     # target_kind 表面唯一真源 = decree_vocabulary.TARGET_KINDS，禁手抄分叉。
     target_kind_hint = "|".join(sorted(TARGET_KINDS))
@@ -280,7 +277,7 @@ def build_c0_declaration_shape() -> str:
     dossier_link_types = "|".join(sorted(DOSSIER_LINK_TYPES))
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
-            {"event_id": "效果属于某事件时填该事件 id（战果，或本段已答请饷的结局，且与该项事件结局的键相同）；未填即独立", **EMPTY_EXTRACTION},
+            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **DECLARATION_EFFECT_FIELDS},
             ensure_ascii=False, indent=2,
         ).splitlines()
     )
@@ -408,7 +405,7 @@ def build_audience_translate_prompt(
     said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
     grounding = str(target_grounding or "")
-    grounding_block = f"{grounding}\n" if grounding.strip() else ""
+    grounding_block = f"{grounding}\n" if grounding else ""
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
         "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"

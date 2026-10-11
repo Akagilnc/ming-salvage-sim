@@ -162,3 +162,16 @@ def validate_rejection_verdict(
                for item in endorsement_ids)
     ):
         raise ValueError("打回判决缺少关口、主否决方、缘由或完整 typed 判据快照")
+
+
+_SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
+
+
+def _parse_sqlite_id(raw: object) -> int:
+    """解析将绑进 SQLite 的整型主键 id（secret_order / issue 等通用）：非整数/bool/float/超
+    SQLite 64-bit 范围 → 抛 ValueError（调用方拒为 invalid_enum）。避免绑定超界 int 抛
+    OverflowError 崩整月结算（#63.5 一坏项带走整批；cmr secret-order r2 / close-issues r1 codex）。"""
+    val = strict_int(raw)  # bool/float/非数 → ValueError
+    if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
+        raise ValueError("id 超出 SQLite 64-bit 范围")
+    return val

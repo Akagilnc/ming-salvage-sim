@@ -41,10 +41,10 @@ def parse_highlight_judge_output(raw: str) -> List[str]:
     for item in items:
         if not isinstance(item, str):
             continue
-        # Free prose highlight phrases: preserve raw; strip only emptiness (#1834 F16).
-        phrase = item
-        if phrase.strip():
-            out.append(phrase)
+        # P6：短语是奏对原文片段；判空观察副本，清单保留原串。
+        if not item.strip():
+            continue
+        out.append(item)
     return out
 
 
@@ -56,7 +56,6 @@ def run_highlight_judge(
     timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
 ) -> List[str]:
     """同通道短调用；超时/坏输出/判官失败 → []（一层带日志边界，零副作用）。"""
-    # Free prose minister_reply: preserve raw; strip only emptiness (#1834 F16).
     reply = str(minister_reply or "")
     if not reply.strip():
         return []

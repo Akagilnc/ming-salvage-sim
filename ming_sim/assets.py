@@ -8,15 +8,11 @@ from __future__ import annotations
 import json
 import math
 import os
-import textwrap
+import re
 from typing import Dict, List
 
-from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT, WRAP
+from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT
 from ming_sim.person_archive_contract import format_person_actions
-
-
-def wrap(text: str) -> str:
-    return "\n".join(textwrap.wrap(text, width=WRAP, replace_whitespace=False))
 
 
 def load_text_asset(relative_path: str) -> str:
@@ -58,10 +54,7 @@ def format_wanliang_amount(value: object) -> str:
     军饷 shortfall 等中间量常为 float；f-string 原始插值会把
     1.2000000000000002 写进 army_logs.reason → previous_summary。
     """
-    try:
-        amount = float(value or 0)
-    except (TypeError, ValueError):
-        amount = 0.0
+    amount = float(value or 0)
     if not math.isfinite(amount):
         amount = 0.0
     rounded = round(amount, 1)

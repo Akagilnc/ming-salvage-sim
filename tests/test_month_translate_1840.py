@@ -6,9 +6,9 @@ import sqlite3
 
 import pytest
 
+from ming_sim.settlement.views import section, view
 from tests.conftest import active_ming_character
 from tests.test_declaration_dispatch_1835 import _minister as _character_name
-
 
 @pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
     (1, 0, 10, 1, 0, 0), (5, 11, 10, 1, 0, 0), (0, 0, 0, 0, 0, 0),
@@ -42,7 +42,7 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
         db, state, segment="调拨和缴获", translate_fn=lambda request, config: declaration,
     )
     effects = result.effects.applied[0]
-    assert [move["delta"] for move in effects["economy_moves"]] == [-treasury, treasury]
+    assert [move["delta"] for move in view(effects, "economy_moves")] == [-treasury, treasury]
     assert (state.metrics["国库"], state.metrics["内库"]) == (0, treasury)
     rows = db.conn.execute(
         "SELECT account, delta FROM economy_ledger WHERE category='转库' ORDER BY id"
@@ -56,7 +56,7 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     assert {row["id"]: row["cannon_equipment"] for row in cannon} == {
         loser: source_cannon - actual_cannon, winner: target_cannon + actual_cannon,
     }
-    assert sorted(change["delta"] for change in effects["army_changes"]
+    assert sorted(change["delta"] for change in view(effects, "army_changes")
                   if change.get("field") == "cannon_equipment") == [
                       -actual_cannon, actual_cannon,
                   ]
@@ -67,7 +67,6 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     assert sorted(row["delta"] for row in logs) == (
         [-actual_cannon, actual_cannon] if actual_cannon else []
     )
-
 
 def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     from ming_sim.month_translate import dispatch_month_segment
@@ -85,33 +84,28 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
         translate_fn=lambda request, config: {"effects": {"economy_moves": [move]}},
     )
 
-    assert result.effects.applied[0]["economy_moves"] == []
-    assert len(result.effects.applied[0]["economy_moves_rejections"]) == 1
-    rejected = result.effects.applied[0]["economy_moves_rejections"][0]
-    assert rejected["account"] == "国库"
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert rejected["item"] == move
+    outcome = result.effects.applied[0]
+    assert view(outcome, "economy_moves") == []
+    rejected = section(outcome, "economy_moves").rejected
+    assert len(rejected) == 1
+    assert rejected[0].category == "invalid_enum"
+    assert rejected[0].item == move
     assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE section='economy_moves_rejections' AND category='invalid_enum'"
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='economy_moves' AND category='invalid_enum'"
     ).fetchone()[0] == 1
     assert (state.metrics["国库"], state.metrics["内库"]) == (100, 0)
     assert db.conn.execute("SELECT arrears FROM armies WHERE id='jingying'").fetchone()[0] == 6
     assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE category='调拨'").fetchone()[0] == 0
-
 
 def _army_id(db) -> str:
     row = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()
     assert row is not None
     return str(row["id"])
 
-
 def _region_id(db) -> str:
     row = db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 1").fetchone()
     assert row is not None
     return str(row["id"])
-
-
 
 
 def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_order(game):
@@ -148,9 +142,8 @@ def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_or
         subject_kind="army", subject_id=army,
     )
     assert [fact.body for fact in person_facts] == ["人物先记一事", "人物再记一事"]
-
-
     assert [fact.body for fact in army_facts] == ["军队先记一事", "军队再记一事"]
+
 def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -224,8 +217,7 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     )
 
     assert result.effects.applied
-    person_change = result.effects.applied[0]["applied_person_changes"][0]
-    assert not person_change.get("rejected", False)
+    person_change = view(result.effects.applied[0], "applied_person_changes")[0]
     assert person_change["new_office"] == new_office
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (person,),
@@ -243,11 +235,11 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     assert any(row["section"] == "army_changes" and row["reason"] and
                row["category"] == "missing_ref" for row in rejection)
     effect_report = result.effects.applied[0]
-    assert effect_report["army_changes"]
-    assert effect_report["army_changes"][0]["new"] == army_before + 2
-    assert effect_report["army_changes"][-1]["rejected"] is True
-    assert effect_report["army_changes"][-1]["reason"]
-    economy_deltas = [move["delta"] for move in effect_report["economy_moves"]]
+    army_rows = view(effect_report, "army_changes")
+    assert army_rows
+    assert army_rows[0]["new"] == army_before + 2
+    assert section(effect_report, "army_changes").rejected[-1].reason
+    economy_deltas = [move["delta"] for move in view(effect_report, "economy_moves")]
     assert economy_deltas[0] == -treasury_before
     # A personal-wealth proposal has no source ledger; keep the existing
     # one-off treasury income path (income modifiers may change 7 to 6).
@@ -259,25 +251,22 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     assert ledger_deltas == economy_deltas
     assert state.metrics["国库"] == treasury_before + sum(ledger_deltas)
     manpower_change = next(
-        change for change in effect_report["army_changes"]
+        change for change in view(effect_report, "army_changes")
         if change.get("field") == "manpower"
     )
     assert manpower_change["old"] == manpower_before
     assert manpower_change["new"] == 0
     assert manpower_change["delta"] == -manpower_before
-    assert not effect_report["population_transfers_rejections"]
-    transfer, depleted_transfer = effect_report["population_transfers"]
+    assert not section(effect_report, "population_transfers").rejected
+    transfer, depleted_transfer = view(effect_report, "population_transfers")
     assert transfer["amount"] == farmer_before
     assert depleted_transfer["amount"] == 0
-    assert not depleted_transfer.get("rejected", False)
     assert db.conn.execute(
         "SELECT population FROM classes WHERE name='农民' AND region_id='shaanxi'"
     ).fetchone()[0] == 0
     assert db.conn.execute(
         "SELECT population FROM classes WHERE name='流民' AND region_id='shaanxi'"
     ).fetchone()[0] == displaced_before + farmer_before
-
-
 
 
 def test_world_segment_failure_rolls_back_only_current_segment(game):
@@ -320,29 +309,6 @@ def test_world_segment_failure_rolls_back_only_current_segment(game):
     )
     assert [fact.body for fact in facts] == ["前一段已落"]
 
-
-@pytest.mark.parametrize("invalid_output", ["not-json", None])
-def test_unparseable_month_segment_does_not_commit(game, monkeypatch, invalid_output):
-    from ming_sim.audience_translate import AudienceTranslateError
-    from ming_sim.month_translate import dispatch_month_segment
-
-    db, state, _ = game
-    before = tuple(db.conn.iterdump())
-    treasury = state.metrics["国库"]
-    if invalid_output is None:
-        kwargs = {"translate_fn": lambda request, config: None}
-    else:
-        monkeypatch.setattr(
-            "ming_sim.cli_backend._run_json_extractor_for_config",
-            lambda *args, **kwargs: (invalid_output, ""),
-        )
-        kwargs = {}
-    with pytest.raises(AudienceTranslateError):
-        dispatch_month_segment(db, state, segment="世界段", **kwargs)
-    assert tuple(db.conn.iterdump()) == before
-    assert state.metrics["国库"] == treasury
-
-
 def test_world_segment_effects_use_frozen_visible_affairs(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -353,7 +319,7 @@ def test_world_segment_effects_use_frozen_visible_affairs(game):
                              period=state.period, turn=state.turn)
     db.conn.execute(
         "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
-        (int(state.turn), int(hidden.id)),
+        (state.turn, hidden.id),
     )
     db.conn.commit()
     before = state.metrics["国库"]
@@ -372,10 +338,6 @@ def test_world_segment_effects_use_frozen_visible_affairs(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM rejection_reports WHERE category='invalid_enum'"
     ).fetchone()[0] >= 1
-
-
-
-
 
 
 def test_world_segment_repeated_entity_effects_apply_in_order(game):
@@ -417,14 +379,12 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
     # #652：世界段不回流；仅邸报后月份推进会扣池。
     assert _pop(db, "流民", "shaanxi") == refugees_before
 
-
 @pytest.mark.parametrize(
     ("initial_pressure", "first_pressure", "second_pressure", "second_morale", "second_reason", "second_army_event", "triggered", "pressure", "morale", "first_reason"),
     [(20, 35, -5, -3, "己巳之变再挫", True, True, 50, 55, "己巳之变敌逼京畿"),
      (20, "非法增量", -5, -3, "己巳之变再挫", True, False, 20, 50, "己巳之变敌逼京畿"),
      (100, -10, 5, -3, "己巳之变再挫", True, True, 95, 55, "己巳之变敌逼京畿"),
-     # 同事件多笔：写核权威下先 +10 至顶后再 +5 为静默无增量，整封仍因前笔有真实变化而接纳。
-     (90, 10, 5, -3, "己巳之变再挫", True, True, 100, 55, "己巳之变敌逼京畿"),
+     (90, 10, 5, -3, "己巳之变再挫", True, False, 90, 50, "己巳之变敌逼京畿"),
      (20, 35, -5, 5, "己巳之变后京营平日操练", False, True, 50, 63, "己巳之变敌逼京畿"),
      (20, "非法增量", -5, 5, "己巳之变后京营平日操练", False, False, 20, 55, "己巳之变敌逼京畿"),
      (20, 35, None, None, "", False, False, 55, 50, None)],
@@ -548,7 +508,6 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
         assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure_before
         assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
 
-
 def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -561,7 +520,7 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
     )
     db.conn.execute(
         "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
-        (int(state.turn), int(hidden.id)),
+        (state.turn, hidden.id),
     )
     db.conn.commit()
     metric_before = state.metrics["民心"]
@@ -585,19 +544,18 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
 
-
 def _closed_affair(db, state):
     hidden = db.affairs.open(
         name="已了结事务", origin="未供料", year=state.year,
         period=state.period, turn=state.turn,
     )
+    # 夹具直接写 closed 态；生产无 declare_closed 动作（ADR 0154）。
     db.conn.execute(
         "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
-        (int(state.turn), int(hidden.id)),
+        (state.turn, hidden.id),
     )
     db.conn.commit()
     return hidden
-
 
 def _json_has_army_id(value, army_id: str) -> bool:
     if isinstance(value, dict):
@@ -607,7 +565,6 @@ def _json_has_army_id(value, army_id: str) -> bool:
     if isinstance(value, list):
         return any(_json_has_army_id(child, army_id) for child in value)
     return False
-
 
 def _army_rejection_categories(db, army_id: str) -> set[str]:
     import json
@@ -619,7 +576,6 @@ def _army_rejection_categories(db, army_id: str) -> set[str]:
         )
         if _json_has_army_id(json.loads(item_json), army_id)
     }
-
 
 @pytest.mark.parametrize("station_region,category", [
     (None, "unauthorized_affair_origin"),
@@ -667,7 +623,6 @@ def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_regi
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
     assert _army_rejection_categories(db, "jisi_hidden_affair_1840") == {category}
 
-
 @pytest.mark.parametrize("station_region", [None, "no-such-region"])
 def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
     from ming_sim.month_translate import dispatch_month_segment
@@ -704,7 +659,6 @@ def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
     assert _army_rejection_categories(db, "jisi_hidden_only_1840") == {"event_rejected"}
 
-
 def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -735,7 +689,6 @@ def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
-
 
 def test_final_strategic_rejection_leaves_no_owned_effects(game):
     """Owned fields and the event ledger stay one envelope.

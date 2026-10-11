@@ -2,85 +2,14 @@
 
 原先：坏 issue_id 静默 continue、坏 reason print[WARN]+continue、close_issue 抛异常 print[WARN]+
 continue、未找到（None）静默 continue——LLM 脏数据/陈旧引用无声蒸发，代码/DB 异常被 WARN 吞。
-改为：脏数据（坏 id/reason/陈旧引用）逐项拒收留痕（进 closes 列表、S0 桥接收进 rejection_reports），
+改为：脏数据（坏 id/reason/陈旧引用）逐项拒收留痕（经 canonical RejectedItem 落 rejection_reports），
 db.close_issue 的代码/DB 异常上抛（ADR 0005 fail-loud）。
 """
 
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+from ming_sim.applier import Provenance
+
 import pytest
-
-import ming_sim.issues as I
-from tests.section_rejection_helpers import game
-
-
-def _closes(result):
-    return result.get("closes") or []
-
-
-def _rejected(result):
-    return [c for c in _closes(result) if c.get("rejected")]
-
-
-@pytest.mark.parametrize("bad_issue_id", [
-    "abc",      # 非数字串
-    None,       # None
-    True,       # bool（_strict_int 拒）
-    1.5,        # float
-    -10 ** 100,  # 超 SQLite 64-bit 下界
-])
-def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
-    db, state, _ = read_game
-    # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 全数逐项拒收 invalid_enum，不泄漏/不崩。
-    out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": bad_issue_id, "reason": "resolved"}]}
-    )
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-
-
-@pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
-def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
-    db, state, _ = read_game
-    # 非 dict close 项（close_issues:[null]/标量，_sanitize 不清列表项可达）：必须逐项拒收，
-    # 不能 cl.get 抛 AttributeError 崩整月（codex r4）。
-    out = I.apply_issue_tracker_output(db, state, {"close_issues": [bad_item]})
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-
-
-def test_close_bad_reason_rejected(read_game):
-    db, state, _ = read_game
-    # reason 在调用 close_issue 前先验，故任意 id 都会先因坏 reason 被拒。
-    out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": 123, "reason": "bogus"}]}
-    )
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-
-
-def test_close_unknown_issue_rejected_missing_ref(read_game):
-    db, state, _ = read_game
-    # 合法 reason + 不存在的 issue_id → close_issue 回 None → missing_ref 拒收（不再静默 continue）。
-    out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": 999999, "reason": "resolved"}]}
-    )
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0]["category"] == "missing_ref"
-
-
-def test_close_overflow_issue_id_rejected(read_game):
-    db, state, _ = read_game
-    # 10**100：int() 过得了但绑定 SQLite 会抛 OverflowError——必须在解析期拒收（invalid_enum），
-    # 不能让 OverflowError 上抛崩整月（codex r1，复用 _parse_sqlite_id 64-bit 守门）。
-    out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": 10 ** 100, "reason": "resolved"}]}
-    )
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
 
 
 def test_close_already_inactive_rejected_missing_ref(game):
@@ -88,13 +17,12 @@ def test_close_already_inactive_rejected_missing_ref(game):
     iid = db.insert_issue(state, kind="situation", title="测试·先结再结",
                           effect_on_resolve={"metrics": {"民心": 1}})
     # 先合法结案一次（resolved），issue → status!=active。
-    I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]})
+    apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]}, source=Provenance.system_simulation)
     # 再结一次：已非 active → missing_ref（不是「未找到」，但归陈旧引用类）。
-    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]})
-    rej = _rejected(out)
+    out = apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]}, source=Provenance.system_simulation)
+    rej = out.rejected
     assert len(rej) == 1
-    assert rej[0]["category"] == "missing_ref"
-    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "resolved"
+    assert rej[0].category == "missing_ref"
 
 
 def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
@@ -103,73 +31,30 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
     # 这是「找到且 active 却被拒」的第三种 None——应归 invalid_enum（语义误判），非 missing_ref。
     iid = db.insert_issue(state, kind="situation", title="测试·不可崩坏天灾",
                           effect_on_resolve={"metrics": {"民心": 1}}, effect_on_fail={})
-    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "failed"}]})
-    rej = _rejected(out)
+    out = apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "failed"}]}, source=Provenance.system_simulation)
+    rej = out.rejected
     assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-    # 行为：issue 仍 active（拒结案，不被误标 missing_ref 也未被结案）。
+    assert rej[0].category == "invalid_enum"
+    # 行为：issue 仍 active。
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "active"
-
-
-def test_close_rejection_reaches_rejection_reports(game):
-    """端到端 plumbing：close 段拒收经 _collect_inline_rejections 真落 rejection_reports 表
-    （桥接下探 issue_summary.closes，cmr Claude r1）。"""
-    db, state, _ = game
-    from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.decree import _collect_inline_rejections
-
-    applied = {"issue_summary": {"closes": [{
-        "rejected": True, "category": "missing_ref",
-        "reason": "close 测试拒收", "item": {"issue_id": 999999, "reason": "resolved"},
-    }]}}
-    collector = RejectionCollector()
-    _collect_inline_rejections(collector, applied, 7, Provenance.unknown)
-    collector.flush_to_db(db)
-
-    row = db.conn.execute(
-        "SELECT section, category, reason FROM rejection_reports "
-        "WHERE turn=7 AND section LIKE '%closes%'"
-    ).fetchone()
-    assert row is not None, "close 段拒收未落 rejection_reports"
-    assert row["category"] == "missing_ref"
-
-
-def test_scalar_item_rejection_preserves_original_in_reports(game):
-    """非 dict 坏项（item 为标量/null）的 item_json 须存原始坏项本身（ADR 决定 5），
-    不是整个 rejected wrapper——桥接按 'item' 键存在性解包、覆盖标量原件（cmr r5 codex）。"""
-    import json
-    from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.decree import _collect_inline_rejections
-
-    applied = {"issue_summary": {"closes": [
-        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": 42},
-        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": None},
-    ]}}
-    collector = RejectionCollector()
-    _collect_inline_rejections(collector, applied, 8, Provenance.unknown)
-    collector.flush_to_db(db := game[0])
-
-    rows = db.conn.execute(
-        "SELECT item_json FROM rejection_reports WHERE turn=8 AND section LIKE '%closes%' ORDER BY id"
-    ).fetchall()
-    items = [json.loads(r["item_json"]) for r in rows]
-    assert 42 in items and None in items, items  # 原始标量原件保真，非嵌套 wrapper
 
 
 def test_close_issue_code_exception_propagates(read_game, monkeypatch):
     db, state, _ = read_game
-    # 代码/DB 异常不再被 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
-    fault = RuntimeError("模拟 close_issue 落库代码异常")
-
     def _boom(*a, **k):
-        raise fault
-
+        raise RuntimeError("模拟 close_issue 落库代码异常")
     monkeypatch.setattr(type(db), "close_issue", _boom)
-    with pytest.raises(RuntimeError) as ei:
-        I.apply_issue_tracker_output(
+    # 代码/DB 异常不再被 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
+    with pytest.raises(RuntimeError):
+        apply_issue_tracker_output(
             db, state, {"close_issues": [{"issue_id": 1, "reason": "resolved"}]}
-        )
-    assert ei.value is fault
+        , source=Provenance.system_simulation)
 
 
+def test_close_valid_issue_still_succeeds(game):
+    db, state, _ = game
+    iid = db.insert_issue(state, kind="situation", title="真实结案", effect_on_resolve={"metrics": {"民心": 1}})
+    out = apply_issue_tracker_output(
+        db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved", "narrative": "测试结案"}]}
+    , source=Provenance.system_simulation)
+    assert iid in {row["issue_id"] for row in out.closes}

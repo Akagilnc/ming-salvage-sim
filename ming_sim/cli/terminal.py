@@ -15,10 +15,8 @@ from ming_sim.constants import (
     EXIT_COMMANDS,
     TURN_UNIT,
 )
-from ming_sim.assets import wrap
-from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
-from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
+from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character
 from ming_sim.session import (
     GameSession,
     TurnPhase,
@@ -36,10 +34,6 @@ _STATUS_LABEL = {
     "dead": "亡",
 }
 
-# 皇帝当场对拟旨草稿的回应
-_CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
-_REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
-
 
 def _print_header(session: GameSession) -> None:
     from ming_sim.report import print_header
@@ -50,7 +44,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
     """列大臣，皇帝选一位。返回 None 表示退朝去审阅诏书。"""
     characters = session.content.characters
     # 可召名册资格单真源 _is_summonable_court_minister（#1317 r2 DRY：与 can_summon/
-    # list_ministers/visible_in_court/事实块同口径）。offstage 未登场另滤——到 debut 年月现身。
+    # visible_in_court/事实块同口径）。offstage 未登场另滤——到 debut 年月现身。
     # 后宫不经朝臣可召谓词、走 can_summon 专路，CLI 大臣单亦不列后宫（与 web consorts 分栏同形）。
     resolve = session.db.resolve_power_id
     names = [
@@ -181,14 +175,12 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     if not retries:
         return
     last = retries[-1]
-    # #1847 N6：判空可读 strip；提示展示玩家问话原文。
     question = str(last.get("question") or "")
     print(
         "【回话中断】上回问话未得回话"
         f"{f'（「{question}」）' if question.strip() else ''}。"
         "输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
     )
-
 
 
 def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Optional[str]:
@@ -222,7 +214,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         db.record_chat_turn_rollback_diffs(
             chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
         )
-        print(f"\n{minister_name}：{wrap(answer)}\n")
+        print(f"\n{minister_name}：{answer}\n")
     except Exception as exc:
         # 失败翻回 interrupted 保持可再重试（与 web restore_interrupted_after_failed_retry 同语义）。
         try:
@@ -275,6 +267,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
     )
     while True:
         # A selection is its own scene turn; the first question remains the player's text.
+        # P6 / ADR 0142：问话自由正文；input 原串入模/落库，判空只观察副本。
         question = f"宣{character.name}" if pending_xuan else input("朕问：")
         pending_xuan = False
         if not str(question).strip():
@@ -376,17 +369,16 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             except BaseException as cleanup_error:
                 raise original_error from cleanup_error
             raise
-        print(wrap(result.answer))
+        print(result.answer)
         print()
         if result.proposed_directive is not None:
-            _confirm_pending_directive(result.proposed_directive, character.name)
-        if result.court_action == "dismiss":
-            # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
-            return "dismiss"
-        if result.court_action == "summon" and result.next_minister:
-            is_temporary = result.next_minister in session.temporary_characters
-
-            return f"{'summon-temp' if is_temporary else 'summon'}:{result.next_minister}"
+            _confirm_pending_directive(session, result.proposed_directive, character.name)
+        if result.appointed_minister:
+            print(f"【吏部铨选】{result.appointed_minister}已补入朝堂名册，本回合起可召见。\n")
+        if result.registered_minister:
+            print(f"【人物补档】{result.registered_minister}已补入人物档，本回合起可召见。\n")
+        if result.displaced_minister:
+            print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
 
 
 def review_directives(session: GameSession) -> str:
@@ -404,13 +396,13 @@ def review_directives(session: GameSession) -> str:
         if pending:
             print(f"  · {len(pending)} 道历史拟旨候结束回合成案：")
             for d in pending:
-                print(f"  [待核定] #{d.id}  {wrap(d.text)}")
+                print(f"  [待核定] #{d.id}  {d.text}")
         if staged_directives:
             print(f"  · {len(staged_directives)} 道对话拟旨待颁诏默认同意。")
         if drafts:
             for idx, d in enumerate(drafts, 1):
                 print(f"{idx}. #{d.id}")
-                print(f"   {wrap(d.text)}")
+                print(f"   {d.text}")
         elif not pending and not staged_directives:
             print("（暂无指令。back 继续召见。）")
         # #1812 第6项：手写拟诏台已删；旨意只从召对来。del 仍可清已有草案。
@@ -439,9 +431,8 @@ def review_directives(session: GameSession) -> str:
             from ming_sim.session import FRONT_HALF_DONE_PHASES
             if session.state.turn_phase in FRONT_HALF_DONE_PHASES:
                 # 恢复态：上月结算未完成（崩溃/中止后），跳过拟诏直接续跑结算——
-                # resolve_turn 沿已存的过月进度与夜里声明续跑未成部分。
-                # （ship-pre r3：write_decree 在此态必拒，不开此口 CLI 永远够不到恢复入口）。
-                # #1812 第9项：未完成转译恢复保留。
+                # resolve_turn 的恢复分流自己决定重放/重新推演/回放决策点
+                # （ship-pre r3：拟诏在此态必拒，不开此口 CLI 永远够不到恢复入口）。
                 print("\n检测到上月结算未完成，续跑结算……")
                 return "issue"
             return "issue"
@@ -449,14 +440,53 @@ def review_directives(session: GameSession) -> str:
             print("CLI 已无手写拟诏入口；旨意只从召对来。")
             continue
         # 变更器统一接 ValueError（FRONT_HALF_DONE 冻结期的指引消息）：打印后留在
-        # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
+        # 审阅循环，不崩出进程（ship-pre r2，与拟诏既有 try 同款）。
         try:
+            if lowered == "add" or raw == "新增":
+                # P6：旨文自由正文；判空观察副本，新增/抽取传原串。
+                text = input("指令内容：")
+                if text.strip():
+                    from ming_sim.cli_backend import capture_manual_directive_payload
+                    dv = session.add_directive(
+                        text,
+                        dossier_payload=capture_manual_directive_payload(
+                            text, session.llm_config,
+                            **({"db": session.db, "content": session.content}
+                               if getattr(session, "content", None) is not None else {}),
+                        ),
+                    )
+                    print(f"已新增草案 #{dv.id}。")
+                else:
+                    print("指令为空，已取消。")
+                continue
             parts = raw.split(maxsplit=1)
             verb = parts[0].lower()
             if len(parts) == 2 and parts[1].lstrip("#").isdigit():
                 target_id = int(parts[1].lstrip("#"))
                 if verb in {"edit", "改", "修改"}:
-                    print("CLI 已无手写改旨入口；旨意只从召对来。")
+                    if not any(d.id == target_id for d in drafts):
+                        print("没有这条草案。")
+                        continue
+                    new_text = input("新的指令内容：")
+                    if new_text.strip():
+                        from ming_sim.cli_backend import capture_manual_directive_payload
+                        row = next(
+                            r for r in session.db.list_directives(
+                                session.state, statuses=("draft",),
+                            ) if int(r["id"]) == target_id
+                        )
+                        existing_payload = session.db.read_directive_dossier_payload(row)
+                        session.update_directive(
+                            target_id,
+                            new_text,
+                            dossier_payload=capture_manual_directive_payload(
+                                new_text, session.llm_config,
+                                existing_mode=existing_payload.get("mode"),
+                                **({"db": session.db, "content": session.content}
+                                   if getattr(session, "content", None) is not None else {}),
+                            ),
+                        )
+                        print("已修改。")
                     continue
                 if verb in {"del", "delete", "删", "删除"}:
                     if any(d.id == target_id for d in drafts):
@@ -471,39 +501,6 @@ def review_directives(session: GameSession) -> str:
             print(f"\n{error}")
             continue
         print("未识别操作。")
-
-
-def _submit_cli_decisions(session: GameSession, result) -> str:
-    """CLI 文书批语：皇帝选择拟批或亲笔；不自动代选。"""
-    if result is None or not result.awaiting:
-        return "" if result is None else result.report
-    choices = []
-    for row in list(result.decisions or []) or session.pending_decisions():
-        print(f"\n{row['title']}\n{row['context']}")
-        for idx, option in enumerate(row["options"], 1):
-            print(f"{idx}. {option['label']} {option.get('hint', '')}")
-        explicit = str(row.get("event_id") or "").startswith(("dossier:", "deliberation:"))
-        while True:
-            raw = input("拟批编号 / 亲笔批语" + ("（m 另旨·中旨）" if row["kind"] == "rescript_draft" else "") + "：")
-            choice = {"decision_key": row["decision_key"]}
-            if raw.isdecimal() and 1 <= int(raw) <= len(row["options"]):
-                option = row["options"][int(raw) - 1]
-                choice.update(label=option["label"], hint=option.get("hint", ""))
-                if explicit:
-                    choice["action"] = option.get("dossier_decision") or option.get("action") or ""
-                choice["note"] = input("附批（可空）：")
-                break
-            if not explicit and raw.strip():
-                if raw == "m" and row["kind"] == "rescript_draft":
-                    choice.update(action="midzhi", note=input("御笔旨意："))
-                    if not choice["note"].strip():
-                        continue
-                else:
-                    choice["note"] = raw
-                break
-            print("请选择编号；不代选。")
-        choices.append(choice)
-    return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
 
 
 def play_turn(session: GameSession) -> None:
@@ -546,7 +543,6 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.advance_without_decree()
-                report = _submit_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
@@ -555,11 +551,13 @@ def play_turn(session: GameSession) -> None:
                 print(f"\n{error}")
                 continue
             if result is not None:
-                print(report)
+                # #1812：命令行批红自动选第一项已裁删除；awaiting 原样保留，不代选、不绕过待裁。
+                report = getattr(result, "report", None) or ""
+                if report:
+                    print(report)
                 if getattr(session.state, "ended", False):
                     return
                 if getattr(result, "awaiting", False):
-                    # #1812 第9项：缺亲裁能力已报告，停在 awaiting，不重入审阅循环。
                     return
                 if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
                     session.end_turn()
@@ -573,7 +571,6 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.resolve_turn()
-                report = _submit_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
@@ -581,11 +578,13 @@ def play_turn(session: GameSession) -> None:
                 print(f"\n{error}")
                 continue
             if result is not None:
-                print(report)
+                # #1812：命令行批红自动选第一项已裁删除；awaiting 原样保留，不代选、不绕过待裁。
+                report = getattr(result, "report", None) or ""
+                if report:
+                    print(report)
                 if getattr(session.state, "ended", False):
                     return
                 if getattr(result, "awaiting", False):
-                    # #1812 第9项：缺亲裁能力已报告，停在 awaiting，不重入审阅循环。
                     return
                 if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
                     session.end_turn()

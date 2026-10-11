@@ -1,4 +1,5 @@
-"""数据类：游戏实体与状态容器。L0 叶子模块。"""
+"""数据类：游戏实体与状态容器。L0 叶子模块。
+"""
 
 from __future__ import annotations
 
@@ -28,111 +29,6 @@ from ming_sim.constants import (
     SCORE_METRICS,
 )
 from ming_sim.person_archive_contract import PERSON_ACTIONS
-
-
-def _load_durable_json_list(raw: object, *, surface: str) -> list:
-    """Durable JSON array column: corrupt / wrong top-level fail loud (#1897 E1).
-
-    SQL NULL may default to empty list; empty string / non-str / non-list must not
-    be falsy-washed into a legal empty array.
-    """
-    if isinstance(raw, list):
-        value = raw
-    else:
-        if raw is None:
-            text = "[]"
-        elif not isinstance(raw, str):
-            raise ValueError(
-                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
-            )
-        else:
-            text = raw
-        try:
-            value = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
-    if not isinstance(value, list):
-        raise ValueError(f"{surface} 须为列表，得 {type(value).__name__}")
-    return value
-
-
-def _load_durable_str_list(raw: object, *, surface: str) -> list:
-    """Durable string-array column: list + each member str (#1897 E1)."""
-    return _require_str_list_members(
-        _load_durable_json_list(raw, surface=surface), surface=surface,
-    )
-
-
-def _load_durable_json_object(raw: object, *, surface: str) -> dict:
-    """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1).
-
-    SQL NULL may default to empty object; empty string / non-str / non-object
-    must not be falsy-washed into a legal empty object.
-    """
-    if isinstance(raw, dict):
-        value = raw
-    else:
-        if raw is None:
-            text = "{}"
-        elif not isinstance(raw, str):
-            raise ValueError(
-                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
-            )
-        else:
-            text = raw
-        try:
-            value = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
-    if not isinstance(value, dict):
-        raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
-    return value
-
-
-def _require_str_list_members(values: list, *, surface: str) -> list:
-    """Each durable list member must already be str — no str() wash (#1897 E1)."""
-    out: list = []
-    for index, item in enumerate(values):
-        if not isinstance(item, str):
-            raise ValueError(
-                f"{surface}[{index}] 须为字符串，得 {type(item).__name__}"
-            )
-        out.append(item)
-    return out
-
-
-def require_persistent_string_list(
-    raw: object, *, surface: str, field: str,
-) -> list:
-    """Durable object/list member of names.
-
-    Missing/None → []. Non-list, null member, empty or non-scalar → loud failure.
-    """
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise ValueError(
-            f"{surface}.{field} 须为数组，得 {type(raw).__name__}"
-        )
-    out: list = []
-    for index, item in enumerate(raw):
-        if item is None:
-            raise ValueError(f"{surface}.{field}[{index}] 不得为 null")
-        if not isinstance(item, (str, int, float)) or isinstance(item, bool):
-            raise ValueError(
-                f"{surface}.{field}[{index}] 须为标量名，得 {type(item).__name__}"
-            )
-        text = str(item)
-        if not text:
-            raise ValueError(f"{surface}.{field}[{index}] 不得为空")
-        out.append(text)
-    return out
-
-
-def loads_persistent_name_list(raw: object, *, surface: str = "name_list") -> list:
-    """Durable JSON name list: missing/empty → []; corrupt/null member raises."""
-    data = _load_durable_json_list(raw, surface=surface)
-    return require_persistent_string_list(data, surface=surface, field="items")
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:
@@ -334,19 +230,16 @@ def effect_dict_has_work(raw: object) -> bool:
     checks = (
         _metric_effect_has_work(effect.get("metrics")),
         _economy_effect_has_work(effect.get("economy")),
-        _economy_effect_has_work(effect.get("economy_moves")),
         _faction_effect_has_work(effect.get("factions")),
-        _faction_effect_has_work(effect.get("faction_delta")),
-        _class_effect_has_work(effect.get("classes")),
         _class_effect_has_work(effect.get("class_delta")),
         _entity_delta_has_work(
-            effect.get("region_delta") or effect.get("regions"),
+            effect.get("region_delta"),
             aliases=REGION_FIELD_ALIASES,
             numeric_fields=REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS + ("cannon",),
             text_fields=REGION_TEXT_FIELDS,
         ),
         _entity_delta_has_work(
-            effect.get("army_delta") or effect.get("armies"),
+            effect.get("army_delta"),
             aliases=ARMY_FIELD_ALIASES,
             numeric_fields=ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS,
             text_fields=ARMY_TEXT_FIELDS,
@@ -492,7 +385,7 @@ def is_weishi(character: "Character") -> bool:
     与「在册身份归一」分离：别名/查重必须认识未仕（史宪之→史可法不得建重档）；
     「在朝可召资格」= 身份归一 ∧ 非宗藩 ∧ 非未仕，由可召/名册面共吃。
     受守面清单（新增同类面时一并加，勿漏；形制同 is_vassal_prince）：
-    - session: list_ministers / can_summon（朝臣支；后宫走专路）
+    - session: can_summon（朝臣支；后宫走专路）
     - web_app: visible_in_court
     - cli: terminal.choose_minister
     - cli_backend: _draft_intent_character_roster_facts（拟诏事实块）
@@ -776,3 +669,108 @@ def reign_period_label(year: int, month: int) -> str:
 def monthly_amount(amount: int) -> int:
     # 全盘已按月度：base/maint/tax 都是月值；本函数只做非负整钳，供盘面展示读端共用。
     return max(0, int(amount))
+
+
+def _load_durable_json_list(raw: object, *, surface: str) -> list:
+    """Durable JSON array column: corrupt / wrong top-level fail loud (#1897 E1).
+
+    SQL NULL may default to empty list; empty string / non-str / non-list must not
+    be falsy-washed into a legal empty array.
+    """
+    if isinstance(raw, list):
+        value = raw
+    else:
+        if raw is None:
+            text = "[]"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
+    if not isinstance(value, list):
+        raise ValueError(f"{surface} 须为列表，得 {type(value).__name__}")
+    return value
+
+
+def _load_durable_str_list(raw: object, *, surface: str) -> list:
+    """Durable string-array column: list + each member str (#1897 E1)."""
+    return _require_str_list_members(
+        _load_durable_json_list(raw, surface=surface), surface=surface,
+    )
+
+
+def _load_durable_json_object(raw: object, *, surface: str) -> dict:
+    """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1).
+
+    SQL NULL may default to empty object; empty string / non-str / non-object
+    must not be falsy-washed into a legal empty object.
+    """
+    if isinstance(raw, dict):
+        value = raw
+    else:
+        if raw is None:
+            text = "{}"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON：{exc}；原值 {text!r}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
+    return value
+
+
+def _require_str_list_members(values: list, *, surface: str) -> list:
+    """Each durable list member must already be str — no str() wash (#1897 E1)."""
+    out: list = []
+    for index, item in enumerate(values):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"{surface}[{index}] 须为字符串，得 {type(item).__name__}"
+            )
+        out.append(item)
+    return out
+
+
+def require_persistent_string_list(
+    raw: object, *, surface: str, field: str,
+) -> list:
+    """Durable object/list member of names.
+
+    Missing/None → []. Non-list, null member, empty or non-scalar → loud failure.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"{surface}.{field} 须为数组，得 {type(raw).__name__}"
+        )
+    out: list = []
+    for index, item in enumerate(raw):
+        if item is None:
+            raise ValueError(f"{surface}.{field}[{index}] 不得为 null")
+        if not isinstance(item, (str, int, float)) or isinstance(item, bool):
+            raise ValueError(
+                f"{surface}.{field}[{index}] 须为标量名，得 {type(item).__name__}"
+            )
+        text = str(item)
+        if not text:
+            raise ValueError(f"{surface}.{field}[{index}] 不得为空")
+        out.append(text)
+    return out
+
+
+def loads_persistent_name_list(raw: object, *, surface: str = "name_list") -> list:
+    """Durable JSON name list: missing/empty → []; corrupt/null member raises."""
+    data = _load_durable_json_list(raw, surface=surface)
+    return require_persistent_string_list(data, surface=surface, field="items")

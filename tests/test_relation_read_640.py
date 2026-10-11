@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-from tests.test_relation_brew_636 import _add_edge
-
 
 import pytest
 
@@ -27,6 +25,12 @@ from ming_sim.relations import EMPEROR_NODE
 # 冻结票面 r3 白名单本体——独立真源（票面原文照抄），不从生产代码重推导。
 FROZEN_DTO_WHITELIST = {"source", "target", "summary", "recent_context", "updated_at_period"}
 
+def _add_edge(db, state, *, source, target, kind, context, origin):
+    return db.record_relation_edge_event(
+        source=source, target=target, event_kind=kind, context=context,
+        origin=origin, turn=int(state.turn),
+        year=int(state.year), period=int(state.period),
+    )
 
 @pytest.fixture
 def ledger(game):
@@ -100,8 +104,8 @@ def test_empty_ledger_projects_empty(ledger):
 # ---------------------------------------------------------------- 返回形态
 
 def test_updated_at_period_is_era_label_not_bare_turn(r3_guard):
-    """updated_at_period＝更新纪年语义标识（天启七年十月式）。"""
-    db, _state = r3_guard
+    """updated_at_period＝更新纪年语义标识（天启七年十月式），非裸 turn 数。"""
+    db, _ = r3_guard
     wei_yang = next(
         d for d in project_relation_ledger(db, viewer=None)
         if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
@@ -145,9 +149,80 @@ def test_omniscient_is_superset_same_core(ledger):
 # ---------------------------------------------------------------- TD-7 双断言 oracle
 
 def test_td7_dto_field_set_equals_frozen_whitelist(ledger):
-    """TD-7：DTO 字段集合==票面冻结五字段白名单（集合相等承接 event_kind 等类目键缺席）。"""
+    """TD-7①：DTO 字段集合==票面冻结五字段白名单（机械集合相等，两面都咬）。"""
     db, _ = ledger
     for dto in project_relation_ledger(db, viewer=None):
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
     for dto in project_relation_ledger(db, viewer="王绍徽"):
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
+
+def test_missing_viewer_rejected(ledger):
+    """漏传 viewer（keyword-only 必填）不被接受，绝不静默落全知机面。"""
+    db, _ = ledger
+    with pytest.raises(TypeError):
+        project_relation_ledger(db)
+
+# ---------------------------------------------------------------- #642 锚④：coda 历史读缝
+
+def test_load_relation_history_before_returns_full_stable_prior_stream(game):
+    """r4：已选中有向对的严格早于 settled 年月的完整历史——多旧事全量、含和解、无裁剪。"""
+    from ming_sim.relation_read import load_relation_history_before
+
+    db, state, _ = game
+    source, target = "杨嗣昌", "倪元璐"
+    # 旧事 1（奠基）
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="结怨",
+        context="杨嗣昌与倪元璐初有细缝。", origin="seed:founding:yang-ni",
+        turn=0, year=1627, period=10,
+    )
+    # 旧事 2（后续加深）
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="使绊",
+        context="清丈议上，杨嗣昌挡了倪元璐的硬路。", origin="audience:turn-2",
+        turn=2, year=1628, period=11,
+    )
+    # 旧事 3（和解——同流后续，不删旧怨）
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="协作",
+        context="二人当面言和，暂释前隙。", origin="audience:turn-3",
+        turn=3, year=1629, period=3,
+    )
+    # 本 settled 月新事——不得进入 prior
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="站台",
+        context="本月新站台，不应进历史包。", origin="audience:turn-4",
+        turn=4, year=1630, period=5,
+    )
+
+    prior = load_relation_history_before(
+        db, source=source, target=target, before_year=1630, before_period=5,
+    )
+    assert [row["context"] for row in prior] == [
+        "杨嗣昌与倪元璐初有细缝。",
+        "清丈议上，杨嗣昌挡了倪元璐的硬路。",
+        "二人当面言和，暂释前隙。",
+    ]
+    # 稳定序＝纪年 (year, period) ＋事件 id；语境字节不改。
+    assert [(int(r["year"]), int(r["period"])) for r in prior] == [
+        (1627, 10), (1628, 11), (1629, 3),
+    ]
+    ids = [int(r["id"]) for r in prior]
+    assert ids == sorted(ids)
+    assert prior[2]["context"] == "二人当面言和，暂释前隙。"
+
+def test_load_relation_history_before_empty_when_no_older_events(game):
+    """r4 验收第三例：无严格更早流水 → 空列表。"""
+    from ming_sim.relation_read import load_relation_history_before
+
+    db, state, _ = game
+    db.record_relation_edge_event(
+        source="徐光启", target="杨嗣昌", event_kind="协作",
+        context="本月当场协作。", origin="audience:now",
+        turn=int(state.turn), year=int(state.year), period=int(state.period),
+    )
+    prior = load_relation_history_before(
+        db, source="徐光启", target="杨嗣昌",
+        before_year=int(state.year), before_period=int(state.period),
+    )
+    assert prior == []

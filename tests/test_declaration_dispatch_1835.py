@@ -32,6 +32,8 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
         int(state.turn), "directive", "拟旨", minister, {"text": "已暂存旧旨"},
     )
 
+    affair = db.affairs.open(name="赈济陕西", origin="遣使赈济",
+                             year=state.year, period=state.period, turn=state.turn)
     # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账（P6）。
     commission_text = "  遣使赈济陕西  \n"
     declaration = {
@@ -39,7 +41,8 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
         "promises": [{"action_id": pre_staged_id, "decision": "应允"}],
         "textual_facts": [{
             "subject_kind": "character", "subject_id": minister,
-            "body": "抱恙数日，仍可视事", "origin_ref": "chat_message:1",
+            "body": "抱恙数日，仍可视事",
+            "affair_declaration": {"attach": "existing", "affair_id": affair.id},
         }],
         "public_sayings": [{
             "body": "坊间传户部已备赈灾银", "involved_characters": [minister],
@@ -67,7 +70,7 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     assert commission_payload["text"] == commission_text  # 原样运输，含空白
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert [f.origin_ref for f in facts] == ["chat_message:1"]
+    assert [f.origin_ref for f in facts] == [db.affairs.origin_ref(affair.id)]
 
     sayings = list_public_sayings(db, involved_character=minister)
     assert sayings[0]["body"] == "坊间传户部已备赈灾银"
@@ -406,12 +409,19 @@ def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_t
     status_after, _ = db.get_character_status(minister)
     assert status_after == "imprisoned"  # 没有被冲突项的「dead」半写进去
     row = db.conn.execute(
-        "SELECT affair_id FROM characters WHERE name=?", (minister,),
+        "SELECT affair_id, status, office, status_reason, reason_code, loyalty, style, power_id "
+        "FROM characters WHERE name=?", (minister,),
     ).fetchone()
     assert row["affair_id"] == affair_a.id  # 指针仍是最初绑的那个，没被改动
-    # DB 回滚必须连运行时对象一起还原：不能出现「DB 仍是 imprisoned、
-    # content.characters 却停在冲突项写过的 dead」这种跨层分叉。
-    assert content.characters[minister].status == "imprisoned"
+    # 局部 undo 复用同源人物重建：内存与保留 DB 全字段一致（非仅 status）。
+    ch = content.characters[minister]
+    assert ch.status == row["status"] == "imprisoned"
+    assert ch.office == (row["office"] or "")
+    assert ch.status_reason == (row["status_reason"] or "")
+    assert ch.reason_code == (row["reason_code"] or "")
+    assert int(ch.loyalty) == int(row["loyalty"])
+    assert ch.style == (row["style"] or "")
+    assert ch.power_id == (row["power_id"] or ch.power_id)
 
 
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
@@ -796,3 +806,317 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
     assert row["c"] == 0
     facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
     assert [f.body for f in facts_after] == ["旨三：首次暂存"]
+
+
+def _emperor_turn(db, state, minister: str, text: str) -> int:
+    """本轮口谕源轮（真表形）：用户消息先落，chat_turns 再绑 user_message_id。"""
+    mid = db.append_chat_message(minister, int(state.turn), "user", text)
+    ctid = db.create_chat_turn(state, minister, "test-sess", 0, status="active")
+    db.update_chat_turn_messages(ctid, user_message_id=int(mid))
+    db.conn.commit()
+    return int(ctid)
+
+
+def _covert_task() -> dict:
+    from tests.dossier_test_helpers import TYPED_COVERT_TASK
+    return dict(TYPED_COVERT_TASK)
+
+
+def test_new_secret_order_declaration_lands_through_the_single_write_mouth(game):
+    """#1835 D-flow：声明里的密令新建走统一分派入口，不导入已删除的落地函数。
+
+    真实分派→暂存确认闸→颁诏 commit_pending_actions 成案，密令按原文可读。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷侵冒")
+    body = "  密查辽东军饷侵冒，具册以闻。  "
+    declaration = {
+        "commissions": [{
+            "secret_order": {
+                "title": "暗查辽饷",
+                "content": body,
+                "assignee": minister,
+                "tags": ["辽饷"],
+                "deadline_months": 3,
+                "covert_task": _covert_task(),
+            },
+            "text": body,
+        }],
+    }
+
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, source_chat_turn_id=ctid,
+    )
+
+    assert result.commissions.rejected == []
+    assert len(result.commissions.applied) == 1
+    staged_id = int(result.commissions.applied[0]["id"])
+
+    row = db.conn.execute(
+        "SELECT kind, action, payload_json FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert row["kind"] == "secret_order" and row["action"] == "新建"
+    payload = json.loads(row["payload_json"])
+    assert payload["content"] == body  # 正文原样落暂存，代码不 strip（P6）
+    assert int(payload["origin_chat_message_id"]) > 0  # 密言溯源钉在口谕源轮
+
+    # 确认闸：未批红前不进真实密令表。
+    assert db.list_secret_orders() == []
+
+    committed = db.commit_pending_actions(state, content=db.content, minister_name=minister)
+    assert [(c["kind"], c["action"]) for c in committed] == [("secret_order", "新建")]
+    orders = db.get_active_secret_orders_for_minister(minister)
+    assert len(orders) == 1
+    assert orders[0]["content"] == body
+    # 批红后暂存行落定，且真实密令挂上本条暂存（#1376 回传同一 id）。
+    assert int(committed[0]["secret_order_id"]) == int(orders[0]["id"])
+    status = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert status["status"] == "committed"
+
+
+def test_secret_order_missing_frozen_task_is_rejected_per_item_without_killing_sibling(game):
+    """缺冻结差务契约的密令逐项拒收，同批另一件交办照落（ADR 0015）。"""
+    db, state, _ = game
+    minister = _minister(db)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷，另遣使赈济陕西")
+
+    declaration = {
+        "commissions": [
+            {
+                "secret_order": {"title": "缺差务", "content": "无契约的密令"},
+                "text": "无契约的密令",
+            },
+            {"text": "遣使赈济陕西"},
+        ],
+    }
+
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, source_chat_turn_id=ctid,
+    )
+
+    assert len(result.commissions.applied) == 1
+    assert result.commissions.applied[0]["kind"] == "directive"
+    assert len(result.commissions.rejected) == 1
+    assert result.commissions.rejected[0].category == "invalid_shape"
+    assert result.commissions.rejected[0].item["secret_order"]["title"] == "缺差务"
+    # 拒收是逐项的：另一件交办的暂存行没有跟着被回滚。
+    rows = db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE kind='directive' AND status='pending'",
+    ).fetchone()
+    assert rows["c"] == 1
+    reports = db.conn.execute(
+        "SELECT COUNT(*) c FROM rejection_reports WHERE turn=?", (int(state.turn),),
+    ).fetchone()
+    assert reports["c"] == 1
+
+
+def _secret_order(secret: dict) -> dict:
+    """一条可落库的密令声明项（正文原样，契约用 TYPED_COVERT_TASK）。"""
+    return {"secret_order": dict(secret), "text": secret["content"]}
+
+
+def test_secret_order_staging_and_landing_are_visible_only_to_handlers(game):
+    """W4: 真相只授经手人；未列排除者也不能读密令。"""
+    from ming_sim.knowledge import origin_visible_to
+
+    db, state, content = game
+    minister = _minister(db)
+    other = next(name for name in content.characters if name != minister)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷侵冒")
+    secret = {
+        "title": "暗查辽饷", "content": "密查辽东军饷侵冒，具册以闻。",
+        "assignee": minister, "covert_task": _covert_task(),
+    }
+    result = dispatch_declaration(
+        db, state, {"commissions": [_secret_order(secret)]},
+        minister_name=minister, source_chat_turn_id=ctid,
+    )
+    assert result.commissions.rejected == []
+    db.commit_pending_actions(state, content=db.content, minister_name=minister)
+    order = db.get_active_secret_orders_for_minister(minister)[0]
+    for origin in (f"secret_order:{order['id']}", f"secret_order_brief:{order['id']}"):
+        assert origin_visible_to(db, origin, minister)
+        assert not origin_visible_to(db, origin, other)
+        assert not origin_visible_to(db, origin, "")
+
+
+def test_secret_order_binds_declared_affair_to_its_dossier(game):
+    """#1835 F3（ADR 0154）：密令新建的事务归属完整移交既有成案绑定核——
+    声明的 affair_declaration 经暂存载荷进成案 payload，dossier 落 pointer。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷侵冒")
+    affair = db.affairs.open(
+        name="宁远护送", origin="拨银、调将、派兵去宁远",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    secret = {
+        "title": "暗查辽饷", "content": "密查辽东军饷侵冒，具册以闻。",
+        "assignee": minister, "tags": [], "deadline_months": 3,
+        "covert_task": _covert_task(),
+    }
+
+    result = dispatch_declaration(
+        db, state,
+        {"commissions": [{
+            **_secret_order(secret),
+            "affair_declaration": {"attach": "existing", "affair_id": affair.id},
+        }]},
+        minister_name=minister, source_chat_turn_id=ctid,
+    )
+    assert result.commissions.rejected == []
+    staged_id = int(result.commissions.applied[0]["id"])
+    payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()["payload_json"])
+    assert payload["affair_declaration"] == {"attach": "existing", "affair_id": affair.id}
+
+    db.commit_pending_actions(state, content=db.content, minister_name=minister)
+    order = db.get_active_secret_orders_for_minister(minister)[0]
+    dossier = db.conn.execute(
+        "SELECT affair_id FROM decree_dossiers WHERE secret_order_id=?",
+        (int(order["id"]),),
+    ).fetchone()
+    assert dossier is not None and dossier["affair_id"] == affair.id
+
+
+def test_secret_order_with_unopened_affair_is_rejected_before_staging(game):
+    """事务声明指向不存在的事务 → 逐项 hallucinated_id 拒收，不进暂存闸。"""
+    db, state, _ = game
+    minister = _minister(db)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷侵冒")
+    secret = {
+        "title": "暗查辽饷", "content": "密查辽东军饷侵冒。",
+        "assignee": minister, "covert_task": _covert_task(),
+    }
+
+    result = dispatch_declaration(
+        db, state,
+        {"commissions": [{
+            **_secret_order(secret),
+            "affair_declaration": {"attach": "existing", "affair_id": 999999},
+        }]},
+        minister_name=minister, source_chat_turn_id=ctid,
+    )
+    assert result.commissions.applied == []
+    assert len(result.commissions.rejected) == 1
+    assert result.commissions.rejected[0].category == "hallucinated_id"
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE kind='secret_order'",
+    ).fetchone()["c"] == 0
+
+
+def test_secret_order_empty_covert_task_is_rejected_with_canonical_rejection_record(game):
+    """#1835 F4：空壳 covert_task={} 只过「有键」检查，到批红才炸并把整条密令
+    静默标 failed。声明入口就真冻一次合同：坏合同逐项拒收，且同批独立交办成案。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷，另遣使赈济陕西")
+    declaration = {
+        "commissions": [
+            _secret_order({
+                "title": "空合同", "content": "差务合同为空壳的密令。",
+                "assignee": minister, "covert_task": {},
+            }),
+            {"text": "遣使赈济陕西"},
+        ],
+    }
+
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, source_chat_turn_id=ctid,
+    )
+    assert [a["kind"] for a in result.commissions.applied] == ["directive"]
+    assert len(result.commissions.rejected) == 1
+    assert result.commissions.rejected[0].category == "invalid_shape"
+
+    rows = db.conn.execute(
+        "SELECT section, category FROM rejection_reports WHERE turn=?",
+        (int(state.turn),),
+    ).fetchall()
+    assert [(r["section"], r["category"]) for r in rows] == [
+        ("commissions", "invalid_shape"),
+    ]
+    # 批红后：坏密令从未进暂存闸，真实密令表只有独立交办那条的结果。
+    db.commit_pending_actions(state, content=db.content, minister_name=minister)
+    assert db.list_secret_orders() == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE kind='secret_order'",
+    ).fetchone()["c"] == 0
+
+
+def test_secret_order_with_nonexistent_assignee_is_rejected_per_item(game):
+    """#1835 F4：幽灵承办人逐项 hallucinated_id 拒收，不成案、不留孤儿暂存行。"""
+    db, state, _ = game
+    minister = _minister(db)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷侵冒")
+    declaration = {
+        "commissions": [_secret_order({
+            "title": "幽灵承办", "content": "交给查无此人。",
+            "assignee": "子虚乌有之人", "covert_task": _covert_task(),
+        })],
+    }
+
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, source_chat_turn_id=ctid,
+    )
+    assert result.commissions.applied == []
+    assert len(result.commissions.rejected) == 1
+    assert result.commissions.rejected[0].category == "hallucinated_id"
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE kind='secret_order'",
+    ).fetchone()["c"] == 0
+
+
+def test_secret_order_title_lands_verbatim_through_the_real_write_mouth(game):
+    """#1835 F5（P6 自由文本零删改）：模型写的标题原值经真实写核落库——含首尾
+    空白与换行，不是先 strip 再落。空白校验只在副本上判空。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    ctid = _emperor_turn(db, state, minister, "密查辽饷侵冒")
+    title = "  暗查辽饷  \n"
+    declaration = {
+        "commissions": [_secret_order({
+            "title": title, "content": "密查辽东军饷侵冒，具册以闻。",
+            "assignee": minister, "covert_task": _covert_task(),
+        })],
+    }
+
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, source_chat_turn_id=ctid,
+    )
+    assert result.commissions.rejected == []
+    db.commit_pending_actions(state, content=db.content, minister_name=minister)
+    order = db.get_active_secret_orders_for_minister(minister)[0]
+    assert order["title"] == title  # 含首尾空白与换行，未被 strip 篡改
+
+def test_effects_reach_accounting_mouth_without_preseeded_empty_shell(game, monkeypatch):
+    """#1835 F1b：声明 effects 只把**自己带的字段**送到既有核算口，不预置整份空壳
+    （30+ 恒空容器）。此断言按真实失败形状钉：核算口收到的键集必须等于声明所带
+    字段集，且不含任何未声明的 effects 键。
+    """
+    import ming_sim.declaration_dispatch as dispatch_mod
+
+    db, state, _ = game
+    captured: list[dict] = []
+    real = dispatch_mod.settle_delta
+
+    def spy(state_, db_, extracted, *args, **kwargs):
+        captured.append(dict(extracted))
+        return real(state_, db_, extracted, *args, **kwargs)
+
+    monkeypatch.setattr(dispatch_mod, "settle_delta", spy)
+    declaration = {"effects": {"metric_delta": {"民心": 1}}}
+    result = dispatch_declaration(db, state, declaration)
+
+    assert result.effects.rejected == []
+    assert len(captured) == 1
+    payload = captured[0]
+    # 键集恰为声明所带字段：其余 30+ effects 字段一个都没被预置成恒空容器。
+    assert set(payload) == {"metric_delta"}
+    assert payload["metric_delta"] == {"民心": 1}

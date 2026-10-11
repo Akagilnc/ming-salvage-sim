@@ -7,12 +7,10 @@ city_level×8 clamp，但零调用方；region_delta 带「城防炮」会被当
 
 from __future__ import annotations
 
-
 from tests.section_rejection_helpers import run_declaration as run_settle
-from ming_sim.issues import apply_score_extraction
-
-
-
+from ming_sim.constants import REGION_FIELD_LABELS
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import section
 
 def test_city_cannon_delta_lands_clamped(game):
     """beizhili city_level=5 → 上限 40；投 50 门城防炮应 clamp 落库为 40。"""
@@ -25,7 +23,6 @@ def test_city_cannon_delta_lands_clamped(game):
         "SELECT cannon FROM regions WHERE id='beizhili'"
     ).fetchone()[0]
     assert cannon == 40
-
 
 def test_city_cannon_capped_at_zero_for_low_city_level(game):
     """city_level=0 的边地上限为 0：投城防炮被 clamp 到 0、不落变化、不报错——
@@ -50,7 +47,6 @@ def test_city_cannon_capped_at_zero_for_low_city_level(game):
     assert int(rows[0]["delta"]) == 0
     assert rows[0]["old_value"] == "0" and rows[0]["new_value"] == "0"
 
-
 def test_city_cannon_lower_bound_clamp_audited_not_as_cap(game):
     """请求减炮但已无炮可减（下限 0 钳制）也留一条 delta=0 的 region_log。"""
     db, state, content = game
@@ -63,7 +59,6 @@ def test_city_cannon_lower_bound_clamp_audited_not_as_cap(game):
     assert len(rows) == 1, "请求减炮被下限 clamp 成 no-op 也须留痕"
     assert int(rows[0]["delta"]) == 0
 
-
 def test_zero_cannon_request_leaves_no_log(game):
     """真 no-op 请求（城防炮 delta=0，本就没要加炮）不留痕——留痕只针对「请求非 0 却被 clamp」（#18）。"""
     db, state, content = game
@@ -75,16 +70,13 @@ def test_zero_cannon_request_leaves_no_log(game):
     ).fetchall()
     assert len(rows) == 0, "delta=0 的无请求不应留痕（避免噪声）"
 
-
 def test_illegal_region_field_rejected_not_raised(read_game):
     """非法 region 字段：ADR 0008 决定 1（PR2-S2）后不再 raise LLMContractError 崩整月，
-    改为逐项拒收留痕（region_changes 含 {"rejected": True, "category": "invalid_enum"}），
+    改为 canonical RejectedItem 逐项拒收留痕（category=invalid_enum），
     好项照落、坏一项不带走整批。"""
     db, state, content = read_game
-    applied = apply_score_extraction(
-        db, state, {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "不存在的字段": 5}}}, content=content
-    )
-    rejected = [c for c in applied["region_changes"]
-                if isinstance(c, dict) and c.get("rejected")]
+    applied = settle_delta(state, db, {'region_delta': {'beizhili': {'origin_ref': '盘面自发', '不存在的字段': 5}}}, SettlementContext(content=content))
+    rejected = section(applied, "region_changes").rejected
     assert len(rejected) == 1
-    assert rejected[0]["category"] == "invalid_enum"
+    assert rejected[0].category == "invalid_enum"
+    assert rejected[0].reason

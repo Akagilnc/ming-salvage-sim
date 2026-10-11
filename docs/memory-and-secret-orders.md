@@ -8,4 +8,10 @@
 
 承办人逐月密奏不直接结案。月末从真实效果、案卷来源与执行判决累计实况；到期后 `settle_due_secret_orders()` 按合同对账，`db.close_secret_order()` 记录结案。奏报不能改变世界状态。
 
-世界段与整月密报是全量推演者材料目录（`prepare_world_materials` 默认：盘面、事务清单、三层全看，含在办密令侧材料；ADR 0155 / #1834）。公开邸报作者另走 `prepare_gazette_author_materials`：排除密令案卷、密令召对与受显式排除的公开说法。密令声明字段（`secret_order_updates` / `dossier_progress_reports` / `secret_dossier_participants` 等）与公开字段分立；未披露的密令不进共享知识源，披露事件才使密令内容成为公开知识（#883）。
+月末公共推演只看公开的到期承诺，不预读密令正文。密令整月供料在 `month_chain._step_4a_secret_order_supply`（`build_secret_orders_supply_feed` → `run_secret_orders_supply`），**不经** `declaration_dispatch`/`settle_delta`：
+
+- `dossier_progress_reports` → 直接 `db.record_monthly_dossier_progress`
+- 披露 → `_apply_deferred_disclosures` 消费 `chain.pending_disclosures`（非供料产物上的披露字段）
+- `covert_exec_selections` → 直接 `apply_monthly_covert_actual_progress`，随后 `settle_due_secret_orders`
+
+声明 effects 里的密奏/执行态另走专属写入口（可 `defer_monthly_secret_supply` 延后到独立供料）；`secret_dossier_participants` 由声明段 `entities.dossier.delta_section` 消费，4a 不读该键。旧五模块 `personnel_secret` extractor 包装已退役；字段名仍可标私密 provenance（#883）。披露事件才可使密令内容成为公开知识。

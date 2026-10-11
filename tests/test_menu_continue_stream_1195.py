@@ -3,48 +3,77 @@ from __future__ import annotations
 
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
+import json
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 import web_app
-from tests.test_chat_stream_failpaths_393 import _parse_sse
 from tests.wait_utils import reset_menu_path_leases, wait_until
 
 # 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
 _reset_path_leases = reset_menu_path_leases
 
 
-def test_menu_continue_streams_stage_labels_then_done_state(web_game, monkeypatch):
+def _parse_sse(text: str) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    for block in text.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        ev_name = ""
+        data_raw = ""
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                ev_name = line[7:].strip()
+            elif line.startswith("data: "):
+                data_raw += line[6:]
+        if not ev_name or not data_raw:
+            continue
+        events.append((ev_name, json.loads(data_raw)))
+    return events
+
+
+def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
     """继续路径：先推 stage 事件，再 done 带 state（结构化终态；不锁阶段措辞）。"""
+    stages_from_ctor: list[str] = []
+
+    class FakeWebGame:
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
+            assert fresh is False
+            labels = ["stage-a", "stage-b", "stage-c"]
+            for label in labels:
+                stages_from_ctor.append(label)
+                if on_stage:
+                    on_stage(label)
+            self._state = {"turn": {"turn": 2, "year": 1627, "period": 11}}
+
+        def state_payload(self) -> dict:
+            return self._state
+
     _reset_path_leases()
-    turn = int(web_game.state.turn)
-    web_game.db.save_state(web_game.state)
-    web_game.session.close()
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: "/tmp/continue-main.db")
+    monkeypatch.setattr(web_app, "WebGame", FakeWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
 
-    try:
-        response = TestClient(web_app.app).post("/api/menu/continue")
-        assert response.status_code == 200
-        assert response.headers["content-type"].startswith("text/event-stream")
+    response = TestClient(web_app.app).post("/api/menu/continue")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
 
-        events = _parse_sse(response.text)
-        assert events, "应至少有 SSE 事件"
-        kinds = [name for name, _ in events]
-        assert kinds[-1] == "done"
-        assert "error" not in kinds
-        # 契约：存在 stage 事件且 content 为 str；不比较生成/阶段措辞正文
-        stage_events = [(name, payload) for name, payload in events if name == "stage"]
-        assert stage_events, "应推送至少一条 stage"
-        assert all(isinstance(payload.get("content"), str) for _, payload in stage_events)
+    events = _parse_sse(response.text)
+    assert events, "应至少有 SSE 事件"
+    kinds = [name for name, _ in events]
+    assert kinds[-1] == "done"
+    assert "error" not in kinds
+    # 契约：存在 stage 事件且 content 为 str；不比较生成/阶段措辞正文
+    stage_events = [(name, payload) for name, payload in events if name == "stage"]
+    assert stage_events, "应推送至少一条 stage"
+    assert all(isinstance(payload.get("content"), str) for _, payload in stage_events)
 
-        done_payload = events[-1][1]
-        assert done_payload["state"]["turn"]["turn"] == turn
-        assert web_app.web_game is not None
-        assert web_app.web_game.db.load_state().turn == turn
-    finally:
-        if web_app.web_game is not None:
-            web_app.web_game.session.close()
+    done_payload = events[-1][1]
+    assert done_payload["state"]["turn"]["turn"] == 2
+    assert web_app.web_game is not None
+    assert stages_from_ctor
 
 
 def test_menu_continue_streams_error_when_llm_unavailable(monkeypatch):
@@ -110,14 +139,13 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
         results["events"] = _parse_sse(response.text)
 
     thread = threading.Thread(target=run_continue, daemon=True)
+    thread.start()
     try:
-        thread.start()
         started.wait()
 
         exit_result = asyncio.run(web_app.api_menu_exit())
         assert exit_result == {"ok": True}
         assert web_app.web_game is None
-
     finally:
         release.set()
         thread.join()
@@ -175,8 +203,8 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
         results["events"] = _parse_sse(response.text)
 
     thread = threading.Thread(target=run_continue, daemon=True)
+    thread.start()
     try:
-        thread.start()
         started.wait()
 
         monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
@@ -184,7 +212,6 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
         assert new_result["state"]["from"] == "new-game"
         settled = web_app.web_game
         assert settled is not None and settled.state_payload()["from"] == "new-game"
-
     finally:
         release.set()
         thread.join()

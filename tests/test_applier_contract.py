@@ -1,9 +1,4 @@
-"""S0 — ming_sim/applier.py 契约类型骨架测试。
-
-覆盖：Provenance 五值矩阵 / RejectedItem 四字段 / RejectionCollector
-缓冲→flush_to_db / mirror_to_jsonl / reset / 来源 admission / DDL 回滚。
-SectionResult.merge 由声明分派及暂存结算真实消费者覆盖。
-"""
+"""RejectionCollector 缓冲、耐久写入及镜像生命周期契约。"""
 
 from __future__ import annotations
 
@@ -13,14 +8,6 @@ import pytest
 
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
-
-# ---------------------------------------------------------------------------
-# RejectedItem
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# RejectionCollector fixtures
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def clean_rejections(game):

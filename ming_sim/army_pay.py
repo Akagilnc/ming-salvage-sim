@@ -1,7 +1,7 @@
 """军饷的**世界后果**计算：应发欠饷核销、优先序补欠、欠饷转士气与哗变（#1901，军饷腿）。
 
 从 `flows.py` 领域旧大块按职责拆出。归属边界：调度与事务归属不变——调用方
-（`flows.apply_fixed_period_flows` / `flows._apply_economy_list`）仍在同一事务内
+（`flows.apply_fixed_period_flows` / `entities.economy.apply._apply_economy_list`）仍在同一事务内
 驱动本模块，本模块不另起调度、不另造派发；本模块内的直接落库（欠饷实拨、
 哗变 latch 与 army_logs 审计）是从 `flows` 原样搬来的既有真账写口，未新增
 任何写口，唯一世界记录写口的收口归 #1889／#1813。
@@ -45,7 +45,7 @@ def army_needed(row) -> int:
     row 需含 owner_power / manpower / salary_rate 三列。
 
     #44 ship-pre R1（codex high）：ming 军「有兵必有饷」。salary_rate<=0 对 ming 军非法（=白嫖），
-    募兵入口（_coerce_new_salary_rate 默认 1.5）已堵；旧档 salary_rate 回填已退役，runtime
+    募兵入口（_coerce_new_salary_rate 默认 1.5）已堵，但 runtime
     易主（owner_power 经 army_delta 翻成 ming）/裸 UPDATE 会留下 rate<=0 的明军（如倒戈的满洲八旗
     62000 兵、salary_rate 0）。在结算唯一咽喉对 ming+有兵+rate<=0 锚定 SALARY_RATE_ANCHOR（边军史实
     锚点），一处堵死所有入口（不依赖每个 mutation 点各自 coerce）。"""
@@ -96,7 +96,7 @@ def derive_army_mutiny_state(army) -> str:
     if bool(army["is_mutinied"]):
         return "哗变"
     loyalty = int(army["loyalty"])
-    probation = int(army["mutiny_probation"])
+    probation = int(army["mutiny_probation"] or 0)
     if loyalty >= 60 and probation <= 0:
         return "正常"
     if loyalty >= 40:
@@ -393,7 +393,6 @@ def _auto_pay_arrears_by_priority(
     category: str,
     reason: str,
     *,
-    commit: bool = True,
     allowed_army_ids: Optional[List[str]] = None,
     origin_ref: str = "",
     beyond_intent: object = 0,
@@ -445,8 +444,6 @@ def _auto_pay_arrears_by_priority(
         for region_id in sorted(touched_regions):
             db._reconcile_army_pay_source_region_container(region_id)
         db._reconcile_central_army_pay_arrears_container()
-    if spent and commit:
-        db.conn.commit()
     return spent
 
 def _payable_army_arrears_cap(row) -> int:

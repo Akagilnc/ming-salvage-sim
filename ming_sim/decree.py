@@ -20,7 +20,7 @@ from ming_sim.agents import (
     run_agent_text,
 )
 from ming_sim.applier import (
-    Provenance, RejectedItem, RejectionCollector, atomic,
+    Provenance, RejectionCollector, atomic,
     mirror_rejections_after_commit,
 )
 from ming_sim.db import GameDB
@@ -30,14 +30,12 @@ from ming_sim.error_pack import (
 from ming_sim.exceptions import (
     LLMContractError,
 )
-from ming_sim.flows import (
-    _SubstrateHubFixedFlowAbort,
-    apply_fixed_period_flows,
-    raise_fixed_period_flow_abort_if_needed,
-)
-from ming_sim.issues import (
-    apply_historical_fiscal_rates,
-)
+from ming_sim.faction_brew import VIEW_FACTION_STANCE
+from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
+from ming_sim.entities.fiscal.levy import apply_historical_fiscal_rates
+from ming_sim.entities.issue.legacy import clear_gated_legacies
+from ming_sim.issues import gather_impeachment_surge_candidates
+from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
 from ming_sim.participant_roster import resolve_dossier_owner_name
@@ -131,10 +129,14 @@ def stub_promulgation_verdicts(
         for row in dossiers
     ]
 
-
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
-    # 规范案卷行（get_decree_dossier／list_decree_dossiers）已解码 payload。
-    return row["payload"]  # type: ignore[return-value]
+    payload = row.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    from ming_sim.db import GameDB
+    return GameDB.parse_engine_payload_json(
+        row.get("payload_json"), surface="decree_dossiers.payload_json",
+    )
 
 
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
@@ -170,7 +172,7 @@ def build_promulgation_judge_context(
         # Never read payload authorization_id(s) as a parallel authority identity source.
         held_authorities = db.project_applicable_authorities(state.turn, row)
         authorization_ids = [str(item["id"]) for item in held_authorities]
-        entry = {
+        dossier_rows.append({
             "id": int(row["id"]),
             "action_type": str(row.get("action_type") or ""),
             "decree_text": str(row.get("decree_text") or ""),
@@ -187,15 +189,7 @@ def build_promulgation_judge_context(
                 "authorization_ids": authorization_ids,
                 "endorsement_entry_ids": sorted(set(endorsement_ids)),
             },
-        }
-        # #1894：撤令案卷须带原旨、已投入与办理进度给外廷判官——撤的是哪道
-        # 已发旨、办到几分、钱花掉多少，本就在既有账里（materials 单一读口）。
-        # 只是供料，不新增调用、不新增判官；判官据此自定准行/劝回/拖延。
-        if str(row.get("action_type") or "") == "revoke_decree":
-            from ming_sim.materials import revoke_target_facts
-            entry["revoke_target"] = revoke_target_facts(db, payload, row)
-        dossier_rows.append(entry)
-    # Exact roster office identities + closed office_type enum — no LIKE stem vocabulary.
+        })
     _GATEKEEPER_OFFICE_TITLES = ("内阁首辅", "司礼监掌印太监")
     gatekeepers = [
         {
@@ -221,7 +215,7 @@ def build_promulgation_judge_context(
     ).fetchall():
         from ming_sim.db import GameDB
         payload = GameDB.parse_engine_payload_json(
-            item["payload_json"], surface="decree.history.payload_json",
+            item["payload_json"], surface="decree_dossiers.payload_json",
         )
         mode = str(payload.get("mode") or "ordinary")
         rescript_action = str(item["rescript_action"] or "")
@@ -492,7 +486,12 @@ def validate_promulgation_verdicts(
         }
     proposed_modes: Dict[int, str] = {}
     for dossier in proposed_dossiers:
-        payload = dossier["payload"]
+        payload = dossier.get("payload")
+        if not isinstance(payload, dict):
+            from ming_sim.db import GameDB
+            payload = GameDB.parse_engine_payload_json(
+                dossier.get("payload_json"), surface="decree_dossiers.payload_json",
+            )
         action_type = dossier.get("action_type")
         external_review = (
             dossier_action_policy(action_type, payload)["external_review"]
@@ -541,7 +540,6 @@ def _rescript_decisions(
             "event_id": f"dossier:{dossier_id}",
             "title": "批红待裁",
             "context": str(dossier.get("decree_text") or ""),
-            # Free prose rejection reason: preserve raw (#1834 F16 / ADR 0142).
             "rejection_reason": str(verdict.get("reason") or ""),
             "opposition": opposition,
             # hint（非 note）：前端 isPendingDecision / DecisionOption 认 hint；
@@ -736,8 +734,6 @@ def tick_transit_arrivals(
     db: GameDB,
     state: GameState,
     content=None,
-    *,
-    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """0095/#668 确定性在途倒数：active 在途者 remaining -= 1.0 * speed_factor；≤0 当月抵达。
 
@@ -745,7 +741,7 @@ def tick_transit_arrivals(
     抵达经唯一写缝 set_character_transit 整账清零；返回本 tick 抵达列表
     （[{"name", "location"}, ...]，按 name 稳定序）。
 
-    commit=False 时不提交——由外层事务（如 pre_settle 的 atomic_and_reload）统一提交。
+    由外层事务（如 pre_settle 的 atomic_and_reload）统一提交。
     """
     current_turn = int(state.turn)
     rows = db.conn.execute(
@@ -782,8 +778,6 @@ def tick_transit_arrivals(
                 content=content,
                 commit=False,
             )
-    if commit:
-        db.conn.commit()
     return arrivals
 
 
@@ -852,15 +846,16 @@ def pre_settle(
     state: GameState, db: GameDB, *, content=None,
     transit_arrivals_out: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
-    """确定性结算「前括号」：暂存动作、固定月度财政、在途抵达、稽核反制与到期密令。
+    """确定性结算「前括号」：固定月度财政 tick、在途抵达、密令到期戳。
 
-    世界事件判门不在此处。它们只在逐旨落账之后消费一次，才能读到当月实账。
-    返回本段仍由程序硬触发的清单（稽核反制、承诺反噬）；content 供 office(任免)暂存动作落库。
+    返回空清单（世界事件终态与 seed 硬触发不在此步，见
+    month_chain._consume_event_gates_after_edicts）。
+    content 供 office(任免)暂存动作落库。
 
     ADR 0008 S4：整段（暂存动作 commit + 固定财政 + 到期密令呈递）包成
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
     落中间相位 settling（写 state.turn_phase + save_state）：只意味着「前半段已完成，不再
-    重跑 pre_settle」，不意味着后半段就绪（恢复入口的消费分流是 S7 的活，本切片只立相位机械）。
+    重跑 pre_settle」，不意味着后半段就绪。
     settling 相位用 models.TurnPhase.SETTLING（单一真源已下沉 models，无循环）。settling 已是入口态时直接 return（幂等守门）：
     「不再重跑前半段」正是 settling 的语义，恢复后重进 pre_settle 不二次落财政。
 
@@ -879,7 +874,6 @@ def pre_settle(
         return []
     if transit_arrivals_out is not None:
         transit_arrivals_out.clear()
-    auto_triggered: List[Dict[str, object]] = []
     # #498：颁诏遇开夜 → 顺势自动收夜（王承恩代宣）；在飞回话 fail-closed 中止，不进 settling。
     # 放在 atomic 外：收夜提交与错误包独立；成功后 pre_settle 事务内 commit_pending 仍幂等。
     # #503：收夜 beat 生产路径接通编排缝。
@@ -889,6 +883,7 @@ def pre_settle(
     # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
     # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。
     collector = RejectionCollector()
+    in_fixed_fiscal = False
     try:
         with atomic_and_reload(
             db, state, content=content,
@@ -909,11 +904,11 @@ def pre_settle(
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
             try:
-                fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+                fiscal_levies = apply_historical_fiscal_rates(state, db)
             except ValueError as exc:
                 # 饷率通道读到持久 settle 坏形状：属固定财政段的坏态，与固定流水同一中止面
                 # （整月回滚、错误包、stage=fixed_fiscal），原因链保留。
-                raise _SubstrateHubFixedFlowAbort(
+                raise _FixedFiscalAbort(
                     f"饷率通道结算失败：{type(exc).__name__}: {exc}"
                 ) from exc
             if fiscal_levies:
@@ -924,9 +919,11 @@ def pre_settle(
             tlog("结算 1/4 固定月度财政 tick")
             # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
             apply_fixed_period_flows(db, state)
+            in_fixed_fiscal = False
             # 0095/#668 在途倒数 tick：remaining -= 1.0*factor，≤0 引擎抵达。
-            # 世界事件判门在逐旨落账后才读 location，抵达须先在本段落定。
-            arrivals = tick_transit_arrivals(db, state, content, commit=False)
+            # 须在月链逐旨后的事件判门之前完成（门控读 location）；消费点见
+            # month_chain._consume_event_gates_after_edicts，不在 pre_settle 双跑。
+            arrivals = tick_transit_arrivals(db, state, content)
             if transit_arrivals_out is not None:
                 transit_arrivals_out.clear()
                 transit_arrivals_out.extend(arrivals)
@@ -937,21 +934,6 @@ def pre_settle(
             # 稽核人派系操守等事实仍留在 dossier_supervision_presence 与
             # build_supervision_judge_surface 供料面；是否反制、采取何种行动由
             # #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
-            # #626：承诺所系反噬——事废/烂尾/变形暴露状态驱动，#625 同格挂点。
-            backlash_hits = db.trigger_commitment_backlashes(state, commit=False)
-            if backlash_hits:
-                auto_triggered = list(auto_triggered) + [
-                    {
-                        "id": item.get("origin_ref"),
-                        "title": f"commitment_backlash:{item.get('source_kind')}",
-                        "issue_id": item.get("issue_id"),
-                        "source": "commitment_backlash",
-                        "trigger_ref": item.get("trigger_ref"),
-                    }
-                    for item in backlash_hits
-                ]
-            if auto_triggered:
-                tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
             # #1504：到期密令只打期限戳，保持 active；结案在 settle 尾部机械对账。
             # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
             due_orders = db.auto_submit_due_secret_orders(state)
@@ -962,62 +944,12 @@ def pre_settle(
             db.save_state(state)
             collector.flush_to_db(db)
     except BaseException as exc:
-        raise_fixed_period_flow_abort_if_needed(db, state, exc)
+        raise_fixed_period_flow_abort_if_needed(db, state, exc, in_fixed_fiscal=in_fixed_fiscal)
         raise
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
-    return auto_triggered
+    return []
 
 
-def _collect_inline_rejections(
-    collector: RejectionCollector,
-    applied: Dict[str, object],
-    turn: int,
-    source: Provenance,
-) -> None:
-    """把 apply 结果里各 section 内嵌的拒收项收进收集器（PR2-S0 桥接）。
-
-    约定：section 结果列表中 `{"rejected": True, ...}` 即拒收项；`reason` 为人读原因，
-    `category` 为机读类别（未迁契约的 section 没有此键 → 兜底 "legacy_inline"）。
-    一层 dict-of-list（issue_summary 的 new_issues/cancels 等）也要下探——new_issues
-    正是实测最常被拒的段，跳过它聚合就失明（cmr S0 r1）。
-    item_json 的取值（ship-pre r3/r4）：迁约 producer（S1-S3 已迁全部）在 wrapper 里
-    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 legacy section
-    （office_changes/secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
-    """
-    def _scan(section: str, items: list) -> None:
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if item.get("rejected"):
-                report_section = str(item.get("report_section") or section)
-                collector.record(report_section, RejectedItem(
-                    # item_json = 原始 delta 项（ADR 决定 5「原 item 原样保留」）：迁约
-                    # producer 在 wrapper 里带原件（'item' 键）则解包,否则兜底存 wrapper
-                    # （ship-pre r3——存整个 wrapper 会让重放分析消费到嵌套形状）。
-                    # 按 'item' 键**存在性**解包（非值类型）：原 isinstance(dict/list/str) 判会把
-                    # 标量/null 原件（如 close_issues:[null]/[42] 的非 dict 拒收）误存成 wrapper、
-                    # 丢原件保真——key 在即解包，覆盖标量原件（cmr close-issues r5 codex）。
-                    item=item["item"] if "item" in item else item,
-                    # ADR「拒收行必带人读原因」在此集中守门：producer 漏给则合成非空兜底
-                    # ——规则写一处，新 section 免疫同类缺陷（fix-coverage 处方，cmr S0 r3）。
-                    reason=str(item.get("reason") or "") or f"拒收（{report_section} 未注明原因）",
-                    category=str(item.get("report_category") or item.get("category") or "legacy_inline"),
-                    source=source,
-                ), turn)
-            for subkey, subvalue in item.items():
-                if isinstance(subvalue, list):
-                    nested_section = f"{section}.{subkey}"
-                    if nested_section == "issue_summary.closes.applied_person_changes":
-                        continue
-                    _scan(nested_section, subvalue)
-
-    for section, value in applied.items():
-        if isinstance(value, list):
-            _scan(section, value)
-        elif isinstance(value, dict):
-            for subkey, subvalue in value.items():
-                if isinstance(subvalue, list):
-                    _scan(f"{section}.{subkey}", subvalue)
 
 
 def resolve_decisions_phase2(
@@ -1047,3 +979,5 @@ def resolve_decisions_phase2(
         else TurnPhase.SETTLING.value
     )
     return result.report
+
+from ming_sim.flows import _FixedFiscalAbort

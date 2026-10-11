@@ -1,16 +1,14 @@
-"""#1356/#1292：删除固定开局邸报（P7）。
+"""#1356/#1292：开局不写固定邸报（P7）。
 
-钉测只保开局无固定邸报的现役行为：
+钉测现役契约：
 1. t0 previous_summary 严格空
-2. 空壳可关闭（前端 vitest）
-3. 首月真报出现
+2. t0 previous_reign_period_label 与空 summary 同口径
+3. Web state_payload 开局 previous_summary 严格空
 """
 
 from __future__ import annotations
 
 import pytest
-
-
 
 def test_new_game_t0_previous_summary_strictly_empty(game):
     """① t0：previous_summary 严格空串；turn_reports 无 seed 行。"""
@@ -18,8 +16,11 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
     assert state.turn == 1
     assert (state.year, state.period) == (1627, 10)
 
+    assert db.get_turn_report(0) == ""
     assert db.conn.execute("SELECT report FROM turn_reports WHERE turn = 0").fetchone() is None
-    _ = db.previous_turn_summary(state)  # 入口可调用；不锁空串正文
+
+    summary = db.previous_turn_summary(state)
+    assert summary == ""
 
 def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     """r5：t0 无上月报 → previous_reign_period_label 与空 summary 同口径（禁九月残留）。"""
@@ -29,7 +30,6 @@ def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     assert db.previous_turn_summary(state) == ""
     label = db.previous_turn_reign_period_label(state)
     assert label == ""
-
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_state_payload_t0_previous_summary_empty(game):

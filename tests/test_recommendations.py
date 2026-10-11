@@ -1,8 +1,9 @@
 """#493 大臣荐人：网络/见闻裁切与采纳后的可恢复荐人事件。"""
 
+
+import pytest
+
 from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
-from tests.dossier_test_helpers import promulgate_proposed_appointments
-from tests.recommendation_rows import recommendation_events
 
 
 def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge(game):
@@ -103,71 +104,6 @@ def test_same_faction_future_debut_is_not_recommendable(game):
     names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
 
     assert future.name not in names
-
-
-def test_adopted_recommendation_is_an_auditable_event_after_restore(game):
-    db, state, content = game
-    recommender = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    candidate = next(c for c in content.characters.values()
-                    if c.name != recommender.name and c.faction == recommender.faction
-                    and c.office_type not in ("后宫", "宗藩"))
-    db.conn.execute("UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?", (candidate.name,))
-    db.conn.commit()
-    rows = db.list_recommendation_candidates(state, recommender.name)
-    row = next(row for row in rows if row["name"] == candidate.name)
-    db.record_recommendation(state, recommender.name, row, "巡盐御史", "旧任有实绩，罢居后仍可起复")
-    restored = db.load_state()
-    events = recommendation_events(db, restored, recommender.name)
-    assert events[0]["recommender"] == recommender.name
-    assert events[0]["candidate"] == candidate.name
-    assert events[0]["candidate_kind"] == "起复"
-    assert events[0]["target_office"] == "巡盐御史"
-
-
-def test_recommendation_appointment_preserves_kind_and_restores_both_types(game):
-    db, state, content = game
-    recommender = next(c for c in content.characters.values()
-                       if c.office_type not in ("后宫", "宗藩"))
-    candidates = db.list_recommendation_candidates(state, recommender.name)
-    # ADR 0009：离事者不持现职名分；荐起复看 status，不要求 office 非空。
-    offstage = next(row for row in candidates if row["candidate_kind"] == "荐起复")
-    active = next(row for row in candidates if row["candidate_kind"] == "荐在职")
-    assert offstage["status"] in {"offstage", "retired", "dismissed"}
-    assert validate_recommendation_snapshot(db, state, recommender.name, offstage)
-    assert validate_recommendation_snapshot(db, state, recommender.name, active)
-    # The staged payload carries the original candidate snapshot; commit must
-    # use it instead of reclassifying the candidate after appointment.
-    for row, office in ((offstage, "巡盐御史"), (active, "河道总督")):
-        payload = {
-            "name": row["name"], "office": office,
-            "faction": row["faction"], "reason": "荐人采纳",
-            "text": f"准荐{row['name']}任{office}",
-            "recommendation": {
-                "candidate": row,
-                "recommender": recommender.name,
-            },
-        }
-        if office == "河道总督":
-            payload["region_id"] = "henan"
-        action_id = db.stage_pending_action(
-            state.turn,
-            kind="office",
-            action="任命",
-            minister_name=recommender.name,
-            target_id=None,
-            payload=payload,
-        )
-        result = db.commit_pending_actions(
-            state, content=content, action_ids=[action_id]
-        )
-        assert result and result[0]["id"] == action_id
-        promulgate_proposed_appointments(db, state, content)
-
-    restored = db.load_state()
-    events = recommendation_events(db, restored, recommender.name)
-    by_candidate = {event["candidate"]: event for event in events}
-    assert by_candidate[offstage["name"]]["candidate_kind"] == "起复"
-    assert by_candidate[active["name"]]["candidate_kind"] == "在职"
 
 
 def test_listed_heard_for_selection_candidate_stays_recovery_type_through_context_and_restore(game):

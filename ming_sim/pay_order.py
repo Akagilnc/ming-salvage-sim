@@ -25,6 +25,7 @@
 provenance、origin_ref=dossier:<id>），禁第二份旨意真源或新表（F1.2）。
 """
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 import math
 from dataclasses import dataclass, field
@@ -46,7 +47,7 @@ _UNTIL_SUFFIX = "_until_turn"
 _PRIORITY_FAMILIES = (DUE_PRIORITY_FAMILY, ARREARS_PRIORITY_FAMILY)
 
 
-class PayOrderKeyError(ValueError):
+class PayOrderKeyError(DeclarationDataError):
     """override 键形状/值域非法（fail-loud，非法旨不得物化 config）。"""
 
 
@@ -289,7 +290,6 @@ def materialize_pay_order_decree(
     entries: List[Dict[str, Any]],
     origin_ref: str,
     reason: str = "",
-    commit: bool = True,
 ) -> List[Dict[str, Any]]:
     """一道 override 旨的唯一次物化入口（F1.2/F1.3，ADR 0055 判后物化缝）。
 
@@ -327,7 +327,6 @@ def materialize_pay_order_decree(
 
     written: List[Dict[str, Any]] = []
     current = db.get_fiscal_config()
-    owns = db.owns_transaction() if commit else False
     for key, value, until in prepared:
         old = int(current.get(key, _default_of(key)))
         db.conn.execute(
@@ -374,8 +373,6 @@ def materialize_pay_order_decree(
                 origin_ref=origin, reason="永久旨覆写清旧期限（stale until 清除）",
             )
             written[-1]["cleared_until_key"] = until_key
-    if commit and owns:
-        db.conn.commit()
     return written
 
 
@@ -426,7 +423,7 @@ def restore_pay_order_override(
             " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
             " VALUES (?, ?, ?, 'override', ?, ?, 0)",
             (int(turn), key, old, origin,
-             reason or "撤销 override 旨，形状退出格律"),
+             reason if str(reason).strip() else "撤销 override 旨，形状退出格律"),
         )
         db.conn.execute("DELETE FROM fiscal_config WHERE key = ?", (key,))
         db.record_fiscal_config_change(

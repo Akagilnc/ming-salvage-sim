@@ -6,13 +6,14 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
 
 import pytest
 
-import ming_sim.issues as issue_engine
 from ming_sim.db import GameDB
-from tests.dossier_test_helpers import create_test_secret_order, executing_rostered_policy
+from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.settlement import SettlementContext, settle_delta
 
 
 DOSSIER_REPORT_MONTHLY = "dossier-report:monthly_errand"
@@ -21,9 +22,14 @@ DOSSIER_REPORT_VERDICT = "dossier-report:execution_verdict"
 
 def _executing_assignment(db, state, *, text="清丈畿辅田亩", target="land-survey-619"):
     """Non-secret execution-surface dossier (policy = narrative in_transit)."""
-    dossier_id = executing_rostered_policy(
-        db, state, token=target, decree_text=text, roster=[],
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=text,
+        target_kind="issue",
+        target_id=target,
     )
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "executing"
     assert row.get("secret_order_id") in (None, 0)
@@ -104,6 +110,7 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
         "SELECT COUNT(*) AS n FROM secret_orders WHERE dossier_progress_json != '[]'"
     ).fetchone()["n"]
     assert leaked == 0
+
 
 
 def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
@@ -193,44 +200,26 @@ def test_origin_namespace_minimum_closed_set_and_open_append(game):
         )
 
 
-def test_production_execution_does_not_auto_write_character_memorial(game):
-    """执行格落终值不代写人物奏报；显式 record_dossier_progress 仍可用。"""
+def test_execution_outcomes_do_not_synthesize_character_reports(game):
+    """执行格落终值不代写人物奏报；奏报只经模型声明/既有存储。"""
     db, state, content = game
     degraded_id = _executing_assignment(db, state, target="deg-619")
     transformed_id = _executing_assignment(db, state, text="变形案", target="xf-619")
     fulfilled_id = _executing_assignment(db, state, text="办妥案", target="ok-619")
     failed_id = _executing_assignment(db, state, text="失败案", target="fail-619")
 
-    issue_engine.apply_score_extraction(
-        db, state,
-        {"dossier_executions": [
-            {"dossier_id": degraded_id, "outcome": "degraded", "note": "只得半成"},
-            {"dossier_id": transformed_id, "outcome": "transformed", "note": "名实已乖"},
-            {"dossier_id": fulfilled_id, "outcome": "fulfilled", "note": "如期办妥"},
-            {"dossier_id": failed_id, "outcome": "failed", "note": "事败不成"},
-        ]},
-        content=content,
-    )
+    settle_delta(state, db, {'dossier_executions': [{'dossier_id': degraded_id, 'outcome': 'degraded', 'note': '只得半成'}, {'dossier_id': transformed_id, 'outcome': 'transformed', 'note': '名实已乖'}, {'dossier_id': fulfilled_id, 'outcome': 'fulfilled', 'note': '如期办妥'}, {'dossier_id': failed_id, 'outcome': 'failed', 'note': '事败不成'}]}, SettlementContext(content=content))
 
     assert db.list_dossier_progress(degraded_id) == []
     assert db.list_dossier_progress(transformed_id) == []
     assert db.list_dossier_progress(fulfilled_id) == []
     assert db.list_dossier_progress(failed_id) == []
 
-    # Execution-slot semantics untouched: outcomes still land.
+    # Execution-slot / joint-liability semantics untouched: outcomes still land.
     assert db.get_decree_dossier(degraded_id)["execution_outcome"] == "degraded"
     assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
     assert db.get_decree_dossier(fulfilled_id)["execution_outcome"] == "fulfilled"
     assert db.get_decree_dossier(failed_id)["execution_outcome"] == "failed"
-
-    # Explicit memorial write path remains.
-    db.record_dossier_progress(
-        degraded_id, state.turn, "将结", "臣另有专折陈之。",
-        is_terminal=True, origin=DOSSIER_REPORT_VERDICT,
-    )
-    rows = db.list_dossier_progress(degraded_id)
-    assert len(rows) == 1
-    assert rows[0]["memorial_text"] == "臣另有专折陈之。"
 
 
 def test_fake_progress_report_does_not_change_world_state(game):

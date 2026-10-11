@@ -14,6 +14,7 @@ import ming_sim.issues as issues
 import ming_sim.month_chain as month_chain
 from ming_sim.db import GameDB
 from ming_sim.issues import FISCAL_LEVY_RESCRIPT_SOURCE
+from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
 from ming_sim.models import LLMConfig
 from ming_sim.month_chain import _LEVY_PETITION_PREFIX
 from tests.month_chain_helpers import make_light_session
@@ -274,7 +275,7 @@ def test_approved_rate_updates_next_month_settle_levy_and_transport(game, monkey
         if target:
             abolish()
         for label in ("已准", "已驳"):
-            result = issues.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", label)
+            result = apply_petition_event_outcome(state, db, "liao_levy_rise_1631", label)
             assert result["settled"] is False
             assert result["terminal_reason"] == "已准"
         session.resolve_turn(allow_empty_decree=True)

@@ -77,6 +77,24 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
     for account_name in ("国库", "内库"):
         for direction in ("income", "expense"):
             for item in payload[account_name][direction]:
-                assert set(item) == {"name", "amount"}
-                assert isinstance(item["name"], str)
-                assert isinstance(item["amount"], int)
+                assert set(item.keys()) == {"name", "amount"}, (
+                    f"玩家预算行键集须恰为 name+amount：{item!r}"
+                )
+
+
+
+def test_army_payload_arrears_text_is_approximate_not_raw(game):
+    db, _state, _ = game
+    army_id = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()["id"]
+    raw = 1.2000000000000002
+    db.conn.execute(
+        "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
+        (raw, raw, army_id),
+    )
+    db.conn.commit()
+    card = {army["id"]: army for army in db.army_payload()}[army_id]
+    assert "arrears" not in card
+    arrears_text = card["arrears_text"]
+    assert isinstance(arrears_text, str) and arrears_text

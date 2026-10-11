@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Mapping
 
 from ming_sim.population_pressure import is_actual_population_transfer
+from ming_sim.settlement.views import view as _view
 
 ENTRY_KIND = "covert_levy_exposure"
 PROHIBITION_ACTION = "prohibit_covert_levy"
@@ -38,6 +39,7 @@ def canonical_fiscal_result(
 
     origin = source.get("origin_ref") if effective_origin_ref is None else effective_origin_ref
     result["origin_ref"] = str(origin or "").strip()
+    result["source_item"] = source
     result["beyond_intent"] = bool(
         db.coerce_beyond_intent_flag(read_beyond_intent_raw(source))
     )
@@ -87,7 +89,7 @@ def army_pay_fact_for_dossier(db: Any, dossier_id: int) -> Dict[str, object] | N
     }
 
 
-def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping[str, object]) -> int:
+def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Any) -> int:
     """只凭 canonical applier 已成功落库的结果消费待办。"""
     consumed = 0
     for todo in db.list_next_audience_todos(status="pending"):
@@ -115,7 +117,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             if participant.get("tier") in {"主办", "协办"}:
                 actors.add(str(participant.get("character_id") or "").strip())
         actors.discard("")
-        successful = lambda x: isinstance(x, Mapping) and not x.get("rejected")
+        successful = lambda x: isinstance(x, Mapping)
         # Identity is the successfully promulgated case-bound dossier, never an
         # unrelated fiscal receipt with a convenient shape.
         pay_fact = army_pay_fact_for_dossier(db, did) or {}
@@ -123,7 +125,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         stopped = prohibition is not None
         if prohibition is not None:
             # The canonical prohibition owns the durable, idempotent rollback receipt.
-            from ming_sim.issues import neutralize_covert_fiscal_effects
+            from ming_sim.entities.fiscal.covert_neutralize import neutralize_covert_fiscal_effects
             neutralize_covert_fiscal_effects(
                 db, state, exposed_dossier_id=did,
                 prohibition_dossier_id=int(prohibition["id"]),
@@ -131,16 +133,15 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         levy_transfer = any(
             is_actual_population_transfer(x)
             and x.get("origin_ref") == origin and x.get("reason") == "摊派"
-            for x in applied.get("population_transfers") or []
+            for x in _view(applied, "population_transfers")
         )
         covert_effect = any(
             successful(x) and x.get("applied") is True
             and x.get("origin_ref") == origin and x.get("beyond_intent") is True
             for key in ("economy_moves", "fiscal_changes", "fiscal_creates", "fiscal_removes")
-            for x in applied.get(key) or []
+            for x in _view(applied, key)
         )
-        person_changes = list(applied.get("applied_person_changes") or [])
-        person_changes += list((applied.get("issue_summary") or {}).get("applied_person_changes") or [])
+        person_changes = list(_view(applied, "applied_person_changes"))
         punished = any(
             successful(x) and x.get("动作") in {"处置", "罢黜"}
             and str(x.get("name") or "") in actors for x in person_changes
@@ -149,7 +150,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             successful(x)
             and str(x.get("origin") or "").startswith(f"{origin}:relation:")
             and ({str(x.get("source") or ""), str(x.get("target") or "")} & actors)
-            for x in applied.get("relation_edge_event_resolutions") or []
+            for x in _view(applied, "relation_edge_event_resolutions")
         )
         decisions = [
             name for name, matched in (
@@ -174,12 +175,10 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
     return consumed
 
 
-def write_exposure_todos(
-    db: Any, state: Any, applied: Mapping[str, object] | None = None,
-) -> int:
+def write_exposure_todos(db: Any, state: Any, applied: Any = None) -> int:
     """由稽核、检举、已成功落库的 #649 民变实况三路写同一待办。"""
     transfers = [
-        item for item in (applied or {}).get("population_transfers") or []
+        item for item in _view(applied, "population_transfers")
         if is_actual_population_transfer(item)
     ]
     written = 0

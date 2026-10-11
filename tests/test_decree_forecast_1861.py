@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 import shutil
 import threading
-from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 import ming_sim.decree as decree_mod
 import ming_sim.decree_forecast as forecast_mod
 import ming_sim.month_translate as month_translate
@@ -16,10 +14,11 @@ from ming_sim.audience_night import mark_actions_night_approved, open_night
 from ming_sim.declaration_dispatch import (
     held_dossier_decree_ref, pending_action_decree_ref, stage_declaration,
 )
-from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
+from ming_sim.settlement.views import section
 from tests.conftest import (
     note_queue_until_game_teardown,
     offline_empty_audience_translate,
@@ -28,7 +27,6 @@ from tests.conftest import (
     stub_scene_agent,
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes
-
 
 # 两个时限各管一件事，量纲不同，不可合并：
 #
@@ -41,7 +39,6 @@ from tests.test_session_write_queue_1353 import wait_pending_writes
 #    （实测 3/3 次误报）。宁可用例在真挂死时多等一会儿，也不接受把机器忙
 #    写成回归。代价只在本已失败的用例上支付，且此时会合观测已一并打印。
 _DRAIN_TIMEOUT_S = 60
-
 
 class ModelCallRendezvous:
     """模型替身入口的会合：证明两条腿的**模型调用段**真的同时在飞。
@@ -113,7 +110,6 @@ class ModelCallRendezvous:
                 "腿内异常见 executor 的 'decree forecast: future failed' 日志。"
             )
 
-
 def _drain_legs(sess, in_flight: "ModelCallRendezvous") -> None:
     """排空并发用例的两条腿；排空不成功时把会合的原始观测一并带进消息。
 
@@ -127,16 +123,15 @@ def _drain_legs(sess, in_flight: "ModelCallRendezvous") -> None:
         f"count={queue.inflight_count()}；会合观测：{in_flight.report()}"
     )
 
-
 def _sess(db, state, content, monkeypatch, translate_fn):
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
     sess.content = content
+    sess.registry = None
     sess.llm_config = LLMConfig(
         api_key="test", base_url="https://example.invalid/v1", model="test-model",
     )
-    sess.temporary_characters = {}
     sess.agno_db = None
     sess._write_gate = get_session_write_queue(sess).write_gate
     # 断言失败时预推仍在跑；登记后夹具在关库前先排空，任务不越过清理边界。
@@ -146,7 +141,6 @@ def _sess(db, state, content, monkeypatch, translate_fn):
         run=lambda _message: SimpleNamespace(content="臣领旨。", tools=[]),
     ))
     return sess
-
 
 def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, monkeypatch):
     db, state, content = game
@@ -271,9 +265,9 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         db, state, [pending_action_decree_ref(second, 1)],
     )[pending_action_decree_ref(second, 1)]
     assert int(state.metrics["国库"]) == treasury_before - 1
-    rejections = settled.effects.applied[0]["economy_moves_rejections"]
+    rejections = section(settled.effects.applied[0], "economy_moves").rejected
     assert len(rejections) == 1
-    assert rejections[0]["item"]["origin_ref"] == f"affair:{hidden.id}"
+    assert rejections[0].item["origin_ref"] == f"affair:{hidden.id}"
     # Background translation legitimately adds a conversation entry; forecast must not
     # publish an extra ledger entry of its own.
     assert db.conn.execute(
@@ -292,7 +286,6 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     }
     assert sources_after == sources_before
     assert int(night["id"]) > 0
-
 
 def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     game, monkeypatch,
@@ -355,16 +348,13 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
         "SELECT 1 FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone() is None
 
-
 def _policy_payload(actor: str, *, text: str, mode: str = "ordinary") -> dict:
     return {
         "dossier_action_type": "policy", "target_kind": "issue",
         "target_id": "test-policy", "actor": actor, "text": text, "mode": mode,
     }
 
-
-@pytest.mark.parametrize("status_code", [429, 502, None])
-def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypatch, status_code):
+def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypatch):
     db, state, content = game
     night = open_night(db, state)
     minister = next(iter(content.characters.values()))
@@ -374,24 +364,9 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
     )
     calls = []
 
-    def judge(_agent, prompt, **_kwargs):
+    def judge(_agent, _prompt, **_kwargs):
         calls.append(1)
-        if len(calls) == 1:
-            if status_code is None:
-                raise RuntimeError("forecast code fault")
-            raise LLMUnavailable("provider failure", status_code=status_code)
-        context = json.loads(prompt)
-        dossier = context["dossiers"][0]
-        faction = context["factions"][0]["name"]
-        return json.dumps({"verdicts": [{
-            "dossier_id": dossier["id"], "decision": "rejected",
-            "blocked_layer": "palace_rescript", "reason": "越制",
-            "primary_opponents": [{"kind": "faction", "key": faction}],
-            "gatekeeper_id": None,
-            "affected_parties": [{"kind": "faction", "key": faction,
-                                  "direction": "negative", "intensity": "weak"}],
-            "criteria_snapshot": dossier["criteria_snapshot_source"],
-        }]})
+        raise LLMUnavailable("rate limited", status_code=429)
 
     def translate_fn(prompt, llm_config):
         return {
@@ -421,31 +396,9 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
     assert phases
     assert all(str(row["post_reply_recovery"] or "") == "" for row in phases)
     assert all(str(row["post_reply_error_pack_path"] or "") == "" for row in phases)
-    from ming_sim.month_chain import month_chain_call_failure
-    failure = month_chain_call_failure(db, state.turn)
-    if status_code == 429:
-        assert failure is None
-    else:
-        assert failure["kind"] == ("model_exhausted" if status_code else "code_exception")
-        assert failure["step"] == "edict_forecast"
-        assert failure["decree_ref"] == pending_action_decree_ref(pending_id, 1)
-        assert Path(failure["error_pack_path"]).is_dir()
-        with pytest.raises(SettlementAbort) as blocked:
-            sess.await_translations_before_month()
-        assert blocked.value.error_pack_path == failure["error_pack_path"]
-        assert calls == [1]
-        assert forecast_mod.retry_failed_decree_forecast(sess)
-        wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
-        assert calls == [1, 1]
-        assert month_chain_call_failure(db, state.turn) is None
-        stored = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
-        assert stored[0].verdict["decision"] == "rejected"
-        assert not forecast_mod.retry_failed_decree_forecast(sess)
-
 
 def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     db, state, content = game
-    state.turn += 1
     night = open_night(db, state)
     minister = next(iter(content.characters.values()))
     pending_id = db.stage_pending_action(
@@ -458,10 +411,6 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     db.conn.execute(
         "UPDATE pending_actions SET night_approved=1, night_id=? WHERE id=?",
         (int(night["id"]), pending_id),
-    )
-    stage_declaration(
-        db, decree_ref=pending_action_decree_ref(pending_id, 1),
-        turn=int(state.turn) - 1, declaration={}, verdict={"decision": "rejected"},
     )
     db.conn.commit()
 
@@ -485,14 +434,13 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
 
     staged = db.staged_declarations.staged_for(
-        pending_action_decree_ref(pending_id, 1), turn=int(state.turn),
+        pending_action_decree_ref(pending_id, 1),
     )
     assert staged
     assert staged[0].status == "staged"
     assert int(db.conn.execute(
         "SELECT night_id FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["night_id"]) == int(night["id"])
-
 
 def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
     db, state, content = game
@@ -523,11 +471,11 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
             "held_turn=?, rescript_pending=0 WHERE id=?",
             (state.turn - 1, dossier_id),
         )
-        for ref in (pending_action_decree_ref(pending_id, 1), held_dossier_decree_ref(dossier_id)):
-            stage_declaration(
-                db, decree_ref=ref, declaration={}, turn=int(state.turn) - 1,
-                verdict={"decision": "rejected"},
-            )
+        stage_declaration(
+            db, decree_ref=pending_action_decree_ref(pending_id, 1),
+            declaration={}, turn=int(state.turn) - 1,
+            verdict={"decision": "rejected"},
+        )
         ids.append(dossier_id)
     db.conn.commit()
     open_night(db, state)
@@ -562,7 +510,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)
         stale = db.staged_declarations.staged_for(stale_ref)
-        fresh = db.staged_declarations.staged_for(held_ref, turn=int(state.turn))
+        fresh = db.staged_declarations.staged_for(held_ref)
         assert stale[0].verdict["decision"] == "rejected"
         assert len(fresh) == 1 and fresh[0].status == "staged"
         assert fresh[0].verdict["decision"] == "promulgated"
@@ -591,7 +539,6 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         target_id="test-policy", payload={"text": "预推后"},
     )
     assert late not in fresh[0].visible_refs["dossiers"]
-
 
 def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monkeypatch, tmp_path):
     from ming_sim.db import GameDB

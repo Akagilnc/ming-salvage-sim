@@ -66,7 +66,12 @@ from ming_sim.llm_config import (
     _slot_header_table,
 )
 from ming_sim.llm_model import verify_llm_available
-from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
+from ming_sim.entities.issue.commitment_display import (
+    commitment_display_text,
+    commitment_progress_payload,
+    commitment_timed_bar_value,
+)
+from ming_sim.entities.issue.effects import format_issue_ongoing
 from ming_sim.session import GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
@@ -659,7 +664,7 @@ def visible_in_court(character: Character, db) -> bool:
     """朝堂大臣列表准入：在朝可召资格 + DB 权威状态非 offstage（离场/未登场不入列）。
 
     资格单真源 session._is_summonable_court_minister（#1317 r2：身份归一∧非宗藩∧非未仕）——
-    与 list_ministers/can_summon/CLI/事实块同口径，禁另造过滤表。resolve 惰性入参，
+    与 can_summon/CLI/事实块同口径，禁另造过滤表。resolve 惰性入参，
     类型短路不得与谓词条件并存。
     状态与势力一律以 DB 为准（与 public_character 同源）——内存 c.status 在 auto-debut
     等路径（set_character_status 只写 DB、不回写内存）会 stale，不能用作过滤依据（见 #104）。
@@ -1349,7 +1354,7 @@ class WebGame:
                 "inertia": int(row["inertia"] or 0),
                 "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
                 "fail_condition": _humanize_condition(row["fail_condition"] or ""),
-                "ongoing_text": _format_issue_ongoing(str(row["ongoing_effects"] or "{}")),
+                "ongoing_text": format_issue_ongoing(str(row["ongoing_effects"] or "{}")),
                 "effect_on_resolve": loads_effect_dict(row["effect_on_resolve"]),
                 "effect_on_fail": loads_effect_dict(row["effect_on_fail"]),
             }
@@ -4832,12 +4837,10 @@ def api_history_turns() -> Dict[str, Any]:
 async def api_history_turn(turn: int) -> Dict[str, Any]:
     """某回合玩家历史：只交付邸报、诏书、已颁草案与独立递话原文。"""
     db = get_game().db
-    # #671：一次读 turn_reports；year/period 在 extraction/directives 皆无时回落存档行
     archive = db.get_turn_report_archive(turn)
     report = str((archive or {}).get("report") or "")
     attendant_message = str((archive or {}).get("attendant_message") or "")
     # #1843 reopen：本月诏书改读月链常驻的 pending_resolve_context.decree_text
-    # （旧 turn_extractions 只由旧 settle 后半段写，新档恒空）。
     resolve_ctx = db.get_resolve_context(turn) or {}
     decree_text = str(resolve_ctx.get("decree_text") or "")
     directives = db.list_directives_by_turn(turn)
@@ -5114,6 +5117,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             )
             if row is None:
                 raise HTTPException(status_code=404, detail="未找到草案。")
+            # P6 / ADR 0142：旨文是自由正文；判空观察副本，抽取/落库传原串。
             text = request.text if request.text is not None else str(row["text"])
             # #1847 N6：判空可读 strip；旨意正文运输用原文。
             if not text.strip():
@@ -5386,4 +5390,3 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
 @app.get("/api/saves")
 async def api_list_saves() -> Dict[str, Any]:
     return {"saves": get_game().list_saves()}
-

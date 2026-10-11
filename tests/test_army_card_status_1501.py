@@ -1,20 +1,22 @@
-"""#1501 军牌欠饷呈现单源化：军牌专属投影停携静态 status；共享读者走结构化字段。
+"""#1501 军牌欠饷呈现单源化：军牌专属投影停携 status；DB status 不被投影改写。
 
-刀口：
-- army_payload（web 军牌）停止携带 status；其余字段完整键集/逐字段机械对照
-- DB armies.status 零改写；payload 用 arrears_text approximate，省略 raw arrears
-- 共享读者（army_rows / state_payload.armies）以结构化字段承接，不锁自由散文子串
+契约面（结构化）：
+- army_payload / state_payload.armies 无 status 键，无 raw arrears/morale/loyalty
+- 完整键集对照 + 逐字段 DB 直输字段
+- arrears_text / morale_text / mutiny_tier 为非空 str
+- 读 payload 后 DB armies.status 原样
+不锁 army_report／detail／roster／知识材料等生成正文中的 status 原句。
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 
-
+import web_app
 
 
 _GUANNING_ID = "guanning"
 
-# army_payload 投影完整键集（#1501 删 status；#321 军心/士气/欠饷改三字符串键）。
 _ARMY_PAYLOAD_KEYS = frozenset(
     {
         "id",
@@ -40,12 +42,9 @@ _ARMY_PAYLOAD_KEYS = frozenset(
 )
 
 
-
-
-def _expected_army_card_from_row(row) -> dict:
-    """Direct DB-field transport; derived situation fields are covered by #321."""
-    from ming_sim.flows import army_needed
-
+def _expected_army_card_from_row(db, row) -> dict:
+    """DB 直输字段；派生 situation 三键由 #321 契约另盖。"""
+    from ming_sim.army_pay import army_needed
     pay = army_needed(row)
     return {
         "id": row["id"],
@@ -67,9 +66,32 @@ def _expected_army_card_from_row(row) -> dict:
     }
 
 
+def _web_runtime(db, state, content):
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        pending_count=lambda: 0,
+        pending_decisions=lambda: [],
+        victory=lambda: {"status": "ongoing", "summary": ""},
+        previous_summary="",
+        last_decree="",
+        last_report="",
+    )
+    runtime.directive_rows = lambda: []
+    runtime.issue_payloads = lambda: []
+    runtime.legacies_payload = lambda: []
+    runtime.closed_this_turn_payloads = lambda: []
+    runtime.map_nodes = lambda: []
+    runtime.ending_payload = lambda: None
+    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+    runtime.character_power_id = lambda c: "ming"
+    return runtime
+
 
 def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
-    """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场；完整键集/逐字段对照。"""
+    """军牌出口：无 status／raw 轴键；键集与 DB 直输字段对照；situation 三键非空 str。"""
     db, _state, _ = read_game
 
     rows_by_id = {row["id"]: row for row in db.army_rows()}
@@ -79,7 +101,7 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
 
     for army_id, row in rows_by_id.items():
         card = by_id[army_id]
-        expected = _expected_army_card_from_row(row)
+        expected = _expected_army_card_from_row(db, row)
 
         assert set(card.keys()) == _ARMY_PAYLOAD_KEYS, (
             f"{army_id}: payload 键集偏离。"
@@ -87,14 +109,30 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
             f" missing={_ARMY_PAYLOAD_KEYS - set(card.keys())!r}"
         )
         for key in ("morale_text", "arrears_text", "mutiny_tier"):
-            assert isinstance(card[key], str)
+            assert isinstance(card[key], str) and card[key].strip()
 
         for key, value in expected.items():
             assert card[key] == value, (
                 f"{army_id}.{key}: payload={card[key]!r} expected={value!r}"
             )
 
-    # 病灶样本：关宁欠饷奏报文案在场（派生文本的逐字对照由 #321 承接）；status 键已从上断言排除。
     guanning = by_id[_GUANNING_ID]
     assert isinstance(guanning["arrears_text"], str) and guanning["arrears_text"]
-    assert "status" not in guanning
+
+
+def test_db_status_field_untouched_after_payload_read(read_game):
+    """DB armies.status 与 seed 不被 payload 投影改写。"""
+    db, _state, content = read_game
+    before = {
+        r["id"]: str(r["status"] or "")
+        for r in db.conn.execute("SELECT id, status FROM armies").fetchall()
+    }
+    _ = db.army_payload()
+    web_app.WebGame.state_payload(_web_runtime(db, _state, content))
+    after = {
+        r["id"]: str(r["status"] or "")
+        for r in db.conn.execute("SELECT id, status FROM armies").fetchall()
+    }
+    assert before == after
+    seed = content.armies[_GUANNING_ID]
+    assert after[_GUANNING_ID] == seed.status

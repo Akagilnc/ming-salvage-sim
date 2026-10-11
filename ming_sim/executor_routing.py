@@ -14,6 +14,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -148,4 +149,4 @@ def require_execution_lead_or_raise(route: Mapping[str, object]) -> None:
         and not list(route.get("leads") or [])
         and str(route.get("coverage") or "") == "multi_month"
     ):
-        raise ValueError("案卷缺少主办（route=unassigned）")
+        raise DeclarationDataError("案卷缺少主办（route=unassigned）")

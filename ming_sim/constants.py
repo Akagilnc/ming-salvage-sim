@@ -11,8 +11,8 @@ from ming_sim.paths import bundled_path, bundled_root
 # 只读资源根：源码=仓库根，frozen=_MEIPASS。
 ROOT_DIR = str(bundled_root())
 CONTENT_DIR = bundled_path("content")
-WRAP = 88
 MONEY_UNIT = "万两"
+_SETTLE_META_JIAPIAI_KEY = "加派基线"
 ECONOMY_ACCOUNTS = ("国库", "内库")
 SCORE_METRICS = ("民心", "皇威")
 
@@ -251,7 +251,7 @@ EXIT_COMMANDS = {"exit", "退出游戏", "退出", "exit game"}
 # #526 / #471 S10：收夜高置信封闭集（口令档确定性层；含「今日且到此」）
 # 单一真源：前端/CLI 不得另复制词表或语义旁路。
 COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝", "今日且到此"}
-# 留侍／含糊收夜词表已退役（#1812 第5项）：走普通场景演绎与转译，不再代码识别。
+
 # 经济流水（economy_ledger）支出条目的结构化标签。
 # 仅对支出（delta<0）有效；收入条目（税收/抄家入帑/纳贡）三项一律 NULL。
 # flows 月固定支出（宗禄/官俸/工部/各军军饷/宫廷/建筑维护等）也一律 NULL，

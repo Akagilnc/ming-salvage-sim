@@ -1,8 +1,9 @@
 """#1274 QA D-1 拟诏归一残余：验证庭 r1 四类处方聚焦测。
 
 1) #1391 泛称闭集（大臣）capture 零 409；「不存在之人甲」仍 409
-2) #1331/#1339 起居注 involved_people 投影滤非人；默认时辰非「此时」
-3) #1327 空载短路；#1465 切片③：外层 30s 总罩已删
+2) #1331/#1339 起居注 involved_people 投影滤非人；开夜 time_of_day 走模块默认常量
+3) #1341/#1338 PATCH /api/decree 零调用方已拆，OpenAPI/实现一致
+4) #1327 空载短路；#1465 切片③：外层 30s 总罩已删
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch, name):
         text, None, db=db, content=content,
     )
     ids = [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
+    assert name not in ids
     assert ids == ["毕自严"]
 
     session = GameSession.__new__(GameSession)
@@ -114,7 +116,40 @@ def test_night_archive_involved_people_drops_non_persons(game):
     assert "杨嗣昌" in people
 
 
-# ── 3) #1327 空载/有界 capture ─────────────────────────────────────
+# ── 3) #1341/#1338 PATCH 死契约拆除 ────────────────────────────────
+
+
+def test_patch_decree_and_manual_create_routes_removed_draft_rw_remains():
+    """#1341 裸设总诏路由已删；#1849 / ADR 0152 决定 1 独立手拟新增口（POST）亦删。
+
+    草稿的改（PATCH）／删（DELETE）保留；日常直接下旨只走召对拟旨。
+    """
+    import web_app
+
+    patch_decree = [
+        r for r in web_app.app.routes
+        if getattr(r, "path", None) == "/api/decree"
+        and "PATCH" in (getattr(r, "methods", None) or set())
+    ]
+    assert patch_decree == []
+
+    post_dirs = [
+        r for r in web_app.app.routes
+        if getattr(r, "path", None) == "/api/directives"
+        and "POST" in (getattr(r, "methods", None) or set())
+    ]
+    assert post_dirs == [], "独立手拟新增口必须已退役"
+
+    for method in ("PATCH", "DELETE"):
+        routes = [
+            r for r in web_app.app.routes
+            if getattr(r, "path", None) == "/api/directives/{directive_id}"
+            and method in (getattr(r, "methods", None) or set())
+        ]
+        assert routes, f"草稿 {method} 必须保留"
+
+
+# ── 4) #1327 空载/有界 capture ─────────────────────────────────────
 
 
 def test_empty_text_capture_short_circuits_without_llm(monkeypatch):

@@ -7,6 +7,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 import json
 from dataclasses import dataclass
@@ -169,7 +170,7 @@ def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-class ActionCandidateShapeError(ValueError):
+class ActionCandidateShapeError(DeclarationDataError):
     pass
 
 
@@ -281,8 +282,7 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if isinstance(raw, (dict, list, tuple)):
                 s = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
             else:
-                # Non-enum values are transported verbatim; identities are
-                # normalized by their consumers, not by trimming every string.
+                # String transport preserves the extractor's original value.
                 s = str(raw or "")
             out[name] = s
     if "draft_text" in obj:

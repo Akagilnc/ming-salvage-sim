@@ -142,6 +142,11 @@ def stages_to_json(stages: object) -> str:
 
 
 
+def stages_list_from_source(stages: object) -> List[Dict[str, object]]:
+    """Strict serial capture: reuse ``stages_to_json``, never a parallel parser."""
+    return json.loads(stages_to_json(stages))
+
+
 def stages_source_from_issue_item(ni: Dict[str, object]) -> object:
     """Single stages key fallback for new_issues items (stages | stages_json).
 
@@ -164,10 +169,7 @@ def is_stage_derived_end_turn(
     norm = normalize_commitment_stages(stages)
     if not norm:
         return False
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError):
-        return False
+    et = int(end_turn or 0)
     if et <= 0:
         return False
     return et == max(int(s["due_turn"]) for s in norm)
@@ -181,10 +183,7 @@ def should_skip_form3_due_for_staged(
     norm = normalize_commitment_stages(stages_raw)
     if not norm:
         return False
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError):
-        et = 0
+    et = int(end_turn or 0)
     # 无独立 end_turn：分段只走 next_audience_todos
     if et <= 0:
         return True
@@ -279,7 +278,7 @@ def list_due_grant_report_dossiers_for_scan(
     return due
 
 
-def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = True) -> int:
+def write_due_staged_commitment_todos(db: Any, state: Any) -> int:
     """结算内确定性写入次回合召对待办。返回新写入条数。
 
     待裁载体改道 next_audience_todos；不置 TurnPhase.AWAITING_DECISION，
@@ -307,6 +306,4 @@ def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = Tru
         )
         if created:
             written += 1
-    if commit and written:
-        db.conn.commit()
     return written

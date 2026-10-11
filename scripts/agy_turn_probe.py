@@ -1,8 +1,7 @@
 """探针：用本地 CLI 后端（agy/codex）非交互跑完整一回合，验证全结算链。
 
-跳大臣对话，直接塞诏书草案 → 颁诏 → 推演 → HITL 决策点自动选第一项 →
-4 模块 extractor 出 JSON → apply 落库 → end_turn。最后打印邸报头 + 国库变化，
-证明「脱 api key 整条结算链能跑」。
+跳大臣对话，直接塞诏书草案 → 颁诏 → 推演；HITL 待裁时保留案头、不自动代选 →
+有报告则打印邸报头 + 国库变化，证明「脱 api key 结算入口能跑」。
 
 用法（脱 key）:
     MING_SIM_LLM_BACKEND=agy .venv/bin/python -m scripts.agy_turn_probe \
@@ -52,15 +51,16 @@ def main() -> int:
     print("[resolve] 颁诏推演中（agy 调用，耐心等）...")
     result = session.resolve_turn(decree=ns.decree)
 
-    # HITL：脚本缺亲裁能力，停在 awaiting，不自动代裁（#1812 第9项 / #1834 F24）。
-    if getattr(result, "awaiting", False):
+    # HITL 不再自动首选续跑（#1812 已裁删除）；awaiting 时保留案头，不 end_turn 抹相位。
+    awaiting = bool(getattr(result, "awaiting", False))
+    if awaiting:
         decisions = session.pending_decisions()
-        print(f"[hitl] 待裁 {len(decisions)} 个；脚本缺亲裁能力，不自动代裁。")
-
+        print(f"[hitl] 待裁 {len(decisions)} 个，探针不自动代选、不推进")
     report_text = result.report if hasattr(result, "report") else str(result)
     dt = time.monotonic() - t0
 
-    session.end_turn()
+    if not awaiting and getattr(result, "advanced", False):
+        session.end_turn()
     after = dict(session.state.metrics)
 
     print(f"\n[resolve] 完成，耗时 {dt:.0f}s。phase={session.current_phase()}")

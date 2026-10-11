@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_verdicts
 import json
 
 from ming_sim.db import GameDB
@@ -125,7 +126,7 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
             "direction": "negative", "intensity": "weak",
         },
     ]
-    db.apply_dossier_verdicts(state, [appt_verdict])
+    apply_dossier_verdicts(db, state, [appt_verdict])
 
     # Face B: executing long-errand with monthly progress (0058/566 进展档).
     errand_id = db.create_decree_dossier(

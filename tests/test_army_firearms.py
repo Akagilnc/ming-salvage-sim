@@ -9,6 +9,8 @@ simulator 看得见、软性加权判战；引擎只 clamp、不算胜负。
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 def _pay_source():
     return {
         "pay_source_region": "shaanxi",
@@ -23,7 +25,7 @@ def test_new_army_defaults_zero_firearm(game):
     db.create_armies_from_extraction(state, [{
         "id": "plain_army_test", "name": "白杆兵测试", "owner_power": "ming",
         "manpower": 3000, "maintenance_per_turn": 1, **_pay_source(),
-    }], actor="测试")
+    }], actor="测试", source=Provenance.system_simulation)
     row = db.conn.execute(
         "SELECT firearm_equipment, cannon_equipment FROM armies WHERE id='plain_army_test'"
     ).fetchone()
@@ -37,7 +39,7 @@ def test_apply_army_delta_sets_firearm(saved_game):
     db.apply_army_deltas(
         state, pseudo, None, "测试",
         {aid: {"firearm_equipment": 40, "cannon_equipment": 10}},
-    )
+    source=Provenance.system_simulation)
     row = db.conn.execute(
         "SELECT firearm_equipment, cannon_equipment FROM armies WHERE id=?", (aid,)
     ).fetchone()
@@ -48,7 +50,7 @@ def test_firearm_clamped_0_100(game):
     db, state, _ = game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
     pseudo = type("E", (), {"id": "test", "title": "x"})()
-    db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"firearm_equipment": 999}})
+    db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"firearm_equipment": 999}}, source=Provenance.system_simulation)
     val = db.conn.execute(
         "SELECT firearm_equipment FROM armies WHERE id=?", (aid,)
     ).fetchone()[0]
@@ -59,7 +61,7 @@ def test_cannon_clamped_to_12(game):
     db, state, _ = game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
     pseudo = type("E", (), {"id": "test", "title": "x"})()
-    db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"cannon_equipment": 999}})
+    db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"cannon_equipment": 999}}, source=Provenance.system_simulation)
     val = db.conn.execute(
         "SELECT cannon_equipment FROM armies WHERE id=?", (aid,)
     ).fetchone()[0]
@@ -71,7 +73,7 @@ def test_create_army_with_firearm(game):
         "id": "shenjiying_test", "name": "神机营测试", "owner_power": "ming",
         "manpower": 5000, "maintenance_per_turn": 2,
         "firearm_equipment": 70, "cannon_equipment": 12, **_pay_source(),
-    }], actor="测试")
+    }], actor="测试", source=Provenance.system_simulation)
     row = db.conn.execute(
         "SELECT firearm_equipment, cannon_equipment FROM armies WHERE id='shenjiying_test'"
     ).fetchone()
@@ -85,36 +87,47 @@ def test_create_army_cannon_count_clamped(game):
         "id": "heavy_test", "name": "重炮营测试", "owner_power": "ming",
         "manpower": 5000, "maintenance_per_turn": 2, "cannon_equipment": 99,
         **_pay_source(),
-    }], actor="测试")
+    }], actor="测试", source=Provenance.system_simulation)
     val = db.conn.execute(
         "SELECT cannon_equipment FROM armies WHERE id='heavy_test'"
     ).fetchone()[0]
     assert val == 12
 
+
+
+
 def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
     """新档 seed 必须贯通火器（非全 0）。"""
+    import os
+    import tempfile
     from ming_sim.db import GameDB
 
-    db = GameDB(str(tmp_path / "seed.db"), content)
-    db.seed_static_data()
-    rows = db.conn.execute("SELECT firearm_equipment FROM armies").fetchall()
-    assert rows
-    assert any(int(r["firearm_equipment"]) > 0 for r in rows)
-    db.conn.close()
+    fd, p = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        db = GameDB(p, content)
+        db.seed_static_data()
+        rows = db.conn.execute("SELECT firearm_equipment FROM armies").fetchall()
+        assert rows
+        assert any(int(r["firearm_equipment"]) > 0 for r in rows)
+        db.conn.close()
+    finally:
+        for f in (p, f"{p}_agno.db"):
+            if os.path.exists(f):
+                os.remove(f)
 
 def test_create_army_cannon_nonint_rejected_not_crash(read_game):
     """建军 cannon_equipment 非 int → 逐项拒收，不崩不静默 0。"""
     db, state, _ = read_game
-    created = db.create_armies_from_extraction(state, [{
+    created, created_rejections = db.create_armies_from_extraction(state, [{
         "id": "cannon_nonint_test", "name": "炮非数测试", "owner_power": "ming",
         "manpower": 2000, "maintenance_per_turn": 1, "cannon_equipment": "几门",
         **_pay_source(),
-    }], actor="测试")
+    }], actor="测试", source=Provenance.system_simulation)
     assert db.conn.execute(
         "SELECT COUNT(*) FROM armies WHERE id='cannon_nonint_test'"
     ).fetchone()[0] == 0
-    rej = [c for c in created if c.get("rejected")]
-    assert len(rej) == 1 and rej[0]["category"] == "invalid_enum"
+    assert len(created_rejections) == 1 and created_rejections[0].category == "invalid_enum"
 
 def test_apply_army_delta_chinese_keys(game):
     """extractor 中文词干 火器/随军大炮 也能落库。"""
@@ -122,12 +135,12 @@ def test_apply_army_delta_chinese_keys(game):
     db.create_armies_from_extraction(state, [{
         "id": "alias_test_army", "name": "别名测试军", "owner_power": "ming",
         "manpower": 3000, "maintenance_per_turn": 1, **_pay_source(),
-    }], actor="测试")
+    }], actor="测试", source=Provenance.system_simulation)
     pseudo = type("E", (), {"id": "test", "title": "配火器"})()
     db.apply_army_deltas(
         state, pseudo, None, "测试",
         {"alias_test_army": {"火器": 25, "随军大炮": 5}},
-    )
+    source=Provenance.system_simulation)
     row = db.conn.execute(
         "SELECT firearm_equipment, cannon_equipment FROM armies WHERE id='alias_test_army'"
     ).fetchone()

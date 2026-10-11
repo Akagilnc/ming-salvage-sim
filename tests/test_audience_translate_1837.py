@@ -7,6 +7,7 @@ Seams:
 """
 
 from __future__ import annotations
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 
 import json
 from types import SimpleNamespace
@@ -478,11 +479,11 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
         db.save_state(state)
         for d in grant_dossiers:
-            db.apply_dossier_promulgation(
+            apply_dossier_promulgation(db,
                 state, int(d["id"]), decision="promulgated", content=content,
             )
         if str(appt["status"]) == "proposed":
-            db.apply_dossier_promulgation(
+            apply_dossier_promulgation(db,
                 state, int(appt["id"]), decision="promulgated", content=content,
             )
 

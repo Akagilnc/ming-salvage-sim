@@ -1,4 +1,4 @@
-"""声明形状与字段契约：EMPTY_EXTRACTION / aliases / sanitize helpers。L7。"""
+"""声明字段契约与条目别名：DECLARATION_EFFECT_FIELDS / aliases / sanitize helpers。L7。"""
 
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ ITEM_FIELD_ALIASES = {
     "leverage": "leverage", "影响力": "leverage", "势力": "leverage",
     # new_armies 子字段（建军）
     "owner_power": "owner_power", "归属": "owner_power", "所属": "owner_power",
-    # character / 人物变更 易主子字段
+    # character_power_changes 子字段（人物易主）
     "new_power": "new_power", "新势力": "new_power",
     "station": "station", "驻扎地": "station", "驻地": "station",
     "station_region": "station_region", "实际驻地": "station_region", "驻地省": "station_region",
@@ -143,39 +143,40 @@ ITEM_FIELD_ALIASES = {
     "loyalty": "loyalty", "忠诚": "loyalty",
 }
 
-EMPTY_EXTRACTION: Dict[str, object] = {
-    "metric_delta": {},
-    "economy_moves": [],
-    "faction_delta": {},
-    "class_delta": {},
-    "population_transfers": [],  # #649/0087：人口守恒转移（单记录双写，源减目标增）
-    "surcharge_decrees": [],  # #650/0089 明渠：下旨加派（逐省累积账，月额万两、负=停征）
-    "region_delta": {},
-    "army_delta": {},
-    "new_armies": [],
-    "power_updates": {},
-    "bandit_absorptions": [],  # #652/0087：流民投贼吸收请求（吃池顶→实力正增）
-    "world_advance": {},
-    "issue_advances": [],
-    "new_issues": [],
-    "事件结局": {},
-    "cancels": [],
-    "close_issues": [],
-    "fiscal_changes": [],
-    "fiscal_creates": [],
-    "fiscal_removes": [],
-    "人物变更": [],
-    "secret_order_updates": [],
-    "covert_exec_selections": [],
-    "dossier_executions": [],
-    "dossier_participants": [],
-    "secret_dossier_participants": [],
-    "faction_denunciations": [],
-    "authority_changes": [],
-    "dossier_progress_reports": [],
-    "emperor_fate": None,  # 已声明的皇帝终态。abdicate/suicide 保留原状态号；被废/暴毙及其它非空声明同样终局；null 不终局
-    "relation_edge_events": [],  # #633/ADR 0082 结算口：邸报大臣互动边事件
-}
+# C0 声明效果字段契约（#1835 F1）：键集 + 各键容器类型。它是**声明字段真源**
+# （供 sanitize_delta_shape 白名单与转译形状用），不是 extractor 时代的空壳模板：
+# 声明只把**自己带的字段**直接送到领域核算口，不预置整份空壳。字段键集从 ADR 0150 决定 4 的有序登记表派生。
+def _declared_effect_fields() -> Dict[str, object]:
+    """声明效果字段契约：键集来自有序登记表，容器类型仍在本处声明。
+
+    容器类型不在此派生：登记条目登记的是「哪个段吃这个字段」，不是「这个字段是
+    list 还是 dict」——后者是声明形状契约，由 :func:`_effect_field_container` 声明。
+    两者分层，避免把形状知识塞进段登记表。
+    """
+    from ming_sim.settlement.registry import derived_effect_fields
+
+    fields: Dict[str, object] = {}
+    for key in derived_effect_fields():
+        fields[key] = _effect_field_container(key)
+    return fields
+
+
+# 容器类型声明：``None`` 表示该字段整体可为标量（而非容器）。
+# 只有 emperor_fate 是标量；world_advance / 事件结局 仍是 dict 容器。
+_EFFECT_FIELD_SCALARS = frozenset({"emperor_fate"})
+
+
+def _effect_field_container(key: str) -> object:
+    if key in _EFFECT_FIELD_SCALARS:
+        return None
+    if key in ("metric_delta", "faction_delta", "class_delta",
+               "region_delta", "army_delta", "power_updates",
+               "world_advance", "事件结局"):
+        return {}
+    return []
+
+
+DECLARATION_EFFECT_FIELDS: Dict[str, object] = _declared_effect_fields()
 
 def read_beyond_intent_raw(item: object) -> object:
     """#1260 旨外别名读取单源：真源=ITEM_FIELD_ALIASES 中映射到 beyond_intent 的键。

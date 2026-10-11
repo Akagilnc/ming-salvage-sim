@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Mapping, Sequence
+
+from ming_sim.exceptions import DeclarationDataError
+
 APPOINTMENT_TENURES = frozenset({"真除", "署理", "兼署", "加衔"})
 DEFAULT_APPOINTMENT_TENURE = "真除"
 
@@ -15,7 +19,7 @@ def appointment_tenure_from(payload: dict[str, object]) -> str:
     for key in keys:
         value = payload[key]
         if not isinstance(value, str) or value not in APPOINTMENT_TENURES:
-            raise ValueError(f"任别非白名单：{value}")
+            raise DeclarationDataError(f"任别非白名单：{value}")
     return payload[keys[0]]  # type: ignore[return-value]
 
 

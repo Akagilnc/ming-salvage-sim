@@ -2,82 +2,101 @@
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
 
 import pytest
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
-from ming_sim.execution_pressure import normalize_locality_scope, resolve_dossier_region_ids
+from ming_sim.execution_pressure import (
+    normalize_locality_scope,
+    resolve_dossier_region_ids,
+)
 
+@pytest.fixture
+def env(game):
+    db, state, content = game
+    return db, state, content
 
 # ── 词表 / scope 归一 ──────────────────────────────────────────────
 
-@pytest.mark.parametrize("raw,expected", [
-    (None, "none"),
-    ("", "none"),
-    ("无", "none"),
-    ("全国", "national"),
-    ("单省", "single"),
-    ("national", "national"),
-])
-def test_normalize_locality_scope(raw, expected):
-    assert normalize_locality_scope(raw) == expected
+def test_normalize_locality_scope_rejects_unknown():
+    with pytest.raises(ValueError):
+        normalize_locality_scope("全省")
 
+def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
+    """#1624：禁止按 target_kind 覆盖 locality 掩盖错误目标；显式矛盾 fail-loud。
 
+    契约落在 StructuredDecreeCombinationError.field_failures/failed_fields
+    （权威结构化失败事实）；不得盯异常措辞。
+    """
+    from ming_sim.structured_decree import assemble_structured_decree as map_rescript_option_or_choice
+    from ming_sim.structured_decree import StructuredDecreeCombinationError
 
-# ── locality oracle 组合矩阵 ───────────────────────────────────────
+    with pytest.raises(StructuredDecreeCombinationError) as ei_issue_single:
+        map_rescript_option_or_choice({
+            "action_type": "authorization",
+            "label": "赈抚",
+            "target_kind": "issue",
+            "target_id": "relief",
+            "locality_scope": "single",
+            "holder_id": "毕自严",
+            "privilege": "便宜行事",
+        })
+    assert "locality_scope" in ei_issue_single.value.failed_fields
+    assert "target_kind" in ei_issue_single.value.failed_fields
+    ff_issue = {
+        str(f["field"]): f for f in ei_issue_single.value.field_failures
+    }
+    assert ff_issue["locality_scope"]["current"] == "single"
+    assert ff_issue["target_kind"]["current"] == "issue"
 
-def test_national_policy_is_one_dossier_not_per_province(game):
-    """#1778 决定 4：全国政令也是一份案卷，region_id 空——不按省拆。"""
-    db, _, content = game
-    regions = resolve_dossier_region_ids(
-        db.conn,
-        payload={
-            "target_kind": "policy",
-            "target_id": "清丈田亩",
-            "locality_scope": "national",
-        },
-        regions_content=content.regions,
-    )
-    assert regions == [""]
-
-def test_special_decree_without_national_is_single_empty(game):
-    db, _, content = game
-    regions = resolve_dossier_region_ids(
-        db.conn,
-        payload={
-            "target_kind": "policy",
-            "target_id": "manual-directive",
-            "locality_scope": "none",
-        },
-        regions_content=content.regions,
-    )
-    assert regions == [""]
-
-def test_region_single_by_id(game):
-    db, _, content = game
-    assert resolve_dossier_region_ids(
-        db.conn,
-        payload={
+    with pytest.raises(StructuredDecreeCombinationError) as ei_region_none:
+        map_rescript_option_or_choice({
+            "action_type": "authorization",
+            "label": "陕赈",
             "target_kind": "region",
             "target_id": "shaanxi",
-            "locality_scope": "single",
-        },
-        regions_content=content.regions,
-    ) == ["shaanxi"]
+            "locality_scope": "none",
+            "holder_id": "毕自严",
+            "privilege": "便宜行事",
+        })
+    assert ei_region_none.value.failed_fields == frozenset({"locality_scope"})
+    ff_region = {
+        str(f["field"]): f for f in ei_region_none.value.field_failures
+    }
+    assert ff_region["locality_scope"]["current"] == "none"
+    assert ff_region["locality_scope"]["expected"] == ["single"]
 
-def test_region_outside_province_set_yields_empty_locality(game):
-    db, _, content = game
-    # 辽东边镇不入省集合
+    # 合法组合：issue+none / region+single 原样通过
+    qa_shape = map_rescript_option_or_choice({
+        "action_type": "authorization",
+        "label": "赈抚",
+        "target_kind": "issue",
+        "target_id": "relief",
+        "locality_scope": "none",
+        "holder_id": "毕自严",
+        "privilege": "便宜行事",
+    })
+    assert qa_shape["locality_scope"] == "none"
     assert resolve_dossier_region_ids(
-        db.conn,
-        payload={
-            "target_kind": "region",
-            "target_id": "liaodong",
-            "locality_scope": "single",
-        },
-        regions_content=content.regions,
+        None,
+        payload=qa_shape,
     ) == [""]
+
+    region_shape = map_rescript_option_or_choice({
+        "action_type": "authorization",
+        "label": "陕赈",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "holder_id": "毕自严",
+        "privilege": "便宜行事",
+    })
+    assert region_shape["locality_scope"] == "single"
+    assert region_shape["region_id"] == "shaanxi"
+
+# ── locality oracle 组合矩阵 ───────────────────────────────────────
 
 @pytest.mark.parametrize("payload", [
     {"target_kind": "region", "target_id": "shaanxi", "locality_scope": "national"},
@@ -86,15 +105,15 @@ def test_region_outside_province_set_yields_empty_locality(game):
     {"target_kind": "character", "target_id": "袁崇焕", "locality_scope": "national"},
     {"target_kind": "unknown", "target_id": "x", "locality_scope": "none"},
 ])
-def test_oracle_contradictions_fail_loud(game, payload):
-    db, _, content = game
+def test_oracle_contradictions_fail_loud(env, payload):
+    db, _, content = env
     with pytest.raises(ValueError):
         resolve_dossier_region_ids(
             db.conn, payload=payload, regions_content=content.regions,
         )
 
-def test_region_zero_hit_fail_loud(game):
-    db, _, content = game
+def test_region_zero_hit_fail_loud(env):
+    db, _, content = env
     with pytest.raises(ValueError):
         resolve_dossier_region_ids(
             db.conn,
@@ -109,8 +128,8 @@ def test_region_zero_hit_fail_loud(game):
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
 
-def test_create_decree_dossier_int_abi_single_row(game):
-    db, state, _ = game
+def test_create_decree_dossier_int_abi_single_row(env):
+    db, state, _ = env
     did = db.create_decree_dossier(
         state,
         action_type="policy",
@@ -124,20 +143,24 @@ def test_create_decree_dossier_int_abi_single_row(game):
     assert row["region_id"] == ""
 
 
-def test_normalize_payload_locality_and_target_kind(game):
-    """非法目标与属地经真实旨稿成案口拒收，不旁路调用归一 helper。"""
-    db, state, _ = game
-    ids = [db.add_directive(
-        state, None, "测试旨稿", source="manual", dossier_payload=payload,
-    ) for payload in (
-        {"dossier_action_type": "policy", "target_kind": "not_a_kind", "target_id": "x", "mode": "ordinary"},
-        {"dossier_action_type": "policy", "target_kind": "policy", "target_id": "x", "locality_scope": "全省", "mode": "ordinary"},
-    )]
-    rejected = db.ensure_dossiers_for_draft_directives(state)
-    assert {r["directive_id"] for r in rejected} == set(ids)
-    assert all(db.get_dossier_for_directive(did) is None for did in ids)
-    assert {row["status"] for row in db.list_directives(state)} == {"draft"}
-
+def test_normalize_payload_locality_and_target_kind(env):
+    """负向闸：未知 kind/scope fail-loud（正向归一由真实成案入口覆盖）。"""
+    db, _, _ = env
+    with pytest.raises(ValueError):
+        db._normalize_directive_dossier_payload({
+            "dossier_action_type": "policy",
+            "target_kind": "not_a_kind",
+            "target_id": "x",
+            "mode": "ordinary",
+        })
+    with pytest.raises(ValueError):
+        db._normalize_directive_dossier_payload({
+            "dossier_action_type": "policy",
+            "target_kind": "policy",
+            "target_id": "x",
+            "locality_scope": "全省",
+            "mode": "ordinary",
+        })
 
 # ── #654 断根 tracer（外部行为）────────────────────────────────────
 
@@ -158,10 +181,118 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     db.conn.commit()
     return int(cur.lastrowid)
 
+def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
+    """Validate-all：名单上的人不在名册 → 首个 INSERT 前整旨零行（#1778 决定 3）。"""
+    db, state, _ = env
+    payload = {
+        "target_kind": "policy",
+        "target_id": "清丈天下田亩",
+        "locality_scope": "national",
+        "dossier_action_type": "assignment",
+        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
+    }
+    did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
+    before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    with pytest.raises(ValueError):
+        db.create_decree_dossiers(
+            state,
+            action_type="assignment",
+            decree_text="清丈天下田亩",
+            target_kind="policy",
+            target_id="清丈天下田亩",
+            directive_id=did,
+            payload=payload,
+            commit=True,
+        )
+    after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    assert after == before
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
 
-def test_path1_conversational_draft_bad_roster_marks_failed(game):
+def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
+    """路 2（#1769）：pending→confirm 只翻 draft；ensure 批缝产物错 → 零行 + 保持 draft。
+
+    旧合同 confirm 内 ensure 并标 rejected 已废；产物错不踢出批缝。
+    """
+    db, state, _ = env
+    payload = {
+        "target_kind": "policy",
+        "target_id": "清丈天下田亩",
+        "locality_scope": "national",
+        "dossier_action_type": "assignment",
+        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
+        "mode": "ordinary",
+    }
+    did = _insert_directive(
+        db, state, text="清丈天下田亩", payload=payload, status="pending",
+    )
+    db.confirm_directive(did)
+    row = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (did,),
+    ).fetchone()
+    assert row["status"] == "draft"
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
+
+    rejections = db.ensure_dossiers_for_draft_directives(state)
+    assert any(int(r["directive_id"]) == did for r in rejections)
+    row = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (did,),
+    ).fetchone()
+    assert row["status"] == "draft"
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
+
+def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
+    """路 3：locality 失败保持 draft；rejection 仅 directive_id（P6 不裁剪旨文）。"""
+    db, state, _ = env
+    long_text = "敕令陕西清丈田亩" + ("甲" * 120)
+    payload = {
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "none",  # region∧none fail-loud
+        "dossier_action_type": "policy",
+        "mode": "ordinary",
+    }
+    did = _insert_directive(db, state, text=long_text, payload=payload, status="draft")
+    other_payload = {
+        "target_kind": "region",
+        "target_id": "henan",
+        "locality_scope": "single",
+        "dossier_action_type": "policy",
+        "assignee_id": "毕自严",
+        "mode": "ordinary",
+    }
+    other_id = _insert_directive(
+        db, state, text="河南清丈", payload=other_payload, status="draft",
+    )
+    db.ensure_dossiers_for_draft_directives(state)
+    bad = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (did,),
+    ).fetchone()
+    good = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (other_id,),
+    ).fetchone()
+    assert bad["status"] == "draft"  # 保持 draft
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (did,)).fetchone()["n"] == 0
+    # 并列第二旨不受影响
+    assert good["status"] == "draft"
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers WHERE directive_id=?", (other_id,)).fetchone()["n"] == 1
+
+    rej = db.conn.execute(
+        "SELECT item_json, reason, category FROM rejection_reports "
+        "WHERE section='directive_locality' ORDER BY id DESC LIMIT 5",
+    ).fetchall()
+    assert rej, "应记 locality rejection"
+    matched = [json.loads(r["item_json"]) for r in rej]
+    hit = next(item for item in matched if item.get("directive_id") == did)
+    assert "text" not in hit
+    assert set(hit.keys()) == {"directive_id"}
+    # 旨文片段不得出现在 item_json
+    raw = next(r["item_json"] for r in rej if json.loads(r["item_json"]).get("directive_id") == did)
+    assert "敕令陕西" not in raw
+    assert "甲甲" not in raw
+
+def test_path1_conversational_draft_bad_roster_marks_failed(env):
     """路 1 _commit_conversational_draft：成案零行 → pending failed、无案卷。"""
-    db, state, _ = game
+    db, state, _ = env
     payload = {
         "text": "清丈天下田亩",
         "actor": "毕自严",
@@ -212,70 +343,37 @@ def test_path1_conversational_draft_bad_roster_marks_failed(game):
 # ── 8×3 locality 矩阵（参数化）──────────────────────────────────
 
 @pytest.mark.parametrize(
-    "target_kind,scope,expect",
+    ("target_kind", "scope"),
     [
-        # policy/issue/account × national → 单行 ''（#1778：不按省拆，无动作白名单）
-        ("policy", "national", "empty"),
-        ("issue", "national", "empty"),
-        ("account", "national", "empty"),
-        # policy/issue/account × single → fail
-        ("policy", "single", "fail"),
-        ("issue", "single", "fail"),
-        # policy/issue/account × none → ''
-        ("policy", "none", "empty"),
-        ("issue", "none", "empty"),
-        ("account", "none", "empty"),
-        # character/office/army × national → fail
-        ("character", "national", "fail"),
-        ("office", "national", "fail"),
-        ("army", "national", "fail"),
-        # character/office/army × single → fail
-        ("character", "single", "fail"),
-        ("office", "single", "fail"),
-        ("army", "single", "fail"),
-        # character/office/army × none → ''
-        ("character", "none", "empty"),
-        ("office", "none", "empty"),
-        ("army", "none", "empty"),
-        # region × national/none → fail；single → R1
-        ("region", "national", "fail"),
-        ("region", "none", "fail"),
-        ("region", "single", "R1"),
-        # dossier 三格：仅 none → 单行 ''；single/national fail-loud
-        ("dossier", "none", "empty"),
-        ("dossier", "single", "fail"),
-        ("dossier", "national", "fail"),
-        ("dossier", None, "empty"),
-        # 缺省 scope（normalize → none）
-        ("policy", None, "empty"),
-        ("region", None, "fail"),
-        # unknown
-        ("unknown", "none", "fail"),
-        ("policy", "全省", "fail"),
+        ("region", "national"),
+        ("region", "none"),
+        ("dossier", "single"),
+        ("dossier", "national"),
+        ("region", None),
+        ("unknown", "none"),
+        ("policy", "全省"),
+        # 下列五组负向无其它等价拒收案覆盖，须保留（policy/character+national 等同文件已有）
+        ("office", "national"),
+        ("army", "national"),
+        ("character", "single"),
+        ("office", "single"),
+        ("army", "single"),
     ],
 )
-def test_locality_matrix_8x3_and_unknown(game, target_kind, scope, expect):
-    db, _, content = game
+def test_locality_matrix_8x3_and_unknown(env, target_kind, scope):
+    """矛盾 locality 组合 fail-loud（正向列表返回由真实 bulk 成案覆盖）。"""
+    db, _, content = env
     payload = {"target_kind": target_kind, "target_id": "shaanxi" if target_kind == "region" else "x"}
     if scope is not None:
         payload["locality_scope"] = scope
-    if expect == "fail":
-        with pytest.raises(ValueError):
-            resolve_dossier_region_ids(
-                db.conn, payload=payload, regions_content=content.regions,
-            )
-        return
-    regions = resolve_dossier_region_ids(
-        db.conn, payload=payload, regions_content=content.regions,
-    )
-    if expect == "empty":
-        assert regions == [""]
-    elif expect == "R1":
-        assert regions == ["shaanxi"]
+    with pytest.raises(ValueError):
+        resolve_dossier_region_ids(
+            db.conn, payload=payload, regions_content=content.regions,
+        )
 
-def test_locality_fail_create_decree_dossiers_zero_rows(game):
+def test_locality_fail_create_decree_dossiers_zero_rows(env):
     """fail 格走真实 bulk 入口：异常 + 零行。"""
-    db, state, _ = game
+    db, state, _ = env
     payload = {
         "target_kind": "region",
         "target_id": "shaanxi",
@@ -293,7 +391,7 @@ def test_locality_fail_create_decree_dossiers_zero_rows(game):
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
 
-def test_revoke_decree_523_producer_durable_oracle_chain(game):
+def test_revoke_decree_523_producer_durable_oracle_chain(env):
     """#523 producer→durable→oracle：dossier 目标恰落一条 region_id='' 案卷。
 
     owner A：八值成员、dossier 三格、unknown 拒绝、revoke identity 保留。
@@ -301,7 +399,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(game):
     import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
     from ming_sim.action_materialize import stage_revoke_decree_candidate
 
-    db, state, content = game
+    db, state, content = env
     holder = str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
         "ORDER BY name LIMIT 1"
@@ -323,7 +421,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(game):
             "locality_scope": "none",
         },
     )
-    db.apply_dossier_promulgation(state, target_id, "promulgated")
+    apply_dossier_promulgation(db, state, target_id, "promulgated")
 
     # 1) #523 真实 producer
     pending_id = stage_revoke_decree_candidate(
@@ -344,7 +442,15 @@ def test_revoke_decree_523_producer_durable_oracle_chain(game):
     assert int(pending["revoke_target_dossier_id"]) == int(target_id)
     assert pending["target_kind"] in TARGET_KINDS
 
-    # 2) 真实收夜成案入口（commit_pending_actions → normalize → create_decree_dossiers）
+    # 2) durable normalization 闭集直校验（无 dossier 暗例外）
+    normalized = db._normalize_directive_dossier_payload(
+        pending, content=content, current_turn=int(state.turn),
+    )
+    assert normalized["target_kind"] == "dossier"
+    assert normalized["locality_scope"] == "none"
+    assert int(normalized["revoke_target_dossier_id"]) == int(target_id)
+
+    # 3) 真实收夜成案入口（commit_pending_actions → normalize → create_decree_dossiers）
     before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     revoke_rows = [
@@ -363,7 +469,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(game):
     assert int(stored.get("revoke_target_dossier_id") or 0) == int(target_id)
     assert stored.get("target_kind") == "dossier"
 
-    # 3) dossier 目标的负向边界（不因消除成功重复证明而删除拒收）
+    # 4) dossier 三格 + unknown 拒绝（与矩阵同契约）
     assert resolve_dossier_region_ids(
         db.conn,
         payload={"target_kind": "dossier", "target_id": str(target_id),
@@ -387,16 +493,23 @@ def test_revoke_decree_523_producer_durable_oracle_chain(game):
             payload={"target_kind": "not_a_kind", "target_id": "x",
                      "locality_scope": "none"},
         )
+    with pytest.raises(ValueError):
+        db._normalize_directive_dossier_payload({
+            "dossier_action_type": "policy",
+            "target_kind": "not_a_kind",
+            "target_id": "x",
+            "mode": "ordinary",
+        })
 
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 
-def test_location_canonical_seed_and_write_seam(game):
+def test_location_canonical_seed_and_write_seam(env):
     """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud。"""
     from ming_sim.matching import canonical_region_id_exact
     from ming_sim.distance import DistanceMatrix
     from ming_sim.paths import bundled_path
 
-    db, state, content = game
+    db, state, content = env
     for name in ("乔允升", "许誉卿", "韩一良"):
         loc = db.conn.execute(
             "SELECT location FROM characters WHERE name=?", (name,),
@@ -436,3 +549,5 @@ def test_location_canonical_seed_and_write_seam(game):
     ).fetchone()["location"] == "beizhili"
     with pytest.raises(ValueError):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
+    # 写缝已钉未知非空 fail-loud。开档别名 migrate / 开档扫 location 已随
+    # _migrate_character_location_aliases 退役，不再造旧档副本期待写回。

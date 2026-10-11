@@ -296,7 +296,7 @@ def test_non_roster_assignee_is_not_made_into_a_minister(game, monkeypatch, decl
     )
     assert result.commissions.applied == []
     assert len(result.commissions.rejected) == 1
-    assert _rejection_rows(db, state.turn)[0]["category"] == "invalid_state"
+    assert _rejection_rows(db, state.turn)[0]["category"] == "hallucinated_id"
     assert _staged_secret_order_rows(db, state.turn) == []
     assert db.list_secret_orders() == []
 

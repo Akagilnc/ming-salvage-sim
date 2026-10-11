@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Dict, List
 
 import pytest
 from pathlib import Path
@@ -18,17 +17,22 @@ from types import SimpleNamespace
 
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
-from ming_sim.highlight_judge import run_highlight_judge
+from ming_sim.highlight_judge import (
+    run_highlight_judge,
+)
 
 
-# ── 单次调用降级（parser 由 run_highlight_judge 真入口覆盖，不另立孤立 parser 钉）──
+# ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
 
 
 def test_run_highlight_judge_timeout_and_exception_degrade_silently():
     release = threading.Event()
+    slow_worker = None
 
     class _Slow:
         def run(self, *_a, **_k):
+            nonlocal slow_worker
+            slow_worker = threading.current_thread()
             release.wait()
             return SimpleNamespace(content='{"highlights": ["迟到"]}')
 
@@ -46,6 +50,8 @@ def test_run_highlight_judge_timeout_and_exception_degrade_silently():
     finally:
         # 断言失败不得扣住 _Slow.run；释放归本测 finally。
         release.set()
+        if slow_worker is not None:
+            slow_worker.join()
 
     assert run_highlight_judge(
         minister_reply="臣陈辽饷。",
@@ -113,7 +119,7 @@ def test_build_chat_projection_includes_minister_highlights(game):
 
     proj = db.build_chat_projection(minister)
     roles = [(m["role"], m.get("highlights")) for m in proj]
-    assert ("user", []) in roles
+    assert ("user", []) in roles or any(r == "user" and h == [] for r, h in roles)
     minister_msgs = [m for m in proj if m["role"] == "minister"]
     assert minister_msgs
     assert minister_msgs[0]["highlights"] == ["辽饷", "户部亏空"]

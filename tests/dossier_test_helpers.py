@@ -1,7 +1,4 @@
-from ming_sim.supervision import SUPERVISION_RELATION
-from tests.readback_helpers import ming_character_name
-
-
+from ming_sim.settlement.dossier import apply_dossier_verdicts
 # #1504 typed covert-task contract fixtures (applier-native 万亩 / 实务事功).
 LIAO_PAY_COVERT_TASK = {
     "kind": "核发辽饷",
@@ -108,8 +105,7 @@ def promulgate_proposed_appointments(db, state, content):
         for row in db.list_decree_dossiers(status="proposed")
         if row["action_type"] == "appointment"
     ]
-    db.apply_dossier_verdicts(state, verdicts, content=content)
-
+    apply_dossier_verdicts(db, state, verdicts, content=content)
 
 def promulgated_policy_origin(db, state, token: str) -> str:
     """已颁布案卷的 origin_ref（``new_issues`` 承诺项须有合法 decree 来源）。
@@ -128,10 +124,9 @@ def promulgated_policy_origin(db, state, token: str) -> str:
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
-
 def create_issue_with_effect(db, state, title: str, effect: dict, *, content=None):
     """Create a policy issue through the live tracker, anchored to a promulgated dossier."""
-    from ming_sim.issues import apply_issue_tracker_output
+    from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 
     origin = promulgated_policy_origin(db, state, title)
     created = apply_issue_tracker_output(db, state, {"new_issues": [{
@@ -140,16 +135,14 @@ def create_issue_with_effect(db, state, title: str, effect: dict, *, content=Non
     }]}, content=content)
     return created["new_issues"][0]["issue_id"]
 
-
 def close_issue_with_effect(db, state, title: str, effect: dict, *, content=None):
     """Resolve the policy issue; callers testing a close failure use its creation seam."""
-    from ming_sim.issues import apply_issue_tracker_output
+    from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 
     issue_id = create_issue_with_effect(db, state, title, effect, content=content)
     return apply_issue_tracker_output(db, state, {
         "close_issues": [{"issue_id": issue_id, "reason": "resolved"}],
     }, content=content)
-
 
 def executing_owned_policy(db, state, *, token: str, holder: str = ""):
     if not holder:
@@ -167,10 +160,9 @@ def executing_owned_policy(db, state, *, token: str, holder: str = ""):
         ],
         payload={"mode": "ordinary", "text": token},
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id, holder
-
 
 def executing_rostered_policy(db, state, *, token: str, roster=None, decree_text=None):
     """复用信用写端的执行前置，调用方保留真实旨文和责任人名册。"""
@@ -186,10 +178,9 @@ def executing_rostered_policy(db, state, *, token: str, roster=None, decree_text
         target_id=token,
         participants=roster,
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
+    apply_dossier_promulgation(db, state, did, "promulgated")
     assert db.get_decree_dossier(did)["status"] == "executing"
     return did
-
 
 def executing_staged_policy(db, state, *, token: str, host: str = "倪元璐"):
     return executing_rostered_policy(
@@ -199,7 +190,6 @@ def executing_staged_policy(db, state, *, token: str, host: str = "倪元璐"):
             {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
         ],
     )
-
 
 def subject_policy_dossier(
     db, state, *, owner: str, token: str = "subj", decree_text=None,
@@ -214,9 +204,8 @@ def subject_policy_dossier(
         executor_id=owner,
         participants=[{"character_id": owner, "tier": "主办"}],
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
+    apply_dossier_promulgation(db, state, did, "promulgated")
     return did
-
 
 def executing_subject_policy(
     db, state, *, owner: str, token: str = "subj", decree_text=None,
@@ -229,7 +218,6 @@ def executing_subject_policy(
     )
     db.conn.commit()
     return did
-
 
 def audit_policy_dossier(
     db, state, *, auditor: str, subject_id: int, token: str = "audit", note=None,
@@ -245,14 +233,13 @@ def audit_policy_dossier(
         executor_id=auditor,
         participants=[{"character_id": auditor, "tier": "主办"}],
     )
-    db.apply_dossier_promulgation(state, aid, "promulgated")
+    apply_dossier_promulgation(db, state, aid, "promulgated")
     db.add_dossier_links(aid, [{
         "target_dossier_id": int(subject_id),
         "relation_type": SUPERVISION_RELATION,
         "note": note if note is not None else f"稽核案卷{subject_id}",
     }])
     return aid
-
 
 def recorded_executing_policy(
     db, state, decree_text="兴修水利", *, target_kind="issue", target_id="origin-558",
@@ -264,3 +251,9 @@ def recorded_executing_policy(
     db.record_dossier_decision(dossier_id, "promulgated")
     db.transition_decree_dossier(dossier_id, "executing")
     return dossier_id
+
+from ming_sim.supervision import SUPERVISION_RELATION
+
+from tests.readback_helpers import ming_character_name
+
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts

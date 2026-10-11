@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Mapping, Optional, Sequence
 
+from ming_sim.exceptions import DeclarationDataError
+
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
 _PERSON_DIR = "人物"
@@ -137,12 +139,12 @@ def _resolve_inside(root: Path, rel: str) -> Path:
     if not raw or raw in {".", "./"}:
         return root_r
     if Path(raw).is_absolute() or raw.startswith("~"):
-        raise ValueError("材料路径越出目录")
+        raise DeclarationDataError("材料路径越出目录")
     candidate = (root_r / raw).resolve()
     try:
         candidate.relative_to(root_r)
     except ValueError as exc:
-        raise ValueError("材料路径越出目录") from exc
+        raise DeclarationDataError("材料路径越出目录") from exc
     return candidate
 
 
@@ -258,19 +260,19 @@ def material_tools(root: Any) -> list:
         value = root() if callable(root) else root
         text = str(value or "").strip()
         if not text:
-            # Empty/cleared materials root must not resolve Path("") → CWD.
-            raise ValueError("材料目录未就绪")
+            # Empty/cleared root must not resolve Path("") → CWD.
+            raise DeclarationDataError("材料目录未就绪")
         return Path(text)
 
     def project_error(operation: str, call: Any, *args: object) -> str:
         try:
             return call(*args)
-        except (ValueError, FileNotFoundError) as exc:
+        except (DeclarationDataError, FileNotFoundError) as exc:
             return f"无法{operation}：{exc}"
 
     def list_materials_tool(path: str = "") -> str:
         """列出当前材料目录中可读的文件（相对路径，一行一项）。"""
-        # current_root() must run inside project_error so empty-root ValueError
+        # current_root() must run inside project_error so empty-root data error
         # projects as structured text (never Path("") → CWD).
         return project_error(
             "读取",
@@ -398,17 +400,11 @@ def _own_affair_lines(
 
     handling_ids: set[int] = set()
     for issue in db.list_active_issues():
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
         if not linked_affair_id:
             continue
-        try:
-            roster = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            roster = set()
+        roster = participant_roster_names(issue["participant_roster"])
         if character_name in roster or _reader_in_issue_audience(db, issue, character_name):
             handling_ids.add(linked_affair_id)
 
@@ -560,19 +556,13 @@ def _opening_affair_lines(
     seen: set[str] = set()
     active = db.list_active_issues()
     for issue in active:
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         if _issue_linked_affair_id(db, issue_id):
             continue  # represented via its affair's own entry, if any.
         dir_key = f"issue-{issue_id}"
         if dir_key not in visible or dir_key in seen:
             continue
-        try:
-            roster = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            roster = set()
+        roster = participant_roster_names(issue["participant_roster"])
         if character_name not in roster and not _reader_in_issue_audience(db, issue, character_name):
             continue
         seen.add(dir_key)
@@ -724,10 +714,7 @@ def _write_textual_fact_files(
                       if origin_visible_to(db, fact.origin_ref, name))
         if not facts:
             continue
-        body = "\n".join(
-            raw for fact in facts
-            if (raw := str(fact.body or "")).strip()
-        )
+        body = "\n".join(str(fact.body or "") for fact in facts if str(fact.body or "").strip())
         if not body:
             continue
         rel = f"{_FACT_DIR}/{kind}-{_safe_segment(label)}.txt"
@@ -893,9 +880,8 @@ def _experience_text(knowledge: dict, audible_entries: Sequence[dict] = ()) -> s
     for item in knowledge.get("events") or []:
         title = str(item.get("title") or "")
         body = str(item.get("body") or "")
-        if not title.strip() and not body.strip():
-            continue
-        lines.append(f"{title}：{body}" if title and body else (title or body))
+        if title or body:
+            lines.append(f"{title}：{body}")
     lines.extend(str(item["body"]) for item in audible_entries if item.get("body"))
     return "\n".join(lines) or "（无）"
 
@@ -991,6 +977,7 @@ def _gazette_index_line(rel: str, year: int, period: int, title: str) -> str:
     from ming_sim.models import reign_period_label
 
     label = reign_period_label(year, period) if year and 1 <= period <= 12 else ""
+    shown = str(title)
     return f"{rel} {label} {shown}" if label else f"{rel} {shown}"
 
 
@@ -1055,11 +1042,6 @@ def is_secret_order_origin(origin: object) -> bool:
 def secret_order_origin(order_id: object) -> str:
     """密令来源字符串：前缀 + 密令 id。"""
     return f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}"
-
-
-def dossier_id_in_origin(origin: object) -> Optional[int]:
-    match = re.match(r"(?:decree_)?dossier:(\d+)(?:[:/]|$)", str(origin or ""))
-    return int(match.group(1)) if match else None
 
 
 def _candidate_event_fact(ev: Any) -> dict[str, object]:
@@ -1476,7 +1458,7 @@ def _world_effect_materials(
     db: Any, origin: str, secret_turn_ids: set[int], public_only: bool,
 ) -> dict[str, Any]:
     """Landed history crosses the same input/source boundary as the world board."""
-    from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS
+    from ming_sim.entities.character.normalize import PERSON_CHANGE_KEY
 
     history = db.list_world_effect_history(origin)
     for table, rows in history.items():
@@ -1491,7 +1473,7 @@ def _world_effect_materials(
                 # 四字段为对象；此处只做人物子项投影，不再重验对象闸。
                 for field in ("ongoing_effects", "cancel_cost", "effect_on_resolve", "effect_on_fail"):
                     effects = row[field]
-                    for key in PERSON_EFFECT_KEYS:
+                    for key in (PERSON_CHANGE_KEY,):
                         items = effects.get(key)
                         if isinstance(items, list):
                             effects[key] = [
@@ -1675,10 +1657,7 @@ def dossier_paid_amount(db: Any, dossier_id: object) -> int:
 
     世界段在途案卷与逐旨预推「本旨」事实共用；无案卷行或尚无动账时为 0。
     """
-    try:
-        oid = int(dossier_id)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0
+    oid = int(dossier_id or 0)  # type: ignore[arg-type]
     if oid <= 0:
         return 0
     return sum(
@@ -1694,7 +1673,7 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
     事实判断准行/劝回/拖延，以及准行后原案卷的办理结果怎么落。只读 DB 真源；
     目标身份解析复用 ``db.resolve_revoke_decree_target_ids``（判后物化同一实现，
     禁平行口径），身份取自载荷与案卷行（与判后物化同一读口，缺行即漏回退）；
-    查无此事时返回空 dict（调用方按「无原旨可读」处理，不猜）。
+    解析器声明的无合法目标（ValueError）与查无案卷返回空 dict；代码异常上抛。
     """
     if not isinstance(payload, Mapping) and not isinstance(row, Mapping):
         return {}
@@ -2189,10 +2168,10 @@ def prepare_scene_materials(
 
 def actual_progress_notes(db: Any, dossier_id: int) -> list[dict[str, object]]:
     """实况轨原文读投影。未提供正文的空串不算一行；显式正文（含空白）原样。"""
-    if not hasattr(db, "list_dossier_actual_progress"):
-        return []
     notes: list[dict[str, object]] = []
-    for row in db.list_dossier_actual_progress(int(dossier_id)):
+    for row in db.list_world_effect_history(f"dossier:{int(dossier_id)}")["实况轨"]:
+        if row.get("rail") != "actual_progress":
+            continue
         note = str(row.get("note") or "")
         # 仅缺省空串视为无正文；不以 strip 丢弃显式空白（P6 / #1897 N2）。
         if note == "":
@@ -2356,3 +2335,7 @@ def inquiry_source_order_id(source_id: object) -> Optional[int]:
 def inquiry_order_source_suffix(order_id: int) -> str:
     """查访见闻指向一条密令的结构化后缀。不用 secret_order: 前缀。"""
     return f":order:{int(order_id)}"
+
+def dossier_id_in_origin(origin: object) -> Optional[int]:
+    match = re.match(r"(?:decree_)?dossier:(\d+)(?:[:/]|$)", str(origin or ""))
+    return int(match.group(1)) if match else None

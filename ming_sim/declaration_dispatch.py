@@ -52,9 +52,11 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
+
+from ming_sim.applier import Provenance
 
 import contextlib
-import copy
 import hashlib
 import json
 from dataclasses import dataclass
@@ -67,13 +69,14 @@ from ming_sim.action_materialize import (
     IncompleteXiexangPayloadError,
     require_materializable_xiexang_payload,
 )
+from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.applier import (
+    ItemAtomicReject,
     Provenance,
     RejectedItem,
     RejectionCollector,
     SectionResult,
-    atomic,
-    connection_owns_transaction,
+    item_savepoint_scope,
     mirror_rejections_after_commit,
 )
 from ming_sim.audience_night import (
@@ -87,7 +90,8 @@ from ming_sim.audience_night import (
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.relations import summon_edge_origin
-from ming_sim.issues import _ORDERED_DELTA_FIELDS, apply_person_changes_only
+from ming_sim.settlement.run import apply_person_changes_only
+from ming_sim.settlement.preflight import _ORDERED_DELTA_FIELDS
 from ming_sim.public_sayings import record_public_saying
 from ming_sim.relations import validate_edge_kind
 
@@ -320,14 +324,12 @@ def _dispatch_declaration_sections(
             db, state, declaration.get("rushes"),
             minister_name=minister_name, source=source,
             night_id=int(night_id),
-            source_chat_turn_id=(
-                int(chat_turn_id or source_chat_turn_id or 0)
-                if source_turn_err is None else 0
-            ),
+            source_chat_turn_id=origin_ctid if source_turn_err is None else 0,
         ),
         travel_tones=_dispatch_travel_tones(
-            db, declaration.get("travel_tones"), night_id=night_id, source=source,
-            chat_turn_id=origin_ctid, source_turn_error=source_turn_err,
+            db, declaration.get("travel_tones"), night_id=night_id,
+            chat_turn_id=origin_ctid, source=source,
+            source_turn_error=source_turn_err,
         ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
@@ -335,30 +337,65 @@ def _dispatch_declaration_sections(
     return result
 
 
+def _merge_effect_field(
+    extraction: dict[str, object],
+    field: str,
+    value: object,
+) -> None:
+    """把一条效果 envelope 的一个字段并进本旨 effects 载荷（只并声明带来的字段）。
+
+    只并入 envelope 自带的字段，不预置整份空壳（#1835 F1）。
+    """
+    if isinstance(value, list):
+        current = extraction.get(field)
+        if isinstance(current, list):
+            current.extend(value)
+        else:
+            extraction[field] = list(value)
+    elif isinstance(value, dict):
+        current = extraction.get(field)
+        if isinstance(current, dict):
+            current.update(value)
+        else:
+            extraction[field] = dict(value)
+    elif value is not None:
+        extraction[field] = value
+
+
 def _effect_extraction_from_clean(
     clean: Mapping[str, object],
     event_id: str,
-    *,
-    empty_extraction: Mapping[str, object],
-) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]:
-    """Build one apply_score_extraction payload from a single effect envelope."""
-    extraction = copy.deepcopy(dict(empty_extraction))
-    ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
-    ordered_effect_event_ids = {field: [] for field in empty_extraction}
+) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]], list[dict[str, object]]]:
+    """从一条已 sanitize 的效果 envelope 取出本笔载荷与其字段级事件归属。
+
+    只取声明实际带来的字段；未知字段已由 :func:`sanitize_delta_shape` 按 ADR 0015
+    逐段拒收留痕，此处不再静默丢弃。
+    """
+    from ming_sim.issues import _merge_first_event_outcome
+
+    extraction: dict[str, object] = {}
+    ordered_deltas: dict[str, list[tuple[str, object]]] = {field: [] for field in _ORDERED_DELTA_FIELDS}
+    ordered_effect_event_ids: dict[str, list[str]] = {}
+    unowned_outcomes: list[dict[str, object]] = []
     for field, value in clean.items():
-        if field not in empty_extraction:
+        if value is None:
             continue
+        if field == "事件结局" and isinstance(value, dict):
+            current = extraction.setdefault("事件结局", {})
+            if not isinstance(current, dict):
+                current = {}
+                extraction["事件结局"] = current
+            unowned_outcomes.extend(_merge_first_event_outcome(current, value, event_id))
+            if event_id:
+                ordered_effect_event_ids.setdefault(field, []).append(event_id)
+        else:
+            _merge_effect_field(extraction, field, value)
         if isinstance(value, list):
-            extraction[field].extend(value)
-            ordered_effect_event_ids[field].extend([event_id] * len(value))
-        elif isinstance(value, dict):
-            extraction[field].update(value)
-            if field in ordered_deltas:
-                ordered_deltas[field].extend(value.items())
-                ordered_effect_event_ids[field].extend([event_id] * len(value))
-        elif value is not None:
-            extraction[field] = value
-    return extraction, ordered_deltas, ordered_effect_event_ids
+            ordered_effect_event_ids.setdefault(field, []).extend([event_id] * len(value))
+        elif isinstance(value, dict) and field in ordered_deltas:
+            ordered_deltas[field].extend(value.items())
+            ordered_effect_event_ids.setdefault(field, []).extend([event_id] * len(value))
+    return extraction, ordered_deltas, ordered_effect_event_ids, unowned_outcomes
 
 
 def _persist_specialized_extraction(
@@ -374,7 +411,8 @@ def _persist_specialized_extraction(
     """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
 
     密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。
-    月度拨帑核账走 ``record_monthly_grant_reconciliations``（引擎中位实抵），本口不碰。
+    月度拨帑核账走 ``record_monthly_grant_reconciliations``（引擎中位实抵，#1900），
+    本口不接 dossier_reconciliations 提案。
 
     过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
     ``defer_monthly_secret_supply`` 时不把逐段字段拼成整月义务。
@@ -391,14 +429,13 @@ def _persist_specialized_extraction(
         selections = extraction.get("covert_exec_selections") or []
         if isinstance(selections, list) and selections:
             from ming_sim.covert_progress import apply_monthly_covert_actual_progress
-            from ming_sim.decree import _collect_inline_rejections
 
-            rows = apply_monthly_covert_actual_progress(
-                db, state, selections=selections, only_supplied=True, commit=False,
+            rows, rows_rejections = apply_monthly_covert_actual_progress(
+                db, state, selections=selections, only_supplied=True,
+                source=source,
             )
-            _collect_inline_rejections(
-                collector, {"covert_exec_selections": rows}, int(turn), source,
-            )
+            for item in rows_rejections:
+                collector.record("covert_exec_selections", item, int(turn))
 
 
 def _dispatch_effects(
@@ -418,9 +455,9 @@ def _dispatch_effects(
     召对夜里的 effects 表示旨意办理结果，仍只是预推候选；当场实况由各自
     section 承接，不能借 effects 绕过 ADR 0157 的过月落账边界。
 
-    #1844/#1899：effects 对象与数组均走同一 effect_sequence 逐笔落账——后来的
-    效果读到先前实际落账后的存量；不按实体段固定类别顺序重排跨类因果。单对象
-    即单步序列，不另开对象专用编排。批次性副作用（回流等）仍只核算一次。
+    #1844：effects 数组按交代先后逐笔落账——后来的效果读到先前实际落账后的
+    存量；不按实体段固定类别顺序重排跨类因果。一次 apply 内按旨序交错字段，
+    批次性副作用（回流等）仍只核算一次。
     """
     if raw is None or raw == {}:
         return SectionResult(applied=[], rejected=[])
@@ -435,15 +472,7 @@ def _dispatch_effects(
             category="invalid_shape", source=source,
         )])
 
-    from ming_sim.simulation import EMPTY_EXTRACTION
-    from ming_sim.issues import (
-        _merge_first_event_outcome,
-        apply_score_extraction,
-        preflight_declared_event_effects,
-        sanitize_delta_shape,
-    )
-    from ming_sim.decree import _collect_inline_rejections
-    from ming_sim.person_delta_adapter import normalize_person_changes
+    from ming_sim.settlement.preflight import preflight_declared_event_effects, sanitize_delta_shape
 
     shape_rejections = []
     rejected = []
@@ -457,92 +486,92 @@ def _dispatch_effects(
             ))
             continue
         has_effect = True
-        # 归属是效果 envelope 的声明，不属于旧 extractor delta 的字段。
+        # 归属是效果 envelope 的声明，不属于 delta 的字段。
         event_id = str(item.get("event_id") or "").strip()
-        clean, invalid = sanitize_delta_shape({k: v for k, v in item.items() if k != "event_id"})
+        clean, invalid = sanitize_delta_shape(
+            {k: v for k, v in item.items() if k != "event_id"}, source=source,
+        )
         shape_rejections.extend(invalid)
-        person_changes = normalize_person_changes(clean)
-        if person_changes:
-            clean["人物变更"] = person_changes
         clean_items.append((item, event_id, clean))
     if not has_effect:
         return SectionResult(applied=[], rejected=rejected)
 
     refs = visible_refs or {}
-    rejected_effects = preflight_declared_event_effects(
+    rejected_events = preflight_declared_event_effects(
         db, state, [(event_id, clean) for _, event_id, clean in clean_items],
         open_affair_ids=set(refs.get("affairs", ())),
     )
-    extraction = copy.deepcopy(EMPTY_EXTRACTION)
-    ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
-    ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
+    extraction: dict[str, object] = {}
+    ordered_deltas: dict[str, list[tuple[str, object]]] = {field: [] for field in _ORDERED_DELTA_FIELDS}
+    ordered_effect_event_ids: dict[str, list[str]] = {}
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
-    declared_effect_event_ids: list[str] = []
     accepted_effect = False
     accepted_event_ids: list[str] = []
+    from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
+    from ming_sim.issues import (
+        FISCAL_LEVY_EVENT_CATEGORY,
+        _event_outcome_label,
+        _merge_first_event_outcome,
+    )
     for index, (item, event_id, clean) in enumerate(clean_items):
-        if index in rejected_effects:
+        if index in rejected_events:
             rejected.append(RejectedItem(
-                item=dict(item), reason=rejected_effects[index],
+                item=dict(item), reason=rejected_events[index],
                 category="event_rejected", source=source,
             ))
             continue
         accepted_effect = True
         if event_id:
-            declared_effect_event_ids.append(event_id)
-        # #1897 S3：事件结局复用既有 first-wins／未归属拒收，不经 dict.update 末写覆盖。
-        step_outcomes: dict[str, object] = {}
-        incoming_outcomes = clean.get("事件结局") or {}
-        for piece in _merge_first_event_outcome(step_outcomes, incoming_outcomes, event_id):
-            rejected.append(RejectedItem(
-                item={"event_id": event_id, "事件结局": piece},
-                reason="事件结局未归属本信封",
-                category="invalid_state", source=source,
-            ))
-        clean_without_outcomes = {
-            key: value for key, value in clean.items() if key != "事件结局"
-        }
-        step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
-            clean_without_outcomes, event_id, empty_extraction=EMPTY_EXTRACTION,
+            accepted_event_ids.append(event_id)
+        step_extraction, step_ordered, step_event_ids, unowned_outcomes = (
+            _effect_extraction_from_clean(clean, event_id)
         )
-        if step_outcomes:
-            step_extraction["事件结局"] = dict(step_outcomes)
-            _merge_first_event_outcome(
-                extraction["事件结局"], step_outcomes, event_id,
-            )
+        for stray in unowned_outcomes:
+            rejected.append(RejectedItem(
+                item={"event_id": event_id, "事件结局": stray},
+                reason="事件结局不属于本效果信封，未写入",
+                category="invalid_state",
+                source=source,
+            ))
         effect_sequence.append((step_extraction, step_ordered, step_event_ids))
         for field, value in step_extraction.items():
-            if field == "事件结局":
-                continue
-            current = extraction[field]
-            if isinstance(value, list) and isinstance(current, list):
-                current.extend(value)
-            elif isinstance(value, dict) and isinstance(current, dict):
-                current.update(value)
-            elif value is not None and not isinstance(value, (list, dict)):
-                extraction[field] = value
+            if field == "事件结局" and isinstance(value, dict):
+                current = extraction.setdefault("事件结局", {})
+                if isinstance(current, dict):
+                    _merge_first_event_outcome(current, value, event_id)
+                    continue
+            _merge_effect_field(extraction, field, value)
         for field, pairs in step_ordered.items():
             ordered_deltas[field].extend(pairs)
         for field, event_ids in step_event_ids.items():
-            ordered_effect_event_ids[field].extend(event_ids)
+            ordered_effect_event_ids.setdefault(field, []).extend(event_ids)
     if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
-    report = apply_score_extraction(
-        db, state, extraction, content=db.content,
-        open_affair_ids_at_input=set(refs.get("affairs", ())),
-        dossier_ids_at_input=set(refs.get("dossiers", ())),
-        secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
+    outcome = settle_delta(
+        state, db, extraction,
+        SettlementContext(
+            source=source,
+            content=db.content,
+            open_affair_ids_at_input=set(refs.get("affairs", ())),
+            dossier_ids_at_input=set(refs.get("dossiers", ())),
+            secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
+            defer_disclosure=defer_disclosure,
+        ),
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=ordered_effect_event_ids,
-        declared_effect_event_ids=declared_effect_event_ids,
         prior_shape_rejections=shape_rejections,
         effect_sequence=effect_sequence,
-        defer_disclosure=defer_disclosure,
     )
     # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。
     from ming_sim.audience_night import settle_applied_arrived_summons
-    settle_applied_arrived_summons(db, report)
-    _collect_inline_rejections(collector, report, turn, source)
+    settle_applied_arrived_summons(db, outcome)
+    for section_name, section in outcome.sections().items():
+        for item in section.rejected:
+            collector.record(section_name, item, turn)
+    # 形状拒收只记一次，section 用净化时的原字段名（#1745）。
+    # 不放进 effects.rejected：那条会再被记成声明段名 effects。
+    for section_name, item in zip(outcome.shape_sections, outcome.shape_rejections):
+        collector.record(section_name, item, turn)
     _persist_specialized_extraction(
         db, state, extraction, collector=collector, turn=turn, source=source,
         defer_monthly_secret_supply=defer_disclosure,
@@ -552,9 +581,9 @@ def _dispatch_effects(
         settle_exposure_from_canonical_actions,
         write_exposure_todos,
     )
-    write_exposure_todos(db, state, report)
-    settle_exposure_from_canonical_actions(db, state, report)
-    return SectionResult(applied=[report], rejected=rejected)
+    write_exposure_todos(db, state, outcome)
+    settle_exposure_from_canonical_actions(db, state, outcome)
+    return SectionResult(applied=[outcome], rejected=rejected)
 
 
 def dispatch_declaration(
@@ -573,11 +602,11 @@ def dispatch_declaration(
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
     承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
-    durable——自己开唯一一段 `atomic(db)`，把各 section 的分派副作用、拒收
-    收集与 `flush_to_db` 全部包在同一个事务里，任一步失败（含 flush 本身失败）
-    都整体回滚，不会出现「合法 sibling 已落库、其拒收却没落进
-    ``rejection_reports``」的半写状态；提交成功后再镜像 jsonl。不建声明专用
-    拒收表，复用既有 ``rejection_reports`` 单一真源（ADR 0008 决定 5）。
+    durable——自己开唯一一段 `atomic_and_reload`（ADR 0008 最外层 DB 同源重载），
+    把各 section 的分派副作用、拒收收集与 `flush_to_db` 全部包在同一个事务里，
+    任一步失败（含 flush 本身失败）都整体回滚并重载运行态，不会出现「合法 sibling
+    已落库、其拒收却没落进 ``rejection_reports``」的半写状态；提交成功后再镜像
+    jsonl。不建声明专用拒收表，复用既有 ``rejection_reports`` 单一真源（ADR 0008 决定 5）。
 
     ``night_id``：本声明所属的召对夜——「应允/拒绝」只认这一夜暂存清单里的
     动作（ADR 0155：转译读「本夜暂存清单」），引用其它夜真实存在的 id 一律
@@ -606,7 +635,9 @@ def dispatch_declaration(
     origin_ctid = int(chat_turn_id or source_chat_turn_id or 0)
     # 有源轮则入口自记前像：后台/直接调用都不必依赖 caller 窗口快照。
     before = db.capture_chat_rollback_snapshot() if origin_ctid > 0 else None
-    with atomic(db):
+    # 整事务根：atomic 真回滚后走既有 DB 同源重载（ADR 0008），不靠批中内存快照顶替。
+    from ming_sim.decree import atomic_and_reload
+    with atomic_and_reload(db, state, content=db.content):
         result = _dispatch_declaration_sections(
             db, state, declaration,
             minister_name=minister_name, night_id=night_id, source=source,
@@ -712,8 +743,7 @@ def settle_staged_declarations_in_decree_order(
                     merged = _empty_dispatch_result()
                     for item in staged:
                         merged = merged.merge(_dispatch_declaration_sections(
-                            db, state,
-                            item.declaration,
+                            db, state, item.declaration,
                             minister_name=minister_name, night_id=night_id, source=source,
                             collector=collector,
                             visible_refs=item.visible_refs,
@@ -780,63 +810,6 @@ def _reject(
     ))
 
 
-class _ItemAtomicReject(Exception):
-    """在 :func:`_item_savepoint_scope` 块内抛出以整项回滚（连同事务指针绑定）、
-    外层捕获后转成该项的 rejected 记录，不留半写状态。"""
-
-    def __init__(self, reason: str, category: str) -> None:
-        self.reason = reason
-        self.category = category
-        super().__init__(reason)
-
-
-@contextlib.contextmanager
-def _item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
-    """逐项落库的最小原子域，供 on_scene_facts / edge_events 的「动作 + 事务
-    指针绑定」两步复合写共用。已在外层事务（本模块 `dispatch_declaration`
-    直接分派自己的 `atomic(db)`，或 `settle_staged_declarations_in_decree_order`
-    的旨级 `atomic`）内时只用 SAVEPOINT 做本项细粒度回滚，不再另开一层
-    `atomic`——嵌套 `atomic()` 的 flat 语义会把「本函数用 try/except 接住内层
-    异常后继续下一项」判定为吞异常并响亮拦截（cmr S1 F2），SAVEPOINT 才是
-    这里真正需要的局部回滚原语。未在任何外层事务内（独立调用）时用
-    `atomic(db)` 令本项独立开合、失败不牵连后续项——同 `db.py
-    commit_pending_actions` 既有 idiom（`atomic(self) if owns_transaction
-    else contextlib.nullcontext()` + SAVEPOINT，同一机制不重复发明）。
-
-    跨层回滚：`apply_person_changes_only` 等既有生产口在有外层事务时会调用
-    `issues.py::_register_runtime_rollback_snapshot`，把恢复 `state.metrics`
-    / `content.characters` 等运行时内存态的闭包追加进
-    `conn._runtime_rollback_callbacks`——但那些闭包只在连接级真
-    `conn.rollback()`（`_SuspendableConnection.rollback`）时才会被执行；
-    SAVEPOINT 只回滚 DB 行，不会触发它。本函数复用同一个既有列表：本项
-    body 开始前记下列表长度，失败时只弹出并按登记的相反顺序执行本项新增的
-    那些闭包（不新建平行的运行时快照系统），让 DB 与运行时内存态在「本项被
-    拒收、其余 sibling 正常」这一常见场景下也保持一致；成功路径与「整段
-    declaration 真失败」路径不动这份列表，交给外层真正的 commit/rollback
-    按既有语义处理。"""
-    owns = connection_owns_transaction(db.conn)
-    cm = atomic(db) if owns else contextlib.nullcontext()
-    with cm:
-        rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
-        if rollback_callbacks is None:
-            rollback_callbacks = []
-            db.conn._runtime_rollback_callbacks = rollback_callbacks
-        baseline = len(rollback_callbacks)
-        db.conn.execute(f"SAVEPOINT {savepoint}")
-        try:
-            yield
-        except BaseException:
-            db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-            item_callbacks = rollback_callbacks[baseline:]
-            del rollback_callbacks[baseline:]
-            for callback in reversed(item_callbacks):
-                callback()
-            raise
-        else:
-            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-
-
 def _commission_appointment_fields(
     appointment: object, *, source: Provenance,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[RejectedItem]]:
@@ -900,7 +873,7 @@ def _assert_commission_grant_target_exists(
     if kind == "region":
         row = db.conn.execute("SELECT 1 FROM regions WHERE id=?", (tid,)).fetchone()
         if row is None:
-            raise KeyError(f"地区不存在：{tid}")
+            raise DeclarationReferenceError(f"地区不存在：{tid}")
         return
     if kind == "character":
         _assert_characters_exist(db, [tid])
@@ -908,7 +881,7 @@ def _assert_commission_grant_target_exists(
     if kind == "army":
         row = db.conn.execute("SELECT 1 FROM armies WHERE id=?", (tid,)).fetchone()
         if row is None:
-            raise KeyError(f"军队不存在：{tid}")
+            raise DeclarationReferenceError(f"军队不存在：{tid}")
         return
     if kind == "issue":
         from ming_sim.strict_types import strict_sqlite_id
@@ -916,10 +889,10 @@ def _assert_commission_grant_target_exists(
             # tid 已是字符串身份；复用 SQLite 64-bit 身份权威（#1897 C1）。
             iid = strict_sqlite_id(tid)
         except (TypeError, ValueError) as exc:
-            raise KeyError(f"事项不存在：{tid}") from exc
+            raise DeclarationReferenceError(f"事项不存在：{tid}") from exc
         row = db.conn.execute("SELECT 1 FROM issues WHERE id=?", (iid,)).fetchone()
         if row is None:
-            raise KeyError(f"事项不存在：{tid}")
+            raise DeclarationReferenceError(f"事项不存在：{tid}")
         return
     # 未知 kind 留给成案/物化缝；此处不放行空目标（调用方已要求非空）。
 
@@ -1009,68 +982,7 @@ def _commission_grant_payload(
     return payload
 
 
-def _attach_commission_escort(
-    db: Any, grant: Mapping[str, object], payload: Dict[str, Any],
-) -> None:
-    """#1900：押解随拨银旨——护送安排写在**同一道拨银交办**里即成。
 
-    owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护送」，押解人
-    就记在这道拨银旨里，不另立密令、不另挂关联。押解人不另走一份名单：声明按
-    ADR 0053 参与人接缝给条目（人物 id／机械档／职分／委派人），代码只 normalize
-    与校验，**不猜机械档**（#1900 / 全局规则 #12）；名单落进 payload 的
-    ``participant_roster`` 单一真源。合法缺省＝没给 ``escort``；已声明却不是
-    ADR 0053 条目形状 → 逐项拒收，不静默丢弃（ADR 0005 失败诚实 / ADR 0015）。
-    """
-    escort = grant.get("escort")
-    if escort is None:          # 合法缺省＝没安排押解
-        return
-    if not isinstance(escort, Mapping):
-        raise DecreeMaterializationValidationError(
-            "押解声明 escort 须为 ADR 0053 参与人条目对象", failed_fields=("escort",),
-        )
-    entries = escort.get("escortees")
-    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
-        raise DecreeMaterializationValidationError(
-            "押解声明 escort.escortees 须为 ADR 0053 参与人条目列表",
-            failed_fields=("escort",),
-        )
-    note = escort.get("note")
-    if note is not None and not isinstance(note, str):
-        raise DecreeMaterializationValidationError(
-            "押解声明 escort.note 须为原文", failed_fields=("escort",),
-        )
-    from ming_sim.cli_backend import normalize_draft_person_roster
-
-    # 形状闸（ADR 0053 条目结构）→ 存在性闸（既有 KeyError 缝 → hallucinated_id）
-    # → canon/非人归一。strict 面已抛 DMVE；不扩 ValueError 洗内部故障（#1897 E1）。
-    shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
-    if not shaped:
-        raise DecreeMaterializationValidationError(
-            "押解声明 escort.escortees 须含 ADR 0053 参与人条目",
-            failed_fields=("escort",),
-        )
-    _assert_characters_exist(
-        db, [str(entry["character_id"]) for entry in shaped],
-    )
-    roster = normalize_draft_person_roster(
-        list(entries), db=db, content=getattr(db, "content", None),
-    )
-    # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
-    # 复用 GameDB 现役 normalize + equality 追加（同 _merge_directive_payload）。
-
-    existing = payload.get("participant_roster")
-    if existing is not None and not isinstance(existing, list):
-        raise ValueError(f"payload.participant_roster 须为数组，得 {type(existing).__name__}")
-    payload["participant_roster"] = GameDB.merge_decode_durable_participant_roster(
-        existing or [],
-        roster,
-    )
-    record: Dict[str, Any] = {
-        "escortees": [str(entry["character_id"]) for entry in roster],
-    }
-    if note is not None:
-        record["note"] = note
-    payload["escort"] = record
 
 
 def _attach_commission_staging_fields(
@@ -1197,11 +1109,16 @@ def _attach_commission_affair(
         return True
     try:
         db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_BIRTH)
-    except KeyError as exc:
+    except DeclarationReferenceError as exc:
         _reject(rejected, item, str(exc), "hallucinated_id", source)
+        return False
+    except DeclarationDataError as exc:
+        _reject(rejected, item, str(exc), "invalid_shape", source)
         return False
     payload["affair_declaration"] = raw_affair
     return True
+
+
 
 
 def _dispatch_commissions(
@@ -1481,7 +1398,7 @@ def _dispatch_commissions(
                 _reject(
                     rejected, item,
                     "密令承办人须是名册里的具名人物（场景或虚构人名不得充当承办人）",
-                    "invalid_state", source,
+                    "hallucinated_id", source,
                 )
                 continue
             # ADR 0005 决定 2：可选集合字段坏类型只拒本项，不带走同批合法交办。
@@ -1533,6 +1450,10 @@ def _dispatch_commissions(
                 "covert_task": frozen_task,
                 "origin_chat_message_id": int(source_turn["user_message_id"]),
             }
+            if not _attach_commission_affair(
+                db, item, payload, rejected=rejected, source=source,
+            ):
+                continue
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "新建", actor, payload,
                 night_id=int(night_id),
@@ -2102,15 +2023,8 @@ def _dispatch_endorsements(
                 db.attach_pending_action_endorsement(
                     action_id, entry, commit=False,
                 )
-            except KeyError as exc:
-                _reject(rejected, item, str(exc), "missing_ref", source)
-                continue
-            except DecreeMaterializationValidationError as exc:
-                # 背书领域校验走既有 typed 异常；未分类写入故障上抛（#1897 E1）。
-                _reject(
-                    rejected, item, str(exc),
-                    getattr(exc, "category", None) or "invalid_item", source,
-                )
+            except (DeclarationDataError, DeclarationReferenceError) as exc:
+                _reject(rejected, item, str(exc), "invalid_item", source)
                 continue
         elif status == "committed":
             drow = db.conn.execute(
@@ -2134,12 +2048,8 @@ def _dispatch_endorsements(
                         source_chat_turn_id=ctid,
                         commit=False,
                     )
-            except DecreeMaterializationValidationError as exc:
-                # 背书领域校验；未分类写入故障上抛（#1897 E1）。
-                _reject(
-                    rejected, item, str(exc),
-                    getattr(exc, "category", None) or "invalid_item", source,
-                )
+            except DeclarationDataError as exc:
+                _reject(rejected, item, str(exc), "invalid_item", source)
                 continue
         else:
             _reject(
@@ -2166,16 +2076,9 @@ def _is_prohibit_covert_levy_item(item: Mapping[str, object]) -> bool:
 
 def _stage_prohibit_covert_levy(
     db: Any, state: Any, item: Mapping[str, object], *, minister_name: str,
-    night_id: int = 0,
-    source_chat_turn_id: int = 0,
+    night_id: int = 0, source_chat_turn_id: int = 0,
 ) -> Dict[str, Any]:
-    """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。
-
-    ``night_id``：与 :func:`_dispatch_commissions` 其余分支同义，暂存与夜应允
-    一并挂源夜，夜收后补译的禁摊派仍接得上（ADR 0038 后出注记）。
-    ``source_chat_turn_id``：同义的源轮。自动应允是本函数独有的消费者——没有它
-    迟到转译在封夜后拿不到源轮，暂存被拒或应允按 night_closed 拒绝。
-    """
+    """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。"""
     from ming_sim.audience_night import mark_actions_night_approved
     from ming_sim.covert_levy import PROHIBITION_ACTION
     from ming_sim.due_review import list_due_review_scenes
@@ -2184,26 +2087,17 @@ def _stage_prohibit_covert_levy(
     try:
         dossier_id = strict_sqlite_id(item["target_id"])
     except (KeyError, TypeError, ValueError):
-        raise KeyError("禁摊派交办缺场面案卷 id") from None
-    body = _declared_prose(item.get("text"))
-    if body is None:
-        # LLM item shape — not a durable read fault (F39 ownership split).
-        raise DecreeMaterializationValidationError(
-            "禁摊派交办缺正文", failed_fields=("text",),
-        )
-    # Durable todo/dossier payload faults raise from list_due_review_scenes (F39).
+        raise DeclarationReferenceError("禁摊派交办缺场面案卷 id") from None
     if not any(
         scene.get("kind") == "covert_levy_exposure"
         and not scene.get("decision")
         and int(scene.get("dossier_id") or 0) == dossier_id
         for scene in list_due_review_scenes(db)
     ):
-        raise KeyError(f"当前无待裁的暗渠摊派暴露案卷：{dossier_id}")
+        raise DeclarationReferenceError(f"当前无待裁的暗渠摊派暴露案卷：{dossier_id}")
     body = _declared_prose(item.get("text"))
     if body is None:
-        raise DecreeMaterializationValidationError(
-            "禁摊派交办缺正文", failed_fields=("text",),
-        )
+        raise DeclarationDataError("禁摊派交办缺正文")
     actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
     payload = {
         "text": body,
@@ -2213,18 +2107,13 @@ def _stage_prohibit_covert_levy(
         "target_id": str(dossier_id),
         "mode": "ordinary",
     }
-    staged_night = int(night_id or 0) or None
     row_id = db.stage_pending_action(
         int(state.turn), "directive", "拟旨", actor, payload,
-        night_id=int(night_id),
-        source_chat_turn_id=source_chat_turn_id,
+        night_id=int(night_id), source_chat_turn_id=source_chat_turn_id,
     )
-    # 源夜已封时按源夜应允；过月 night_id<=0 仍由开放夜接应允，与盖章回退一致。
     if int(night_id) > 0:
-        mark_actions_night_approved(
-            db, [row_id], night_id=int(night_id),
-            source_chat_turn_id=int(source_chat_turn_id or 0),
-        )
+        mark_actions_night_approved(db, [row_id], night_id=int(night_id),
+                                    source_chat_turn_id=int(source_chat_turn_id or 0))
     else:
         mark_actions_night_approved(db, [row_id])
     return {"id": row_id, "payload": payload, "kind": "directive"}
@@ -2318,7 +2207,7 @@ def _dispatch_inquiries(
             continue
         try:
             _assert_characters_exist(db, [attendant])
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         from ming_sim.audience_night import is_inner_court_attendant
@@ -2493,6 +2382,7 @@ def _dispatch_rushes(
     return SectionResult(applied=applied, rejected=rejected)
 
 
+
 def _dispatch_travel_tones(
     db: Any,
     raw: object,
@@ -2504,7 +2394,7 @@ def _dispatch_travel_tones(
 ) -> SectionResult:
     """传召行程语气声明 → 本轮传召账；已有口令账则更新它。"""
     from ming_sim.audience_night import record_summon_fresh, update_summon_travel_tone
-    from ming_sim.issues import normalize_travel_tone
+    from ming_sim.entities.character.transit import normalize_travel_tone
 
     items, rejected = _section_items(raw, label="行程语气声明", source=source)
     if int(night_id or 0) <= 0 or source_turn_error:
@@ -2519,7 +2409,7 @@ def _dispatch_travel_tones(
             continue
         try:
             tone = normalize_travel_tone(item.get("tone") or item.get("行程语气"))
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_enum", source)
             continue
         try:
@@ -2527,7 +2417,7 @@ def _dispatch_travel_tones(
                 db, night_id=int(night_id), person_name=person, travel_tone=tone,
                 origin_chat_turn_id=chat_turn_id,
             )
-        except KeyError:
+        except DeclarationReferenceError:
             # A non-command-shaped summons (e.g. an urgent summons) has no
             # deterministic command ledger. The translator supplies the person;
             # only an offsite, eligible person can acquire a fresh summons here.
@@ -2549,7 +2439,9 @@ def _dispatch_travel_tones(
                 origin_id=f"scene:xuan:{chat_turn_id}:{person}",
                 origin_chat_turn_id=chat_turn_id, travel_tone=tone,
             )
-        # 未分类写入故障不在此冒充 invalid_state（#1897 E1）；人名/语气已在上狭缝校验。
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_state", source)
+            continue
         applied.append({
             "entry_id": entry_id, "person_name": person, "tone": tone,
         })
@@ -2623,9 +2515,10 @@ def _dispatch_promises(
             ):
                 _reject(rejected, item, "只有新建密令可用非空 typed new_content 修改", "invalid_shape", source)
                 continue
-            payload = dict(GameDB.parse_engine_payload_json(
+            from ming_sim.db import GameDB
+            payload = GameDB.parse_engine_payload_json(
                 row["payload_json"], surface="pending_actions.payload_json",
-            ))
+            )
             payload["content"] = new_content
             db.conn.execute(
                 "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
@@ -2684,9 +2577,10 @@ def _dispatch_promises(
             else:
                 changed = False
                 if kind == "directive" and declared_mode is not None:
-                    payload = dict(GameDB.parse_engine_payload_json(
+                    from ming_sim.db import GameDB
+                    payload = GameDB.parse_engine_payload_json(
                         row["payload_json"], surface="pending_actions.payload_json",
-                    ))
+                    )
                     if payload.get("mode", "ordinary") != declared_mode:
                         payload["mode"] = declared_mode
                         if int(row["night_approved"] or 0):
@@ -2715,13 +2609,13 @@ def _dispatch_promises(
 
 
 def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> None:
-    """存在性查询：不存在 → KeyError（hallucinated_id）。
-
-    affair 路径要求 ``subject_id`` 已是通过 ``parse_positive_affair_id`` 的正整数
-    （领域形状拒收在调用方解析步完成）。getter 真故障不在此捕获（#1897 C1）。
-    """
+    """格式及缺失引用为类型化数据错误；持久读取异常不转译。"""
     if subject_kind == "affair":
-        db.affairs.get(int(subject_id))
+        try:
+            affair_id = int(subject_id)
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError("事务引用须为整数") from exc
+        db.affairs.get(affair_id)
         return
     table_column = _TEXTUAL_FACT_EXISTENCE_TABLES.get(subject_kind)
     if table_column is None:
@@ -2731,7 +2625,7 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
         f"SELECT 1 FROM {table} WHERE {column}=?", (subject_id,),
     ).fetchone()
     if row is None:
-        raise KeyError(f"{subject_kind} 不存在：{subject_id}")
+        raise DeclarationReferenceError(f"{subject_kind} 不存在：{subject_id}")
 
 
 def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
@@ -2769,15 +2663,17 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
     """
     try:
         raw_affair = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
-    except (TypeError, ValueError, OverflowError):
+    except DeclarationDataError:
         return None, "invalid_shape"
     if raw_affair is None:
         return None, None
     # 声明形检已完成；peek/get 持久损坏上抛，不洗 invalid_shape（F39）。
     try:
         affair_id = db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_EXPERIENCE)
-    except KeyError:
+    except DeclarationReferenceError:
         return None, "hallucinated_id"
+    except DeclarationDataError:
+        return None, "invalid_shape"
     return affair_id, None
 
 
@@ -2796,8 +2692,9 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
     """`characters` 主键是 name（非整数 id）；AffairStore.attach_pointer 现按表
     配置主键列（`characters` → `name`），语义（未绑可绑一次、同一事务幂等、
     绑别的事务响亮拒绝）与其它指针表完全一致，直接复用、不再单独实现
-    （#1831）。只在人物变更 / 入册已经真实落库之后调用——绑定失败不撤销已经
-    发生的落库（那会谎报「没发生」），调用方把异常信息原样带回结果，不吞。"""
+    （#1831）。只在人物变更 / 入册已经进入同一原子块之后调用——绑定失败时由
+    调用方的 :func:`item_savepoint_scope` 连同人物变更一起回滚，不留半写；
+    调用方把异常信息原样带回结果，不吞。"""
     db.affairs.attach_pointer("characters", name, affair_id)
 
 
@@ -2813,34 +2710,25 @@ def _dispatch_textual_facts(
             continue
         subject_kind = str(item.get("subject_kind") or "").strip()
         subject_id = str(item.get("subject_id") or "").strip()
-        if subject_kind == "affair":
-            from ming_sim.entities.affair import parse_positive_affair_id
-            try:
-                # 领域形状/超界在查询前拒收；随后 getter 真故障保持响亮。
-                subject_id = str(parse_positive_affair_id(subject_id))
-            except (TypeError, ValueError) as exc:
-                _reject(rejected, item, str(exc), "invalid_shape", source)
-                continue
         try:
             _assert_textual_fact_subject_exists(db, subject_kind, subject_id)
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
-        affair_id, error_category = _peek_affair_id(db, item)
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        origin_ref, error_category = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
-            continue
-        origin_ref = item.get("origin_ref", "")
-        if not isinstance(origin_ref, str):
-            _reject(rejected, item, "来源引用须为字符串", "invalid_shape", source)
             continue
         try:
             fact = db.textual_facts.append(
                 subject_kind=subject_kind, subject_id=subject_id,
                 body=item.get("body"), year=state.year, period=state.period,
-                turn=state.turn, origin_ref=origin_ref, affair_id=affair_id or 0,
+                turn=state.turn, origin_ref=origin_ref,
             )
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         applied.append({
@@ -2853,7 +2741,7 @@ def _assert_characters_exist(db: Any, names: Sequence[str]) -> None:
     for name in names:
         row = db.conn.execute("SELECT 1 FROM characters WHERE name=?", (name,)).fetchone()
         if row is None:
-            raise KeyError(f"人物不存在：{name}")
+            raise DeclarationReferenceError(f"人物不存在：{name}")
 
 
 def _string_array_field(item: Mapping[str, object], key: str) -> Optional[List[str]]:
@@ -2886,7 +2774,7 @@ def _dispatch_public_sayings(
             continue
         try:
             _assert_characters_exist(db, involved)
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         affair_ref, error_category = _resolve_affair_origin_ref(db, item)
@@ -2898,7 +2786,7 @@ def _dispatch_public_sayings(
                 db, state, item.get("body"),
                 involved_characters=involved, affair_ref=affair_ref,
             )
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         applied.append({"id": saying_id})
@@ -2915,16 +2803,10 @@ def _dispatch_on_scene_facts(
 
     夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
 
-    各自所属事务：人物变更与事务指针绑定放进同一个 :func:`_item_savepoint_scope`
-    块逐项处理（不再整批调用 `apply_person_changes_only`）——指针绑定失败时
-    整块回滚，该项进 rejected、不产生任何副作用；`apply_person_changes_only`
-    在既有事务内运行时会自行注册运行时快照（`_register_runtime_rollback_snapshot`），
-    `_item_savepoint_scope` 在本项失败时手动回放该快照的 undo 闭包，回滚会
-    连带撤销它对 `content.characters` 做的内存态更改，不会出现「DB 已回滚、
-    内存态却留着」的半写状态（详见 :func:`_item_savepoint_scope` 文档）。用
-    SAVEPOINT 而非直接嵌套 `atomic(db)`：本函数可能被 `dispatch_declaration`
-    自己的外层事务（直接分派或暂存结算）调用，SAVEPOINT 才能在共享事务内做
-    本项独立回滚而不牵连同批 sibling。"""
+    各自所属事务：人物变更与事务指针绑定放进同一个 :func:`item_savepoint_scope`
+    块逐项处理——指针绑定失败时整块回滚，该项进 rejected、不产生任何副作用。
+    人物落账本身的项级隔离在 `land_person_changes_isolated`（编排侧）；本块再包
+    一层以覆盖指针绑定。失败时回放本项新增的运行态回调，DB 与内存一致。"""
     items, rejected = _section_items(raw, label="当场实况声明", source=source)
     applied: List[Any] = []
     for item in items:
@@ -2939,27 +2821,25 @@ def _dispatch_on_scene_facts(
             db.affairs.origin_ref(affair_id) if affair_id is not None else "转译声明"
         )
         try:
-            with _item_savepoint_scope(db, f"on_scene_fact_{int(state.turn)}_{id(item)}"):
+            with item_savepoint_scope(db, f"on_scene_fact_{int(state.turn)}_{id(item)}"):
                 outcome = apply_person_changes_only(
                     db, state, [item], content=db.content, origin_ref=origin_ref,
-                )
-                results = list(outcome.get("applied_person_changes") or ())
+                source=source)
+                refusals = outcome.rejected
+                if refusals:
+                    raise ItemAtomicReject(refusals[0].reason, refusals[0].category)
+                results = list(outcome.applied)
                 if not results:
-                    raise _ItemAtomicReject("人物变更未产生结果", "invalid_shape")
+                    raise ItemAtomicReject("人物变更未产生结果", "invalid_shape")
                 result = results[0]
-                if result.get("rejected"):
-                    raise _ItemAtomicReject(
-                        str(result.get("reason") or ""),
-                        str(result.get("category") or "invalid_enum"),
-                    )
                 if affair_id is not None:
                     name = str(result.get("name") or "").strip()
                     try:
                         _attach_character_affair_pointer(db, name, affair_id)
-                    except (ValueError, KeyError) as exc:
+                    except (DeclarationDataError, DeclarationReferenceError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
-                        raise _ItemAtomicReject(str(exc), category) from exc
-        except _ItemAtomicReject as exc:
+                        raise ItemAtomicReject(str(exc), category) from exc
+        except ItemAtomicReject as exc:
             _reject(rejected, item, exc.reason, exc.category, source)
             continue
         applied.append(result)
@@ -3031,7 +2911,7 @@ def _dispatch_presence(
             continue
         try:
             _assert_characters_exist(db, [name])
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         origin_ref, error_category = _resolve_affair_origin_ref(db, item)
@@ -3100,7 +2980,7 @@ def _dispatch_scene_facts(
         if speaker_names:
             try:
                 _assert_characters_exist(db, speaker_names)
-            except KeyError as exc:
+            except DeclarationReferenceError as exc:
                 _reject(rejected, item, str(exc), "hallucinated_id", source)
                 continue
         origin_ref, error_category = _resolve_affair_origin_ref(db, item)
@@ -3142,7 +3022,7 @@ def _dispatch_edge_events(
     空 source/target/context 等形状问题 = invalid_shape——不拿宽 catch 一律
     冒称实体幻觉。各自所属事务：`relation_edge_events` 是整数 id 主键，直接
     复用 AffairStore 通用指针（`attach_pointer`）；写事件与绑指针放进同一个
-    :func:`_item_savepoint_scope` 块，指针冲突时整块回滚（该项进 rejected，
+    :func:`item_savepoint_scope` 块，指针冲突时整块回滚（该项进 rejected，
     不留半写的「有边事件没有所属事务」状态）；用 SAVEPOINT 而非直接嵌套
     `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。
 
@@ -3165,12 +3045,12 @@ def _dispatch_edge_events(
             continue
         try:
             event_kind = validate_edge_kind(item.get("event_kind"))
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_enum", source)
             continue
         try:
             _assert_characters_exist(db, [source_name, target_name])
-        except KeyError as exc:
+        except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         affair_id, error_category = _peek_affair_id(db, item)
@@ -3178,22 +3058,22 @@ def _dispatch_edge_events(
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
         try:
-            with _item_savepoint_scope(db, f"edge_event_{int(state.turn)}_{id(item)}"):
+            with item_savepoint_scope(db, f"edge_event_{int(state.turn)}_{id(item)}"):
                 try:
                     event_id = db.record_relation_edge_event(
                         source=source_name, target=target_name, event_kind=event_kind,
                         context=context, origin=origin,
                         turn=int(state.turn), year=int(state.year), period=int(state.period),
                     )
-                except ValueError as exc:
-                    raise _ItemAtomicReject(str(exc), "invalid_shape") from exc
+                except DeclarationDataError as exc:
+                    raise ItemAtomicReject(str(exc), "invalid_shape") from exc
                 if affair_id is not None:
                     try:
                         db.affairs.attach_pointer("relation_edge_events", event_id, affair_id)
-                    except (ValueError, KeyError) as exc:
+                    except (DeclarationDataError, DeclarationReferenceError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
-                        raise _ItemAtomicReject(str(exc), category) from exc
-        except _ItemAtomicReject as exc:
+                        raise ItemAtomicReject(str(exc), category) from exc
+        except ItemAtomicReject as exc:
             _reject(rejected, item, exc.reason, exc.category, source)
             continue
         applied.append({"id": event_id, "source": source_name, "target": target_name})
@@ -3221,7 +3101,7 @@ def _dispatch_protagonist(db: Any, raw: object, *, source: Provenance) -> Protag
         )])
     try:
         _assert_characters_exist(db, [name])
-    except KeyError as exc:
+    except DeclarationReferenceError as exc:
         return ProtagonistResult(validated=None, rejected=[RejectedItem(
             item=dict(raw), reason=str(exc), category="hallucinated_id", source=source,
         )])
@@ -3243,7 +3123,7 @@ def _dispatch_registrations(
     typed 任所（`region_id` / `任所` / `office_region`）原样传给共享写核，不从
     官名或 location 推断。地方/督抚/边镇缺 seat 或未知 region 时，
     `db.add_character` 抛 `OfficeAppointmentRejection`；本函数按项捕获其
-    `category` 记入拒收真源。每项落在 :func:`_item_savepoint_scope` 内：失败项的
+    `category` 记入拒收真源。每项落在 :func:`item_savepoint_scope` 内：失败项的
     characters / character_offices / 内存 roster 全回滚，合法 sibling 继续
     （#1835 AC3）。事务引用在真正登记之前先校验，引用不存在事务的项在产生
     副作用前就被拒收。"""
@@ -3304,7 +3184,7 @@ def _dispatch_registrations(
             )
             continue
         try:
-            with _item_savepoint_scope(db, f"registration_{int(state.turn)}_{id(item)}"):
+            with item_savepoint_scope(db, f"registration_{int(state.turn)}_{id(item)}"):
                 character = register_unlisted_person_record(
                     db, state, db.content,
                     name=name, office=office, office_type=office_type,
@@ -3318,10 +3198,10 @@ def _dispatch_registrations(
                 )
                 if character is None:
                     # 字段已在上面校验过非空，到这里返回 None 只可能是姓名/别名已在册。
-                    raise _ItemAtomicReject(f"人物已在册：{name}", "invalid_state")
+                    raise ItemAtomicReject(f"人物已在册：{name}", "invalid_state")
                 if affair_id is not None:
                     _attach_character_affair_pointer(db, character.name, affair_id)
-        except _ItemAtomicReject as exc:
+        except ItemAtomicReject as exc:
             _reject(rejected, item, exc.reason, exc.category, source)
             continue
         except OfficeAppointmentRejection as exc:
@@ -3329,3 +3209,67 @@ def _dispatch_registrations(
             continue
         applied.append({"name": character.name})
     return SectionResult(applied=applied, rejected=rejected)
+
+
+def _attach_commission_escort(
+    db: Any, grant: Mapping[str, object], payload: Dict[str, Any],
+) -> None:
+    """#1900：押解随拨银旨——护送安排写在**同一道拨银交办**里即成。
+
+    owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护送」，押解人
+    就记在这道拨银旨里，不另立密令、不另挂关联。押解人不另走一份名单：声明按
+    ADR 0053 参与人接缝给条目（人物 id／机械档／职分／委派人），代码只 normalize
+    与校验，**不猜机械档**（#1900 / 全局规则 #12）；名单落进 payload 的
+    ``participant_roster`` 单一真源。合法缺省＝没给 ``escort``；已声明却不是
+    ADR 0053 条目形状 → 逐项拒收，不静默丢弃（ADR 0005 失败诚实 / ADR 0015）。
+    """
+    escort = grant.get("escort")
+    if escort is None:          # 合法缺省＝没安排押解
+        return
+    if not isinstance(escort, Mapping):
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort 须为 ADR 0053 参与人条目对象", failed_fields=("escort",),
+        )
+    entries = escort.get("escortees")
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.escortees 须为 ADR 0053 参与人条目列表",
+            failed_fields=("escort",),
+        )
+    note = escort.get("note")
+    if note is not None and not isinstance(note, str):
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.note 须为原文", failed_fields=("escort",),
+        )
+    from ming_sim.cli_backend import normalize_draft_person_roster
+
+    # 形状闸（ADR 0053 条目结构）→ 存在性闸（既有 KeyError 缝 → hallucinated_id）
+    # → canon/非人归一。strict 面已抛 DMVE；不扩 ValueError 洗内部故障（#1897 E1）。
+    shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
+    if not shaped:
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.escortees 须含 ADR 0053 参与人条目",
+            failed_fields=("escort",),
+        )
+    _assert_characters_exist(
+        db, [str(entry["character_id"]) for entry in shaped],
+    )
+    roster = normalize_draft_person_roster(
+        list(entries), db=db, content=getattr(db, "content", None),
+    )
+    # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
+    # 复用 GameDB 现役 normalize + equality 追加（同 _merge_directive_payload）。
+
+    existing = payload.get("participant_roster")
+    if existing is not None and not isinstance(existing, list):
+        raise ValueError(f"payload.participant_roster 须为数组，得 {type(existing).__name__}")
+    payload["participant_roster"] = GameDB.merge_decode_durable_participant_roster(
+        existing or [],
+        roster,
+    )
+    record: Dict[str, Any] = {
+        "escortees": [str(entry["character_id"]) for entry in roster],
+    }
+    if note is not None:
+        record["note"] = note
+    payload["escort"] = record

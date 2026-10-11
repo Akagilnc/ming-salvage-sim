@@ -24,12 +24,12 @@
             → outer commit 后 registry.project_outcome
 
 月末人物变化
-  月链声明段「人物变更」
-    → declaration_dispatch → apply_score_extraction
+  extractor 的「人物变更」
+    → settle_delta
     → ADR 0009 人物 applier
 ```
 
-人物写只认 canonical 键 `人物变更`（ADR 0009 / [`DELTA_SCHEMA`](DELTA_SCHEMA.md)）；旧四 key 与 legacy 翻译层已退役，不得再经 sanitize 重放。
+旧 `appointments` / `office_changes` / `character_status_changes` / `character_power_changes` 已随 C0 声明契约退役（#1835 F1）：内容只写 `人物变更`，旧键按 ADR 0015 逐段拒收留痕；字段与动作见 ADR 0009 和 `docs/DELTA_SCHEMA.md`。
 
 ## 二、召对任免
 
@@ -70,7 +70,7 @@
 | 打回 / 收回 | 零人物效果 |
 | 留中 | 同一案卷留待后续判决，零人物效果 |
 
-朝臣任命路径与后宫册封路径都不调用完整 `apply_score_extraction`，因此不会顺带重跑赈灾回流、议题或其他月末结算核。
+朝臣任命路径与后宫册封路径都不走完整 `settle_delta`，因此不会顺带重跑赈灾回流、议题或其他月末结算核。
 
 结算提交成功后，受影响人物才由 `registry.project_outcome` 注册或刷新；事务内不碰运行时缓存。
 

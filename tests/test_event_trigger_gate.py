@@ -5,33 +5,37 @@ seed 情势，历史 `events` 分支只过纯日历窗口 `_event_window_open` �
 年月误触发（毛文龙已安抚/效顺仍被弹出的机制半）。把门接进历史分支：带 gate 的历史事件须达标
 才进候选；无 gate（空 dict）= 纯日历锚定，行为不变。
 """
+import ming_sim.settlement.preflight as settlement_preflight
+
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+from ming_sim.applier import Provenance
 import json
 from contextlib import contextmanager
-from pathlib import Path
 
 import pytest
 
 from ming_sim import issues
+import ming_sim.entities.issue.event_terminal as event_terminal
 from ming_sim.models import Event
-from tests.dossier_test_helpers import recorded_executing_policy
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import section, view
 
-
-def _gather_with_gate(db, state, content, gate):
-    """把带给定 trigger_gate 的 seed 事件挂进内容，经公共 gather_candidate_events 求值（用后撤出）。"""
-    from ming_sim import issues
-    issues.bind_content(content)
-    ev = _hist_event("__gate_negative__", gate)
-    ev.auto_trigger = False
-    content.seed_events.append(ev)
-    try:
-        return issues.gather_candidate_events(state, db)
-    finally:
-        content.seed_events.remove(ev)
+def _land(db, state, extracted, *, content=None, ordered_deltas=None,
+          ordered_effect_event_ids=None):
+    """直调落账缝：旧总入口已退役，测试走 settle_delta。"""
+    return settle_delta(
+        state, db, extracted, SettlementContext(content=content),
+        ordered_deltas=ordered_deltas,
+        ordered_effect_event_ids=ordered_effect_event_ids,
+    )
 
 def _promulgated_dossier(db, state, decree_text):
-    dossier_id = recorded_executing_policy(
-        db, state, decree_text, target_kind="army", target_id="guanning",
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text=decree_text,
+        target_kind="army", target_id="guanning",
     )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
     return f"dossier:{dossier_id}"
 
 def _hist_event(eid, gate):
@@ -149,17 +153,18 @@ def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game
             ("__test_expiring_hist__",),
         ).fetchone() is None
 
-        terminalized = issues.apply_event_terminal_states(state, db)
+        terminalized = event_terminal.apply_event_terminal_states(state, db)
 
-        hit = next(
-            (item for item in terminalized if item.get("id") == "__test_expiring_hist__"),
-            None,
-        )
-        assert hit["terminal_state"] == "expired"
+        assert {
+            "id": "__test_expiring_hist__",
+            "title": "测试门控历史事件",
+            "terminal_state": "expired",
+        } in terminalized
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
             ("__test_expiring_hist__",),
         ).fetchone()
+        assert row is not None
         assert row["terminal_state"] == "expired"
 
         state.metrics["民心"] = 3
@@ -287,7 +292,7 @@ def test_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
             ("__test_expiring_seed__",),
         ).fetchone() is None
 
-        issues.apply_event_terminal_states(state, db)
+        event_terminal.apply_event_terminal_states(state, db)
 
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
@@ -353,7 +358,7 @@ def test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writi
             ("__test_expiring_auto_seed_candidate__",),
         ).fetchone() is None
 
-        issues.apply_event_terminal_states(state, db)
+        event_terminal.apply_event_terminal_states(state, db)
 
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
@@ -377,16 +382,16 @@ def test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute(gam
         assert ev.id in {candidate.id for candidate in issues.gather_candidate_events(state, db)}
 
         state.metrics["民心"] = 60
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
             content=content,
             candidate_event_ids_at_input={ev.id},
             candidate_event_ids_authoritative=True,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is False
+        assert "rejected" not in out.new_issues[0]
         assert db.conn.execute(
             "SELECT 1 FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -411,7 +416,7 @@ def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
         state.metrics["民心"] = 60
         db.conn.execute("BEGIN")
 
-        terminalized = issues.apply_event_terminal_states(state, db)
+        terminalized = event_terminal.apply_event_terminal_states(state, db)
 
         assert any(item["id"] == "__test_expiring_inside_outer_txn__" for item in terminalized)
         assert db.conn.in_transaction
@@ -439,7 +444,6 @@ def test_historical_event_none_gate_no_crash(game):
 
 # ── #12(b)：trigger_gate key/cond fail-loud（ADR 0012 残留 4b，Q3 裁断=fail-loud）──
 
-
 def test_gate_key_form_error_rejects_typo_metric_table_structure():
     """typo'd metric / 未知表 / 结构不完整 → 非空错误说明（fail-loud 素材）。"""
     from ming_sim.content import gate_key_form_error
@@ -449,11 +453,8 @@ def test_gate_key_form_error_rejects_typo_metric_table_structure():
     assert gate_key_form_error("event.huabei_plague.status")     # event 仅支持 triggered
 
 def test_gate_cond_form_error_numeric_and_text():
-    """数值比较 + 文本相等都合法（load/runtime 调和，残留 4b②）；垃圾非法。"""
+    """cond 形态负向闸：垃圾非法（合法 cond 由真实 load/runtime 案覆盖）。"""
     from ming_sim.content import gate_cond_form_error
-    # 数值比较（无 !=）+ 文本相等（==/!=）；数值 != 见 test_gate_cond_numeric_neq_rejected_*
-    for c in ("<=240", ">=34", "==5", "==ming", "!=houjin"):
-        assert gate_cond_form_error(c) == "", (c, gate_cond_form_error(c))
     assert gate_cond_form_error("abc")
     assert gate_cond_form_error(">> 5")
 
@@ -542,12 +543,14 @@ def test_load_event_rejects_month_out_of_range(monkeypatch, field, value):
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
 
-def test_typo_field_gate_raises_clear_not_operationalerror(game):
-    """region 字段 typo（DB 无此列）→ 清晰 ValueError，不留 OperationalError。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
+def test_typo_field_gate_raises_clear_not_operationalerror(read_game):
+    """gate 引用 typo'd 字段（DB 无此列）→ 求值期 SELECT 抛 OperationalError，被 fail-loud
+    成清晰 ValueError（含 key + 'DB 无此列'），不留 cryptic 崩（#12 Q3）。"""
     import pytest
-    db, state, content = game
+    from ming_sim.issues import _gate_passed
+    db, state, content = read_game
     with pytest.raises(ValueError):
-        _gather_with_gate(db, state, content, {'region.huguang.grane_security': '>=1'})
+        _gate_passed({"region.huguang.grane_security": ">=1"}, state.metrics, db)  # grain_security typo
 
 def test_gate_cond_numeric_neq_rejected_text_neq_ok():
     """cmr r1（Claude+codex concur）：'!=5' 数值 not-equal load 不许（runtime 数值分支无 !=、
@@ -567,12 +570,14 @@ def test_gate_key_rejects_empty_segments():
     assert gate_key_form_error("region.shaanxi|.unrest")  # | 含空成员
     assert gate_key_form_error("region.shaanxi.unrest") == ""  # 正常仍放行
 
-def test_typo_field_text_gate_raises_clear(game):
-    """文本相等 gate 字段 typo → 清晰 ValueError（文本分支）。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
+def test_typo_field_text_gate_raises_clear(read_game):
+    """cmr r1（Claude）：文本相等 gate 引用 typo'd 字段 → text-branch（_eval_gate_key_str）的
+    OperationalError 也被 fail-loud 成清晰 ValueError（覆盖文本分支 wrap）。"""
     import pytest
-    db, state, content = game
+    from ming_sim.issues import _gate_passed
+    db, state, content = read_game
     with pytest.raises(ValueError):
-        _gather_with_gate(db, state, content, {'region.huguang.controled_by': '==ming'})
+        _gate_passed({"region.huguang.controled_by": "==ming"}, state.metrics, db)  # controlled_by typo
 
 def test_gate_key_rejects_empty_class_name():
     """cmr r2（Claude+codex concur）：class.<名>@<region> 的类名为空（@ 前）→ fail-loud
@@ -620,41 +625,97 @@ def test_gate_key_rejects_empty_region_after_at():
     assert gate_key_form_error("class.士绅.satisfaction") == ""     # national（无 @）放行
     assert gate_key_form_error("class.士绅@nanzhili.satisfaction") == ""  # regional 正常放行
 
-def test_numeric_cond_on_text_field_raises_clear(game):
-    """数值比较 cond 配文本字段 → 清晰 ValueError。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
+def test_numeric_cond_on_text_field_raises_clear(read_game):
+    """#159：数值比较 cond 配文本字段（如 region.x.controlled_by >=1）→ runtime int(str) ValueError
+    被 fail-loud 成清晰 ValueError（数值不可比文本字段），不静默回 None 当条件不满足（Q3）。"""
     import pytest
-    db, state, content = game
+    from ming_sim.issues import _gate_passed
+    db, state, content = read_game
+    # controlled_by 是文本字段（'ming'/'houjin'），对它做数值比较 → fail-loud
     with pytest.raises(ValueError):
-        _gather_with_gate(db, state, content, {'region.huguang.controlled_by': '>=1'})
+        _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
 
-def test_character_gate_rejects_malformed_field_before_sql(game):
-    """畸形字段名先过白名单，不拼进 SQL。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
+def test_character_numeric_gate_supports_comparison(read_game):
+    """character.<name>.<field> 数值字段可参与 trigger_gate 比较（#201）。"""
+    from ming_sim.issues import _gate_passed
+    db, state, content = read_game
+
+    row = db.conn.execute("SELECT loyalty FROM characters WHERE name = ?", ("毛文龙",)).fetchone()
+    assert row is not None, "测试盘面应有毛文龙"
+
+    assert _gate_passed({"character.毛文龙.loyalty": f">={int(row['loyalty'])}"}, state.metrics, db)
+    assert not _gate_passed({"character.毛文龙.loyalty": f">{int(row['loyalty'])}"}, state.metrics, db)
+
+def test_character_numeric_gate_supports_aggregation(game):
+    """character.<name>|<name>.<field>.<agg> 与其它 gate 表同样支持聚合。"""
+    from ming_sim.issues import _gate_passed
+    db, state, _content = game
+
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (40, "毛文龙"))
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (80, "袁崇焕"))
+    db.conn.commit()
+
+    assert _gate_passed({"character.毛文龙|袁崇焕.loyalty.avg": ">=60"}, state.metrics, db)
+    assert not _gate_passed({"character.毛文龙|袁崇焕.loyalty.min": ">=60"}, state.metrics, db)
+
+def test_army_numeric_gate_preserves_fractional_arrears_tail(game):
+    """#302 cmr：并轨后 armies.arrears 可为小数尾差，trigger_gate 不得 int 截断成 0。"""
+    from ming_sim.issues import _gate_passed
+    db, state, _content = game
+
+    army_id = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()["id"]
+    db.conn.execute("UPDATE armies SET arrears=? WHERE id=?", (0.5, army_id))
+    db.conn.commit()
+
+    assert not _gate_passed({f"army.{army_id}.arrears": "<=0"}, state.metrics, db)
+    assert _gate_passed({f"army.{army_id}.arrears": ">0"}, state.metrics, db)
+
+def test_character_gate_rejects_malformed_field_before_sql(read_game):
+    """trigger_gate 字段名必须先过白名单，不能把畸形字段拼进 SQL。"""
     import pytest
-    db, state, content = game
-    with pytest.raises(ValueError):
-        _gather_with_gate(db, state, content, {'character.毛文龙.loyalty;DROP': '>=1'})
+    from ming_sim.issues import _gate_passed
+    db, state, _content = read_game
 
-def test_character_numeric_field_text_gate_raises_clear(game):
-    """人物数值字段走文本比较 → 清晰 ValueError。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
+    with pytest.raises(ValueError):
+        _gate_passed({"character.毛文龙.loyalty;DROP": ">=1"}, state.metrics, db)
+
+def test_character_numeric_field_text_gate_raises_clear(read_game):
+    """character 数值字段走文本比较时必须 fail-loud，不能 str(loyalty) 后静默 False。"""
     import pytest
-    db, state, content = game
-    with pytest.raises(ValueError):
-        _gather_with_gate(db, state, content, {'character.毛文龙.loyalty': '==active'})
+    from ming_sim.issues import _gate_passed
+    db, state, _content = read_game
 
-def test_character_typo_field_gate_raises_clear(game):
-    """人物字段名 typo → 清晰 ValueError（#201）。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
+    with pytest.raises(ValueError):
+        _gate_passed({"character.毛文龙.loyalty": "==active"}, state.metrics, db)
+
+def test_character_text_gate_supports_equality(game):
+    """character.<name>.<field> 文本字段可参与 trigger_gate 相等/不等比较（#201）。"""
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    db.conn.execute("UPDATE characters SET location = ? WHERE name = ?", ("liaodong", "毛文龙"))
+
+    assert _gate_passed({"character.毛文龙.location": "==liaodong"}, state.metrics, db)
+    assert _gate_passed({"character.毛文龙.location": "!=capital"}, state.metrics, db)
+    assert not _gate_passed({"character.毛文龙.location": "==capital"}, state.metrics, db)
+
+def test_character_typo_field_gate_raises_clear(read_game):
+    """character gate 字段名 typo（DB 无此列）沿用清晰 ValueError（#201）。"""
     import pytest
-    db, state, content = game
-    with pytest.raises(ValueError):
-        _gather_with_gate(db, state, content, {'character.毛文龙.loyality': '>=1'})
+    from ming_sim.issues import _gate_passed
+    db, state, content = read_game
 
-def test_character_text_typo_field_gate_raises_clear(game):
-    """人物文本 gate 字段 typo → 清晰 ValueError（#201）。经现役公共入口 gather_candidate_events（seed 事件门）断言 fail-loud。"""
+    with pytest.raises(ValueError):
+        _gate_passed({"character.毛文龙.loyality": ">=1"}, state.metrics, db)
+
+def test_character_text_typo_field_gate_raises_clear(read_game):
+    """character 文本 gate 字段名 typo 也必须 fail-loud（#201 cmr P2）。"""
     import pytest
-    db, state, content = game
-    with pytest.raises(ValueError):
-        _gather_with_gate(db, state, content, {'character.毛文龙.locaiton': '==liaodong'})
+    from ming_sim.issues import _gate_passed
+    db, state, content = read_game
 
+    with pytest.raises(ValueError):
+        _gate_passed({"character.毛文龙.locaiton": "==liaodong"}, state.metrics, db)
 
 def test_character_text_gate_rejects_serialized_list_field():
     """character.personal_skills 是序列化列表，不适合作普通文本等值门。"""
@@ -667,30 +728,6 @@ def test_character_text_gate_rejects_numeric_character_field():
     from ming_sim.content import gate_text_key_form_error
 
     assert gate_text_key_form_error("character.毛文龙.loyalty")
-
-
-def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
-    """auto-trigger 事务体内转 issue 时不得内部 commit，回滚边界由外层 atomic 统一控制。"""
-    db, state, content = game
-    issues.bind_content(content)
-    event_id = "__test_auto_trigger_atomic__"
-    ev = _hist_event(event_id, {})
-    ev.auto_trigger = True
-    calls = []
-
-    def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True, **_kwargs):
-        calls.append((ev_arg.id, commit))
-        return 999
-
-    monkeypatch.setattr(issues, "event_to_issue", fake_event_to_issue)
-    content.events.append(ev)
-    try:
-        triggered = issues.auto_trigger_seed_issues(state, db)
-    finally:
-        content.events.remove(ev)
-
-    assert calls == [(event_id, False)]
-    assert {"id": event_id, "title": ev.title, "issue_id": 999} in triggered
 
 
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
@@ -749,14 +786,14 @@ def test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transi
     with _restore_yuan_as_guanning_commander(db, content):
         assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
 
-        applied = issues.apply_score_extraction(
+        applied = _land(
             db,
             state,
             {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "transit_to": "shaanxi", "reason": "启程赴陕西剿抚"}]},
             content=content,
         )
 
-        assert not applied["applied_person_changes"][0].get("rejected", False)
+        assert view(applied, "applied_person_changes")
         row = db.conn.execute(
             "SELECT location, transit_to FROM characters WHERE name=?",
             ("毛文龙",),
@@ -794,14 +831,14 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
         assert any(ev.id == "mao_wenlong" for ev in cands)
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
             content=content,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is False
+        assert "rejected" not in out.new_issues[0]
         assert db.get_character_status("毛文龙")[0] == "dead"
         assert content.characters["毛文龙"].status == "dead"
         assert db.conn.execute(
@@ -817,7 +854,7 @@ def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome
     ).fetchone()["training"]
     origin_ref = _promulgated_dossier(db, state, "整饬锦州战备")
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"army_delta": {"guanning": {"origin_ref": origin_ref, "training": 5, "reason": "奉旨整饬锦州战备"}}},
@@ -827,7 +864,7 @@ def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome
     assert db.conn.execute(
         "SELECT training FROM armies WHERE id = ?", ("guanning",)
     ).fetchone()["training"] == before + 5
-    assert out["army_changes"][0].get("rejected") is not True
+    assert view(out, "army_changes")
 
 def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game):
     """#189 CMR：战略/外敌战事不能只记事件触发而无主账结果。"""
@@ -838,14 +875,15 @@ def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game)
 
     assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}]},
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert not db.has_event_triggered("jisi_lubian")
 
 def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(game):
@@ -857,14 +895,15 @@ def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(
 
     assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
 
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}]},
         content=content,
-    )
+    source=Provenance.system_simulation)
 
-    assert out["new_issues"][0]["rejected"] is True
+    assert out.new_issues == []
+    assert out.rejected[0].category == "issue"
     assert not db.has_event_triggered("jisi_lubian")
 
 def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected(game):
@@ -873,7 +912,7 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
     issues.bind_content(content)
     origin_ref = _promulgated_dossier(db, state, "移镇锦州前屯")
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -887,7 +926,7 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
     assert db.conn.execute(
         "SELECT station FROM armies WHERE id = ?", ("guanning",)
     ).fetchone()["station"] == "锦州前屯"
-    assert out["army_changes"][0].get("rejected") is not True
+    assert view(out, "army_changes")
 
 def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta(game):
     """PR R1：普通北直隶边防政策不能被林丹汗西迁锚点误当成孤儿战果。"""
@@ -897,7 +936,7 @@ def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta
     state.period = 4
     db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (30, "beizhili"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -915,7 +954,7 @@ def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 27
-    assert out["region_changes"][0].get("rejected") is not True
+    assert view(out, "region_changes")
 
 @pytest.mark.parametrize("reason", [
     "修筑洛阳城防，河南军压下降",
@@ -929,7 +968,7 @@ def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game,
     state.period = 9
     db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (30, "henan"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -948,7 +987,7 @@ def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game,
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("henan",)
     ).fetchone()["military_pressure"] == 26
-    assert out["region_changes"][0].get("rejected") is not True
+    assert view(out, "region_changes")
 
 def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(game):
     """PR R3：普通李自成势力变化不能因河南+流寇泛锚点被误当成洛阳陷落战果。"""
@@ -961,7 +1000,7 @@ def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(ga
         (52, "bandit_li_zicheng"),
     )
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -979,7 +1018,7 @@ def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(ga
     assert db.conn.execute(
         "SELECT military_strength FROM powers WHERE id = ?", ("bandit_li_zicheng",)
     ).fetchone()["military_strength"] == 49
-    assert out["power_changes"][0].get("rejected") is not True
+    assert view(out, "power_changes")
 
 def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R2：同信封无关地区变化不能冒充该战略战事的主账结果。"""
@@ -989,7 +1028,7 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
     state.period = 11
     db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "shaanxi"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -999,7 +1038,8 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert not db.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
@@ -1013,7 +1053,7 @@ def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_eve
     state.period = 11
     db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "beizhili"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1023,12 +1063,13 @@ def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_eve
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert not db.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["unrest"] == 79
-    assert out["region_changes"][0].get("rejected") is not True
+    assert view(out, "region_changes")
 
 def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R4：无关人物变化不能冒充战略战事主账结果。"""
@@ -1038,7 +1079,7 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
     state.period = 11
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1048,10 +1089,11 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert not db.has_event_triggered("jisi_lubian")
     assert db.get_character_status("孙传庭")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
+    assert view(out, "applied_person_changes")
 
 def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
     """ship-pre CMR R4：无关人物即使 reason 带战役锚词，也不能冒充战略战事主账。"""
@@ -1061,7 +1103,7 @@ def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_eve
     state.period = 11
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1071,10 +1113,11 @@ def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_eve
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert not db.has_event_triggered("jisi_lubian")
     assert db.get_character_status("孙传庭")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
+    assert view(out, "applied_person_changes")
 
 def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R5：点名将普通人物变化不能只靠姓名冒充该战事结果。"""
@@ -1084,7 +1127,7 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
     state.period = 9
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1094,10 +1137,11 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert not db.has_event_triggered("wuyin_lubian")
     assert db.get_character_status("卢象升")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
+    assert view(out, "applied_person_changes")
 
 def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game):
     """#189 CMR R2：战略事件被拒时，只跳过其战果，不能吞掉本月无关地区变化。"""
@@ -1108,7 +1152,7 @@ def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game)
     db.mark_event_triggered(state, "jisi_lubian")
     db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "shaanxi"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1118,7 +1162,8 @@ def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game)
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
     ).fetchone()["unrest"] == 79
@@ -1132,7 +1177,7 @@ def test_rejected_strategic_event_preserves_unanchored_target_region_delta(game)
     db.mark_event_triggered(state, "jisi_lubian")
     db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "beizhili"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1142,11 +1187,12 @@ def test_rejected_strategic_event_preserves_unanchored_target_region_delta(game)
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["unrest"] == 79
-    assert out["region_changes"][0].get("rejected") is not True
+    assert view(out, "region_changes")
 
 def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
     """#189 CMR R4：战略事件重复/拒收时，不能吞掉同信封无关人物变化。"""
@@ -1157,7 +1203,7 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
     db.mark_event_triggered(state, "jisi_lubian")
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -1167,17 +1213,13 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert db.get_character_status("孙传庭")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
+    assert view(out, "applied_person_changes")
 
 def test_rejected_strategic_event_does_not_land_substitute_commander_person_delta(game):
-    """#189 CMR R3：替补将也是战事软判结果；重复/拒收事件不得单独杀人。
-
-    经真实声明入口承接：事件归属信封在 C3 预检整封拒收，替补将人事不得落账。
-    """
-    from ming_sim.declaration_dispatch import dispatch_declaration
-
+    """#189 CMR R3：替补将也是战事软判结果；重复/拒收事件不得单独杀人。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1641
@@ -1185,88 +1227,39 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     db.mark_event_triggered(state, "songshan_battle")
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    result = dispatch_declaration(
+    out = _land(
         db,
         state,
         {
-            "effects": [
-                {
-                    "event_id": "songshan_battle",
-                    "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-                    "人物变更": [
-                        {
-                            "origin_ref": "盘面自发",
-                            "name": "孙传庭",
-                            "动作": "处置",
-                            "status": "dead",
-                            "reason": "松锦替补战死",
-                        },
-                    ],
-                },
+            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
+            "人物变更": [
+                {"origin_ref": "盘面自发", "affair_declaration": {"attach": "new"}},
+                {"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "松锦替补战死"},
             ],
         },
+        content=content,
+        ordered_deltas={
+            "army_delta": [], "region_delta": [], "power_updates": [],
+            "new_armies": [],
+        },
+        ordered_effect_event_ids={"人物变更": ["", "songshan_battle"]},
     )
 
-    assert any(
-        getattr(item, "category", "") == "event_rejected"
-        for item in result.effects.rejected
-    )
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert db.get_character_status("孙传庭")[0] == "active"
-    assert result.effects.applied == []
-
-
-
-def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
-    """#189：外敌战事节点不硬绑主帅死/降；人物结局不进结构化 effect。"""
-    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
-    events = json.loads(events_path.read_text(encoding="utf-8"))
-    wuyin = next(item for item in events if item["id"] == "wuyin_lubian")
-    songshan = next(item for item in events if item["id"] == "songshan_battle")
-
-    # 结构契约：战略外敌节点；无硬编码人物终态 effect 键。
-    for item in (wuyin, songshan):
-        assert item["trigger_class"] == "strategic_foreign"
-        assert item["event_type"] == "node"
-        assert "character_status_changes" not in item
-        assert "effect_on_resolve" not in item
-        assert "effect_on_fail" not in item
-    assert "卢象升" in wuyin["audiences"] or "卢象升" in wuyin["interests"]
-    assert "洪承畴" in songshan["audiences"] or "洪承畴" in songshan["interests"]
-
+    refused_people = section(out, "applied_person_changes").rejected
+    assert len(refused_people) == 1
+    assert all(
+        not (isinstance(rejection.item, dict) and "_effect_event_id" in rejection.item)
+        for rejection in out.shape_rejections
+    )
+    assert refused_people[0].category == "event_rejected"
 
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
-    """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 6
-    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
+    """event trigger 写入不得提前提交；外层 atomic_and_reload 回滚后 DB 与内存同源恢复。"""
+    from ming_sim.decree import atomic_and_reload
 
-    with _restore_yuan_as_guanning_commander(db, content):
-        db.conn.commit()
-        before_logs = db.conn.execute(
-            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
-        ).fetchone()[0]
-
-        db.conn.execute("BEGIN")
-        out = issues.apply_issue_tracker_output(
-            db,
-            state,
-            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
-            content=content,
-        )
-        assert out["new_issues"][0]["rejected"] is False
-        db.conn.rollback()
-
-        assert db.get_character_status("毛文龙")[0] == "active"
-        assert content.characters["毛文龙"].status == "active"
-        assert not db.has_event_triggered("mao_wenlong")
-        assert db.conn.execute(
-            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
-        ).fetchone()[0] == before_logs
-
-def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game):
-    """review R3：content 省略时也要 snapshot bind_content() 的人物内存。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1629
@@ -1276,36 +1269,49 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
 
     with _restore_yuan_as_guanning_commander(db, content):
         db.conn.commit()
+        before_logs = db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0]
 
-        db.conn.execute("BEGIN")
-        out = issues.apply_issue_tracker_output(
-            db,
-            state,
-            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
-        )
-        assert out["new_issues"][0]["rejected"] is False
-        assert content.characters["毛文龙"].status == "dead"
-        db.conn.rollback()
+        with pytest.raises(RuntimeError, match="force-rollback"):
+            with atomic_and_reload(db, state, content=content):
+                out = apply_issue_tracker_output(
+                    db,
+                    state,
+                    {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+                    content=content,
+                    source=Provenance.system_simulation,
+                )
+                assert "rejected" not in out.new_issues[0]
+                raise RuntimeError("force-rollback")
 
         assert db.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
+        assert not db.has_event_triggered("mao_wenlong")
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0] == before_logs
 
-def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):
-    """post-merge CMR R9：外层事务 rollback 后，state.metrics 内存也必须回到事务前。"""
+def test_apply_score_extraction_metric_delta_restores_runtime_via_outer_reload(game):
+    """整事务回滚后内存由最外层 atomic_and_reload 同源重载，不靠 settle 全批快照。"""
+    from ming_sim.decree import atomic_and_reload
+
     db, state, content = game
     state.metrics["民心"] = 50
+    db.conn.execute("UPDATE metrics SET value=? WHERE key=?", (50, "民心"))
     db.conn.commit()
 
-    db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {"metric_delta": {"民心": -7}},
-        content=content,
-    )
-    assert out["metric_delta"]["民心"] == -7
-    assert state.metrics["民心"] == 43
-    db.conn.rollback()
+    with pytest.raises(RuntimeError, match="force-rollback"):
+        with atomic_and_reload(db, state, content=content):
+            out = _land(
+                db,
+                state,
+                {"metric_delta": {"民心": -7}},
+                content=content,
+            )
+            assert dict(out.metric.applied)["民心"] == -7
+            assert state.metrics["民心"] == 43
+            raise RuntimeError("force-rollback")
 
     assert state.metrics["民心"] == 50
 
@@ -1331,13 +1337,13 @@ def test_event_pool_situation_insert_respects_outer_transaction_rollback(game):
     content.event_by_id[ev.id] = ev
     try:
         db.conn.execute("BEGIN")
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
             content=content,
-        )
-        assert out["new_issues"][0]["rejected"] is False
+        source=Provenance.system_simulation)
+        assert "rejected" not in out.new_issues[0]
         db.conn.rollback()
 
         row = db.conn.execute(
@@ -1358,14 +1364,15 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (70, "毛文龙"))
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
 
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
         content=content,
-    )
+    source=Provenance.system_simulation)
 
-    assert out["new_issues"][0]["rejected"] is True
+    assert out.new_issues == []
+    assert out.rejected[0].category == "issue"
     assert db.get_character_status("毛文龙")[0] == "active"
     assert content.characters["毛文龙"].status == "active"
     assert not db.has_event_triggered("mao_wenlong")
@@ -1384,7 +1391,7 @@ def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
     cands = issues.gather_candidate_events(state, db)
 
     assert all(ev.id != "yuan_xialing" for ev in cands)
-    issues.apply_event_terminal_states(state, db)
+    event_terminal.apply_event_terminal_states(state, db)
     row = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
         ("yuan_xialing",),
@@ -1432,26 +1439,6 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
     )
 
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
-
-
-def test_person_core_static_backfill_preserves_relocated_mao(game):
-    """#191 CMR R4：旧档静态补丁不能覆盖玩家已落库的调离规避状态。"""
-    db, _state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET location=?, transit_to='' WHERE name=?",
-        ("beizhili", "毛文龙"),
-    )
-    db.conn.commit()
-
-    db.init_schema()
-
-    row = db.conn.execute(
-        "SELECT location FROM characters WHERE name=?",
-        ("毛文龙",),
-    ).fetchone()
-    assert row["location"] == "beizhili"
-
 
 def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
     """#191 CMR：洛阳陷落是城市/流寇压力事件，福王已死不应让事件进入人物核心作废终态。"""
@@ -1509,120 +1496,11 @@ def test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path(ga
 
     assert any(ev.id == "zhangxianzhong_zaifan" for ev in issues.gather_candidate_events(state, db))
 
-def test_issue_191_person_core_events_are_explicitly_classified(content):
-    """#191：人物核心类逐事件显式标注；战略/外敌点名将不误纳入。"""
-    expected = {
-        "mao_wenlong": (
-            ["毛文龙"],
-            {"character.毛文龙.status", "character.毛文龙.location", "character.袁崇焕.status", "army.guanning.commander"},
-        ),
-        "yuan_xialing": (
-            ["袁崇焕"],
-            {"character.袁崇焕.status", "army.guanning.commander", "character.毛文龙.status", "character.毛文龙.status_reason", "event.jisi_lubian.terminal_state", "event.jisi_lubian.terminal_reason"},
-        ),
-        "kong_youde": (
-            ["孔有德"],
-            {"character.孔有德.status", "character.孔有德.power_id", "character.孔有德.location", "character.毛文龙.status"},
-        ),
-        "li_chenghai": (
-            ["李自成"],
-            {"character.李自成.status", "character.李自成.power_id", "character.李自成.location", "region.shaanxi.unrest", "power.bandit_li_zicheng.military_strength"},
-        ),
-        "zhangxianzhong_zaifan": (
-            ["张献忠"],
-            {"character.张献忠.status", "character.张献忠.power_id", "character.张献忠.loyalty", "character.张献忠.location"},
-        ),
-    }
-    for event_id, (subjects, gate_keys) in expected.items():
-        ev = content.event_by_id[event_id]
-        assert ev.person_core_subjects == subjects
-        assert gate_keys <= set(ev.trigger_gate)
-
-    not_person_core = {
-        "jisi_lubian",
-        "dalingghe",
-        "lindan_xiqian",
-        "huangtaiji_chengdi",
-        "wuyin_lubian",
-        "songshan_battle",
-        "luoyang_fallen",
-    }
-    assert not {
-        event_id for event_id in not_person_core
-        if content.event_by_id[event_id].person_core_subjects
-    }
-
-def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(content):
-    """#194：战略/外敌类事件显式分类，且每条都有结构化 trigger_gate。"""
-    raw_by_id = {
-        str(item["id"]): item
-        for item in json.loads(
-            (Path(__file__).resolve().parents[1] / "content" / "events.json").read_text(
-                encoding="utf-8"
-            )
-        )
-    }
-    expected = {
-        "jisi_lubian": {},
-        "dalingghe": {
-            "region.liaodong.controlled_by": "==ming",
-            "army.guanning.supply": "<=45",
-            "army.guanning.arrears": ">=40",
-            "power.houjin.military_strength": ">=70",
-        },
-        "lindan_xiqian": {
-            "region.mongol_chahar.controlled_by": "==mongol",
-            "army.mongol_chahar_host.loyalty": "<=45",
-            "power.mongol.military_strength": "<=55",
-            "power.houjin.military_strength": ">=70",
-        },
-        "wuyin_lubian": {
-            "army.jizhen.arrears": ">=10",
-            "army.xuan_da.morale": "<=55",
-            "power.mongol.military_strength": "<=55",
-            "power.houjin.military_strength": ">=75",
-        },
-        "songshan_battle": {
-            "region.liaodong.controlled_by": "==ming",
-            "army.guanning.supply": "<=45",
-            "army.guanning.morale": "<=55",
-            "power.houjin.military_strength": ">=70",
-        },
-        "luoyang_fallen": {
-            "region.henan.controlled_by": "==ming",
-            "region.henan.unrest": ">=60",
-            "power.bandit_li_zicheng.military_strength": ">=45",
-        },
-        "kaifeng_siege": {
-            "event.luoyang_fallen.terminal_state": "==triggered",
-            "region.henan.controlled_by": "==ming",
-            "region.henan.military_pressure": ">=70",
-            "power.bandit_li_zicheng.military_strength": ">=55",
-        },
-        "beijing_fallen": {
-            "region.beizhili.controlled_by": "==ming",
-            "region.beizhili.military_pressure": ">=85",
-            "army.jingying.morale": "<=40",
-            "army.jingying.loyalty": "<=45",
-            "power.bandit_li_zicheng.military_strength": ">=65",
-        },
-    }
-
-    for event_id, trigger_gate in expected.items():
-        raw = raw_by_id[event_id]
-        ev = content.event_by_id[event_id]
-        assert raw["trigger_class"] == "strategic_foreign"
-        assert raw["trigger_gate"] == trigger_gate
-        assert ev.trigger_class == "strategic_foreign"
-        assert ev.event_type in {"node", "ending"}
-        assert ev.trigger_gate == trigger_gate
-        assert ev.person_core_subjects == []
-
 def test_strategic_foreign_classification_requires_outcome_targets(content, monkeypatch):
     """PR R3：trigger_class 是内容真源，消费者 target map 漏项必须启动期 fail-loud。"""
-    targets = dict(issues._STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS)
+    targets = dict(settlement_preflight._STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS)
     targets.pop("luoyang_fallen")
-    monkeypatch.setattr(issues, "_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS", targets)
+    monkeypatch.setattr(settlement_preflight, "_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS", targets)
 
     with pytest.raises(SystemExit):
         issues.bind_content(content)
@@ -1635,7 +1513,7 @@ def test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event(
     state.period = 8
     db.set_character_status(state, "祖大寿", "dead", reason="测试：大凌河前已阵亡")
 
-    terminalized = issues.apply_event_terminal_states(state, db)
+    terminalized = event_terminal.apply_event_terminal_states(state, db)
     cands = issues.gather_candidate_events(state, db)
 
     assert all(item["id"] != "dalingghe" for item in terminalized)
@@ -1669,12 +1547,16 @@ def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
     assert after["population"] == before["population"] - 400000  # #648：新档人口单位=人（ADR 0088），content -40万
     assert after["unrest"] == before["unrest"] + 6
 
-def test_historical_auto_trigger_core_effect_is_applied_once(game):
-    """#192：确定性核心事实重进不应二次扣数，event_triggers 是硬幂等门。"""
+def test_historical_auto_trigger_core_effect_is_applied_once(game, monkeypatch):
+    """确定性核心事实与坏后果拒收均遵循事件的硬幂等门。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1633
     state.period = 7
+    event = next(ev for ev in content.events if ev.id == "huabei_plague")
+    monkeypatch.setattr(event, "effect_on_trigger", {
+        **event.effect_on_trigger, "metrics": {"not_a_metric": 1},
+    })
 
     first = issues.auto_trigger_seed_issues(state, db)
     after_first = db.conn.execute(
@@ -1694,6 +1576,31 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("huabei_plague",),
     ).fetchone()[0] == 1
+    reports = db.conn.execute(
+        "SELECT item_json, category, turn FROM rejection_reports WHERE section='event_trigger'"
+    ).fetchall()
+    assert len(reports) == 1
+    assert json.loads(reports[0]["item_json"]) == {
+        "event_id": event.id, "effect": {"field": "not_a_metric", "raw_value": 1},
+    }
+    assert reports[0]["category"] == "invalid_enum"
+    assert reports[0]["turn"] == state.turn
+
+def test_auto_trigger_historical_events_use_preloaded_terminal_refs(game, monkeypatch):
+    """PR review：历史 auto_trigger 去重应批量读 event_triggers，避免每事件查 terminal_state。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1633
+    state.period = 7
+
+    def _unexpected_per_event_probe(*_args, **_kwargs):
+        raise AssertionError("auto_trigger historical loop must not call event_terminal_state per event")
+
+    monkeypatch.setattr(type(db), "event_terminal_state", _unexpected_per_event_probe)
+
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    assert any(item["id"] == "huabei_plague" for item in triggered)
 
 def test_historical_auto_trigger_event_expires_after_latest_window(game):
     """#188：历史 auto_trigger 也须尊重最晚窗口，过期后不能硬触发。"""
@@ -1785,7 +1692,9 @@ def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effec
     def boom(*args, **kwargs):
         raise RuntimeError("boom after issue insert")
 
-    monkeypatch.setattr(issues, "_apply_issue_entities", boom)
+    import ming_sim.entities.issue.effects as issue_effects
+
+    monkeypatch.setattr(issue_effects, "_apply_issue_entities", boom)
 
     with pytest.raises(RuntimeError):
         issues.auto_trigger_seed_issues(state, db)
@@ -1861,7 +1770,7 @@ def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     assert after["manpower"] == before["manpower"] - 51000
     assert after["morale"] == before["morale"] - 16
 
-def test_huangtaiji_chengdi_lands_only_when_model_picks_it(web_game):
+def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
     """#1893/#192：称帝不选不落、选中一次落定——两向都走真实接缝。
 
     旧断链有两处，且都在本用例须穿过的接缝上：月初 ``GameSession.begin_turn``
@@ -1871,7 +1780,10 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(web_game):
     """
     from ming_sim.month_translate import dispatch_month_segment
     from ming_sim.decree import prepare_resolve_front_half
-    db, state, content = web_game.db, web_game.state, web_game.session.content
+    from ming_sim.session import GameSession
+    import ming_sim.session as session_mod
+
+    db, state, content = game
     issues.bind_content(content)
     state.year, state.period = 1636, 4
     db.save_state(state)
@@ -1884,8 +1796,13 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(web_game):
     assert _power_name()["name"] == "后金", "本用例以未选中的后金为起点，起点已变则本用例空转"
 
     # 不选：经真实 begin_turn 入口，日期到了也不改名、不发终态，候选仍在池里可挑。
-    web_game.session.begin_turn()
-    state = web_game.state
+    # 用 __new__ 跳过重型 __init__（agno/registry/LLM），只装 begin_turn 需要的协作者。
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
+    monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.content, sess.llm_config, sess.agno_db = db, content, None, None
+    sess.begin_turn()
+    state = sess.state
     prepare_resolve_front_half(state, db, decree_text="", content=content)
 
     assert _power_name()["name"] == "后金"
@@ -1908,8 +1825,9 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(web_game):
         db, state, segment="皇太极称帝",
         translate_fn=lambda request, config: declaration,
     )
-    applied = result.effects.applied[0]["issue_summary"]["new_issues"]
-    assert [item.get("rejected") for item in applied] == [False]
+    outcome = result.effects.applied[0]
+    assert outcome.issue.new_issues
+    assert not section(outcome, "issue_summary").rejected
     assert db.event_terminal_state("huangtaiji_chengdi") == "triggered"
     row = _power_name()
     assert row["name"] == "大清"
@@ -1935,10 +1853,8 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(web_game):
         db, state, segment="再说称帝",
         translate_fn=lambda request, config: declaration,
     )
-    assert [
-        item.get("rejected")
-        for item in again.effects.applied[0]["issue_summary"]["new_issues"]
-    ] == [True]
+    again_outcome = again.effects.applied[0]
+    assert section(again_outcome, "issue_summary").rejected or not again_outcome.issue.new_issues
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
         ("huangtaiji_chengdi",),
@@ -2040,7 +1956,7 @@ def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
     try:
         assert all(c.id != ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -2048,10 +1964,11 @@ def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
             },
             content=content,
-        )
+        source=Provenance.system_simulation)
 
         assert state.metrics["民心"] == 5
-        assert out["new_issues"][0]["rejected"] is True
+        assert out.new_issues == []
+        assert out.rejected[0].category == "issue"
         assert not db.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
@@ -2080,7 +1997,7 @@ def test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta(game):
     try:
         assert all(c.id != ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_score_extraction(
+        out = _land(
             db,
             state,
             {
@@ -2091,7 +2008,8 @@ def test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta(game):
         )
 
         assert state.metrics["民心"] == 5
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert section(out, "issue_summary").rejected
+        assert section(out, "issue_summary").rejected[0].category == "issue"
         assert not db.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
@@ -2129,7 +2047,7 @@ def test_event_pool_rechecks_after_advances_close_gate(game):
     try:
         assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -2137,10 +2055,11 @@ def test_event_pool_rechecks_after_advances_close_gate(game):
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
             },
             content=content,
-        )
+        source=Provenance.system_simulation)
 
         assert state.metrics["民心"] == 5
-        assert out["new_issues"][0]["rejected"] is True
+        assert out.new_issues == []
+        assert out.rejected[0].category == "issue"
         assert not db.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
@@ -2189,7 +2108,7 @@ def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
         cands = issues.gather_candidate_events(state, db)
         assert {first.id, second.id}.issubset({c.id for c in cands})
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -2199,11 +2118,12 @@ def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
                 ]
             },
             content=content,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is False
+        assert "rejected" not in out.new_issues[0]
         assert db.get_character_status("袁崇焕")[0] == "dismissed"
-        assert out["new_issues"][1]["rejected"] is True
+        assert len(out.new_issues) == 1
+        assert out.rejected[0].category == "issue"
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (second.id,),
@@ -2221,7 +2141,7 @@ def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {
@@ -2237,9 +2157,9 @@ def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game
                 }
             ]
         },
-    )
-    assert out["new_issues"][0]["rejected"] is False
-    issue_id = out["new_issues"][0]["issue_id"]
+    source=Provenance.system_simulation)
+    assert "rejected" not in out.new_issues[0]
+    issue_id = out.new_issues[0]["issue_id"]
     db.conn.rollback()
 
     assert db.conn.execute("SELECT id FROM issues WHERE id=?", (issue_id,)).fetchone() is None
@@ -2263,12 +2183,12 @@ def test_issue_tracker_advance_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"advances": [{"issue_id": issue_id, "delta_bar": 7, "stage_text": "推进后"}]},
-    )
-    assert out["advances"][0]["status"] == "active"
+    source=Provenance.system_simulation)
+    assert out.advances[0]["status"] == "active"
     db.conn.rollback()
 
     row = db.conn.execute("SELECT bar_value, stage_text, status FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -2298,12 +2218,12 @@ def test_issue_tracker_advance_effects_respect_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"advances": [{"issue_id": issue_id, "delta_bar": 10, "stage_text": "办成"}]},
-    )
-    assert out["advances"][0]["status"] == "resolved"
+    source=Provenance.system_simulation)
+    assert out.advances[0]["status"] == "resolved"
     db.conn.rollback()
 
     row = db.conn.execute("SELECT bar_value, stage_text, status FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -2337,12 +2257,12 @@ def test_issue_tracker_close_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
-    )
-    assert out["closes"][0]["reason"] == "resolved"
+    source=Provenance.system_simulation)
+    assert out.closes[0]["reason"] == "resolved"
     db.conn.rollback()
 
     row = db.conn.execute("SELECT bar_value, stage_text, status FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -2384,12 +2304,12 @@ def test_issue_tracker_close_effects_respect_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
-    )
-    assert out["closes"][0]["reason"] == "resolved"
+    source=Provenance.system_simulation)
+    assert out.closes[0]["reason"] == "resolved"
     db.conn.rollback()
 
     issue_row = db.conn.execute("SELECT status, bar_value FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -2437,12 +2357,12 @@ def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(g
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
-    )
-    assert out["closes"][0]["reason"] == "resolved"
+    source=Provenance.system_simulation)
+    assert out.closes[0]["reason"] == "resolved"
     db.conn.rollback()
 
     issue_row = db.conn.execute("SELECT status, bar_value FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -2478,12 +2398,12 @@ def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(g
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
-    )
-    assert out["closes"][0]["reason"] == "resolved"
+    source=Provenance.system_simulation)
+    assert out.closes[0]["reason"] == "resolved"
     db.conn.rollback()
 
     issue_row = db.conn.execute("SELECT status, bar_value FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -2495,8 +2415,8 @@ def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(g
         (reason,),
     ).fetchone()[0] == 0
 
-def test_apply_issue_entities_person_changes_respect_commit_false(game):
-    """post-merge CMR R6：_apply_issue_entities(commit=False) 的人物 DB 写入不得自行提交。"""
+def test_apply_score_extraction_person_changes_respect_outer_transaction_rollback(game):
+    """顶层人物变更不得自行提交外层事务（真实 settle_delta 入口，非 helper 自持生命周期）。"""
     db, state, content = game
     issues.bind_content(content)
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "毛文龙"))
@@ -2506,18 +2426,25 @@ def test_apply_issue_entities_person_changes_respect_commit_false(game):
         ("毛文龙",),
     ).fetchone()[0]
 
-    issues._apply_issue_entities(
+    db.conn.execute("BEGIN")
+    out = _land(
         db,
         state,
         {
             "人物变更": [
-                {"origin_ref": "盘面自发", "name": "毛文龙", "动作": "处置", "status": "dismissed", "reason": "测试 helper no-commit"}
+                {
+                    "origin_ref": "盘面自发",
+                    "name": "毛文龙",
+                    "动作": "处置",
+                    "status": "dismissed",
+                    "reason": "测试外层人物回滚",
+                }
             ]
         },
-        "测试 helper no-commit",
         content=content,
-        commit=False,
     )
+    assert view(out, "applied_person_changes")
+    assert db.get_character_status("毛文龙")[0] == "dismissed"
     db.conn.rollback()
 
     assert db.get_character_status("毛文龙")[0] == "active"
@@ -2533,12 +2460,13 @@ def test_apply_score_extraction_top_level_economy_respects_outer_transaction_rol
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -1, "category": "测试", "reason": reason}]},
         content=content,
     )
+    assert view(out, "economy_moves")[0]["reason"] == reason
     db.conn.rollback()
 
     assert db.conn.execute(
@@ -2553,13 +2481,13 @@ def test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollbac
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"fiscal_changes": [{"origin_ref": "盘面自发", "key": key, "delta": 1, "reason": "测试顶层财政事务R7"}]},
         content=content,
     )
-    assert out["fiscal_changes"][0]["key"] == key
+    assert view(out, "fiscal_changes")[0]["key"] == key
     db.conn.rollback()
 
     assert db.get_fiscal_config()[key] == before
@@ -2578,13 +2506,13 @@ def test_apply_score_extraction_class_delta_respects_outer_transaction_rollback(
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {"class_delta": {class_key: {"satisfaction": -1}}},
         content=content,
     )
-    assert out["class_delta"][class_key]["satisfaction"] == -1
+    assert {k: v for k, v in out.social_class.applied}[class_key]["satisfaction"] == -1
     db.conn.rollback()
 
     if row["region_id"] is None:
@@ -2621,7 +2549,7 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -2635,17 +2563,23 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
                     "name": "测试顶层事务营",
                     "owner_power": "ming",
                     "manpower": 100,
+                    "pay_source_region": "shaanxi",
+                    "province_pay_share": 1.0,
+                    "central_pay_share": 0.0,
                     "reason": "测试顶层建军事务R7",
                 }
             ],
         },
         content=content,
     )
-    assert out["region_changes"]
-    assert out["army_changes"]
-    assert out["power_changes"]
-    assert out["faction_delta"]
-    assert out["created_armies"][0]["id"] == new_army_id
+    assert view(out, "region_changes")
+    assert view(out, "army_changes")
+    assert view(out, "power_changes")
+    assert {k: v for k, v in out.faction.applied}
+    assert any(
+        isinstance(item, dict) and item.get("id") == new_army_id
+        for item in view(out, "army_changes")
+    )
     db.conn.rollback()
 
     assert db.conn.execute(
@@ -2669,13 +2603,13 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
 def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 fiscal_creates/removes 不得由财政 helper 提前提交。"""
     db, state, content = game
-    remove_key = next(key for key in db.get_fiscal_config() if key.endswith("_base"))
+    remove_key = next(iter(db.get_fiscal_config()))
     created_key = "__test_fiscal_txn_r7_base"
     created_rate_key = "__test_fiscal_txn_r7_rate"
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -2693,8 +2627,8 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
         },
         content=content,
     )
-    assert out["fiscal_removes"][0]["key"] == remove_key
-    assert out["fiscal_creates"][0]["key"] == created_key
+    assert view(out, "fiscal_removes")[0]["key"] == f"{db._stem_of(remove_key)}_base"
+    assert view(out, "fiscal_creates")[0]["key"] == created_key
     db.conn.rollback()
 
     assert remove_key in db.get_fiscal_config()
@@ -2702,534 +2636,6 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
         "SELECT key FROM fiscal_config WHERE key IN (?, ?)",
         (created_key, created_rate_key),
     ).fetchall() == []
-
-def test_event_pool_pending_invalid_location_does_not_block_gate(game):
-    """#667：拒收的 location-only 行止不得投影到事件 gate。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, location=?, transit_to='' WHERE name=?",
-        ("active", "liaodong", "毛文龙"),
-    )
-    if "毛文龙" in content.characters:
-        content.characters["毛文龙"].status = "active"
-        content.characters["毛文龙"].location = "liaodong"
-        content.characters["毛文龙"].transit_to = ""
-    ev = Event(
-        id="__test_pending_location_gate__",
-        title="测试·行止地点门",
-        kind="朝议",
-        summary="毛文龙仍在辽东才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.毛文龙.location": "== liaodong"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
-
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "location": "beizhili"}],
-            },
-            content=content,
-        )
-
-        new_issue = out["issue_summary"]["new_issues"][0]
-        assert new_issue["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["category"] == "invalid_transition"
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is not None
-        assert db.conn.execute(
-            "SELECT location FROM characters WHERE name=?",
-            ("毛文龙",),
-        ).fetchone()["location"] == "liaodong"
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_invalid_appointment_does_not_block_gate(game):
-    """post-merge CMR R7：会被任命转移矩阵拒收的人物变更，不应提前阻断事件门。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("dead", "袁崇焕"))
-    if "袁崇焕" in content.characters:
-        content.characters["袁崇焕"].status = "dead"
-    ev = Event(
-        id="__test_invalid_appointment_pending__",
-        title="测试·非法任命不阻断",
-        kind="朝议",
-        summary="袁崇焕已死时可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.status": "== dead"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is not None
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game):
-    """post-merge CMR R7：缺方式/反噬的易主拒收项，不应提前阻断 power_id 门。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute("UPDATE characters SET status=?, power_id=? WHERE name=?", ("active", "ming", "袁崇焕"))
-    if "袁崇焕" in content.characters:
-        content.characters["袁崇焕"].status = "active"
-        content.characters["袁崇焕"].power_id = "ming"
-    ev = Event(
-        id="__test_invalid_allegiance_pending__",
-        title="测试·非法易主不阻断",
-        kind="朝议",
-        summary="袁崇焕仍属明时可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.power_id": "== ming"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "易主", "new_power": "houjin"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is not None
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_disposition_clears_office_gate(game):
-    """post-merge CMR R7：同回合处置会清空 office，事件门不得沿用旧职。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, office=?, office_type=? WHERE name=?",
-        ("active", "蓟辽督师", "职名分", "袁崇焕"),
-    )
-    if "袁崇焕" in content.characters:
-        ch = content.characters["袁崇焕"]
-        ch.status = "active"
-        ch.office = "蓟辽督师"
-        ch.office_type = "职名分"
-    ev = Event(
-        id="__test_disposition_clears_office_pending__",
-        title="测试·处置清职门",
-        kind="朝议",
-        summary="袁崇焕仍为督师时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.office": "== 蓟辽督师"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
-
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试罢离督师"}],
-            },
-            content=content,
-        )
-
-        new_issue = out["issue_summary"]["new_issues"][0]
-        assert new_issue["rejected"] is True
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is None
-        assert db.conn.execute(
-            "SELECT office FROM characters WHERE name=?",
-            ("袁崇焕",),
-        ).fetchone()["office"] == ""
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_invalid_location_does_not_clear_transit_gate(game):
-    """#667：拒收的 location-only 行止不得清空 gate 所见在途目的地。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, location=?, transit_to=? WHERE name=?",
-        ("active", "liaodong", "beizhili", "毛文龙"),
-    )
-    if "毛文龙" in content.characters:
-        ch = content.characters["毛文龙"]
-        ch.status = "active"
-        ch.location = "liaodong"
-        ch.transit_to = "beizhili"
-    ev = Event(
-        id="__test_location_clears_transit_pending__",
-        title="测试·行止清在途门",
-        kind="朝议",
-        summary="毛文龙仍在途入京时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.毛文龙.transit_to": "== beizhili"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
-
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "location": "liaodong"}],
-            },
-            content=content,
-        )
-
-        new_issue = out["issue_summary"]["new_issues"][0]
-        assert new_issue["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["category"] == "invalid_transition"
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is not None
-        assert db.conn.execute(
-            "SELECT transit_to FROM characters WHERE name=?",
-            ("毛文龙",),
-        ).fetchone()["transit_to"] == "beizhili"
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-
-def test_event_pool_pending_rejected_person_change_does_not_block(game):
-    """转移矩阵拒收的 pending 人物变更，不应提前阻断事件门。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("dismissed", "袁崇焕"))
-    if "袁崇焕" in content.characters:
-        content.characters["袁崇焕"].status = "dismissed"
-    ev = Event(
-        id="__test_rejected_person_change_pending__",
-        title="测试·拒收人物变更不阻断",
-        kind="朝议",
-        summary="袁崇焕已罢黜时可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.status": "== dismissed"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_issue_tracker_output(
-            db,
-            state,
-            {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
-            content=content,
-            pending_person_changes_for_gates=[
-                # dismissed 上 易主 被转移矩阵拒收，不得提前改 status 阻断门
-                {"name": "袁崇焕", "动作": "易主", "new_power": "houjin", "方式": "主动投敌",
-                 "反噬": {"houjin": {"leverage": 1}}, "reason": "应拒收的 pending 变更"}
-            ],
-        )
-
-        assert out["new_issues"][0]["rejected"] is False
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is not None
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-
-def test_event_pool_pending_power_change_blocks_gate(game):
-    """人物变更·易主会真实落库，pending 闸门也必须按同一语义预检。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=? WHERE name=?",
-        ("active", "ming", "袁崇焕"),
-    )
-    if "袁崇焕" in content.characters:
-        ch = content.characters["袁崇焕"]
-        ch.status = "active"
-        ch.power_id = "ming"
-    ev = Event(
-        id="__test_person_power_pending__",
-        title="测试·易主门",
-        kind="朝议",
-        summary="袁崇焕仍属明时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.power_id": "== ming"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
-
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [
-                    {
-                        "origin_ref": "盘面自发",
-                        "name": "袁崇焕",
-                        "动作": "易主",
-                        "new_power": "houjin",
-                        "方式": "主动投敌",
-                        "反噬": {"houjin": {"leverage": 1}},
-                        "reason": "测试易主",
-                    }
-                ],
-            },
-            content=content,
-        )
-
-        new_issue = out["issue_summary"]["new_issues"][0]
-        assert new_issue["rejected"] is True
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is None
-        assert db.conn.execute(
-            "SELECT power_id FROM characters WHERE name=?",
-            ("袁崇焕",),
-        ).fetchone()["power_id"] == "houjin"
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate(game):
-    """post-merge CMR R8：同势力易主是 no-op，不能先把职名覆盖成身份名分再误阻断。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
-    )
-    if "袁崇焕" in content.characters:
-        ch = content.characters["袁崇焕"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "蓟辽督师"
-        ch.office_type = "职名分"
-    ev = Event(
-        id="__test_same_power_noop_pending__",
-        title="测试·同势力易主 no-op",
-        kind="朝议",
-        summary="袁崇焕仍为督师时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.office": "== 蓟辽督师"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [
-                    {
-                        "origin_ref": "盘面自发", "name": "袁崇焕",
-                        "动作": "易主",
-                        "new_power": "ming",
-                        "方式": "主动归附",
-                        "反噬": {},
-                        "reason": "测试同势力 no-op",
-                    }
-                ],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["category"] == "noop"
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is not None
-        assert db.conn.execute(
-            "SELECT office FROM characters WHERE name=?",
-            ("袁崇焕",),
-        ).fetchone()["office"] == "蓟辽督师"
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_allegiance_backlash_blocks_power_gate(game):
-    """post-merge CMR R11：易主反噬会真实改 power.*，pending 闸门也必须看同回合副作用。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE powers SET leverage=? WHERE id=?",
-        (80, "houjin"),
-    )
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
-    )
-    if "袁崇焕" in content.characters:
-        ch = content.characters["袁崇焕"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "蓟辽督师"
-        ch.office_type = "职名分"
-    ev = Event(
-        id="__test_power_backlash_pending__",
-        title="测试·势力反噬门",
-        kind="朝议",
-        summary="后金威望仍高涨时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"power.houjin.leverage": ">=75"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [
-                    {
-                        "origin_ref": "盘面自发", "name": "袁崇焕",
-                        "动作": "易主",
-                        "new_power": "houjin",
-                        "方式": "被俘而降",
-                        "反噬": {"houjin": {"leverage": -10}},
-                        "reason": "测试反噬后门不达标",
-                    }
-                ],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert db.conn.execute(
-            "SELECT leverage FROM powers WHERE id=?",
-            ("houjin",),
-        ).fetchone()["leverage"] == 70
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is None
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
-    """post-merge CMR R8：同一人的 pending 变更必须按顺序模拟，后续拒收项不能复活前序处置。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 6
-    db.conn.execute(
-        "UPDATE characters SET loyalty=?, status=? WHERE name=?",
-        (44, "active", "毛文龙"),
-    )
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
-            "人物变更": [
-                {"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "dead", "reason": "测试先处死"},
-                {"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "任命", "office": "兵部尚书", "reason": "测试后任命"},
-            ],
-        },
-        content=content,
-    )
-
-    new_issue = out["issue_summary"]["new_issues"][0]
-    assert new_issue["rejected"] is True
-    assert not db.has_event_triggered("mao_wenlong")
-    assert db.get_character_status("毛文龙")[0] == "active"
-    assert db.get_character_status("袁崇焕")[0] == "dead"
-    assert out["applied_person_changes"][0]["status"] == "dead"
-    assert out["applied_person_changes"][1]["rejected"] is True
 
 def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(game):
     """外层事务回滚时，任命的 DB 与内存身份均回到旧值。"""
@@ -3251,7 +2657,7 @@ def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(ga
 
     with pytest.raises(RuntimeError):
         with atomic(db):
-            issues.apply_score_extraction(
+            _land(
                 db,
                 state,
                 {"人物变更": [{"origin_ref": "盘面自发", "name": "韩爌", "动作": "任命", "office": "兵部尚书"}]},
@@ -3265,326 +2671,6 @@ def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(ga
         ("韩爌",),
     ).fetchone()["office"] == "内阁首辅"
     assert content.characters["韩爌"].office == "内阁首辅"
-
-def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
-    """post-merge CMR R9：任命别名会真实归一到在册大臣，pending 闸门也必须看规范名。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "内阁首辅", "职名分", "韩爌"),
-    )
-    if "韩爌" in content.characters:
-        ch = content.characters["韩爌"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "内阁首辅"
-        ch.office_type = "职名分"
-    ev = Event(
-        id="__test_alias_appointment_pending__",
-        title="测试·别名任命门",
-        kind="朝议",
-        summary="韩爌仍为首辅时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.韩爌.office": "== 内阁首辅"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "韩阁老", "动作": "任命", "office": "兵部尚书"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["name"] == "韩爌"
-        assert db.conn.execute(
-            "SELECT office FROM characters WHERE name=?",
-            ("韩爌",),
-        ).fetchone()["office"] == "兵部尚书"
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is None
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
-    """online R1 Gemini：非任命动作也会用别名，pending 闸门须按规范名重算。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "内阁首辅", "职名分", "韩爌"),
-    )
-    if "韩爌" in content.characters:
-        ch = content.characters["韩爌"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "内阁首辅"
-        ch.office_type = "职名分"
-    ev = Event(
-        id="__test_alias_disposition_pending__",
-        title="测试·别名处置门",
-        kind="朝议",
-        summary="韩爌仍为首辅时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.韩爌.office": "== 内阁首辅"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [
-                    {"origin_ref": "盘面自发", "name": "韩阁老", "动作": "处置", "status": "dismissed", "reason": "测试别名处置"}
-                ],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["name"] == "韩爌"
-        row = db.conn.execute(
-            "SELECT status, office FROM characters WHERE name=?",
-            ("韩爌",),
-        ).fetchone()
-        assert row["status"] == "dismissed"
-        assert row["office"] == ""
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is None
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-
-def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game):
-    """post-merge CMR R9：宗藩任命会被真实写口拒收，pending 闸门不得按成功授官误挡。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "福王,就藩洛阳", "宗藩", "朱常洵"),
-    )
-    if "朱常洵" in content.characters:
-        ch = content.characters["朱常洵"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "福王,就藩洛阳"
-        ch.office_type = "宗藩"
-    ev = Event(
-        id="__test_vassal_appointment_pending__",
-        title="测试·宗藩拒任不阻断",
-        kind="朝议",
-        summary="福王仍为宗藩时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.朱常洵.office": "== 福王,就藩洛阳"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "朱常洵", "动作": "任命", "office": "兵部尚书"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert db.conn.execute(
-            "SELECT office FROM characters WHERE name=?",
-            ("朱常洵",),
-        ).fetchone()["office"] == "福王,就藩洛阳"
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is not None
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-
-def test_event_pool_pending_appointment_clears_reason_gate(game):
-    """post-merge CMR R10：任命起复会真实改 reason_code/status_reason，pending 闸门不得沿用旧缘由。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office='', office_type=?, status_reason=?, reason_code=? WHERE name=?",
-        ("dismissed", "ming", "身名分", "获罪削籍", "获罪削籍", "钱谦益"),
-    )
-    if "钱谦益" in content.characters:
-        ch = content.characters["钱谦益"]
-        ch.status = "dismissed"
-        ch.power_id = "ming"
-        ch.office = ""
-        ch.office_type = "身名分"
-        ch.status_reason = "获罪削籍"
-        ch.reason_code = "获罪削籍"
-    ev = Event(
-        id="__test_reason_gate_pending__",
-        title="测试·缘由门",
-        kind="朝议",
-        summary="钱谦益仍因获罪削籍时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.钱谦益.reason_code": "== 获罪削籍"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "钱谦益", "动作": "任命", "office": "兵部尚书"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        row = db.conn.execute(
-            "SELECT status, reason_code, status_reason FROM characters WHERE name=?",
-            ("钱谦益",),
-        ).fetchone()
-        assert row["status"] == "active"
-        assert row["reason_code"] == ""
-        # 拒收任命不得写入罪由码；不比较自由 status_reason 散文
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_appointment_updates_office_type_gate(game):
-    """post-merge CMR R10：任命后 office_type 由真实写口推断，pending 闸门也要同步。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "内阁首辅", "内阁", "韩爌"),
-    )
-    if "韩爌" in content.characters:
-        ch = content.characters["韩爌"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "内阁首辅"
-        ch.office_type = "内阁"
-    ev = Event(
-        id="__test_office_type_pending__",
-        title="测试·官署门",
-        kind="朝议",
-        summary="韩爌仍属内阁时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.韩爌.office_type": "== 内阁"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "韩爌", "动作": "任命", "office": "兵部尚书"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert db.conn.execute(
-            "SELECT office_type FROM characters WHERE name=?",
-            ("韩爌",),
-        ).fetchone()["office_type"] == "兵部"
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-def test_event_pool_pending_appointment_normalizes_equivalent_office(game):
-    """post-merge CMR R10：全角分隔的等价官职经真实写口规范化后，不应误阻断旧 office 门。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "兵部尚书,左都御史", "兵部", "袁崇焕"),
-    )
-    if "袁崇焕" in content.characters:
-        ch = content.characters["袁崇焕"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "兵部尚书,左都御史"
-        ch.office_type = "兵部"
-    ev = Event(
-        id="__test_normalized_office_pending__",
-        title="测试·规范化等价官职门",
-        kind="朝议",
-        summary="袁崇焕仍兼两职时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.office": "== 兵部尚书,左都御史"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "任命", "office": "兵部尚书，左都御史"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert db.conn.execute(
-            "SELECT office FROM characters WHERE name=?",
-            ("袁崇焕",),
-        ).fetchone()["office"] == "兵部尚书,左都御史"
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
 
 def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
     """post-merge CMR R4：cancels 段不得由 db.cancel_issue 提前提交外层事务。"""
@@ -3606,12 +2692,12 @@ def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"cancels": [{"issue_id": issue_id, "narrative": "撤办"}]},
-    )
-    assert out["cancels"][0]["rejected"] is False
+    source=Provenance.system_simulation)
+    assert "rejected" not in out.cancels[0]
     db.conn.rollback()
 
     row = db.conn.execute("SELECT bar_value, stage_text, status FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -3638,7 +2724,7 @@ def test_issue_tracker_cancel_cost_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {
@@ -3652,8 +2738,8 @@ def test_issue_tracker_cancel_cost_respects_outer_transaction_rollback(game):
                 }
             ]
         },
-    )
-    assert out["cancels"][0]["rejected"] is False
+    source=Provenance.system_simulation)
+    assert "rejected" not in out.cancels[0]
     db.conn.rollback()
 
     row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -3672,7 +2758,7 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game
     db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (60, "active", "毛文龙"))
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -3682,7 +2768,8 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert not db.has_event_triggered("mao_wenlong")
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.conn.execute("SELECT loyalty FROM characters WHERE name=?", ("毛文龙",)).fetchone()["loyalty"] == 70
@@ -3696,7 +2783,7 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
     db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
 
-    out = issues.apply_score_extraction(
+    out = _land(
         db,
         state,
         {
@@ -3706,36 +2793,11 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert section(out, "issue_summary").rejected
+    assert section(out, "issue_summary").rejected[0].category == "issue"
     assert not db.has_event_triggered("mao_wenlong")
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.get_character_status("袁崇焕")[0] == "dismissed"
-
-def test_invalid_pending_person_change_does_not_block_event_gate(game):
-    """post-merge CMR R4：未被人物 applier 接受的同回合处置，不得提前阻断事件 gate。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 6
-    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
-
-    with _restore_yuan_as_guanning_commander(db, content):
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "active", "reason": "处置不能恢复在职"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert db.has_event_triggered("mao_wenlong")
-        assert db.get_character_status("毛文龙")[0] == "dead"
-        assert db.get_character_status("袁崇焕")[0] == "active"
-        assert out["applied_person_changes"][0]["rejected"] is True
-        assert out["applied_person_changes"][0]["category"] == "invalid_transition"
 
 def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
     """#191：毛文龙已永久死亡时，斩毛人物核心事件应作废而非只当回合空判。"""
@@ -3751,16 +2813,17 @@ def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
     cands = issues.gather_candidate_events(state, db)
     assert all(ev.id != "mao_wenlong" for ev in cands)
 
-    issues.apply_event_terminal_states(state, db)
+    event_terminal.apply_event_terminal_states(state, db)
 
-    out = issues.apply_issue_tracker_output(
+    out = apply_issue_tracker_output(
         db,
         state,
         {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
         content=content,
-    )
+    source=Provenance.system_simulation)
 
-    assert out["new_issues"][0]["rejected"] is True
+    assert out.new_issues == []
+    assert out.rejected[0].category == "issue"
     assert db.get_character_status("毛文龙")[0] == "dead"
     row = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
@@ -3793,14 +2856,15 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
         cands = issues.gather_candidate_events(state, db)
         assert all(ev.id != "mao_wenlong" for ev in cands), yuan_status
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
             content=content,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is True
+        assert out.new_issues == []
+        assert out.rejected[0].category == "issue"
         assert db.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
         assert not db.has_event_triggered("mao_wenlong")
@@ -3808,13 +2872,13 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs
 
-def test_event_pool_current_candidate_recheck_rejects_when_no_longer_candidates(game, monkeypatch):
-    """输入时在候选池、重验时已不在候选池的 event_pool 项须拒收。"""
+def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, monkeypatch):
+    """online R2 Gemini：同一批无状态变化的 event_pool 项不应重复重算候选池。"""
     db, state, content = game
     issues.bind_content(content)
     ev1 = Event(
-        id="__test_recheck_current_candidate_1__",
-        title="测试·候选重验一",
+        id="__test_cached_current_candidate_1__",
+        title="测试·候选缓存一",
         kind="朝议",
         summary="x",
         urgency=10,
@@ -3825,8 +2889,8 @@ def test_event_pool_current_candidate_recheck_rejects_when_no_longer_candidates(
         event_type="situation",
     )
     ev2 = Event(
-        id="__test_recheck_current_candidate_2__",
-        title="测试·候选重验二",
+        id="__test_cached_current_candidate_2__",
+        title="测试·候选缓存二",
         kind="朝议",
         summary="x",
         urgency=10,
@@ -3839,10 +2903,16 @@ def test_event_pool_current_candidate_recheck_rejects_when_no_longer_candidates(
     content.seed_events.extend([ev1, ev2])
     content.event_by_id[ev1.id] = ev1
     content.event_by_id[ev2.id] = ev2
+    calls = 0
 
-    monkeypatch.setattr(issues, "gather_candidate_events", lambda _state, _db: [])
+    def fake_gather_candidate_events(_state, _db):
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
     try:
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {
@@ -3853,14 +2923,16 @@ def test_event_pool_current_candidate_recheck_rejects_when_no_longer_candidates(
             },
             content=content,
             candidate_event_ids_at_input={ev1.id, ev2.id},
-        )
+        source=Provenance.system_simulation)
     finally:
         content.seed_events.remove(ev1)
         content.seed_events.remove(ev2)
         content.event_by_id.pop(ev1.id, None)
         content.event_by_id.pop(ev2.id, None)
 
-    assert [item["rejected"] for item in out["new_issues"]] == [True, True]
+    assert out.new_issues == []
+    assert len(out.rejected) == 2
+    assert calls == 1
 
 def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
     """#203 CMR：同一轮重复 emit 已触发事件时，第二条应拒收留痕而不是 abort。"""
@@ -3873,7 +2945,7 @@ def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
     with _restore_yuan_as_guanning_commander(db, content):
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
 
-        out = issues.apply_issue_tracker_output(
+        out = apply_issue_tracker_output(
             db,
             state,
             {"new_issues": [
@@ -3881,10 +2953,11 @@ def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
                 {"origin_kind": "event_pool", "id": "mao_wenlong"},
             ]},
             content=content,
-        )
+        source=Provenance.system_simulation)
 
-        assert out["new_issues"][0]["rejected"] is False
-        assert out["new_issues"][1]["rejected"] is True
+        assert "rejected" not in out.new_issues[0]
+        assert len(out.new_issues) == 1
+        assert out.rejected[0].category == "issue"
         assert db.get_character_status("毛文龙")[0] == "dead"
         assert content.characters["毛文龙"].status == "dead"
         assert db.has_event_triggered("mao_wenlong")

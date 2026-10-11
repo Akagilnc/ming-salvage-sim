@@ -54,7 +54,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
     for m in _DECISION_RE.finditer(text or ""):
         try:
             obj = json.loads(m.group(1))
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except json.JSONDecodeError:
             continue
         if not isinstance(obj, dict):
             continue

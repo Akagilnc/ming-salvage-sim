@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from ming_sim.applier import atomic, connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.applier import atomic, connection_owns_transaction
+
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS staged_declarations (
@@ -67,7 +68,7 @@ class StagedDeclarationStore:
 
     @staticmethod
     def ensure_schema(conn: Any) -> None:
-        # #1847 N11：列权威只在 CREATE；不另跑旧档 ALTER 补列。
+        # 唯一当前 schema 一次建齐；不另走补列 ALTER 链服务 superseded 表示。
         conn.executescript(_SCHEMA_SQL)
 
     def stage(
@@ -94,16 +95,12 @@ class StagedDeclarationStore:
                 "VALUES (?, ?, ?, 'staged', ?, ?, ?, ?)",
                 (
                     ref,
-                    sanitize_sqlite_text(json.dumps(declaration, ensure_ascii=False)),
+                    json.dumps(declaration, ensure_ascii=False),
                     json.dumps(visible_refs or {}, ensure_ascii=False),
                     int(turn),
-                    None if verdict is None else sanitize_sqlite_text(
-                        json.dumps(dict(verdict), ensure_ascii=False),
-                    ),
-                    None if questions is None else sanitize_sqlite_text(
-                        json.dumps(list(questions), ensure_ascii=False),
-                    ),
-                    None if forecast_text is None else sanitize_sqlite_text(forecast_text),
+                    None if verdict is None else json.dumps(dict(verdict), ensure_ascii=False),
+                    None if questions is None else json.dumps(list(questions), ensure_ascii=False),
+                    None if forecast_text is None else forecast_text,
                 ),
             )
             return int(cur.lastrowid)
@@ -253,6 +250,8 @@ class StagedDeclarationStore:
         if owns:
             self._conn.commit()
         return int(cur.rowcount or 0)
+
+
 
 
 def _row_to_staged(row: Any) -> StagedDeclaration:

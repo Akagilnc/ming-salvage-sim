@@ -1,10 +1,13 @@
 """#655 弹劾潮当前切片：动态候选适配器与 transformed 真源腿。
 
 """
+
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+from ming_sim.applier import Provenance
 import json
 
 from ming_sim.db import GameDB
-from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates
+from ming_sim.issues import gather_impeachment_surge_candidates
 
 
 def _candidate_world(db, state, *, participants=None, execution_note="名实已乖，旨外受益"):
@@ -150,16 +153,16 @@ def test_apply_accepts_only_current_candidate_closed_target_and_free_text(game):
         "target_roster": [owner],
         "title": "  自由题名  ", "stage_text": "原样案情。",
     }]}
-    result = apply_issue_tracker_output(db, state, output)
-    accepted = result["new_issues"][0]
-    assert accepted["rejected"] is False
+    result = apply_issue_tracker_output(db, state, output, source=Provenance.system_simulation)
+    accepted = result.new_issues[0]
     row = db.conn.execute("SELECT * FROM issues WHERE id=?", (accepted["issue_id"],)).fetchone()
     assert row["origin_ref"] == f"commitment:{did}:deformation_exposure"
     assert row["title"] == "  自由题名  "
     assert row["stage_text"] == "原样案情。"
 
-    duplicate = apply_issue_tracker_output(db, state, output)["new_issues"][0]
-    assert duplicate["rejected"] is True
+    duplicate = apply_issue_tracker_output(db, state, output, source=Provenance.system_simulation)
+    assert duplicate.new_issues == []
+    assert duplicate.rejected
 
 
 def test_dynamic_apply_rejects_blank_title_wrong_faction_and_outside_target(game):
@@ -172,8 +175,9 @@ def test_dynamic_apply_rejects_blank_title_wrong_faction_and_outside_target(game
             "title": "题", "stage_text": "情"}
     bad = [dict(base, title="  "), dict(base, faction_hint="伪派"),
            dict(base, target_roster=["不存在"])]
-    result = apply_issue_tracker_output(db, state, {"new_issues": bad})["new_issues"]
-    assert all(item["rejected"] for item in result)
+    result = apply_issue_tracker_output(db, state, {"new_issues": bad}, source=Provenance.system_simulation)
+    assert result.new_issues == []
+    assert len(result.rejected) == 3
     assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'").fetchone()[0] == 0
 
 
@@ -187,16 +191,22 @@ def test_dynamic_targets_are_roleless_deduplicated_without_participant_roles(gam
     result = apply_issue_tracker_output(db, state, {"new_issues": [
         dict(base, target_roster=[{"character_id": owner, "tier": "主办"}]),
         dict(base, target_roster=[owner, owner]),
-    ]})["new_issues"]
+    ]}, source=Provenance.system_simulation)
 
-    assert result[0]["rejected"] is True
-    assert result[1]["rejected"] is False
+    assert len(result.rejected) == 1
+    assert len(result.new_issues) == 1
+    applied = result.new_issues[0]
     row = db.conn.execute(
         "SELECT participants,participant_roster,target_roster FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()
     assert json.loads(row["participants"]) == []
     assert json.loads(row["participant_roster"]) == []
     assert json.loads(row["target_roster"]) == [owner]
+    knowledge = db.conn.execute(
+        "SELECT participant_roster FROM character_knowledge_sources WHERE source_id=?",
+        (f"issue:{applied['issue_id']}",),
+    ).fetchone()
+    assert knowledge is None  # W4 retired the parallel knowledge-source mirror.
 
 
 def test_dynamic_apply_deduplicates_same_candidate_within_input_snapshot(game):
@@ -210,10 +220,10 @@ def test_dynamic_apply_deduplicates_same_candidate_within_input_snapshot(game):
     result = apply_issue_tracker_output(
         db, state, {"new_issues": [item, item]},
         impeachment_surge_candidates_at_input=[candidate],
-    )["new_issues"]
+    source=Provenance.system_simulation)
 
-    assert result[0]["rejected"] is False
-    assert result[1]["rejected"] is True
+    assert len(result.new_issues) == 1
+    assert len(result.rejected) == 1
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()[0] == 1
@@ -229,8 +239,9 @@ def test_target_roster_survives_generic_issue_restore(game, content):
     issue_id = apply_issue_tracker_output(
         db, state, {"new_issues": [item]},
         impeachment_surge_candidates_at_input=[candidate],
-    )["new_issues"][0]["issue_id"]
+    source=Provenance.system_simulation).new_issues[0]["issue_id"]
     path = db.conn.execute("PRAGMA database_list").fetchone()[2]
+    db.conn.commit()
     db.close()
 
     restored = GameDB(path, content)
@@ -255,9 +266,10 @@ def test_dynamic_apply_rejects_non_text_free_fields_without_coercion(game):
     result = apply_issue_tracker_output(db, state, {"new_issues": [
         dict(base, title={"bad": "shape"}),
         dict(base, stage_text=["bad"]),
-    ]})["new_issues"]
+    ]}, source=Provenance.system_simulation)
 
-    assert all(item["rejected"] for item in result)
+    assert result.new_issues == []
+    assert len(result.rejected) == 2
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()[0] == 0
@@ -280,15 +292,16 @@ def test_leverage_boundary_and_authoritative_input_snapshot(game):
         db, state, {"new_issues": [item]}, candidate_event_ids_at_input=set(),
         candidate_event_ids_authoritative=True,
         impeachment_surge_candidates_at_input=[],
-    )["new_issues"][0]
-    assert rejected["rejected"] is True
+    source=Provenance.system_simulation)
+    assert rejected.new_issues == []
+    assert rejected.rejected[0].category == "issue"
 
     accepted = apply_issue_tracker_output(
         db, state, {"new_issues": [item]}, candidate_event_ids_at_input=set(),
         candidate_event_ids_authoritative=True,
         impeachment_surge_candidates_at_input=[candidate],
-    )["new_issues"][0]
-    assert accepted["rejected"] is False
+    source=Provenance.system_simulation)
+    assert accepted.new_issues and accepted.new_issues[0].get("issue_id")
 
 
 def test_transformed_candidate_fails_closed_outside_window_or_without_liability(game):

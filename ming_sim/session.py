@@ -6,9 +6,9 @@ CLI 和 Web 各自只做 I/O 包装。
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 import logging
-import sqlite3
 import threading
 import time
 import uuid
@@ -49,8 +49,7 @@ from ming_sim.decree import (
     resolve_directives,
 )
 from ming_sim.issues import bind_content as _bind_issues
-from ming_sim.issues import sync_opening_legacies
-from ming_sim.audience_night import CMD_CLOSE_NIGHT
+from ming_sim.entities.issue.legacy import sync_opening_legacies
 from ming_sim.llm_model import create_agno_db
 from ming_sim.models import Character, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
@@ -133,7 +132,7 @@ class DirectiveView:
 @dataclass
 class ChatTurnResult:
     answer: str
-    court_action: str = ""   # "" | dismiss | summon | court_break | handled
+    court_action: str = ""   # "" | court_break
     next_minister: str = ""
     proposed_directive: Optional[DirectiveView] = None
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
@@ -188,7 +187,7 @@ def _is_summonable_court_minister(
 ) -> bool:
     """在朝可召资格 = 在册身份归一 ∧ 非宗藩 ∧ 非未仕（#1317 r2 单真源）。
 
-    受守面清单见 models.is_weishi / is_vassal_prince；list_ministers / can_summon（朝臣支）/
+    受守面清单见 models.is_weishi / is_vassal_prince；can_summon（朝臣支）/
     visible_in_court / CLI choose_minister / 拟诏事实块共吃本谓词。禁另造过滤表。
     resolve 成本规避走 resolve_power_id 惰性入参——类型短路不得与本谓词条件并存。
     """
@@ -205,7 +204,7 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
     后宫人物不在此查。返回在册原始 key，无则 None。
 
     吃「在册身份归一」(_is_ming_court_minister_character)，**含宗藩/未仕**——五处解析
-    （本函数 / db._commit_office_action / create_secret_order / apply_office_appointment 别名归一 /
+    （本函数 / settlement.dossier._commit_office_action / create_secret_order / apply_office_appointment 别名归一 /
     转译入册）共吃，禁与可召谓词混用（#1317 r2）。
     power_id 用 db.resolve_power_id 惰性入参（DB 权威，#125）：招抚归明者可召即可罢/可任；
     外藩(皇太极) resolve≠ming 仍不接。"""
@@ -300,7 +299,7 @@ def register_unlisted_person_record(
 
     register_runtime_outcome_callbacks(db, on_rollback=_drop_runtime_registration)
     # SAVEPOINT：add_character 写前已完成 seat 校验，但 characters + character_offices
-    # 仍须整项原子；外层 _item_savepoint_scope / atomic 嵌套仍合法。commit 必须在
+    # 仍须整项原子；外层 item_savepoint_scope / atomic 嵌套仍合法。commit 必须在
     # RELEASE 之后、且仅当本核拥有事务时发生——否则 SAVEPOINT 期内 commit 会把
     # 整个事务提前提交，随后 RELEASE 无点。
     owns_transaction = connection_owns_transaction(db.conn)
@@ -599,6 +598,8 @@ class GameSession:
                         opening_year=int(self.state.year),
                         opening_period=int(self.state.period),
                     )
+                # 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
+                sync_opening_legacies(self.db, self.state)
             _t, _e = time.monotonic(), time.monotonic() - _t
             tlog(f"[载入] 3/4 状态载入 {_e:.1f}s")
             if seed_report:
@@ -607,8 +608,6 @@ class GameSession:
                     f"{seed_report['events_imported']}/{seed_report['events_total']} 笔奠基边事件，"
                     f"{seed_report['summaries_written']} 份初始摘要"
                 )
-            # 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
-            sync_opening_legacies(self.db, self.state)
             tlog(f"[载入] 4/4 开局修正 {time.monotonic() - _t:.1f}s")
             self.deaths_this_turn: List[Dict[str, str]] = []
             self.debuts_this_turn: List[Dict[str, str]] = []
@@ -707,7 +706,9 @@ class GameSession:
         self.auto_save("begin")
 
     def note_chat_rollback(self, deleted_committed_draft_ids: Optional[List[int]] = None) -> None:
-        """P1-2：撤回召对若删了已 commit 的对话草案，作废本份 last_decree 存稿。"""
+        """P1-2：撤回召对若删了拟诏已 commit 的对话草案（committed draft），
+        本份生成的诏书正文（last_decree）含被撤回的指令——必须作废，使颁诏须重生成，
+        不能原样颁出。普通撤回（未删 committed draft）不动有效生成稿。"""
         if deleted_committed_draft_ids:
             self.last_decree = ""
 
@@ -734,10 +735,10 @@ class GameSession:
         clean_name = str(name_or_text or "").strip()
         if clean_name in self.content.characters:
             return self.content.characters[clean_name]
-        raise ValueError(f"人物未建档：{clean_name}")
+        raise DeclarationDataError(f"人物未建档：{clean_name}")
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
-        # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster / is_vassal_prince 同口径
+        # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster 同口径
         # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
         if is_vassal_prince(character):
@@ -762,7 +763,7 @@ class GameSession:
         # 后宫 active+ming 可召（既有契约：嫔妃 chat 复用本闸，不经朝臣可召谓词；cmr 后宫反向锁）。
         if getattr(character, "office_type", None) == "后宫":
             return (True, "")
-        # 朝臣可召：与 list_ministers / visible_in_court / CLI / 事实块同吃 _is_summonable_court_minister
+        # 朝臣可召：与 visible_in_court / CLI / 事实块同吃 _is_summonable_court_minister
         # （#1317 r2：未仕诸生等身名分在册不得以在朝命官入可召；power 已解析，直传）。
         if not _is_summonable_court_minister(character, power_id=power_id):
             return (False, f"{character.name}尚未入仕，非朝廷命官，无法召见。")
@@ -861,7 +862,7 @@ class GameSession:
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
-        """#526：同步识别收夜口令。纯封闭集匹配，无 Future/宽降级。"""
+        """同步识别明确退朝口令。纯封闭集匹配，无 Future/宽降级。"""
         from ming_sim.audience_night import (
             normalize_audience_command_verdict,
             recognize_audience_command,
@@ -1316,7 +1317,7 @@ class GameSession:
     def _refuse_if_settling(self) -> None:
         """Freeze decree changes once the month's front half has committed."""
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
-            raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
+            raise DeclarationDataError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
 
     def add_directive(
         self, text: str, notes: str = "",
@@ -1325,7 +1326,7 @@ class GameSession:
         self._refuse_if_settling()
         payload = dict(dossier_payload or {})
         if not directive_payload_admits_structured_write(payload):
-            raise ValueError("新增旨意须由上游提供完整结构化动作与目标")
+            raise DeclarationDataError("新增旨意须由上游提供完整结构化动作与目标")
         directive_id = self.db.add_directive(
             self.state, None, text, "手动新增", notes=notes,
             dossier_payload=payload,
@@ -1411,21 +1412,7 @@ class GameSession:
             row = self.db.get_directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
-            # 持久读失败是代码/账本故障，不得 continue 进补交耗尽空返回（F39）。
-            # 与同方法写回 Exception 分支同出口：错误包 + SettlementAbort。
-            try:
-                bad_payload = self.db.read_directive_dossier_payload(row)
-            except ValueError as durable_exc:
-                # 已持久载荷损坏：系统故障，不得跳过进补交空 carry（#1897 E1）。
-                pack_path = write_error_pack(
-                    self.db, self.state, exc=durable_exc,
-                )
-                raise SettlementAbort(
-                    settlement_abort_message(pack_path, reason=str(durable_exc)),
-                    turn=int(self.state.turn),
-                    stage="directive_admission_resubmit",
-                    error_pack_path=pack_path,
-                ) from durable_exc
+            bad_payload = self.db.read_directive_dossier_payload(row)
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:
@@ -1481,7 +1468,10 @@ class GameSession:
         for job, new_payload, exc in outcomes:
             did = int(job["directive_id"])
             if exc is not None:
-                if is_declaration_domain_error(exc):
+                if isinstance(exc, DeclarationDataError):
+                    # 本轮重写自身的产物错（含名册 escalate 归一）：DB 载荷未动，
+                    # 光靠下一轮 ensure 重探只会拿回旧拒因——把本轮失败事实带过去，
+                    # 否则同一句话问三遍（0150-D5-b：告诉 LLM 事实）。
                     logger.warning(
                         "[1769] draft#%s admission resubmit product exhaust: %s",
                         did, exc,
@@ -1809,7 +1799,7 @@ class GameSession:
 
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
-            raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
+            raise DeclarationDataError("当前不在待裁决策阶段，无法提交亲裁。")
 
     def submit_hitl_choices(
         self, choices: List[Dict[str, object]], *, write_gate: Any,
@@ -1928,3 +1918,5 @@ class GameSession:
             logger.exception("GameSession.db.close failed")
             raise
         self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
+
+from ming_sim.audience_night import CMD_CLOSE_NIGHT

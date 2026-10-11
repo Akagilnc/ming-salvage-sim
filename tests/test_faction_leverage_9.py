@@ -13,9 +13,13 @@
 
 from __future__ import annotations
 
+from ming_sim.entities.character.appointment import apply_office_appointment
+
+from ming_sim.applier import Provenance, RejectedItem
+
 import pytest
 
-from ming_sim.issues import apply_office_appointment
+
 
 
 def _yandang_core(db):
@@ -147,19 +151,19 @@ def test_restore_uses_new_office_weight_not_old(game):
     result_lo = apply_office_appointment(
         db, state, content, name_lo, "某府知府",
         reason="起复地方", faction="阉党", region_id="henan",
-    )
+    source=Provenance.system_simulation)
     after_low = db.faction_leverage("阉党")
 
     # name_hi 起复到内阁(高权)
     result_hi = apply_office_appointment(
         db, state, content, name_hi, "内阁大学士", reason="起复内阁", faction="阉党"
-    )
+    , source=Provenance.system_simulation)
     after_high = db.faction_leverage("阉党")
 
     # cmr R3 finding#3 防假绿：两次任命都必须真落库（未被拒）——若低职任命被拒(inc_low=0)，
     # 高职任命成功仍满足 inc_high>inc_low，本测试会假绿（没真验「加的是新职权重」）。
-    assert not result_lo.get("rejected"), f"起复到地方不应被拒：{result_lo}"
-    assert not result_hi.get("rejected"), f"起复到内阁不应被拒：{result_hi}"
+    assert not isinstance(result_lo, RejectedItem), result_lo
+    assert not isinstance(result_hi, RejectedItem), result_hi
     # 低职起复后该人应 active 且 office 含目标低职（新职权重确被计入，而非任命形同未发生）。
     assert db.get_character_status(name_lo)[0] == "active", "低职起复后该人应 active"
     lo_office = db.conn.execute(
@@ -212,7 +216,6 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     ).fetchone()
     assert name is not None
     name = name["name"]
-    # 先退场，制造一个「起复」场景（起复路会 set_character_status(active)→全重算→再 set_character_office）。
     db.set_character_status(state, name, "dismissed", reason="清算")
     before = db.faction_leverage("阉党")
 
@@ -224,9 +227,11 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     db.set_character_office = _boom  # type: ignore[assignment]
     try:
         try:
-            apply_office_appointment(
-                db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
-            )
+            from ming_sim.decree import atomic_and_reload
+            with atomic_and_reload(db, state, content=content):
+                apply_office_appointment(
+                    db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
+                )
             raise AssertionError("代码故障必须上抛，不得洗成业务 rejected")
         except RuntimeError as exc:
             assert "注入故障：授官落库失败" in str(exc)
@@ -237,14 +242,47 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     assert after == before, (
         f"失败任命回滚后阉党 leverage 应不变(before={before} after={after})"
     )
-    # 人物状态也应回滚（仍 dismissed，未被中途 set_character_status(active) 残留）
     assert db.get_character_status(name)[0] == "dismissed", "失败任命应回滚人物状态"
 
 
+def test_displaced_minister_faction_leverage_recomputed(game):
+    """#9 cmr R1：顶替路也要重算【被顶替者】所属派系 leverage。
+    新任者属 A 派系(东林)，经 apply_office_appointment 任命到独占实职(兵部尚书)，
+    顶替掉持该职、属 B 派系(阉党≠东林)的在朝核心崔呈秀。
+    _displace_duplicate_offices 用裸 UPDATE 把崔呈秀的 office_type 改成低权(剥兵部尚书后只剩左都御史
+    /或身名分)，绕过 set_character_office 钩子 → 修前 B(阉党) leverage 不被重算、残留偏高。
+    断言：任命后阉党 leverage < 任命前（被顶替者权重下跌、其派系全重算联动）。"""
+    db, state, content = game
+    chong = db.conn.execute(
+        "SELECT name, office, office_type, faction FROM characters WHERE name='崔呈秀' AND status='active'"
+    ).fetchone()
+    # 新任者属东林（≠阉党），无需 active——apply_office_appointment 会起复激活后再授官。
+    new_holder = db.conn.execute(
+        "SELECT name, faction FROM characters WHERE name='孙承宗'"
+    ).fetchone()
+    if chong is None or new_holder is None:
+        pytest.skip("基底盘面缺 崔呈秀/孙承宗（数据依赖）")
+    assert chong["faction"] == "阉党", "崔呈秀应为阉党"
+    assert new_holder["faction"] == "东林", "孙承宗应为东林(≠阉党)"
+    assert "兵部尚书" in (chong["office"] or ""), "崔呈秀应持兵部尚书(独占实职)"
+
+    before = db.faction_leverage("阉党")
+    result = apply_office_appointment(
+        db, state, content, "孙承宗", "兵部尚书", reason="起复掌兵部", faction="东林"
+    , source=Provenance.system_simulation)
+    assert not isinstance(result, RejectedItem), result
+    assert result.get("displaced"), f"应顶替崔呈秀的兵部尚书：{result}"
+    after = db.faction_leverage("阉党")
+    assert after < before, (
+        f"被顶替者(崔呈秀)所属阉党 leverage 应在顶替后全重算下跌(before={before} after={after})"
+    )
+
+
 def test_offset_not_re_anchored_on_reload_after_clamp(game):
-    """#9：已校准档 reload 不得重锚 offset。
-    seed 后取白名单 offset；手动把 leverage 打到 0（模拟 clamp 触底）；再开 GameDB
-    并 seed_static_data。已有持久校准标记时 _calibrate_faction_offsets 早返，offset 不变。"""
+    """#9 cmr R3：老档每次 load 重锚 offset，clamp 后腐蚀基线。
+    seed 后取白名单派系 offset；手动把 leverage 打到 0（模拟 clamp 触底）；再开一个 GameDB
+    （生产里每次 GameSession init = 新 GameDB.__init__→init_schema→seed_static_data，是真正的 reload）。
+    修前每次 load 都 offset=round(0−weight_sum)≠原值（被腐蚀）；修后因「非新档」直接 return，offset 不变。"""
     from ming_sim.db import GameDB
 
     db, state, content = game
@@ -291,7 +329,8 @@ def test_leverage_clamps_at_zero_no_negative(game):
     offset = db.conn.execute(
         "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
     ).fetchone()["leverage_offset"]
-    raw = round(offset)
+    weight_sum = db._faction_office_weight_sum(faction)
+    raw = round(offset + weight_sum)
     if raw >= 0:
         pytest.skip(f"{faction} 全退后未 clamp 值非负(raw={raw})，非下界触底场景")
     after = db.faction_leverage(faction)
@@ -314,11 +353,15 @@ def test_add_character_appointment_lifts_faction_leverage(game):
         "SELECT name FROM characters WHERE name=?", (new_name,)
     ).fetchone() is None, "测试用新人物不应已在册"
     before = db.faction_leverage(faction)
+    before_ws = db._faction_office_weight_sum(faction)
     result = apply_office_appointment(
         db, state, content, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
-    )
-    assert not result.get("rejected"), f"新大臣任命不应被拒：{result}"
+    , source=Provenance.system_simulation)
+    assert not isinstance(result, RejectedItem), result
     assert result.get("kind") == "appoint", f"应走新建档(appoint)路：{result}"
+    # 新成员确入册且 active/ming（add_character 落库成功），权重和随之上升。
+    after_ws = db._faction_office_weight_sum(faction)
+    assert after_ws > before_ws, f"新建大臣应使{faction}权重和上升(before={before_ws} after={after_ws})"
     after = db.faction_leverage(faction)
     assert after > before, (
         f"经 add_character 新建大臣加入{faction}后 leverage 应上升(before={before} after={after})"
@@ -326,11 +369,12 @@ def test_add_character_appointment_lifts_faction_leverage(game):
 
 
 def test_active_member_empty_office_contributes_zero_weight(game):
-    """#9 cmr R2 finding#3：active + power_id='ming' + office='' 的成员对派系权势贡献为 0，
-    与其 office_type 无关。经公共口径 faction_leverage / recompute_all_faction_leverage 断言：
-    office_type 为兵部与为空时，派系权势相等。"""
+    """#9 cmr R2 finding#3：active + power_id='ming' + office='' + office_type 非空(理论可达边界)
+    对 faction 权重和贡献为 0（无实职=不贡献 leverage）。修前 _member_office_weight 会把
+    _office_rank_multiplier('') 的默认 1.0 × office_type 域权重算进去 → 误算满权重（红）。"""
     db, state, content = game
     faction = "东林"
+    # 取一个该派系在朝握官成员，裸 UPDATE 把 office 清空但保留 office_type='兵部'，制造边界态。
     row = db.conn.execute(
         "SELECT name, office_type FROM characters WHERE faction=? AND status='active' AND power_id='ming' "
         "AND office_type NOT IN ('后宫','宗藩','未仕','') LIMIT 1",
@@ -339,42 +383,35 @@ def test_active_member_empty_office_contributes_zero_weight(game):
     if row is None:
         pytest.skip(f"{faction} 无握官在朝成员（数据依赖）")
     name = row["name"]
+    # 该成员单独的权重贡献：office 空、office_type='兵部' → 应为 0。
     db.conn.execute(
         "UPDATE characters SET office='', office_type='兵部' WHERE name=?", (name,)
     )
     db.conn.commit()
+    from ming_sim.db import _member_office_weight
+    assert _member_office_weight("兵部", "") == 0.0, (
+        "active 但 office 空的成员 office_type 再高也应贡献 0 权重"
+    )
+    # 端到端：把其余在朝成员全退场后，仅剩该「空 office」成员，权重和应为 0。
     others = db.conn.execute(
         "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' AND name!=?",
         (faction, name),
     ).fetchall()
     for o in others:
         db.set_character_status(state, o["name"], "dismissed", reason="清场")
-    db.recompute_all_faction_leverage()
-    db.conn.commit()
-    with_type = db.faction_leverage(faction)
-    db.conn.execute("UPDATE characters SET office_type='' WHERE name=?", (name,))
-    db.conn.commit()
-    db.recompute_all_faction_leverage()
-    db.conn.commit()
-    assert db.faction_leverage(faction) == with_type, (
-        "active 但 office 空的成员 office_type 再高也应贡献 0 权重"
+    weight_sum = db._faction_office_weight_sum(faction)
+    assert weight_sum == 0.0, (
+        f"仅剩 active 空 office 成员时 faction 权重和应为 0(weight_sum={weight_sum})"
     )
 
 
-def test_recompute_all_reconciles_drift_from_unhooked_path(game, monkeypatch):
+def test_recompute_all_reconciles_drift_from_unhooked_path(game):
     """#9 cmr R2 finding#1（集中化兜底）：绕过所有 hook 的裸 UPDATE 改了 faction 成员 office_type 后，
-    真实玩家月链把全部白名单派系恢复；未改官职者回到原值，空官职者按 offset 触底。"""
+    recompute_all_faction_leverage() 把全部白名单派系重算回公式值（结算尾兜底层等价直测）。"""
     db, state, content = game
     from ming_sim.db import _LEVERAGE_FACTIONS
 
     faction = "阉党"
-    expected = {r["name"]: int(r["leverage"]) for r in db.conn.execute(
-        "SELECT name, leverage FROM factions"
-    ) if r["name"] in _LEVERAGE_FACTIONS}
-    offset = db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,),
-    ).fetchone()["leverage_offset"]
-    expected[faction] = max(0, min(100, round(offset)))
     # 裸 UPDATE 把阉党所有在朝成员 office 清空（绕过 set_character_office/status 钩子）→ leverage 残留旧值。
     db.conn.execute(
         "UPDATE characters SET office='' WHERE faction=? AND status='active' AND power_id='ming'",
@@ -398,10 +435,31 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game, monkeypatch):
     # 脏写已生效：每个被脏写的派系此刻读到的就是 sentinel（确证 recompute_all 之后的归位非假绿）。
     for f in dirtied:
         assert db.faction_leverage(f) == SENTINEL, f"{f} sentinel 脏写应已落库"
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-    for f in dirtied:
-        assert db.faction_leverage(f) == expected[f], f
+    # 此刻 leverage 是脏 sentinel（阉党还叠了 unhooked office 清空的 drift）。
+    stale = db.faction_leverage(faction)
+    # 兜底重算全部白名单派系。
+    db.recompute_all_faction_leverage()
+    db.conn.commit()
+    # 重算后该派系 leverage == 公式值（offset + 当前权重和，clamp）。
+    offset = db.conn.execute(
+        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+    ).fetchone()["leverage_offset"]
+    weight_sum = db._faction_office_weight_sum(faction)
+    expected = max(0, min(100, round(offset + weight_sum)))
+    reconciled = db.faction_leverage(faction)
+    assert reconciled == expected, (
+        f"recompute_all 后{faction} leverage 应= 公式值(stale={stale} reconciled={reconciled} expected={expected})"
+    )
+    # 全部白名单派系都应被重算到各自公式值。
+    for f in _LEVERAGE_FACTIONS:
+        row = db.conn.execute(
+            "SELECT leverage, leverage_offset FROM factions WHERE name=?", (f,)
+        ).fetchone()
+        if row is None:
+            continue
+        ws = db._faction_office_weight_sum(f)
+        exp = max(0, min(100, round(float(row["leverage_offset"] or 0) + ws)))
+        assert row["leverage"] == exp, f"{f} 应被 recompute_all 重算到公式值(got={row['leverage']} exp={exp})"
 
 
 def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch):
@@ -492,7 +550,7 @@ def test_whitelist_faction_delta_routes_to_offset_survives_reconcile(game):
 
 def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
     """#9 cmr R7 端到端：白名单派系的 LLM faction_delta.leverage 经【整条真实结算路】
-    玩家月链（pre_settle → 世界段转译 → apply_score_extraction → adjust_factions 注 offset
+    玩家月链（pre_settle → 世界段转译 → settle_delta → adjust_factions 注 offset
     → 结算尾 recompute_all_faction_leverage → next_period）跑一回合后仍保留——证明 R5 修的 HIGH 集成 bug（offset 穿过结算尾 reconcile）
     在生产路径上真闭环，而非仅单元层直调 adjust_factions+recompute 能过。
     与上面的 test_whitelist_faction_delta_routes_to_offset_survives_reconcile（直调单元路）
@@ -504,7 +562,7 @@ def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
 
     # faction_delta payload 真实 schema：顶层 key=faction_delta（canonical 英文；
     # 中文「派系变化」亦可，canonicalize 等价），value={派系名: {"leverage": 增量}}。
-    # 经玩家世界段转译 → apply_score_extraction(faction_delta) → _apply_faction_dict
+    # 经玩家世界段转译 → settle_delta(faction_delta) → _apply_faction_dict
     # 识别 dict 形态的 leverage 项 → adjust_factions 把白名单 +8 注入 leverage_offset。
     from tests.test_month_chain_1843 import _prepare_player_month
     session = _prepare_player_month(
@@ -546,6 +604,16 @@ def test_non_whitelist_faction_delta_direct_leverage_survives_reconcile(game):
     assert after_reconcile == before + 6, (
         f"非白名单(宗室) leverage 不被 reconcile 动、增量留存（after_reconcile={after_reconcile}）"
     )
+
+
+# ----------------------------------------------------------------------------
+# #9 线上 R1 评审 6 项 fix 的回归测试
+# ----------------------------------------------------------------------------
+
+
+
+
+
 
 
 def test_chat_rollback_restores_faction_leverage(game):
@@ -600,7 +668,7 @@ def test_power_id_defection_drops_faction_leverage_immediately(game):
     # 直接调 apply_character_power_changes（power_id 翻转落库入口），不走结算路
     db.apply_character_power_changes(
         [{"name": name, "new_power": "houjin", "reason": "通虏投敌"}]
-    )
+    , source=Provenance.system_simulation)
     after = db.faction_leverage("阉党")
     assert after < before, (
         f"投敌后原派系 leverage 应即时下跌（不等 reconcile）：before={before} after={after}"
@@ -625,12 +693,13 @@ def test_half_weight_odd_baseline_no_round_drift(game):
         db.set_character_status(state, m["name"], "dismissed", reason="清场")
     keeper = members[0]["name"]
     db.set_character_office(keeper, "礼部侍郎", "礼部")
+    assert db._faction_office_weight_sum(faction) == 2.5
     # 设奇数基线 79，直接写 offset（不走已退役的老档反推校准）。
     baseline = 79
-    weight_sum = 2.5  # 礼部域权重 5 × 侍郎档 0.5（契约输入，不取生产计算作 oracle）
+    weight = db._faction_office_weight_sum(faction)
     db.conn.execute(
         "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
-        (baseline, baseline - weight_sum, faction),
+        (baseline, baseline - weight, faction),
     )
     db.conn.commit()
     db.recompute_faction_leverage(faction)

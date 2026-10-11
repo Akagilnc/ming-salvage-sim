@@ -1,7 +1,16 @@
-import ming_sim.issues as I
-from tests.dossier_test_helpers import promulgated_policy_origin
+import pytest
 
+from ming_sim.models import effect_dict_has_work
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+from ming_sim.applier import Provenance
 
+def _promulgated_commitment_origin(db, state) -> str:
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="测试辽饷承诺",
+        target_kind="army", target_id="guanning", payload={"purpose": "补饷"},
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    return f"dossier:{dossier_id}"
 
 def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     db, state, _content = game
@@ -18,11 +27,11 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
         },
     )
 
-    result = I.apply_issue_tracker_output(
+    result = apply_issue_tracker_output(
         db,
         state,
         {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]},
-    )
+    source=Provenance.system_simulation)
 
     assert db.conn.execute(
         "SELECT 1 FROM buildings WHERE id=?", (building["id"],),
@@ -32,7 +41,17 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
         (building["id"],),
     ).fetchone()
     assert dict(log) == {"old_value": building["name"], "field": "remove"}
-    assert result["closes"][0]["building_ops"][0]["removed"] is True
+    assert result.closes[0]["building_ops"][0]["removed"] is True
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": "2"}]},
+    ],
+)
+def test_effect_dict_has_work_ignores_malformed_person_loyalty(payload):
+    assert effect_dict_has_work(payload) is False
 
 def test_insert_issue_persists_commitment_deadline_columns(game):
     db, state, _ = game
@@ -77,10 +96,10 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     db, state, _ = game
     stop_condition = {"army.guanning.arrears": "<=0"}
 
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
-            "origin_ref": promulgated_policy_origin(db, state, "测试辽饷承诺"),
+            "origin_ref": _promulgated_commitment_origin(db, state),
             "kind": "initiative",
             "title": "每月补辽饷直到补齐",
             "end_turn": state.turn + 4,
@@ -88,9 +107,9 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
             "stop_condition": stop_condition,
             "commitment_kind": "until_stop",
         }],
-    })
+    }, source=Provenance.system_simulation)
 
-    created = [item for item in out["new_issues"] if item.get("issue_id")]
+    created = [item for item in out.new_issues if item.get("issue_id")]
     assert len(created) == 1, out
     row = db.conn.execute(
         "SELECT end_turn, stop_condition, resolve_condition, commitment_kind FROM issues WHERE id=?",
@@ -104,7 +123,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
 def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read_game):
     db, state, _ = read_game
 
-    out = I.apply_issue_tracker_output(db, state, {
+    out = apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
             "origin_ref": "decree:turn-1:appease-mao",
@@ -115,11 +134,11 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
             },
             "stop_condition": "character.毛文龙.loyalty >= 65",
         }],
-    })
+    }, source=Provenance.system_simulation)
 
-    rejected = [item for item in out["new_issues"] if item.get("rejected")]
+    rejected = out.rejected or []
     assert len(rejected) == 1, out
-    assert rejected[0]["category"] == "invalid_enum"
+    assert rejected[0].category == "invalid_enum"
     row = db.conn.execute(
         "SELECT id FROM issues WHERE title=?", ("安抚毛文龙直到效顺",)
     ).fetchone()

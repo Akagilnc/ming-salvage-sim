@@ -13,12 +13,12 @@ Seams:
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
 
-import pytest
 
-import ming_sim.issues as issue_engine
-from ming_sim.applier import Provenance
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
 from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
@@ -63,7 +63,7 @@ def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_
         target_id=target_id,
         payload=payload,
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "executing"
     return dossier_id
@@ -141,16 +141,15 @@ def test_close_keeps_recon_structured_without_second_treasury_debit(game):
     assert db.list_economy_moves_for_dossier(gid) == moves_before
 
     note = "  赈银押解到达\n"
-    result = issue_engine.apply_score_extraction(
-        db, state,
-        {"dossier_executions": [{
+    result = settle_delta(state, db, {"dossier_executions": [{
             "dossier_id": gid,
             "outcome": "fulfilled",
             "note": note,
-        }]},
-        content=content,
-    )
-    assert result["dossier_executions"] == [{"dossier_id": gid, "outcome": "fulfilled"}]
+        }]}, SettlementContext(content=content))
+    assert view(result, "dossier_executions") == [{
+        "dossier_id": gid, "outcome": "fulfilled",
+        "source_item": {"dossier_id": gid, "outcome": "fulfilled", "note": note},
+    }]
     closed = db.get_decree_dossier(gid)
     assert closed["status"] == "closed"
     assert closed["execution_note"] == note  # 原文零删改，无核账模板增补
@@ -177,7 +176,7 @@ def test_failed_close_reconciles_only_when_the_silver_already_left(game):
             "execution_surface": "in_transit",
         },
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "closed"
     assert row["execution_outcome"] == "failed"
@@ -203,7 +202,7 @@ def test_failed_close_reconciles_only_when_the_silver_already_left(game):
         },
     )
     assert [int(move["delta"]) for move in db.list_economy_moves_for_dossier(partial)] == [-7]
-    db.apply_dossier_promulgation(state, partial, "promulgated")
+    apply_dossier_promulgation(db, state, partial, "promulgated")
     partial_closed = db.get_decree_dossier(partial)
     assert partial_closed["status"] == "closed"
     assert partial_closed["execution_outcome"] == "failed"

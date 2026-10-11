@@ -1,6 +1,16 @@
-"""官职推断的宿主调用及持久任所接缝。"""
+"""office_type 推断走 offices.json 参考表（替代旧正则词表）。
+
+无 CLI 后端时 LLM 兜底不触发（表查不中→待铨），故这里只测表命中的确定性分类，
+重点覆盖旧版漏判进『待铨』的：后宫/武职/民间。
+"""
 
 from __future__ import annotations
+
+from ming_sim.entities.character.appointment import apply_office_appointment
+
+from ming_sim.applier import Provenance, RejectedItem
+
+import pytest
 
 import ming_sim.cli_backend as cb
 import ming_sim.db as dbmod
@@ -22,6 +32,12 @@ def _cli_cfg() -> LLMConfig:
         cli_model="gpt-5.3-codex-spark",
         cli_timeout_seconds=240,
     )
+
+
+def test_unknown_falls_to_daiquan_without_backend(monkeypatch):
+    # 无 CLI 后端 + 表查不中 → 待铨（不误判、不崩）
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    assert infer("绝无此名的杜撰怪衔甲乙丙") == "待铨"
 
 
 def test_api_channel_unknown_office_does_not_use_backend_env(monkeypatch):
@@ -180,7 +196,10 @@ def test_fresh_gamesession_start_makes_no_backend_calls(tmp_path, monkeypatch):
         sess.begin_turn()  # 再跑一回合：sync 路径每回合复跑，确认仍零调用
         assert calls == [], f"开局全路径不应调 CLI 后端，实调 {len(calls)} 次：{calls[:3]}"
     finally:
-        sess.close()
+        try:
+            sess.close()
+        except Exception:
+            pass
 
 
 def test_sync_preserves_persisted_court_office_type_on_table_miss(tmp_path):
@@ -235,8 +254,6 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
 
 def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     """一次任职 resolved seat：地方同职省略 region 续任不跨省挤位；中央夹带 region 归一空。"""
-    from ming_sim.issues import apply_office_appointment
-
     db, state, content = game
     rows = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
@@ -247,13 +264,13 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     r1 = apply_office_appointment(
         db, state, content, a, "巡抚",
         new_office_type="督抚", region_id="shaanxi", reason="seat-a",
-    )
-    assert not r1.get("rejected")
+    source=Provenance.system_simulation)
+    assert not isinstance(r1, RejectedItem), r1
     r2 = apply_office_appointment(
         db, state, content, b, "巡抚",
         new_office_type="督抚", region_id="henan", reason="seat-b",
-    )
-    assert not r2.get("rejected")
+    source=Provenance.system_simulation)
+    assert not isinstance(r2, RejectedItem), r2
     assert db.character_office_region(a) == "shaanxi"
     assert db.character_office_region(b) == "henan"
 
@@ -261,8 +278,9 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     r3 = apply_office_appointment(
         db, state, content, a, "巡抚",
         new_office_type="督抚", region_id="", reason="reappoint-omit-region",
-    )
-    assert not r3.get("rejected")
+    source=Provenance.system_simulation)
+    assert not isinstance(r3, RejectedItem), r3
+    assert not r3.get("displaced"), r3
     assert content.characters[a].office == "巡抚"
     assert content.characters[a].office_region == "shaanxi"
     assert db.character_office_region(a) == "shaanxi"
@@ -270,11 +288,11 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     assert content.characters[b].office_region == "henan"
     assert db.character_office_region(b) == "henan"
 
-    # Central identity ignores caller-stuffed region on the real write.
+    # Central office write strips caller-stuffed region on the real seat.
     r4 = apply_office_appointment(
         db, state, content, a, "户部尚书",
         new_office_type="户部", region_id="henan", reason="central-noise-region",
-    )
-    assert not r4.get("rejected")
+    source=Provenance.system_simulation)
+    assert not isinstance(r4, RejectedItem), r4
     assert db.character_office_region(a) == ""
     assert content.characters[a].office_region == ""

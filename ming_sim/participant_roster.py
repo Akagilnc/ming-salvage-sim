@@ -159,8 +159,7 @@ def project_execution_liability_parties(
     同构 breach_decree_dossier 双处收集：协办本人零机械只作戏源，
     但其委派人仍次责（ADR 0053：大臣遣学生为协办办砸→全权者背锅）。
     先定档后去重：同一人 primary 胜 secondary；知情永不入。
-    写路与 list_execution_liability_parties 共用本函数，禁止第二份 roster 遍历。
-    已持久名册 schema 与 authority 投影同一 decode 权威（#1897 E1）。
+    写路共用本函数，禁止第二份 roster 遍历。
     """
     entries = decode_durable_participant_roster(roster)
 

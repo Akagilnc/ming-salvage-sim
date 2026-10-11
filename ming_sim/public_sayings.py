@@ -5,6 +5,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
 from ming_sim.models import (
     _load_durable_json_object,
@@ -15,7 +16,7 @@ from ming_sim.models import (
 import json
 from typing import Any, Iterable
 
-from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.applier import connection_owns_transaction
 
 SOURCE_PREFIX = "public_saying:"
 LAYER_TITLE = "有此说法"
@@ -36,11 +37,11 @@ def record_public_saying(
 ) -> int:
     """Record public speech without granting its associated private facts."""
     if not isinstance(body, str) or not body.strip():
-        raise ValueError("公开说法正文不能为空")
+        raise DeclarationDataError("公开说法正文不能为空")
     if not isinstance(affair_ref, str):
-        raise ValueError("事务引用必须为字符串")
-    text = sanitize_sqlite_text(body)
-    affair = sanitize_sqlite_text(affair_ref.strip())
+        raise DeclarationDataError("事务引用必须为字符串")
+    text = body
+    affair = affair_ref.strip()
     people = _character_names(involved_characters)
     people_json = json.dumps(people, ensure_ascii=False)
     owns = bool(commit) and connection_owns_transaction(db.conn)
@@ -80,8 +81,12 @@ def public_layer_events(db: Any) -> list[dict[str, object]]:
 
 
 def _json_name_list(raw: object) -> list[str]:
-    from ming_sim.db import _load_durable_str_list
-    return _load_durable_str_list(raw, surface="public_sayings.involved_characters")
+    values = json.loads(raw or "[]")
+    if not isinstance(values, list) or any(not isinstance(name, str) for name in values):
+        raise ValueError("持久说法人物名单须为字符串列表")
+    return [str(name) for name in values if str(name).strip()]
+
+
 
 
 def _row_as_saying(row: Any) -> dict[str, object]:

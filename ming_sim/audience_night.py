@@ -9,6 +9,9 @@
 
 from __future__ import annotations
 
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
+from ming_sim.applier import Provenance
+
 from ming_sim.models import _load_durable_str_list
 
 import contextlib
@@ -23,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ming_sim.applier import connection_owns_transaction
 from ming_sim.db import normalize_office
+from ming_sim.settlement.views import view
 from ming_sim.error_pack import error_packs_root
 from ming_sim.models import GameState
 from ming_sim.participant_roster import is_non_person_participant_name
@@ -124,12 +128,12 @@ _SUMMON_TRAVEL_TONE_PREFIX = "行程语气:"
 
 
 def _travel_tone_tag(value: object) -> str:
-    from ming_sim.issues import normalize_travel_tone
+    from ming_sim.entities.character.transit import normalize_travel_tone
     return f"{_SUMMON_TRAVEL_TONE_PREFIX}{normalize_travel_tone(value)}"
 
 
 def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
-    from ming_sim.issues import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
+    from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
     tones = [
         normalize_travel_tone(str(tag)[len(_SUMMON_TRAVEL_TONE_PREFIX):])
         for tag in tags if str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX)
@@ -803,7 +807,7 @@ def open_night(
             db.conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
             db.conn.execute(f"RELEASE SAVEPOINT {sp}")
         except Exception:
-            pass
+            logger.exception("open_night rollback failed")
         raise
 
     night = get_night(db, night_id)
@@ -1326,19 +1330,19 @@ def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
     return _one_per_person(waiting)
 
 def settle_applied_arrived_summons(
-    db: Any, applied: Dict[str, Any],
+    db: Any, outcome: Any,
 ) -> List[str]:
     """结清已由 canonical applier 成功续启赴京的在途召旨。
 
-    只认 applied_person_changes 中未拒收且 transit_to=beizhili 的成功行止；
+    只认人物段中未拒收且 transit_to=beizhili 的成功行止；
     同人全部 kind=in_transit 未结 origin 一并结清。失败/空 applied 为 no-op。
     外层 settle atomic 使行止与结清同成同败（_should_commit 已为 False）。
     """
     accepted = {
         str(item.get("name") or item.get("人物") or "").strip()
-        for item in (applied.get("applied_person_changes") or [])
+        for item in view(outcome, "applied_person_changes")
         if isinstance(item, dict)
-        and not item.get("rejected")
+
         and str(item.get("transit_to") or item.get("去向") or "").strip() == "beizhili"
     }
     accepted.discard("")
@@ -1387,7 +1391,7 @@ def settle_summon_origin(
     候见中 active 再奉旨离京（canonical 行止写缝）；
     续启 applier 成功后按 origin（settle_applied_arrived_summons）。
     commit 由调用方事务所有权决定（与 append_story_ledger 同形）；
-    行止接缝须传 commit=commit_person_change，避免 SAVEPOINT/外层事务中擅自提交。
+    行止接缝传 commit=False：提交归外层事务。
     """
     owns = _should_commit(db) if commit else False
     origin = str(origin_id or "").strip()
@@ -1502,8 +1506,8 @@ def update_summon_travel_tone(
     owns = _should_commit(db)
     name = str(person_name or "").strip()
     if not name:
-        raise ValueError("传召人名不能为空")
-    from ming_sim.issues import normalize_travel_tone
+        raise DeclarationDataError("传召人名不能为空")
+    from ming_sim.entities.character.transit import normalize_travel_tone
     tone = normalize_travel_tone(travel_tone)
     target = None
     for item in list_unsettled_summons(db):
@@ -1520,7 +1524,7 @@ def update_summon_travel_tone(
         target = item
         break
     if target is None:
-        raise KeyError(f"本夜无此人未结传召：{name}")
+        raise DeclarationReferenceError(f"本夜无此人未结传召：{name}")
     entry_id = int(target["entry_id"])
     row = db.conn.execute(
         "SELECT tags FROM story_ledger_entries WHERE id=?",
@@ -1560,7 +1564,7 @@ def commit_fresh_summons_for_night(
     if not pending:
         return []
     from ming_sim.decree import atomic_and_reload
-    from ming_sim.issues import apply_person_changes_only
+    from ming_sim.settlement.run import apply_person_changes_only
 
     # 历史多 origin 未结账：按人分组，apply 一次后全部标在途（兼容重试）。
     by_person: Dict[str, List[Dict[str, Any]]] = {}
@@ -1600,7 +1604,7 @@ def commit_fresh_summons_for_night(
                 for item in items:
                     origins.append(str(item["origin_id"]))
                 continue
-            from ming_sim.issues import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
+            from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
             travel_tone = max(
                 (normalize_travel_tone(item.get("travel_tone")) for item in items),
                 key=TRAVEL_SPEED_BY_TONE.__getitem__,
@@ -1618,9 +1622,9 @@ def commit_fresh_summons_for_night(
                     "origin_ref": "盘面自发",
                 }],
                 content=content,
-            )
-            results = list(applied.get("applied_person_changes") or [])
-            if not results or any(result.get("rejected") for result in results):
+            source=Provenance.system_simulation)
+            results = list(applied.applied)
+            if not results or applied.rejected:
                 raise AudienceNightError(
                     f"传召启程未落定：{person_name}",
                     code="summon_departure_rejected",
@@ -1754,7 +1758,7 @@ def recognize_xuan_command(message: str) -> Optional[str]:
     text = str(message or "").strip()
     if not text:
         return None
-    # 显式退朝口令优先，避免被宣召形状误吞。
+    # 收夜口令优先，避免「退下」等被宣召形状误吞。
     if recognize_audience_command(text) != CMD_NONE:
         return None
     m = _XUAN_COMMAND_RE.match(text)

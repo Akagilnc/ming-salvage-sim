@@ -1,12 +1,18 @@
-"""Affair records: identity, birth, pointers (ADR 0154). No declare-closed action."""
+"""Affair records: identity, birth, pointers (ADR 0154).
+
+ADR 0154（2026-09-30）：不设「宣布了结」动作；closed 态由世界记录自然承接。
+"""
 
 from __future__ import annotations
+
+from ming_sim.strict_types import strict_sqlite_id
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
-from ming_sim.strict_types import strict_sqlite_id
+from ming_sim.applier import connection_owns_transaction
+from ming_sim.strict_types import strict_int
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
@@ -72,7 +78,7 @@ class Affair:
 
 
 class AffairStore:
-    """World-record home for affairs. Birth and pointers only; no close action."""
+    """World-record home for affairs. Status becomes closed only via world archive."""
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
@@ -91,7 +97,6 @@ class AffairStore:
         turn: int,
         birth_key: str = "",
     ) -> Affair:
-        # Free prose name/origin on the materials board: preserve bytes.
         title = str(name or "")
         cause = str(origin or "")
         if not title.strip():
@@ -105,9 +110,9 @@ class AffairStore:
             "created_turn, created_year, created_period) "
             "VALUES (?, ?, 'open', ?, ?, ?, ?)",
             (
-                sanitize_sqlite_text(title),
-                sanitize_sqlite_text(cause),
-                sanitize_sqlite_text(key),
+                title,
+                cause,
+                key,
                 int(turn),
                 int(year),
                 int(period),
@@ -125,7 +130,7 @@ class AffairStore:
             (int(affair_id),),
         ).fetchone()
         if row is None:
-            raise KeyError(f"事务不存在：{affair_id}")
+            raise DeclarationReferenceError(f"事务不存在：{affair_id}")
         return _row_to_affair(row)
 
     def list_all(self) -> tuple[Affair, ...]:
@@ -235,7 +240,7 @@ class AffairStore:
         if current == want:
             return
         if current != 0:
-            raise ValueError(
+            raise DeclarationDataError(
                 f"{_POINTER_TABLES[table]}已指向事务 {current}，不能改指 {want}"
             )
         owns = connection_owns_transaction(self._conn)
@@ -253,14 +258,14 @@ class AffairStore:
     def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)
         if label is None:
-            raise ValueError(f"事务指针表非法：{table}")
+            raise DeclarationDataError(f"事务指针表非法：{table}")
         key_column = _POINTER_KEY_COLUMNS.get(table, "id")
         row = self._conn.execute(
             f"SELECT affair_id FROM {table} WHERE {key_column}=?",
             (row_id if key_column != "id" else int(row_id),),
         ).fetchone()
         if row is None:
-            raise KeyError(f"{label}不存在：{row_id}")
+            raise DeclarationReferenceError(f"{label}不存在：{row_id}")
         return int(row["affair_id"] or 0)
 
     def dossiers(self, affair_id: int) -> tuple[dict[str, object], ...]:
@@ -289,7 +294,7 @@ class AffairStore:
         dossier_affair = self._current_pointer("decree_dossiers", int(target))
         declared = self.peek_declared_id(declaration, allowed=ATTACH_BIRTH)
         if dossier_affair and declared != dossier_affair:
-            raise ValueError(
+            raise DeclarationDataError(
                 f"案卷已指向事务 {dossier_affair}，不能同时声明 {declared or '新事务'}"
             )
 
@@ -384,12 +389,11 @@ class AffairStore:
         return self.origin_ref(affair_id)
 
 
-
 def parse_positive_affair_id(raw: object) -> int:
     """Affair identity: reject bool/float/超 SQLite 界, keep integer-string compat, require >0."""
     value = strict_sqlite_id(raw, accept_numeric_strings=True)
     if value <= 0:
-        raise ValueError("affair_id must be a positive integer")
+        raise DeclarationDataError("affair_id must be a positive integer")
     return value
 
 
@@ -400,17 +404,16 @@ def parse_affair_declaration(
 ) -> dict[str, object]:
     """Typed LLM declaration only. No prose parsing."""
     if not isinstance(raw, Mapping):
-        raise ValueError("事务声明须为对象")
+        raise DeclarationDataError("事务声明须为对象")
     attach = str(raw.get("attach") or "").strip()
     permitted = ATTACH_BIRTH if allowed is None else allowed
     if attach not in permitted:
-        raise ValueError("事务声明 attach 不在本阶段")
+        raise DeclarationDataError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
-        # Affair name/origin are free prose on the materials board: preserve bytes.
         name = str(raw.get("name") or "")
         origin = str(raw.get("origin") or "")
         if not name.strip() or not origin.strip():
-            raise ValueError("新事务声明须有名字与起因")
+            raise DeclarationDataError("新事务声明须有名字与起因")
         key = str(raw.get("birth_key") or "").strip()
         identity = str(raw.get("identity") or "")
         out: dict[str, object] = {"attach": _ATTACH_NEW, "name": name, "origin": origin}
@@ -422,7 +425,7 @@ def parse_affair_declaration(
     try:
         affair_id = parse_positive_affair_id(raw.get("affair_id"))
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"接到已开事务 affair_id 无效：{exc}") from exc
+        raise DeclarationDataError("接到已开事务须有 affair_id") from exc
     return {"attach": attach, "affair_id": affair_id}
 
 

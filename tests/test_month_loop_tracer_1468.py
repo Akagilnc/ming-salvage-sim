@@ -15,15 +15,22 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 import ming_sim.cli_backend as cli_backend
+import ming_sim.decree as decree_mod
+import ming_sim.session as session_mod
 import web_app
-from tests.conftest import stub_webgame_boundary
+from ming_sim import audience_night as an
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
+from tests.conftest import stub_audience_translate
+
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
+
 
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由、月尾 writer 全真跑。
@@ -124,7 +131,30 @@ def _get_state(client: TestClient) -> dict:
     return resp.json()
 
 
-from tests.test_chat_stream_failpaths_393 import _parse_sse
+def _pending_payload(client: TestClient) -> dict:
+
+    """#1842/#1853：待补投影唯一真源 = list_pending_translations → scroll.translation_retries。"""
+    resp = client.get("/api/audience/scroll")
+    _assert_not_bare_500(resp, step="GET /api/audience/scroll")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    retries = list(body.get("translation_retries") or [])
+    return {"pending": retries, "count": len(retries)}
+
+
+def _parse_sse(text: str) -> list[dict]:
+    """解析 SSE 文本为 [{event, data}, ...]（与仓内其他 ASGI tracer 同形）。"""
+    events: list[dict] = []
+    for block in (text or "").strip().split("\n\n"):
+        cur: dict = {}
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                cur["event"] = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                cur["data"] = line[len("data:"):].strip()
+        if cur:
+            events.append(cur)
+    return events
 
 
 def _post_issue_stream(
@@ -146,9 +176,13 @@ def _post_issue_stream(
     # 流式入口 HTTP 层 200；业务失败走 event:error（含 409 令牌/锁语义）。
     events = _parse_sse(resp.text)
     assert events, f"{step}: empty SSE body={resp.text!r}"
-    ev, data = events[-1]
-    if not isinstance(data, dict):
-        data = {"message": data}
+    terminal = events[-1]
+    ev = terminal.get("event")
+    raw = terminal.get("data") or "{}"
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except json.JSONDecodeError:
+        data = {"message": raw}
     if ev == "error":
         status = data.get("status_code") if isinstance(data, dict) else None
         assert status != 409, (
@@ -169,3 +203,72 @@ def _post_issue_stream(
     )
 
 
+def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
+    """生产同核欠账：开夜 + 回话落库未抽。返回 chat_turn_id。"""
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    an.ensure_summon_enter(game.db, nid, minister)
+    ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
+    game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
+
+    assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
+
+    return int(ctid)
+
+
+def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
+    """#1353 fold-in / #1842：转译 LLM 死透 → 耗尽失败单源；夜可重按。
+
+    现役流式入口：error 事件携原失败 stage 与错误包，夜可重试。
+    """
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
+    client = tracer_client
+
+    new = client.post("/api/menu/new_game")
+    _assert_not_bare_500(new, step="new_game (dead-llm)")
+    assert new.status_code == 200, new.text
+    state0 = (new.json() or {}).get("state") or {}
+    turn0 = _turn_of(state0)
+    minister = _pick_active_minister(state0)
+    game = web_app.web_game
+    assert game is not None
+
+    ctid = _plant_extraction_debt(game, minister, sess_tag="sess-1468-dead")
+
+    # #1842：收夜 catch-up 认转译水位；真失败注入转译缝。
+    def _boom_translate(prompt, llm_config):
+        del prompt, llm_config
+        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+
+    stub_audience_translate(monkeypatch, _boom_translate)
+
+    issue = client.post("/api/decree/issue/stream", json={"expected_turn": turn0})
+    _assert_not_bare_500(issue, step="dead-llm issue")
+    assert issue.status_code == 200, issue.text
+    errors = [json.loads(event["data"]) for event in _parse_sse(issue.text) if event.get("event") == "error"]
+    assert len(errors) == 1
+    assert errors[0]["stage"] == "audience_translation_exhausted"
+    assert errors[0]["error_pack_path"]
+
+    # 诊断面仍可见欠账；夜保持开，玩家重按过月=重试整段
+    pending = _pending_payload(client)
+    pending_list = pending.get("pending") or []
+    count = int(pending.get("count") or 0)
+    assert count == len(pending_list) >= 1, (
+        f"diagnostic pending should remain: count={count} body={pending!r}"
+    )
+    api_ids = {int(p.get("chat_turn_id") or 0) for p in pending_list}
+    assert ctid in api_ids, f"pending API missing debt turn {ctid}: {pending!r}"
+
+    still = an.get_open_night(game.db)
+    assert still is not None
+    assert str(still.get("status")) == an.NIGHT_STATUS_OPEN
+    after = _get_state(client)
+    assert _turn_of(after) == turn0, "dead-llm must not advance month"
+
+
+# ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
+
+from tests.conftest import stub_webgame_boundary

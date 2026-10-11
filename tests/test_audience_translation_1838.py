@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from ming_sim.session_write_queue import get_session_write_queue
 
 from types import SimpleNamespace
 
@@ -26,6 +27,8 @@ from ming_sim.audience_translation import apply_audience_round_translation
 from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relations import summon_edge_origin
+from ming_sim.session import GameSession
+from tests.conftest import note_queue_until_game_teardown
 
 
 def _activate(db, state, *names: str) -> None:
@@ -156,8 +159,10 @@ def test_presence_enter_exit_from_translation(game):
         (nid,),
     ).fetchall()
     presence_rows = [r for r in rows if r["source_chat_turn_id"] == ctid]
-    # 在场进出效果序；不锁 body 戏文。筛选谓词已保证 source 身份，不重复 all 自证（#1897 T1）。
-    assert [r["presence_effect"] for r in presence_rows] == ["enter", "exit"]
+    assert [(r["body"], r["presence_effect"]) for r in presence_rows] == [
+        (enter_body, "enter"),
+        (exit_body, "exit"),
+    ]
 
 
 def _scene_session(db, state, content, monkeypatch):
@@ -172,14 +177,33 @@ def _scene_session(db, state, content, monkeypatch):
 
     stub_scene_agent(monkeypatch, FakeAgent())
     stub_audience_translate(monkeypatch)
-    from tests.month_chain_helpers import make_light_session
-    sess = make_light_session(db, state, content)
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda out: str(getattr(out, "content", "") or ""),
+    )
+    monkeypatch.setattr("ming_sim.session._dump_llm_messages", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "ming_sim.session.prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="开场", root=None),
+    )
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
     sess.llm_config = SimpleNamespace(channel="")
-    sess.temporary_characters = {}
+    sess.agno_db = None
+    sess._write_gate = get_session_write_queue(sess).write_gate
+    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
+    note_queue_until_game_teardown(db, get_session_write_queue(sess))
     return sess
 
 
-from tests.test_audience_translate_1837 import _active_chat_turn
+def _active_chat_turn(db, state, night_id: int) -> int:
+    """建可撤回的存活轮（status=active；挂夜默认 generating 不可 undo）。"""
+    return int(db.create_chat_turn(
+        state, "殿上", "s", 0, night_id=int(night_id), status="active",
+    ))
 
 
 def test_edge_event_and_public_saying_attach_affair(game):
@@ -222,6 +246,7 @@ def test_edge_event_and_public_saying_attach_affair(game):
         (edge_id,),
     ).fetchone()
     assert edge_row["affair_id"] == affair.id
+    assert edge_row["context"] == "当殿为赈灾站台"
     # 源轮绑定复用 summon_edge_origin，接入既有撤回删口（ADR 0082）
     assert str(edge_row["origin"]).startswith(summon_edge_origin(ctid))
 

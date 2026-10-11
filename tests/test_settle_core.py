@@ -8,7 +8,7 @@ from ming_sim import issues
 
 
 def test_pre_settle_runs_fixed_fiscal_tick(game):
-    """pre_settle 跑固定月度财政 tick（落 economy_ledger 行）+ 返回 auto_triggered 清单。"""
+    """pre_settle 跑固定月度财政 tick（落 economy_ledger 行）。"""
     db, state, content = game
     turn = state.turn
     before = db.conn.execute(

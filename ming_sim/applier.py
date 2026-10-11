@@ -1,6 +1,6 @@
 """结算落库统一拒收契约与事务边界（ADR 0008 S0 骨架）。
 
-契约住此模块；各 section 适配器将原地迁入（PR2）。
+契约住此模块；段适配器在 entities/* 与 settlement 目录，经登记表调度。
 公开类型：Provenance / RejectedItem / SectionResult / RejectionCollector。
 """
 
@@ -9,35 +9,15 @@ from __future__ import annotations
 import enum
 import json
 import sqlite3
+import contextlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 
-def sanitize_sqlite_text(value: Any) -> Any:
-    """Return value with strings safe to bind into SQLite UTF-8 TEXT.
-
-    Python can hold lone surrogate codepoints produced by permissive JSON
-    parsing, but sqlite3 refuses to UTF-8 encode them at bind time. Preserve
-    normal text (including Chinese) and escape only unencodable codepoints.
-    """
-    if isinstance(value, str):
-        return value.encode("utf-8", "backslashreplace").decode("utf-8")
-    if isinstance(value, list):
-        return [sanitize_sqlite_text(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(sanitize_sqlite_text(item) for item in value)
-    if isinstance(value, dict):
-        return {
-            sanitize_sqlite_text(key): sanitize_sqlite_text(val)
-            for key, val in value.items()
-        }
-    return value
-
-
 def safe_json_dumps(value: Any, **kwargs: Any) -> str:
     """json.dumps that preserves readable UTF-8 while escaping bad codepoints."""
-    return json.dumps(sanitize_sqlite_text(value), **kwargs)
+    return json.dumps(value, **kwargs).encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +212,50 @@ def atomic(db: Any) -> Iterator[None]:
                 raise
 
 
+class ItemAtomicReject(Exception):
+    """在 :func:`item_savepoint_scope` 块内抛出以整项回滚，外层捕获后转拒收。"""
+
+    def __init__(self, reason: str, category: str) -> None:
+        self.reason = reason
+        self.category = category
+        super().__init__(reason)
+
+
+@contextmanager
+def item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
+    """逐项落库的最小原子域：外层事务内用 SAVEPOINT 做本项细粒度回滚。
+
+    已在外层事务内时只用 SAVEPOINT，不再另开 ``atomic``（嵌套 flat 语义会把
+    「接住内层异常后继续下一项」判为吞异常）。未在任何外层事务内时用
+    ``atomic(db)`` 令本项独立开合。
+
+    跨层回滚：本项 body 开始前记 ``_runtime_rollback_callbacks`` 长度，失败时
+    只回放本项新增的闭包（不新建平行快照系统）；成功路径留给外层 commit/
+    rollback 按既有语义处理。
+    """
+    owns = connection_owns_transaction(db.conn)
+    cm = atomic(db) if owns else contextlib.nullcontext()
+    with cm:
+        rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+        if rollback_callbacks is None:
+            rollback_callbacks = []
+            db.conn._runtime_rollback_callbacks = rollback_callbacks
+        baseline = len(rollback_callbacks)
+        db.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            yield
+        except BaseException:
+            db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            item_callbacks = rollback_callbacks[baseline:]
+            del rollback_callbacks[baseline:]
+            for callback in reversed(item_callbacks):
+                callback()
+            raise
+        else:
+            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+
+
 # ---------------------------------------------------------------------------
 # 决定 5：拒收来源枚举
 # ---------------------------------------------------------------------------
@@ -258,11 +282,10 @@ class RejectedItem:
     source 由调用方传入，决定是否向玩家可见（ADR 0008 决定 5）。
     """
 
-    item: dict                  # 原始 dict，原样保留便于重放分析
+    item: dict                  # 恒为对象；非对象在拒收产生处包成 {"raw_value": 原值}
     reason: str                 # 人读原因
     category: str               # 机读类别，供聚合
     source: Provenance          # 来源
-
 
 # ---------------------------------------------------------------------------
 # 决定 1：段适配器返回值
@@ -287,9 +310,22 @@ class SectionResult:
         )
 
 
-# ---------------------------------------------------------------------------
-# 决定 1：适配器入参上下文
-# ---------------------------------------------------------------------------
+def merge_delta_maps(total: dict, applied: dict) -> None:
+    """把一笔派系/阶级增量并进同批累计（同键同字段相加）。"""
+    for key, delta in applied.items():
+        if isinstance(delta, dict):
+            previous = total.get(key, {})
+            if not isinstance(previous, dict):
+                previous = {"satisfaction": previous}
+            for fld, amount in delta.items():
+                previous[fld] = previous.get(fld, 0) + amount
+            total[key] = previous
+        else:
+            previous = total.get(key, 0)
+            if isinstance(previous, dict):
+                previous["satisfaction"] = previous.get("satisfaction", 0) + delta
+            else:
+                total[key] = previous + delta
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-import json
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdict_metadata
 import re
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
@@ -763,17 +763,14 @@ def _run_opening_levy(
         return
     from ming_sim.displaced_population import apply_levy_driven_transfers
     from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
-    from ming_sim.decree import _collect_inline_rejections
     from ming_sim.error_pack import rejections_jsonl_path
 
     collector = RejectionCollector()
     with atomic(db):
-        _applied, rejected = apply_levy_driven_transfers(db, commit=False)
+        _applied, rejected = apply_levy_driven_transfers(db,  source=source)
         if rejected:
-            _collect_inline_rejections(
-                collector, {"population_transfers_rejections": rejected}, turn,
-                source,
-            )
+            for item in rejected:
+                collector.record("population_transfers", item, turn)
             collector.flush_to_db(db)
         chain["opening_levy_done"] = True
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -999,7 +996,7 @@ def _settle_edicts(
                     db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
                     try:
                         with atomic(db):
-                            db.apply_dossier_promulgation(
+                            apply_dossier_promulgation(db,
                                 state, int(dossier["id"]), str(verdict["decision"]),
                                 blocked_layer=str(verdict.get("blocked_layer") or ""),
                                 reason=str(verdict.get("reason") or ""),
@@ -1009,7 +1006,7 @@ def _settle_edicts(
                                 criteria_snapshot=verdict.get("criteria_snapshot") or {},
                                 content=session.content,
                             )
-                            db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
+                            apply_dossier_verdict_metadata(db, state, int(dossier["id"]), verdict)
                     finally:
                         db.conn._recommendation_snapshots_prevalidated = previous
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
@@ -1038,8 +1035,8 @@ def _settle_edicts(
 def _ending_from_dispatch_result(result: Any) -> Optional[Dict[str, object]]:
     if result is None:
         return None
-    for report in result.effects.applied:
-        candidate = report.get("victory_status") if isinstance(report, dict) else None
+    for outcome in result.effects.applied:
+        candidate = getattr(outcome, "victory_status", None)
         if isinstance(candidate, dict) and candidate.get("status") != "ongoing":
             return candidate
     return None
@@ -1051,10 +1048,10 @@ def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: An
     pending = chain.setdefault("pending_disclosures", [])
     effects = getattr(result, "effects", None)
     applied = getattr(effects, "applied", []) if effects is not None else []
-    for report in applied:
-        if not isinstance(report, dict):
-            continue
-        for update in report.get("secret_order_updates") or []:
+    from ming_sim.settlement.views import view
+
+    for outcome in applied:
+        for update in view(outcome, "secret_order_updates"):
             if isinstance(update, dict) and update.get("disclosed"):
                 item = {
                     "order_id": int(update["order_id"]),
@@ -1073,7 +1070,8 @@ def _consume_event_gates_after_edicts(
     ``pre_settle`` 不再调用这两条判门。``event_gates_after_edicts_done`` 只防止
     同月恢复时再消费一次。
     """
-    from ming_sim.issues import apply_event_terminal_states, auto_trigger_seed_issues
+    from ming_sim.entities.issue.event_terminal import apply_event_terminal_states
+    from ming_sim.issues import auto_trigger_seed_issues
     from ming_sim.token_stats import tlog
 
     db, state = session.db, session.state
@@ -1081,7 +1079,7 @@ def _consume_event_gates_after_edicts(
     if chain.get("event_gates_after_edicts_done"):
         return
     with atomic(db):
-        terminalized = apply_event_terminal_states(state, db, commit=False)
+        terminalized = apply_event_terminal_states(state, db)
         triggered = auto_trigger_seed_issues(state, db)
     if terminalized:
         tlog(
@@ -1175,13 +1173,13 @@ def _run_world_segment(
 def _apply_deferred_disclosures(
     db: Any, state: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
 ) -> None:
-    pending = _load_durable_json_list(chain.get("pending_disclosures"), surface="month_chain.pending_disclosures")
-    from ming_sim.issues import record_secret_order_disclosure
+    pending = chain.get("pending_disclosures") or []
+    from ming_sim.entities.secret_order.disclosure import record_secret_order_disclosure
     with atomic(db):
         for item in pending:
             order_id = int(item["order_id"])
             sim_note = str(item.get("sim_note") or "")
-            record_secret_order_disclosure(db, state, order_id, sim_note, commit=False)
+            record_secret_order_disclosure(db, state, order_id, sim_note)
         chain["secret_orders_disclosures_done"] = True
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
@@ -1442,6 +1440,7 @@ def _step_4a_secret_order_supply(
         return
 
     from ming_sim.covert_progress import _is_issuance_turn
+    from ming_sim.exceptions import DeclarationDataError
 
     candidates = db.list_monthly_dossier_progress_nudges()
     active_orders = [
@@ -1493,7 +1492,7 @@ def _step_4a_secret_order_supply(
                 db.record_monthly_supervision_presence(turn, commit=False)
                 try:
                     db.record_monthly_dossier_progress(turn, reports)
-                except ValueError:
+                except DeclarationDataError:
                     # 仅 0058 完整性校验失败标 invalid；其它异常保留产物供重试接续。
                     validation_failed = True
                     raise
@@ -1532,7 +1531,6 @@ def _step_4a_secret_order_supply(
     if not chain.get("covert_progress_done"):
         from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
         from ming_sim.covert_progress import apply_monthly_covert_actual_progress
-        from ming_sim.decree import _collect_inline_rejections
         from ming_sim.error_pack import rejections_jsonl_path
 
         collector = RejectionCollector()
@@ -1540,23 +1538,21 @@ def _step_4a_secret_order_supply(
         invalid_declarations = False
         try:
             with atomic(db):
-                rows = apply_monthly_covert_actual_progress(
-                    db, state, selections=selections, only_supplied=False, commit=False,
-                )
-                rejections = [r for r in rows if r.get("rejected")]
+                rows, rows_rejections = apply_monthly_covert_actual_progress(
+                    db, state, selections=selections, only_supplied=False,
+                    source=source)
+                # #1835 S1：只消费 canonical RejectedItem；保留 invalid_enum 停续语义。
+                rejections = list(rows_rejections)
                 invalid_declarations = any(
-                    bool(r.get("invalid")) or r.get("category") == "invalid_enum"
-                    for r in rejections
+                    getattr(item, "category", None) == "invalid_enum"
+                    for item in rejections
                 )
                 if invalid_declarations:
-                    # 无效声明不冒充合法完成：本段整体回滚（不留半截实况行），
-                    # 随后按 #1846 失效重起契约标 invalid 并中止本月 run，
-                    # 重试时弃掉本月 4a 产物重新调用；已落的前段成果不动。
+                    # #1846：无效声明不冒充合法完成；标 invalid 并中止，重试弃 4a 产物。
                     raise ValueError("密令声明无效，本月 4a 产物须重来")
                 if rejections:
-                    _collect_inline_rejections(
-                        collector, {"covert_exec_selections": rows}, turn, source,
-                    )
+                    for item in rejections:
+                        collector.record("covert_exec_selections", item, turn)
                     collector.flush_to_db(db)
                 chain["covert_progress_done"] = True
                 _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -1572,7 +1568,7 @@ def _step_4a_secret_order_supply(
         from ming_sim.covert_progress import settle_due_secret_orders
         try:
             with atomic(db):
-                settle_due_secret_orders(db, state, commit=False)
+                settle_due_secret_orders(db, state)
                 chain["due_secret_orders_settled"] = True
                 chain["secret_orders_supply_done"] = True
                 _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -1585,8 +1581,8 @@ def _run_month_drift(
 ) -> None:
     if chain.get("inertia_done") or not chain.get("world_committed"):
         return
-    from ming_sim.issues import clear_gated_legacies
     from ming_sim.situation_drift import apply_situation_monthly_drift
+    from ming_sim.entities.issue.legacy import clear_gated_legacies
     from ming_sim.due_review import apply_pending_due_reviews
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     from ming_sim.breach_plea import expire_breach_pleas_on_due, scan_and_write_breach_pleas
@@ -1594,7 +1590,6 @@ def _run_month_drift(
     from ming_sim.urge_lever import consume_pending_urge_audience_todos
     from ming_sim.audience_night import retire_unsettled_summons_for_inactive
     from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
-    from ming_sim.decree import _collect_inline_rejections
     from ming_sim.error_pack import rejections_jsonl_path
 
     collector = RejectionCollector()
@@ -1607,26 +1602,22 @@ def _run_month_drift(
         # 默许/查办必须在逐段落账接缝带该段 report 结算，见 declaration_dispatch。
         from ming_sim.covert_levy import settle_exposure_from_canonical_actions, write_exposure_todos
         write_exposure_todos(db, state)
-        settle_exposure_from_canonical_actions(db, state, {})
+        settle_exposure_from_canonical_actions(db, state, None)
         person_changes: list[dict[str, object]] = []
         rejections = apply_situation_monthly_drift(
             db, state, applied_person_changes=person_changes,
-        )
-        _collect_inline_rejections(
-            collector, {
-                "issue_inertia": {"entity_rejections": rejections},
-                "issue_summary": {"applied_person_changes": person_changes},
-            }, turn, source,
-        )
+            source=source)
+        for item in rejections:
+            collector.record("issue_inertia", item, turn)
         collector.flush_to_db(db)
         db.recompute_all_faction_leverage()
         clear_gated_legacies(db, state)
-        apply_pending_due_reviews(db, state, commit=False)
-        settle_due_secret_orders(db, state, commit=False)
-        expire_breach_pleas_on_due(db, state, commit=False)
-        consume_pending_urge_audience_todos(db, state, commit=False)
-        write_due_staged_commitment_todos(db, state, commit=False)
-        scan_and_write_breach_pleas(db, state, commit=False)
+        apply_pending_due_reviews(db, state)
+        settle_due_secret_orders(db, state)
+        expire_breach_pleas_on_due(db, state)
+        consume_pending_urge_audience_todos(db, state)
+        write_due_staged_commitment_todos(db, state)
+        scan_and_write_breach_pleas(db, state)
         chain["inertia_done"] = True
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
@@ -1889,7 +1880,7 @@ def _apply_decided_triad(
     ).strip()
     if decision not in {"force_promulgated", "withdrawn", "hold"}:
         return
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier_id, decision, content=content,
     )
 
@@ -1994,8 +1985,8 @@ def _advance_after_gazette(
         chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
         # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
-        from ming_sim.displaced_population import apply_recovery_driven_transfers
-        apply_recovery_driven_transfers(db, state, commit=False)
+        from ming_sim.entities.population.recovery import _apply_recovery_driven_transfers
+        _apply_recovery_driven_transfers(db, state)
         state.next_period()
         state.turn_phase = "issued"
         db.save_state(state)

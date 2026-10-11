@@ -6,6 +6,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
@@ -21,7 +22,7 @@ from ming_sim.execution_pressure import (
 from ming_sim.executor_routing import duty_route_categories
 
 
-class StructuredDecreeCombinationError(ValueError):
+class StructuredDecreeCombinationError(DeclarationDataError):
     """结构化旨意组合校验失败（typed；纠错路径只捕本类，禁异常文本子串识别）。
 
     partial_result：抽取已解析但组合未过的首抽快照（含 participant_roster）；
@@ -152,7 +153,7 @@ def structured_decree_prompt_contract() -> str:
 def transport_keys_to_canonical(raw: Mapping[str, object]) -> Dict[str, object]:
     """运输键归一；同义键合并，后写不覆盖已有非空 canonical。"""
     if not isinstance(raw, Mapping):
-        raise ValueError("structured decree raw 须为 object")
+        raise DeclarationDataError("structured decree raw 须为 object")
     out: Dict[str, object] = dict(raw)
     for src, dest in _TRANSPORT_KEY_ALIASES.items():
         if src not in raw:

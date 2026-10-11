@@ -11,22 +11,22 @@ Seams:
 
 from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_promulgation
+from ming_sim.exceptions import PendingActionRefusal
+from ming_sim.applier import atomic
+
 from functools import partial
 
 import pytest
 
-from tests.dossier_test_helpers import executing_staged_policy
 from tests.test_due_review_621 import _insert_staged_commitment as _due_review_commitment
 from ming_sim.due_review import (
     apply_due_review_for_todo,
     apply_pending_due_reviews,
     build_due_review_input,
-    dossiers_with_pending_due_review,
     list_due_review_scenes,
     project_due_review_scene,
 )
-from ming_sim.exceptions import PendingActionRefusal
-from ming_sim.issues import apply_score_extraction
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -47,7 +47,21 @@ from ming_sim.urge_lever import (
 # ── fixtures ──────────────────────────────────────────────────────────
 
 
-_executing_policy_dossier = partial(executing_staged_policy, token="urge-624")
+def _executing_policy_dossier(db, state, *, token: str = "urge-624", host: str = "倪元璐"):
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"清丈差务·{token}",
+        target_kind="issue",
+        target_id=token,
+        participants=[
+            {"character_id": host, "tier": "主办", "role": "清丈"},
+            {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
+        ],
+    )
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    return dossier_id
 
 
 _insert_staged_commitment = partial(_due_review_commitment, title="催办分段之诺")
@@ -152,19 +166,15 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
 
 
 def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
-    """#1895：同一实况下，催办压力与 integrity 都不再改写到期复核判词。
+    """#1895 / #1835 J18：催办压力不代判终值；终值只经模型声明写格。
 
-    旧契约是 derive_distortion_tendency 按 integrity＋催办压力算出失真档，
-    apply_distortion_to_verdict 再把判词只往更重方向推（fulfilled→degraded→
-    failed/transformed）。此测试钉相反行为：人物肯不肯办归模型自选，代码只按
-    实况账（旨外标记／durable_effects／progress_reports）判终值。
+    催办史仍作事实素材供模型；apply_due_review 不机械选 degraded/failed。
     """
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
     dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
     _set_integrity(db, "倪元璐", 25)
-    # 单段末段终裁面（多段会走 mid_stage=executing）
     stages = [{
         "stage_idx": 0,
         "due_turn": state.turn + 24,
@@ -175,7 +185,6 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
         title="失真对照之诺",
     )
-    # 有表报无实账 → 基线 degraded
     db.record_dossier_progress(
         dossier_id, state.turn, "在办", "表报已陈，实绩未充",
         is_terminal=False, commit=True,
@@ -207,10 +216,12 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     # 催办史仍作事实素材落进输入（世界因果保留）。
     assert len(rushed_inp["urge_history"]) > len(base_inp["urge_history"])
 
-    # 落库路径只认实况：重催不把执行格改写成 failed/transformed。
-    applied = apply_due_review_for_todo(db, state, todo, commit=True)
-    assert applied["verdict"]["outcome"] == "degraded"
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "degraded"
+    # 无模型终值：不机械替判，保留 pending。
+    applied = apply_due_review_for_todo(db, state, todo)
+    assert applied.get("consumed") is False
+    assert (applied.get("execution") or {}).get("waiting_model") is True
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] in ("", None, "executing")
 
 # ── AC6 求宽限真伪底落 payload、玩家面零裸露 ─────────────────────────
 
@@ -249,7 +260,7 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     assert payload.get("truth") in {"genuine", "pretextual"}
     assert "grace_fake" in payload
 
-    # 结构化 payload 不得投影泄漏；不锁自由 origin_context/criterion 散文
+    # The structured payload is not projected; supplied prose passes through unchanged.
     urge_scenes = list_urge_audience_scenes(db, state)
     assert urge_scenes, "grace pending 必须顶出召对面"
     assert all("payload_json" not in item for item in urge_scenes)
@@ -257,7 +268,8 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     assert "payload_json" not in grace_scene
     marked = dict(grace[0], origin_context="上奏 grace_fake 待议", criterion_text="求宽限 truth")
     projected = project_urge_audience_scene(marked)
-    assert "payload_json" not in projected
+    assert projected["origin_context"] == marked["origin_context"]
+    assert projected["criterion_text"] == marked["criterion_text"]
 
     # 最坏形态：带真伪底 payload 的 staged 条走真实 due-review 投影，断言零泄漏
     tid = db.insert_next_audience_todo(
@@ -325,17 +337,18 @@ def test_urge_history_restore_from_committed_pending_ac7(game):
     db.conn.commit()
     stages = _seed_stages(state)
     issue_id, _ = _insert_staged_commitment(db, state, content, stages=stages)
-    rush_staged_commitment_stage(
-        db, state, commitment_ref=issue_id, stage_idx=0,
-        deadline_months=3, reason="restore-probe",
-    )
+    with atomic(db):
+        rush_staged_commitment_stage(
+            db, state, commitment_ref=issue_id, stage_idx=0,
+            deadline_months=3, reason="restore-probe",
+        )
     path = db.path
     db.conn.close()
     from ming_sim.db import GameDB
     db2 = GameDB(path)
     hist = collect_urge_history(db2, commitment_ref=issue_id)
     assert len(hist) >= 1
-    assert int(hist[0]["deadline_months"]) == 3  # restore 结构字段；不锁 reason 散文
+    assert hist[0]["reason"] == "restore-probe"
 
 
 def test_rush_without_issue_fail_closed_no_remonstrance(game):
@@ -397,13 +410,9 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
     # 1) 不投影为 due-review 场面
     assert list_due_review_scenes(db) == []
 
-    # 2) 不占接管窗
-    owned = dossiers_with_pending_due_review(db, state)
-    assert dossier_id not in owned
-
-    # 3) apply 不消费、不落格、不连坐
+    # 2) apply 不消费、不落格、不连坐（催办 lane 不走 due-review）
     before_outcome = db.get_decree_dossier(dossier_id)["execution_outcome"]
-    results = apply_pending_due_reviews(db, state, commit=True)
+    results = apply_pending_due_reviews(db, state)
     assert results == []
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == before_outcome
     still = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
@@ -413,7 +422,7 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
 
     # 4) apply_due_review_for_todo 单条亦拒
     rem = [t for t in still if t["entry_kind"] == ENTRY_KIND_RUSH_REMONSTRANCE][0]
-    one = apply_due_review_for_todo(db, state, rem, commit=True)
+    one = apply_due_review_for_todo(db, state, rem)
     assert one.get("rejected") is True
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     # 仍 pending，未被 failed/连坐吞
@@ -516,13 +525,12 @@ def test_urge_audience_project_and_consume_path(game):
     assert ENTRY_KIND_RUSH_REMONSTRANCE in kinds
     for s in scenes:
         assert "payload_json" not in s
-    # 不进 due-review、不占接管窗
+    # 不进 due-review 场面
     assert list_due_review_scenes(db) == []
-    assert dossier_id not in dossiers_with_pending_due_review(db, state)
 
     # 消费路径：created_turn < 下回合 → consumed
     state.turn = int(state.turn) + 1
-    consumed = consume_pending_urge_audience_todos(db, state, commit=True)
+    consumed = consume_pending_urge_audience_todos(db, state)
     assert consumed
     assert all(c.get("consumed") for c in consumed)
     still = [
@@ -586,6 +594,7 @@ def test_commitment_rush_via_pending_actions_gate(game):
     hist = collect_urge_history(db, commitment_ref=issue_id)
     assert len(hist) >= 1
     assert hist[-1]["new_due"] == state.turn + 1
+    assert hist[-1]["reason"] == "闸门催"
     chosen = [
         t for t in db.list_next_audience_todos(commitment_ref=issue_id)
         if t["entry_kind"] in {ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_GRACE_PLEA}

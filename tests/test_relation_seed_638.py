@@ -159,10 +159,9 @@ def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
     new_events = collect_new_edge_events(
         db=sess.db, source="魏忠贤", target="杨涟", watermark=0,
     )
-    # seed 边 id 进入酿制输入；不锁 context 自由正文成员。
-    pair_ids = {int(e["id"]) for e in pair_events}
-    new_ids = {int(e["id"]) for e in new_events}
-    assert pair_ids <= new_ids
+    contexts = [e["context"] for e in new_events]
+    assert contexts, "seed 奠基边未进酿制输入"
+    assert all(e["context"] in contexts for e in pair_events)
 
 
 def test_earliest_legal_start_imports_only_earlier_seed_events(tmp_path, monkeypatch):
@@ -246,8 +245,6 @@ def test_invalid_bundled_seed_rolls_back_new_save_and_can_retry(tmp_path, monkey
         assert any(row["event_kind"] == "把柄" for row in cover)
     finally:
         sess.close()
-
-
 
 
 def test_seed_failure_rolls_back_new_save_and_retry_imports(tmp_path, monkeypatch):
@@ -352,20 +349,17 @@ def test_repeated_import_is_idempotent_no_double_write(fresh_session):
     assert report["events_total"] == len(events_before)
 
     events_after = [dict(row) for row in sess.db.get_relation_edge_events()]
-    assert [
-        (e["id"], e["origin"], e["event_kind"], e["source"], e["target"]) for e in events_after
-    ] == [
-        (e["id"], e["origin"], e["event_kind"], e["source"], e["target"]) for e in events_before
-    ], "重复导入后流水身份变化"
+    assert events_after == events_before, "重复导入后流水发生变化"
     summaries_after = {
         (row["source"], row["target"]): dict(row)
         for row in sess.db.get_relation_summaries()
     }
-    # 摘要身份／水位不变；不跨导入等值段正文。
+    # 奠基段字节不变（updated_at 变化不在比较面：dict 含该键，逐字段比内容）。
     for key, before_row in summaries_before.items():
         after_row = summaries_after[key]
+        assert after_row["founding_segment"] == before_row["founding_segment"]
+        assert after_row["recent_segment"] == before_row["recent_segment"]
         assert int(after_row["last_event_id"]) == int(before_row["last_event_id"])
-        assert after_row["dimension"] == before_row["dimension"]
 
 
 def test_seed_replay_does_not_overwrite_later_brew_summary(fresh_session):
@@ -394,26 +388,22 @@ def test_seed_replay_does_not_overwrite_later_brew_summary(fresh_session):
     second = import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
     assert first["summaries_written"] == second["summaries_written"] == 0
     assert len(sess.db.get_relation_edge_events()) == events_after_first
-    after = sess.db.get_relation_summary(source, target)
-    assert int(after["last_event_id"]) == int(before["last_event_id"]) == 17
-    assert after["dimension"] == before["dimension"]
+    assert sess.db.get_relation_summary(source, target) == before
 
 
 def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
-    """旧档不受影响：真实构造 GameSession 后，关系流水/摘要身份不变，且不调用模型。"""
+    """旧档不受影响：真实构造 GameSession 后，关系流水/摘要逐字段不变，且不调用模型。"""
     import ming_sim.cli_backend as _cb
     import ming_sim.llm_model as llm_mod
 
     db, _state, content = game
     assert db.has_state() is True
-    events_before = [
-        (r["id"], r["origin"], r["event_kind"], r["source"], r["target"])
-        for r in db.get_relation_edge_events()
-    ]
-    summaries_before = [
-        (r["source"], r["target"], r["dimension"], int(r["last_event_id"]))
-        for r in db.get_relation_summaries()
-    ]
+    events_before = [tuple(row) for row in db.conn.execute(
+        "SELECT * FROM relation_edge_events ORDER BY id"
+    ).fetchall()]
+    summaries_before = [tuple(row) for row in db.conn.execute(
+        "SELECT * FROM relation_summaries ORDER BY source, target"
+    ).fetchall()]
     db_path = db.path
     db.close()
 
@@ -428,14 +418,12 @@ def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
     cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
     sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
     try:
-        events_after = [
-            (r["id"], r["origin"], r["event_kind"], r["source"], r["target"])
-            for r in sess.db.get_relation_edge_events()
-        ]
-        summaries_after = [
-            (r["source"], r["target"], r["dimension"], int(r["last_event_id"]))
-            for r in sess.db.get_relation_summaries()
-        ]
+        events_after = [tuple(row) for row in sess.db.conn.execute(
+            "SELECT * FROM relation_edge_events ORDER BY id"
+        ).fetchall()]
+        summaries_after = [tuple(row) for row in sess.db.conn.execute(
+            "SELECT * FROM relation_summaries ORDER BY source, target"
+        ).fetchall()]
         assert events_after == events_before
         assert summaries_after == summaries_before
     finally:
@@ -443,14 +431,17 @@ def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
 
 
 def test_new_save_seed_founding_events_enter_founding_segment(fresh_session):
-    """新开档导入样例 seed：奠基摘要行在、近况留空、水位为 0（近况归月末酿制）。"""
+    """新开档导入样例 seed：奠基事件入摘要奠基段（验收条①后半）。"""
     sess, _content = fresh_session
     summaries = {
         (row["source"], row["target"]): row for row in sess.db.get_relation_summaries()
     }
+    # 样例 seed 自带可选初始摘要（皇帝→王承恩 信邸君臣边）；奠基段必须非空。
     assert ("皇帝", "王承恩") in summaries, "样例 seed 初始摘要未入摘要层"
     row = summaries[("皇帝", "王承恩")]
     assert row["dimension"] == "君臣"
+    founding = str(row["founding_segment"])
+    assert founding.strip(), "奠基段为空：可选初始摘要未落"
     assert str(row["recent_segment"]) == "", "seed 导入不得写近况段（近况段归月末酿制）"
     assert int(row["last_event_id"]) == 0, "seed 导入不得推进水位（同一套酿制判据）"
 
@@ -471,16 +462,17 @@ def test_issue_639_seed_owner_audit_corrections(fresh_session):
     assert cover["event_kind"] == "把柄"
 
     # 史料日期确错：崔夜投魏＝天启四年九月；黄立极入阁＝五年八月
+    # （不盯 context 散文措辞；结构化年月/端点/event_kind 为准）
     cui = by_origin_prefix("seed:founding:cui-wei-submission")
     assert (cui["year"], cui["period"]) == (1624, 9)
     huang = by_origin_prefix("seed:founding:wei-huangliji-promotion")
     assert (huang["year"], huang["period"]) == (1625, 8)
 
-    # 阎鸣泰：景忠山生祠在天启七年二月，不得倒填开局前；改用史载潜结/召用
+    # 阎鸣泰：结构化端点与年月；不盯 context 生祠/潜结措辞
     yan = by_origin_prefix("seed:founding:yanmingtai-wei-attach")
     assert (yan["source"], yan["target"]) == ("阎鸣泰", "魏忠贤")
     assert (yan["year"], yan["period"]) == (1625, 6)
-    # 李从心：禁天启七年生祠倒填；改魏→李荐引（点名/题本关照），不得复用 works origin
+    # 李从心：不得复用 works origin；结构化荐引边
     assert not any(
         str(row["origin"]).startswith("seed:founding:wei-licongxin-works")
         for row in events
@@ -495,7 +487,7 @@ def test_issue_639_seed_owner_audit_corrections(fresh_session):
     assert str(li["origin"]).startswith("seed:founding:wei-licongxin-patronage")
     assert li["evidence"] is False
 
-    # ADR 0086 三硬锚：盟誓 / 拦升迁 / 私怨（盟誓禁「多年」倒填）
+    # ADR 0086 三硬锚：盟誓 / 拦升迁 / 私怨（结构化端点/年月/evidence）
     oath = by_origin_prefix("seed:founding:wei-cui-oath")
     assert (oath["source"], oath["target"], oath["event_kind"]) == (
         "魏忠贤", "崔呈秀", "恩义",
@@ -515,7 +507,7 @@ def test_issue_639_seed_owner_audit_corrections(fresh_session):
     )
     assert grudge["evidence"] is False
 
-    # 施/张：史载依媚/生祠碑，不作魏荐引入阁；入阁月=六年七月
+    # 施/张：入阁月=六年七月；不盯 context 措辞
     shi = by_origin_prefix("seed:founding:wei-shifenglai-promotion")
     assert (shi["source"], shi["target"], shi["event_kind"]) == ("施凤来", "魏忠贤", "站台")
     assert (shi["year"], shi["period"]) == (1626, 7)

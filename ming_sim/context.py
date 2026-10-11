@@ -97,7 +97,7 @@ def victory_status(db: GameDB) -> Dict[str, object]:
     """结局判定（数值型部分）：本函数只判「京师失守」。
 
     退位、自尽、被废、暴毙及其它已声明的皇帝终态走 emperor_fate
-    （叙事型，见 issues.apply_score_extraction），
+    （叙事型，见 settlement.settle_delta），
     20 年到期走 decree 结局收口（turn>=240），均不在此判。未声明终态则 ongoing。
     京畿 = beizhili，控制权字段 controlled_by（FK powers）；非 'ming' 即京师失守。
     """
@@ -141,9 +141,8 @@ def minister_dossier(character: Character) -> str:
     # 存在性用 strip 探测；选用时传原串（禁把裁剪值当正文，P6 / ADR 0142）。
     style_present = bool(raw_style.strip())
     if dossier is None:
-        # Free prose summary → 供料 identity：preserve raw; emptiness on copy (#1834 F21).
-        summary_raw = character.summary or ""
-        identity = summary_raw if summary_raw.strip() else "未有专门 dossier，以官职、性情和任事处作通用特征化"
+        raw_summary = character.summary or ""
+        identity = raw_summary if raw_summary.strip() else "未有专门 dossier，以官职、性情和任事处作通用特征化"
         temperament = raw_style if style_present else "以官职与任事处推知其处世分寸"
         skills = "、".join(character.personal_skills) or "未留专长档案"
         motivation = f"在{character.office or '所任官署'}任事并完成本分"

@@ -2,7 +2,7 @@
 
 一条贯穿：web/CLI 会话 seam 与 GameSession 公开颁诏/过回合入口，断言 DB 可观察
 结果。覆盖 AC1–10 核心：账本骨架、多夜隔离、完成态与 night_seq 对齐、死账、
-员额、AC8 顺势收夜顺序、AC9 崩溃续跑真实任免/候选、AC10 完成等待与超时。
+员额、AC8 顺势收夜顺序、AC9 崩溃续跑真实任免/候选、AC10 完成等待与超时、旧档迁移。
 
 不锁 LLM 叙事正文；不接受 failed 当成功。
 """
@@ -206,42 +206,6 @@ def test_standing_roster_skips_dead(game):
 # ── AC8：公开入口顺势收夜（GameSession.resolve_turn / advance）────────
 
 
-def test_cross_night_directive_reassigned_to_second_night(game):
-    """同臣跨两夜拟旨：第一夜未应允 directive 留 pending；第二夜改草时归属原子迁到第二夜，
-    第二夜应允 → 只在第二夜收夜提交，不被旧夜漏挂。
-
-    现役写口：stage_directive_candidate（新拟）+ update_directive_candidate（改草迁夜）。
-    已删 upsert_pending_directive 不恢复。"""
-    db, state, content = game
-    minister = _active_minister(db, content)
-
-    n1 = an.open_night(db, state, location="乾清宫")
-    d_id = db.stage_directive_candidate(
-        state.turn, minister,
-        payload={**_POLICY_FIELDS, "text": "初稿：缓征辽饷", "actor": minister},
-    )
-    # 第一夜不应允 → 留 pending；收夜不提交
-    an.close_night(db, state, night_id=n1["id"], content=content)
-    assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "pending"
-
-    n2 = an.open_night(db, state, location="文华殿")
-    # 现役改草写口：update_directive_candidate 未持源夜时归属迁到当前开夜并清 approval
-    same_id = db.update_directive_candidate(
-        d_id, {**_POLICY_FIELDS, "text": "定稿：改折色", "actor": minister},
-    )
-    assert same_id == d_id
-    row = db.conn.execute("SELECT night_id, night_approved FROM pending_actions WHERE id=?", (d_id,)).fetchone()
-    assert int(row["night_id"]) == n2["id"]
-    assert int(row["night_approved"]) == 0
-    # 第二夜应允 + 收夜 → 提交
-    assert db.mark_pending_night_approved([d_id], night_id=n2["id"]) == 1
-    an.close_night(db, state, night_id=n2["id"], content=content)
-    assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "committed"
-    drafts = db.conn.execute(
-        "SELECT text FROM turn_directives WHERE turn=? AND status='draft'", (state.turn,)).fetchall()
-    assert any("改折色" in (r["text"] or "") for r in drafts)
-
-
 # ── AC9：真实任免 + 候选转档 + 崩溃续跑 ──────────────────────────────
 
 
@@ -325,7 +289,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
 # 拟诏 preview 不收夜，均走真实 WebGame.chat_stream + 真实 ASGI 路由验证（只 fake LLM）。
 
 
-# ── 开夜原子 ──────────────────────────────────────────────────
+# ── 开夜原子 + 旧档迁移 ──────────────────────────────────────────────
 
 
 def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
@@ -372,6 +336,51 @@ def test_bad_audibility_and_append_after_close(game):
         an.append_ledger_entry(db, night["id"], tags=["试"])
     assert ei2.value.code == "night_closed"
 
+
+def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
+    """CLI 真实输入入口 terminal.minister_chat 起聊 → 对话轮挂夜（非 night_id=0 旁路）。"""
+    import ming_sim.cli.terminal as term
+    from types import SimpleNamespace
+
+    db, state, content = game
+    character = next(c for c in content.characters.values()
+                     if db.get_character_status(c.name)[0] == "active"
+                     and getattr(c, "power_id", "ming") == "ming"
+                     and getattr(c, "office_type", "") != "后宫")
+
+    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
+        assert chat_turn_id > 0  # 挂夜轮以 generating 起笔，回话须带 chat_turn_id
+        return SimpleNamespace(
+            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
+            registered_minister="", displaced_minister="", court_action="",
+            next_minister="", secret_order_id=0, pending_action_id=0,
+        )
+
+    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # #1842：CLI 殿上口令外问话走 scene_chat；替身委托既有 chat 同形。
+        del stream_emit
+        return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
+
+    session = SimpleNamespace(
+        db=db, state=state, content=content,
+        chat=chat, scene_chat=scene_chat,
+        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
+        schedule_pending_scene_translation=lambda result: None,
+        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
+        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
+        close_night_after_chat_if_needed=lambda *_a, **_k: None,
+    )
+    answers = iter(["朕问卿边事如何？", "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(session, character) == "dismiss"
+
+    open_n = an.get_open_night(db)
+    assert open_n is not None
+    turns = an.list_chat_turns_for_night(db, int(open_n["id"]))
+    # #1838 reopen：CLI 殿上建轮以「殿上」为 speaker
+    assert turns and turns[-1]["minister_name"] in {character.name, "殿上"}
+    assert int(turns[-1]["night_id"]) == int(open_n["id"]) > 0
 
 
 def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):

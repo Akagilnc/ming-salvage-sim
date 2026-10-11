@@ -79,6 +79,96 @@ def test_dismiss_noop_when_not_present(game):
     assert ei.value.code == "empty_person"
 
 
+# ── AC1 真实入口 tracer：CLI 玩家「退下」口令 → 引擎告退账 → 名单即时去人 ──
+
+
+def _cli_session(db, state, content):
+    from types import SimpleNamespace
+
+    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
+        return SimpleNamespace(
+            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
+            registered_minister="", displaced_minister="", court_action="",
+            next_minister="", secret_order_id=0, pending_action_id=0,
+        )
+
+    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # #1842：CLI 殿上口令外问话走 scene_chat；替身委托既有 chat 同形。
+        return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
+
+    return SimpleNamespace(
+        db=db, state=state, content=content,
+        chat=chat, scene_chat=scene_chat,
+        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
+        schedule_pending_scene_translation=lambda result: None,
+        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
+        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
+        close_night_after_chat_if_needed=lambda *_a, **_k: None,
+    )
+
+
+def _active_minister(db, content):
+    return next(
+        c for c in content.characters.values()
+        if db.get_character_status(c.name)[0] == "active"
+        and getattr(c, "power_id", "ming") == "ming"
+        and getattr(c, "office_type", "") != "后宫"
+    )
+
+
+def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
+    """AC1 真实入口：起聊入殿 → 「退下」口令 → 告退账落地、present 即时去人。"""
+    import ming_sim.cli.terminal as term
+
+    db, state, content = game
+    character = _active_minister(db, content)
+    session = _cli_session(db, state, content)
+    answers = iter(["退下"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(session, character, selected=True) == "dismiss"
+
+    nid = int(an.get_open_night(db)["id"])
+    last = an.list_ledger(db, nid)[-1]
+    assert TAG_EXIT in last["tags"] and character.name in last["person_names"]
+    assert character.name not in an.present_names_at(db, nid)
+
+
+def test_court_break_writes_no_exit_ledger(game, monkeypatch):
+    """负向：退朝不落个人告退账（#526 收夜链 ≠ dismiss 告退）。"""
+
+    import ming_sim.cli.terminal as term
+    db, state, content = game
+    character = _active_minister(db, content)
+    session = _cli_session(db, state, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    closed_nid: dict[str, int] = {}
+
+    # #526：CLI 退朝走收夜；本测只证「无个人告退账」，收夜本体 stub 成功。
+    # #1353：生产 epilogue 传 write_gate=…；假体须收 **kwargs，禁 TypeError。
+    def _close_ok(court_action: str, **_kwargs) -> None:
+        assert court_action == "court_break"
+        open_n = an.get_open_night(db)
+        assert open_n is not None
+        nid = int(open_n["id"])
+        closed_nid["id"] = nid
+        an.close_night(db, state, night_id=nid, content=content)
+
+    session.close_night_after_chat_if_needed = _close_ok
+    session.schedule_close_night_after_chat_if_needed = _close_ok
+    answers = iter(["朕问卿边事如何？", "退朝"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(session, character) == "court_break"
+
+    nid = closed_nid["id"]
+    exits = [
+        e for e in an.list_ledger(db, nid)
+        if TAG_EXIT in e["tags"] and character.name in e["person_names"]
+    ]
+    assert exits == []  # 未落个人告退账
+    assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
+
 
 # ── L1 R2：court_action=dismiss 单缝——非流式 web /api/audience/chat
 #          与 CLI tool 路共 GameSession.chat 产源，令退落告退账、名单即时去人 ──

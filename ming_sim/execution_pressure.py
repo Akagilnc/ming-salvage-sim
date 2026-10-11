@@ -1,6 +1,7 @@
 """#654 差务属地 oracle：闭合结构化组合，不解析散文。"""
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -57,11 +58,7 @@ def normalize_locality_scope(raw: object) -> str:
     else:
         scope = text
     if scope not in LOCALITY_SCOPES:
-        from ming_sim.action_materialize import DecreeMaterializationValidationError
-        raise DecreeMaterializationValidationError(
-            f"locality_scope 非法：{raw!r}",
-            failed_fields=("locality_scope",),
-        )
+        raise DeclarationDataError(f"locality_scope 非法：{raw!r}")
     return scope
 
 
@@ -74,7 +71,7 @@ def _resolve_single_region_id(
     """R1 解析链：id 精确 → name 精确 → match_region_id_from_text；歧义/零命中 fail-loud。"""
     tid = str(target_id or "").strip()
     if not tid:
-        raise ValueError("单省目标 target_id 为空")
+        raise DeclarationDataError("单省目标 target_id 为空")
     by_id = conn.execute(
         "SELECT id, kind, controlled_by FROM regions WHERE id=?", (tid,),
     ).fetchone()
@@ -86,18 +83,18 @@ def _resolve_single_region_id(
     if len(by_name) == 1:
         return _region_row_to_locality(by_name[0])
     if len(by_name) > 1:
-        raise ValueError(f"单省目标歧义（多省同名）：{tid!r}")
+        raise DeclarationDataError(f"单省目标歧义（多省同名）：{tid!r}")
     # ③ matching 链：需 content.regions；无 content 时仅 DB 已判零命中
     if regions_content is None:
-        raise ValueError(f"单省目标零命中：{tid!r}")
+        raise DeclarationDataError(f"单省目标零命中：{tid!r}")
     matched = match_region_id_from_text(tid, regions_content)
     if matched is None:
-        raise ValueError(f"单省目标零命中或歧义：{tid!r}")
+        raise DeclarationDataError(f"单省目标零命中或歧义：{tid!r}")
     row = conn.execute(
         "SELECT id, kind, controlled_by FROM regions WHERE id=?", (matched,),
     ).fetchone()
     if row is None:
-        raise ValueError(f"单省目标零命中：{tid!r}")
+        raise DeclarationDataError(f"单省目标零命中：{tid!r}")
     return _region_row_to_locality(row)
 
 
@@ -111,7 +108,7 @@ def _region_row_to_locality(row) -> str:
     return ""
 
 
-class TargetLocalityMatrixError(ValueError):
+class TargetLocalityMatrixError(DeclarationDataError):
     """属地矩阵不变式失败；failed_fields 为可修字段边界（禁异常文本识别）。
 
     field_failures：权威结构化失败事实（field/current/expected）；运输层只携带。
@@ -183,7 +180,7 @@ def assert_target_locality_matrix(
 
     try:
         scope = normalize_locality_scope(locality_scope)
-    except ValueError as exc:
+    except DeclarationDataError as exc:
         _matrix_fail(
             str(exc),
             field_failures=(

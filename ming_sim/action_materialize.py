@@ -6,6 +6,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 from ming_sim.models import _load_durable_json_list, _load_durable_json_object
 
@@ -90,7 +91,7 @@ def _apply_existing_appointment_hit(
         if annotate:
             mode_mark = resolve_directive_mode(
                 extracted=extracted_mode,
-                existing=_office_payload(row).get("mode"),
+                existing=_pending_action_payload(row).get("mode"),
             )
             pending_id = _annotate_office_pending_path(
                 session.db,
@@ -108,7 +109,10 @@ def _apply_existing_appointment_hit(
             current = session.db.conn.execute(
                 "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
             ).fetchone()
-            stored = dict(_pending_payload_dict(current))
+            from ming_sim.db import GameDB
+            stored = GameDB.parse_engine_payload_json(
+                current["payload_json"], surface="pending_actions.payload_json",
+            )
             stored.update(recommendation_fields)
             session.db.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -155,8 +159,7 @@ def stage_pacification_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        # 已持久候选解码故障响亮，不静默跳过另造新单（#1897 E1）。
-        payload = _pending_payload_dict(row)
+        payload = _pending_action_payload(row)
         if str(payload.get("dossier_action_type") or "").strip() != "pacification":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -244,15 +247,14 @@ def stage_punishment_candidate(
     linked_issue_id = 0
     if disposition in issue_dispositions_allowed() and issue_id is None:
         return 0
-    if issue_id is not None:
-        from ming_sim.strict_types import strict_sqlite_id
+    if issue_id is not None and issue_id != "":
+        # LLM 声明脏 issue_id → ValidationError（dispatch 逐项拒收）。
         try:
-            linked_issue_id = strict_sqlite_id(issue_id)
+            linked_issue_id = int(issue_id)
         except (TypeError, ValueError) as exc:
             raise DecreeMaterializationValidationError(
-                f"issue_id 非法：{issue_id!r}",
+                f"惩处交办 issue_id 非法：{issue_id!r}",
                 failed_fields=("issue_id",),
-                category="invalid_shape",
             ) from exc
         if linked_issue_id <= 0:
             raise DecreeMaterializationValidationError(
@@ -268,12 +270,15 @@ def stage_punishment_candidate(
             return 0
         if disposition not in issue_dispositions_allowed():
             return 0
-        # 已持久 target_roster 腐坏是内部故障，不得洗成声明 invalid_state（#1897 E1）。
-        from ming_sim.db import _load_durable_json_list
-
-        roster = _load_durable_json_list(
-            issue["target_roster"], surface=f"弹劾潮#{linked_issue_id}.target_roster",
-        )
+        try:
+            roster = json.loads(str(issue["target_roster"] or "[]"))
+        except (TypeError, ValueError) as exc:
+            # 持久名册腐坏：响亮上抛，不洗成交办声明拒收。
+            raise ValueError(
+                f"issues.target_roster 腐坏 JSON：{issue['target_roster']!r}"
+            ) from exc
+        if not isinstance(roster, list):
+            raise ValueError("持久弹劾名册须为数组")
         if not roster:
             return 0
         if disposition == "办人":
@@ -303,16 +308,12 @@ def stage_punishment_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        # 已持久候选解码故障响亮，不静默跳过另造新单（#1897 E1）。
-        payload = _pending_payload_dict(row)
+        payload = _pending_action_payload(row)
         if str(payload.get("dossier_action_type") or "").strip() != "punishment":
             continue
         if str(payload.get("target_id") or "").strip() != target:
             continue
-        try:
-            stored_issue_id = int(payload.get("issue_id") or 0)
-        except (TypeError, ValueError):
-            stored_issue_id = 0
+        stored_issue_id = int(payload.get("issue_id") or 0)
         if stored_issue_id != linked_issue_id:
             continue
         existing_id = int(row["id"])
@@ -347,11 +348,18 @@ def stage_punishment_candidate(
         if not valid:
             return 0
         staged["transaction_category"] = category
-    try:
-        n = int(amount) if amount is not None and amount != "" else 0
-    except (TypeError, ValueError):
+    # LLM 声明：缺席→0；在场脏→ValidationError。持久损坏另路上抛。
+    if amount in (None, ""):
         n = 0
-    # #517 r2：罚俸 admission 要求正数 amount；缺/零/非法不得成候选。
+    else:
+        try:
+            n = int(amount)
+        except (TypeError, ValueError) as exc:
+            raise DecreeMaterializationValidationError(
+                f"惩处交办 amount 非法：{amount!r}",
+                failed_fields=("amount",),
+            ) from exc
+    # #517 r2：罚俸 admission 要求正数 amount；缺/零不得成候选。
     if action == "罚俸":
         if n <= 0:
             return 0
@@ -469,7 +477,7 @@ def canonicalize_xiexang_army_target(db: Any, raw_target: object) -> str:
     return army_id
 
 
-class DecreeMaterializationValidationError(ValueError):
+class DecreeMaterializationValidationError(DeclarationDataError):
     """Typed rejection raised before a decree candidate can be recorded."""
 
     def __init__(
@@ -540,8 +548,8 @@ def require_explicit_xiexang_fields(
     try:
         n = strict_int(amount, accept_numeric_strings=False)
     except ValueError:
-        n = 0
-    if n <= 0:
+        n = None
+    if n is None or n <= 0:
         _note("amount", current=amount, expected={"type": "positive_int"})
     # #1620：太仓→国库唯一权威 resolve_grant_account；此处不再平行 if。
     canonical_account = resolve_grant_account(grant_action="协饷", account=account)
@@ -638,30 +646,16 @@ def _assignment_absolute_end_turn(
     - 显式期限月数优先：deadline_months=N → turn+N
     - end_turn 已严格大于当前 turn → 视为绝对回合
     - 否则 0<end_turn≤turn → 视为相对月数 turn+end_turn
-
-    缺省/空 → 0；可辨识 LLM 脏数字（bool/非数/非有限）领域拒收，不洗成 0 成功
-    （#1897 C1 / ADR 0015）。
+    LLM 声明：缺席→0；在场脏→ValidationError。
     """
-    def _finite_int(raw: object, *, field: str, default: int) -> int:
-        if raw is None or raw == "":
-            return int(default)
-        if isinstance(raw, bool):
-            raise DecreeMaterializationValidationError(
-                f"{field} cannot be a boolean",
-                failed_fields=(field,),
-                category="invalid_shape",
-            )
-        try:
-            return int(raw)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise DecreeMaterializationValidationError(
-                f"{field} must be a finite integer",
-                failed_fields=(field,),
-                category="invalid_shape",
-            ) from exc
-
-    et = _finite_int(end_turn, field="end_turn", default=0)
-    months = _finite_int(deadline_months, field="deadline_months", default=0)
+    try:
+        et = 0 if end_turn in (None, "") else int(end_turn)
+        months = 0 if deadline_months in (None, "") else int(deadline_months)
+    except (TypeError, ValueError) as exc:
+        raise DecreeMaterializationValidationError(
+            f"责成期限非法：end_turn={end_turn!r} deadline_months={deadline_months!r}",
+            failed_fields=("end_turn", "deadline_months"),
+        ) from exc
     cur = int(turn)
     if months > 0:
         return cur + months
@@ -739,7 +733,7 @@ def assert_responsible_bodies_org_only(
     for body in bodies:
         name = str(body or "").strip()
         if name and name in persons:
-            raise ValueError(f"responsible_bodies 禁个人名：{name}")
+            raise DeclarationDataError(f"responsible_bodies 禁个人名：{name}")
 
 
 def _list_pending_office_rows(
@@ -762,20 +756,11 @@ def _list_pending_office_rows(
     return out
 
 
-def _pending_payload_dict(row: Mapping[str, Any]) -> Dict[str, Any]:
-    """已持久 pending 候选载荷：复用引擎读路，腐坏响亮（#1897 E1 / ADR 0005）。"""
+def _pending_action_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     from ming_sim.db import GameDB
-
-    return dict(
-        GameDB.parse_engine_payload_json(
-            row["payload_json"],
-            surface="pending_actions.payload_json",
-        )
+    return GameDB.parse_engine_payload_json(
+        row.get("payload_json"), surface="pending_actions.payload_json",
     )
-
-
-def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    return _pending_payload_dict(row)
 
 
 def _match_office_row_by_name_office(
@@ -802,7 +787,7 @@ def _match_office_row_by_name_office(
     key = _canonical_minister_key(content, want_name, db) if want_name else ""
     hits: List[Dict[str, Any]] = []
     for row in rows:
-        payload = _office_payload(row)
+        payload = _pending_action_payload(row)
         staged_name = str(payload.get("name") or "").strip()
         if not staged_name:
             continue
@@ -844,7 +829,7 @@ def _annotate_office_pending_path(
     if not mode_mark and not tenure_mark and not seat:
         return 0
     pending_id = int(row["id"])
-    payload = dict(_office_payload(row))
+    payload = dict(_pending_action_payload(row))
     changed = False
     if mode_mark in {"midzhi", "ordinary"} and payload.get("mode") != mode_mark:
         payload["mode"] = mode_mark
@@ -952,8 +937,6 @@ def _write_path_nature_ledger(
     )
 
 
-
-
 _PURE_AUTHORITY_DOSSIER_ACTIONS = frozenset({
     "authorization", "secret_authorization",
 })
@@ -1006,12 +989,16 @@ def _parse_revoke_decree_target(
         raw = raw.split(":", 1)[1].strip()
     if not kind:
         kind = "dossier"
-    # 身份引用走 SQLite 64-bit 权威：超界/脏类型在查询前拒，不让 OverflowError 带走同批（#1897 C1）。
-    from ming_sim.strict_types import strict_sqlite_id
-    try:
-        tid = strict_sqlite_id(raw, accept_numeric_strings=True)
-    except (TypeError, ValueError):
+    if raw in (None, ""):
         return None
+    # LLM 声明脏 target → ValidationError；禁 except→None。
+    try:
+        tid = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise DecreeMaterializationValidationError(
+            f"撤回成命目标标识非法：{raw!r}",
+            failed_fields=("target_id",),
+        ) from exc
     if tid <= 0:
         return None
     if kind == "issue":
@@ -1022,15 +1009,13 @@ def _parse_revoke_decree_target(
             return None
         if str(row["status"] or "").strip() != "active":
             return None
-        linked = 0
         origin = str(row["origin_ref"] or "").strip()
-        if origin.startswith("dossier:"):
-            try:
-                linked = strict_sqlite_id(
-                    origin.split(":", 1)[1], accept_numeric_strings=True,
-                )
-            except (TypeError, ValueError):
-                linked = 0
+        if not origin.startswith("dossier:"):
+            return None
+        suffix = origin.split(":", 1)[1]
+        if suffix in (None, ""):
+            return None
+        linked = int(suffix)  # 持久 origin_ref；损坏上抛
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
         if linked <= 0:
             return None
@@ -1052,61 +1037,6 @@ def _parse_revoke_decree_target(
         "dossier_id": tid,
         "issue_id": 0,
     }
-
-def _resolve_pending_target_candidate(
-    pending_rows: List[Dict[str, Any]],
-    target_candidate: object,
-    *,
-    expected_action: str,
-) -> tuple[int, Any]:
-    """续办身份：缺省/「新」→ 新建；显式指针必须命中既有 pending，失败拒收不搭救。
-
-    #1897 C1：显式坏形或查找不中不得静默改成独立新交办。
-    """
-    if target_candidate in (None, ""):
-        return 0, None
-    if isinstance(target_candidate, str):
-        pointed = target_candidate.strip()
-        if not pointed:
-            return 0, None
-        if pointed == "新":
-            return 0, None
-    else:
-        pointed = target_candidate
-    from ming_sim.strict_types import strict_sqlite_id
-    try:
-        want_id = strict_sqlite_id(pointed, accept_numeric_strings=True)
-    except (TypeError, ValueError) as exc:
-        raise DecreeMaterializationValidationError(
-            "续办目标候选须为既有候选 id",
-            failed_fields=("target_candidate",),
-        ) from exc
-    if want_id <= 0:
-        raise DecreeMaterializationValidationError(
-            "续办目标候选须为正整数 id",
-            failed_fields=("target_candidate",),
-            category="hallucinated_id",
-        )
-    for row in pending_rows:
-        if row.get("kind") != "directive":
-            continue
-        if int(row["id"]) != want_id:
-            continue
-        # 已持久候选解码/schema 故障响亮上抛，不洗成声明拒收（#1897 E1）。
-        payload = _pending_payload_dict(row)
-        if str(payload.get("dossier_action_type") or "").strip() != expected_action:
-            raise DecreeMaterializationValidationError(
-                f"续办目标候选类型不匹配：{want_id}",
-                failed_fields=("target_candidate",),
-                category="hallucinated_id",
-            )
-        return want_id, payload.get("mode")
-    raise DecreeMaterializationValidationError(
-        f"续办目标候选不存在或不可更新：{want_id}",
-        failed_fields=("target_candidate",),
-        category="hallucinated_id",
-    )
-
 
 def stage_assignment_candidate(
     db: Any,
@@ -1149,8 +1079,9 @@ def stage_assignment_candidate(
             "交办旨意缺少正文", failed_fields=("text",),
         )
     # 题名只认结构化锚；不得从正文/皇帝散文截取
-    matter_title = str(title or "") or str(target_id or "").strip()
-    if not matter_title.strip():
+    raw_title = str(title or "")
+    matter_title = raw_title if raw_title.strip() else str(target_id or "").strip()
+    if not matter_title:
         raise DecreeMaterializationValidationError(
             "交办旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
@@ -1167,9 +1098,22 @@ def stage_assignment_candidate(
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
-    existing_id, existing_mode = _resolve_pending_target_candidate(
-        pending_rows, target_candidate, expected_action="assignment",
-    )
+    existing_id = 0
+    existing_mode = None
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if row.get("kind") != "directive":
+                continue
+            if int(row["id"]) != want_id:
+                continue
+            payload = _pending_action_payload(row)
+            if str(payload.get("dossier_action_type") or "").strip() != "assignment":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
 
     mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
@@ -1182,13 +1126,10 @@ def stage_assignment_candidate(
         "title": matter_title,
         "mode": mode,
     }
-    try:
-        origin_cid = int(source_chat_turn_id or 0)
-    except (TypeError, ValueError):
-        origin_cid = 0
     # #1890：来源轮不写进载荷——它只落 pending_actions.source_chat_turn_id 一列
     # （交办的统一身份）。载荷里留副本等于同一事实两处可写，改草与迟到转译
-    # 会让两者漂移；成案侧已改读该列。
+    # 会让两者漂移；成案侧已改读该列。坏类型响亮失败，不洗成 0。
+    origin_cid = int(source_chat_turn_id or 0)
     category = str(transaction_category or "").strip()
     if category:
         staged["transaction_category"] = category
@@ -1218,8 +1159,10 @@ def stage_assignment_candidate(
     try:
         stages_norm = json.loads(stages_to_json(stages))
     except (TypeError, ValueError) as exc:
+        # 声明侧 stages 脏值 → 类型化数据错误，供分派口拒收；非持久真源故障。
         raise DecreeMaterializationValidationError(
-            str(exc), failed_fields=("stages",),
+            f"交办 stages 非法：{stages!r}",
+            failed_fields=("stages",),
         ) from exc
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
@@ -1265,6 +1208,8 @@ def stage_revoke_decree_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
+    if str(target_candidate or "").strip() == "含糊":
+        return 0
     body = str(text or "")
     if not body.strip():
         return 0
@@ -1282,9 +1227,20 @@ def stage_revoke_decree_candidate(
             p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
-    existing_id, existing_mode = _resolve_pending_target_candidate(
-        pending_rows, target_candidate, expected_action="revoke_decree",
-    )
+    existing_id = 0
+    existing_mode = None
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if int(row["id"]) != want_id:
+                continue
+            payload = _pending_action_payload(row)
+            if str(payload.get("dossier_action_type") or "").strip() != "revoke_decree":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
 
     mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {

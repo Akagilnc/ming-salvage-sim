@@ -12,10 +12,12 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import RejectedItem, Provenance
+
 import copy
 import json
 import math
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.centrifuge_ledger import CENTRIFUGE_AXES
@@ -667,7 +669,6 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
     has_reports = bool(review_input.get("has_reports"))
-    # Free prose origin_context: preserve raw; strip only emptiness (#1834 F16).
     origin = str(review_input.get("origin_context") or "")
 
     delivered = target > 0.0 and actual + 1e-9 >= target
@@ -910,10 +911,7 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
         did = int(row["id"] or 0)
         if skip and did == skip:
             continue
-        dossier = db.get_decree_dossier(did)
-        if dossier is None:
-            continue
-        payload = dossier["payload"]
+        payload = db.get_decree_dossier(did)["payload"]
         for lane in _lanes_from_payload(payload):
             if lane.get("mastered"):
                 used.add(str(lane["fact_key"]))
@@ -921,7 +919,7 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
 
 
 def _write_fact_lanes(
-    db: Any, dossier_id: int, lanes: Sequence[Mapping[str, object]], *, commit: bool = False,
+    db: Any, dossier_id: int, lanes: Sequence[Mapping[str, object]],
 ) -> None:
     payload = _dossier_payload_map(db, dossier_id)
     payload[FACT_LANES_KEY] = [
@@ -934,7 +932,7 @@ def _write_fact_lanes(
         }
         for lane in lanes
     ]
-    db.update_decree_dossier_payload(int(dossier_id), payload, commit=commit)
+    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
 
 
 def _append_investigation_log(
@@ -953,7 +951,7 @@ def _append_investigation_log(
     items = list(raw or [])
     items.append(dict(entry))
     payload[key] = items
-    db.update_decree_dossier_payload(int(dossier_id), payload)
+    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
 
 
 def investigation_fact_is_gone(db: Any, target: str, fact_key: str) -> bool:
@@ -1195,7 +1193,6 @@ def seed_investigation_fact_lanes(
     target: str,
     *,
     investigator: str = "",
-    commit: bool = False,
 ) -> List[Dict[str, object]]:
     """开案铺 lane 集：目标当前全部可坐实事实逐条开 lane，并冻结各自难度。
 
@@ -1219,7 +1216,7 @@ def seed_investigation_fact_lanes(
             "mastered": False,
         })
         seen.add(key)
-    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+    _write_fact_lanes(db, dossier_id, lanes)
     return lanes
 
 
@@ -1319,7 +1316,7 @@ def _consume_monthly_clues(
             lane["mastered"] = True
     payload = _dossier_payload_map(db, dossier_id)
     payload[INVESTIGATION_CLUES_KEY] = clues
-    db.update_decree_dossier_payload(int(dossier_id), payload)
+    db.update_decree_dossier_payload(int(dossier_id), payload, commit=False)
     return credited
 
 
@@ -1332,7 +1329,6 @@ def apply_investigation_monthly_effort(
     *,
     fact_key: str = "",
     intensity: float = 0.0,
-    commit: bool = False,
 ) -> Dict[str, object]:
     """#1896 逐证核算：人物声明"下了多大劲"，引擎核出本月实投再记到该条事实上。
 
@@ -1349,7 +1345,7 @@ def apply_investigation_monthly_effort(
     - 奏报自称成功不入本函数（P6：呈现层与实况分轨，谎奏不造罪不抹证）。
     """
     lanes = seed_investigation_fact_lanes(
-        db, dossier_id, target, investigator=investigator, commit=False,
+        db, dossier_id, target, investigator=investigator,
     )
     declared = _declared_intensity(intensity)
     if declared is None:
@@ -1370,7 +1366,7 @@ def apply_investigation_monthly_effort(
             db, dossier_id, target, investigator, lanes,
             live=live, blocked=blocked, capacity=capacity,
         )
-        _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+        _write_fact_lanes(db, dossier_id, lanes)
         return {
             "bound_fact_key": "", "effort_applied": 0.0, "mastered": [],
             "units": 0.0, "dropped_fact_key": bound,
@@ -1387,7 +1383,7 @@ def apply_investigation_monthly_effort(
                 db, dossier_id, target, investigator, lanes,
                 live=live, blocked=blocked, capacity=capacity,
             )
-            _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+            _write_fact_lanes(db, dossier_id, lanes)
             return {
                 "bound_fact_key": bound, "effort_applied": 0.0,
                 "clue_credited": credited, "mastered": [],
@@ -1400,7 +1396,7 @@ def apply_investigation_monthly_effort(
             db, dossier_id, target, investigator, lanes,
             live=live, blocked=blocked, capacity=capacity,
         )
-        _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+        _write_fact_lanes(db, dossier_id, lanes)
         return {
             "bound_fact_key": bound, "effort_applied": 0.0,
             "declared_intensity": declared, "capacity": capacity,
@@ -1434,7 +1430,7 @@ def apply_investigation_monthly_effort(
         db, dossier_id, target, investigator, lanes,
         live=live, blocked=blocked, capacity=capacity,
     )
-    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+    _write_fact_lanes(db, dossier_id, lanes)
     return {
         "bound_fact_key": bound,
         "effort_applied": applied_amount,
@@ -1554,7 +1550,6 @@ def apply_investigation_spoliation(
     dossier_id: int = 0,
     origin_ref: str = "",
     turn: Optional[int] = None,
-    commit: bool = False,
 ) -> Dict[str, object]:
     """毁证落账口：按对应事实改可查性，不团灭、不改真相底。
 
@@ -1562,7 +1557,6 @@ def apply_investigation_spoliation(
     经真实传话声明知情（knowledge_source）——未知情不替其毁证，知情也不强制毁证。
     'gone' 之后该事实永不可查——关案重开、另起新案都不恢复（真源在 (target, fact_key)）。
     """
-    owns = db.owns_transaction() if commit else False
     name = str(target or "").strip()
     key = str(fact_key or "").strip()
     if not name or not key:
@@ -1581,8 +1575,6 @@ def apply_investigation_spoliation(
         target_name=name, fact_key=key, turn=turn, effect=effect,
         origin_ref=origin_ref, commit=False,
     )
-    if owns:
-        db.conn.commit()
     return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
             "knowledge_source": str(knowledge_source or ""),
             "row_id": row.get("id")}
@@ -1627,7 +1619,6 @@ def merge_investigation_confirmation(
     pending_action_id: int = 0,
     origin_chat_message_ids: Sequence[int] = (),
     fact_key: str = "",
-    commit: bool = False,
 ) -> int:
     """同目标汇案：并案卷。只有带事实指针的来源才留下待消费线索。
 
@@ -1666,7 +1657,7 @@ def merge_investigation_confirmation(
             "credited": False,
         })
         payload[INVESTIGATION_CLUES_KEY] = clues
-    db.update_decree_dossier_payload(did, payload, commit=commit)
+    db.update_decree_dossier_payload(did, payload, commit=False)
     return int(order_id)
 
 
@@ -1715,10 +1706,7 @@ def originated_quantity_this_turn(
 
 def monthly_actual_units(*, fidelity: object, originated_quantity: float) -> float:
     """实进度 = 执行格份额 × 当月 canonical 可数量。无 origin 实物则空转 0。"""
-    try:
-        quantity = float(originated_quantity or 0)
-    except (TypeError, ValueError):
-        quantity = 0.0
+    quantity = float(originated_quantity or 0)
     if quantity <= 0.0:
         return 0.0
     return progress_units_for_state(fidelity) * quantity
@@ -1826,9 +1814,9 @@ def apply_monthly_covert_actual_progress(
     state: Any,
     *,
     selections: object = None,
-    commit: bool = False,
     only_supplied: bool = False,
-) -> List[Dict[str, object]]:
+    source: Provenance = Provenance.system_simulation,
+) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     """当月实况轨落笔：推演者声明的真实投入/效果 → dossier_actual_progress。
 
     不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
@@ -1837,8 +1825,9 @@ def apply_monthly_covert_actual_progress(
     #1896：查案密令改走逐证核算——4a 声明的 effort 记到指定事实，累计到该证难度
     才记已掌握；不再由执行态折固定增量、满统一阈自动坐实。执行态枚举对查案
     不再是必填（#1895 同批废旧查案的意愿底档），缺省只落事实投入。
+    返回 (applied, rejections)：拒收一律 canonical :class:`~ming_sim.applier.RejectedItem`。
     """
-    owns = db.owns_transaction() if commit else False
+    rejections: List[RejectedItem] = []
     orders = list(db.list_secret_orders(status="active"))
     by_sel = _selection_map(selections)
     applied: List[Dict[str, object]] = []
@@ -1859,8 +1848,8 @@ def apply_monthly_covert_actual_progress(
             continue
         dossier = db.get_dossier_for_secret_order(oid)
         if dossier is None:
-            # #1897 / ADR0005：active 密令缺案卷是内部故障，不得洗成逐项拒收后继续。
-            raise ValueError("密令进展缺少对应案卷")
+            rejections.append(RejectedItem(item={"order_id": oid}, reason="密令缺少案卷", category="missing_ref", source=source))
+            continue
         if str(dossier.get("status") or "") == "closed":
             continue
         did = int(dossier["id"])
@@ -1868,42 +1857,35 @@ def apply_monthly_covert_actual_progress(
         sel = by_sel.get(oid) or {}
         inv_target = _investigation_target_of(contract)
         if inv_target:
-            applied.append(
-                _apply_investigation_selection(
-                    db, order=order, dossier=dossier, sel=sel,
-                    target=inv_target, investigator=minister, turn=turn,
-                )
+            result, item_rejections = _apply_investigation_selection(
+                db, order=order, dossier=dossier, sel=sel,
+                target=inv_target, investigator=minister, turn=turn,
+                source=source,
             )
+            # #1835 S1：查案拒收（整项或反应项）只走 canonical RejectedItem。
+            rejections.extend(item_rejections)
+            if result is not None:
+                applied.append(result)
             continue
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = normalize_fidelity_state(selected)
         if fidelity is None:
-            applied.append({
-                "order_id": oid,
-                "rejected": True,
-                "category": "invalid_enum",
-                "report_section": "covert_exec_selections",
-                "reason": f"密令 {oid} 缺少有效执行态",
-                "item": sel or {"order_id": oid},
-            })
+            rejections.append(RejectedItem(item=sel or {"order_id": oid}, reason=f"密令 {oid} 缺少有效执行态", category="invalid_enum", source=source))
             continue
         originated = originated_quantity_this_turn(db, did, turn, contract)
         units = monthly_actual_units(
             fidelity=fidelity, originated_quantity=originated,
         )
-        if "note" in sel:
-            raw_note = sel.get("note")
-        elif "备注" in sel:
-            raw_note = sel.get("备注")
+        note_raw = sel.get("note")
+        if note_raw is None or not str(note_raw).strip():
+            note_raw = sel.get("备注")
+        if note_raw is None or not str(note_raw).strip():
+            note = (
+                f"月度实进度：执行态{fidelity}（{units:g}）"
+                f"；origin_effects={originated}"
+            )
         else:
-            raw_note = None
-        if raw_note is None:
-            # #1897：没有推演者给出的正文字段 → note=None，数值写口保留已存正文。
-            note: Optional[str] = None
-        else:
-            # 已提供 note 禁 str() 洗白；坏类型沿写口响亮（#1897 J820-E1）。
-            from ming_sim.db import _require_durable_prose
-            note = _require_durable_prose(raw_note, field="note", required=False)
+            note = str(note_raw)
         row = db.record_dossier_actual_progress(
             did,
             turn,
@@ -1925,9 +1907,7 @@ def apply_monthly_covert_actual_progress(
             "contract_kind": contract.get("kind"),
             "contract_axes": list(contract.get("axes") or []),
         })
-    if owns:
-        db.conn.commit()
-    return applied
+    return applied, rejections
 
 
 def _apply_investigation_selection(
@@ -1939,40 +1919,39 @@ def _apply_investigation_selection(
     target: str,
     investigator: str,
     turn: int,
-) -> Dict[str, object]:
+    source: Provenance = Provenance.system_simulation,
+) -> Tuple[Optional[Dict[str, object]], List[RejectedItem]]:
     """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。
 
     无效声明（缺 effort／effort 非数字或非有限／只给了旧执行态）不是合法的
-    零投入：拒收、不写实况行，由月链把本月 4a 产物标成 invalid 重来一次
-    （#1846 失效与重起契约）。
+    零投入：只产 canonical RejectedItem、不写实况行，由月链据 RejectedItem.category
+    把本月 4a 产物标成 invalid 重来一次（#1846 失效与重起契约；#1835 S1 删 dict 回声）。
 
     人物知情与反应按真实因果承接：知情来源解自案卷已落的传话记录（跨月持续），
     毁证与压案共用该判定，未知情不替其落账（见 ``_resolve_investigation_knowledge``）。
+
+    返回 (applied_or_none, rejections)：整项失败时 applied 为 None；合法实入与反应拒收
+    可并存——反应拒收走 canonical 列表，不嵌进 applied 的替代键。
     """
     did = int(dossier["id"])
     oid = int(order["id"])
-    rejected_reactions: List[Dict[str, object]] = []
+    reaction_rejections: List[RejectedItem] = []
     # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
     # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
-    existing_rows = [
-        row
-        for row in db.list_dossier_actual_progress(did)
-        if int(row.get("turn") or 0) == int(turn)
-    ]
-    existing = existing_rows[0] if existing_rows else None
+    existing = db.conn.execute(
+        "SELECT id, units FROM dossier_actual_progress "
+        "WHERE dossier_id=? AND turn=? LIMIT 1",
+        (did, int(turn)),
+    ).fetchone()
     declaration = _investigation_declaration(sel)
     invalid = str(declaration.get("invalid") or "")
     if invalid.strip():
-        return {
-            "order_id": oid,
-            "dossier_id": did,
-            "rejected": True,
-            "invalid": True,
-            "category": "invalid_enum",
-            "report_section": "covert_exec_selections",
-            "reason": f"密令 {oid} 查案声明无效：{invalid}",
-            "item": sel or {"order_id": oid},
-        }
+        return None, [RejectedItem(
+            item=dict(sel) if isinstance(sel, Mapping) else {"order_id": oid},
+            reason=f"密令 {oid} 查案声明无效：{invalid}",
+            category="invalid_enum",
+            source=source,
+        )]
     if existing is not None:
         return {
             "order_id": oid,
@@ -1984,7 +1963,7 @@ def _apply_investigation_selection(
             "mastered_facts": [],
             "originated_quantity": 0.0,
             "already_applied": True,
-        }
+        }, []
     # 真实传话声明先落账：知情判定的唯一来源就是它（关系边存在不算）。
     tip = declaration.get("tip_off")
     tip_source = str(tip.get("source") or "").strip() if isinstance(tip, Mapping) else ""
@@ -2015,11 +1994,19 @@ def _apply_investigation_selection(
             acts["suppression"] = dict(suppression)
         else:
             # 未知情不替其压案：不落这项事实，也不改任何实证（P6 人物决定归人物，
-            # 但引擎不替一个不知情的人记下他"压了案"）。
-            rejected_reactions.append({
-                "reaction": "suppression", "form": str(suppression.get("form") or ""),
-                "reason": "无真实关系网知情来源，不承接压案声明",
-            })
+            # 但引擎不替一个不知情的人记下他"压了案"）。拒收走 canonical 通道。
+            # 项级事实准入拒收：不得用 invalid_enum——月链将该类别当作整份 4a
+            # 声明无效并回滚同批合法实入（#1835 S1；整项缺 effort 等仍用 invalid_enum）。
+            reaction_rejections.append(RejectedItem(
+                item={
+                    "order_id": oid,
+                    "reaction": "suppression",
+                    "form": str(suppression.get("form") or ""),
+                },
+                reason="无真实关系网知情来源，不承接压案声明",
+                category="missing_ref",
+                source=source,
+            ))
     if acts:
         _append_investigation_log(db, did, INVESTIGATION_ACTS_KEY, {
             "turn": int(turn), "investigator": investigator, **acts,
@@ -2028,7 +2015,6 @@ def _apply_investigation_selection(
         db, did, target, investigator,
         fact_key=str(declaration.get("fact_key") or ""),
         intensity=float(declaration.get("intensity") or 0.0),
-        commit=False,
     )
     spoliation = declaration.get("spoliation")
     spoiled_result: Dict[str, object] = {}
@@ -2042,7 +2028,7 @@ def _apply_investigation_selection(
                 effect=str(spoliation.get("effect") or "harder"),
                 knowledge_source=knowledge_source,
                 dossier_id=did,
-                origin_ref=f"dossier:{did}", turn=turn, commit=False,
+                origin_ref=f"dossier:{did}", turn=turn,
             )
     units = float(result.get("units") or 0.0)
     sel_map = sel if isinstance(sel, Mapping) else {}
@@ -2081,11 +2067,9 @@ def _apply_investigation_selection(
     }
     if result.get("dropped_fact_key"):
         applied["dropped_fact_key"] = str(result["dropped_fact_key"])
-    if rejected_reactions:
-        applied["rejected_reactions"] = rejected_reactions
     if spoiled_result:
         applied["spoliation"] = spoiled_result
-    return applied
+    return applied, reaction_rejections
 
 
 def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str, object]]:
@@ -2103,10 +2087,10 @@ def settle_due_secret_orders(
     db: Any,
     state: Any,
     *,
-    commit: bool = False,
-) -> List[Dict[str, object]]:
-    owns = db.owns_transaction() if commit else False
+    source: Provenance = Provenance.system_simulation,
+) -> tuple[List[Dict[str, object]], List[RejectedItem]]:
     results: List[Dict[str, object]] = []
+    rejections: List[RejectedItem] = []
     for order in list_due_secret_orders_for_settlement(db, state):
         oid = int(order["id"])
         dossier = db.get_dossier_for_secret_order(oid)
@@ -2156,6 +2140,4 @@ def settle_due_secret_orders(
             "target_units": target,
             "delivered": bool(verdict["delivered"]),
         })
-    if owns:
-        db.conn.commit()
-    return results
+    return results, rejections

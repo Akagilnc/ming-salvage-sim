@@ -1,18 +1,20 @@
 """#635 [479·S4] 荐人口：荐人事件消费·原子双边（庭裁 r1-r3）。
 
-真入口验收：stage→commit_pending_actions（proposed 案卷）→apply_dossier_verdicts
+真入口验收（F3）：stage→commit_pending_actions（proposed 案卷）→apply_dossier_verdicts
 获准任命→_commit_office_action 内 applier.atomic 同事务落 record_recommendation 与两条边
 →restore 只读 DB 重建；负向：任命未获准→零边；第二腿注入失败→全回滚零残留；
-reason 非空为落账闸（缺失则任命与双边同事务 fail-loud 回滚），不锁荐词自由正文。
+r3：reason 非空逐字必填，缺失则任命与双边同事务 fail-loud 回滚。
 """
 
 import pytest
-from tests.recommendation_rows import recommendation_events
 
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
-from tests.test_recommendation_batch_snapshot_1583 import _pick_recommender
+def _pick_recommender(content):
+    return next(c for c in content.characters.values()
+                if c.office_type not in ("后宫", "宗藩"))
+
 
 def _stage_recommendation(db, state, recommender_name, row, office, reason):
     return db.stage_pending_action(
@@ -43,53 +45,6 @@ def _recommendation_origins(db):
             if str(e["origin"]).startswith("recommendation:")]
 
 
-def test_approved_recommendation_writes_both_edges_atomically(game):
-    db, state, content = game
-    recommender = _pick_recommender(content)
-    row = db.list_recommendation_candidates(state, recommender.name)[0]
-    # 带首尾空白／换行：原样运输合同并入本 tracer（#1897 T1）。
-    reason = "  旧任有实绩，罢居后仍可起复。\n"
-    action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
-
-    _commit_and_promulgate(db, state, content, action_id)
-
-    events = recommendation_events(db, state, recommender.name)
-    assert len(events) == 1
-    event = events[0]
-    assert event["candidate"] == row["name"]
-    assert event["reason"] == reason  # 荐语原样运输
-    char_row = db.conn.execute(
-        "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
-    assert char_row["office"] == "巡盐御史"
-
-    # 恰两条边：荐主→被荐人(恩义) ＋ 君(EMPEROR_NODE)→荐主(知遇)，
-    # origin 全串精确断言（含写口自动追加的 |round:{turn} 后缀）。
-    legs = [e for e in db.get_relation_edge_events()
-            if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
-    assert len(legs) == 2
-    by_origin = {e["origin"]: e for e in legs}
-    turn = int(state.turn)
-    grace = by_origin[f"recommendation:{event['id']}:恩义|round:{turn}"]
-    assert grace["source"] == recommender.name
-    assert grace["target"] == row["name"]
-    assert grace["event_kind"] == "恩义"
-    assert grace["context"] == reason
-    zhiyu = by_origin[f"recommendation:{event['id']}:知遇|round:{turn}"]
-    assert zhiyu["source"] == "皇帝"
-    assert zhiyu["target"] == recommender.name
-    assert zhiyu["event_kind"] == "知遇"
-    assert zhiyu["context"] == reason
-
-    # restore：只读重建 GameState 后，任命与双边无损接续（P1/TD-5）。
-    db.load_state()
-    restored_char = content.characters[row["name"]]
-    assert restored_char.office == "巡盐御史"
-    restored_legs = [e for e in db.get_relation_edge_events()
-                     if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
-    assert len(restored_legs) == 2
-    assert {e["event_kind"] for e in restored_legs} == {"恩义", "知遇"}
-
-
 def test_unapproved_appointment_writes_zero_edges(game):
     db, state, content = game
     recommender = _pick_recommender(content)
@@ -103,7 +58,7 @@ def test_unapproved_appointment_writes_zero_edges(game):
     with pytest.raises(ValueError):
         _commit_and_promulgate(db, state, content, action_id)
 
-    assert recommendation_events(db, state, recommender.name) == []
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()["n"] == 0
     assert _recommendation_origins(db) == []
 
 
@@ -117,7 +72,7 @@ def test_empty_reason_fails_loud_and_rolls_back_everything(game):
     with pytest.raises(ValueError):
         _commit_and_promulgate(db, state, content, action_id)
 
-    assert recommendation_events(db, state, recommender.name) == []
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()["n"] == 0
     assert _recommendation_origins(db) == []
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
@@ -143,38 +98,44 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
         _commit_and_promulgate(db, state, content, action_id)
 
     # 全回滚零残留：不落任命、不落荐人事件、零边。
-    assert recommendation_events(db, state, recommender.name) == []
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()["n"] == 0
     assert db.get_relation_edge_events() == []
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
     assert char_row["office"] != "巡盐御史"
 
 
-def test_replay_same_event_with_changed_reason_stays_two_rows(game):
-    """幂等身份只锚稳定 origin（recommendation:{id}:{腿别}+|round），
-    不含可变 context——同 event_id 换荐词重放，边行数与腿别结构不变。"""
+@pytest.mark.parametrize("candidate_kind", ["荐起复", "荐在职"])
+def test_replay_same_event_with_changed_reason_stays_two_rows(game, candidate_kind):
+    """r1 F2：幂等身份只锚稳定 origin（recommendation:{id}:{腿别}+|round 口径），
+    不含可变 context——同 event_id 换荐词重放，恒 2 行且原文不被改写。"""
     from ming_sim.recommendations import record_recommendation_edges
 
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = db.list_recommendation_candidates(state, recommender.name)[0]
-    reason1 = "旧任有实绩，罢居后仍可起复"
-    grace1, zhiyu1 = record_recommendation_edges(
-        db, state, recommender.name, row["name"], 501, reason1)
+    row = next(r for r in db.list_recommendation_candidates(state, recommender.name)
+               if r["candidate_kind"] == candidate_kind)
+    reason = "  旧任有实绩，罢居后仍可起复。\r\n "
+    action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
+    _commit_and_promulgate(db, state, content, action_id)
+    event = db.conn.execute("SELECT * FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()
+    assert (event["candidate"], event["candidate_kind"], event["reason"]) == (
+        row["name"], {"荐起复": "起复", "荐在职": "在职"}[candidate_kind], reason,
+    )
+    legs = _recommendation_origins(db)
+    assert {(e["source"], e["target"], e["event_kind"], e["context"]) for e in legs} == {
+        (recommender.name, row["name"], "恩义", reason),
+        ("皇帝", recommender.name, "知遇", reason),
+    }
+    assert content.characters[row["name"]].office == "巡盐御史"
 
-    # 换 reason、甚至跨回合重放同一事件 id。
-    state.turn = int(state.turn) + 3
-    reason2 = "改口：边才可用，堪当巡盐"
-    grace2, zhiyu2 = record_recommendation_edges(
-        db, state, recommender.name, row["name"], 501, reason2)
-
-    assert (grace1, zhiyu1) == (grace2, zhiyu2)
-    legs = [e for e in db.get_relation_edge_events()
-            if str(e["origin"]).startswith("recommendation:501:")]
-    assert len(legs) == 2
-    assert {e["event_kind"] for e in legs} == {"恩义", "知遇"}
-    # 原 context 不被重放改写（#1897 T1 前像）
-    assert all(e["context"] == reason1 for e in legs)
+    # Same durable event, changed reason and turn: no duplicate or rewritten edges.
+    state.turn += 3
+    record_recommendation_edges(db, state, recommender.name, row["name"], event["id"], "改口")
+    db.load_state()
+    assert tuple(db.conn.execute("SELECT * FROM recommendation_events WHERE id=?", (event["id"],)).fetchone()) == tuple(event)
+    assert _recommendation_origins(db) == legs
+    assert content.characters[row["name"]].office == "巡盐御史"
 
 
 def test_appointment_without_recommendation_writes_no_edges(game):
@@ -197,7 +158,3 @@ def test_appointment_without_recommendation_writes_no_edges(game):
     _commit_and_promulgate(db, state, content, action_id)
 
     assert _recommendation_origins(db) == []
-
-
-# ---------------------------------------------------------------------------
-# PR #1519 庭裁 Y1/Y2/Y3：工具受理点唯一准入 + 生产链逐字透传真入口回归。

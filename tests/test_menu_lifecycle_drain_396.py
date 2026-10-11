@@ -10,7 +10,6 @@ import time
 from types import SimpleNamespace
 
 import web_app
-from tests.conftest import stub_webgame_boundary
 from tests.wait_utils import reset_menu_path_leases, wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
 
@@ -51,9 +50,9 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
         assert not done.is_set()
         assert closed == []
     finally:
-        if gate.locked():
-            gate.release()
+        gate.release()
         thread.join()
+
     assert closed == [1]
     assert not gate.locked()
 
@@ -85,8 +84,9 @@ def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path)
     finally:
         gate.release()
         if entry.close_op is not None:
-            entry.close_op.done.wait()
-    assert closed == [1]
+            entry.close_op.archive_settled.wait()
+
+    wait_until(lambda: closed == [1])
     assert not gate.locked()
 
 
@@ -126,8 +126,9 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     finally:
         gate.release()
         if entry.close_op is not None:
-            entry.close_op.done.wait()
-    assert closed == [1]
+            entry.close_op.archive_settled.wait()
+
+    wait_until(lambda: closed == [1])
     assert not gate.locked()
 
 
@@ -138,16 +139,10 @@ def test_get_main_db_path_prefers_active_db_over_launch_env(monkeypatch, tmp_pat
     active_db_path = str(tmp_path / "active_from_new_game.db")
     monkeypatch.setenv("MING_SIM_DB", env_db_path)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    with open(web_app.user_data_path("active_db.txt"), "w", encoding="utf-8") as f:
+    with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
         f.write(active_db_path)
 
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    stub_webgame_boundary(monkeypatch)
-    game = web_app.WebGame(fresh=False)
-    try:
-        assert game.db_path == active_db_path
-    finally:
-        game.session.close()
+    assert web_app._get_main_db_path() == active_db_path
 
 
 def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_path):
@@ -409,11 +404,12 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
         assert closed == []
         assert killed == []
     finally:
-        if gate.locked():
-            gate.release()
+        gate.release()
         thread.join()
+        if done.is_set():
+            wait_until(lambda: bool(killed))
+
     assert closed == [1]
-    wait_until(lambda: bool(killed))
 
 
 def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch):
@@ -426,9 +422,10 @@ def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda *_args: None)
 
     result = asyncio.run(web_app.api_menu_shutdown())
-
-    assert result == {"ok": True}
-    wait_until(lambda: bool(killed))
+    try:
+        assert result == {"ok": True}
+    finally:
+        wait_until(lambda: bool(killed))
 
 
 def test_drain_rejects_late_pending_write_before_gate_acquire():

@@ -284,7 +284,7 @@ def _uncased_grant_catalog_token(
         pending_id = int(candidate.get("pending_action_id"))
     except (TypeError, ValueError):
         return None
-    if pending_id <= 0 or not hasattr(db, "conn"):
+    if pending_id <= 0:
         return None
     existing = db.conn.execute(
         "SELECT id FROM decree_dossiers "
@@ -311,10 +311,9 @@ def _append_this_decree_escort_grounding(
         f"dossier\t{token}\t{kind}:{target_id}\t本旨"
         + ("\t自带押解" if declared else "")
     )
-    body = grounding.rstrip("\n")
-    if not body:
+    if not grounding.strip():
         return extra + "\n"
-    return body + "\n" + extra + "\n"
+    return grounding + "\n" + extra + "\n"
 
 
 def _frozen_effect_refs(
@@ -492,7 +491,7 @@ def _submit_snapshot_job(
                 if isinstance(exc, LLMUnavailable) and _rate_limited(exc):
                     return
 
-                def stop_if_current() -> None:
+                def stop_if_current(exc=exc) -> None:
                     from ming_sim.applier import Provenance
                     from ming_sim.month_chain import _abort_month_call, _load_chain
                     ref = _current_forecast_ref(session, forecast_key)

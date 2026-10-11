@@ -31,15 +31,7 @@ def _public(db, nid, name, body):
 # ── AC2/AC3：侍立者补话组装取其在场时段殿上公开对话；未在场者取空 ──────────
 
 
-
-
-
-
-
-
 # ── AC1：乾清宫一夜连场骨架可跑（宣→留侍→宣→插话站台→同殿）──────────────
-
-
 
 
 # ── AC4：回奏输入按角色见闻分流（同问不同答/臣不知，千人千答非旧询问机制）──
@@ -63,3 +55,19 @@ def test_exit_excludes_later_public_ledger_from_character_hearing(game):
     visible_ids = {r["id"] for r in an.audible_entries_for(db, nid, "毕自严")}
     assert heard_id in visible_ids
     assert unheard_id not in visible_ids
+
+
+def test_present_roster_reflects_command_dismissal(game):
+    """召退命令从现役在场名单移除召入者，并保留仍侍立者。"""
+    db, state, content = game
+    _activate(db, state, "毕自严", "徐光启")
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    an.summon_enter(db, nid, "毕自严")
+    an.summon_enter(db, nid, "徐光启")
+    assert {"毕自严", "徐光启"} <= an.present_names_at(db, nid)  # 正向：宣入皆在场
+
+    an.dismiss_from_audience(db, "毕自严", night_id=nid)
+    present = an.present_names_at(db, nid)
+    assert "毕自严" not in present
+    assert "徐光启" in present

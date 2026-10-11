@@ -17,6 +17,10 @@
 
 from __future__ import annotations
 
+from ming_sim.action_materialize import DecreeMaterializationValidationError
+from ming_sim.exceptions import DeclarationDataError
+
+
 import codecs
 import json
 import logging
@@ -303,7 +307,6 @@ _TRACE_DISABLED = os.environ.get("MING_SIM_TRACE", "1").strip() in ("0", "false"
 _TRACE_PATH = os.environ.get(
     "MING_SIM_TRACE_PATH", f"scripts/runs/cli_trace_{os.getpid()}.jsonl"
 )
-_TRACE_FIELD_CAP = int(os.environ.get("MING_SIM_TRACE_CAP", "40000"))  # 单字段字符上限
 _seq = 0
 _trace_announced = False
 # #83 月末 extractor 并发：CliChat.invoke 被多线程并发调（codex 后端）。_seq 自增是非原子读改写
@@ -328,12 +331,6 @@ def _trace(record: Dict[str, Any]) -> None:
     global _trace_announced
     try:
         os.makedirs(os.path.dirname(_TRACE_PATH) or ".", exist_ok=True)
-        # 大字段截断，防失控；保留首尾各一半。
-        cap = _TRACE_FIELD_CAP
-        for k in ("prompt", "response"):
-            v = record.get(k)
-            if isinstance(v, str) and len(v) > cap:
-                record[k] = v[: cap // 2] + f"\n...[截断 {len(v) - cap} 字]...\n" + v[-cap // 2:]
         line = json.dumps(record, ensure_ascii=False) + "\n"
         with _TRACE_LOCK:  # 串行化写盘，防并发大行交错损坏 trace（#83）
             with open(_TRACE_PATH, "a", encoding="utf-8") as f:
@@ -407,9 +404,9 @@ def _iter_cli_process_lines(
     """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
 
     - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）
-      并 SIGTERM 收尾该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现；禁 SIGKILL）。
+      并 kill 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
     - idle 只认 transport 策略（`_cli_idle_seconds`）= 设置页那一格的静默判死阈值。
-    - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀；收尾禁 SIGKILL。
+    - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
     - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
     - 活动期 stdin/stdout/stderr 真异常记入 outcome；终止真异常原样上抛（#1834 F48）。
@@ -790,10 +787,11 @@ def _iter_cli_runner_text(
 
     **活动信号与 content 解耦**：新字节刷新空转时刻是 `_iter_cli_process_lines`
     的事（读到就刷新，跨多久都不杀）；本函数只在该次 attempt 判活之后才把文本交
-    出去。故纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——终包判活前
-    不把半截 stdout 当大臣正文送进 delta。终失败按票面走系统层人话（ADR 0046
-    否决失败戏内化）。codex `--json` 是结构化事件流（`_codex_event_text` 认字段、
-    不读散文，ADR 0142），可照旧边到边出。
+    出去。故纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——避免半截机器
+    文本先入 delta。机器失败只认退出码、空输出、stdin/IO 与 typed 异常
+    （ADR 0142 / #1835 J10）；成功权威状态后的 stdout 正文不再扫词猜认证失败。
+    codex `--json` 是结构化事件流（`_codex_event_text` 认字段、不读散文），
+    可照旧边到边出。
 
     次数只在 llm_transport（run_with_transport / run_transport_stream）；此处禁
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
@@ -852,14 +850,17 @@ def _iter_cli_runner_text(
         returncode = int(outcome.returncode or 0)
         stderr = outcome.stderr or ""
         stdout_text = "".join(pieces)
-        # Codex / CLI：干净正文只在 stdout；stderr 是日志，不得冒充正文
-        # （Python subprocess 分流；Codex non-interactive：progress→stderr，final→stdout）。
-        # #1847 N10：不扫正文词表猜认证失败；只信退出码与原生异常。
+        # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
+        # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
+        if outcome.stdin_error is not None:
+            raise RuntimeError(
+                f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
+            ) from outcome.stdin_error
         text = stdout_text if stdout_text.strip() else final_text
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
             raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr}")
-        if not text.strip():
+        if not text:
             raise transport_failure_unavailable(
                 empty_output_failure(), attempts=1, exhausted=False,
             )
@@ -894,7 +895,6 @@ def _run_cli_runner(
             materials_dir=materials_dir,
         )
     )
-    # 正文已在 _iter_cli_runner_text 判活；此处禁二次 strip（#1834 F16）。
     return text, 1
 
 
@@ -1051,7 +1051,7 @@ def _run_backend_for_config(
     直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
     每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
     （agno 游戏路径走 CliChat.invoke 自有 trace，与此咽喉不重叠。）
-    tag 空时记 other；由调用方显式申报，不从自由 prompt 猜身份。
+    tag 空时仅记录已知 CLI surface，不根据 prompt 正文猜调用者。
 
     #1465 切片③：本入口是结算/拟旨等非 Agent CLI extractor 的**次数入口**——
     在此包一次 run_with_transport，operation 调单次子进程；runner 内禁私有重试。"""
@@ -1088,7 +1088,7 @@ def _run_backend_for_config(
     finally:
         _trace({
             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "seq": -1, "tag": tag or "?",
+            "seq": -1, "tag": tag or "cli_backend",
             "backend": _backend_label(llm_config), "model_id": model_id,
             "dur_s": round(time.monotonic() - t0, 1), "attempts": attempts,
             "wants_json": False,
@@ -1773,10 +1773,10 @@ def normalize_draft_person_roster(
 ) -> List[Dict[str, object]]:
     """人物参与人：normalize → 非人滤除 → canon → ADR 0053 校验。
 
-    capture 与召对 materialize 共用；校验失败 raise ValueError（参与人物不存在…）。
-    validate_delegations=False：调用方将与既有名单合并后再验委派链（#1897 E1）。
+    capture 与召对 materialize 共用；声明校验失败 raise DeclarationDataError。
     """
-    from ming_sim.action_materialize import DecreeMaterializationValidationError
+    if not isinstance(roster, list):
+        raise DeclarationDataError("参与人须为对象列表")
 
     if not isinstance(roster, list):
         raise DecreeMaterializationValidationError(
@@ -2730,13 +2730,13 @@ def resubmit_draft_admission_payload(
         # 已识别的名册产物错：与 capture_manual_directive_payload 同一归一
         # ——产物错走本票 B 路预算/留存，不得升成整月 SettlementAbort 连带好旨。
         # 结算路无召对现场，不另作戏内回禀；只把不在册事实当失败事实回喂下一次重写。
-        raise DecreeMaterializationValidationError(exc.fact) from exc
+        raise DeclarationDataError(exc.fact) from exc
     # #1769 结算路 B：仅「仍为拟旨且非 capture 空载 fallback」才算本轮成功产物。
     # extract 缺拟旨意图/垃圾 → draft_action=无；project 再映成 special_decree
     # fallback——若 replace_payload 会毁掉原 pay_order/grant 并被二次 ensure 成案（P1）。
     # capture 首次空载/超时 fallback 不经本函数，不动。
     if captured.get("draft_action") != "拟旨":
-        raise DecreeMaterializationValidationError("结算补交重写未返回拟旨意图")
+        raise DeclarationDataError("结算补交重写未返回拟旨意图")
     payload = project_draft_extract_to_directive_payload(
         captured,
         decree_text=text,

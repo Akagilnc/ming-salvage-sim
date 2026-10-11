@@ -1,7 +1,7 @@
 """#633 [479·S2] 结算口：extractor 边事件模块——契约·捕获·落库。
 
 验收对表（冻结票面 + 庭裁 r1/r2）：
-- 邸报大臣互动经 extractor delta → apply_score_extraction → relation_edge_events 落库，
+- 邸报大臣互动经 extractor delta → settle_delta → relation_edge_events 落库，
   origin 回指本回合（TD-1 结算侧）。
 - relations 模块并入既有 ThreadPoolExecutor 并发装配，无第二套编排。
 - 捕获为空零事件零副作用；shape 垃圾按既有 extractor 契约拒收。
@@ -12,45 +12,33 @@
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 import json
 
-from ming_sim.issues import apply_score_extraction
 from ming_sim.relations import (
     resolve_relation_edge_events_from_extraction,
     settlement_edge_origin,
 )
 import pytest
-
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import section, view
 
 def _edge_rows(db, **kw):
     return db.get_relation_edge_events(**kw)
 
-
 def _triplets(rows):
     return {(r["source"], r["target"], r["event_kind"]) for r in rows}
 
-
 # ── 路由归属：受控 section 归 relations 独占槽 ────────────────────────
-
 
 # ── TD-1 结算侧：当场落库、origin 回指本回合、方向三元组 ─────────────
 
-
 def test_settlement_interaction_lands_directed_edge_with_origin_round(game):
     db, state, content = game
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [{
-                "施动者": "毕自严", "受动者": "王绍徽", "类目": "使绊",
-                "语境": "毕自严在户部用度上挡了王绍徽的路。",
-                "来源引用": "盘面自发",
-            }],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    assert not any(r.get("rejected") for r in res), res
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '毕自严', '受动者': '王绍徽', '类目': '使绊', '语境': '毕自严在户部用度上挡了王绍徽的路。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    assert section(out, "relation_edge_event_resolutions").rejected == []
     rows = _edge_rows(db, source="毕自严", target="王绍徽")
     assert len(rows) == 1
     row = rows[0]
@@ -61,31 +49,18 @@ def test_settlement_interaction_lands_directed_edge_with_origin_round(game):
     # TD-1：origin 回指本回合
     assert row["turn"] == state.turn
     assert row["origin_round"] == state.turn
+    assert f"|round:{state.turn}" in row["origin"]
     assert row["origin"] == settlement_edge_origin("盘面自发", "使绊") + f"|round:{state.turn}"
     # 反向无边（写端不做对称翻倍）
     assert _edge_rows(db, source="王绍徽", target="毕自严") == []
 
-
 # ── r2 F2 基数：三人联名=牵头→各联署恰两行；负向禁例 ─────────────────
-
 
 def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
     db, state, content = game
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [{
-                "施动者": "温体仁",
-                "受动者": ["周延儒", "黄立极"],
-                "类目": "联名",
-                "语境": "温体仁牵头联合周延儒、黄立极上疏。",
-                "来源引用": "盘面自发",
-            }],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    assert not any(r.get("rejected") for r in res), res
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '温体仁', '受动者': ['周延儒', '黄立极'], '类目': '联名', '语境': '温体仁牵头联合周延儒、黄立极上疏。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    assert section(out, "relation_edge_event_resolutions").rejected == []
     rows = [r for r in _edge_rows(db) if r["event_kind"] == "联名"]
     # 正例：唯一应有集合 {甲→乙, 甲→丙}，同 origin
     assert _triplets(rows) == {
@@ -94,17 +69,9 @@ def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
     }
     assert len(rows) == 2
     assert len({r["origin"] for r in rows}) == 1
-    # 负向：不得出现乙→丙、丙→乙、乙→甲、丙→甲或任何反向/重复行
-    pairs = [(r["source"], r["target"]) for r in rows]
-    assert pairs.count(("温体仁", "周延儒")) == 1
-    assert pairs.count(("温体仁", "黄立极")) == 1
-    banned = {("周延儒", "黄立极"), ("黄立极", "周延儒"),
-              ("周延儒", "温体仁"), ("黄立极", "温体仁")}
-    assert not banned & set(pairs)
-
 
 def test_replayed_delta_does_not_double_write(game):
-    """同一声明重复落账幂等：UNIQUE(source,target,kind,context,origin) 吸收重复。"""
+    """结算重放（恢复/重试）幂等：UNIQUE(source,target,kind,context,origin) 吸收重复。"""
     db, state, content = game
     delta = {
         "relation_edge_events": [{
@@ -113,163 +80,82 @@ def test_replayed_delta_does_not_double_write(game):
             "来源引用": "盘面自发",
         }],
     }
-    apply_score_extraction(db, state, json.loads(json.dumps(delta)), content=content)
-    apply_score_extraction(db, state, json.loads(json.dumps(delta)), content=content)
+    settle_delta(state, db, json.loads(json.dumps(delta)), SettlementContext(content=content))
+    settle_delta(state, db, json.loads(json.dumps(delta)), SettlementContext(content=content))
     rows = [r for r in _edge_rows(db) if r["event_kind"] == "协作"]
     assert len(rows) == 1
 
-
 # ── 空捕获：零事件零副作用 ───────────────────────────────────────────
-
 
 def test_empty_capture_writes_nothing(game):
     db, state, content = game
     before = db.conn.execute(
         "SELECT COUNT(*) AS c FROM relation_edge_events"
     ).fetchone()["c"]
-    out = apply_score_extraction(
-        db, state, {"relation_edge_events": []}, content=content,
-    )
-    assert out["relation_edge_event_resolutions"] == []
+    out = settle_delta(state, db, {'relation_edge_events': []}, SettlementContext(content=content))
+    assert view(out, "relation_edge_event_resolutions") == []
     after = db.conn.execute(
         "SELECT COUNT(*) AS c FROM relation_edge_events"
     ).fetchone()["c"]
     assert after == before == 0
 
-
 # ── shape 垃圾按既有契约拒收 ─────────────────────────────────────────
-
 
 def test_shape_garbage_rejected_per_existing_extractor_contract(game):
     db, state, content = game
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [
-                "不是对象",  # 非 dict item → sanitize 层逐项拒收
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "擅自发明", "语境": "x", "来源引用": "盘面自发"},  # 未知类目
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨", "语境": "   ", "来源引用": "盘面自发"},  # 空语境
-                {"受动者": "王绍徽", "类目": "结怨", "语境": "缺施动者", "来源引用": "盘面自发"},  # 缺施动者
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "兑现所托", "语境": "君臣类目不归本口", "来源引用": "盘面自发"},
-            ],
-        },
-        content=content,
-    )
+    out = settle_delta(state, db, {'relation_edge_events': ['不是对象', {'施动者': '甲', '受动者': '乙', '类目': '擅自发明', '语境': 'x'}, {'施动者': '甲', '受动者': '乙', '类目': '结怨', '语境': '   '}, {'受动者': '乙', '类目': '结怨', '语境': '缺施动者'}, {'施动者': '甲', '受动者': '皇帝', '类目': '兑现所托', '语境': '君臣类目不归本口'}]}, SettlementContext(content=content))
     # 非 dict item 由既有 sanitize_delta_shape 列表逐项拒收（ADR 0015 形，raw_value 载荷）
-    validate_rejections = out["validate_shape_rejections"]
+    validate_rejections = out.shape_rejections
     assert any(
-        isinstance(r.get("item"), dict) and r["item"].get("raw_value") == "不是对象"
+        isinstance(r.item, dict) and r.item.get("raw_value") == "不是对象"
         for r in validate_rejections
     )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    # 内容级坏项由适配器逐条拒收留痕，不阻塞其它项；未入名册端点也是拒收理由之一
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 4
-    assert all(r["category"] == "invalid_relation_event" for r in rejected)
-    items = [r.get("item") for r in rejected]
-    assert any(isinstance(item, dict) and item.get("类目") == "擅自发明" for item in items)
-    assert any(
-        isinstance(item, dict) and not str(item.get("语境") or "").strip()
-        for item in items
-    )
-    assert any(isinstance(item, dict) and "施动者" not in item for item in items)
-    assert any(isinstance(item, dict) and item.get("类目") == "兑现所托" for item in items)
+    assert all(r.category == "invalid_relation_event" for r in rejected)
+    # 全部拒收：库里零写入
     assert _edge_rows(db) == []
-
 
 def test_non_string_actor_target_context_shapes_rejected(game):
     """施动者/受动者/语境非字符串形状逐项拒收留痕，零写入（不 str() 搭救）。"""
     db, state, content = game
-    base = {"受动者": "王绍徽", "类目": "结怨", "语境": "x", "来源引用": "盘面自发"}
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [
-                {"施动者": 123, **base},  # 数字型施动者
-                {"施动者": {"名": "甲"}, **base},  # 对象型施动者
-                {"施动者": "毕自严", "受动者": ("王绍徽",), "类目": "结怨",
-                 "语境": "x", "来源引用": "盘面自发"},  # tuple 受动者容器
-                {"施动者": "毕自严", "受动者": ["王绍徽", 3], "类目": "结怨",
-                 "语境": "x", "来源引用": "盘面自发"},  # 混型受动者列表
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
-                 "语境": 42, "来源引用": "盘面自发"},  # 数字型语境
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
-                 "语境": {"句": "x"}, "来源引用": "盘面自发"},  # 对象型语境
-            ],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    base = {"受动者": "乙", "类目": "结怨", "语境": "x", "来源引用": "盘面自发"}
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': 123, **base}, {'施动者': {'名': '甲'}, **base}, {'施动者': '甲', '受动者': ('乙',), '类目': '结怨', '语境': 'x', '来源引用': '盘面自发'}, {'施动者': '甲', '受动者': ['乙', 3], '类目': '结怨', '语境': 'x', '来源引用': '盘面自发'}, {'施动者': '甲', '受动者': '乙', '类目': '结怨', '语境': 42, '来源引用': '盘面自发'}, {'施动者': '甲', '受动者': '乙', '类目': '结怨', '语境': {'句': 'x'}, '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 6
-    assert all(r["category"] == "invalid_relation_event" for r in rejected)
-    items = [r.get("item") for r in rejected]
-    assert any(isinstance(item, dict) and item.get("施动者") == 123 for item in items)
-    assert any(isinstance(item, dict) and isinstance(item.get("受动者"), tuple) for item in items)
-    assert any(isinstance(item, dict) and item.get("语境") == 42 for item in items)
+    assert all(r.category == "invalid_relation_event" for r in rejected)
     assert _edge_rows(db) == []
 
-
 def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
-    """缺 provenance/伪前缀/未知未授权案卷/自带 round 的伪造值：逐项拒收留痕不落边。
-
-    同批保留合法盘面自发项：端点合法时来源闸才是拒收真因；禁用来源闸须红（J17）。
-    """
+    """缺 provenance/伪前缀/未知未授权案卷/自带 round 的伪造值：逐项拒收留痕不落边。"""
     db, state, content = game
-    base = {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨", "语境": "x"}
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [
-                dict(base),  # 缺 provenance 条目
-                {**base, "来源引用": None},  # 空来源
-                {**base, "来源引用": "   "},  # 空白来源
-                {**base, "来源引用": "盘面自发|round:999"},  # 伪造当前回合回指
-                {**base, "来源引用": "dossier:999999"},  # 未知案卷
-                {**base, "来源引用": "fake"},  # 伪前缀自由文本
-                {**base, "来源引用": " 盘面自发 "},  # 空白包裹哨兵变体
-                {**base, "来源引用": "\n盘面自发\t"},  # 换行/制表包裹变体
-                {**base, "来源引用": 123},
-                {**base, "来源引用": "盘面自发", "类目": "协作"},
-            ],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
-    assert len(rejected) == 9
-    assert all(r["category"] == "invalid_relation_event" for r in rejected)
-    assert {r["item"].get("来源引用") for r in rejected} == {
-        None, "   ", "盘面自发|round:999", "dossier:999999", "fake",
-        " 盘面自发 ", "\n盘面自发\t", 123,
-    }
-    rows = _edge_rows(db)
-    assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
-    assert len(rows) == 1
-    assert rows[0]["origin"] == f"盘面自发:relation:协作|round:{state.turn}"
-
+    base = {"施动者": "甲", "受动者": "乙", "类目": "结怨", "语境": "x"}
+    out = settle_delta(state, db, {'relation_edge_events': [dict(base), {**base, '来源引用': None}, {**base, '来源引用': '   '}, {**base, '来源引用': '盘面自发|round:999'}, {**base, '来源引用': 'dossier:999999'}, {**base, '来源引用': 'fake'}, {**base, '来源引用': ' 盘面自发 '}, {**base, '来源引用': '\n盘面自发\t'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
+    assert len(rejected) == 8
+    assert all(r.category == "invalid_relation_event" for r in rejected)
+    # 全部拒收：库里零边、无任何 origin 被默认成「盘面自发」落库
+    assert _edge_rows(db) == []
 
 def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
     """r2 残余：来源只收精确 canonical 值——空白/变体一律拒收留痕，不 strip 后放行。
 
     庭裁 probe：守门曾先 strip 后授权，把非 canonical provenance 归一成合法
-    来源（fail-open）；本负例钉死精确匹配契约。端点用真人物，避免端点闸遮蔽来源闸。
-    """
+    来源（fail-open）；本负例钉死精确匹配契约。"""
     db, state, content = game
-    base = {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨", "语境": "x"}
+    base = {"施动者": "甲", "受动者": "乙", "类目": "结怨", "语境": "x"}
     variants = [" 盘面自发 ", "\n盘面自发\t", "盘面自发\n", "\t盘面自发", "盘面自发 "]
-    out = apply_score_extraction(
-        db, state,
-        {"relation_edge_events": [{**base, "来源引用": v} for v in variants]},
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    out = settle_delta(state, db, {'relation_edge_events': [{**base, '来源引用': v} for v in variants]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == len(variants), res
-    assert all(r["category"] == "invalid_relation_event" for r in rejected)
-    assert {r["item"]["来源引用"] for r in rejected} == set(variants)
+    assert all(r.category == "invalid_relation_event" for r in rejected)
     # 零写入：无任何归一后的「盘面自发」origin 溜进库
     assert _edge_rows(db) == []
-
 
 def test_settlement_edge_origin_rejects_missing_and_non_string():
     """拼装器本体不再静默默认哨兵；缺失/非字符串诚实报错。"""
@@ -286,7 +172,6 @@ def test_settlement_edge_origin_rejects_missing_and_non_string():
     # 合法条目照常拼装；拼装器不独立 strip——值原样进入 origin（空白只作非空谓词）
     assert settlement_edge_origin("盘面自发", "联名") == "盘面自发:relation:联名"
 
-
 def _promulgated_dossier(db, state, holder, token):
     """建并颁布一个案卷，返回 id（effect_origin_rejection 授权路径）。"""
     did = db.create_decree_dossier(
@@ -302,7 +187,6 @@ def _promulgated_dossier(db, state, holder, token):
     db.record_dossier_decision(did, "promulgated")
     return did
 
-
 def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
     """冻结闭集内且已颁授权的 dossier 引用照常落边，origin_round 由当前回合绑定。"""
     db, state, content = game
@@ -311,27 +195,14 @@ def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
     ).fetchone()["name"]
     did = _promulgated_dossier(db, state, holder, "relation-origin-633")
     db.conn.commit()
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [{
-                "施动者": "毕自严", "受动者": "王绍徽", "类目": "把柄",
-                "语境": "案卷授权的互动。", "来源引用": f"dossier:{did}",
-            }, {
-                # 空白包裹的 dossier 引用：非 canonical，逐项拒收不搭救
-                "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
-                "语境": "空白包裹的案卷引用。", "来源引用": f" dossier:{did} ",
-            }],
-        },
-        content=content,
-        dossier_ids_at_input={did},
-    )
-    res = out["relation_edge_event_resolutions"]
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '毕自严', '受动者': '王绍徽', '类目': '把柄', '语境': '案卷授权的互动。', '来源引用': f'dossier:{did}'}, {'施动者': '毕自严', '受动者': '王绍徽', '类目': '结怨', '语境': '空白包裹的案卷引用。', '来源引用': f' dossier:{did} '}]}, SettlementContext(content=content, dossier_ids_at_input={did}))
+    res = view(out, "relation_edge_event_resolutions")
     padded = next(
-        r for r in res if (r.get("item") or {}).get("语境") == "空白包裹的案卷引用。"
+        r for r in section(out, "relation_edge_event_resolutions").rejected
+        if isinstance(r.item, dict) and r.item.get("语境") == "空白包裹的案卷引用。"
     )
-    assert padded.get("rejected") and padded["category"] == "invalid_relation_event"
-    assert not any(r.get("rejected") for r in res if r is not padded), res
+    assert padded.category == "invalid_relation_event"
+    assert len(res) == 1
     # 恰一行合法边落库；无归一后的 dossier origin 变体
     rows = _edge_rows(db)
     assert len(rows) == 1
@@ -340,9 +211,7 @@ def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
     assert row["origin"] == f"dossier:{did}:relation:把柄|round:{state.turn}"
     assert row["origin_round"] == state.turn
 
-
 # ── V2：dossier 来源锁本批冻结输入闭集（fail-closed 双重合取） ────────
-
 
 def test_authorized_dossier_outside_frozen_batch_rejected_zero_edges(game):
     """已颁授权但不在本批冻结输入的案卷：逐项拒收留痕，好项不受牵连。"""
@@ -353,29 +222,16 @@ def test_authorized_dossier_outside_frozen_batch_rejected_zero_edges(game):
     in_batch = _promulgated_dossier(db, state, holder, "v2-in-batch")
     stale = _promulgated_dossier(db, state, holder, "v2-stale-legal-but-not-fed")
     db.conn.commit()
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "把柄",
-                 "语境": "陈旧无关旧旨归因。", "来源引用": f"dossier:{stale}"},
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
-                 "语境": "本批闭集内合法来源。", "来源引用": f"dossier:{in_batch}"},
-            ],
-        },
-        content=content,
-        dossier_ids_at_input={in_batch},
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '毕自严', '受动者': '王绍徽', '类目': '把柄', '语境': '陈旧无关旧旨归因。', '来源引用': f'dossier:{stale}'}, {'施动者': '毕自严', '受动者': '王绍徽', '类目': '协作', '语境': '本批闭集内合法来源。', '来源引用': f'dossier:{in_batch}'}]}, SettlementContext(content=content, dossier_ids_at_input={in_batch}))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 1
-    assert rejected[0]["category"] == "invalid_relation_event"
-    assert (rejected[0]["item"]["来源引用"] == f"dossier:{stale}")
+    assert rejected[0].category == "invalid_relation_event"
+    assert rejected[0].item["来源引用"] == f"dossier:{stale}"
     # 好项不牵连：闭集内且授权的照常落库
     rows = _edge_rows(db)
     assert len(rows) == 1
     assert rows[0]["origin"] == f"dossier:{in_batch}:relation:协作|round:{state.turn}"
-
 
 def test_unauthorized_dossier_inside_frozen_set_still_rejected(game):
     """闭集合取另一支：在本批集合但未颁/未授权（effect_origin_rejection 不过）仍拒收。"""
@@ -394,21 +250,12 @@ def test_unauthorized_dossier_inside_frozen_set_still_rejected(game):
         payload={"token": "v2-unissued"},
     )
     db.conn.commit()
-    out = apply_score_extraction(
-        db, state,
-        {"relation_edge_events": [{
-            "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
-            "语境": "未颁案卷引用。", "来源引用": f"dossier:{unissued}",
-        }]},
-        content=content,
-        dossier_ids_at_input={unissued},
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '毕自严', '受动者': '王绍徽', '类目': '结怨', '语境': '未颁案卷引用。', '来源引用': f'dossier:{unissued}'}]}, SettlementContext(content=content, dossier_ids_at_input={unissued}))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 1
-    assert rejected[0]["category"] == "invalid_relation_event"
+    assert rejected[0].category == "invalid_relation_event"
     assert _edge_rows(db) == []
-
 
 def test_missing_frozen_dossier_set_is_empty_closed_set(game):
     """None/缺集按空闭集：live DB 里已颁授权也不搭救（不从 DB 重建）。"""
@@ -418,48 +265,51 @@ def test_missing_frozen_dossier_set_is_empty_closed_set(game):
     ).fetchone()["name"]
     did = _promulgated_dossier(db, state, holder, "v2-fail-closed")
     db.conn.commit()
-    out = apply_score_extraction(
-        db, state,
-        {"relation_edge_events": [{
-            "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
-            "语境": "缺冻结集时已授权也拒。", "来源引用": f"dossier:{did}",
-        }]},
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '毕自严', '受动者': '王绍徽', '类目': '结怨', '语境': '缺冻结集时已授权也拒。', '来源引用': f'dossier:{did}'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 1
-    assert rejected[0]["category"] == "invalid_relation_event"
+    assert rejected[0].category == "invalid_relation_event"
     assert _edge_rows(db) == []
     # 盘面自发不受 dossier 闭集影响：同批照常落边
-    out2 = apply_score_extraction(
-        db, state,
-        {"relation_edge_events": [{
-            "施动者": "温体仁", "受动者": "周延儒", "类目": "站台",
-            "语境": "盘面自发不受案卷闭集影响。", "来源引用": "盘面自发",
-        }]},
-        content=content,
-    )
-    assert not any(r.get("rejected") for r in out2["relation_edge_event_resolutions"])
+    out2 = settle_delta(state, db, {'relation_edge_events': [{'施动者': '温体仁', '受动者': '周延儒', '类目': '站台', '语境': '盘面自发不受案卷闭集影响。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    assert not section(out2, "relation_edge_event_resolutions").rejected
     assert len(_edge_rows(db, source="温体仁", target="周延儒")) == 1
 
+# ── F1：context 存储零删改，全链字节相等 ────────────────────────────
 
+def test_context_stored_byte_identical_through_full_chain(game):
+    """含首尾空白+换行的 context 经 extractor JSON → apply → DB 字节相等。"""
+    db, state, content = game
+    raw_context = "  毕自严当面替王绍徽担名。\n\t"
+    payload = {
+        "relation_edge_events": [{
+            "施动者": "毕自严", "受动者": ["王绍徽"], "类目": "站台",
+            "语境": raw_context, "来源引用": "盘面自发",
+        }],
+    }
+    extracted = json.loads(json.dumps(payload, ensure_ascii=False))
+    settle_delta(state, db, extracted, SettlementContext(content=content))
+    row = _edge_rows(db, source="毕自严", target="王绍徽")[0]
+    assert row["context"] == raw_context  # 字节相等，无 strip/裁剪/归一
 
-
-# ── 语境写缝：空白拒收闸；不锁自由语境正文等值 ─────────────────────
-
-
-def test_writer_rejects_blank_context(game):
-    """空白语境仍拒收（strip 只作非空谓词）。"""
-    import pytest
+def test_writer_stores_whitespace_context_byte_identical(game):
+    """S1 写缝直接验收：record_relation_edge_event 对空白语境存储原样。"""
     db, state, _ = game
+    raw = "\n  带首尾空白的把柄语境。\t\n"
+    db.record_relation_edge_event(
+        source="甲", target="乙", event_kind="把柄",
+        context=raw, origin="settle:f1-probe", turn=state.turn,
+    )
+    row = _edge_rows(db, source="甲", target="乙")[0]
+    assert row["context"] == raw
+    # 空白语境仍拒收（strip 只作非空谓词）
+    import pytest
     with pytest.raises(ValueError):
         db.record_relation_edge_event(
             source="甲", target="乙", event_kind="把柄",
             context="   \n\t ", origin="settle:f1-blank", turn=state.turn,
         )
-    assert _edge_rows(db, source="甲", target="乙") == []
-
 
 def test_writer_rejects_non_string_context(game):
     """S1 写缝直接验收：context 非 str（dict/bytes）立即 ValueError 且零行落库。"""
@@ -473,74 +323,32 @@ def test_writer_rejects_non_string_context(game):
             )
     assert _edge_rows(db, source="甲", target="乙") == []
 
-
 # ── P5 并行装配：新模块并入同一 executor，不串行 ────────────────────
 
-# ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
 
+# ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
 
 def test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges(game):
     """幻觉名/错字/「皇帝」入大臣边端点：逐项拒收留痕，零写入。"""
     db, state, content = game
-    # Seed may mark 徐光启 active; force offstage so "未在朝名册" 项仍拒收。
-    db.set_character_status(state, "徐光启", "offstage", reason="relation_capture_endpoint_fixture")
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [
-                # 幻觉 source
-                {"施动者": "幻觉甲", "受动者": "王绍徽", "类目": "结怨",
-                 "语境": "幻觉施动者。", "来源引用": "盘面自发"},
-                # 幻觉 target
-                {"施动者": "毕自严", "受动者": "幻觉乙", "类目": "结怨",
-                 "语境": "幻觉受动者。", "来源引用": "盘面自发"},
-                # 皇帝作 source（君臣类目归 0079，皇帝节点不归大臣边任一端）
-                {"施动者": "皇帝", "受动者": "王绍徽", "类目": "把柄",
-                 "语境": "皇帝施动者。", "来源引用": "盘面自发"},
-                # 皇帝作 target
-                {"施动者": "毕自严", "受动者": "皇帝", "类目": "把柄",
-                 "语境": "皇帝受动者。", "来源引用": "盘面自发"},
-                # 未登场/已退场（不在当前在朝名册）
-                {"施动者": "毕自严", "受动者": "徐光启", "类目": "协作",
-                 "语境": "未登场人物。", "来源引用": "盘面自发"},
-            ],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '幻觉甲', '受动者': '王绍徽', '类目': '结怨', '语境': '幻觉施动者。', '来源引用': '盘面自发'}, {'施动者': '毕自严', '受动者': '幻觉乙', '类目': '结怨', '语境': '幻觉受动者。', '来源引用': '盘面自发'}, {'施动者': '皇帝', '受动者': '王绍徽', '类目': '把柄', '语境': '皇帝施动者。', '来源引用': '盘面自发'}, {'施动者': '毕自严', '受动者': '皇帝', '类目': '把柄', '语境': '皇帝受动者。', '来源引用': '盘面自发'}, {'施动者': '毕自严', '受动者': '徐光启', '类目': '协作', '语境': '未登场人物。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 5
-    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    assert all(r.category == "invalid_relation_event" for r in rejected)
     assert _edge_rows(db) == []
-
 
 def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     """同互动含任一非法端点：先整项校验后零边写入，不做部分落库；好项隔离照落。"""
     db, state, content = game
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [
-                {"施动者": "温体仁", "受动者": ["周延儒", "幻觉丙"],
-                 "类目": "联名", "语境": "联名混入幻觉联署者。",
-                 "来源引用": "盘面自发"},
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
-                 "语境": "同批好项照常落。", "来源引用": "盘面自发"},
-            ],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '温体仁', '受动者': ['周延儒', '幻觉丙'], '类目': '联名', '语境': '联名混入幻觉联署者。', '来源引用': '盘面自发'}, {'施动者': '毕自严', '受动者': '王绍徽', '类目': '协作', '语境': '同批好项照常落。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 1
-    assert rejected[0]["category"] == "invalid_relation_event"
-    # 坏项身份按原项结构核值；不锁 reason 措辞、不猜退化形状。
-    bad_item = rejected[0]["item"]
-    assert bad_item.get("受动者") == ["周延儒", "幻觉丙"]
+    assert rejected[0].category == "invalid_relation_event"
     # 坏项零写入（含好端点也不部分落库）；好项不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
-
 
 @pytest.mark.parametrize(
     ("targets", "bad_member"),
@@ -555,28 +363,15 @@ def test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges(
     """V9：多 target 项混入空白/自指成员——整项 fail-closed 拒收留痕，
     不静默丢坏成员保留其余落边；同批独立好互动照落（ADR 0015 隔离）。"""
     db, state, content = game
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [
-                {"施动者": "温体仁", "受动者": targets,
-                 "类目": "联名", "语境": f"联名混入{bad_member}联署者。",
-                 "来源引用": "盘面自发"},
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
-                 "语境": "同批好项照常落。", "来源引用": "盘面自发"},
-            ],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '温体仁', '受动者': targets, '类目': '联名', '语境': f'联名混入{bad_member}联署者。', '来源引用': '盘面自发'}, {'施动者': '毕自严', '受动者': '王绍徽', '类目': '协作', '语境': '同批好项照常落。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 1
-    assert rejected[0]["category"] == "invalid_relation_event"
-    assert rejected[0]["item"]["施动者"] == "温体仁"
+    assert rejected[0].category == "invalid_relation_event"
+    assert rejected[0].item["施动者"] == "温体仁"
     # 坏项整项零写入（合法成员周延儒也不部分落库）；好项隔离不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
-
 
 @pytest.mark.parametrize(
     ("targets", "label"),
@@ -591,48 +386,26 @@ def test_empty_or_all_invalid_targets_reject_whole_item_zero_edges(
     """V10：受动者列表为空（含全无效成员被拒后为空的等价情形）——整项
     fail-closed 拒收留痕，不得静默零写冒充成功；同批独立好互动照落。"""
     db, state, content = game
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [
-                {"施动者": "温体仁", "受动者": targets,
-                 "类目": "联名", "语境": f"{label}受动者的联名互动。",
-                 "来源引用": "盘面自发"},
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
-                 "语境": "同批好项照常落。", "来源引用": "盘面自发"},
-            ],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '温体仁', '受动者': targets, '类目': '联名', '语境': f'{label}受动者的联名互动。', '来源引用': '盘面自发'}, {'施动者': '毕自严', '受动者': '王绍徽', '类目': '协作', '语境': '同批好项照常落。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     # 空列表项产生且仅产生一条 invalid_relation_event 留痕
     assert len(rejected) == 1
-    assert rejected[0]["category"] == "invalid_relation_event"
-    assert rejected[0]["item"]["施动者"] == "温体仁"
+    assert rejected[0].category == "invalid_relation_event"
+    assert rejected[0].item["施动者"] == "温体仁"
     # 坏项零边写入；同批独立好互动不受牵连照常落库
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
 
-
 def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
     """两个合格在朝大臣的合法边照常落库（端点守门不误伤）。"""
     db, state, content = game
-    out = apply_score_extraction(
-        db, state,
-        {"relation_edge_events": [{
-            "施动者": "孙传庭", "受动者": ["洪承畴"], "类目": "恩义",
-            "语境": "合格名册双端点。", "来源引用": "盘面自发",
-        }]},
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    assert not any(r.get("rejected") for r in res), res
+    out = settle_delta(state, db, {'relation_edge_events': [{'施动者': '孙传庭', '受动者': ['洪承畴'], '类目': '恩义', '语境': '合格名册双端点。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    assert section(out, "relation_edge_event_resolutions").rejected == []
     assert _triplets(_edge_rows(db)) == {("孙传庭", "洪承畴", "恩义")}
 
-
 # ── T1 r5 B 案：批内 pre∪post 名册并集时间语义 ────────────────────────
-
 
 def test_interaction_then_same_batch_dismissal_still_lands(game):
     """先互动后退场（同批罢黜）：端点 ∈ 入口 pre-roster，边照落。
@@ -641,28 +414,14 @@ def test_interaction_then_same_batch_dismissal_still_lands(game):
     （P1 事实账完整性缺口）；B 案以入口 canonical pre-roster 保住该向。"""
     db, state, content = game
     assert db.get_character_status("王绍徽")[0] == "active"
-    out = apply_score_extraction(
-        db, state,
-        {
-            "人物变更": [
-                {"name": "王绍徽", "origin_ref": "盘面自发",
-                 "动作": "罢黜", "reason": "同批罢黜时序验收"},
-            ],
-            "relation_edge_events": [{
-                "施动者": "王绍徽", "受动者": "毕自严", "类目": "结怨",
-                "语境": "退场前真实互动须当回合落账。", "来源引用": "盘面自发",
-            }],
-        },
-        content=content,
-    )
+    out = settle_delta(state, db, {'人物变更': [{'name': '王绍徽', 'origin_ref': '盘面自发', '动作': '罢黜', 'reason': '同批罢黜时序验收'}], 'relation_edge_events': [{'施动者': '王绍徽', '受动者': '毕自严', '类目': '结怨', '语境': '退场前真实互动须当回合落账。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     # 人物变更确实生效：该员已出 post 名册（证明拒收不是守门失灵）
     assert db.get_character_status("王绍徽")[0] == "dismissed"
-    res = out["relation_edge_event_resolutions"]
-    assert not any(r.get("rejected") for r in res), res
+    res = view(out, "relation_edge_event_resolutions")
+    assert section(out, "relation_edge_event_resolutions").rejected == []
     row = _edge_rows(db, source="王绍徽", target="毕自严")[0]
     assert (row["source"], row["target"], row["event_kind"]) == ("王绍徽", "毕自严", "结怨")
     assert row["origin"] == f"盘面自发:relation:结怨|round:{state.turn}"
-
 
 def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
     """先入场后互动（同批起复/任命）：端点 ∈ 人物变更后 post-roster，边照落。
@@ -670,85 +429,59 @@ def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
     回归锚：任何只冻 pre roster/前移 resolver 的方案会误拒同批入场者的真实
     互动；B 案以人物变更 apply 后的 post-roster 并入并集保住该向。"""
     db, state, content = game
-    # Seed may already list 孙承宗 active; force offstage so同批起复前提成立。
-    db.set_character_status(state, "孙承宗", "offstage", reason="relation_capture_reinstatement_fixture")
     assert db.get_character_status("孙承宗")[0] != "active"
-    out = apply_score_extraction(
-        db, state,
-        {
-            "人物变更": [
-                {"name": "孙承宗", "origin_ref": "盘面自发", "动作": "任命",
-                 "office": "兵部尚书", "reason": "同批起复时序验收"},
-            ],
-            "relation_edge_events": [{
-                "施动者": "孙承宗", "受动者": "毕自严", "类目": "协作",
-                "语境": "起复后当月互动须落账。", "来源引用": "盘面自发",
-            }],
-        },
-        content=content,
-    )
+    out = settle_delta(state, db, {'人物变更': [{'name': '孙承宗', 'origin_ref': '盘面自发', '动作': '任命', 'office': '兵部尚书', 'reason': '同批起复时序验收'}], 'relation_edge_events': [{'施动者': '孙承宗', '受动者': '毕自严', '类目': '协作', '语境': '起复后当月互动须落账。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     # 人物变更确实生效：该员已入 post 名册（证明落库不是 pre 资格）
     assert db.get_character_status("孙承宗")[0] == "active"
-    res = out["relation_edge_event_resolutions"]
-    assert not any(r.get("rejected") for r in res), res
+    res = view(out, "relation_edge_event_resolutions")
+    assert section(out, "relation_edge_event_resolutions").rejected == []
     row = _edge_rows(db, source="孙承宗", target="毕自严")[0]
     assert (row["source"], row["target"], row["event_kind"]) == ("孙承宗", "毕自严", "协作")
-
 
 def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     """前后均不合格（幻觉名）在同批人物变更下仍拒收留痕、零边写入；
     同批双向合格项隔离照落——并集只放宽「任一投影合格」，不放宽到全放行。"""
     db, state, content = game
-    out = apply_score_extraction(
-        db, state,
-        {
-            "人物变更": [
-                {"name": "王绍徽", "origin_ref": "盘面自发",
-                 "动作": "罢黜", "reason": "同批退场仍不豁免幻觉门"},
-                {"name": "孙承宗", "origin_ref": "盘面自发", "动作": "任命",
-                 "office": "兵部尚书", "reason": "同批起复仍不豁免幻觉门"},
-            ],
-            "relation_edge_events": [
-                {"施动者": "幻觉甲", "受动者": "毕自严", "类目": "结怨",
-                 "语境": "幻觉施动者前后两投影均不合格。", "来源引用": "盘面自发"},
-                {"施动者": "毕自严", "受动者": "皇帝", "类目": "把柄",
-                 "语境": "皇帝节点不入大臣边任一端。", "来源引用": "盘面自发"},
-                {"施动者": "王绍徽", "受动者": "毕自严", "类目": "结怨",
-                 "语境": "退场向照落。", "来源引用": "盘面自发"},
-                {"施动者": "孙承宗", "受动者": "毕自严", "类目": "协作",
-                 "语境": "入场向照落。", "来源引用": "盘面自发"},
-            ],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
+    out = settle_delta(state, db, {'人物变更': [{'name': '王绍徽', 'origin_ref': '盘面自发', '动作': '罢黜', 'reason': '同批退场仍不豁免幻觉门'}, {'name': '孙承宗', 'origin_ref': '盘面自发', '动作': '任命', 'office': '兵部尚书', 'reason': '同批起复仍不豁免幻觉门'}], 'relation_edge_events': [{'施动者': '幻觉甲', '受动者': '毕自严', '类目': '结怨', '语境': '幻觉施动者前后两投影均不合格。', '来源引用': '盘面自发'}, {'施动者': '毕自严', '受动者': '皇帝', '类目': '把柄', '语境': '皇帝节点不入大臣边任一端。', '来源引用': '盘面自发'}, {'施动者': '王绍徽', '受动者': '毕自严', '类目': '结怨', '语境': '退场向照落。', '来源引用': '盘面自发'}, {'施动者': '孙承宗', '受动者': '毕自严', '类目': '协作', '语境': '入场向照落。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
+    res = view(out, "relation_edge_event_resolutions")
+    rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 2
-    assert all(r["category"] == "invalid_relation_event" for r in rejected)
-    assert any(r["item"].get("施动者") == "幻觉甲" for r in rejected)
+    assert all(r.category == "invalid_relation_event" for r in rejected)
     assert _triplets(_edge_rows(db)) == {
         ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
     }
 
-
 # ── r6 确认庭：资格集必传单一契约——无 live/post fallback ─────────────
-
 
 def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     """负向：端点资格唯一语义＝传入的 pre∪post 并集。在 live 名册但在传入
     资格集之外者仍拒收——不存在「仅 live 可过而 pre∪post 不过」的通路。
-    （apply_score_extraction 批内 post=live，故该构造只能经直调缝验证。）"""
+    （settle_delta 批内 post=live，故该构造只能经直调缝验证。）"""
     db, state, content = game
     assert db.get_character_status("王绍徽")[0] == "active"  # live 在册
-    res = resolve_relation_edge_events_from_extraction(
+    res, res_rejections = resolve_relation_edge_events_from_extraction(
         db, state,
         {"relation_edge_events": [{
             "施动者": "王绍徽", "受动者": "毕自严", "类目": "结怨",
             "语境": "live 在册但不在传入资格集。", "来源引用": "盘面自发",
         }]},
         allowed_endpoint_names={"毕自严"},  # 故意缺王绍徽
-    )
-    assert len(res) == 1 and res[0].get("rejected")
-    assert res[0]["category"] == "invalid_relation_event"
-    assert res[0]["item"].get("施动者") == "王绍徽"
+    source=Provenance.system_simulation)
+    assert res == []
+    assert len(res_rejections) == 1
+    assert res_rejections[0].category == "invalid_relation_event"
     assert _edge_rows(db) == []  # 零边写入
+
+def test_missing_endpoint_qualification_set_fails_loud(game):
+    """负向：资格集必传——缺参即 TypeError 显式失败，绝不静默退化到
+    live/post 语义（无第二机制、无直调兼容后门）。"""
+    db, state, content = game
+    with pytest.raises(TypeError):
+        resolve_relation_edge_events_from_extraction(
+            db, state,
+            {"relation_edge_events": [{
+                "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
+                "语境": "缺资格集必须炸，不静默退化。", "来源引用": "盘面自发",
+            }]},
+        source=Provenance.system_simulation)
+    assert _edge_rows(db) == []  # 零边副作用

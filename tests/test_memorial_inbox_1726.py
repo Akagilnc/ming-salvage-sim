@@ -5,30 +5,37 @@
 
 from __future__ import annotations
 
-from tests.dossier_test_helpers import executing_subject_policy, executing_rostered_policy
-
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 
 from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
-from tests.readback_helpers import active_character_name as _active_name
-
-
-def _unread_count(db) -> int:
-    return sum(1 for m in db.list_player_memorials() if m.get("unread"))
-
-
-def _unread(db) -> int:
-    """未读奏报数（进度 + 检举）：list_player_memorials 投影的 unread 位计数。"""
-    return sum(1 for row in db.list_player_memorials() if row.get("unread"))
 
 
 def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
-    return executing_subject_policy(
-        db, state, owner=owner, token=token,
+    did = db.create_decree_dossier(
+        state,
+        action_type="policy",
         decree_text=f"着{owner}从国库拨银{token}",
+        target_kind="issue",
+        target_id=f"land-{token}",
+        executor_kind="character",
+        executor_id=owner,
+        participants=[{"character_id": owner, "tier": "主办"}],
     )
+    apply_dossier_promulgation(db, state, did, "promulgated")
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,),
+    )
+    db.conn.commit()
+    return did
+
+
+def _active_name(db) -> str:
+    return db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
 
 
 def test_new_game_memorial_inbox_empty(game):
@@ -76,6 +83,7 @@ def test_progress_and_denunciation_project_as_memorials(game):
     prog = by_key[f"progress:{pid}"]
     assert prog["kind"] == "progress"
     assert prog["author_name"] == owner
+    assert prog["memorial_text"] == body_progress
     assert prog["unread"] is True
     # 玩家面不得夹带结构化字段
     for banned in ("progress_band", "origin", "payload", "target_dossier_id", "dossier_id"):
@@ -84,6 +92,7 @@ def test_progress_and_denunciation_project_as_memorials(game):
     den = by_key[f"denunciation:{den_id}"]
     assert den["kind"] == "denunciation"
     assert den["author_name"] == accuser
+    assert den["memorial_text"] == body_den
     assert den["unread"] is True
 
     assert _unread_count(db) == 2
@@ -185,6 +194,7 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     state_payload = state_resp.json()
     assert any(m.get("key") == key for m in state_payload["memorials"])
     memorial = next(m for m in state_payload["memorials"] if m["key"] == key)
+    assert memorial["memorial_text"] == body
     assert memorial["author_name"] == owner
     assert memorial["unread"] is True
     assert state_payload["unread_memorial_count"] == 1
@@ -208,9 +218,14 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
 def test_progress_without_owner_uses_diegetic_fallback(game):
     """无可解析承办人时不得裸露 id。"""
     db, state, _content = game
-    did = executing_rostered_policy(
-        db, state, token="land-orphan-1726", decree_text="清丈无主名", roster=[],
+    did = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="清丈无主名",
+        target_kind="issue",
+        target_id="land-orphan-1726",
     )
+    apply_dossier_promulgation(db, state, did, "promulgated")
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing', executor_id='', executor_kind='', "
         "participant_roster='[]' WHERE id=?",
@@ -225,3 +240,7 @@ def test_progress_without_owner_uses_diegetic_fallback(game):
     assert row["author_name"]
     assert row["author_name"] != str(did)
     assert not row["author_name"].isdigit()
+
+
+def _unread_count(db):
+    return sum(1 for row in db.list_player_memorials() if row["unread"])
