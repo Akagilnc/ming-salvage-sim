@@ -344,3 +344,35 @@ def test_nonstream_chat_rejects_when_session_draining():
     events = list(runtime.chat_stream("殿上", "边饷如何？"))
     assert events and events[0].get("type") == "error"
     assert runtime._pending_writes_count == 0
+
+
+def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
+    events: list[str] = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _BlockingGame:
+        def chat_stream(self, minister_name: str, message: str):
+            entered.set()
+            release.wait()  # block until tick observed entry (no wall clock)
+            events.append("stream")
+            yield {"type": "done", "payload": {"ok": True}}
+
+    monkeypatch.setattr(web_app, "get_game", lambda: _BlockingGame())
+
+    async def drive_first_event():
+        response = await web_app.api_audience_chat_stream( web_app.ChatRequest(message="请奏"))
+        iterator = response.body_iterator
+
+        async def tick():
+            await asyncio.to_thread(entered.wait)
+            events.append("tick")
+            release.set()
+
+        first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
+        return first_event
+
+    first = asyncio.run(drive_first_event())
+
+    assert events == ["tick", "stream"]
+    assert "event: done" in first

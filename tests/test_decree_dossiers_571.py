@@ -1931,3 +1931,68 @@ def test_rejection_contract_rejects_numeric_contamination_without_history(
 
     assert db.list_decree_dossier_decisions(dossier_id) == []
     assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+
+
+def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
+    import ming_sim.cli.terminal as terminal
+    import ming_sim.cli_backend as cli_backend
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    directive = session.add_directive(
+        "拨十两赈济",
+        dossier_payload={
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue",
+            "target_id": "relief",
+            "amount": 10,
+            "account": "国库",
+            "execution_surface": "immediate",
+            "mode": "midzhi",
+        },
+    )
+    revised_text = "改拨二十五两赈济"
+    response = {
+        "拟旨意图": "拟旨",
+        "动作类型": "grant_allocation",
+        "目标类型": "issue",
+        "目标": "relief",
+        "金额": 25,
+        "账户": "国库",
+        "执行面": "immediate",
+        "颁布方式": "ordinary",
+    }
+    prompts = []
+
+    def prompt_faithful_backend(prompt, *_args, **_kwargs):
+        prompts.append(prompt)
+        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
+        if "请据此拟旨" not in emperor or revised_text not in emperor:
+            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
+    answers = iter([f"edit {directive.id}", revised_text, "issue", "yes"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    before = state.metrics["国库"]
+
+    assert terminal.review_directives(session) == "issue"
+    assert len(prompts) == 1
+
+    db.ensure_dossiers_for_draft_directives(state)
+    dossier = db.get_dossier_for_directive(directive.id)
+    payload = json.loads(dossier["payload_json"])
+    assert dossier["decree_text"] == revised_text
+    assert dossier["action_type"] == "grant_allocation"
+    assert (payload["amount"], payload["account"], payload["mode"]) == (
+        25, "国库", "ordinary",
+    )
+    db.apply_dossier_promulgation(
+        state, dossier["id"], "promulgated", content=content,
+    )
+    assert state.metrics["国库"] == before - 25
+    assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -25
