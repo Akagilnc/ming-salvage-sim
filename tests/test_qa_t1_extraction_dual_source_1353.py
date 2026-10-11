@@ -352,25 +352,12 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     state.turn_phase = TurnPhase.REVIEWING.value
 
-    from ming_sim.session_write_queue import SessionWriteQueue
-    queue = SessionWriteQueue()
-    gate = queue.write_gate
-    assert gate.acquire(blocking=False)
-
-    sess = object.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
+    from tests.month_chain_helpers import make_light_session
+    from ming_sim.session_write_queue import get_session_write_queue
+    sess = make_light_session(db, state, content)
     sess.llm_config = object()
-    sess._write_queue = queue
-    sess._write_gate = gate
-    sess.agno_db = None
-    sess.last_decree = ""
-    sess._decree_draft_fingerprint = ()
-    sess.deaths_this_turn = []
-    sess.debuts_this_turn = []
-    sess.auto_save = lambda *_a, **_k: None
+    gate = get_session_write_queue(sess).write_gate
+    assert gate.acquire(blocking=False)
 
     # 合法真实前置：无旨月 + 外部 LLM 缝 canned；不替 resolve_directives（被测持闸在其后）。
     _canned_full_settlement(monkeypatch, narrative="持闸落相位探针邸报。")

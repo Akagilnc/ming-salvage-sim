@@ -45,7 +45,6 @@ def canned_full_settlement(
     *,
     narrative: str = "本月边情邸报：辽饷催征，流寇未息。",
     simulator_calls: Optional[list] = None,
-    skip_fixed_flows: bool = False,
 ) -> list:
     """Replace only external LLM seams; keep production settlement spine."""
     simulator_calls = simulator_calls if simulator_calls is not None else []
@@ -73,7 +72,5 @@ def canned_full_settlement(
         "ming_sim.month_translate.translate_month_segment",
         lambda *_a, **_k: {"effects": {}},
     )
-    if skip_fixed_flows:
-        monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
 
     return simulator_calls

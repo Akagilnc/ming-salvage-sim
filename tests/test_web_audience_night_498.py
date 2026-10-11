@@ -81,37 +81,13 @@ class _FakeAgent:
 
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
     """替换月链中的拟诏、世界段、转译和邸报模型调用；其余结算路径真跑。"""
-    from tests.month_chain_helpers import empty_rescript_response
-    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
-    monkeypatch.setattr(
-        decree_mod, "llm_promulgation_verdicts",
-        lambda dossiers, _state, **_kwargs: [
-            {"dossier_id": row["id"], "decision": "promulgated"}
-            for row in dossiers
-        ],
-    )
+    from tests.month_chain_helpers import canned_full_settlement
+    from types import SimpleNamespace
+    canned_full_settlement(monkeypatch, narrative=narrative)
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_world_segment_text", lambda *a, **k: narrative,
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_gazette_text",
-        lambda *a, **k: ("邸报", narrative),
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_translate.translate_month_segment",
-        lambda *a, **k: {"effects": {}},
-    )
-    monkeypatch.setattr(
-        "ming_sim.decree_forecast.produce_forecast_product",
-        lambda *_a, **_k: {
-            "verdict": {"decision": "promulgated"},
-            "declaration": {"effects": {}},
-            "questions": None,
-            "forecast_text": narrative,
-            "visible_refs": {},
-        },
-    )
+    monkeypatch.setattr(agents_mod, "create_decree_forecast_agent", lambda *a, **k: SimpleNamespace())
+    monkeypatch.setattr(agents_mod, "run_agent_text", lambda *a, **k: narrative)
+    monkeypatch.setattr("ming_sim.decree_forecast.translate_month_segment", lambda *a, **k: {"effects": {}})
 
 
 # web_game 夹具权威在 tests/conftest.py（#1847 消费者闭包复用，禁平行装配）。
@@ -143,8 +119,6 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
     before, retry = asyncio.run(scenario())
     assert before["translation_retries"] == []
     assert retry.status_code == 404
-
-
 
 
 @pytest.mark.parametrize("night_status", [an.NIGHT_STATUS_CLOSING, an.NIGHT_STATUS_CLOSED])
@@ -429,10 +403,6 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
 # ── ② 对话内应允候选：收夜提交即准旨，月末玩家流零二次准驳 ─────────────
 
 
-
-
-
-
 # ── ③ #1353 K10a：挂起在飞不按 elapsed 造 409；工人终态后过月续跑 ──
 
 
@@ -622,7 +592,6 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
         (turn_before,),
     ).fetchall()
     assert any(str(row["text"] or "") == text for row in rows), rows
-
 
 
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):

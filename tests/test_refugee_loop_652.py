@@ -26,9 +26,6 @@ FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
 
 
-
-
-
 from tests.fiscal_test_utils import class_population as _pop
 
 def _strength(db: GameDB, power_id: str) -> int:
@@ -52,9 +49,6 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
     return dossier_id
 
 
-
-
-
 def _reset_shaanxi_pool(db):
     db.conn.execute(
         "UPDATE classes SET population=? WHERE name='流民' AND region_id='shaanxi'",
@@ -68,7 +62,6 @@ def _reset_shaanxi_pool(db):
 
 
 # ── 刀① 池清单 + 投贼吸收 ───────────────────────────────────────────────────
-
 
 
 def _database_path(db: GameDB) -> str:
@@ -140,8 +133,6 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
     assert db.conn.execute(
         "SELECT fiscal FROM regions WHERE id='shaanxi'"
     ).fetchone()[0] == before_fiscal
-
-
 
 
 def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
@@ -261,7 +252,7 @@ def test_llm_free_回流_rejected(game):
 
 def _advance_canned_month(db, state, content, monkeypatch):
     """Only external LLM calls are canned; settlement and advancement remain real."""
-    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    canned_full_settlement(monkeypatch)
     session = make_light_session(db, state, content)
     waiting = session.advance_without_decree()
     assert waiting.stage == "gazette"
@@ -383,7 +374,6 @@ def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls):
         monkeypatch,
         narrative=narrative,
         simulator_calls=sim_calls,
-        skip_fixed_flows=True,
     )
 
 
@@ -427,7 +417,7 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
     _recovery_grant(db, state, amount=30)
     _recovery_grant(db, state, amount=30)
     before_farmers = _pop(db, "农民", "shaanxi")
-    canned_full_settlement(monkeypatch, skip_fixed_flows=True)
+    canned_full_settlement(monkeypatch)
     session = make_light_session(db, state, content)
     waiting = session.advance_without_decree()
     assert waiting.stage == "gazette"

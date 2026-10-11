@@ -24,9 +24,9 @@ from fastapi import HTTPException
 import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
-from tests.conftest import open_hall_turn
+from tests.conftest import open_hall_turn, stub_scene_agent
+from tests.test_web_audience_night_498 import _FakeAgent
 from ming_sim.db import GameDB
-from ming_sim.session import ChatTurnResult
 from web_app import FRONT_HALF_DONE_PHASES
 
 
@@ -222,70 +222,8 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
 # ── AC3 重试重新生成回话、记录无重复句 ───────────────────────────────
 
 
-class _RetrySession:
-    """最小真路径替身：chat 复用被指定 chat_turn，落回话由 WebGame._chat_payload 走真实 db。"""
-
-    temporary_characters: set = set()
-
-    def __init__(self, db, state, minister):
-        self.db = db
-        self.state = state
-        self._minister = minister
-        self.content = SimpleNamespace(characters={minister: SimpleNamespace(name=minister)})
-
-    def _character(self, name):
-        return self.content.characters[name]
-
-    def pending_count(self):
-        return 0
-
-    def chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        # 关键：retry 复用既有 chat_turn，绝再不落问话——只产回话。
-        assert chat_turn_id != 0
-        return ChatTurnResult(answer="臣重奏：剿为先。")
-
-    # #1842：殿上重试入口走 scene_chat；替身委托既有 chat 同 ChatTurnResult。
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        return self.chat(
-            minister_name or self._minister, message, chat_turn_id=chat_turn_id,
-        )
-
-    def schedule_pending_scene_translation(self, result):
-        # #1842：WebGame persist 尾必调；轻壳无 pending 时与生产同形 no-op。
-        from ming_sim.session import GameSession
-        return GameSession.schedule_pending_scene_translation(self, result)
-
-    def schedule_close_night_after_chat_if_needed(self, court_action, *, write_gate=None):
-        # #1853：入口直调核心 schedule；轻壳委托同缝（非 court_break 为空操作）。
-        from ming_sim.session import GameSession
-        return GameSession.schedule_close_night_after_chat_if_needed(
-            self, court_action, write_gate=write_gate,
-        )
-
-def _retry_runtime(db, state, minister, *, session=None):
-    """Web retry 入口唯一装配壳。session 默认轻量 _RetrySession；可注入生产 chat session。"""
-    rt = object.__new__(web_app.WebGame)
-    # WebGame.db/state 均为只读 property（读 session.db / session.state）——经 session 供给。
-    rt.session = session if session is not None else _RetrySession(db, state, minister)
-    rt.chat_history = {minister: []}
-    rt._runtime_write_gate = lambda: rt._write_gate
-    rt.directive_rows = lambda: []
-    rt.directive_payload = lambda row: row
-    rt.can_undo_last_chat = lambda name: False
-    rt._audience_turn_in_flight = lambda name: False
-    # 整轮 pending 由 retry 本体持有；转译与高亮尾随在本单元测试外——不起后台线程。
-    from ming_sim.session_write_queue import SessionWriteQueue
-    rt._write_queue = SessionWriteQueue()
-    rt._write_gate = rt._write_queue.write_gate
-    rt._runtime_write_queue = lambda: rt._write_queue  # type: ignore
-    rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))  # type: ignore
-    rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)  # type: ignore
-    rt._spawn_pending_write_thread = lambda *a, **k: False
-    return rt
-
-
-def test_retry_regenerates_reply_without_duplicate_question(restore_env):
-    env = restore_env
+def test_retry_regenerates_reply_without_duplicate_question(web_game, monkeypatch):
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
@@ -293,7 +231,8 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     later = _start_generating_turn(db, state, minister, "续问军情？")
     db.reconcile_interrupted_chat_turns()
 
-    rt = _retry_runtime(db, state, minister)
+    rt = web_game
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣重奏：剿为先。"))
     payload = rt.retry_interrupted_reply(minister, ct)
 
     assert payload["answer"] == "臣重奏：剿为先。"
@@ -316,25 +255,24 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
 
 
-
-
-def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env):
-    db, state, content = restore_env.db, restore_env.state, restore_env.content
+def test_post_reply_failure_resumes_close_without_regenerating_reply(web_game, monkeypatch):
+    db, state, content = web_game.db, web_game.state, web_game.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     ct = _land_full_turn(db, state, minister, "退朝", "臣遵旨。")
     db.mark_post_reply_failure(ct, "court_break", "/tmp/post-reply-pack")
-    rt = _retry_runtime(db, state, minister)
+    rt = web_game
     assert [(r["chat_turn_id"], r["error_pack_path"]) for r in rt.reply_retries(minister)] == [
         (ct, "/tmp/post-reply-pack")]
-    rt.session.chat = lambda *a, **k: (_ for _ in ()).throw(AssertionError("reply model rerun"))
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: (_ for _ in ()).throw(AssertionError("reply model rerun")))
     calls = []
+    real_close = rt.session.close_night_after_chat_if_needed
     def close_once(action, **kw):
         calls.append(action)
         with pytest.raises(HTTPException):
             rt.retry_interrupted_reply(minister, ct)
+        return real_close(action, **kw)
     rt.session.close_night_after_chat_if_needed = close_once
-    rt.pending_directive_count = lambda: 0
     payload = rt.retry_interrupted_reply(minister, ct)
     assert payload["answer"] == "臣遵旨。"
     assert calls == ["court_break"]
@@ -344,13 +282,12 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env
     )] == ["臣遵旨。"]
 
 
-
-def test_retry_without_interrupted_turn_is_rejected(restore_env):
+def test_retry_without_interrupted_turn_is_rejected(web_game):
     """负向：无待重试轮时重试响亮拒绝，不静默造轮。"""
-    env = restore_env
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
-    rt = _retry_runtime(db, state, minister)
+    rt = web_game
     with pytest.raises(HTTPException):
         rt.retry_interrupted_reply(minister)
 
@@ -358,22 +295,16 @@ def test_retry_without_interrupted_turn_is_rejected(restore_env):
 # ── finding1：重试失败尾声——副作用回滚、问话保留、可再重试（与 chat 失败尾声同缝）────
 
 
-class _FailingRetrySession(_RetrySession):
-    """session.chat 在返回前 durable 落副作用（改 characters.loyalty）随后失败——
+class _FailingRetryAgent:
+    """模型调用在返回前 durable 落副作用（改 characters.loyalty）随后失败——
     测重试失败尾声：本次落下的副作用回滚、问话不删、翻回 interrupted 保持可再重试。"""
 
-    def chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        assert chat_turn_id != 0
+    def run(self, *_a, **_k):
         self.db.conn.execute(
             "UPDATE characters SET loyalty = loyalty + 40 WHERE name = ?", (self._minister,)
         )
         self.db.conn.commit()
         raise RuntimeError("重试 LLM 失败")
-
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        return self.chat(
-            minister_name or self._minister, message, chat_turn_id=chat_turn_id,
-        )
 
 
 @pytest.mark.parametrize("rollback_method", ["fail_chat_turn", "restore_interrupted_after_failed_retry"])
@@ -411,8 +342,8 @@ def test_failed_chat_rollback_returns_restored_directive_ids(restore_env, rollba
     assert row["status"] == "pending" and row["night_approved"] == 1
 
 
-def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
-    env = restore_env
+def test_failed_retry_rolls_back_side_effects_and_keeps_question(web_game, monkeypatch):
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
@@ -422,8 +353,11 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
         "SELECT loyalty FROM characters WHERE name=?", (minister,)
     ).fetchone()["loyalty"]
 
-    rt = _retry_runtime(db, state, minister)
-    rt.session = _FailingRetrySession(db, state, minister)
+    rt = web_game
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣重奏：剿为先。"))
+    agent = _FailingRetryAgent()
+    agent.db, agent._minister = db, minister
+    stub_scene_agent(monkeypatch, agent)
     with pytest.raises(RuntimeError):
         rt.retry_interrupted_reply(minister)
 
@@ -454,7 +388,7 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ).fetchone()["c"] == 0
 
     # 再重试成功：问话仍只一条、回话新落一条（记录无重复句）。
-    rt.session = _RetrySession(db, state, minister)
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣重奏：剿为先。"))
     payload = rt.retry_interrupted_reply(minister)
     assert payload["answer"] == "臣重奏：剿为先。"
     assert [
@@ -467,14 +401,14 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
 # ── finding3：reopen CAS——未赢的并发/双击重试不落第二条大臣回话 ─────────────
 
 
-def test_lost_reopen_cas_rejects_without_second_reply(restore_env, monkeypatch):
-    env = restore_env
+def test_lost_reopen_cas_rejects_without_second_reply(web_game, monkeypatch):
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     _start_generating_turn(db, state, minister, "剿抚孰先？")
     db.reconcile_interrupted_chat_turns()
-    rt = _retry_runtime(db, state, minister)
+    rt = web_game
     # 模拟并发重试抢先翻走 CAS：本次 reopen 未赢（rowcount=0 → False）。
     monkeypatch.setattr(db, "reopen_interrupted_chat_turn_for_retry", lambda cid: False)
     with pytest.raises(HTTPException):
@@ -487,14 +421,14 @@ def test_lost_reopen_cas_rejects_without_second_reply(restore_env, monkeypatch):
 # ── finding4：结算/亲裁相位不得重试召对（夜不跨月）─────────────────────────
 
 
-def test_retry_rejected_in_settlement_phase(restore_env):
-    env = restore_env
+def test_retry_rejected_in_settlement_phase(web_game):
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     _start_generating_turn(db, state, minister, "剿抚孰先？")
     db.reconcile_interrupted_chat_turns()
-    rt = _retry_runtime(db, state, minister)
+    rt = web_game
     rt.session.state.turn_phase = next(iter(FRONT_HALF_DONE_PHASES))
     with pytest.raises(HTTPException):
         rt.retry_interrupted_reply(minister)
@@ -583,8 +517,6 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
-
-
 
 
 def test_reconcile_marks_questionless_orphan_failed(restore_env):

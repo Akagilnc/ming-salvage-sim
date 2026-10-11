@@ -520,7 +520,6 @@ def _offline_scene_beat_generator():
     mp.undo()
 
 
-
 def stub_webgame_boundary(monkeypatch) -> None:
     """WebGame 外部 LLM 边界中和：runtime 配置与高亮判官（单权威；#1847 D14）。
 
@@ -559,37 +558,6 @@ def web_game(webgame_env, monkeypatch):
         yield game
     finally:
         game.session.close()
-
-
-
-@pytest.fixture
-def _atomic_connless_test_shell_compat():
-    """#542：无 conn 轻壳测试显式 opt-in 的 atomic 兼容（非 autouse）。
-
-    生产 chat/retry/stream 落回话无条件 `with atomic(self.db)`；真实 DB 测试默认
-    走生产 atomic。仅轻壳（故意无 conn，以保持 stub 缝）请求本 fixture：
-    missing conn → no-op CM；真 _SuspendableConnection 仍走真实 atomic。
-    """
-    import contextlib
-
-    import ming_sim.applier as applier
-    import web_app
-
-    real_atomic = applier.atomic
-
-    @contextlib.contextmanager
-    def atomic_for_tests(db):
-        if getattr(db, "conn", None) is None:
-            yield
-            return
-        with real_atomic(db):
-            yield
-
-    mp = pytest.MonkeyPatch()
-    mp.setattr(applier, "atomic", atomic_for_tests)
-    mp.setattr(web_app, "atomic", atomic_for_tests)
-    yield
-    mp.undo()
 
 
 @pytest.fixture(autouse=True)

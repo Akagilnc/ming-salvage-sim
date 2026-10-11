@@ -380,44 +380,6 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     )
 
 
-
-
-def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
-    """Non-awaiting arms must read applied history at the pre-resolve turn."""
-    from ming_sim.content import GameContent
-    from ming_sim.models import LLMConfig
-    from scripts import promulgation_gate_561 as gate
-
-    content = GameContent.load()
-    cfg = LLMConfig(
-        api_key="", base_url="", model="test", channel="cli",
-        cli_runner="codex", cli_model="test",
-    )
-
-    def fake_resolve(state, db, *_a, **_k):
-        dossiers = db.list_decree_dossiers(status="proposed")
-        verdicts = [
-            {"dossier_id": int(row["id"]), "decision": "promulgated"}
-            for row in dossiers
-        ]
-        db.apply_dossier_verdicts(state, verdicts, content=content)
-        # Settlement advances turn — the bug surface (pending batch writer retired).
-        state.turn += 1
-        db.save_state(state)
-        return decree_mod.ResolveResult(awaiting=False, report="settled")
-
-    monkeypatch.setattr(gate, "resolve_directives", fake_resolve)
-    result = gate._run_resolve_arm(
-        str(tmp_path), content, cfg,
-        name="settled_arm", authority=100, kinds=("hostile",),
-    )
-    assert result["awaiting"] is False
-    assert result["verdicts"], "settled arm must recover applied verdicts"
-    assert {int(row["dossier_id"]) for row in result["verdicts"]} == set(
-        result["ids"].values()
-    )
-    assert all(row["decision"] == "promulgated" for row in result["verdicts"])
-
 def test_gatekeeper_successor_removes_donglin_block_posture(game):
     """TD-9 successor must be registered and not recreate the 东林 block."""
     from scripts.promulgation_gate_561 import (

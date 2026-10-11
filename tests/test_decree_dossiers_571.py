@@ -1,4 +1,5 @@
 import json
+from tests.month_chain_helpers import make_light_session
 
 import pytest
 import ming_sim.cli_backend as cli_backend
@@ -893,11 +894,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
+    session = make_light_session(db, state, content)
     payload = cli_backend.capture_manual_directive_payload(
         directive_text, None, db=db, content=content,
     )
@@ -964,11 +961,7 @@ def test_manual_directive_capture_rejects_malformed_roster(
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
+    session = make_light_session(db, state, content)
 
     import ming_sim.cli.terminal as terminal
 
@@ -1003,11 +996,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
+    session = make_light_session(db, state, content)
 
     with pytest.raises(ValueError):
         payload = cli_backend.capture_manual_directive_payload(
@@ -1060,11 +1049,7 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
         },
     )
     db.ensure_dossiers_for_draft_directives(state)
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.enter_review = lambda: None
-    session.back_to_summoning = lambda: None
+    session = make_light_session(db, state, _content)
     answers = iter([f"edit {directive_id}", f"del {directive_id}", "back"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
@@ -1079,10 +1064,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
     from ming_sim.session import GameSession
 
     db, state, content = game
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
+    session = make_light_session(db, state, content)
     directive = session.add_directive(
         "拨十两赈济",
         dossier_payload={

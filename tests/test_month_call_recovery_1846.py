@@ -166,20 +166,17 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
     )
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
+    from tests.test_web_audience_night_498 import _fake_settlement_llm
+    _fake_settlement_llm(monkeypatch)
     failed = {"once": True}
 
     def produce(*_a, **_k):
         if failed["once"]:
             failed["once"] = False
             raise LLMUnavailable("catch-up exhausted")
-        return {
-            "verdict": {"decision": "promulgated"},
-            "declaration": {"effects": {}},
-            "questions": None,
-            "forecast_text": "补跑完成",
-        }
+        return "补跑完成"
 
-    monkeypatch.setattr(decree_forecast, "produce_forecast_product", produce)
+    monkeypatch.setattr(decree_forecast.agents, "run_agent_text", produce)
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *_a, **_k: "")
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")

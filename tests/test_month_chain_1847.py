@@ -1906,9 +1906,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     )
     db.conn.commit()
 
-    sess = SimpleNamespace(
-        db=db, state=state, llm_config=None, agno_db=None, content=content,
-    )
+    sess = make_light_session(db, state, content)
     chain: dict = {}
     _settle_edicts(sess, chain=chain)
 
@@ -2401,9 +2399,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
     )
     db.conn.commit()
 
-    sess = SimpleNamespace(
-        db=db, state=state, llm_config=None, agno_db=None, content=content,
-    )
+    sess = make_light_session(db, state, content)
     chain: dict = {}
     real_save = month_chain._save_chain
 

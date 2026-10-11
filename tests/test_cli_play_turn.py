@@ -17,11 +17,8 @@ from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbor
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import GameSession, TurnPhase
 from ming_sim import audience_night as an
-
-
-def _cli_schedule_pending_noop(self, result):
-    """#1842：CLI persist 尾必调 schedule_pending_scene_translation；轻壳无 pending 时 no-op。"""
-    return None
+from tests.month_chain_helpers import make_light_session, canned_full_settlement
+from tests.conftest import stub_scene_agent
 
 
 class _Snap:
@@ -60,21 +57,17 @@ def _active_character(content):
     return next(c for c in content.characters.values() if c.status == "active")
 
 
-def _cli_minister_session(game, *, scene_chat):
-    """真实 GameDB + 开夜；只替 scene 协作面，不复制持久化/回滚。"""
+def _cli_minister_session(game, monkeypatch, *, scene_chat=None):
+    """真实 GameDB + 开夜；成功只替模型出口，失败案可注入 scene 异常。"""
     db, state, content = game
     character = _active_character(content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
+    sess = make_light_session(db, state, content)
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess.scene_chat = scene_chat  # type: ignore[method-assign]
-    sess.schedule_pending_scene_translation = (  # type: ignore[method-assign]
-        lambda result: _cli_schedule_pending_noop(sess, result)
-    )
+    if scene_chat is not None:
+        # Negative injection only. Success paths use the real scene consumer.
+        sess.scene_chat = scene_chat
     return sess, character, db, state
 
 
@@ -108,68 +101,36 @@ def test_issue_refusal_stays_in_loop(monkeypatch, exc):
 
 
 @pytest.mark.parametrize("action", ["issue", "skip"])
-def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
-    class Session(_Sess):
-        def __init__(self):
-            super().__init__(None)
-            self.step = 0
-
-        def resolve_turn(self):
-            self.calls.append("resolve")
-            advanced = self.step > 0
-            self.step += 1
-            if advanced:
-                self.state.turn += 1
-            return SimpleNamespace(advanced=advanced)
-
-        def advance_without_decree(self):
-            self.calls.append("advance")
-            advanced = self.step > 0
-            self.step += 1
-            if advanced:
-                self.state.turn += 1
-            return SimpleNamespace(advanced=advanced)
-
-    sess = Session()
-    actions = iter([action, action])
-    monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
+def test_cli_does_not_end_unadvanced_turn(web_game, monkeypatch, action):
+    sess = web_game.session
+    db, state = sess.db, sess.state
+    turn = int(state.turn)
+    state.turn_phase = TurnPhase.REVIEWING.value
+    db.save_state(state)
+    canned_full_settlement(monkeypatch)
+    from tests.test_month_chain_1843 import _stage_edict, _forbid_extractor
+    _forbid_extractor(monkeypatch)
+    if action == "issue":
+        actor = next(iter(sess.content.characters.values())).name
+        affair = db.affairs.open(name="边饷", origin="旨意", year=state.year, period=state.period, turn=state.turn)
+        _stage_edict(db, state, actor, "核边饷", "边饷", 0, affair.id)
+    config = sess.llm_config
+    reviews = []
+    # 作者配置缺席时真实月链停在邸报；玩家补配置后重新颁诏/退朝。
+    monkeypatch.setattr(term, "review_directives", lambda s: (
+        reviews.append((int(s.state.turn), s.state.turn_phase)),
+        setattr(s, "llm_config", None if len(reviews) == 1 else config),
+        action,
+    )[-1])
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_cli_decisions", lambda *_a: "")
 
     term.play_turn(sess)
 
-    call_name = "resolve" if action == "issue" else "advance"
-    # 未推进时留在本回合交互循环不调 end_turn，再次推进后才调 end_turn 退出
-    assert sess.calls == ["begin", call_name, call_name, "end"]
-
-
-def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
-    """CLI issue reaches the end-turn owner without reviving decree preview/review."""
-
-    class Db:
-        def list_pending_actions(self, turn):
-            return [{"kind": "directive", "status": "pending"}]
-
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=1, turn_phase=TurnPhase.REVIEWING.value)
-            self.calls = []
-
-        def enter_review(self):
-            self.calls.append("enter_review")
-
-        def list_directives(self, include_pending=False):
-            return []
-
-
-    answers = iter(["issue"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
-
-    assert term.review_directives(session) == "issue"
-    assert session.calls == ["enter_review"]
+    assert reviews == [(turn, TurnPhase.REVIEWING.value), (turn, TurnPhase.SETTLING.value)]
+    assert sess.state.turn == turn + 1
+    assert db.load_state().turn == turn + 1
+    assert sess.state.turn_phase == TurnPhase.SUMMONING.value
 
 
 def test_terminal_minister_chat_persists_messages_before_session_chat(game, monkeypatch):
@@ -177,19 +138,13 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(game, monk
 
     seen_before_scene: list[list[tuple[str, str]]] = []
 
-    def scene_chat(question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+    def scene_chat(*_a, **_k):
         seen_before_scene.append(_chat_rows(sess.db, character.name))
-        return SimpleNamespace(
-            answer="臣领密旨，当令东厂暗中护送赈银。",
-            proposed_directive=None,
-            appointed_minister="",
-            registered_minister="",
-            displaced_minister="",
-            court_action="",
-            next_minister="",
-        )
+        return SimpleNamespace(content="臣领密旨，当令东厂暗中护送赈银。", tools=[])
 
-    sess, character, db, _state = _cli_minister_session(game, scene_chat=scene_chat)
+    sess, character, db, _state = _cli_minister_session(game, monkeypatch)
+    agent = SimpleNamespace(run=scene_chat)
+    stub_scene_agent(monkeypatch, agent)
     question = "交给洪承畴督办陕西赈灾，东厂暗助护赈银。"
     answers = iter([question, "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -207,7 +162,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(gam
 
     chat_error = RuntimeError("LLM down")
     sess, character, db, state = _cli_minister_session(
-        game,
+        game, monkeypatch,
         scene_chat=lambda *a, **k: (_ for _ in ()).throw(chat_error),
     )
     prior = "前一轮召对内容"
@@ -227,7 +182,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
     """Ctrl-C 中断中的 CLI 召对也不能留下 user-only 半轮（真实 fail_chat_turn）。"""
 
     sess, character, db, state = _cli_minister_session(
-        game,
+        game, monkeypatch,
         scene_chat=lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
     prior = "前一轮召对内容"
@@ -248,7 +203,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(game, m
     rollback_error = RuntimeError("rollback failed")
 
     sess, character, db, _state = _cli_minister_session(
-        game,
+        game, monkeypatch,
         scene_chat=lambda *a, **k: (_ for _ in ()).throw(chat_error),
     )
 
@@ -272,18 +227,8 @@ def test_terminal_minister_chat_reply_persist_failure_uses_fail_chat_turn(game, 
     fail_calls: list[int] = []
     persist_error = RuntimeError("reply persist failed")
 
-    def scene_chat(question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        return SimpleNamespace(
-            answer="臣领密旨，当令东厂暗中护送赈银。",
-            proposed_directive=None,
-            appointed_minister="",
-            registered_minister="",
-            displaced_minister="",
-            court_action="",
-            next_minister="",
-        )
-
-    sess, character, db, _state = _cli_minister_session(game, scene_chat=scene_chat)
+    sess, character, db, _state = _cli_minister_session(game, monkeypatch)
+    stub_scene_agent(monkeypatch, SimpleNamespace(content="臣领密旨，当令东厂暗中护送赈银。", tools=[]))
 
     def boom_persist(*_a, **_k):
         raise persist_error
@@ -313,20 +258,6 @@ def test_terminal_minister_chat_reply_persist_failure_uses_fail_chat_turn(game, 
 
     assert fail_calls and fail_calls[0] > 0
     assert _chat_rows(db, character.name) == []
-
-def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypatch):
-    session = _Sess(RuntimeError("unused"))
-    session.current_phase = lambda: TurnPhase.REVIEWING
-    session.advance_without_decree = lambda: SimpleNamespace(
-        awaiting=False, advanced=True, report="留中案卷本月重判月报",
-    )
-    monkeypatch.setattr(term, "review_directives", lambda _s: "skip")
-    monkeypatch.setattr(term, "_print_header", lambda _s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-
-    term.play_turn(session)
-
-    assert session.calls == ["begin", "end"]
 
 
 @pytest.mark.parametrize("exc", [

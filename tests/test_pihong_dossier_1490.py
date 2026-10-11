@@ -13,6 +13,7 @@ import pytest
 import ming_sim.decree as decree_mod
 
 import ming_sim.session as session_mod
+from tests.test_web_audience_night_498 import _fake_settlement_llm
 
 
 @pytest.fixture(autouse=True)
@@ -58,13 +59,15 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='冷场')
     stalled_id = int(stalled['id'])
     normal_id = int(db.create_decree_dossier(state, action_type='policy', decree_text='清核河工', target_kind='issue', target_id=f'river-{state.turn}'))
+    _fake_settlement_llm(monkeypatch, narrative="预推")
+    from ming_sim.decree_forecast import produce_forecast_product as real_product
     seen: list[int] = []
 
     def product(_session, snapshot):
         candidate = snapshot.get('candidate') or {}
         dossier_id = int(snapshot.get('dossier_id') or candidate.get('id') or 0)
         seen.append(dossier_id)
-        return {'verdict': {'decision': 'promulgated', 'dossier_id': dossier_id}, 'declaration': {}, 'questions': None, 'forecast_text': ''}
+        return real_product(_session, snapshot)
     monkeypatch.setattr(month_chain, 'run_world_segment_text', lambda *a, **k: '')
     monkeypatch.setattr('ming_sim.decree_forecast.produce_forecast_product', product)
     decree_mod.resolve_directives(state, db, None, object(), [], '清核河工', content=content)
@@ -93,18 +96,14 @@ def test_658_endorsement_provenance_xor(game):
 
 @pytest.mark.parametrize("historical", [False, True])
 def test_658_imperial_push_uses_rescript_original_and_key(game, monkeypatch, historical):
-    from tests.month_chain_helpers import make_light_session, canned_full_settlement
+    from tests.month_chain_helpers import make_light_session
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content)
     did = int(stalled["id"])
     if historical:
         db.conn.execute("UPDATE decree_dossiers SET created_turn=? WHERE id=?", (state.turn - 1, did))
         db.conn.commit()
-    canned_full_settlement(monkeypatch)
-    monkeypatch.setattr("ming_sim.decree_forecast.produce_forecast_product", lambda *a, **k: {
-        "verdict": {"decision": "promulgated"}, "declaration": {"effects": {}},
-        "questions": None, "forecast_text": "", "visible_refs": {},
-    })
+    _fake_settlement_llm(monkeypatch)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     assert session.resolve_turn(allow_empty_decree=True).awaiting
@@ -128,9 +127,8 @@ def test_658_imperial_push_uses_rescript_original_and_key(game, monkeypatch, his
 
 @pytest.mark.parametrize("failure", ["consume", "scope", "account"])
 def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeypatch, failure):
-    from tests.month_chain_helpers import make_light_session, canned_full_settlement
+    from tests.month_chain_helpers import make_light_session
     db, state, content = game
-    canned_full_settlement(monkeypatch)
     captured = []
 
     def rescript(session, *, officers, backlog, answer=None):
@@ -151,12 +149,13 @@ def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeyp
             "text": "御笔旨文", "payload": payload,
         }})
 
-    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", rescript)
     gate = []
+    _fake_settlement_llm(monkeypatch)
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", rescript)
+    from ming_sim.decree_forecast import produce_forecast_product as real_product
     def forecast(_session, snapshot):
         gate.append(snapshot["candidate"]["id"])
-        return {"verdict": {"decision": "promulgated"}, "declaration": {"effects": {}},
-                "questions": None, "forecast_text": "", "visible_refs": {}}
+        return real_product(_session, snapshot)
     monkeypatch.setattr("ming_sim.decree_forecast.produce_forecast_product", forecast)
     session = make_light_session(db, state, content)
     session.llm_config = object()

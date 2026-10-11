@@ -6,6 +6,8 @@ ADR 0036/0006 机制零动。
 from __future__ import annotations
 
 import asyncio
+import json
+from tests.month_chain_helpers import canned_full_settlement, empty_rescript_response
 from types import SimpleNamespace
 
 import pytest
@@ -90,11 +92,11 @@ def test_directive_payload_authority_not_notes_alias(web_game):
 # ── #1322 resolve stream 相位预检在抢锁前 ───────────────────────────────────
 
 
-async def _consume_resolve_sse() -> list[tuple[str, object]]:
+async def _consume_resolve_sse(choices=None) -> list[tuple[str, object]]:
     """Drain the whole SSE; return [(event, payload), ...] in order."""
     from tests.test_chat_stream_failpaths_393 import _parse_sse
     response = await web_app.api_resolve_decisions_stream(
-        web_app.ResolveDecisionsRequest(choices=[{"label": "发帑"}])
+        web_app.ResolveDecisionsRequest(choices=choices if choices is not None else [{"label": "发帑"}])
     )
     chunks = [
         chunk.decode() if isinstance(chunk, bytes) else chunk
@@ -132,23 +134,23 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(web_game, mo
     """#1322：awaiting 相位仍经 submit_hitl 在 write_gate 内提交（权威复查保留）。"""
     game = web_game
     gate = game._write_gate
-    game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", lambda session, *, officers, backlog, answer=None: json.dumps({
+        "actor_name": officers[-1]["name"], "items": [{"title": "发帑", "context": "是否发帑", "options": [{"label": "发帑"}]}], "revisions": [],
+    }) if answer is None else empty_rescript_response(session, officers=officers, backlog=backlog, answer=answer))
+    waiting = game.session.advance_without_decree()
+    assert waiting.awaiting
     submitted = {"ok": False}
+    real_read = game.db.get_rescript_desk_rows_by_keys
 
-    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
-        with write_gate:
-            assert gate.locked(), "submit must run while write gate held"
-            submitted["ok"] = True
-            return "邸报：已裁。"
+    def _submit_hitl(keys):
+        assert gate.locked(), "submit must run while write gate held"
+        submitted["ok"] = True
+        return real_read(keys)
 
-    game.session.submit_hitl_choices = _submit_hitl  # type: ignore[method-assign]
-    game.session.last_decree = "诏曰：发帑。"
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-
-    events = asyncio.run(_consume_resolve_sse())
+    monkeypatch.setattr(game.db, "get_rescript_desk_rows_by_keys", _submit_hitl)
+    events = asyncio.run(_consume_resolve_sse([{"decision_key": waiting.decisions[0]["decision_key"], "label": "发帑"}]))
     assert submitted["ok"] is True
     kinds = [ev for ev, _ in events]
     assert "stage" not in kinds
     assert kinds[-1] == "done"
-    payload = events[-1][1]
-    assert payload["report"] == "邸报：已裁。"

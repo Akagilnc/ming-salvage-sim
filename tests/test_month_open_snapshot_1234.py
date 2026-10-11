@@ -241,7 +241,6 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(web_game, monkeypa
     外部可见 + durable：响应 awaiting_decision/decisions 原样下发、turn 不推进、
     持久 phase 仍 awaiting。保留真实 end_turn/refresh；误调即改变相位与核账脸。
     """
-    from ming_sim.decree import ResolveResult
 
     db, state = web_game.db, web_game.state
     turn_before = int(state.turn)
@@ -255,14 +254,12 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(web_game, monkeypa
         }
     ]
 
-    def _advance_awaiting(**_kw):
-        # entry accept 已 capture；桩内保持快照，落生产 awaiting 相位。
-        state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.save_state(state)
-        return ResolveResult(awaiting=True, decisions=list(decisions))
-
-    runtime.session.advance_without_decree = _advance_awaiting
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    from tests.month_chain_helpers import canned_full_settlement
+    import json
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", lambda session, *, officers, backlog, answer=None: json.dumps({
+        "actor_name": officers[-1]["name"], "items": decisions, "revisions": [],
+    }))
 
     result = web_app.api_advance_without_edict()
 
@@ -270,7 +267,8 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(web_game, monkeypa
     assert reloaded.turn == turn_before
     assert reloaded.turn_phase == TurnPhase.AWAITING_DECISION.value
     assert result["awaiting_decision"] is True
-    assert result["decisions"] == decisions
+    assert result["decisions"] == runtime.session.pending_decisions()
+    assert [(row["title"], row["context"], row["options"]) for row in result["decisions"]] == [(row["title"], row["context"], row["options"]) for row in decisions]
     assert result["state"]["turn"]["turn"] == turn_before
     assert state.turn == turn_before
     # durable 红证：误调 end_turn 会把相位打回 summoning 并清核账脸。

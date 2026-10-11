@@ -14,7 +14,6 @@ import asyncio
 import pytest
 
 import web_app
-from ming_sim.decree import ResolveResult
 from ming_sim.models import TurnPhase
 
 
@@ -44,15 +43,13 @@ def test_double_issue_same_token_second_is_409_turn_plus_one(web_game, monkeypat
     start = int(state.turn)
     runtime = web_game
 
-    def _fake_resolve(**_k):
-        # 模拟 resolve_turn 成功推进一格（与生产同向副作用）。
-        state.turn = start + 1
-        state.turn_phase = TurnPhase.SUMMONING.value
-        db.save_state(state)
-        runtime.session.last_decree = "诏曰测试"
-        return ResolveResult(awaiting=False, report="邸报测")
-
-    runtime.session.resolve_turn = _fake_resolve
+    from tests.month_chain_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch)
+    from tests.test_month_chain_1843 import _stage_edict, _forbid_extractor
+    _forbid_extractor(monkeypatch)
+    minister = next(iter(runtime.content.characters.values())).name
+    affair = db.affairs.open(name="边饷", origin="旨意", year=state.year, period=state.period, turn=state.turn)
+    _stage_edict(db, state, minister, "核边饷", "核边饷", 0, affair.id)
 
     ev1, first = asyncio.run(_issue_stream_terminal(_body(start)))
     assert ev1 == "done", first

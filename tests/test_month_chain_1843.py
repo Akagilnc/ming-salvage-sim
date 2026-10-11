@@ -81,18 +81,16 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     db.save_state(state)
     produced = []
 
+    from tests.test_web_audience_night_498 import _fake_settlement_llm
+    _fake_settlement_llm(monkeypatch, narrative="补跑不可见")
+    from ming_sim.decree_forecast import produce_forecast_product as real_product
+    monkeypatch.setattr("ming_sim.decree_forecast.translate_month_segment", lambda *_a, **_k: {
+        "effects": {"economy_moves": [{"origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -1, "category": "大凌河", "reason": "补跑"}]},
+    })
+
     def product(session, snapshot):
         produced.append(snapshot["decree_ref"])
-        return {
-            "verdict": {"decision": "promulgated"},
-            "declaration": {"effects": {"economy_moves": [{
-                "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -1,
-                "category": "大凌河", "reason": "补跑",
-            }]}},
-            "questions": None,
-            "forecast_text": "补跑不可见",
-            "visible_refs": snapshot.get("visible_refs"),
-        }
+        return real_product(session, snapshot)
 
     real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
     armed = {"fail": True}
@@ -380,9 +378,7 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
         visible_refs={"dossiers": [dossier_id]},
     )
 
-    sess = SimpleNamespace(
-        db=db, state=state, llm_config=None, agno_db=None, content=content,
-    )
+    sess = make_light_session(db, state, content)
 
     chain = {}
     # 首次结算失败：暂存保持未落账，旧打回暂存不被破坏

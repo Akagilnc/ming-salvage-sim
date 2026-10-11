@@ -10,6 +10,8 @@ from __future__ import annotations
 
 
 import asyncio
+import json
+from tests.month_chain_helpers import canned_full_settlement, empty_rescript_response
 import threading
 
 
@@ -36,34 +38,24 @@ def test_resolve_stream_uses_settlement_period_entry(web_game, monkeypatch):
     db, state = web_game.db, web_game.state
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    db.save_pending_decisions(int(state.turn), [{
-        "event_id": "evt-1",
-        "title": "饷银",
-        "context": "是否发帑",
-        "options": [{"label": "发", "hint": "发内帑"}],
-    }])
-
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", lambda session, *, officers, backlog, answer=None: json.dumps({
+        "actor_name": officers[-1]["name"], "items": [{"title": "饷银", "context": "是否发帑", "options": [{"label": "发"}]}], "revisions": [],
+    }))
+    waiting = web_game.session.advance_without_decree()
+    assert waiting.awaiting
     runtime = web_game
     phase2_started = threading.Event()
     release_phase2 = threading.Event()
 
-    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
-        # 生产协议：submit_hitl_choices；纯 decision 路径持 write_gate。
-        with write_gate:
-            # 模拟 decided 先写（崩溃安全时序）——本刀不改 session 真写序，仅证展示态窗口。
-            db.conn.execute(
-                "UPDATE pending_decisions SET status='decided' WHERE turn=?",
-                (int(state.turn),),
-            )
-            db.conn.commit()
-            phase2_started.set()
-            release_phase2.wait()
-            return "邸报：测。"
+    def _submit_hitl(session, *, officers, backlog, answer=None):
+        assert answer is not None
+        assert db.conn.execute("SELECT status FROM pending_decisions WHERE turn=?", (int(state.turn),)).fetchone()[0] == "decided"
+        phase2_started.set()
+        release_phase2.wait()
+        return empty_rescript_response(session, officers=officers, backlog=backlog, answer=answer)
 
-    runtime.session.submit_hitl_choices = _submit_hitl
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", _submit_hitl)
 
     async def _go():
         # 并行：放行 phase2 前先观测展示态。
@@ -91,7 +83,7 @@ def test_resolve_stream_uses_settlement_period_entry(web_game, monkeypatch):
         watch_exc: BaseException | None = None
         result = None
         try:
-            result = await _drain_resolve_sse([{"label": "发"}])
+            result = await _drain_resolve_sse([{"decision_key": waiting.decisions[0]["decision_key"], "label": "发"}])
         except BaseException as exc:
             body_exc = exc
         finally:
@@ -115,8 +107,8 @@ def test_resolve_stream_uses_settlement_period_entry(web_game, monkeypatch):
     serialized = asyncio.run(_go())
     events = _parse_sse(serialized)
     assert events and events[-1][0] == "done", events
-    # 快照仍在（本替身 submit 未推进月份）；phase2 窗内展示态真源不灭
-    assert db.get_month_open_snapshot(int(state.turn)) == before
+    # 真实续跑推进月份，核账展示在结束时退出。
+    assert db.get_month_open_snapshot(waiting.decisions[0]["source_turn"]) is None
 
 
 def test_resolve_stream_entry_failure_exits_display_when_not_front_half(web_game, monkeypatch):
@@ -145,25 +137,12 @@ def test_resolve_stream_clear_throw_emits_error_not_done(web_game, monkeypatch):
     """负向：stream __done__ 须在 clear 成功后入队——clear 抛不得先推 done。"""
     db, state = web_game.db, web_game.state
     runtime = web_game
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    db.capture_month_open_snapshot(state)
-    db.save_pending_decisions(int(state.turn), [{
-        "event_id": "evt-1",
-        "title": "饷银",
-        "context": "是否发帑",
-        "options": [{"label": "发", "hint": "发内帑"}],
-    }])
-
-    def _submit_hitl(choices, *, write_gate, cheat_directive=""):
-        with write_gate:
-            # 回 summoning 常态，使成功支 clear_orphan 真触发
-            state.turn_phase = TurnPhase.SUMMONING.value
-            db.save_state(state)
-            return "邸报：测。"
-
-    runtime.session.submit_hitl_choices = _submit_hitl
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", lambda session, *, officers, backlog, answer=None: json.dumps({
+        "actor_name": officers[-1]["name"], "items": [{"title": "饷银", "context": "是否发帑", "options": [{"label": "发"}]}], "revisions": [],
+    }) if answer is None else empty_rescript_response(session, officers=officers, backlog=backlog, answer=answer))
+    waiting = runtime.session.advance_without_decree()
+    assert waiting.awaiting
 
     import ming_sim.month_open_snapshot as mos
 
@@ -172,7 +151,7 @@ def test_resolve_stream_clear_throw_emits_error_not_done(web_game, monkeypatch):
 
     monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
 
-    serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
+    serialized = asyncio.run(_drain_resolve_sse([{"decision_key": waiting.decisions[0]["decision_key"], "label": "发"}]))
     events = _parse_sse(serialized)
     assert events, serialized
     assert [name for name, _ in events] == ["error"], events

@@ -35,14 +35,9 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     现役关系／派系酿制外部模型出口一并纳入：复用 deterministic brew 手，不改生产
     ``load_runtime_llm() == {}`` 配置语义，也不截月尾／queue／持久化。
     """
-    from tests.month_chain_helpers import empty_rescript_response
+    from tests.test_web_audience_night_498 import _fake_settlement_llm
     from tests.test_faction_brew_637 import _dual_brew_fn_factory
-
-    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
-    # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
-    # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
-    # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
-    # runtime 与高亮判官两缝经 conftest 单权威中和。
+    _fake_settlement_llm(monkeypatch, narrative="本月邸报：边饷已清，流寇未息。")
     stub_webgame_boundary(monkeypatch)
     # 拟旨 capture 默认 30s 总罩——外层接缝 canned，禁真 LLM/真等。
     monkeypatch.setattr(
@@ -53,40 +48,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
             "target_kind": "issue",
             "target_id": "month-loop-tracer-1468",
             "mode": "ordinary",
-        },
-    )
-    # 判决及本月世界段只桩现役外部 LLM 缝。
-    monkeypatch.setattr(
-        decree_mod,
-        "llm_promulgation_verdicts",
-        lambda dossiers, _state, **_kwargs: [
-            {"dossier_id": row["id"], "decision": "promulgated"} for row in dossiers
-        ],
-    )
-    monkeypatch.setattr(
-        session_mod, "write_decree_with_agno",
-        lambda *a, **k: "奉天承运，诏曰：着户部清核辽饷。",
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_world_segment_text",
-        lambda *a, **k: "本月邸报：边饷已清，流寇未息。",
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_gazette_text",
-        lambda *a, **k: ("边饷已清", "本月邸报：边饷已清，流寇未息。"),
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_translate.translate_month_segment",
-        lambda *a, **k: {"effects": {}},
-    )
-    monkeypatch.setattr(
-        "ming_sim.decree_forecast.produce_forecast_product",
-        lambda *_a, **_k: {
-            "verdict": {"decision": "promulgated"},
-            "declaration": {"effects": {}},
-            "questions": None,
-            "forecast_text": "边饷已核",
-            "visible_refs": {},
         },
     )
     # 月尾关系／派系酿制：隔离外部 brew 模型出口，保留 mechanical_tail 真路径。
@@ -155,11 +116,9 @@ def _pick_active_minister(state: dict) -> str:
     raise AssertionError(f"no active ming minister in state ministers={state.get('ministers')!r}")
 
 
-
 def _turn_of(state: dict) -> int:
     turn = state.get("turn") or {}
     return int(turn.get("turn") or 0)
-
 
 
 def _get_state(client: TestClient) -> dict:
@@ -170,7 +129,6 @@ def _get_state(client: TestClient) -> dict:
 
 
 from tests.test_chat_stream_failpaths_393 import _parse_sse
-
 
 
 def _post_issue_stream(
@@ -213,7 +171,5 @@ def _post_issue_stream(
     raise AssertionError(
         f"{step}: unexpected terminal SSE event {ev!r}; body={resp.text!r}"
     )
-
-
 
 
