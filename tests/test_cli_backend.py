@@ -190,19 +190,14 @@ def test_run_codex_stdout_empty_fallback(monkeypatch):
     # Free host body: carry pre-banner segment as-is (no strip of trailing newline).
     assert out == "STDOUT_BODY\n"
 
-def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
+@pytest.mark.parametrize('strength, expected_tokens', [("medium", "10000"), ("off", "2000")])
+def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch, strength, expected_tokens):
     monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
     captured = _capture_run(monkeypatch)
-    out, n = cb._run_claude("p", reasoning_strength="medium")
+    out, n = cb._run_claude("p", reasoning_strength=strength)
     assert out == "STDOUT_BODY"
-    assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == "10000"
+    assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == expected_tokens
 
-def test_run_claude_off_reasoning_uses_explicit_minimum_tokens(monkeypatch):
-    monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
-    captured = _capture_run(monkeypatch)
-    out, n = cb._run_claude("p", reasoning_strength="off")
-    assert out == "STDOUT_BODY"
-    assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == "2000"
 
 # ── _resolve_cli_bin / login shell path ──
 
@@ -382,7 +377,6 @@ def test_run_backend_for_config_traces_on_backend_error(monkeypatch, tmp_path):
     assert ei.value is injected
     record = json.loads(trace_path.read_text())
     assert record["error"] == str(injected)
-
 
 
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──

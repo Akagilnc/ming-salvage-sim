@@ -172,14 +172,11 @@ def test_two_consecutive_player_months_both_get_fiscal_tick(game, monkeypatch):
     assert rows_t2 > 0  # 第二回合财政 tick 真跑了
 
 
-def test_enter_review_does_not_clobber_settling(game):
-    """enter_review 不得抹掉崩溃保活的 settling（cmr S4 r1 F2）。
-
-    抹成 reviewing 后 pre_settle 守门失效=同回合二次财政 tick。
-    """
+@pytest.mark.parametrize('phase', ["settling", "awaiting_decision"])
+def test_enter_review_preserves_front_half_done_phase(game, phase):
     from ming_sim.session import GameSession
     db, state, content = game
-    state.turn_phase = "settling"
+    state.turn_phase = phase
     db.reign.save_game_state(state)
 
     sess = GameSession.__new__(GameSession)
@@ -187,12 +184,10 @@ def test_enter_review_does_not_clobber_settling(game):
     sess.state = state
 
     sess.enter_review()
-    assert state.turn_phase == "settling"
+    assert state.turn_phase == phase
 
     sess.back_to_summoning()
-    assert state.turn_phase == "settling"
-
-
+    assert state.turn_phase == phase
 
 
 # ---------------------------------------------------------------------------
@@ -222,25 +217,6 @@ def test_pre_settle_guard_covers_awaiting_decision(game):
 # ---------------------------------------------------------------------------
 # cmr S4 r3 修复回归（FRONT_HALF_DONE_PHASES 集中化）
 # ---------------------------------------------------------------------------
-
-def test_sticky_phases_cover_awaiting_decision(game):
-    """粘滞守门覆盖 awaiting_decision（cmr S4 r3 F1）。
-
-    CLI 重载于 awaiting 时 enter_review 抹相位=守门 miss 双 tick+决策搁浅。
-    """
-    from ming_sim.session import GameSession
-    db, state, content = game
-    state.turn_phase = "awaiting_decision"
-    db.reign.save_game_state(state)
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-
-    sess.enter_review()
-    assert state.turn_phase == "awaiting_decision"
-    sess.back_to_summoning()
-    assert state.turn_phase == "awaiting_decision"
 
 
 def test_advance_without_edict_refused_at_awaiting(game):

@@ -36,15 +36,16 @@ def _create(db, state, *, action="assignment", category="清丈", payload=None,
     )
 
 
-@pytest.mark.parametrize("punish_action", ["", "抄家"])
-def test_punishment_without_admitted_strike_subtype_is_excluded(env, punish_action):
-    """未准入惩处细类不经 stage 落 pending 或案卷。"""
+@pytest.mark.parametrize("punish_action, category, text", [
+    ("", "缉拿", "拿问"), ("抄家", "缉拿", "拿问"), ("拿问下狱", "修仙", "拿问下狱"),
+])
+def test_punishment_without_admitted_strike_subtype_is_excluded(env, punish_action, category, text):
     db, state, _ = env
     pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
     dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
     pending_id = stage_punishment_candidate(
-        db, state.turn, "陈新甲", text="拿问", target_id="毕自严",
-        punish_action=punish_action, transaction_category="缉拿",
+        db, state.turn, "陈新甲", text=text, target_id="毕自严",
+        punish_action=punish_action, transaction_category=category,
     )
     assert pending_id == 0
     assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
@@ -257,19 +258,6 @@ def test_real_punishment_stage_preserves_category(env):
         "SELECT payload_json FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone()["payload_json"])
     assert payload["transaction_category"] == "缉拿"
-
-
-def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(env):
-    db, state, _ = env
-    pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
-    dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
-    pending_id = stage_punishment_candidate(
-        db, state.turn, "陈新甲", text="拿问下狱", target_id="毕自严",
-        punish_action="拿问下狱", transaction_category="修仙",
-    )
-    assert pending_id == 0
-    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
 
 
 def _directive_payload(category):

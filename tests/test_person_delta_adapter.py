@@ -966,12 +966,10 @@ def test_apply_score_extraction_accepts_status_reason_as_person_reason(game):
         content.characters[name].office = old_office
 
 
+@pytest.mark.parametrize('failure_point', ["office_write", "post_office"])
 def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fails(
-    game, monkeypatch
+    game, monkeypatch, failure_point,
 ):
-    """Office write code fault must fail loud (ADR 0005 / #1853) and roll back
-    derived release — not wash into a business rejected row.
-    """
     db, state, content = game
     name = active_ming_character(db, content)
     old_status = content.characters[name].status
@@ -984,7 +982,10 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
         db.set_character_status(state, name, "imprisoned", "旧案在押")
         content.characters[name].status = "imprisoned"
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
-        monkeypatch.setattr(db, "set_character_office", fail_office_write)
+        if failure_point == "office_write":
+            monkeypatch.setattr(db, "set_character_office", fail_office_write)
+        else:
+            monkeypatch.setattr(issues, "_displace_duplicate_offices", fail_office_write)
 
         try:
             issues.apply_score_extraction(
@@ -1114,58 +1115,6 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
         content.characters[first].office = old_first_office
         content.characters[second].status = old_second_status
         content.characters[second].office = old_second_office
-
-
-def test_derived_release_restores_when_post_office_helper_raises(game, monkeypatch):
-    """Post-office helper code fault fails loud and restores derived release (#1853)."""
-    db, state, content = game
-    name = active_ming_character(db, content)
-    old_status = content.characters[name].status
-    old_office = content.characters[name].office
-
-    def fail_after_office_write(*_args, **_kwargs):
-        raise RuntimeError("simulated post-office failure")
-
-    try:
-        db.set_character_status(state, name, "imprisoned", "旧案在押")
-        content.characters[name].status = "imprisoned"
-        before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
-        monkeypatch.setattr(issues, "_displace_duplicate_offices", fail_after_office_write)
-
-        try:
-            issues.apply_score_extraction(
-                db,
-                state,
-                {
-                    "人物变更": [
-                        {
-                            "name": name,
-                            "origin_ref": "盘面自发", "动作": "任命",
-                            "office": "陕西总督",
-                            "office_type": "地方",
-                            "region_id": "shaanxi",
-                            "reason": "查明旧案后起用",
-                        }
-                    ]
-                },
-                content=content,
-            )
-            raise AssertionError("post-office code fault must raise, not reject")
-        except RuntimeError as exc:
-            assert "simulated post-office failure" in str(exc)
-
-        row = db.conn.execute(
-            "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
-        ).fetchone()
-        assert row["status"] == "imprisoned"
-        assert row["office"] == ""
-        assert row["reason_code"] == ""
-        assert content.characters[name].status == "imprisoned"
-        assert content.characters[name].office == ""
-        assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-    finally:
-        content.characters[name].status = old_status
-        content.characters[name].office = old_office
 
 
 def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointment_is_rejected(game):

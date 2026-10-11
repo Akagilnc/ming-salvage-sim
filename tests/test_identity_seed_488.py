@@ -74,8 +74,6 @@ def test_required_dig_7_seed_roster_entries_are_persisted(game):
             assert guilt["severity"] in {"无", "轻", "中", "重"}
 
 
-
-
 def test_roster_has_no_cross_faction_aliases():
     _, characters = load_character_content()
     by_alias = {}
@@ -84,32 +82,24 @@ def test_roster_has_no_cross_faction_aliases():
             by_alias.setdefault(alias, set()).add(character.faction)
     assert all(len(factions) == 1 for factions in by_alias.values())
 
-def test_roster_rejects_alias_colliding_with_other_faction_name(monkeypatch):
+@pytest.mark.parametrize("mutation, field, value", [
+    ('alias', 'aliases', '温体仁'),
+    ('duplicate', None, None),
+    ('field', 'identity', 101),
+    ('field', 'seed_guilt', {'crime': '', 'severity': '轻'}),
+    ('field', 'seed_guilt', {'crime': '无', 'severity': '未知'}),
+    ('field', 'seed_guilt', []),
+    ('field', 'seed_guilt', {'crime': [], 'severity': '无'}),
+    ('field', 'seed_guilt', {'crime': '', 'severity': {}}),
+])
+def test_roster_rejects_alias_colliding_with_other_faction_name(monkeypatch, mutation, field, value):
     data = load_json_asset("characters.json")
-    data["characters"][0]["aliases"].append("温体仁")
-    monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
-    with pytest.raises(SystemExit):
-        load_character_content()
-
-def test_roster_rejects_duplicate_canonical_name(monkeypatch):
-    data = load_json_asset("characters.json")
-    duplicate = json.loads(json.dumps(data["characters"][0]))
-    data["characters"].append(duplicate)
-    monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
-    with pytest.raises(SystemExit):
-        load_character_content()
-
-@pytest.mark.parametrize(
-    "field,value",
-    [
-        ("identity", 101),
-        ("seed_guilt", {"crime": "", "severity": "轻"}),
-        ("seed_guilt", {"crime": "无", "severity": "未知"}),
-    ],
-)
-def test_seed_schema_rejects_invalid_values(monkeypatch, field, value):
-    data = load_json_asset("characters.json")
-    data["characters"][0][field] = value
+    if mutation == "duplicate":
+        data["characters"].append(json.loads(json.dumps(data["characters"][0])))
+    elif mutation == "alias":
+        data["characters"][0][field].append(value)
+    else:
+        data["characters"][0][field] = value
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
     with pytest.raises(SystemExit):
         load_character_content()

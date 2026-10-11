@@ -5,7 +5,6 @@ import pytest
 import ming_sim.issues as I
 
 
-
 def _promulgated_commitment_origin(db, state, token: str) -> str:
     dossier_id = db.create_decree_dossier(
         state,
@@ -281,113 +280,128 @@ def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch
     assert db.fiscal_config.values()["neiku_dujiang_base"] == 10
 
 
-@pytest.mark.parametrize("shape,end_offset", [
-    ({"stop_condition": {"character.毛文龙.loyalty": ">=65"}}, None),
-    ({"ongoing_effects": {"metrics": {"皇威": -1}}}, None),
-    ({}, 3),
-    ({"stop_condition": "character.毛文龙.loyalty >= 65"}, None),
-    ({"origin_ref": "", "resolve_condition": "character.毛文龙.loyalty >= 65",
-      "ongoing_effects": {"人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": 2, "reason": "每月安抚"}]}}, None),
+@pytest.mark.parametrize("turn, item", [
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:current-turn-expired-pay',
+      'kind': 'initiative',
+      'title': '本回合即到期的每月补饷承诺',
+      'stage_text': '户部按月拨银补饷，但 end_turn 错落在当前回合。',
+      'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '补饷承诺', 'reason': '每月补饷', 'purpose': '补饷'}]},
+      'end_turn': 0,
+      'commitment_kind': 'until_stop'}),
+    (4,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-4:past-expired-pay',
+      'kind': 'initiative',
+      'title': '过去回合已到期的每月补饷承诺',
+      'stage_text': '户部按月拨银补饷，但 end_turn 错落在过去回合。',
+      'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '补饷承诺', 'reason': '每月补饷', 'purpose': '补饷'}]},
+      'end_turn': -1,
+      'commitment_kind': 'until_stop'}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:bad-kind',
+      'kind': 'situation',
+      'title': '每月补辽饷但类型写成局势',
+      'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]},
+      'stop_condition': {'army.guanning.arrears': '<=0'},
+      'commitment_kind': 'until_stop'}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:string-loyalty-appease',
+      'kind': 'initiative',
+      'title': '字符串忠诚安抚承诺',
+      'stage_text': '每月安抚毛文龙，但 loyalty 错写成字符串。',
+      'ongoing_effects': {'人物变更': [{'name': '毛文龙', '动作': '评定', 'loyalty': '2', 'reason': '奉旨持续安抚'}]},
+      'end_turn': 2,
+      'commitment_kind': 'until_stop'}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:bad-stop-string',
+      'kind': 'initiative',
+      'title': '每月补辽饷但停止条件是坏串',
+      'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]},
+      'stop_condition': 'army.guanning.arrears <= 0',
+      'commitment_kind': 'until_stop'}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:bad-stop-key',
+      'kind': 'initiative',
+      'title': '每月补辽饷但停止条件无表前缀',
+      'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]},
+      'stop_condition': {'arrears': '<=0'},
+      'commitment_kind': 'until_stop'}),
+    (1,
+     {'origin_kind': 'decree',
+      'kind': 'initiative',
+      'title': '每月补辽饷但无诏书引用',
+      'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]},
+      'stop_condition': {'army.guanning.arrears': '<=0'},
+      'commitment_kind': 'until_stop'}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:empty-monthly-action',
+      'kind': 'initiative',
+      'title': '每月补辽饷但没有月度动作',
+      'stop_condition': {'army.guanning.arrears': '<=0'},
+      'commitment_kind': 'until_stop'}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:empty-shell-monthly-action',
+      'kind': 'initiative',
+      'title': '每月补辽饷但月度动作只是空壳',
+      'ongoing_effects': {'economy': [], 'metrics': {}},
+      'stop_condition': {'army.guanning.arrears': '<=0'},
+      'commitment_kind': 'until_stop'}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:bad-monthly-army-create',
+      'kind': 'initiative',
+      'title': '每月重复建军的错误承诺',
+      'ongoing_effects': {'new_armies': [{'id': 'bad_monthly_army', 'name': '月度重复新军', 'manpower': 1000}]},
+      'stop_condition': {'army.guanning.arrears': '<=0'},
+      'commitment_kind': 'until_stop'}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:pay-two-fronts-arrears',
+      'kind': 'initiative',
+      'title': '缺标记承诺',
+      'stop_condition': {'character.毛文龙.loyalty': '>=65'}}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:pay-two-fronts-arrears',
+      'kind': 'initiative',
+      'title': '缺标记承诺',
+      'ongoing_effects': {'metrics': {'皇威': -1}}}),
+    (1, {'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:pay-two-fronts-arrears', 'kind': 'initiative', 'title': '缺标记承诺', 'end_turn': 3}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': 'decree:turn-1:pay-two-fronts-arrears',
+      'kind': 'initiative',
+      'title': '缺标记承诺',
+      'stop_condition': 'character.毛文龙.loyalty >= 65'}),
+    (1,
+     {'origin_kind': 'decree',
+      'origin_ref': '',
+      'kind': 'initiative',
+      'title': '缺标记承诺',
+      'resolve_condition': 'character.毛文龙.loyalty >= 65',
+      'ongoing_effects': {'人物变更': [{'name': '毛文龙', '动作': '评定', 'loyalty': 2, 'reason': '每月安抚'}]}}),
 ])
-def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch, shape, end_offset):
-    """承诺各形态须显式标记；同一拒收口的独立识别分支共用真实入口。"""
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    item = {
-        "origin_kind": "decree", "origin_ref": "decree:turn-1:pay-two-fronts-arrears",
-        "kind": "initiative", "title": "缺标记承诺", **shape,
-    }
-    if end_offset is not None:
-        item["end_turn"] = state.turn + end_offset
-    out = I.apply_score_extraction(db, state, {"new_issues": [item]}, content=content)
-    created = out["issue_summary"]["new_issues"][0]
-    assert created["rejected"] is True
-    assert created["category"] == "invalid_enum"
-    assert _issue_by_title(db, item["title"]) is None
-
-
-
-
-def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:current-turn-expired-pay",
-                    "kind": "initiative",
-                    "title": "本回合即到期的每月补饷承诺",
-                    "stage_text": "户部按月拨银补饷，但 end_turn 错落在当前回合。",
-                    "ongoing_effects": {
-                        "economy": [
-                            {
-                                "account": "国库",
-                                "delta": -50,
-                                "category": "补饷承诺",
-                                "reason": "每月补饷",
-                                "purpose": "补饷",
-                            }
-                        ]
-                    },
-                    "end_turn": state.turn,
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "本回合即到期的每月补饷承诺") is None
-
-
-def test_limited_duration_ongoing_commitment_rejects_past_end_turn(game, monkeypatch):
+def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(game, monkeypatch, turn, item):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    state.turn = 4
+    state.turn = turn
     db.reign.save_game_state(state)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": "decree:turn-4:past-expired-pay",
-                    "kind": "initiative",
-                    "title": "过去回合已到期的每月补饷承诺",
-                    "stage_text": "户部按月拨银补饷，但 end_turn 错落在过去回合。",
-                    "ongoing_effects": {
-                        "economy": [
-                            {
-                                "account": "国库",
-                                "delta": -50,
-                                "category": "补饷承诺",
-                                "reason": "每月补饷",
-                                "purpose": "补饷",
-                            }
-                        ]
-                    },
-                    "end_turn": state.turn - 1,
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
+    item = dict(item)
+    if "end_turn" in item:
+        item["end_turn"] += state.turn
+    out = I.apply_score_extraction(db, state, {"new_issues": [item]}, content=content)
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "过去回合已到期的每月补饷承诺") is None
+    assert _issue_by_title(db, item["title"]) is None
 
 
 def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, monkeypatch):
@@ -459,45 +473,6 @@ def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(gam
     assert row["cancellable"] == "decree"
 
 
-
-
-
-
-
-
-
-
-
-
-def test_until_stop_commitment_requires_initiative_kind(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:bad-kind",
-                    "kind": "situation",
-                    "title": "每月补辽饷但类型写成局势",
-                    "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
-                    "stop_condition": {"army.guanning.arrears": "<=0"},
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "每月补辽饷但类型写成局势") is None
-
-
 def test_until_stop_commitment_supports_character_loyalty_condition(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -525,221 +500,6 @@ def test_until_stop_commitment_supports_character_loyalty_condition(game, monkey
     row = _issue_by_title(db, "安抚毛文龙直到效顺")
     assert row["commitment_kind"] == "until_stop"
     assert json.loads(row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
-
-
-def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:string-loyalty-appease",
-                    "kind": "initiative",
-                    "title": "字符串忠诚安抚承诺",
-                    "stage_text": "每月安抚毛文龙，但 loyalty 错写成字符串。",
-                    "ongoing_effects": {
-                        "人物变更": [
-                            {
-                                "name": "毛文龙",
-                                "动作": "评定",
-                                "loyalty": "2",
-                                "reason": "奉旨持续安抚",
-                            }
-                        ]
-                    },
-                    "end_turn": state.turn + 2,
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "字符串忠诚安抚承诺") is None
-
-
-def test_until_stop_commitment_rejects_non_dict_stop_condition(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:bad-stop-string",
-                    "kind": "initiative",
-                    "title": "每月补辽饷但停止条件是坏串",
-                    "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
-                    "stop_condition": "army.guanning.arrears <= 0",
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "每月补辽饷但停止条件是坏串") is None
-
-
-def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:bad-stop-key",
-                    "kind": "initiative",
-                    "title": "每月补辽饷但停止条件无表前缀",
-                    "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
-                    "stop_condition": {"arrears": "<=0"},
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "每月补辽饷但停止条件无表前缀") is None
-
-
-def test_until_stop_commitment_requires_origin_ref(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "kind": "initiative",
-                    "title": "每月补辽饷但无诏书引用",
-                    "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
-                    "stop_condition": {"army.guanning.arrears": "<=0"},
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "每月补辽饷但无诏书引用") is None
-
-
-def test_until_stop_commitment_requires_ongoing_effects(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:empty-monthly-action",
-                    "kind": "initiative",
-                    "title": "每月补辽饷但没有月度动作",
-                    "stop_condition": {"army.guanning.arrears": "<=0"},
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "每月补辽饷但没有月度动作") is None
-
-
-def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:empty-shell-monthly-action",
-                    "kind": "initiative",
-                    "title": "每月补辽饷但月度动作只是空壳",
-                    "ongoing_effects": {"economy": [], "metrics": {}},
-                    "stop_condition": {"army.guanning.arrears": "<=0"},
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "每月补辽饷但月度动作只是空壳") is None
-
-
-def test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:bad-monthly-army-create",
-                    "kind": "initiative",
-                    "title": "每月重复建军的错误承诺",
-                    "ongoing_effects": {
-                        "new_armies": [
-                            {"id": "bad_monthly_army", "name": "月度重复新军", "manpower": 1000}
-                        ]
-                    },
-                    "stop_condition": {"army.guanning.arrears": "<=0"},
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert _issue_by_title(db, "每月重复建军的错误承诺") is None
 
 
 def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
@@ -886,8 +646,6 @@ def test_stop_condition_without_commitment_kind_advance_to_full_stays_active(gam
     assert advanced["bar_value"] == 100
     assert advanced["status"] == "active"
     assert advanced["closed_turn"] is None
-
-
 
 
 def test_empty_json_stop_condition_allows_advance_to_resolved(game):

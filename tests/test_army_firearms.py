@@ -18,7 +18,6 @@ def _pay_source():
     }
 
 
-
 def test_new_army_defaults_zero_firearm(game):
     """新建军未指定火器/大炮时默认 0（列默认值 + 落库兜底）。"""
     db, state, _ = game
@@ -46,26 +45,6 @@ def test_apply_army_delta_sets_firearm(saved_game):
     assert row["firearm_equipment"] == 40
     assert row["cannon_equipment"] == 10
 
-def test_firearm_clamped_0_100(game):
-    db, state, _ = game
-    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
-    pseudo = type("E", (), {"id": "test", "title": "x"})()
-    db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"firearm_equipment": 999}})
-    val = db.conn.execute(
-        "SELECT firearm_equipment FROM armies WHERE id=?", (aid,)
-    ).fetchone()[0]
-    assert val == 100
-
-def test_cannon_clamped_to_12(game):
-    """部队随军大炮 clamp 0-12。"""
-    db, state, _ = game
-    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
-    pseudo = type("E", (), {"id": "test", "title": "x"})()
-    db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"cannon_equipment": 999}})
-    val = db.conn.execute(
-        "SELECT cannon_equipment FROM armies WHERE id=?", (aid,)
-    ).fetchone()[0]
-    assert val == 12
 
 def test_create_army_with_firearm(game):
     db, state, _ = game

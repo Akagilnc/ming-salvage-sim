@@ -117,35 +117,26 @@ def _snapshot(db, fields=DENY_SNAPSHOT_FIELDS):
     return {f: row[f] for f in fields}
 
 
-def test_latched_denies_dispatch_armament_status_and_positive_manpower(game):
+@pytest.mark.parametrize("delta, arrears, fields", [
+    ({'station': '新驻地', 'commander': '新统帅', 'status': '已整编', 'equipment': 5, 'firearm_equipment': 5, 'cannon_equipment': 1, 'training': 5, 'troop_type': '新兵种', 'morale': 5, 'supply': 5, 'manpower': 100}, 5, DENY_SNAPSHOT_FIELDS),
+    *[pytest.param(case.values[0], 0, PAY_SOURCE_DENY_FIELDS, marks=case.marks, id=case.id)
+      for case in PAY_SOURCE_LEGAL_DELTAS],
+])
+def test_latched_denies_dispatch_armament_status_and_positive_manpower(game, delta, arrears, fields):
     db, state, _ = game
     _configure(db)
-    _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1)
-    before = _snapshot(db)
+    _set(db, loyalty=30, arrears=arrears, latched=1, mutiny_count=1)
+    before = _snapshot(db, fields)
 
     db.apply_army_deltas(
         state,
         _event(),
         None,
         "测试",
-        {
-            ARMY: {
-                "station": "新驻地",
-                "commander": "新统帅",
-                "status": "已整编",
-                "equipment": 5,
-                "firearm_equipment": 5,
-                "cannon_equipment": 1,
-                "training": 5,
-                "troop_type": "新兵种",
-                "morale": 5,
-                "supply": 5,
-                "manpower": 100,
-            }
-        },
+        {ARMY: delta},
     )
 
-    after = _snapshot(db)
+    after = _snapshot(db, fields)
     assert after == before
 
 
@@ -294,7 +285,8 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
     assert _row(db, "loyalty")["loyalty"] == before_loyalty
 
 
-def test_latched_mixed_item_allows_and_denies_per_field(game):
+@pytest.mark.parametrize('delta', [{"manpower": -100, "station": "新驻地", "status": "已整编", "loyalty": 5}, {"兵力": -100, "驻地": "新驻地", "状态": "已整编", "军心": 5}])
+def test_latched_mixed_item_allows_and_denies_per_field(game, delta):
     db, state, _ = game
     _configure(db)
     _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
@@ -306,43 +298,7 @@ def test_latched_mixed_item_allows_and_denies_per_field(game):
         _event(),
         None,
         "测试",
-        {
-            ARMY: {
-                "manpower": -100,
-                "station": "新驻地",
-                "status": "已整编",
-                "loyalty": 5,
-            }
-        },
-    )
-
-    after = _row(db, "station", "status", "manpower", "loyalty")
-    assert after["manpower"] == before["manpower"] - 100
-    assert after["loyalty"] == before["loyalty"] + 5
-    assert after["station"] == before["station"]
-    assert after["status"] == before["status"]
-
-
-def test_latched_chinese_aliases_same_rules(game):
-    db, state, _ = game
-    _configure(db)
-    _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
-    )
-    before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
-
-    db.apply_army_deltas(
-        state,
-        _event(),
-        None,
-        "测试",
-        {
-            ARMY: {
-                "兵力": -100,
-                "驻地": "新驻地",
-                "状态": "已整编",
-                "军心": 5,
-            }
-        },
+        {ARMY: delta},
     )
 
     after = _row(db, "station", "status", "manpower", "loyalty")
@@ -456,30 +412,12 @@ def test_apply_score_extraction_respects_latched_field_gate(game):
     assert after["status"] == before["status"]
 
 
-@pytest.mark.parametrize("pay_delta", PAY_SOURCE_LEGAL_DELTAS)
-def test_latched_cutover_denies_pay_source_fields(game, pay_delta):
-    """现役 hub：latched 军各组合法饷源输入一律静默 no-op（写缝入口复用 latch 门）。"""
-    db, state, _ = game
-    _configure(db)
-    # arrears=0：各组输入在无 latch 门时均可真实落库，避免校验假绿
-    _set(db, loyalty=30, arrears=0, latched=1, mutiny_count=1)
-    before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
-
-    db.apply_army_deltas(
-        state, _event(), None, "测试", {ARMY: dict(pay_delta)}
-    )
-
-    after = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
-    assert after == before
-
-
-def test_latched_cutover_rejects_invalid_pay_source_share(game):
-    """现役 hub + latched：畸形 share 须 invalid_enum 拒收留痕，不得被 latch 静默吞没。"""
+@pytest.mark.parametrize('bad', [{"province_pay_share": 0.3, "central_pay_share": 0.3}, {"pay_source_region": "no_such_region_319"}])
+def test_latched_cutover_rejects_invalid_pay_source_share(game, bad):
     db, state, _ = game
     _configure(db)
     _set(db, loyalty=30, arrears=0, latched=1, mutiny_count=1)
     before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
-    bad = {"province_pay_share": 0.3, "central_pay_share": 0.3}
 
     changes = db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: dict(bad)}
@@ -490,26 +428,6 @@ def test_latched_cutover_rejects_invalid_pay_source_share(game):
         if c.get("rejected") and c.get("category") == "invalid_enum"
     ]
     assert rejected, f"畸形 share 应 invalid_enum 拒收：{changes}"
-    assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
-
-
-def test_latched_cutover_rejects_unknown_pay_source_region(game):
-    """现役 hub + latched：不存在 region 须 invalid_enum 拒收留痕，快照不变。"""
-    db, state, _ = game
-    _configure(db)
-    _set(db, loyalty=30, arrears=0, latched=1, mutiny_count=1)
-    before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
-    bad = {"pay_source_region": "no_such_region_319"}
-
-    changes = db.apply_army_deltas(
-        state, _event(), None, "测试", {ARMY: dict(bad)}
-    )
-
-    rejected = [
-        c for c in changes
-        if c.get("rejected") and c.get("category") == "invalid_enum"
-    ]
-    assert rejected, f"不存在 region 应 invalid_enum 拒收：{changes}"
     assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
 
 

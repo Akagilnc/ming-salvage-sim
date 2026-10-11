@@ -13,6 +13,8 @@ oracle：army_loyalty_tick_delta 分档 + hub 路真实落库接线。
 
 from __future__ import annotations
 
+import pytest
+
 
 from ming_sim.flows import apply_fixed_period_flows
 
@@ -52,8 +54,6 @@ def _run_months(db, state, months, *, fund_fully=True):
         apply_fixed_period_flows(db, state)
 
 
-
-
 def test_substrate_hub_path_loyalty_tier(game):
     # substrate_hub 路：欠 ≥3 月结算后 -5，且同事务写 army_logs loyalty 行。
     db, state, _ = game
@@ -72,22 +72,21 @@ def test_substrate_hub_path_loyalty_tier(game):
     assert log is not None and int(log["delta"]) == -5, "hub 路同事务写 loyalty 日志"
 
 
-def test_substrate_hub_pure_province_source_loyalty_regression(game):
-    """纯省源 1.0/0.0 — hub 路仍按合计欠饷分档动 loyalty。"""
+@pytest.mark.parametrize('aid, region, province_share, central_share', [("fujian_navy", "fujian", 1.0, 0.0), ("xuan_da", "shanxi", 0.55, 0.45)])
+def test_substrate_hub_pure_province_source_loyalty_regression(game, aid, region, province_share, central_share):
     db, state, _ = game
-    aid = "fujian_navy"  # 种子纯省源 fujian 1.0/0.0
     _silence_other_armies(db, keep=(aid,))
     db.conn.execute(
         """
         UPDATE armies
         SET owner_power='ming', is_tusi=0, self_funded_pay=0,
             manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
-            province_pay_share=1.0, central_pay_share=0.0,
-            pay_source_region='fujian',
+            province_pay_share=?, central_pay_share=?,
+            pay_source_region=?,
             province_pay_arrears=3.0, central_pay_arrears=0
         WHERE id=?
         """,
-        (aid,),
+        (province_share, central_share, region, aid),
     )
     db.conn.commit()
     db.conn.execute("DELETE FROM army_logs WHERE army_id=?", (aid,))
@@ -95,37 +94,6 @@ def test_substrate_hub_pure_province_source_loyalty_regression(game):
     state.metrics["国库"] = 10 ** 9
     apply_fixed_period_flows(db, state)
     assert _loyalty_of(db, aid) == 45, "纯省源欠 3 月结算后 loyalty 应 -5"
-    logs = db.conn.execute(
-        "SELECT delta, reason FROM army_logs WHERE army_id=? AND field='loyalty' ORDER BY id",
-        (aid,),
-    ).fetchall()
-    assert len(logs) == 1, f"忠诚日志应仅一条，实得 {len(logs)}"
-    assert int(logs[0]["delta"]) == -5
-
-
-def test_substrate_hub_hybrid_source_loyalty_regression(game):
-    """混合 0.55/0.45 — hub 路按合计欠饷分档。"""
-    db, state, _ = game
-    aid = "xuan_da"  # 种子混合 shanxi 0.55/0.45
-    _silence_other_armies(db, keep=(aid,))
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-            manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
-            province_pay_share=0.55, central_pay_share=0.45,
-            pay_source_region='shanxi',
-            province_pay_arrears=3.0, central_pay_arrears=0
-        WHERE id=?
-        """,
-        (aid,),
-    )
-    db.conn.commit()
-    db.conn.execute("DELETE FROM army_logs WHERE army_id=?", (aid,))
-    db.conn.commit()
-    state.metrics["国库"] = 10 ** 9
-    apply_fixed_period_flows(db, state)
-    assert _loyalty_of(db, aid) == 45, "混合省源欠 3 月结算后 loyalty 应 -5"
     logs = db.conn.execute(
         "SELECT delta, reason FROM army_logs WHERE army_id=? AND field='loyalty' ORDER BY id",
         (aid,),

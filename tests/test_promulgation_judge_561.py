@@ -151,8 +151,16 @@ def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
     with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts({"verdicts": []}, [], db)
 
-@pytest.mark.parametrize("decision", ["promulgated", "rejected"])
-def test_promulgation_verdict_rejects_unknown_fields(game, decision):
+@pytest.mark.parametrize("decision, field, value, snapshot, midzhi", [
+    ('promulgated', 'foo', 'bar', False, False),
+    ('rejected', 'foo', 'bar', False, False),
+    ('rejected', 'imperial_authority_band', '极弱', True, False),
+    ('rejected', 'appointment_tenure', '署理', True, False),
+    ('rejected', 'authorization_ids', ['forged-auth'], True, False),
+    ('rejected', 'endorsement_entry_ids', [1], True, False),
+    ('rejected', None, None, False, True),
+])
+def test_promulgation_verdict_rejects_unknown_fields(game, decision, field, value, snapshot, midzhi):
     db, state, _content = game
     dossier_id = _dossier(db, state)
     dossiers = db.dossiers.list_dossiers(status="proposed")
@@ -160,14 +168,13 @@ def test_promulgation_verdict_rejects_unknown_fields(game, decision):
     verdict = (
         {"dossier_id": dossier_id, "decision": "promulgated"}
         if decision == "promulgated"
-        else _rejected_verdict(dossier_id, context["imperial_authority_band"])
+        else _rejected_verdict(dossier_id, context["imperial_authority_band"], midzhi=midzhi)
     )
-    verdict["foo"] = "bar"
-
+    if field is not None:
+        target = verdict["criteria_snapshot"] if snapshot else verdict
+        target[field] = value
     with pytest.raises(decree_mod.LLMContractError):
-        decree_mod.validate_promulgation_verdicts(
-            [verdict], dossiers, db, prepared_context=context,
-        )
+        decree_mod.validate_promulgation_verdicts([verdict], dossiers, db, prepared_context=context)
 
 def test_promulgated_verdict_strips_rejection_only_noise(game):
     """#1397：顺颁夹带打回专属字段 → 剥离后过闸，不卡 settling。
@@ -547,29 +554,6 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
     assert calls[0][1] == "promulgation-judge"
     assert [row["id"] for row in calls[0][0]["dossiers"]] == [first, second]
 
-@pytest.mark.parametrize(
-    ("snapshot_key", "forged"),
-    [
-        ("imperial_authority_band", "极弱"),
-        ("appointment_tenure", "署理"),
-        ("authorization_ids", ["forged-auth"]),
-        ("endorsement_entry_ids", [1]),
-    ],
-)
-def test_rejected_snapshot_must_equal_the_prepared_judge_input(
-    game, snapshot_key, forged,
-):
-    db, state, _content = game
-    dossier_id = _dossier(db, state)
-    dossiers = db.dossiers.list_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
-    verdict["criteria_snapshot"][snapshot_key] = forged
-
-    with pytest.raises(decree_mod.LLMContractError):
-        decree_mod.validate_promulgation_verdicts(
-            [verdict], dossiers, db, prepared_context=context,
-        )
 
 def test_appointment_tenure_is_the_rejection_snapshot_value(game):
     db, state, _content = game
@@ -603,19 +587,6 @@ def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
             [verdict], dossiers, db, prepared_context=context,
         )
 
-def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
-    db, state, _content = game
-    dossier_id = _dossier(db, state)
-    dossiers = db.dossiers.list_dossiers(status="proposed")
-    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
-    verdict = _rejected_verdict(
-        dossier_id, context["imperial_authority_band"], midzhi=True,
-    )
-
-    with pytest.raises(decree_mod.LLMContractError):
-        decree_mod.validate_promulgation_verdicts(
-            [verdict], dossiers, db, prepared_context=context,
-        )
 
 @pytest.mark.parametrize(
     ("action_type", "mode"),

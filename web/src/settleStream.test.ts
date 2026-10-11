@@ -21,23 +21,18 @@ function streamResponse(chunks: string[], ok = true): Response {
 const silent = {};
 
 describe("consumeSettleStream residual flush", () => {
-  it("parses a terminal done left in buffer without trailing blank line", async () => {
-    for (const suffix of ["", "\n\n"]) {
-      const outcome = await consumeSettleStream(
-        streamResponse(['event: done\ndata: {"ok":true}' + suffix]),
-        silent,
-      );
-      expect(outcome).toEqual({ kind: "done", data: { ok: true } });
-    }
-  });
-
-  it("parses a terminal decisions left in buffer without trailing blank line", async () => {
+  it.each([
+    { event: "done", data: { ok: true }, suffix: "" },
+    { event: "done", data: { ok: true }, suffix: "\n\n" },
+    { event: "decisions", data: { items: [1] }, suffix: "" },
+  ])("parses terminal $event with suffix '$suffix'", async ({ event, data, suffix }) => {
     const outcome = await consumeSettleStream(
-      streamResponse(['event: decisions\ndata: {"items":[1]}']),
+      streamResponse([`event: ${event}\ndata: ${JSON.stringify(data)}${suffix}`]),
       silent,
     );
-    expect(outcome).toEqual({ kind: "decisions", data: { items: [1] } });
+    expect(outcome).toEqual({ kind: event, data });
   });
+
 
   it("still returns interrupted for empty/incomplete tails", async () => {
     const outcome = await consumeSettleStream(

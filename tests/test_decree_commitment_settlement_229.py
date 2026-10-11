@@ -77,11 +77,6 @@ def _advance_player_month(db, state, content):
 _settle_empty_month = _advance_player_month
 
 
-
-
-
-
-
 def test_faction_class_commitment_ongoing_applies_monthly_when_counted(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -222,14 +217,6 @@ def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
     assert payload["commitment_progress"]["months_elapsed"] == 1
 
 
-
-
-
-
-
-
-
-
 def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -264,12 +251,13 @@ def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
     assert paid == -50
 
 
-def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
+@pytest.mark.parametrize('debts, payment, condition', [({"guanning": 70, "xuan_da": 40}, -30, "army.xuan_da.arrears"), ({"guanning": 100, "xuan_da": 100}, -50, "army.guanning|xuan_da.arrears.sum")])
+def test_arrears_commitment_preserves_explicit_monthly_payment_target(game, debts, payment, condition):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
-    _seed_central_army_arrears(db, {"guanning": 70, "xuan_da": 40})
+    _seed_central_army_arrears(db, debts)
     state.metrics["国库"] = 500
     db.reign.save_game_state(state)
 
@@ -285,7 +273,7 @@ def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
             "economy": [
                 {
                     "account": "国库",
-                    "delta": -30,
+                    "delta": payment,
                     "reason": "每月定向补宣大旧欠",
                     "purpose": "补饷",
                     "target_kind": "army",
@@ -293,7 +281,7 @@ def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
                 }
             ]
         },
-        stop_condition=json.dumps({"army.xuan_da.arrears": "<=0"}, ensure_ascii=False),
+        stop_condition=json.dumps({condition: "<=0"}, ensure_ascii=False),
         commitment_kind="until_stop",
     )
 
@@ -302,9 +290,7 @@ def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
     assert [tuple(row) for row in db.conn.execute(
         "SELECT target_id, delta FROM economy_ledger "
         "WHERE purpose='补饷' AND target_kind='army' ORDER BY id"
-    )] == [("xuan_da", -30)]
-
-
+    )] == [("xuan_da", payment)]
 
 
 def test_metric_commitment_records_progress_when_monthly_cap_blocks_effect(game):
@@ -351,14 +337,6 @@ def test_metric_commitment_records_progress_when_monthly_cap_blocks_effect(game)
     assert payload["commitment_progress"]["months_elapsed"] == 1
 
 
-
-
-
-
-
-
-
-
 def test_commitment_missing_purpose_still_routes_arrears_budget(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -399,47 +377,6 @@ def test_commitment_missing_purpose_still_routes_arrears_budget(game):
         "SELECT COALESCE(SUM(delta),0) FROM economy_ledger "
         "WHERE purpose='补饷' AND target_kind='army'"
     ).fetchone()[0] == -50
-
-
-def test_commitment_targeted_pay_uses_explicit_arrears_target(game):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
-    _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100})
-    state.metrics["国库"] = 500
-    db.reign.save_game_state(state)
-
-    db.insert_issue(
-        state,
-        kind="initiative",
-        title="带目标的补饷承诺按目标军兑现",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:targeted-pay",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={
-            "economy": [
-                {
-                    "account": "国库",
-                    "delta": -50,
-                    "reason": "定向补宣大旧欠",
-                    "purpose": "补饷",
-                    "target_kind": "army",
-                    "target_id": "xuan_da",
-                }
-            ]
-        },
-        stop_condition=json.dumps({"army.guanning|xuan_da.arrears.sum": "<=0"}, ensure_ascii=False),
-        commitment_kind="until_stop",
-    )
-
-    _advance_player_month(db, state, content)
-
-    assert [tuple(row) for row in db.conn.execute(
-        "SELECT target_id, delta FROM economy_ledger "
-        "WHERE purpose='补饷' AND target_kind='army' ORDER BY id"
-    )] == [("xuan_da", -50)]
 
 
 def test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool(game):

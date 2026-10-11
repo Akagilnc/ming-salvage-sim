@@ -200,24 +200,21 @@ def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeyp
     assert item == {"power_id": "查无此势力", "changes": {"leverage": 5}}  # 原件
 
 
-def test_person_change_rejection_item_json_keeps_original_delta_item(game, monkeypatch, tmp_path):
-    """人物变更拒收也必须把原始条目带进 rejection_reports，不能只存截断 wrapper。"""
+@pytest.mark.parametrize("action", ["travel", "power_move"])
+def test_person_change_rejection_item_json_keeps_original_delta_item(game, monkeypatch, tmp_path, action):
     import json as _json
-
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
-    raw_item = {"name": "孔有德", "动作": "行止", "location": "辽东"}
-
-    run_settle(
-        db,
-        state,
-        content,
-        {"人物变更": [raw_item]},
-        narrative="x",
-        decree_text="y",
+    raw_item = (
+        {"name": "孔有德", "动作": "行止", "location": "辽东"}
+        if action == "travel" else {
+            "name": active_ming_character(db, content), "动作": "易主",
+            "new_power": "ghost_power", "方式": "主动投敌", "反噬": {},
+            "reason": "测试非法势力",
+        }
     )
-
+    run_settle(db, state, content, {"人物变更": [raw_item]}, narrative="x", decree_text="y")
     row = db.conn.execute(
         "SELECT item_json FROM rejection_reports WHERE turn=? AND section='applied_person_changes'",
         (turn,),
@@ -228,75 +225,11 @@ def test_person_change_rejection_item_json_keeps_original_delta_item(game, monke
     assert item == raw_item
 
 
-def test_power_move_rejection_item_json_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
-    """易主委托底层 power helper 后的拒收,也要保留完整 ADR0009 原始条目。"""
-    import json as _json
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    name = active_ming_character(db, content)
-    raw_item = {
-        "name": name,
-        "动作": "易主",
-        "new_power": "ghost_power",
-        "方式": "主动投敌",
-        "反噬": {},
-        "reason": "测试非法势力",
-    }
-
-    run_settle(
-        db,
-        state,
-        content,
-        {"人物变更": [raw_item]},
-        narrative="x",
-        decree_text="y",
-    )
-
-    row = db.conn.execute(
-        "SELECT item_json FROM rejection_reports WHERE turn=? AND section='applied_person_changes'",
-        (turn,),
-    ).fetchone()
-    assert row is not None
-    item = _json.loads(row[0])
-    assert "rejected" not in item
-    assert item == raw_item
-
-
-def test_office_change_rejection_item_json_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
-    """任命/调任委托任官 helper 后的拒收,也要保留完整 ADR0009 原始条目。"""
-    import json as _json
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    name = active_ming_character(db, content)
-    raw_item = {"name": name, "动作": "任命", "reason": "漏填官职"}
-
-    run_settle(
-        db,
-        state,
-        content,
-        {"人物变更": [raw_item]},
-        narrative="x",
-        decree_text="y",
-    )
-
-    row = db.conn.execute(
-        "SELECT category, item_json FROM rejection_reports "
-        "WHERE turn=? AND section='applied_person_changes'",
-        (turn,),
-    ).fetchone()
-    assert row is not None
-    assert row["category"] == "missing_field"
-    item = _json.loads(row["item_json"])
-    assert "rejected" not in item
-    assert item == raw_item
-
-
-def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
-    """非明人物任大明官被拒时,也要保留完整 ADR0009 原始条目。"""
+@pytest.mark.parametrize("power, fields, category", [
+    ("ming", {"reason": "漏填官职"}, "missing_field"),
+    ("houjin", {"office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "测试错授外臣"}, "invalid_transition"),
+])
+def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, monkeypatch, tmp_path, power, fields, category):
     import json as _json
 
     db, state, content = game
@@ -305,11 +238,11 @@ def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, m
     name = active_ming_character(db, content)
     ch = content.characters[name]
     old_power = ch.power_id
-    raw_item = {"name": name, "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "测试错授外臣"}
+    raw_item = {"name": name, "动作": "任命", **fields}
 
     try:
-        ch.power_id = "houjin"
-        db.conn.execute("UPDATE characters SET power_id=? WHERE name=?", ("houjin", name))
+        ch.power_id = power
+        db.conn.execute("UPDATE characters SET power_id=? WHERE name=?", (power, name))
         db.conn.commit()
 
         run_settle(
@@ -327,7 +260,7 @@ def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, m
             (turn,),
         ).fetchone()
         assert row is not None
-        assert row["category"] == "invalid_transition"
+        assert row["category"] == category
         item = _json.loads(row["item_json"])
         assert "rejected" not in item
         assert item == raw_item

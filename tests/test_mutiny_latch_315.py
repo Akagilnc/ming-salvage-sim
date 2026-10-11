@@ -86,18 +86,12 @@ def test_mutiny_stays_latched_while_loyalty_recovers_below_40(game):
     ]
 
 
-def test_mutiny_exits_at_40_only_when_arrears_have_retired(game):
+@pytest.mark.parametrize('loyalty, arrears, expected', [(35, 0, (40, 0, "不满")), (45, 5, (40, 1, "哗变"))])
+def test_mutiny_exits_at_40_only_when_arrears_have_retired(game, loyalty, arrears, expected):
     db, state, _ = game
-    _setup(db, loyalty=35, arrears=0, latched=1)
+    _setup(db, loyalty=loyalty, arrears=arrears, latched=1)
 
-    assert _tick(db, state)[:3] == (40, 0, "不满")
-
-
-def test_raised_loyalty_alone_does_not_release_latch(game):
-    db, state, _ = game
-    _setup(db, loyalty=45, arrears=5, latched=1)
-
-    assert _tick(db, state)[:3] == (40, 1, "哗变")
+    assert _tick(db, state)[:3] == expected
 
 
 @pytest.mark.parametrize(
@@ -130,19 +124,9 @@ def test_mutiny_latch_enters_only_beyond_four_months_arrears(game):
     assert _tick(db, state)[1] == 1
 
 
-def test_mutiny_latch_exits_only_within_four_months_arrears(game):
-    """解闩侧：欠饷退到四月内即解闩，逾四月仍闩——经真实 tick 落库断言。"""
+@pytest.mark.parametrize('arrears, expected_latch', [(4.0, 0), (math.nextafter(4.0, math.inf), 1)])
+def test_mutiny_latch_exits_only_within_four_months_arrears(game, arrears, expected_latch):
     db, state, _ = game
-    four_months = 4.0
 
-    _setup(db, loyalty=45, arrears=four_months, latched=1)
-    assert _tick(db, state)[1] == 0
-
-
-def test_mutiny_latch_holds_beyond_four_months_arrears(game):
-    """解闩侧负例：已闩军欠饷逾四月，即便 loyalty 回到 40 也不解闩。"""
-    db, state, _ = game
-    four_months = 4.0
-
-    _setup(db, loyalty=45, arrears=math.nextafter(four_months, math.inf), latched=1)
-    assert _tick(db, state)[1] == 1
+    _setup(db, loyalty=45, arrears=arrears, latched=1)
+    assert _tick(db, state)[1] == expected_latch

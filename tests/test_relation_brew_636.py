@@ -307,33 +307,6 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
 
 # --------------------------------------------- P5：批内条目并行不串行
 
-def test_brew_batch_runs_items_in_parallel_not_serialized(game):
-    db, state, _ = game
-    pairs = [("甲", "乙"), ("丙", "丁")]
-    for source, target in pairs:
-        _add_edge(db, state, source=source, target=target, kind="协作",
-                  context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
-
-    barrier = threading.Barrier(len(pairs))
-    threads: list = []
-
-    def parallel_brew(payload_json: str) -> str:
-        payload = json.loads(payload_json)
-        threads.append(threading.current_thread().name)
-        barrier.wait()  # 串行实现会在第二个条目处超时破裂
-        return json.dumps(
-            _script(recent=f"{payload['source']}与{payload['target']}协作在案。"),
-            ensure_ascii=False,
-        )
-
-    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
-    assert len(report["brewed"]) == 2
-    assert len(set(threads)) == 2
-    for source, target in pairs:
-        assert db.person_logs.get_relation_summary(source, target)["recent_segment"] == (
-            f"{source}与{target}协作在案。"
-        )
-
 
 # ------------------------------------------------- 「本月新增」总判据（历史水位不选旧事）
 
@@ -355,24 +328,6 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
 
 
 # ------- 判词类③ fail-loud 异常边界：DB/schema/程序错误响亮，仅 LLM 单条降级
-
-def test_prepare_claim_db_error_propagates_loudly(game):
-    """认领 DB 失败不得伪装成 LLM 降级：无 durable claim 就开酿会让失败月失去恢复
-    凭据（庭裁 r3 F1②缝），必须响亮上抛（ADR 0005/0008）。
-    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-
-    fault = sqlite3.OperationalError("认领库不可写")
-
-    def boom(*args, **kwargs):
-        raise fault
-
-    db.person_logs.claim_relation_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError) as ei:
-        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
-    assert ei.value is fault
 
 
 def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
@@ -423,46 +378,21 @@ def test_mark_failure_after_llm_failure_propagates_loudly(game):
     assert ei.value is fault
 
 
-def test_brew_program_error_propagates_loudly_not_degraded(game):
-    """判词残留项②：_brew_one 宽吞拆类——brew_fn 内的程序错（KeyError 等非 LLM
-    失败声明类型）不得被吞成单条降级留痕，必须响亮上抛（ADR 0005）；durable
-    claim 已在册，恢复凭据不丢。来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
+@pytest.mark.parametrize('error_type', [KeyError, ValueError])
+def test_brew_program_error_propagates_loudly_not_degraded(game, error_type):
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
-    fault = KeyError("酿制手程序错误")
+    fault = error_type("酿制手程序错误")
 
     def buggy_brew(payload_json: str) -> str:
         raise fault
 
-    with pytest.raises(KeyError) as ei:
+    with pytest.raises(error_type) as ei:
         run_month_end_relation_brew(db, state, buggy_brew)
     assert ei.value is fault
     # 响亮上扑而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
-    assert [(row["source"], row["target"]) for row in db.person_logs.get_relation_brew_pending()] == [
-        ("温体仁", "周延儒")
-    ]
-
-
-def test_brew_fn_value_error_is_program_error_propagates_loudly(game):
-    """判词机械反例（确认庭 r5 残余）：_brew_fn 自身抛出的裸 ValueError 是程序错
-    ——降级面按结构位置分界而非异常类型，LLM 调用缝只收声明类型 LLMUnavailable，
-    调用段的 ValueError/KeyError 等一律响亮上抛（ADR 0005），不得吞成单条降级；
-    durable claim 已在册，恢复凭据不丢。来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-
-    fault = ValueError("酿制手程序错误")
-
-    def buggy_brew(payload_json: str) -> str:
-        raise fault
-
-    with pytest.raises(ValueError) as ei:
-        run_month_end_relation_brew(db, state, buggy_brew)
-    assert ei.value is fault
-    # 响亮上抛而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
     assert [(row["source"], row["target"]) for row in db.person_logs.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")
     ]

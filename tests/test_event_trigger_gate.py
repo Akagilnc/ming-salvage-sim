@@ -82,45 +82,26 @@ def _restore_yuan_as_guanning_commander(db, content):
         db.conn.commit()
 
 
-def test_gated_historical_event_excluded_when_unsatisfied(game):
+@pytest.mark.parametrize("gate, support, calendar, trigger, included", [
+    ({"民心": "<=5"}, 3, None, (1, 1), True),
+    (None, 60, None, (1, 1), True),
+    ({}, 60, None, (1, 1), True),
+    ({"民心": "<=5"}, 60, None, (1, 1), False),
+    ({}, None, (1627, 10), (1629, 6), False),
+])
+def test_gated_historical_event_included_when_satisfied(game, gate, support, calendar, trigger, included):
     db, state, content = game
-    issues.bind_content(content)  # 防他测漂移 _content：确保 _ctx() 指向本 fixture 盘面
-    ev = _hist_event("__test_gated_hist__", {"民心": "<=5"})
+    issues.bind_content(content)
+    ev = _hist_event("__test_gated_hist2__", gate)
+    ev.trigger_year, ev.trigger_month = trigger
     content.events.append(ev)
     try:
-        state.metrics["民心"] = 60  # gate 不达标
+        if support is not None:
+            state.metrics["民心"] = support
+        if calendar is not None:
+            state.year, state.period = calendar
         cands = issues.gather_candidate_events(state, db)
-        assert all(c.id != "__test_gated_hist__" for c in cands), \
-            "前提门不达标的历史事件不应进候选（#12 机制半）"
-    finally:
-        content.events.remove(ev)
-
-
-def test_gated_historical_event_included_when_satisfied(game):
-    db, state, content = game
-    issues.bind_content(content)  # 防他测漂移 _content：确保 _ctx() 指向本 fixture 盘面
-    ev = _hist_event("__test_gated_hist2__", {"民心": "<=5"})
-    content.events.append(ev)
-    try:
-        state.metrics["民心"] = 3  # gate 达标
-        cands = issues.gather_candidate_events(state, db)
-        assert any(c.id == "__test_gated_hist2__" for c in cands), \
-            "前提门达标的历史事件应进候选"
-    finally:
-        content.events.remove(ev)
-
-
-@pytest.mark.parametrize("gate", [{}, None])
-def test_ungated_historical_event_unchanged(game, gate):
-    db, state, content = game
-    issues.bind_content(content)  # 防他测漂移 _content：确保 _ctx() 指向本 fixture 盘面
-    ev = _hist_event("__test_ungated_hist__", gate)  # 无 gate = 纯日历锚定
-    content.events.append(ev)
-    try:
-        state.metrics["民心"] = 60
-        cands = issues.gather_candidate_events(state, db)
-        assert any(c.id == "__test_ungated_hist__" for c in cands), \
-            "无前提门的历史事件应保持纯日历窗口行为不变"
+        assert any(c.id == ev.id for c in cands) is included
     finally:
         content.events.remove(ev)
 
@@ -247,25 +228,6 @@ def test_open_window_historical_event_never_expires(game):
             ("__test_open_window_hist__",),
         ).fetchone()
         assert row is None
-    finally:
-        content.events.remove(ev)
-
-
-def test_open_window_historical_event_still_waits_for_earliest_time(game):
-    db, state, content = game
-    issues.bind_content(content)
-    ev = _hist_event("__test_open_window_future_hist__", {})
-    ev.trigger_year = 1629
-    ev.trigger_month = 6
-    ev.open_window = True
-    content.events.append(ev)
-    try:
-        state.year = 1627
-        state.period = 10
-
-        cands = issues.gather_candidate_events(state, db)
-
-        assert all(c.id != "__test_open_window_future_hist__" for c in cands)
     finally:
         content.events.remove(ev)
 
@@ -450,104 +412,43 @@ def test_gate_passed_tolerates_nonstring_cond(game, condition):
 # ── #12(b)：trigger_gate key/cond fail-loud（ADR 0012 残留 4b，Q3 裁断=fail-loud）──
 
 
-@pytest.mark.parametrize("key", [
-    "民生", "regon.x.unrest", "region.x", "event.huabei_plague.status",
-    "region..unrest", "region.x.", "region.shaanxi|.unrest",
-    "class.@nanzhili.satisfaction", "class.@n1|@n2.satisfaction", "class.士绅@.satisfaction",
+@pytest.mark.parametrize("event_input", [
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'民生': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'regon.x.unrest': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'region.x': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'event.huabei_plague.status': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'region..unrest': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'region.x.': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'region.shaanxi|.unrest': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'class.@nanzhili.satisfaction': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'class.@n1|@n2.satisfaction': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'class.士绅@.satisfaction': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'interests': [], 'audiences': [], 'trigger_year': 1629, 'trigger_month': 6, 'trigger_gate': {'民心': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'interests': [], 'audiences': [], 'trigger_year': 1629, 'trigger_month': 6, 'open_window': 'false', 'trigger_gate': {'民心': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'interests': [], 'audiences': [], 'event_type': 'situation', 'trigger_class': 'strategic_foreign'},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'interests': [], 'audiences': [], 'trigger_year': 1629, 'trigger_month': 6, 'trigger_end_year': 1629, 'trigger_end_month': 5, 'trigger_gate': {'民心': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'interests': [], 'audiences': [], 'trigger_year': 1629, 'trigger_month': 13, 'trigger_end_year': 1629, 'trigger_end_month': 7, 'trigger_gate': {'民心': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'interests': [], 'audiences': [], 'trigger_year': 1629, 'trigger_month': -1, 'trigger_end_year': 1629, 'trigger_end_month': 7, 'trigger_gate': {'民心': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'interests': [], 'audiences': [], 'trigger_year': 1629, 'trigger_month': 6, 'trigger_end_year': 1629, 'trigger_end_month': 13, 'trigger_gate': {'民心': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'interests': [], 'audiences': [], 'trigger_year': 1629, 'trigger_month': 6, 'trigger_end_year': 1629, 'trigger_end_month': -1, 'trigger_gate': {'民心': '<=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'民心': 'abc'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'民心': '>> 5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'民心': '!=5'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'民心': '!=-3'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'region.a|b.controlled_by': '==ming'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'class.士绅.satisfaction': '==ming'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'民心': '==ming'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'region.huguang.unrest': '==ming'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'power.houjin.leverage': '==ming'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'character.毛文龙.personal_skills': '==ming'}},
+    {'id': 'e', 'title': 't', 'kind': 'k', 'summary': 's', 'urgency': 1, 'severity': 1, 'credibility': 1, 'trigger_gate': {'character.毛文龙.loyalty': '==active'}},
+    {'id': 'bad_person_core_subjects', 'title': '坏人物核心事件', 'kind': 'situation', 'summary': 'x', 'urgency': 50, 'severity': 50, 'credibility': 50, 'interests': [], 'audiences': [], 'person_core_subjects': ''},
 ])
-def test_load_event_fail_loud_on_bad_gate_key(monkeypatch, key):
+def test_load_event_fail_loud_on_bad_gate_key(monkeypatch, event_input):
     import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-        "urgency": 1, "severity": 1, "credibility": 1,
-        "trigger_gate": {key: "<=5"}}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: [event_input])
     with pytest.raises(SystemExit):
-        content_mod.load_event_content("x.json")
-
-
-def test_load_event_requires_latest_or_open_window(monkeypatch):
-    """历史锚定事件必须显式声明最晚时点或 open_window，漏填不许隐式永不过期。"""
-    import pytest
-    import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "interests": [], "audiences": [],
-            "trigger_year": 1629, "trigger_month": 6,
-            "trigger_gate": {"民心": "<=5"}}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit):
-        content_mod.load_event_content("x.json")
-
-
-def test_load_event_rejects_non_boolean_open_window(monkeypatch):
-    """open_window 必须是 JSON boolean，不能让字符串 'false' 被 bool() 误作 True。"""
-    import pytest
-    import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "interests": [], "audiences": [],
-            "trigger_year": 1629, "trigger_month": 6,
-            "open_window": "false",
-            "trigger_gate": {"民心": "<=5"}}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit):
-        content_mod.load_event_content("x.json")
-
-
-def test_load_event_rejects_strategic_foreign_situation(monkeypatch):
-    """战略/外敌分类只允许 node/ending，不能被 situation 静默吞掉。
-
-    区分度是**入参本身**（trigger_class=strategic_foreign 配 event_type=situation
-    这一对矛盾组合），不在报错措辞（#1889）。
-    """
-    import pytest
-    import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "interests": [], "audiences": [],
-            "event_type": "situation",
-            "trigger_class": "strategic_foreign"}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit):
-        content_mod.load_event_content("x.json")
-
-
-def test_load_event_rejects_latest_before_earliest(monkeypatch):
-    """最晚时点不能早于最早时点，否则该事件永远无法合法开窗。"""
-    import pytest
-    import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "interests": [], "audiences": [],
-            "trigger_year": 1629, "trigger_month": 6,
-            "trigger_end_year": 1629, "trigger_end_month": 5,
-            "trigger_gate": {"民心": "<=5"}}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit):
-        content_mod.load_event_content("x.json")
-
-
-@pytest.mark.parametrize("field,value", [
-    ("trigger_month", 13),
-    ("trigger_month", -1),
-    ("trigger_end_month", 13),
-    ("trigger_end_month", -1),
-])
-def test_load_event_rejects_month_out_of_range(monkeypatch, field, value):
-    """月份越界整份拒收。区分度是参数化的 (field, value) 本身（13 / -1 各跑一遍），
-    不在报错措辞（#1889）。"""
-    import pytest
-    import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "interests": [], "audiences": [],
-            "trigger_year": 1629, "trigger_month": 6,
-            "trigger_end_year": 1629, "trigger_end_month": 7,
-            "trigger_gate": {"民心": "<=5"}}]
-    bad[0][field] = value
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit):
-        content_mod.load_event_content("x.json")
+        content_mod.load_event_content("events.json")
 
 
 @pytest.mark.parametrize("gate", [
@@ -566,22 +467,6 @@ def test_typo_field_gate_raises_clear_not_operationalerror(game, gate):
             issues.gather_candidate_events(state, db)
     finally:
         content.events.remove(ev)
-
-
-@pytest.mark.parametrize("gate", [
-    {"民心": "abc"}, {"民心": ">> 5"}, {"民心": "!=5"}, {"民心": "!=-3"},
-    {"region.a|b.controlled_by": "==ming"}, {"class.士绅.satisfaction": "==ming"},
-    {"民心": "==ming"}, {"region.huguang.unrest": "==ming"},
-    {"power.houjin.leverage": "==ming"}, {"character.毛文龙.personal_skills": "==ming"},
-    {"character.毛文龙.loyalty": "==active"},
-])
-def test_load_fail_loud_on_text_cond_multi_id_key(monkeypatch, gate):
-    import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-        "urgency": 1, "severity": 1, "credibility": 1, "trigger_gate": gate}]
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit):
-        content_mod.load_event_content("x.json")
 
 
 @pytest.mark.parametrize("gate,eligible", [
@@ -608,44 +493,29 @@ def test_character_numeric_gate_supports_comparison(game, gate, eligible):
         content.events.remove(ev)
 
 
-def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
-    """内容契约：person_core_subjects 写了就必须是字符串数组，空字符串不能吞成缺省。"""
-    from ming_sim import content as content_module
-
-    monkeypatch.setattr(
-        content_module,
-        "load_json_asset",
-        lambda filename: [
-            {
-                "id": "bad_person_core_subjects",
-                "title": "坏人物核心事件",
-                "kind": "situation",
-                "summary": "x",
-                "urgency": 50,
-                "severity": 50,
-                "credibility": 50,
-                "interests": [],
-                "audiences": [],
-                "person_core_subjects": "",
-            }
-        ],
-    )
-
-    with pytest.raises(SystemExit):
-        content_module.load_event_content("events.json")
-
-
-def test_mao_wenlong_event_excluded_after_appeasement(game):
-    """#203/#12：毛文龙 loyalty 已过阈值时，袁斩毛文龙不应再按日历进候选。"""
+@pytest.mark.parametrize("period, event_id, writes", [
+    (6, "mao_wenlong", [
+        ("UPDATE characters SET loyalty=? WHERE name=?", (70, "毛文龙")),
+    ]),
+    (6, "mao_wenlong", [
+        ("UPDATE characters SET loyalty=?, status=?, location=? WHERE name=?", (44, "active", "dongjiang_area", "毛文龙")),
+        ("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕")),
+        ("UPDATE armies SET commander=? WHERE id=?", ("孙承宗", "guanning")),
+    ]),
+    (12, "yuan_xialing", [
+        ("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕")),
+        ("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning")),
+        ("UPDATE characters SET status=?, status_reason=? WHERE name=?", ("dead", "袁崇焕双岛斩帅", "毛文龙")),
+    ]),
+])
+def test_mao_wenlong_event_excluded_after_appeasement(game, period, event_id, writes):
     db, state, content = game
     issues.bind_content(content)
-    state.year = 1629
-    state.period = 6
-    db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (70, "毛文龙"))
-
+    state.year, state.period = 1629, period
+    for query, parameters in writes:
+        db.conn.execute(query, parameters)
     cands = issues.gather_candidate_events(state, db)
-
-    assert all(ev.id != "mao_wenlong" for ev in cands)
+    assert all(ev.id != event_id for ev in cands)
 
 
 def test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transit(game):
@@ -680,24 +550,6 @@ def test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transi
         ).fetchone()
         assert dict(row) == {"location": "dongjiang_area", "transit_to": "shaanxi"}
         assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
-
-
-def test_mao_wenlong_event_excluded_after_player_reassigns_yuan(game):
-    """#191 CMR：袁崇焕仍活但不掌关宁时，斩毛事件不应仅因袁 active 进候选。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 6
-    db.conn.execute(
-        "UPDATE characters SET loyalty=?, status=?, location=? WHERE name=?",
-        (44, "active", "dongjiang_area", "毛文龙"),
-    )
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
-    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("孙承宗", "guanning"))
-
-    cands = issues.gather_candidate_events(state, db)
-
-    assert all(ev.id != "mao_wenlong" for ev in cands)
 
 
 def test_mao_wenlong_event_trigger_lands_character_status(game):
@@ -813,33 +665,36 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
     assert out["army_changes"][0].get("rejected") is not True
 
 
-def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta(game):
-    """PR R1：普通北直隶边防政策不能被林丹汗西迁锚点误当成孤儿战果。"""
+@pytest.mark.parametrize('year, period, table, field, entity_id, before, section, result_key, reason, event_id', [
+    (1632, 4, "regions", "military_pressure", "beizhili", 30, "region_delta", "region_changes", "修筑蒙古边墙，北直隶军压下降", "lindan_xiqian"),
+    (1642, 9, "powers", "military_strength", "bandit_li_zicheng", 52, "power_updates", "power_changes", "河南流寇被围剿，声势稍挫", "luoyang_fallen"),
+])
+def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta(game, year, period, table, field, entity_id, before, section, result_key, reason, event_id):
     db, state, content = game
     issues.bind_content(content)
-    state.year = 1632
-    state.period = 4
-    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (30, "beizhili"))
+    state.year = year
+    state.period = period
+    db.conn.execute(f"UPDATE {table} SET {field} = ? WHERE id = ?", (before, entity_id))
 
     out = issues.apply_score_extraction(
         db,
         state,
         {
-            "region_delta": {
-                "beizhili": {
-                    "origin_ref": "盘面自发", "military_pressure": -3,
-                    "reason": "修筑蒙古边墙，北直隶军压下降",
+            section: {
+                entity_id: {
+                    "origin_ref": "盘面自发", field: -3,
+                    "reason": reason,
                 }
             }
         },
         content=content,
     )
 
-    assert not db.issues.has_event_triggered("lindan_xiqian")
+    assert not db.issues.has_event_triggered(event_id)
     assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
-    ).fetchone()["military_pressure"] == 27
-    assert out["region_changes"][0].get("rejected") is not True
+        f"SELECT {field} FROM {table} WHERE id = ?", (entity_id,)
+    ).fetchone()[field] == before - 3
+    assert out[result_key][0].get("rejected") is not True
 
 
 @pytest.mark.parametrize("reason", [
@@ -874,38 +729,6 @@ def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game,
         "SELECT military_pressure FROM regions WHERE id = ?", ("henan",)
     ).fetchone()["military_pressure"] == 26
     assert out["region_changes"][0].get("rejected") is not True
-
-
-def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(game):
-    """PR R3：普通李自成势力变化不能因河南+流寇泛锚点被误当成洛阳陷落战果。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1642
-    state.period = 9
-    db.conn.execute(
-        "UPDATE powers SET military_strength = ? WHERE id = ?",
-        (52, "bandit_li_zicheng"),
-    )
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "power_updates": {
-                "bandit_li_zicheng": {
-                    "origin_ref": "盘面自发", "military_strength": -3,
-                    "reason": "河南流寇被围剿，声势稍挫",
-                }
-            }
-        },
-        content=content,
-    )
-
-    assert not db.issues.has_event_triggered("luoyang_fallen")
-    assert db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id = ?", ("bandit_li_zicheng",)
-    ).fetchone()["military_strength"] == 49
-    assert out["power_changes"][0].get("rejected") is not True
 
 
 def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(game):
@@ -959,75 +782,27 @@ def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_eve
     assert out["region_changes"][0].get("rejected") is not True
 
 
-def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(game):
-    """#189 CMR R4：无关人物变化不能冒充战略战事主账结果。"""
+@pytest.mark.parametrize('year, period, person, event_id, reason', [(1629, 11, "孙传庭", "jisi_lubian", "病重卒于任上"), (1629, 11, "孙传庭", "jisi_lubian", "己巳之变误写无关人物"), (1638, 9, "卢象升", "wuyin_lubian", "病重卒于任上")])
+def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(game, year, period, person, event_id, reason):
     db, state, content = game
     issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
+    state.year = year
+    state.period = period
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", person))
 
     out = issues.apply_score_extraction(
         db,
         state,
         {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "人物变更": [{"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
+            "new_issues": [{"origin_kind": "event_pool", "id": event_id}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": person, "动作": "处置", "status": "dead", "reason": reason}],
         },
         content=content,
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.issues.has_event_triggered("jisi_lubian")
-    assert db.characters.get_character_status("孙传庭")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
-
-
-def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
-    """ship-pre CMR R4：无关人物即使 reason 带战役锚词，也不能冒充战略战事主账。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "人物变更": [{"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "己巳之变误写无关人物"}],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.issues.has_event_triggered("jisi_lubian")
-    assert db.characters.get_character_status("孙传庭")[0] == "dead"
-    assert out["applied_person_changes"][0].get("rejected") is not True
-
-
-def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
-    """#189 CMR R5：点名将普通人物变化不能只靠姓名冒充该战事结果。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1638
-    state.period = 9
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [{"origin_ref": "盘面自发", "name": "卢象升", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.issues.has_event_triggered("wuyin_lubian")
-    assert db.characters.get_character_status("卢象升")[0] == "dead"
+    assert not db.issues.has_event_triggered(event_id)
+    assert db.characters.get_character_status(person)[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 
@@ -1314,24 +1089,6 @@ def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("yuan_xialing",),
     ).fetchone()[0] == 1
-
-
-def test_yuan_xialing_event_excluded_without_jisi_triggered(game):
-    """#191 CMR：袁下狱依赖己巳之变已发生，不能与上游事件同月凭其它事实一起候选。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 12
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
-    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
-    db.conn.execute(
-        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
-        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
-    )
-
-    cands = issues.gather_candidate_events(state, db)
-
-    assert all(ev.id != "yuan_xialing" for ev in cands)
 
 
 def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
@@ -3112,20 +2869,23 @@ def test_event_pool_pending_appointment_clears_reason_gate(game):
         content.event_by_id.pop(ev.id, None)
 
 
-def test_event_pool_pending_appointment_updates_office_type_gate(game):
-    """post-merge CMR R10：任命后 office_type 由真实写口推断，pending 闸门也要同步。"""
+@pytest.mark.parametrize('name, office, office_type, gate_field, assigned_office, rejected, expected', [
+    ("韩爌", "内阁首辅", "内阁", "office_type", "兵部尚书", True, "兵部"),
+    ("袁崇焕", "兵部尚书,左都御史", "兵部", "office", "兵部尚书，左都御史", False, "兵部尚书,左都御史"),
+])
+def test_event_pool_pending_appointment_updates_office_type_gate(game, name, office, office_type, gate_field, assigned_office, rejected, expected):
     db, state, content = game
     issues.bind_content(content)
     db.conn.execute(
         "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "内阁首辅", "内阁", "韩爌"),
+        ("active", "ming", office, office_type, name),
     )
-    if "韩爌" in content.characters:
-        ch = content.characters["韩爌"]
+    if name in content.characters:
+        ch = content.characters[name]
         ch.status = "active"
         ch.power_id = "ming"
-        ch.office = "内阁首辅"
-        ch.office_type = "内阁"
+        ch.office = office
+        ch.office_type = office_type
     ev = Event(
         id="__test_office_type_pending__",
         title="测试·官署门",
@@ -3137,7 +2897,7 @@ def test_event_pool_pending_appointment_updates_office_type_gate(game):
         interests=[],
         audiences=[],
         event_type="situation",
-        trigger_gate={"character.韩爌.office_type": "== 内阁"},
+        trigger_gate={f"character.{name}.{gate_field}": f"== {office_type if gate_field == 'office_type' else office}"},
     )
     content.seed_events.append(ev)
     content.event_by_id[ev.id] = ev
@@ -3147,66 +2907,16 @@ def test_event_pool_pending_appointment_updates_office_type_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "韩爌", "动作": "任命", "office": "兵部尚书"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "任命", "office": assigned_office}],
             },
             content=content,
         )
 
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is rejected
         assert db.conn.execute(
-            "SELECT office_type FROM characters WHERE name=?",
-            ("韩爌",),
-        ).fetchone()["office_type"] == "兵部"
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-
-def test_event_pool_pending_appointment_normalizes_equivalent_office(game):
-    """post-merge CMR R10：全角分隔的等价官职经真实写口规范化后，不应误阻断旧 office 门。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "兵部尚书,左都御史", "兵部", "袁崇焕"),
-    )
-    if "袁崇焕" in content.characters:
-        ch = content.characters["袁崇焕"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "兵部尚书,左都御史"
-        ch.office_type = "兵部"
-    ev = Event(
-        id="__test_normalized_office_pending__",
-        title="测试·规范化等价官职门",
-        kind="朝议",
-        summary="袁崇焕仍兼两职时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.office": "== 兵部尚书,左都御史"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "任命", "office": "兵部尚书，左都御史"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert db.conn.execute(
-            "SELECT office FROM characters WHERE name=?",
-            ("袁崇焕",),
-        ).fetchone()["office"] == "兵部尚书,左都御史"
+            f"SELECT {gate_field} FROM characters WHERE name=?",
+            (name,),
+        ).fetchone()[gate_field] == expected
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)

@@ -198,52 +198,34 @@ def test_resolve_applies_unified_person_change_effect(game):
         content.characters[name].transit_to = old_transit_to
 
 
-@pytest.mark.parametrize("bad_effect", [{"人物变更": "bad"}, {"人物变更": ["bad"]}])
-def test_issue_person_change_effect_rejects_malformed_shape(read_game, bad_effect):
-    db, state, content = read_game
-
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, bad_effect, "局势#测试结案", content=content)
-
-
-def test_army_bad_owner_power_raises(read_game):
-    db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "new_armies": [{"id": "x", "name": "野军", "owner_power": "不存在的势力",
-                            "manpower": 1000, "maintenance_per_turn": 1}],
-        }, "局势#测试")
-
-
-@pytest.mark.parametrize("change", [
-    {"动作": "处置", "status": "dead"},
-    {"动作": "行止", "transit_to": "liaodong"},
+@pytest.mark.parametrize("effect, needs_character", [
+    ({'人物变更': 'bad'}, False),
+    ({'人物变更': ['bad']}, False),
+    ({'new_armies': [{'id': 'x', 'name': '野军', 'owner_power': '不存在的势力', 'manpower': 1000, 'maintenance_per_turn': 1}]}, False),
+    ({'人物变更': [{'name': '查无此人张三', '动作': '处置', 'status': 'dead'}]}, False),
+    ({'人物变更': [{'name': '查无此人张三', '动作': '行止', 'transit_to': 'liaodong'}]}, False),
+    ({'人物变更': [{'动作': '处置', 'status': '升仙'}]}, True),
+    ({'army_delta': {'查无此军': {'manpower': 100}}}, False),
 ])
-def test_unknown_character_raises(read_game, change):
+def test_issue_person_change_effect_rejects_malformed_shape(read_game, effect, needs_character):
     db, state, content = read_game
+    effect = {**effect}
+    if needs_character:
+        effect["人物变更"] = [{"name": active_ming_character(db, content), **effect["人物变更"][0]}]
     with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "人物变更": [{"name": "查无此人张三", **change}],
-        }, "局势#测试", content=content)
+        I._apply_issue_entities(db, state, effect, "局势#测试结案", content=content)
 
 
-def test_bad_status_raises(read_game):
-    db, state, content = read_game
-    name = active_ming_character(db, content)
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "人物变更": [{"name": name, "动作": "处置", "status": "升仙"}],
-        }, "局势#测试")
-
-
-def test_apply_score_extraction_splits_bad_nested_entity(game):
-    """ADR0015：嵌套实体坏值逐实体拒收，不带走同批好字段。"""
+@pytest.mark.parametrize("payload, rejected_item", [
+    ({"region_delta": {"shanxi": "not-a-dict", "henan": {"unrest": 1}}},
+     {"entity_id": "shanxi", "raw_value": "not-a-dict"}),
+    ({"power_updates": {"houjin": {"leverage": 1}, "mongol": "bad"}},
+     {"entity_id": "mongol", "raw_value": "bad"}),
+])
+def test_apply_score_extraction_splits_bad_nested_entity(game, payload, rejected_item):
     db, state, _ = game
-    bad = {
-        "region_delta": {"shanxi": "not-a-dict", "henan": {"unrest": 1}},
-    }
-    applied = I.apply_score_extraction(db, state, bad)
-    assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "shanxi", "raw_value": "not-a-dict"}
+    applied = I.apply_score_extraction(db, state, payload)
+    assert applied["validate_shape_rejections"][0]["item"] == rejected_item
 
 
 def test_apply_score_extraction_accepts_flat_faction_scalar(game):
@@ -258,13 +240,6 @@ def test_apply_score_extraction_accepts_flat_faction_scalar(game):
     })
     assert applied["faction_delta"] == {"阉党": -10}
     assert applied["class_delta_rejections"][0]["category"] == "invalid_enum"
-
-
-def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
-    """ADR0015：power_updates 二级非 dict 逐 power 拒收。"""
-    db, state, _ = game
-    applied = I.apply_score_extraction(db, state, {"power_updates": {"houjin": {"leverage": 1}, "mongol": "bad"}})
-    assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "mongol", "raw_value": "bad"}
 
 
 def test_apply_score_extraction_rejects_nondict_list_item_per_item(read_game):
@@ -310,15 +285,6 @@ def test_resolve_army_delta_reinforces_existing(game):
     new = db.conn.execute("SELECT manpower FROM armies WHERE id='jingying'").fetchone()["manpower"]
     assert new == old + 500
     assert _army_count(db) == before          # 扩编不新建军队
-
-
-def test_army_delta_unknown_army_raises(read_game):
-    """army_delta 引用未入库军队 → 抛错中断（全局严格，绝不静默）。"""
-    db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "army_delta": {"查无此军": {"manpower": 100}},
-        }, "局势#测试")
 
 
 def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):

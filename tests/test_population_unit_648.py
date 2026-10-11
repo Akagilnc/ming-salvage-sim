@@ -10,6 +10,8 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双�
 
 from __future__ import annotations
 
+import pytest
+
 
 from ming_sim.db import GameDB
 from ming_sim.issues import (
@@ -77,22 +79,13 @@ def test_new_save_displaced_class_seed_frozen_table(game):
     assert nat["leverage"] == DEFAULT_LEV
 
 
-def test_new_save_classes_seed_persons_scale(game):
-    """既有七阶级 seed 机械 ×10⁴（漏乘/重乘必咬）：抽样钉裸人数。"""
+@pytest.mark.parametrize('query, expected', [("SELECT population FROM classes WHERE name='农民' AND region_id=''", FARMER_NATIONAL_POP_PERSONS), ("SELECT population FROM regions WHERE id='beizhili'", BEIZHILI_POP_PERSONS)])
+def test_new_save_classes_seed_persons_scale(game, query, expected):
     db, _, _ = game
     row = db.conn.execute(
-        "SELECT population FROM classes WHERE name='农民' AND region_id=''"
+        query
     ).fetchone()
-    assert row["population"] == FARMER_NATIONAL_POP_PERSONS
-
-
-def test_new_save_regions_seed_persons_scale(game):
-    """regions seed 机械 ×10⁴：北直隶 720万 → 7200000 人。"""
-    db, _, _ = game
-    row = db.conn.execute(
-        "SELECT population FROM regions WHERE id='beizhili'"
-    ).fetchone()
-    assert row["population"] == BEIZHILI_POP_PERSONS
+    assert row["population"] == expected
 
 
 # ── F1：class 写面只收 satisfaction/leverage（流民行含内）───────────────────

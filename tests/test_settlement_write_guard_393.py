@@ -219,32 +219,25 @@ def _endpoint_cases():
         ("memorials_read", lambda: web_app.api_memorials_read({"keys": ["progress:1"]})),
     ]
 
-@pytest.mark.parametrize("phase", [TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value])
+@pytest.mark.parametrize("phase, hold_gate", [
+    (TurnPhase.SETTLING.value, False),
+    (TurnPhase.AWAITING_DECISION.value, False),
+    (TurnPhase.SUMMONING.value, True),
+])
 @pytest.mark.parametrize("name,call", _endpoint_cases(), ids=lambda c: c if isinstance(c, str) else "")
-def test_direct_db_write_refused_by_phase(monkeypatch, phase, name, call):
-    """相位分支：FRONT_HALF_DONE 期间（含 settling 落定后 + awaiting_decision 暂停）→ 409、不写。"""
+def test_direct_db_write_refused_by_phase(monkeypatch, phase, hold_gate, name, call):
     game = _FakeGame(phase)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
-    with pytest.raises(HTTPException) as ei:
-        _invoke(call())
-    assert ei.value.status_code == 409
-    assert game.db.writes == [], f"{name} wrote DB during settlement: {game.db.writes}"
-
-@pytest.mark.parametrize("name,call", _endpoint_cases(), ids=lambda c: c if isinstance(c, str) else "")
-def test_direct_db_write_refused_when_gate_held(monkeypatch, name, call):
-    """Gate2 F-A 承重测试：相位正常（summoning，pre_settle 尚未落定 settling），但结算 worker
-    已持 _write_gate（=正跑 resolve_turn / pre_settle 原子块）→ 端点非阻塞抢锁失败 → 409、不写。
-    这正是 phase-only 守不住、gate 才能守住的 pre_settle 窗口。"""
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-    game._write_gate.acquire()  # 模拟结算 worker 持锁
+    if hold_gate:
+        game._write_gate.acquire()
     try:
         with pytest.raises(HTTPException) as ei:
             _invoke(call())
         assert ei.value.status_code == 409
-        assert game.db.writes == [], f"{name} wrote while gate held: {game.db.writes}"
+        assert game.db.writes == [], f"{name} wrote during settlement: {game.db.writes}"
     finally:
-        game._write_gate.release()
+        if hold_gate:
+            game._write_gate.release()
 
 
 def test_advance_without_edict_refused_by_phase(monkeypatch):

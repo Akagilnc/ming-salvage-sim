@@ -8,6 +8,8 @@ updates 数据校验类拒收带精确 category（未知 order_id → missing_re
 
 from __future__ import annotations
 
+import pytest
+
 from functools import partial
 
 from tests.section_rejection_helpers import run_declaration as run_settle
@@ -19,14 +21,14 @@ from tests.dossier_test_helpers import create_test_secret_order
 _rejection_rows = partial(rejection_rows, columns="section, reason, category")
 
 
-def test_update_nonint_order_id_invalid_enum(game):
-    """secret_order_updates order_id 非整数 → invalid_enum 拒收达 rejection_reports。"""
+@pytest.mark.parametrize('bad_id', ["乙", 10 ** 100])
+def test_update_nonint_order_id_invalid_enum(game, bad_id):
     db, state, content = game
     turn = state.turn
 
     run_settle(db, state, content, {
         "secret_order_updates": [
-            {"order_id": "乙", "sim_note": "坏 id 副作用"},
+            {"order_id": bad_id, "sim_note": "坏 id 副作用"},
         ],
     }, narrative="x", decree_text="y")
 
@@ -96,18 +98,3 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
     row = db.character_knowledge.get_secret_order(oid)
     assert row is not None
     assert "测试密令副作用R8" not in (row["sim_note"] or "")
-
-
-def test_oversized_order_id_rejected_not_crash(game):
-    """超 SQLite 64-bit 范围的 order_id（int() 不抛但 get_secret_order 绑定会 OverflowError）
-    → invalid_enum 逐项拒收，不崩整月结算（#63.5；cmr r2 codex）。"""
-    db, state, content = game
-    turn = state.turn
-    huge = 10 ** 100
-
-    run_settle(db, state, content, {
-        "secret_order_updates": [{"order_id": huge, "sim_note": "超界 id"}],
-    }, narrative="x", decree_text="y")
-
-    up = [r for r in _rejection_rows(db, turn, "secret_order_updates") if r[2] == "invalid_enum"]
-    assert len(up) == 1, up

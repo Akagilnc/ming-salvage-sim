@@ -436,14 +436,18 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
         "SELECT office FROM characters WHERE name=?", (minister,)
     ).fetchone()["office"] == "兵部主事"
 
-@pytest.mark.parametrize("status", ("executing", "closed"))
-def test_dossier_cannot_start_in_execution_state(game, status):
+@pytest.mark.parametrize("action_type, target_kind, target_id, options", [
+    ("appointment", "character", "invalid", {"status": "executing"}),
+    ("appointment", "character", "invalid", {"status": "closed"}),
+    *[(action, "issue", "not-a-decree", {}) for action in
+      ("extraordinary_summons", "summons", "inquiry", "pressure_inquiry", "public_support")],
+])
+def test_dossier_cannot_start_in_execution_state(game, action_type, target_kind, target_id, options):
     db, state, _content = game
     with pytest.raises(ValueError):
         db.create_decree_dossier(
-            state, action_type="appointment", decree_text="非法初态",
-            target_kind="character", target_id="invalid",
-            status=status,
+            state, action_type=action_type, decree_text="非法案卷准入",
+            target_kind=target_kind, target_id=target_id, **options,
         )
 
 def test_secret_order_and_dossier_roll_back_as_one_unit(game, monkeypatch):
@@ -1241,22 +1245,6 @@ def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
     assert db.character_knowledge.get_secret_order(order_id)["sim_note"] == ""
     assert db.dossiers.get_for_secret_order(order_id)["status"] == "promulgated"
 
-@pytest.mark.parametrize(
-    "action_type",
-    (
-        "extraordinary_summons", "summons", "inquiry",
-        "pressure_inquiry", "public_support",
-    ),
-)
-def test_dialogue_and_engine_action_types_cannot_create_dossiers(
-    game, action_type,
-):
-    db, state, _content = game
-    with pytest.raises(ValueError):
-        db.create_decree_dossier(
-            state, action_type=action_type, decree_text="非旨意动作",
-            target_kind="issue", target_id="not-a-decree",
-        )
 
 def test_create_secret_order_has_resumable_dossier(game):
     db, state, _content = game
@@ -1299,17 +1287,40 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
     )
     assert db.dossiers.get(dossier_id)["status"] == "executing"
 
-def test_interim_verdict_rejects_reserved_legal_reason_code(game):
+@pytest.mark.parametrize("operation, field, bad_value", [
+    ('reserved', 'legal_reason_code', 'statute-42'),
+    ('missing', 'blocked_layer', None),
+    ('missing', 'primary_opponents', None),
+    ('missing', 'gatekeeper_id', None),
+    ('missing', 'reason', None),
+    ('missing', 'criteria_snapshot', None),
+    ('reference', 'primary_opponents', [{'kind': 'faction', 'key': 'not-a-real-faction'}]),
+    ('reference', 'primary_opponents', [{'kind': 'class', 'key': '士绅'}]),
+    ('reference', 'primary_opponents', [{'kind': 'faction', 'key': '东林', 'score': 1}]),
+    ('reference', 'gatekeeper_id', 'not-a-real-character'),
+    ('snapshot', 'imperial_authority_band', 'low'),
+    ('snapshot', 'appointment_tenure', '临时'),
+    ('snapshot', 'authorization_ids', [{}]),
+    ('snapshot', 'endorsement_entry_ids', [True]),
+    ('snapshot', 'endorsement_entry_ids', ['1']),
+])
+def test_interim_verdict_rejects_reserved_legal_reason_code(game, operation, field, bad_value):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="着核边饷",
-        target_kind="issue", target_id="frontier-pay",
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
     )
+    verdict = (
+        {"dossier_id": dossier_id, "decision": "rejected"}
+        if operation == "reserved" else _rejected_verdict(dossier_id)
+    )
+    target = verdict["criteria_snapshot"] if operation == "snapshot" else verdict
+    if operation == "missing":
+        target.pop(field)
+    else:
+        target[field] = bad_value
     with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(state, [{
-            "dossier_id": dossier_id, "decision": "rejected",
-            "legal_reason_code": "statute-42",
-        }])
+        db.apply_dossier_verdicts(state, [verdict])
 
 def test_session_manual_directive_keeps_structured_action_at_submission(
     game, monkeypatch,
@@ -1466,22 +1477,17 @@ def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
     ).fetchall()
     assert any("account" in str(r["reason"]) for r in rej)
 
-def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
+@pytest.mark.parametrize('target_kind, target_id, payload', [("region", "shaanxi", {"account": "国库", "amount": 10, "execution_surface": "in_transit", "locality_scope": "single", "target_kind": "region", "target_id": "shaanxi"}), ("issue", "relief", {"account": "国库", "amount": 10, "execution_surface": "immediate"})])
+def test_underfunded_in_transit_allocation_closes_from_execution_state(game, target_kind, target_id, payload):
     db, state, _content = game
     state.metrics["国库"] = 5
     dossier_id = db.create_decree_dossier(
         state,
         action_type="grant_allocation",
         decree_text="拨银十两押解赴陕",
-        target_kind="region",
-        target_id="shaanxi",
-        payload={
-            "account": "国库", "amount": 10,
-            "execution_surface": "in_transit",
-            "locality_scope": "single",
-            "target_kind": "region",
-            "target_id": "shaanxi",
-        },
+        target_kind=target_kind,
+        target_id=target_id,
+        payload=payload,
     )
 
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
@@ -1491,41 +1497,8 @@ def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
 
-def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
-    db, state, _content = game
-    state.metrics["国库"] = 5
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="拨银十两赈济",
-        target_kind="issue",
-        target_id="relief",
-        payload={
-            "account": "国库", "amount": 10,
-            "execution_surface": "immediate",
-        },
-    )
 
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-
-    dossier = db.dossiers.get(dossier_id)
-    assert state.metrics["国库"] == 0
-    assert dossier["status"] == "closed"
-    assert dossier["execution_outcome"] == "failed"
-
-@pytest.mark.parametrize(
-    "payload",
-    (
-        {
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief", "account": "国库",
-        },
-        {
-            "dossier_action_type": "assignment",
-            "assignee": "不存在的人",
-        },
-    ),
-)
+@pytest.mark.parametrize('payload', ({'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'relief', 'account': '国库'}, {'dossier_action_type': 'assignment', 'assignee': '不存在的人'}, {'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'account': '国库', 'amount': 10, 'execution_surface': 'immediate'}))
 def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
     game, payload,
 ):
@@ -1545,29 +1518,6 @@ def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
         "WHERE section='directive_locality'",
     ).fetchone()["n"] >= 1
 
-def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
-    db, state, _content = game
-    directive_id = db.issues.add_directive(
-            state.turn, state.year, state.period, None,
-            "拨银十两但未指明去处", "手动新增",
-        dossier_payload={
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue",
-            "account": "国库",
-            "amount": 10,
-            "execution_surface": "immediate",
-        },)
-    # #654 路3：缺 target → rejection，不抛穿（结构化：section + 非空拒收；不锁生产 reason 措辞）
-    db.ensure_dossiers_for_draft_directives(state)
-    assert db.dossiers.get_for_directive(directive_id) is None
-    status = db.conn.execute(
-        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
-    ).fetchone()["status"]
-    assert status == "draft"
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM rejection_reports "
-        "WHERE section='directive_locality'",
-    ).fetchone()["n"] >= 1
 
 def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
     db, state, _content = game
@@ -2051,54 +2001,6 @@ def test_rejection_verdict_defaults_omitted_midzhi_marker_to_false(game):
     row = db.dossiers.decisions(dossier_id)[-1]
     assert row["midzhi_unpromulgatable"] is False
 
-@pytest.mark.parametrize("missing", [
-    "blocked_layer", "primary_opponents", "gatekeeper_id", "reason", "criteria_snapshot",
-])
-def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    verdict = _rejected_verdict(dossier_id)
-    verdict.pop(missing)
-    with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(state, [verdict])
-
-@pytest.mark.parametrize(("field", "bad_value"), [
-    ("primary_opponents", [{"kind": "faction", "key": "not-a-real-faction"}]),
-    ("primary_opponents", [{"kind": "class", "key": "士绅"}]),
-    ("primary_opponents", [{"kind": "faction", "key": "东林", "score": 1}]),
-    ("gatekeeper_id", "not-a-real-character"),
-])
-def test_rejection_runtime_contract_rejects_unknown_references(game, field, bad_value):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    verdict = _rejected_verdict(dossier_id)
-    verdict[field] = bad_value
-    with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(state, [verdict])
-
-@pytest.mark.parametrize(("field", "bad_value"), [
-    ("imperial_authority_band", "low"),
-    ("appointment_tenure", "临时"),
-    ("authorization_ids", [{}]),
-    ("endorsement_entry_ids", [True]),
-    ("endorsement_entry_ids", ["1"]),
-])
-def test_rejection_snapshot_rejects_malformed_typed_values(game, field, bad_value):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    verdict = _rejected_verdict(dossier_id)
-    verdict["criteria_snapshot"][field] = bad_value
-    with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(state, [verdict])
 
 @pytest.mark.parametrize("contamination", [
     {"primary_opponents": [{"kind": "faction", "key": 1}]},

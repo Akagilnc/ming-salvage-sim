@@ -17,17 +17,15 @@ const validDecision: PendingDecision = {
 };
 
 describe("decision routing — issueDecree entry (routeIssueDecisions)", () => {
-  it("rejects the whole batch when any decision is corrupt, not just the bad item (批示错位 guard)", () => {
-    const route = routeIssueDecisions([validDecision, { idx: "bad" }]);
+  it.each([
+    [validDecision, { idx: "bad" }],
+    [{ idx: 0, title: "空票", context: "无票拟。", options: [] }],
+  ])("rejects an invalid decision batch %#", (...decisions) => {
+    const route = routeIssueDecisions(decisions);
     expect(route.pendingDecisions).toEqual([]);
     expect(route.error).toBe(PAUSED_DECISION_MSG);
   });
 
-  it("rejects a decision whose options array is empty (空票拟 guard)", () => {
-    const route = routeIssueDecisions([{ idx: 0, title: "空票", context: "无票拟。", options: [] }]);
-    expect(route.pendingDecisions).toEqual([]);
-    expect(route.error).toBe(PAUSED_DECISION_MSG);
-  });
 
 });
 

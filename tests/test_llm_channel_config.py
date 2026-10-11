@@ -72,66 +72,31 @@ def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
     assert isinstance(model, OpenAIChat)
     assert not isinstance(model, CliChat)
 
-def test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning(monkeypatch):
+@pytest.mark.parametrize("model_id, legacy, role, expected", [
+    ("gpt-test", {"advanced_model": "gpt-5.5", "advanced_thinking_level": "high"}, "simulator", "high"),
+    ("gpt-5.5", {"thinking_level": "none"}, None, "none"),
+])
+def test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning(monkeypatch, model_id, legacy, role, expected):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.delenv("MING_SIM_REASONING_STRENGTH", raising=False)
-
-    cfg = load_llm_config(
-        "https://api.example.com",
-        "gpt-test",
-        api_key="sk-test",
-        advanced_model="gpt-5.5",
-        advanced_thinking_level="high",
-    )
-    advanced = for_role(cfg, "simulator")
-
-    assert create_chat_model(advanced).reasoning_effort == "high"
+    cfg = load_llm_config("https://api.example.com", model_id, api_key="sk-test", **legacy)
+    selected = for_role(cfg, role) if role is not None else cfg
+    assert create_chat_model(selected).reasoning_effort == expected
 
 
-def test_load_llm_config_migrates_legacy_none_thinking_to_off(monkeypatch):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.delenv("MING_SIM_REASONING_STRENGTH", raising=False)
-
-    cfg = load_llm_config(
-        "https://api.example.com",
-        "gpt-5.5",
-        api_key="sk-test",
-        thinking_level="none",
-    )
-
-    assert create_chat_model(cfg).reasoning_effort == "none"
-
-@pytest.mark.parametrize("model_id", ["gpt-5.5", "gpt-5.6-luna"])
-def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch, model_id):
+@pytest.mark.parametrize("model_id, expected", [
+    ("gpt-5.5", "none"), ("gpt-5.6-luna", "none"),
+    ("o1-mini", "minimal"), ("o3-mini", "minimal"), ("o4-mini", "minimal"),
+    ("o3", "minimal"), ("o4-mini-high", "minimal"),
+])
+def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch, model_id, expected):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model=model_id,
-        channel="api",
-        thinking_level="high",
-        reasoning_strength="off",
+        api_key="sk-test", base_url="https://api.example.com/v1", model=model_id,
+        channel="api", thinking_level="high", reasoning_strength="off",
     )
-
     model = create_chat_model(cfg)
-
-    assert model.reasoning_effort == "none"
-
-
-@pytest.mark.parametrize("model_id", ["o1-mini", "o3-mini", "o4-mini", "o3", "o4-mini-high"])
-def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch, model_id):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model=model_id,
-        channel="api",
-        reasoning_strength="off",
-    )
-
-    model = create_chat_model(cfg)
-
-    assert model.reasoning_effort == "minimal"
+    assert model.reasoning_effort == expected
 
 
 def test_create_chat_model_strips_provider_prefix_for_reasoning_family(monkeypatch):
@@ -291,36 +256,21 @@ def test_create_chat_model_maps_reasoning_strength_to_dashscope_thinking_budget(
 
     assert model.extra_body == {"enable_thinking": True, "thinking_budget": 10000}
 
-def test_create_chat_model_maps_reasoning_strength_to_minimax_thinking(monkeypatch):
+@pytest.mark.parametrize('strength, legacy_level, enable, expected', [("off", "", True, "disabled"), ("medium", "disabled", False, "adaptive")])
+def test_create_chat_model_maps_reasoning_strength_to_minimax_thinking(monkeypatch, strength, legacy_level, enable, expected):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
         api_key="sk-test",
         base_url="https://api.minimaxi.com/v1",
         model="minimax-test",
         channel="api",
-        reasoning_strength="off",
+        reasoning_strength=strength, thinking_level=legacy_level,
     )
 
-    model = create_chat_model(cfg, enable_thinking=True)
+    model = create_chat_model(cfg, enable_thinking=enable)
 
-    assert model.extra_body == {"thinking": {"type": "disabled"}, "reasoning_split": True}
+    assert model.extra_body == {"thinking": {"type": expected}, "reasoning_split": True}
 
-def test_minimax_reasoning_strength_overrides_stale_thinking_level(monkeypatch):
-    """#358 cmr: 统一推理强度选档（低/中/高）对 minimax 须直接映射 adaptive，不被遗留
-    thinking_level=disabled 这个隐藏旋钮压回 disabled。"""
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.minimaxi.com/v1",
-        model="minimax-test",
-        channel="api",
-        thinking_level="disabled",
-        reasoning_strength="medium",
-    )
-
-    model = create_chat_model(cfg, enable_thinking=False)
-
-    assert model.extra_body == {"thinking": {"type": "adaptive"}, "reasoning_split": True}
 
 def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):
     captured = {}
@@ -402,24 +352,22 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
     assert seen.get("config") is cfg
     assert seen.get("tag") == "verify"
 
-def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+@pytest.mark.parametrize("backend_env, channel_config, message", [
+    (None, {"channel": "cli", "cli_runner": "codex", "cli_model": "gpt-5.5", "cli_timeout_seconds": 240}, "codex missing"),
+    ("agy", {"channel": ""}, "agy missing"),
+])
+def test_verify_llm_available_cli_channel_failure_raises(monkeypatch, backend_env, channel_config, message):
+    if backend_env is None:
+        monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    else:
+        monkeypatch.setenv("MING_SIM_LLM_BACKEND", backend_env)
 
     def boom(prompt, llm_config=None, tag="", *, policy=None):
-        raise RuntimeError("codex missing")
+        raise RuntimeError(message)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
-    cfg = LLMConfig(
-        api_key="cli-backend",
-        base_url="",
-        model="api-fallback",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-5.5",
-        cli_timeout_seconds=240,
-    )
-
-    with pytest.raises(LLMUnavailable, match="codex missing"):
+    cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", **channel_config)
+    with pytest.raises(LLMUnavailable, match=message):
         verify_llm_available(cfg)
 
 def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
@@ -439,17 +387,6 @@ def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
     verify_llm_available(cfg)
     assert seen.get("tag") == "verify"
 
-def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
-    """legacy env-only smoke 失败同样抛 LLMUnavailable（fail-fast，不静默放行）。"""
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-
-    def boom(prompt, llm_config=None, tag="", *, policy=None):
-        raise RuntimeError("agy missing")
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
-    cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
-    with pytest.raises(LLMUnavailable, match="agy missing"):
-        verify_llm_available(cfg)
 
 def _api_cfg(**overrides) -> LLMConfig:
     base = dict(

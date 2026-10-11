@@ -398,43 +398,27 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     }
   );
 
-  it("uses advanced model capability for API reasoning support", async () => {
+  it.each([
+    { base_url: "https://api.deepseek.com/v1", model: "deepseek-chat",
+      advanced_base_url: "https://api.example.com/v1", advanced_model: "gpt-5",
+      reasoning_supported: true },
+    { base_url: "https://api.example.com/v1", model: "gpt-5", reasoning_supported: false },
+  ])("uses backend API reasoning capability: $reasoning_supported", async (capability) => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         ...BASE_LLM_RESPONSE,
-        base_url: "https://api.deepseek.com/v1",
-        model: "deepseek-chat",
-        advanced_base_url: "https://api.example.com/v1",
-        advanced_model: "gpt-5",
-        reasoning_supported: true,
+        ...capability,
       }),
     } as Response);
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(strength?.disabled).toBe(false);
+    expect(strength?.disabled).toBe(!capability.reasoning_supported);
     cleanup();
   });
 
-  it("trusts backend reasoning_supported over local API model heuristics", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        ...BASE_LLM_RESPONSE,
-        base_url: "https://api.example.com/v1",
-        model: "gpt-5",
-        reasoning_supported: false,
-      }),
-    } as Response);
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(strength?.disabled).toBe(true);
-    cleanup();
-  });
 
   it("keeps trusting backend reasoning support for whitespace-only API edits", async () => {
     global.fetch = vi.fn().mockResolvedValue({

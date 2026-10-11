@@ -7,6 +7,8 @@ issue #104 原提议的 `c.status != "offstage"` 会把「DB 已 active 但内�
 """
 from __future__ import annotations
 
+import pytest
+
 
 from tests.test_qa_c2_settlement_display_lifecycle_1343 import _shell
 
@@ -91,16 +93,14 @@ def _materialized_prince(db, state, content):
     return name, ch
 
 
-def test_vassal_prince_excluded_from_court(game):
-    """宗室/就藩藩王（office_type=宗藩）不是可召见/可任免的朝堂官员，即便 ming+active 也不入列
-    （用户 2026-06-14 拍：宗室要隐藏）。藩王在册数据照旧留 DB（事件按名引用不受影响），只是不进
-    朝堂/任免列表 UI。"""
+@pytest.mark.parametrize('status, surface', [("active", "ministers"), ("offstage", "talent_pool")])
+def test_vassal_prince_excluded_from_court(game, status, surface):
     db, state, content = game
     name, ch = _materialized_prince(db, state, content)
-    db.set_character_status(state, name, "active", "测试：在世")
+    db.set_character_status(state, name, status, "测试：在世")
     # 物化后 setup 真生效：DB 确为 active+ming（否则仅 office_type 短路，测不出 gate 优先于状态）
-    assert db.characters.get_character_status(name)[0] == "active"
-    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["ministers"]}
+    assert db.characters.get_character_status(name)[0] == status
+    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()[surface]}
 
 
 def test_offstage_former_minister_in_talent_pool(game):
@@ -128,15 +128,6 @@ def test_active_minister_not_in_talent_pool(read_game):
     db, state, content = read_game
     name = _active_ming_minister(db, content)
     assert content.characters[name].name not in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
-
-
-def test_vassal_prince_excluded_from_talent_pool(game):
-    """宗藩（藩王不入仕）即便 offstage+ming 也不进人才池（按 office_type 排除）。"""
-    db, state, content = game
-    name, ch = _materialized_prince(db, state, content)
-    db.set_character_status(state, name, "offstage", "测试")
-    assert db.characters.get_character_status(name)[0] == "offstage"  # 物化后 setup 真生效
-    assert ch.name not in {row["name"] for row in _shell(db, state, content).state_payload()["talent_pool"]}
 
 
 def test_amnestied_rebel_excluded_from_talent_pool(game):

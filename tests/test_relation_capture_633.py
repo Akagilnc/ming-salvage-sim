@@ -33,8 +33,6 @@ def _triplets(rows):
 # ── 路由归属：受控 section 归 relations 独占槽 ────────────────────────
 
 
-
-
 # ── TD-1 结算侧：当场落库、origin 回指本回合、方向三元组 ─────────────
 
 
@@ -447,8 +445,6 @@ def test_missing_frozen_dossier_set_is_empty_closed_set(game):
     assert len(_edge_rows(db, source="温体仁", target="周延儒")) == 1
 
 
-
-
 # ── F1：context 存储零删改，全链字节相等 ────────────────────────────
 
 
@@ -561,18 +557,10 @@ def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
 
 
-@pytest.mark.parametrize(
-    ("targets", "bad_member"),
-    [
-        (["周延儒", "   "], "空白"),
-        (["周延儒", "温体仁"], "自指"),
-    ],
-)
+@pytest.mark.parametrize("targets, bad_member", [(['周延儒', '   '], '空白'), (['周延儒', '温体仁'], '自指'), ([], '空列表'), (['温体仁', '   '], '全无效')])
 def test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges(
     game, targets, bad_member,
 ):
-    """V9：多 target 项混入空白/自指成员——整项 fail-closed 拒收留痕，
-    不静默丢坏成员保留其余落边；同批独立好互动照落（ADR 0015 隔离）。"""
     db, state, content = game
     out = apply_score_extraction(
         db, state,
@@ -593,43 +581,6 @@ def test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges(
     assert rejected[0]["category"] == "invalid_relation_event"
     assert rejected[0]["item"]["施动者"] == "温体仁"
     # 坏项整项零写入（合法成员周延儒也不部分落库）；好项隔离不受牵连
-    rows = _edge_rows(db)
-    assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
-
-
-@pytest.mark.parametrize(
-    ("targets", "label"),
-    [
-        ([], "空列表"),
-        (["温体仁", "   "], "全无效"),
-    ],
-)
-def test_empty_or_all_invalid_targets_reject_whole_item_zero_edges(
-    game, targets, label,
-):
-    """V10：受动者列表为空（含全无效成员被拒后为空的等价情形）——整项
-    fail-closed 拒收留痕，不得静默零写冒充成功；同批独立好互动照落。"""
-    db, state, content = game
-    out = apply_score_extraction(
-        db, state,
-        {
-            "relation_edge_events": [
-                {"施动者": "温体仁", "受动者": targets,
-                 "类目": "联名", "语境": f"{label}受动者的联名互动。",
-                 "来源引用": "盘面自发"},
-                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
-                 "语境": "同批好项照常落。", "来源引用": "盘面自发"},
-            ],
-        },
-        content=content,
-    )
-    res = out["relation_edge_event_resolutions"]
-    rejected = [r for r in res if r.get("rejected")]
-    # 空列表项产生且仅产生一条 invalid_relation_event 留痕
-    assert len(rejected) == 1
-    assert rejected[0]["category"] == "invalid_relation_event"
-    assert rejected[0]["item"]["施动者"] == "温体仁"
-    # 坏项零边写入；同批独立好互动不受牵连照常落库
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
 

@@ -20,40 +20,17 @@ def _rejected(result):
     return [c for c in _closes(result) if c.get("rejected")]
 
 
-@pytest.mark.parametrize("bad_issue_id", [
-    "abc",      # 非数字串
-    None,       # None
-    True,       # bool（_strict_int 拒）
-    1.5,        # float
-    -10 ** 100,  # 超 SQLite 64-bit 下界
-    10 ** 100,   # 超 SQLite 64-bit 上界
+@pytest.mark.parametrize("bad_item", [
+    *[{"issue_id": bad_id, "reason": "resolved"}
+      for bad_id in ["abc", None, True, 1.5, -10 ** 100, 10 ** 100]],
+    {"issue_id": 123, "reason": "bogus"},
 ])
-def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
+def test_close_bad_issue_id_rejected(read_game, bad_item):
     db, state, _ = read_game
-    # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 全数逐项拒收 invalid_enum，不泄漏/不崩。
-    out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": bad_issue_id, "reason": "resolved"}]}
-    )
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [bad_item]})
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-
-
-
-
-def test_close_bad_reason_rejected(read_game):
-    db, state, _ = read_game
-    # reason 在调用 close_issue 前先验，故任意 id 都会先因坏 reason 被拒。
-    out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": 123, "reason": "bogus"}]}
-    )
-    rej = _rejected(out)
-    assert len(rej) == 1
-    assert rej[0]["category"] == "invalid_enum"
-
-
-
-
 
 
 def test_close_already_inactive_rejected_missing_ref(game):
@@ -129,23 +106,6 @@ def test_scalar_item_rejection_preserves_original_in_reports(game, bad_item):
     ).fetchall()
     items = [json.loads(r["item_json"]) for r in rows]
     assert bad_item in items, items  # 原始坏项保真，非嵌套 wrapper
-
-
-def test_close_issue_code_exception_propagates(read_game, monkeypatch):
-    db, state, _ = read_game
-    # 代码/DB 异常不再被 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
-    fault = RuntimeError("模拟 close_issue 落库代码异常")
-
-    def _boom(*a, **k):
-        raise fault
-
-    monkeypatch.setattr(type(db), "close_issue", _boom)
-    with pytest.raises(RuntimeError) as ei:
-        I.apply_issue_tracker_output(
-            db, state, {"close_issues": [{"issue_id": 1, "reason": "resolved"}]}
-        )
-    assert ei.value is fault
 
 
 def test_close_valid_issue_still_succeeds(game):

@@ -26,7 +26,7 @@ from ming_sim.faction_brew import (
 )
 from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY
 from ming_sim.relations import EMPEROR_NODE
-from tests.test_relation_brew_636 import run_month_end_relation_brew
+from tests.test_relation_brew_636 import _brew_fn_factory, run_month_end_relation_brew
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -117,37 +117,24 @@ def test_out_of_table_faction_and_unknown_person_never_projected(game):
 
 # ------------------------------------------- 异常边界：DB 错响亮不伪装降级
 
-def test_faction_claim_db_error_propagates_loudly(game):
-    """认领 DB 失败响亮上抛；来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
+@pytest.mark.parametrize("store, method, brew_factory", [
+    ("person_logs", "claim_faction_brew_targets", _dual_brew_fn_factory),
+    (None, "apply_faction_brew_result", _dual_brew_fn_factory),
+    ("person_logs", "claim_relation_brew_targets", _brew_fn_factory),
+])
+def test_faction_claim_db_error_propagates_loudly(game, store, method, brew_factory):
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-
-    fault = sqlite3.OperationalError("派系认领库不可写")
+    fault = sqlite3.OperationalError("认领或落库不可写")
 
     def boom(*args, **kwargs):
         raise fault
 
-    db.person_logs.claim_faction_brew_targets = boom
+    owner = getattr(db, store) if store is not None else db
+    setattr(owner, method, boom)
     with pytest.raises(sqlite3.OperationalError) as ei:
-        run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
-    assert ei.value is fault
-
-
-def test_faction_apply_db_error_propagates_loudly_not_disguised(game):
-    """落定 DB 失败响亮上抛、不伪装；来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
-
-    fault = sqlite3.OperationalError("派系落定库不可写")
-
-    def boom(*args, **kwargs):
-        raise fault
-
-    db.apply_faction_brew_result = boom
-    with pytest.raises(sqlite3.OperationalError) as ei:
-        run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+        run_month_end_relation_brew(db, state, brew_factory([]))
     assert ei.value is fault
 
 

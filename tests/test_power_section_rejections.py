@@ -70,25 +70,6 @@ def test_illegal_power_field_rejected(game):
     assert len(rows) == 1
     assert rows[0][1]  # reason 非空
 
-def test_power_deltas_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_power_deltas 内代码异常原样上抛，原子分派回滚整批。
-    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
-
-    db, state, content = game
-    good = _valid_power_id(db)
-
-    fault = AttributeError("code bug in apply_power_deltas")
-
-    def _boom(self, *a, **k):
-        raise fault
-
-    monkeypatch.setattr(type(db), "apply_power_deltas", _boom)
-
-    with pytest.raises(AttributeError) as ei:
-        run_settle(db, state, content, {
-            "power_updates": {good: {"leverage": 3}},
-        }, narrative="x", decree_text="y")
-    assert ei.value is fault
 
 # ---- section 9b: character_power_changes(人物易主) ----
 

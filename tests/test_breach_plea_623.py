@@ -653,7 +653,6 @@ def test_no_decision_pause_on_breach_plea_settle(game, monkeypatch):
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
 
 
-
 # ── 修后四组新增用例 ──────────────────────────────────────────────────
 
 
@@ -932,8 +931,8 @@ def test_merged_persist_via_extraction_settles(game):
     assert _cost_events(db, did, identity="breach")
 
 
-def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
-    """㈡ primary=funding + absorbed=[remove_sponsor]：0056 落一次、撤人辜负边在且不重复。"""
+@pytest.mark.parametrize('primary, absorbed', [(BREACH_KIND_FUNDING, BREACH_KIND_REMOVE_SPONSOR), (BREACH_KIND_REMOVE_SPONSOR, BREACH_KIND_FUNDING)])
+def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game, primary, absorbed):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -945,18 +944,18 @@ def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
     t1 = write_breach_plea_todo(
-        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
+        db, state, commitment_ref=cid, breach_kind=primary,
         reason="断供", target_dossier_id=did, commit=True,
     )
     t2 = write_breach_plea_todo(
-        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR,
+        db, state, commitment_ref=cid, breach_kind=absorbed,
         reason="撤人", target_dossier_id=did, commit=True,
     )
     assert t2 == t1
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == t1)
     meta = decode_plea_meta(todo["origin_context"])
-    assert meta.get("breach_kind") == BREACH_KIND_FUNDING
-    assert BREACH_KIND_REMOVE_SPONSOR in (meta.get("absorbed_breach_kinds") or [])
+    assert meta.get("breach_kind") == primary
+    assert absorbed in (meta.get("absorbed_breach_kinds") or [])
 
     result = finalize_persist(db, state, todo, commit=True)
     assert result["breach_0056"] is True
@@ -969,44 +968,6 @@ def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
     assert edges, "撤人/0056 须落辜负边"
     # 同人同回合不重复（0056 已写则 0079 跳过）
     assert len(edges) == 1
-
-
-def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
-    """㈢ primary=remove_sponsor + absorbed=[funding]：0056 落、撤人边不丢且不重复。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    did, holder = _executing_policy_dossier(db, state, token="rm+f")
-    origin = f"dossier:{did}"
-    cid, _ = _insert_commitment(
-        db, state, title="撤人主+断供并", origin_ref=origin,
-        bar_value=12, end_turn=state.turn + 12,
-        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
-    )
-    t1 = write_breach_plea_todo(
-        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR,
-        reason="撤人", target_dossier_id=did, commit=True,
-    )
-    t2 = write_breach_plea_todo(
-        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
-        reason="断供", target_dossier_id=did, commit=True,
-    )
-    assert t2 == t1
-    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == t1)
-    meta = decode_plea_meta(todo["origin_context"])
-    assert meta.get("breach_kind") == BREACH_KIND_REMOVE_SPONSOR
-    assert BREACH_KIND_FUNDING in (meta.get("absorbed_breach_kinds") or [])
-
-    result = finalize_persist(db, state, todo, commit=True)
-    assert result["breach_0056"] is True, "absorbed funding 须触发 0056"
-    assert _cost_events(db, did, identity="breach")
-    edges = list(db.conn.execute(
-        "SELECT event_kind, target, origin FROM relation_edge_events "
-        "WHERE target=? AND event_kind='辜负' AND turn=? ORDER BY id",
-        (holder, int(state.turn)),
-    ).fetchall())
-    assert edges, "撤人边/0056 辜负不得丢"
-    assert len(edges) == 1, "同人辜负不重复"
 
 
 @pytest.mark.parametrize("stored_target", [False, True])

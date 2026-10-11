@@ -501,8 +501,6 @@ def test_fresh_save_pay_source_prefers_content_army_fields(tmp_path):
         db.close()
 
 
-
-
 def test_conservation_rejects_excluded_army_with_pay_source_debt(fresh_db):
     fresh_db.conn.execute(
         "\n        UPDATE armies\n        SET owner_power = 'houjin',\n            province_pay_share = 0,\n            central_pay_share = 0,\n            province_pay_arrears = 2,\n            central_pay_arrears = 3\n        WHERE id = 'guanning'\n        "
@@ -1630,10 +1628,6 @@ def test_armies_provision_empty_mutiny_status_flag(fresh_db):
     ).fetchone()["count"] == 0
 
 
-
-
-
-
 def test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale(fresh_game):
     import ming_sim.flows as flows_mod
 
@@ -2411,47 +2405,28 @@ def test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt(fresh
     )
 
 
-def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
+@pytest.mark.parametrize("enemy_control, army", [
+    (False, {"id": "no_pay_source", "name": "无饷源新军", "manpower": 1000, "owner_power": "ming"}),
+    (True, {"id": "rebel_source_army", "name": "逆境索饷军", "manpower": 1000, "owner_power": "ming",
+            "pay_source_region": "shaanxi", "province_pay_share": 1.0, "central_pay_share": 0.0}),
+])
+def test_new_ming_army_rejects_non_ming_pay_source_region(fresh_db, enemy_control, army):
     state = fresh_db.load_state()
+    if enemy_control:
+        non_ming_power = fresh_db.conn.execute(
+            "SELECT id FROM powers WHERE id <> 'ming' LIMIT 1"
+        ).fetchone()[0]
+        fresh_db.conn.execute(
+            "UPDATE regions SET controlled_by = ? WHERE id = 'shaanxi'", (non_ming_power,)
+        )
+        fresh_db.conn.commit()
 
-    rejected = fresh_db.create_armies_from_extraction(state, [{
-        "id": "no_pay_source",
-        "name": "无饷源新军",
-        "manpower": 1000,
-        "owner_power": "ming",
-    }], commit=False)
+    rejected = fresh_db.create_armies_from_extraction(state, [army], commit=False)
 
     assert rejected and rejected[0]["rejected"] is True
     assert "pay_source_region" in rejected[0]["reason"]
     assert fresh_db.conn.execute(
-        "SELECT 1 FROM armies WHERE id = 'no_pay_source'"
-    ).fetchone() is None
-
-
-def test_new_ming_army_rejects_non_ming_pay_source_region(fresh_db):
-    state = fresh_db.load_state()
-    non_ming_power = fresh_db.conn.execute(
-        "SELECT id FROM powers WHERE id <> 'ming' LIMIT 1"
-    ).fetchone()[0]
-    fresh_db.conn.execute(
-        "UPDATE regions SET controlled_by = ? WHERE id = 'shaanxi'", (non_ming_power,)
-    )
-    fresh_db.conn.commit()
-
-    rejected = fresh_db.create_armies_from_extraction(state, [{
-        "id": "rebel_source_army",
-        "name": "逆境索饷军",
-        "manpower": 1000,
-        "owner_power": "ming",
-        "pay_source_region": "shaanxi",
-        "province_pay_share": 1.0,
-        "central_pay_share": 0.0,
-    }], commit=False)
-
-    assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
-    assert fresh_db.conn.execute(
-        "SELECT 1 FROM armies WHERE id = 'rebel_source_army'"
+        "SELECT 1 FROM armies WHERE id = ?", (army["id"],)
     ).fetchone() is None
 
 
@@ -2512,56 +2487,18 @@ def test_new_ming_army_rejects_initial_arrears_under_cutover(fresh_db):
     ).fetchone() is None
 
 
-@pytest.mark.parametrize("bad_defaults", [None, [], "not-a-dict"])
-def test_region_loader_rejects_bad_shared_settle_meta_defaults_container(monkeypatch, bad_defaults):
-    fake_regions = {
-        "settle_meta_defaults": bad_defaults,
-        "regions": [_region_with_settle({"st": {}, "p": {}})],
-    }
+@pytest.mark.parametrize("fake_regions", [
+    {"settle_meta_defaults": None, "regions": [_region_with_settle({"st": {}, "p": {}})]},
+    {"settle_meta_defaults": [], "regions": [_region_with_settle({"st": {}, "p": {}})]},
+    {"settle_meta_defaults": 'not-a-dict', "regions": [_region_with_settle({"st": {}, "p": {}})]},
+    {"regions": [_region_with_settle({"_meta": [], "st": {}, "p": {}})]},
+    {"settle_meta_defaults": {'ming_province': {}}, "regions": [_region_with_settle({'_meta_defaults': '', '_meta': {}, 'st': {}, 'p': {}})]},
+    {"settle_meta_defaults": {'ming_province': {}}, "regions": [_region_with_settle({'_meta_defaults': 'missing_group', '_meta': {}, 'st': {}, 'p': {}})]},
+    {"settle_meta_defaults": {'ming_province': {}}, "regions": [_region_with_settle({'_meta_defaults': 'ming_province', '_meta': [], 'st': {}, 'p': {}})]},
+    {"settle_meta_defaults": {'ming_province': []}, "regions": [_region_with_settle({'_meta_defaults': 'ming_province', '_meta': {}, 'st': {}, 'p': {}})]},
+])
+def test_region_loader_rejects_bad_shared_settle_meta_defaults_container(monkeypatch, fake_regions):
     monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
-
-    with pytest.raises(SystemExit):
-        content_mod.load_region_content()
-
-
-def test_region_loader_rejects_bad_plain_settle_meta(monkeypatch):
-    fake_regions = {
-        "regions": [_region_with_settle({"_meta": [], "st": {}, "p": {}})],
-    }
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
-
-    with pytest.raises(SystemExit):
-        content_mod.load_region_content()
-
-
-@pytest.mark.parametrize(
-    "settle,defaults",
-    [
-        (
-            {"_meta_defaults": "", "_meta": {}, "st": {}, "p": {}},
-            {"ming_province": {}},
-        ),
-        (
-            {"_meta_defaults": "missing_group", "_meta": {}, "st": {}, "p": {}},
-            {"ming_province": {}},
-        ),
-        (
-            {"_meta_defaults": "ming_province", "_meta": [], "st": {}, "p": {}},
-            {"ming_province": {}},
-        ),
-        (
-            {"_meta_defaults": "ming_province", "_meta": {}, "st": {}, "p": {}},
-            {"ming_province": []},
-        ),
-    ],
-)
-def test_region_loader_rejects_bad_settle_meta_defaults(monkeypatch, settle, defaults):
-    fake_regions = {
-        "settle_meta_defaults": defaults,
-        "regions": [_region_with_settle(settle)],
-    }
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
-
     with pytest.raises(SystemExit):
         content_mod.load_region_content()
 
@@ -2913,8 +2850,6 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
     assert res.new_st["省库库银"] is not None
 
 
-
-
 def test_shaanxi_seed_is_relabelled_to_historical_shadow_scale(fresh_db):
     settle = _read_settle(fresh_db)
     p = settle["p"]
@@ -3005,8 +2940,6 @@ def test_border_slice_raw_content_keeps_primary_source_anchors():
     assert dongjiang["st"]["军饷欠"] == 0
 
 
-
-
 def test_liaodong_pay_source_rows_are_the_only_pay_ledger(fresh_db):
     """#1889：一旦该省真出现以它为饷源省、有省份额的军，省级账只从这支行派生。"""
     state = fresh_db.load_state()
@@ -3032,8 +2965,6 @@ def test_liaodong_pay_source_rows_are_the_only_pay_ledger(fresh_db):
     assert after["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "liaodong"), abs=1e-6
     )
-
-
 
 
 def test_new_dongjiang_army_makes_province_due_exactly_its_row_due(fresh_db):
@@ -3268,20 +3199,6 @@ def test_henan_royal_grants_make_zonglu_due_heavy(fresh_db):
     assert henan["p"]["Due"]["宗禄"] > beizhili["p"]["Due"]["宗禄"]
     assert henan["p"]["Due"]["宗禄"] > shandong["p"]["Due"]["宗禄"]
     assert henan["p"]["Due"]["宗禄"] == pytest.approx(9.15)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ── slice3：接入月末固定财政相位（shadow，不驱动国库；fail-loud 但隔离）──

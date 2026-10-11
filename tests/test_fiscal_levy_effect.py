@@ -1356,8 +1356,8 @@ def _liao_terminal(db):
     return dict(row) if row is not None else None
 
 
-def test_same_batch_keeps_the_first_event_outcome(game):
-    """同批先已驳、后已准：留下第一次裁定，后写不覆盖，也不另造拒收。"""
+@pytest.mark.parametrize('later_outcome', ["已准", "乱写"])
+def test_same_batch_keeps_the_first_event_outcome(game, later_outcome):
     from ming_sim.declaration_dispatch import dispatch_declaration
 
     db, state, content = game
@@ -1370,7 +1370,7 @@ def test_same_batch_keeps_the_first_event_outcome(game):
         },
         {
             "event_id": "liao_levy_rise_1631",
-            "事件结局": {"liao_levy_rise_1631": "已准"},
+            "事件结局": {"liao_levy_rise_1631": later_outcome},
         },
     ]})
     assert result.effects.rejected == []
@@ -1429,27 +1429,6 @@ def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
     report = result.effects.applied[0]
     assert state.metrics["民心"] == before + 1 + report["metric_delta"]["民心"]
     assert len(_outcome_rejection_rows(db)) == 2
-
-
-def test_later_illegal_outcome_does_not_discard_the_first_ruling(game):
-    """后一封非法标签不得把同事件已成立的第一次裁定整组打掉。"""
-    from ming_sim.declaration_dispatch import dispatch_declaration
-
-    db, state, content = game
-    issues.bind_content(content)
-    _present_liao_petition(db, state)
-    result = dispatch_declaration(db, state, {"effects": [
-        {
-            "event_id": "liao_levy_rise_1631",
-            "事件结局": {"liao_levy_rise_1631": "已驳"},
-        },
-        {
-            "event_id": "liao_levy_rise_1631",
-            "事件结局": {"liao_levy_rise_1631": "乱写"},
-        },
-    ]})
-    assert result.effects.rejected == []
-    assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
 
 
 def test_independent_petition_outcome_commits_for_another_connection(game):
