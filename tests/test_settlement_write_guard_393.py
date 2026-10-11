@@ -247,8 +247,6 @@ def test_direct_db_write_refused_when_gate_held(monkeypatch, name, call):
         game._write_gate.release()
 
 
-
-
 def test_advance_without_edict_refused_by_phase(monkeypatch):
     """退朝默认提交也会写 pending_actions，必须和写诏一样先过统一 web 写闸。"""
     game = _FakeGame(TurnPhase.SETTLING.value)
@@ -267,18 +265,20 @@ def test_advance_without_edict_refused_by_phase(monkeypatch):
     assert ei.value.status_code == 409
     assert game.db.writes == []
 
-def test_advance_without_edict_refused_when_gate_held(monkeypatch):
+def test_advance_without_edict_refused_when_gate_held(game, monkeypatch):
     """相位尚未落定但结算 worker 已持锁时，退朝端点不得阻塞事件循环等锁。"""
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    game.directive_rows = lambda: []
+    from ming_sim.month_open_snapshot import accept_settlement_period
+    from tests.month_chain_helpers import make_light_session
 
-    def _should_not_run(**_k):
-        game.db.writes.append("advance_without_decree")
-        return None
-
-    game.session.advance_without_decree = _should_not_run
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-    game._write_gate.acquire()
+    db, state, content = game
+    web_game = web_app.WebGame.__new__(web_app.WebGame)
+    web_game.session = make_light_session(db, state, content)
+    web_game._write_gate = web_game.session._write_gate
+    # 结算 worker 已受理这一月；拒收请求不得修改现有快照或盘面。
+    accept_settlement_period(db, state)
+    before = db.conn.total_changes
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    web_game._write_gate.acquire()
     result: dict[str, object] = {}
 
     def _run_call():
@@ -297,7 +297,7 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)
         assert exc.status_code == 409
-        assert game.db.writes == []
+        assert db.conn.total_changes == before
     finally:
-        game._write_gate.release()
+        web_game._write_gate.release()
         worker.join()

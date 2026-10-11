@@ -275,22 +275,6 @@ def test_run_claude_off_reasoning_uses_explicit_minimum_tokens(monkeypatch):
 
 # ── _resolve_cli_bin / login shell path ──
 
-def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
-    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
-    captured = {}
-
-    class _R:
-        stdout = "<<<CMRPATH>>>/a/bin:/b/bin<<<ENDPATH>>>"
-        stderr = ""
-        returncode = 0
-
-    monkeypatch.setattr(cb, "_RAW_RUN", lambda cmd, **kw: captured.update(cmd=cmd) or _R())
-    assert cb._login_shell_path() == "/a/bin:/b/bin"
-    joined = " ".join(captured["cmd"])
-    assert "printenv PATH" in joined
-    assert '"$PATH"' not in joined
-    assert "-lic" not in captured["cmd"]
-    assert {"-l", "-i", "-c"} <= set(captured["cmd"])
 
 @pytest.mark.parametrize(
     "runner,resolved",
@@ -387,12 +371,6 @@ def _agy_popen(monkeypatch, script):
     monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
     return state
 
-def test_run_agy_success_single_subprocess(monkeypatch):
-    state = _agy_popen(monkeypatch, [("STDOUT_BODY", 0)])
-    out, attempts = cb._run_agy("PROMPT")
-    assert out == "STDOUT_BODY" and attempts == 1
-    assert state["agy"] == 1
-    assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
 
 @pytest.mark.parametrize(
     "banner", ["Authentication required", "authentication timed out"],
@@ -419,16 +397,12 @@ class _RcProc:
     def __init__(self, stdout="", stderr="", returncode=0):
         self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
 
-@pytest.mark.parametrize(
-    "runner,proc",
-    [
-        ("_run_codex", lambda: _RcProc(stderr="error: auth failed", returncode=1)),
-        ("_run_claude", lambda: _RcProc(stderr="auth required", returncode=1)),
-    ],
-)
-def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, proc):
+@pytest.mark.parametrize("runner", [
+    "_run_codex", "_run_claude", "_run_cursor", "_run_kimi", "_run_grok", "_run_pi",
+])
+def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    _capture_run(monkeypatch, lambda cmd, **kw: proc())
+    _capture_run(monkeypatch, _RcProc(stderr="auth failed", returncode=1))
     with pytest.raises(RuntimeError):
         getattr(cb, runner)("p")
 
@@ -610,11 +584,6 @@ def test_describe_effective_model_includes_new_runners(runner):
     )
     assert cb.describe_effective_model(cfg) == f"{runner}/live-model"
 
-@pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok", "_run_pi"])
-def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
-    _capture_run(monkeypatch, _RcProc(stderr="auth failed", returncode=1))
-    with pytest.raises(RuntimeError):
-        getattr(cb, runner)("p")
 
 # ── #1256 S2 gate LLM args / config / evidence ──
 

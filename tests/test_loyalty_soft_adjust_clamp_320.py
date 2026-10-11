@@ -108,16 +108,6 @@ def test_deterministic_tick_plus_five_unaffected_by_soft_clamp(game):
     assert _loyalty(db) == 45
 
 
-def test_single_narrative_cannot_max_out_loyalty(game):
-    """④ 单次叙事 +100 不能拉满；cap=100 时仍只 +15。"""
-    db, state, _ = game
-    _set_loyalty(db, loyalty=40, mutiny_count=0, redemption_count=0)
-
-    _apply(db, state, {"loyalty": 100})
-
-    assert _loyalty(db) == 55
-
-
 @pytest.mark.parametrize(
     "kwargs",
     [

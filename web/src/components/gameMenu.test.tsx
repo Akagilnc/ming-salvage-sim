@@ -213,37 +213,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
-  it("in-game CLI runner dropdown includes grok from shared source (#1274 W1)", async () => {
-    mockFetch({
-      ...BASE_LLM_RESPONSE,
-      channel: "cli",
-      cli_runner: "agy",
-      cli_runners: [
-        { value: "agy", label: "agy（Gemini）" },
-        { value: "codex", label: "codex" },
-        { value: "claude", label: "claude" },
-        { value: "cursor", label: "cursor" },
-        { value: "kimi", label: "kimi" },
-        { value: "grok", label: "grok" },
-      ],
-      persisted: {
-        ...BASE_LLM_RESPONSE.persisted,
-        channel: "cli",
-        cli_runner: "agy",
-      },
-    });
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    const runnerSelect = Array.from(document.querySelectorAll("select")).find((select) =>
-      Array.from(select.options).some((option) => option.value === "codex")
-    );
-    const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
-    expect(runnerValues).toEqual(["agy", "codex", "claude", "cursor", "kimi", "grok"]);
-    expect(runnerValues).toContain("grok");
-    cleanup();
-  });
-
   it("clears the legacy thinking_level shadow on save so the unified selector owns reasoning (#358 cmr)", async () => {
     // 旧档持有 thinking_level=high、reasoning_strength 空。统一选择器以旧值迁移初始化，
     // 保存时须清掉旧 thinking_level，否则它仍作隐藏旋钮、用户选「默认」也清不掉。

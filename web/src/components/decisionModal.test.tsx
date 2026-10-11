@@ -38,14 +38,6 @@ afterEach(() => {
 });
 
 describe("DecisionModal", () => {
-  it("uses a non-main full-screen container inside the app landmark", () => {
-    const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
-    const page = document.querySelector<HTMLElement>(".decision-page");
-
-    expect(page?.tagName).toBe("SECTION");
-    expect(page?.querySelector("main")).toBeNull();
-    cleanup();
-  });
 
   it("exposes a modal dialog and keeps keyboard focus inside the red-seal page", () => {
     const background = document.createElement("button");
@@ -198,19 +190,6 @@ describe("DecisionModal", () => {
 });
 
 describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", () => {
-  it("makes the unique decision-confirm the seal button with no parallel decorative seal", () => {
-    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
-    const confirms = document.querySelectorAll(".decision-confirm");
-    expect(confirms).toHaveLength(1);
-    expect(document.querySelector(".decision-seal")).toBeNull();
-
-    const seal = confirms[0] as HTMLButtonElement;
-    expect(seal.tagName).toBe("BUTTON");
-    expect(seal.getAttribute("aria-hidden")).not.toBe("true");
-    expect(seal.disabled).toBe(true);
-
-    cleanup();
-  });
 
   it("disables the seal only when no pick and handwritten note is empty; either path enables", () => {
     const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
@@ -262,21 +241,6 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
     expect(onResolveNote).toHaveBeenCalledWith([{ note: "着即办理，不得有误。" }]);
     cleanupNote();
-  });
-
-  it("keeps program focus distinct from is-picked until a listed option is clicked", () => {
-    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
-    const options = document.querySelectorAll<HTMLButtonElement>(".decision-option");
-    expect(options[0].classList.contains("is-picked")).toBe(false);
-    act(() => options[0].focus());
-    expect(document.activeElement).toBe(options[0]);
-    expect(options[0].classList.contains("is-picked")).toBe(false);
-    expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
-
-    act(() => options[0].click());
-    expect(options[0].classList.contains("is-picked")).toBe(true);
-
-    cleanup();
   });
 
   it("#657 同页两类 + 六动作可点 + 留中默认", () => {

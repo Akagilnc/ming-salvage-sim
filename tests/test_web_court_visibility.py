@@ -197,30 +197,6 @@ def test_consort_excluded_from_court(read_game):
     assert visible_in_court(content.characters[consort], db) is False
 
 
-def _stub_game(monkeypatch, db, content):
-    """把 web_app.web_game 换成轻量 stub（复用真 db/content），供 _require_active_minister 端点守门测试。
-
-    #1402：端点改调 session.can_summon 取文案——stub 须挂真 GameSession.can_summon
-    （db + temporary_characters），不得再空壳 SimpleNamespace。
-    """
-    from ming_sim.session import GameSession
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.temporary_characters = {}
-    stub = SimpleNamespace(
-        session=sess,
-        content=content,
-        db=db,
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-    )
-    monkeypatch.setattr(web_app, "web_game", stub)
-
-
-
-
-
-
 def test_zongfan_cannot_be_summoned_via_can_summon(game):
     """summon_minister 工具链（session 召对 + web 流式两路）共用 session.can_summon 闸——宗藩须在此拒，
     否则裁判可绕朝堂列表按名召宗室（cmr R4：_require_active_minister 只守 /chat 直连，summon 工具走
@@ -299,23 +275,10 @@ def test_summon_power_check_uses_db_not_content(game):
     assert ok is True, f"DB 已归明却被内存值误拒：{reason}"
 
 
-def test_normal_ming_minister_still_summonable(read_game):
-    """回归：正常大明 active 大臣不受 #125 power 闸影响，照常可召。"""
-    db, state, content = read_game
-    sess = _bare_session(db)
-    name = _active_ming_minister(db, content)
-    ok, _ = sess.can_summon(content.characters[name])
-    assert ok is True
-
-
-
-
 def test_find_existing_minister_uses_db_power_id(game):
-    """_find_existing_minister 是罢黜/任命去重/密令 canonical 的 ming-guard，须与 can_summon 同口径
-    （DB 权威，#125 R2 codex high）：招抚归明者(DB翻ming/content仍旧势力)可召就必须可查到（可罢/可任）；
-    外藩(皇太极 DB houjin)仍查不到，防误黜外藩的保护不丢。"""
-    from ming_sim.session import _find_existing_minister
+    """真实任命认 DB 归明身份；外藩不得因在世而被授大明官职。"""
     import pytest
+    from ming_sim import issues
     db, state, content = game
     # 招抚归明者：DB 翻 ming、content 仍非 ming、active → 应被 _find_existing_minister 命中
     归明 = next((n for n, c in content.characters.items()
@@ -326,30 +289,18 @@ def test_find_existing_minister_uses_db_power_id(game):
     db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
     db.conn.commit()
     db.set_character_status(state, 归明, "active", "测试：招抚归明")
-    assert _find_existing_minister(content, 归明, db) == 归明, "DB 已归明者却被内存值挡出 ming-guard（可召不可罢）"
-    # 外藩 active（DB houjin）仍查不到（防误黜皇太极）
+    appointed = issues.apply_office_appointment(
+        db, state, content, 归明, "兵部郎中", new_office_type="兵部",
+    )
+    assert not appointed.get("rejected"), appointed
+    assert db.conn.execute("SELECT office FROM characters WHERE name=?", (归明,)).fetchone()["office"] == "兵部郎中"
     enemy = _enemy_active_name(db, content)
-    assert _find_existing_minister(content, enemy, db) is None
-
-
-def test_db_resolve_power_id_authoritative(game):
-    """db.resolve_power_id：DB 行 power_id 优先于内存，DB 无行时回退内存，再默认 ming。"""
-    db, state, content = game
-    name = _active_ming_minister(db, content)
-    ch = content.characters[name]
-    db.conn.execute("UPDATE characters SET power_id='houjin' WHERE name=?", (name,))
-    db.conn.commit()
-    assert db.resolve_power_id(ch) == "houjin"  # DB 权威压过内存的 ming
-    # DB 无该行 → 回退内存 power_id
-    ghost = SimpleNamespace(name="查无此人_测试", power_id="mongol")
-    assert db.resolve_power_id(ghost) == "mongol"
-    # 内存也无 → 默认 ming
-    ghost2 = SimpleNamespace(name="查无此人_测试2")
-    assert db.resolve_power_id(ghost2) == "ming"
-
-
-
-
+    before = dict(db.conn.execute("SELECT * FROM characters WHERE name=?", (enemy,)).fetchone())
+    refused = issues.apply_office_appointment(
+        db, state, content, enemy, "兵部郎中", new_office_type="兵部",
+    )
+    assert refused.get("rejected") is True
+    assert dict(db.conn.execute("SELECT * FROM characters WHERE name=?", (enemy,)).fetchone()) == before
 
 
 # ── #1317 r2：身份归一 ≠ 可召资格；未仕/宗藩别名解析 + 可召排未仕 ──────────
@@ -365,23 +316,14 @@ def _session_stub(db, content):
     return sess
 
 
-
-
-
-
-
-
 def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
     """#1317 r2 钉：身份归一认识未仕/宗藩——史宪之入仕不建重档；福王别名撞宗藩闸。"""
     from ming_sim import issues
-    from ming_sim.session import _find_existing_minister
 
     db, state, content = game
 
     assert "史可法" in content.characters
     assert "史宪之" in (content.characters["史可法"].aliases or [])
-    assert _find_existing_minister(content, "史可法", db) == "史可法"
-    assert _find_existing_minister(content, "史宪之", db) == "史可法"
 
     before = {
         r["name"]
@@ -411,7 +353,6 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         None,
     )
     assert prince is not None, "seed 须有福王别名宗藩（朱常洵）"
-    assert _find_existing_minister(content, "福王", db) == prince
     before_p = {
         r["name"]
         for r in db.conn.execute("SELECT name FROM characters").fetchall()

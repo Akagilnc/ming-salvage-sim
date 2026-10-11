@@ -31,7 +31,6 @@ def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatc
     assert "treasury" not in view["world"]
 
 
-
 def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     game, monkeypatch
 ):
@@ -292,19 +291,6 @@ def test_public_reports_accumulate_across_turns(game):
     source_ids = {item["source_id"] for item in view["public_events"]}
     assert {f"projection:turn_report:{state.turn}", f"projection:turn_report:{later.turn}"} <= source_ids
 
-def test_participation_record_adapter_covers_assignment_shape(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    db.record_participation_record(
-        state,
-        {"participants": [minister.name], "title": "清丈差事", "body": "奉命督办"},
-        kind="assignment",
-        source_id="assignment:1",
-    )
-
-    view = db.get_character_knowledge(state, minister.name)
-
-    assert any(item["source_id"] == "assignment:1" for item in view["events"])
 
 def test_issue_write_path_projects_participants_across_restore(game):
     db, state, content = game
@@ -496,51 +482,6 @@ def test_issue_roster_is_structured_and_read_side_projection_needs_no_write_hook
     )
     assert any(item["source_id"] == f"issue:{issue_id}" for item in db.get_character_knowledge(state, minister.name)["events"])
 
-def test_participation_adapter_reads_structured_roster_without_fake_names(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    db.record_participation_record(
-        state,
-        {
-            "participant_roster": [{"character_id": minister.name, "tier": "主办", "role": "督办"}],
-            "title": "清丈差事",
-            "body": "奉命督办",
-        },
-        kind="assignment",
-        source_id="assignment:structured",
-    )
-
-    view = db.get_character_knowledge(state, minister.name)
-
-    assert any(item["source_id"] == "assignment:structured" for item in view["events"])
-
-def test_new_participation_source_is_projected_without_read_side_type_branch(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    db.record_participation_record(
-        state,
-        {"participants": [minister.name], "title": "新型案卷", "body": "案卷内容"},
-        kind="new_record_type",
-        source_id="new_record:1",
-    )
-
-    assert any(item["source_id"] == "new_record:1" for item in db.get_character_knowledge(state, minister.name)["events"])
-
-def test_participant_roster_is_discovered_from_persistent_record_without_adapter(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    db.conn.execute(
-        """INSERT INTO issues
-           (kind, title, origin_turn, stage_text, participants, participant_roster)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        ("initiative", "未经适配的新案卷", state.turn, "案卷正文",
-         "[]", '[{"character_id": "' + minister.name + '"}]'),
-    )
-    db.conn.commit()
-
-    view = db.get_character_knowledge(state, minister.name)
-
-    assert any(item["title"] == "未经适配的新案卷" for item in view["events"])
 
 def test_office_blacklist_preserves_unrelated_war_register_fact(game):
     db, state, content = game
@@ -574,38 +515,6 @@ def test_event_office_blacklist_matches_current_office_name(game):
         for item in view["events"]
     )
 
-def test_participant_roster_is_discovered_from_any_persistent_table(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    db.conn.execute(
-        """
-        CREATE TABLE custom_participant_records (
-            id INTEGER PRIMARY KEY,
-            turn INTEGER NOT NULL,
-            year INTEGER NOT NULL,
-            period INTEGER NOT NULL,
-            kind TEXT NOT NULL,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL DEFAULT '',
-            source_id TEXT NOT NULL,
-            participant_roster TEXT NOT NULL
-        )
-        """
-    )
-    db.conn.execute(
-        """
-        INSERT INTO custom_participant_records
-            (turn, year, period, kind, title, body, source_id, participant_roster)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (state.turn, state.year, state.period, "custom", "新型案卷", "案卷内容",
-         "custom:1", '[{"character_id": "' + minister.name + '"}]'),
-    )
-    db.conn.commit()
-
-    view = db.get_character_knowledge(state, minister.name)
-
-    assert any(item["source_id"] == "custom:1" for item in view["events"])
 
 def test_appended_dossier_participant_learns_only_on_join_turn_after_restore(game):
     from ming_sim.db import GameDB

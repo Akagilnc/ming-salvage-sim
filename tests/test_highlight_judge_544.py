@@ -18,62 +18,13 @@ from typing import Any, Dict, List
 
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
-from ming_sim.highlight_judge import run_highlight_judge
 
 
 # ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
 
 
-def test_run_highlight_judge_timeout_and_exception_degrade_silently():
-    release = threading.Event()
-
-    class _Slow:
-        def run(self, *_a, **_k):
-            release.wait()
-            return SimpleNamespace(content='{"highlights": ["迟到"]}')
-
-    class _Boom:
-        def run(self, *_a, **_k):
-            raise RuntimeError("model down")
-
-    try:
-        assert run_highlight_judge(
-            minister_reply="臣陈辽饷。",
-            llm_config=object(),
-            agent=_Slow(),
-            timeout_s=0.05,
-        ) == []
-    finally:
-        # 断言失败不得扣住 _Slow.run；释放归本测 finally。
-        release.set()
-
-    assert run_highlight_judge(
-        minister_reply="臣陈辽饷。",
-        llm_config=object(),
-        agent=_Boom(),
-        timeout_s=1.0,
-    ) == []
 
 
-@pytest.mark.parametrize(("output", "expected"), [
-    ("", []),
-    ("not json", []),
-    ('{"highlights": "辽饷"}', []),
-    ('{"phrases": ["甲"]}', []),
-    ('{"highlights": [1, null, ""]}', []),
-    ('{"highlights": ["辽饷", "军心"]}', ["辽饷", "军心"]),
-])
-def test_run_highlight_judge_success_returns_phrases(output, expected):
-    class _Ok:
-        def run(self, *_a, **_k):
-            return SimpleNamespace(content=output)
-
-    assert run_highlight_judge(
-        minister_reply="臣陈**辽饷**与军心。",
-        llm_config=object(),
-        agent=_Ok(),
-        timeout_s=1.0,
-    ) == expected
 
 
 # ── 落库 + 两读端 + restore ──────────────────────────────────────────────
@@ -271,7 +222,12 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
     _drain(web_game)
 
 
-def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
+@pytest.mark.parametrize(("output", "expected"), [
+    ("", []), ("not json", []), ('{"highlights": "辽饷"}', []),
+    ('{"phrases": ["甲"]}', []), ('{"highlights": [1, null, ""]}', []),
+    ('{"highlights": ["辽饷", "军心"]}', ["辽饷", "军心"]),
+])
+def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch, output, expected):
     """AC6 非流式：折进等待窗，成功则 history 同到带高亮。"""
     import web_app as web_app_mod
     from tests.test_audience_background import _FakeAgent, _web_game
@@ -280,16 +236,11 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣陈辽饷。"]))
     _restore_highlight_seams(web_game)
 
-    # #1842：殿上非流式走 scene_chat
-    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name="", **_kw):
-        from ming_sim.session import ChatTurnResult
-        return ChatTurnResult(answer="臣陈辽饷。")
+    class _Ok:
+        def run(self, *_a, **_k):
+            return SimpleNamespace(content=output)
 
-    web_game.session.scene_chat = fake_scene_chat  # type: ignore[method-assign]
-    monkeypatch.setattr(
-        web_app_mod, "run_highlight_judge",
-        lambda **_k: ["辽饷"],
-    )
+    monkeypatch.setattr("ming_sim.agents.create_highlight_judge_agent", lambda *_a, **_k: _Ok())
 
     events = list(web_game.chat_stream("殿上", "问辽饷？"))
     assert "error" not in [e.get("type") for e in events]
@@ -303,10 +254,11 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
         row = db.reign.get_last_active_chat_turn("殿上", state.turn)
         mid = int((row or {}).get("minister_message_id") or 0)
     assert mid > 0
-    assert db.chat_messages.highlights(mid) == ["辽饷"]
+    assert db.chat_messages.highlights(mid) == expected
 
 
-def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypatch):
+@pytest.mark.parametrize("mode", ["timeout", "exception"])
+def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypatch, mode):
     """非流式超时封顶：回话先行返回、无高亮、不报错。"""
     import web_app as web_app_mod
     import ming_sim.highlight_judge as hj
@@ -316,12 +268,6 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
     _restore_highlight_seams(web_game)
 
-    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name="", **_kw):
-        from ming_sim.session import ChatTurnResult
-        return ChatTurnResult(answer="臣遵旨。")
-
-    web_game.session.scene_chat = fake_scene_chat  # type: ignore[method-assign]
-
     release = threading.Event()
 
     class _Slow:
@@ -329,11 +275,15 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
             release.wait()
             return SimpleNamespace(content='{"highlights": ["不该出现"]}')
 
+    class _Boom:
+        def run(self, *_a, **_k):
+            raise RuntimeError("model down")
+
     real_run = hj.run_highlight_judge
 
     def capped(**kwargs):
         kwargs = dict(kwargs)
-        kwargs["agent"] = _Slow()
+        kwargs["agent"] = _Slow() if mode == "timeout" else _Boom()
         kwargs["timeout_s"] = 0.05
         return real_run(**kwargs)
 

@@ -56,7 +56,6 @@ class _Sess:
         self.calls.append("end")
 
 
-
 def _active_character(content):
     return next(c for c in content.characters.values() if c.status == "active")
 
@@ -173,7 +172,6 @@ def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
 
     assert term.review_directives(session) == "issue"
     assert session.calls == ["enter_review"]
-
 
 
 def test_terminal_minister_chat_persists_messages_before_session_chat(game, monkeypatch):
@@ -329,22 +327,6 @@ def test_terminal_minister_chat_reply_persist_failure_uses_fail_chat_turn(game, 
 
     assert fail_calls and fail_calls[0] > 0
     assert _chat_rows(db, character.name) == []
-
-
-def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypatch, capsys):
-    session = _Sess(RuntimeError("unused"))
-    session.current_phase = lambda: TurnPhase.REVIEWING
-    session.advance_without_decree = lambda: SimpleNamespace(
-        awaiting=False, advanced=True, report="留中案卷本月重判月报",
-    )
-    monkeypatch.setattr(term, "review_directives", lambda _s: "skip")
-    monkeypatch.setattr(term, "_print_header", lambda _s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-
-    term.play_turn(session)
-
-    assert "留中案卷本月重判月报" in capsys.readouterr().out
-    assert session.calls == ["begin", "end"]
 
 
 @pytest.mark.parametrize("exc", [

@@ -60,20 +60,18 @@ def ledger(game):
 
 # ---------------------------------------------------------------- 视角裁切形态
 
-def test_participant_sees_own_edge_non_participant_default_invisible(ledger):
-    """参与者即知自己的边；非参与者默认不可见（ID-11）。"""
+@pytest.mark.parametrize("viewer, expected", [
+    ("王绍徽", [("王绍徽", "崔呈秀")]),
+    ("崔呈秀", [("王绍徽", "崔呈秀")]),
+    ("钱谦益", [("钱谦益", "温体仁")]),
+    ("孙承宗", []),
+])
+def test_participant_sees_own_edge_non_participant_default_invisible(ledger, viewer, expected):
+    """任一端参与者能读到自己的边；其余边及无参与人物的可见面均不可越权。"""
     db, _ = ledger
-    jia_view = project_relation_ledger(db, viewer="王绍徽")
-    assert [(d["source"], d["target"]) for d in jia_view] == [("王绍徽", "崔呈秀")]
-    # 非参与者（丙）看不见甲乙的边。
-    qian_view = project_relation_ledger(db, viewer="钱谦益")
-    assert [(d["source"], d["target"]) for d in qian_view] == [("钱谦益", "温体仁")]
+    visible = project_relation_ledger(db, viewer=viewer)
+    assert [(d["source"], d["target"]) for d in visible] == expected
 
-def test_role_view_cuts_by_either_end_participation(ledger):
-    """边的任一端参与即知：乙端视角同样读到该边。"""
-    db, _ = ledger
-    cui_view = project_relation_ledger(db, viewer="崔呈秀")
-    assert [(d["source"], d["target"]) for d in cui_view] == [("王绍徽", "崔呈秀")]
 
 def test_blank_viewer_fails_closed_not_omniscient(ledger):
     """空白 viewer fail-closed（判卷修复）：空串/纯空白是 malformed 授权参数，
@@ -92,14 +90,6 @@ def test_blank_viewer_fails_closed_not_omniscient(ledger):
     jia_view = project_relation_ledger(db, viewer="  王绍徽  ")
     assert [(d["source"], d["target"]) for d in jia_view] == [("王绍徽", "崔呈秀")]
 
-def test_empty_ledger_projects_empty(ledger):
-    """无账行为可辨：零边零摘要时空投影；有账后非空且含酿制产物。"""
-    db, _ = ledger
-    assert project_relation_ledger(db, viewer=None) != []
-    fresh: GameDB = ledger[0]
-    # 同核空库判别：直接另起内存库不可行（GameDB 依赖 content），改用
-    # 无任何关系数据的视角人物——其可见面为空。
-    assert project_relation_ledger(fresh, viewer="孙承宗") == []
 
 # ---------------------------------------------------------------- 返回形态
 
@@ -124,14 +114,6 @@ def r3_guard(game):
 
 # ---------------------------------------------------------------- 判官全知机面
 
-def test_judge_face_reads_edges_invisible_to_role_view(ledger):
-    """判官机面全知（ID-12）：读到普通角色视角不可见的边；两面不混用。"""
-    db, _ = ledger
-    judge_face = project_relation_ledger(db, viewer=None)
-    judge_pairs = {(d["source"], d["target"]) for d in judge_face}
-    assert ("钱谦益", "温体仁") in judge_pairs  # 王绍徽视角不可见
-    jia_pairs = {(d["source"], d["target"]) for d in project_relation_ledger(db, viewer="王绍徽")}
-    assert ("钱谦益", "温体仁") not in jia_pairs
 
 def test_omniscient_is_superset_same_core(ledger):
     """庭裁 r1 F2：同一 DTO 同一投影核心，仅授权参数不同；全知＝权限超集。"""

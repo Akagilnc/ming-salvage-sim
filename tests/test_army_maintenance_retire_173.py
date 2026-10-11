@@ -27,7 +27,6 @@ def _pay_source():
 # ── schema：列已物理删除 ──────────────────────────────────────────────
 
 
-
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
 
 def test_new_army_maintenance_key_ignored(game):
@@ -60,15 +59,20 @@ def test_new_army_inf_manpower_rejected_not_crash(read_game):
 
 # ── 月饷纯由兵力派生，与已删的维护费无关 ──────────────────────────────
 
-def test_pay_derives_from_manpower(game):
+@pytest.mark.parametrize("salary_rate,expected_rate", [
+    (-1, 1.5), (0, 1.5), (None, 1.5), ("脏", 1.5), (True, 1.5),
+    (float("inf"), 1.5), (float("-inf"), 1.5), (float("nan"), 1.5), (2.0, 2.0),
+])
+def test_pay_derives_from_manpower(game, salary_rate, expected_rate):
     # 两军缺省 salary_rate 落同一锚点，兵力多者 army_needed 严格更大 → 月饷由兵力派生（非维护费）。
     db, state, _ = game
     db.create_armies_from_extraction(state, [
-        {"id": "pay_lo", "name": "少兵营", "owner_power": "ming", "manpower": 10000, **_pay_source()},
-        {"id": "pay_hi", "name": "多兵营", "owner_power": "ming", "manpower": 40000, **_pay_source()},
+        {"id": "pay_lo", "name": "少兵营", "owner_power": "ming", "manpower": 10000, "salary_rate": salary_rate, **_pay_source()},
+        {"id": "pay_hi", "name": "多兵营", "owner_power": "ming", "manpower": 40000, "salary_rate": salary_rate, **_pay_source()},
     ])
     lo = db.conn.execute("SELECT * FROM armies WHERE id='pay_lo'").fetchone()
     hi = db.conn.execute("SELECT * FROM armies WHERE id='pay_hi'").fetchone()
+    assert lo["salary_rate"] == hi["salary_rate"] == expected_rate
     assert army_needed(hi) > army_needed(lo) > 0, "兵力多者月饷应更大（月饷随兵力派生）"
 
 # ── army_delta 写维护费 → 非法字段拒收（别名已删） ────────────────────
@@ -79,23 +83,13 @@ def test_army_delta_maintenance_rejected_as_invalid_field(game, field_key):
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    before = db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
     changes = db.apply_army_deltas(
-        state, _pseudo("加饷"), None, "户部", {aid: {field_key: 5, "reason": "诏加饷"}})
+        state, _pseudo("加饷"), None, "户部", {aid: {field_key: 5, "士气": -3, "reason": "诏加饷"}})
     rejected = [c for c in changes if c.get("rejected")]
     assert rejected and rejected[0]["category"] == "invalid_enum", \
         f"写维护费应作非法字段拒收(invalid_enum)：{changes}"
+    assert db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"] == before - 3
 
-def test_army_delta_other_fields_still_apply(game):
-    # 拒维护费不误伤同信封其它合法字段（士气照落）。
-    db, state, _ = game
-    aid = str(db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    before = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
-    db.apply_army_deltas(
-        state, _pseudo("整饬"), None, "兵部", {aid: {"维护费": 5, "士气": -3, "reason": "整饬"}})
-    after = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
-    assert after == before - 3, "拒维护费不应连累同军合法字段（士气）落库"
 
 # ── extractor 写端 prompt 不教军队维护费 ─────────────────────────────

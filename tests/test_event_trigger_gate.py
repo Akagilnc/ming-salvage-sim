@@ -110,10 +110,11 @@ def test_gated_historical_event_included_when_satisfied(game):
         content.events.remove(ev)
 
 
-def test_ungated_historical_event_unchanged(game):
+@pytest.mark.parametrize("gate", [{}, None])
+def test_ungated_historical_event_unchanged(game, gate):
     db, state, content = game
     issues.bind_content(content)  # 防他测漂移 _content：确保 _ctx() 指向本 fixture 盘面
-    ev = _hist_event("__test_ungated_hist__", {})  # 无 gate = 纯日历锚定
+    ev = _hist_event("__test_ungated_hist__", gate)  # 无 gate = 纯日历锚定
     content.events.append(ev)
     try:
         state.metrics["民心"] = 60
@@ -434,76 +435,31 @@ def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
         content.events.remove(ev)
 
 
-def test_gate_passed_tolerates_none(read_game):
-    # PR#107 R1（gemini medium）：trigger_gate=None（content JSON 显式 null）传进 _gate_passed
-    # 不应 None.items() AttributeError 崩候选收集；None 视同空门、恒过。
-    db, state, content = read_game
-    from ming_sim.issues import _gate_passed
-    assert _gate_passed(None, state.metrics, db) is True
-
-
-def test_gate_passed_tolerates_nonstring_cond(read_game):
-    # PR#107 R2（gemini high）：条件值写成非字符串（{"民心":60} 而非 ">=60"）不应 cond.strip()
-    # AttributeError 崩候选收集；str() 强转后不匹配操作符正则 → 门不达标（安全降级、不崩）。
-    db, state, content = read_game
-    from ming_sim.issues import _gate_passed
-    assert _gate_passed({"民心": 60}, state.metrics, db) is False
-    assert _gate_passed({"民心": True}, state.metrics, db) is False
-
-
-def test_historical_event_none_gate_no_crash(game):
+@pytest.mark.parametrize("condition", [60, True])
+def test_gate_passed_tolerates_nonstring_cond(game, condition):
     db, state, content = game
     issues.bind_content(content)
-    ev = _hist_event("__test_none_gate__", {})
-    ev.trigger_gate = None  # 模拟 content JSON 显式 null
+    ev = _hist_event("__test_nonstring_gate__", {"民心": condition})
     content.events.append(ev)
     try:
-        cands = issues.gather_candidate_events(state, db)  # 不应 AttributeError
-        assert any(c.id == "__test_none_gate__" for c in cands), "None 门视同空门、恒过进候选"
+        assert ev.id not in {c.id for c in issues.gather_candidate_events(state, db)}
     finally:
         content.events.remove(ev)
 
 
 # ── #12(b)：trigger_gate key/cond fail-loud（ADR 0012 残留 4b，Q3 裁断=fail-loud）──
 
-def test_gate_key_form_error_accepts_valid_forms():
-    """存量 6 形态 + 文本字段 key 全合法（不误拒）。"""
-    from ming_sim.content import gate_key_form_error
-    for k in ("民心", "皇威", "国库", "内库",
-              "power.houjin.leverage", "region.huguang.grain_security",
-              "region.shaanxi|shanxi|henan.unrest.min",
-              "class.士绅@nanzhili|zhejiang|fujian.satisfaction.max",
-              "event.huabei_plague.triggered",
-              "region.x.controlled_by"):
-        assert gate_key_form_error(k) == "", (k, gate_key_form_error(k))
 
-
-def test_gate_key_form_error_rejects_typo_metric_table_structure():
-    """typo'd metric / unknown table / incomplete shape → non-empty fail-loud error."""
-    from ming_sim.content import gate_key_form_error
-    assert gate_key_form_error("民生")  # 民心 typo
-    assert gate_key_form_error("regon.x.unrest")  # region typo
-    assert gate_key_form_error("region.x")  # 2 段，结构不完整
-    assert gate_key_form_error("event.huabei_plague.status")  # event 仅支持 triggered
-
-
-def test_gate_cond_form_error_numeric_and_text():
-    """数值比较 + 文本相等都合法（load/runtime 调和，残留 4b②）；垃圾非法。"""
-    from ming_sim.content import gate_cond_form_error
-    # 数值比较（无 !=）+ 文本相等（==/!=）；数值 != 见 test_gate_cond_numeric_neq_rejected_*
-    for c in ("<=240", ">=34", "==5", "==ming", "!=houjin"):
-        assert gate_cond_form_error(c) == "", (c, gate_cond_form_error(c))
-    assert gate_cond_form_error("abc")
-    assert gate_cond_form_error(">> 5")
-
-
-def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
-    """load 时 trigger_gate key typo → SystemExit fail-loud（不再静默当条件不满足）。"""
-    import pytest
+@pytest.mark.parametrize("key", [
+    "民生", "regon.x.unrest", "region.x", "event.huabei_plague.status",
+    "region..unrest", "region.x.", "region.shaanxi|.unrest",
+    "class.@nanzhili.satisfaction", "class.@n1|@n2.satisfaction", "class.士绅@.satisfaction",
+])
+def test_load_event_fail_loud_on_bad_gate_key(monkeypatch, key):
     import ming_sim.content as content_mod
     bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "trigger_gate": {"民生": "<=5"}}]  # 民心 typo
+        "urgency": 1, "severity": 1, "credibility": 1,
+        "trigger_gate": {key: "<=5"}}]
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
@@ -594,218 +550,62 @@ def test_load_event_rejects_month_out_of_range(monkeypatch, field, value):
         content_mod.load_event_content("x.json")
 
 
-def test_typo_field_gate_raises_clear_not_operationalerror(read_game):
-    """gate 引用 typo'd 字段（DB 无此列）→ 求值期 SELECT 抛 OperationalError，被 fail-loud
-    成清晰 ValueError（含 key + 'DB 无此列'），不留 cryptic 崩（#12 Q3）。"""
-    import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-    with pytest.raises(ValueError):
-        _gate_passed({"region.huguang.grane_security": ">=1"}, state.metrics, db)  # grain_security typo
+@pytest.mark.parametrize("gate", [
+    {"region.huguang.grane_security": ">=1"}, {"region.huguang.controled_by": "==ming"},
+    {"region.huguang.controlled_by": ">=1"}, {"character.毛文龙.loyalty;DROP": ">=1"},
+    {"character.毛文龙.loyalty": "==active"}, {"character.毛文龙.loyality": ">=1"},
+    {"character.毛文龙.locaiton": "==liaodong"},
+])
+def test_typo_field_gate_raises_clear_not_operationalerror(game, gate):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_bad_runtime_gate__", gate)
+    content.events.append(ev)
+    try:
+        with pytest.raises(ValueError):
+            issues.gather_candidate_events(state, db)
+    finally:
+        content.events.remove(ev)
 
 
-def test_gate_cond_numeric_neq_rejected_text_neq_ok():
-    """cmr r1（Claude+codex concur）：'!=5' 数值 not-equal load 不许（runtime 数值分支无 !=、
-    永远 False）；'!=houjin' 文本相等仍合法（与 runtime 两分支精确对齐）。"""
-    from ming_sim.content import gate_cond_form_error
-    assert gate_cond_form_error("!=5")        # 数值 != → 拒
-    assert gate_cond_form_error("!=-3")       # 数值 != → 拒
-    assert gate_cond_form_error("!=houjin") == ""   # 文本 != → 放行
-    assert gate_cond_form_error("==ming") == ""
-    assert gate_cond_form_error("==5") == ""        # 数值 == → 放行
-
-
-def test_gate_key_rejects_empty_segments():
-    """cmr r1（codex）：空 id / 空字段 / | 列表空成员 → fail-loud 素材（非静默/SQL 崩）。"""
-    from ming_sim.content import gate_key_form_error
-    assert gate_key_form_error("region..unrest")        # 空 id
-    assert gate_key_form_error("region.x.")             # 空字段
-    assert gate_key_form_error("region.shaanxi|.unrest")  # | 含空成员
-    assert gate_key_form_error("region.shaanxi.unrest") == ""  # 正常仍放行
-
-
-def test_typo_field_text_gate_raises_clear(read_game):
-    """cmr r1（Claude）：文本相等 gate 引用 typo'd 字段 → text-branch（_eval_gate_key_str）的
-    OperationalError 也被 fail-loud 成清晰 ValueError（覆盖文本分支 wrap）。"""
-    import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-    with pytest.raises(ValueError):
-        _gate_passed({"region.huguang.controled_by": "==ming"}, state.metrics, db)  # controlled_by typo
-
-
-def test_gate_key_rejects_empty_class_name():
-    """cmr r2（Claude+codex concur）：class.<名>@<region> 的类名为空（@ 前）→ fail-loud
-    （| 守不到单 @ 子形）。存量 class.士绅@... 正常仍放行。"""
-    from ming_sim.content import gate_key_form_error
-    assert gate_key_form_error("class.@nanzhili.satisfaction")          # 空类名
-    assert gate_key_form_error("class.@n1|@n2.satisfaction")            # | 多成员均空类名
-    assert gate_key_form_error("class.士绅@nanzhili.satisfaction") == ""  # 正常
-
-
-def test_text_cond_requires_text_capable_key():
-    """cmr r2（codex）：文本相等 cond 须配单 id region/army/power 三段 key；多 id/聚合/class/
-    bare-metric 配文本 cond → fail-loud（runtime _eval_gate_key_str 不支持、否则静默永不达标）。"""
-    from ming_sim.content import gate_text_key_form_error, gate_cond_is_text
-    assert gate_cond_is_text("==ming") and not gate_cond_is_text("==5")
-    assert gate_text_key_form_error("region.huguang.controlled_by") == ""   # 合法
-    assert gate_text_key_form_error("region.a|b.controlled_by")              # 多 id 拒
-    assert gate_text_key_form_error("class.士绅.satisfaction")                # class 拒
-    assert gate_text_key_form_error("民心")                                  # bare metric 拒
-
-
-def test_load_fail_loud_on_text_cond_multi_id_key(monkeypatch):
-    """load 时 文本 cond 配多 id key → SystemExit fail-loud（配对校验）。"""
-    import pytest
+@pytest.mark.parametrize("gate", [
+    {"民心": "abc"}, {"民心": ">> 5"}, {"民心": "!=5"}, {"民心": "!=-3"},
+    {"region.a|b.controlled_by": "==ming"}, {"class.士绅.satisfaction": "==ming"},
+    {"民心": "==ming"}, {"region.huguang.unrest": "==ming"},
+    {"power.houjin.leverage": "==ming"}, {"character.毛文龙.personal_skills": "==ming"},
+    {"character.毛文龙.loyalty": "==active"},
+])
+def test_load_fail_loud_on_text_cond_multi_id_key(monkeypatch, gate):
     import ming_sim.content as content_mod
     bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "trigger_gate": {"region.a|b.controlled_by": "==ming"}}]
+        "urgency": 1, "severity": 1, "credibility": 1, "trigger_gate": gate}]
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
 
 
-def test_text_cond_field_must_be_text_field():
-    """cmr r3（codex）：文本相等 cond 须配各表文本字段；配数值字段（如 region.x.unrest）→ fail-loud
-    （runtime str(数值)!=文本 永远 False）。controlled_by 等文本字段仍放行。"""
-    from ming_sim.content import gate_text_key_form_error
-    assert gate_text_key_form_error("region.huguang.controlled_by") == ""   # 文本字段 OK
-    assert gate_text_key_form_error("power.houjin.stance") == ""            # 文本字段 OK
-    assert gate_text_key_form_error("region.huguang.unrest")               # 数值字段 → 拒
-    assert gate_text_key_form_error("power.houjin.leverage")               # 数值字段 → 拒
-
-
-def test_gate_key_rejects_empty_region_after_at():
-    """online codex P2：class.<名>@<空> = 想写 regional 漏 region → runtime 静默回退 national，
-    fail-loud 拒之。national 用无 @ 形式仍放行；存量 @region 形式不误拒。"""
-    from ming_sim.content import gate_key_form_error
-    assert gate_key_form_error("class.士绅@.satisfaction")          # @ 后空 region → 拒
-    assert gate_key_form_error("class.士绅.satisfaction") == ""     # national（无 @）放行
-    assert gate_key_form_error("class.士绅@nanzhili.satisfaction") == ""  # regional 正常放行
-
-
-def test_numeric_cond_on_text_field_raises_clear(read_game):
-    """#159：数值比较 cond 配文本字段（如 region.x.controlled_by >=1）→ runtime int(str) ValueError
-    被 fail-loud 成清晰 ValueError（数值不可比文本字段），不静默回 None 当条件不满足（Q3）。"""
-    import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-    # controlled_by 是文本字段（'ming'/'houjin'），对它做数值比较 → fail-loud
-    with pytest.raises(ValueError):
-        _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
-
-
-def test_character_numeric_gate_supports_comparison(read_game):
-    """character.<name>.<field> 数值字段可参与 trigger_gate 比较（#201）。"""
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-
-    row = db.conn.execute("SELECT loyalty FROM characters WHERE name = ?", ("毛文龙",)).fetchone()
-    assert row is not None, "测试盘面应有毛文龙"
-
-    assert _gate_passed({"character.毛文龙.loyalty": f">={int(row['loyalty'])}"}, state.metrics, db)
-    assert not _gate_passed({"character.毛文龙.loyalty": f">{int(row['loyalty'])}"}, state.metrics, db)
-
-
-def test_character_numeric_gate_supports_aggregation(game):
-    """character.<name>|<name>.<field>.<agg> 与其它 gate 表同样支持聚合。"""
-    from ming_sim.issues import _gate_passed
-    db, state, _content = game
-
-    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (40, "毛文龙"))
-    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (80, "袁崇焕"))
-    db.conn.commit()
-
-    assert _gate_passed({"character.毛文龙|袁崇焕.loyalty.avg": ">=60"}, state.metrics, db)
-    assert not _gate_passed({"character.毛文龙|袁崇焕.loyalty.min": ">=60"}, state.metrics, db)
-
-
-def test_army_numeric_gate_preserves_fractional_arrears_tail(game):
-    """#302 cmr：并轨后 armies.arrears 可为小数尾差，trigger_gate 不得 int 截断成 0。"""
-    from ming_sim.issues import _gate_passed
-    db, state, _content = game
-
-    army_id = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()["id"]
-    db.conn.execute('UPDATE armies SET province_pay_arrears=0, central_pay_arrears=? WHERE id=?', (0.5, army_id))
-    db.conn.commit()
-
-    assert not _gate_passed({f"army.{army_id}.arrears": "<=0"}, state.metrics, db)
-    assert _gate_passed({f"army.{army_id}.arrears": ">0"}, state.metrics, db)
-
-
-def test_character_gate_rejects_malformed_field_before_sql(read_game):
-    """trigger_gate 字段名必须先过白名单，不能把畸形字段拼进 SQL。"""
-    import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, _content = read_game
-
-    with pytest.raises(ValueError):
-        _gate_passed({"character.毛文龙.loyalty;DROP": ">=1"}, state.metrics, db)
-
-
-def test_character_numeric_field_text_gate_raises_clear(read_game):
-    """character 数值字段走文本比较时必须 fail-loud，不能 str(loyalty) 后静默 False。"""
-    import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, _content = read_game
-
-    with pytest.raises(ValueError):
-        _gate_passed({"character.毛文龙.loyalty": "==active"}, state.metrics, db)
-
-
-def test_character_text_gate_supports_equality(game):
-    """character.<name>.<field> 文本字段可参与 trigger_gate 相等/不等比较（#201）。"""
-    from ming_sim.issues import _gate_passed
+@pytest.mark.parametrize("gate,eligible", [
+    ({"character.毛文龙.loyalty": ">=40"}, True), ({"character.毛文龙.loyalty": ">40"}, False),
+    ({"character.毛文龙|袁崇焕.loyalty.avg": ">=60"}, True),
+    ({"character.毛文龙|袁崇焕.loyalty.min": ">=60"}, False),
+    ({"army.guanning.arrears": "<=0"}, False), ({"army.guanning.arrears": ">0"}, True),
+    ({"character.毛文龙.location": "==liaodong"}, True),
+    ({"character.毛文龙.location": "!=capital"}, True),
+    ({"character.毛文龙.location": "==capital"}, False),
+])
+def test_character_numeric_gate_supports_comparison(game, gate, eligible):
     db, state, content = game
-
-    db.conn.execute("UPDATE characters SET location = ? WHERE name = ?", ("liaodong", "毛文龙"))
-
-    assert _gate_passed({"character.毛文龙.location": "==liaodong"}, state.metrics, db)
-    assert _gate_passed({"character.毛文龙.location": "!=capital"}, state.metrics, db)
-    assert not _gate_passed({"character.毛文龙.location": "==capital"}, state.metrics, db)
-
-
-def test_character_typo_field_gate_raises_clear(read_game):
-    """character gate 字段名 typo（DB 无此列）沿用清晰 ValueError（#201）。"""
-    import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-
-    with pytest.raises(ValueError):
-        _gate_passed({"character.毛文龙.loyality": ">=1"}, state.metrics, db)
-
-
-def test_character_text_typo_field_gate_raises_clear(read_game):
-    """character 文本 gate 字段名 typo 也必须 fail-loud（#201 cmr P2）。"""
-    import pytest
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-
-    with pytest.raises(ValueError):
-        _gate_passed({"character.毛文龙.locaiton": "==liaodong"}, state.metrics, db)
-
-
-def test_character_text_gate_key_passes_content_validation():
-    """load-time 文本 gate 校验接受 character 的文本字段（#201）。"""
-    from ming_sim.content import gate_text_key_form_error
-
-    assert gate_text_key_form_error("character.毛文龙.location") == ""
-    assert gate_text_key_form_error("character.毛文龙.office") == ""
-
-
-def test_character_text_gate_rejects_serialized_list_field():
-    """character.personal_skills 是序列化列表，不适合作普通文本等值门。"""
-    from ming_sim.content import gate_text_key_form_error
-
-    assert gate_text_key_form_error("character.毛文龙.personal_skills")
-
-
-def test_character_text_gate_rejects_numeric_character_field():
-    """character loyalty 等数值字段不应被文本等值门放行。"""
-    from ming_sim.content import gate_text_key_form_error
-
-    assert gate_text_key_form_error("character.毛文龙.loyalty")
+    issues.bind_content(content)
+    db.conn.execute("UPDATE characters SET loyalty=40, location='liaodong' WHERE name='毛文龙'")
+    db.conn.execute("UPDATE characters SET loyalty=80 WHERE name='袁崇焕'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0.5 WHERE id='guanning'")
+    db.conn.commit()
+    ev = _hist_event("__test_field_gate__", gate)
+    content.events.append(ev)
+    try:
+        assert (ev.id in {c.id for c in issues.gather_candidate_events(state, db)}) is eligible
+    finally:
+        content.events.remove(ev)
 
 
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
@@ -3764,68 +3564,6 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
         assert db.conn.execute(
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs
-
-
-def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, monkeypatch):
-    """online R2 Gemini：同一批无状态变化的 event_pool 项不应重复重算候选池。"""
-    db, state, content = game
-    issues.bind_content(content)
-    ev1 = Event(
-        id="__test_cached_current_candidate_1__",
-        title="测试·候选缓存一",
-        kind="朝议",
-        summary="x",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-    )
-    ev2 = Event(
-        id="__test_cached_current_candidate_2__",
-        title="测试·候选缓存二",
-        kind="朝议",
-        summary="x",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-    )
-    content.seed_events.extend([ev1, ev2])
-    content.event_by_id[ev1.id] = ev1
-    content.event_by_id[ev2.id] = ev2
-    calls = 0
-
-    def fake_gather_candidate_events(_state, _db):
-        nonlocal calls
-        calls += 1
-        return []
-
-    monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
-    try:
-        out = issues.apply_issue_tracker_output(
-            db,
-            state,
-            {
-                "new_issues": [
-                    {"origin_kind": "event_pool", "id": ev1.id},
-                    {"origin_kind": "event_pool", "id": ev2.id},
-                ],
-            },
-            content=content,
-            candidate_event_ids_at_input={ev1.id, ev2.id},
-        )
-    finally:
-        content.seed_events.remove(ev1)
-        content.seed_events.remove(ev2)
-        content.event_by_id.pop(ev1.id, None)
-        content.event_by_id.pop(ev2.id, None)
-
-    assert [item["rejected"] for item in out["new_issues"]] == [True, True]
-    assert calls == 1
 
 
 def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):

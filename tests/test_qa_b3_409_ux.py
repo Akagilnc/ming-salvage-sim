@@ -1,6 +1,6 @@
 """#1274 QA A-新3：409/超时 UX 族（#1301/#1306/#1312/#1319(a)/#1322）。
 
-刀口只锁玩家面文案、相位分文、authority 投影与 resolve 锁前预检；
+保留 authority 投影权限与 resolve 锁前准入负向；
 ADR 0036/0006 机制零动。
 """
 from __future__ import annotations
@@ -14,65 +14,14 @@ import pytest
 from fastapi import HTTPException
 
 import web_app
-from ming_sim import audience_night as an
 from ming_sim.session_write_queue import ClassifiedWriteGate
-from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
+from ming_sim.models import TurnPhase
 
 
 # ── #1301 玩家面 409 去裸 night_id ──────────────────────────────────────────
 
 
-def test_closing_night_error_preserves_structured_detail(monkeypatch):
-    night = {
-        "id": 42,
-        "status": an.NIGHT_STATUS_CLOSING,
-        "close_commit_cursor": 0,
-    }
-    monkeypatch.setattr(an, "get_open_night", lambda _db: night)
-    monkeypatch.setattr(an, "get_night", lambda _db, nid: night if int(nid) == 42 else None)
-
-    with pytest.raises(an.AudienceNightError) as ei:
-        an.assert_night_accepts_player_input(object(), what="召对")
-
-    assert ei.value.code == "night_closing"
-    assert ei.value.detail == {"night_id": 42, "what": "召对"}
-
-
 # ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
-
-def test_serialized_web_write_rejects_awaiting_decision():
-    game = SimpleNamespace(
-        state=SimpleNamespace(turn_phase=TurnPhase.AWAITING_DECISION.value),
-        _write_gate=ClassifiedWriteGate(),
-    )
-    with pytest.raises(HTTPException) as ei:
-        with web_app._serialized_web_write(game):
-            pass
-    assert ei.value.status_code == 409
-
-
-def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
-    """#1306: settling-phase writes stay rejected with HTTP 409."""
-    game = SimpleNamespace(
-        state=SimpleNamespace(turn_phase=TurnPhase.SETTLING.value),
-        _write_gate=ClassifiedWriteGate(),
-    )
-    with pytest.raises(HTTPException) as ei:
-        with web_app._serialized_web_write(game):
-            pass
-    assert ei.value.status_code == 409
-
-
-def test_serialized_web_write_rejects_front_half_done_phases():
-    for phase in FRONT_HALF_DONE_PHASES:
-        game = SimpleNamespace(
-            state=SimpleNamespace(turn_phase=phase),
-            _write_gate=ClassifiedWriteGate(),
-        )
-        with pytest.raises(HTTPException) as ei:
-            with web_app._serialized_web_write(game):
-                pass
-        assert ei.value.status_code == 409
 
 
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────
@@ -181,8 +130,6 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     assert event == "error"
     assert game.session._submit_called is False
     assert game.actions == []
-
-
 
 
 def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):

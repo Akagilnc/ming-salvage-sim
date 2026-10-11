@@ -338,8 +338,6 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     assert rejection["reason"]
 
 
-
-
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
     """AC1：scene_chat 转译 → 一条组合暂存 → 应允收夜 → 任免与拨帑两类效果全。
 
@@ -574,7 +572,6 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     ).fetchone() is not None
 
 
-
 def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     """AC3：CLI 与 API 通道产出同一形状，不再前缀+二次分类两套路。"""
     db, state, content = game
@@ -636,7 +633,6 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
 
     assert len(payloads) == 2
     assert payloads[0] == payloads[1]
-
 
 
 def test_unhandleable_commission_rejected_as_fact_no_forced_ask(game):
@@ -718,26 +714,6 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
     assert after == before  # 失败不得当分派成功写库
     # 后台失败 → 待补水位，不洗成成功空声明
     assert db.reign.get_story_extract_status(ctid) == "pending"
-
-
-def test_translate_empty_success_still_dispatches_without_failure(game, monkeypatch):
-    """成功空声明仍可分派（零写），与调用失败可区分。"""
-    db, state, content = game
-    open_night(db, state, location="乾清宫", time_of_day="夜")
-
-    class FakeAgent:
-        def run(self, message):
-            return SimpleNamespace(content="臣在。", tools=[])
-
-    monkeypatch.setattr(
-        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
-    )
-    sess = _sess(
-        db, state, content, monkeypatch,
-        translate_fn=offline_empty_audience_translate,
-    )
-    result = sess.scene_chat("边事如何？")
-    assert result.answer == "臣在。"
 
 
 def test_appointment_without_text_is_rejected_not_templated(game):
@@ -979,39 +955,3 @@ def test_appointment_region_id_stages_into_pending_payload(game):
     )
     assert payload.get("region_id") == region
     assert payload.get("text") == edict
-
-
-def test_scene_chat_translation_can_approve_staged_action(game, monkeypatch):
-    db, state, content = game
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    _persist_night_chat(db, state, night_id, "昨夜已问边饷", "臣已回奏。")
-    staged = dispatch_declaration(
-        db, state,
-        {"commissions": [{"text": "旧暂存旨正文独特标记XYZ"}]},
-        minister_name="", night_id=night_id,
-    )
-    staged_id = int(staged.commissions.applied[0]["id"])
-
-    def translate_fn(prompt, llm_config):
-        return {
-            **offline_empty_audience_translate(prompt, llm_config),
-            "commissions": [],
-            "promises": [{"action_id": staged_id, "decision": "应允"}],
-        }
-
-    class FakeAgent:
-        def run(self, message):
-            return SimpleNamespace(content="臣领旨。", tools=[])
-
-    monkeypatch.setattr(
-        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
-    )
-    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
-    # 用不会与规则段「准」混淆的皇帝原话
-    _scene_turn(sess, db, state, "着即照办")
-
-    row = db.conn.execute(
-        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
-    ).fetchone()
-    assert int(row["night_approved"] or 0) == 1

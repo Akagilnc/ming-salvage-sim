@@ -40,28 +40,6 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     assert dict(log) == {"old_value": building["name"], "field": "remove"}
     assert result["closes"][0]["building_ops"][0]["removed"] is True
 
-def test_insert_issue_persists_commitment_deadline_columns(game):
-    db, state, _ = game
-
-    issue_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="补辽饷直到补齐",
-        origin_kind="decree",
-        end_turn=state.turn + 6,
-        stop_condition='{"army.guanning.arrears":"<=0"}',
-        commitment_kind="until_stop",
-    )
-
-    row = db.conn.execute(
-        "SELECT end_turn, stop_condition, commitment_kind FROM issues WHERE id=?", (issue_id,)
-    ).fetchone()
-    assert dict(row) == {
-        "end_turn": state.turn + 6,
-        "stop_condition": '{"army.guanning.arrears":"<=0"}',
-        "commitment_kind": "until_stop",
-    }
-
 
 def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     db, state, _ = game

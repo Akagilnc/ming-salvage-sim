@@ -517,12 +517,13 @@ def test_verify_llm_available_api_smoke_omits_max_tokens(monkeypatch):
     verify_llm_available(_api_cfg())
     assert "max_tokens" not in captured["kwargs"]
 
-def test_verify_llm_available_api_empty_content_passes(monkeypatch):
+@pytest.mark.parametrize("output_content", ["", None])
+def test_verify_llm_available_api_empty_content_passes(monkeypatch, output_content):
     """推理模型思考耗尽回空 content：调用成功即过，空文不作失败。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     class EmptyOutput:
-        content = ""
+        content = output_content
         status = None
 
     class FakeAgent:
@@ -536,23 +537,6 @@ def test_verify_llm_available_api_empty_content_passes(monkeypatch):
     # 走真实 extract_agent_text：空 content 不得误杀
     verify_llm_available(_api_cfg())
 
-def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
-    """content=None 同空串：烟测不校验返回内容。"""
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    class NoneContent:
-        content = None
-        status = None
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        def run(self, prompt: str) -> NoneContent:
-            return NoneContent()
-
-    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
-    verify_llm_available(_api_cfg())
 
 def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch):
     """#1455：status=ERROR 且空 content 仍是权威失败——设置页不得判连通成功。

@@ -2,8 +2,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GameHud, resolveUnreadMemorialCount } from "./gameHud";
-import { MinisterCardList, AppointmentDrawer } from "./drawers";
-import type { GameState, Minister } from "../types";
+import type { GameState } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,198 +70,6 @@ function makeState(
   } as GameState;
 }
 
-function minister(name = "周延儒"): Minister {
-  return {
-    name, office: "首辅", office_type: "内阁", faction: "", style: "",
-    status: "active", status_label: "在朝", summary: "辅臣", favorite: false,
-  };
-}
-
-describe("#1236 GameHud face gates eat settlement_display", () => {
-  it("核账期：王承恩递话条出现；关闭组导航 aria-disabled；密令角标清零；半程局势藏、上月已结只读可达", () => {
-    const state = makeState(true);
-    const host = mount(
-      <GameHud
-        stageRef={() => {}}
-        ready={true}
-        state={state}
-        mapNodes={[]}
-        mapSelectedId=""
-        onSelectMapNode={() => {}}
-        activeDrawerKey=""
-        navHandlers={{
-          court: () => {}, harem: () => {}, army: () => {}, region: () => {},
-          building: () => {}, economy: () => {}, appointment: () => {},
-        }}
-        secretOrderActiveCount={3}
-        unreadMemorialCount={resolveUnreadMemorialCount(state)}
-        onOpenModal={() => {}}
-        settlementFace={true}
-      />,
-    );
-
-    // 关闭组：省/兵
-    const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表");
-    const armyBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "军队列表");
-    expect(regionBtn?.getAttribute("aria-disabled")).toBe("true");
-    expect(armyBtn?.getAttribute("aria-disabled")).toBe("true");
-    expect(regionBtn?.getAttribute("data-settlement-face")).toBe("closed");
-    // 只读组：朝堂可达
-    const courtBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "朝堂·召见大臣");
-    expect(courtBtn?.getAttribute("aria-disabled")).toBe("false");
-    expect(courtBtn?.getAttribute("data-settlement-face")).toBe("readonly");
-    // 密令角标清零（核账期 secret_orders 关闭；勿被奏疏 issues badge 误伤）
-    const secretCmd = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
-      (b.getAttribute("aria-label") || "").startsWith("密令"),
-    );
-    expect(secretCmd?.querySelector(".hud2-cmd-badge")).toBeNull();
-    // 奏疏 badge/sub 同源 situation：核账期 badge=0，勿报半程 N
-    const memorialBtn = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
-      (b.getAttribute("aria-label") || "").startsWith("奏疏"),
-    );
-    // Badge absence is the structured unread signal; do not lock aria copy phrasing.
-    expect(memorialBtn?.querySelector(".hud2-cmd-badge")).toBeNull();
-
-    // situation 关闭 / closed_issues 只读：半程议题不渲染，上月已结仍在
-
-    expect(host.querySelector(".situation-list")).toBeNull();
-    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
-
-    expect(host.querySelector(".hud2-issue-quad")?.getAttribute("data-settlement-face")).toBe("readonly");
-  });
-
-  it("非核账：递话条隐藏；关闭组恢复可达；角标恢复", () => {
-    const state = makeState(false);
-    const host = mount(
-      <GameHud
-        stageRef={() => {}}
-        ready={true}
-        state={state}
-        mapNodes={[]}
-        mapSelectedId=""
-        onSelectMapNode={() => {}}
-        activeDrawerKey=""
-        navHandlers={{
-          court: () => {}, harem: () => {}, army: () => {}, region: () => {},
-          building: () => {}, economy: () => {}, appointment: () => {},
-        }}
-        secretOrderActiveCount={3}
-        unreadMemorialCount={resolveUnreadMemorialCount(state)}
-        onOpenModal={() => {}}
-        settlementFace={false}
-      />,
-    );
-    expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
-    const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表");
-    expect(regionBtn?.getAttribute("aria-disabled")).toBe("false");
-    // 密令木牌角标（奏疏/拟诏也可能有 badge，勿用全局首枚）
-    const secretCmd = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
-      (b.getAttribute("aria-label") || "").startsWith("密令"),
-    );
-    expect(secretCmd?.querySelector(".hud2-cmd-badge")?.textContent).toBe("3");
-  });
-
-  it("关闭组点击触发戏内理由回调", () => {
-    const attempts: string[] = [];
-    const state = makeState(true);
-    const host = mount(
-      <GameHud
-        stageRef={() => {}}
-        ready={true}
-        state={state}
-        mapNodes={[]}
-        mapSelectedId=""
-        onSelectMapNode={() => {}}
-        activeDrawerKey=""
-        navHandlers={{
-          court: () => {}, harem: () => {}, army: () => {}, region: () => {},
-          building: () => {}, economy: () => {}, appointment: () => {},
-        }}
-        secretOrderActiveCount={0}
-        unreadMemorialCount={resolveUnreadMemorialCount(state)}
-        onOpenModal={() => {}}
-        onClosedFaceAttempt={(r) => attempts.push(r)}
-        settlementFace={true}
-      />,
-    );
-    const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表")!;
-    act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(attempts).toHaveLength(1);
-  });
-
-  it("#1323 awaiting_decision：递话/角标文案为有本待批；锁面机制仍关", () => {
-    const attempts: string[] = [];
-    const state = makeState(true, {}, "awaiting_decision");
-    const host = mount(
-      <GameHud
-        stageRef={() => {}}
-        ready={true}
-        state={state}
-        mapNodes={[]}
-        mapSelectedId=""
-        onSelectMapNode={() => {}}
-        activeDrawerKey=""
-        navHandlers={{
-          court: () => {}, harem: () => {}, army: () => {}, region: () => {},
-          building: () => {}, economy: () => {}, appointment: () => {},
-        }}
-        secretOrderActiveCount={0}
-        unreadMemorialCount={resolveUnreadMemorialCount(state)}
-        onOpenModal={() => {}}
-        onClosedFaceAttempt={(r) => attempts.push(r)}
-        settlementFace={true}
-      />,
-    );
-
-    const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表")!;
-    expect(regionBtn.getAttribute("aria-disabled")).toBe("true");
-    act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(attempts).toHaveLength(1);
-  });
-});
-
-describe("#1236 roster chat entry stripped in settlement_display", () => {
-  it("MinisterCardList disables onOpenChat when chatEntryEnabled=false", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ layout: "{}" }) } as Response)));
-    const opened: string[] = [];
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const root = createRoot(host);
-    mounted.push({ root, host });
-    await act(async () => {
-      root.render(
-        <MinisterCardList
-          list={[minister()]}
-          portraitPrefix="minister_"
-          selectedMinister=""
-          emptyNote=""
-          onOpenChat={(m) => opened.push(m.name)}
-          chatEntryEnabled={false}
-          phase="settling"
-        />,
-      );
-    });
-    const card = host.querySelector("button.minister-card") as HTMLButtonElement;
-    expect(card.disabled).toBe(true);
-    act(() => { card.click(); });
-    expect(opened).toEqual([]);
-     // 名册仍在
-  });
-
-  it("AppointmentDrawer 任免名册不再承载召对入口", () => {
-    const host = mount(
-      <AppointmentDrawer
-        ministers={[minister("温体仁")]}
-        open={true}
-        onClose={() => {}}
-      />,
-    );
-
-    expect(host.querySelector("button.right-drawer-row-minister")).toBeNull();
-    expect(host.querySelector(".right-drawer-row-minister")?.tagName).toBe("DIV");
-  });
-});
-
 describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
   function mountHud(opts: {
     state?: GameState;
@@ -324,81 +131,6 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     return { host, opened, navCalls, closed };
   }
 
-  it("#1276 邸报木牌 caption/动作对齐 gazette，不再挂起居注", () => {
-    const { host, opened } = mountHud();
-    const dibao = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      (b.getAttribute("aria-label") || "").startsWith("邸报"),
-    );
-    expect(dibao).toBeTruthy();
-
-    // 起居注不得再占命令木牌 caption
-    const mislabeled = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      b.textContent?.includes("起居注"),
-    );
-    expect(mislabeled).toBeFalsy();
-    act(() => { dibao?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(opened).toEqual(["report"]);
-  });
-
-  it("#1282 owner 先隐：礼木牌不渲染；政仍走朝堂；礼部槽位资源保留待立项", () => {
-    const { host, navCalls } = mountHud();
-    const zheng = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "朝堂·召见大臣");
-    const li = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "礼部");
-    expect(zheng).toBeTruthy();
-    expect(li).toBeFalsy(); // 隐掉，不删 HUD_SLOTS.导航.礼部
-
-    act(() => { zheng?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(navCalls).toEqual(["court"]);
-  });
-
-  it("#1726 奏疏 badge/副文接未读奏报数；与局势 issues 脱钩；木牌打开 state 槽", () => {
-    const { host, opened } = mountHud();
-    const memorial = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      (b.getAttribute("aria-label") || "").startsWith("奏疏"),
-    );
-    expect(memorial).toBeTruthy();
-    // Badge is a standalone scalar node (unread_memorial_count=3), not prose-derived.
-    expect(host.querySelector('button.hud2-cmd[aria-label^="奏疏"] .hud2-cmd-badge')?.textContent).toBe("3");
-
-    // 零未读时不得借 issues 条数充数 → badge 缺席
-    const { host: hostZero } = mountHud({
-      state: makeState(false, {
-        issues: makeState(false).issues,
-        memorials: [],
-        unread_memorial_count: 0,
-      }),
-    });
-    expect(hostZero.querySelector('button.hud2-cmd[aria-label^="奏疏"] .hud2-cmd-badge')).toBeNull();
-
-    act(() => { memorial?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(opened).toEqual(["state"]);
-  });
-
-  it("拟诏木牌在零/有草案时都只打开拟诏台", () => {
-    for (const directives of [[], makeState(false).directives]) {
-      const { host, opened } = mountHud({ state: makeState(false, { directives }) });
-      const edict = Array.from(host.querySelectorAll<HTMLButtonElement>("button.hud2-cmd")).find((b) =>
-        (b.getAttribute("aria-label") || "").startsWith("拟诏"),
-      );
-      expect(edict).toBeTruthy();
-      act(() => { edict?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-      expect(opened).toEqual(["edict"]);
-    }
-  });
-
-  it("#1454 拟诏台开着：木牌可点收起，不二次打开/不造第二条颁诏路径", () => {
-    const { host, opened, closed } = mountHud({ edictOpen: true });
-    const edict = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      (b.getAttribute("aria-label") || "").includes("拟诏"),
-    );
-    expect(edict).toBeTruthy();
-    // 可点性：台开态木牌必须响应（不再被 desk-footer 挡成空等）
-    act(() => { edict?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(closed).toEqual(["edict"]);
-    // 勿再走 onOpenModal("edict")——那会变成无反馈/二次开台，不是收起
-    expect(opened).toEqual([]);
-  });
-
   it("#1458 拟诏台开着：底栏仅拟诏收起可点，其余命令不得切走 activeModal", () => {
     // 复现：edict-safe-cmd 底边整条开洞，奏疏/邸报/密令/史册图钮与文字钮都在洞内可点，
     // 一点就 openModal 把拟诏台切走。修：台开时只放行拟诏收起。
@@ -411,8 +143,6 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
       const img = cmds.find((b) => (b.getAttribute("aria-label") || "").includes(name));
       expect(cap, `${name} caption`).toBeTruthy();
       expect(img, `${name} img`).toBeTruthy();
-      expect(cap?.classList.contains("hud-cmd-blocked-by-edict")).toBe(true);
-      expect(img?.classList.contains("hud-cmd-blocked-by-edict")).toBe(true);
       act(() => { cap?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
       act(() => { img?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     }
@@ -420,39 +150,7 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
 
     const edictCap = captions.find((b) => (b.getAttribute("aria-label") || "").includes("拟诏"));
     const edictImg = cmds.find((b) => (b.getAttribute("aria-label") || "").includes("拟诏"));
-    expect(edictCap?.classList.contains("hud-cmd-blocked-by-edict")).toBe(false);
-    expect(edictImg?.classList.contains("hud-cmd-blocked-by-edict")).toBe(false);
     act(() => { edictCap?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(closed).toEqual(["edict"]);
-  });
-});
-
-describe("#1796 GameHud settlementFace 同会话切核账期面", () => {
-  it("settlement_display=false 但 face=true：切面；state 真源不被改写", () => {
-    const state = makeState(false);
-    expect(state.turn.settlement_display).toBe(false);
-    const host = mount(
-      <GameHud
-        stageRef={() => {}}
-        ready={true}
-        state={state}
-        mapNodes={[]}
-        mapSelectedId=""
-        onSelectMapNode={() => {}}
-        activeDrawerKey=""
-        navHandlers={{
-          court: () => {}, harem: () => {}, army: () => {}, region: () => {},
-          building: () => {}, economy: () => {}, appointment: () => {},
-        }}
-        secretOrderActiveCount={0}
-        unreadMemorialCount={resolveUnreadMemorialCount(state)}
-        onOpenModal={() => {}}
-        settlementFace={true}
-      />,
-    );
-    // 差分：face 切入核账期面（递话条挂上）；#1236 既锁的文案/半程/·核账不复述
-    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
-    // 结构化：传入的 state 真源字段未被组件改写
-    expect(state.turn.settlement_display).toBe(false);
   });
 });

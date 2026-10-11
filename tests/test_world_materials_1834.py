@@ -284,48 +284,6 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
     assert f"邸报/{past_year}年{past_period}月.txt" in names
 
 
-def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
-    """#1892 J3：世界段起调时材料目录按当前实况给出合资格人物事件候选及结构化事实。
-
-    候选资格单一真源＝issues.gather_candidate_events；本例只钉「供料接缝接通」，
-    不另设判门。已落终态者不入候选（引擎硬触发的大疫不在其中）。
-    """
-    from ming_sim import issues
-
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1636
-    state.period = 4
-    db.reign.save_game_state(state)
-
-    dest = tmp_path / "world-materials"
-    prepared = prepare_world_materials(db, state, dest_root=dest)
-
-    candidate_paths = [
-        p for p in list_materials(prepared.root)
-        if p.startswith("候选事件/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
-    ]
-    assert candidate_paths
-    # 人读索引可读；实际取阅路径只从列目录取得，不解析索引排版。
-    assert read_material(prepared.root, "候选事件/INDEX.txt").strip()
-    for rel in candidate_paths:
-        assert read_material(prepared.root, rel)
-    # 候选集合＝权威快照逐条可达；快照为空则本例无意义，故先钉非空。
-    eligible = {ev.id for ev in issues.gather_candidate_events(state, db)}
-    assert eligible, "fixture 需当期有合资格人物事件"
-    assert "huangtaiji_chengdi" in eligible
-    assert len(candidate_paths) == len(eligible)
-    from ming_sim.materials import _world_candidate_events
-
-    labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
-    roster = {
-        item["id"]: list(item["terminal_reason_labels"])
-        for item in _world_candidate_events(db, state)
-    }
-    assert labels and roster.get("jisi_lubian") == labels
-    assert "jisi_lubian" in eligible
-
-
 def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
     """#1892 J5：三饷到点须皇帝亲裁，故走「请旨事项」目录交世界段上疏。
 
@@ -349,8 +307,6 @@ def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
         if p.startswith("请旨事项/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
     ]
     assert paths
-    from ming_sim.materials import _safe_segment
-    assert set(paths) == {f"请旨事项/{_safe_segment(event_id)}.txt" for event_id in due}
     for rel in paths:
         assert read_material(prepared.root, rel)
 

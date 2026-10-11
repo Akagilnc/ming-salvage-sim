@@ -98,25 +98,6 @@ def _reopen(path, content):
 # ── AC1/AC4 账本逐条一致、恢复路径未删任何账 ──────────────────────────
 
 
-def test_reopen_reconcile_preserves_ledger_exactly(restore_env):
-    env = restore_env
-    db, state, content = env.db, env.state, env.content
-    minister = _active_minister(db, content)
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    an.summon_enter(db, night["id"], minister, method=an.METHOD_XUANRU)
-    # 回话生成半途 kill：问话已落、回话未落。
-    _start_generating_turn(db, state, minister, "剿抚孰先？")
-    ledger_before = an.list_ledger(db, night["id"])
-    db.close()
-
-    db2, _state2 = _reopen(env.path, content)
-    try:
-        db2.reconcile_interrupted_chat_turns()
-        ledger_after = an.list_ledger(db2, night["id"])
-        # 恢复路径未删任何账，且逐条一致（AC1/AC4）。
-        assert ledger_after == ledger_before
-    finally:
-        db2.close()
     # keep db handle count sane for fixture teardown
 
 
@@ -128,7 +109,9 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     night = an.open_night(db, state, location="文华殿", time_of_day="午时")
+    an.summon_enter(db, night["id"], minister, method=an.METHOD_XUANRU)
     ct = _start_generating_turn(db, state, minister, "杨卿何以教朕？")
+    ledger_before = an.list_ledger(db, night["id"])
     # kill 前：该轮为在飞、大臣被判「仍在进行」。
     assert an.list_in_flight_chat_turns(db, night["id"])
     db.close()
@@ -136,6 +119,7 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
     db2, _state2 = _reopen(env.path, content)
     try:
         interrupted = db2.reconcile_interrupted_chat_turns()
+        assert an.list_ledger(db2, night["id"]) == ledger_before
         # 该轮被标为可重试的 interrupted（不再在飞、不阻塞续问/收夜）。
         assert an.list_in_flight_chat_turns(db2, night["id"]) == []
         assert any(int(r["chat_turn_id"]) == ct for r in interrupted)
@@ -166,29 +150,6 @@ def test_reconcile_leaves_completed_turn_untouched(restore_env):
             "SELECT status FROM chat_turns WHERE id=?", (ct,)
         ).fetchone()["status"]
         assert status == "active"
-    finally:
-        db2.close()
-
-
-def test_reconcile_does_not_delete_question_row(restore_env):
-    """负向对照：reconcile 保留问话消息行（区别于 fail_chat_turn 的删问话善后）。"""
-    env = restore_env
-    db, state, content = env.db, env.state, env.content
-    minister = _active_minister(db, content)
-    an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    _start_generating_turn(db, state, minister, "此问不可蒸发")
-    before = db.conn.execute(
-        "SELECT COUNT(*) c FROM chat_messages WHERE role='user'"
-    ).fetchone()["c"]
-    db.close()
-
-    db2, _state2 = _reopen(env.path, content)
-    try:
-        db2.reconcile_interrupted_chat_turns()
-        after = db2.conn.execute(
-            "SELECT COUNT(*) c FROM chat_messages WHERE role='user'"
-        ).fetchone()["c"]
-        assert after == before  # 一条问话都不删
     finally:
         db2.close()
 
@@ -542,7 +503,6 @@ def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
     db.conn.commit()
 
 
-
 def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -684,7 +644,6 @@ def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
         TAG_ENTER,
         list_ledger,
         prepare_rescript_summon_scaffold,
-        rescript_summon_origin_consumed,
         rescript_summon_origin_ref,
     )
 
@@ -701,10 +660,14 @@ def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
         row for row in list_ledger(db, int(night["id"]))
         if str(row.get("origin_ref") or "") == origin
     )
-    assert rescript_summon_origin_consumed(entry)
     assert TAG_ENTER in entry["tags"]
     assert str(entry.get("body") or "") == ""
     assert int(sc["entry_id"]) == int(entry["id"])
+    assert int(sc.get("chat_turn_id") or 0) == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM chat_turns WHERE agno_session_id=?",
+        (f"rescript-summon:{origin}",),
+    ).fetchone()[0] == 0
 
     again = prepare_rescript_summon_scaffold(
         db, state, person_name=minister, origin_ref=origin,
@@ -715,26 +678,6 @@ def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
         "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
         (origin,),
     ).fetchone()["c"] == 1
-
-
-def test_657_rescript_summon_no_chat_turn_scaffold(game):
-    """#1838 reopen：不再建 generating 对话轮等待旁白。"""
-    from ming_sim.audience_night import (
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-    )
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 51, 0)
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert int(sc.get("chat_turn_id") or 0) == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
-        (f"rescript-summon:{origin}",),
-    ).fetchone()["c"] == 0
 
 
 def test_657_rescript_summon_atomic_on_enter_failure(game, monkeypatch):

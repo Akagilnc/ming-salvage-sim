@@ -168,6 +168,9 @@ def test_ac1_breach_verdict_triggers_commitment_backlash(game):
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
     result = finalize_persist(db, state, todo, commit=True)
+    stamped = next(t for t in db.dossiers.list_next_audience_todos(status="consumed")
+        if int(t["id"]) == todo_id)
+    assert stamped["payload_json"].get(PLEA_VERDICT_KEY) == PLEA_VERDICT_PERSIST
     # #1894：代码不判执行格终值（那是执行格判官的判决），只落 0056 与停 tick
     assert result["breach_0056"] is True
     assert result["target_dossier_id"] == did
@@ -626,39 +629,6 @@ def test_ac3_plea_due_expire_then_commitment_expire_no_hammer(game):
     assert _backlash_issues(db) == []
     assert int(state.metrics.get("民心", 0) or 0) == minxin_0
     assert int(state.metrics.get("皇威", 0) or 0) == huangwei_0
-
-
-def test_ac3_persist_stamps_verdict_and_still_triggers(game):
-    """I3 辅证：finalize_persist 落 verdict=persist；次回合 breach_verdict 仍触发。"""
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-
-    did, holder = _executing_policy_dossier(db, state, token="pv")
-    bar = _seed_halfway(db, state, did=did)
-    cid = _insert_commitment(
-        db, state, title="坚持撤既判之诺", origin_ref=f"dossier:{did}",
-        bar_value=bar,
-        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
-    )
-    todo_id = write_breach_plea_todo(
-        db, state, commitment_ref=cid,
-        breach_kind=BREACH_KIND_POLICY_REVERSAL,
-        reason="坚持撤·痕迹", target_dossier_id=did, commit=True,
-    )
-    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
-    finalize_persist(db, state, todo, commit=True)
-    stamped = next(
-        t for t in db.dossiers.list_next_audience_todos(status="consumed")
-        if int(t["id"]) == todo_id
-    )
-    assert stamped["payload_json"].get(PLEA_VERDICT_KEY) == PLEA_VERDICT_PERSIST
-
-    state.turn = int(state.turn) + 1
-    hits = db.trigger_commitment_backlashes(state, commit=True)
-    assert hits
-    assert hits[0]["source_kind"] == SOURCE_BREACH_VERDICT
-    assert hits[0]["commitment_ref"] == cid
 
 
 # ── AC4：restore 无损 ─────────────────────────────────────────────

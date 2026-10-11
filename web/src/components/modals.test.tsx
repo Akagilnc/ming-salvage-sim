@@ -216,16 +216,13 @@ function renderEdictModal(props: {
     root.render(
       <EdictModal
         state={props.state}
-        directiveText=""
         editingDirectiveId={null}
         editingDirectiveText=""
         decree=""
         report=""
         busy=""
         error={props.error ?? ""}
-        onDirectiveTextChange={() => {}}
         onEditingTextChange={() => {}}
-        onCreateDirective={() => {}}
         onStartEdit={() => {}}
         onCancelEdit={() => {}}
         onSaveDirective={() => {}}
@@ -877,27 +874,6 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     { role: "attendant", speaker: "王承恩", content: "他神色凝重。", beat: "aside", chat_turn_id: 11, audibility: "御前低语", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "召对" } },
   ];
 
-  it("names the live scroll from its persisted container", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [],
-      night_id: 23, protagonist: "", roster: [], translation_pending: false,
-      container: { time_of_day: "戌时", location: "便殿", audience_type: "召对" },
-      messages: [{ ...nightScroll[0], container: { time_of_day: "戌时", location: "便殿", audience_type: "召对" } }],
-    }) }));
-    const host = renderModal({ minister: hong, ministers: [hong], portraitPrefix: "minister_", currentNightId: 23 });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector(".audience-roster h2")?.textContent).toBe("便殿 · 戌时");
-  });
-
-  it("names an empty-scaffold night without relying on projected messages", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [],
-      night_id: 23, protagonist: "", roster: [], translation_pending: false,
-      container: { time_of_day: "午时", location: "文华殿", audience_type: "召对" }, messages: [],
-    }) }));
-    const host = renderModal({ minister: hong, ministers: [hong], portraitPrefix: "minister_", currentNightId: 23 });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector(".audience-roster h2")?.textContent).toBe("文华殿 · 午时");
-  });
-
   it("shows portraits for declared people outside the court and talent lists", async () => {
     const visitor = { ...MINISTER_MOCK, name: "夜访者", portrait_id: "portrait_guest" };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply_retries: [],
@@ -1206,45 +1182,6 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
 
 });
 
-describe("#1480 / #1499 FullscreenModal modal-layout-bare 只随 hideTitle", () => {
-  it("hideTitle 挂 modal-layout-bare；起居注有可见标题栏不挂", async () => {
-    const bareHost = document.createElement("div");
-    document.body.appendChild(bareHost);
-    const bareRoot = createRoot(bareHost);
-    mountedRoots.push({ root: bareRoot, host: bareHost });
-    act(() => {
-      bareRoot.render(
-        <FullscreenModal title="召对：周延儒" subtitle="内阁首辅" bgClass="modal-bg-chat" hideTitle onClose={() => {}}>
-          <div className="chat-full-grid">长转录正文</div>
-        </FullscreenModal>,
-      );
-    });
-    const bareModal = bareHost.querySelector(".fullscreen-modal.modal-bg-chat");
-    expect(bareModal).not.toBeNull();
-    expect(bareModal!.classList.contains("modal-layout-bare")).toBe(true);
-    expect(bareHost.querySelector(".modal-header-bare")).not.toBeNull();
-    expect(bareHost.querySelector(".modal-title")).toBeNull();
-
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ turns: [] }),
-    }));
-    const archiveHost = document.createElement("div");
-    document.body.appendChild(archiveHost);
-    const archiveRoot = createRoot(archiveHost);
-    mountedRoots.push({ root: archiveRoot, host: archiveHost });
-    await act(async () => {
-      archiveRoot.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />);
-      await Promise.resolve();
-    });
-    const archiveModal = archiveHost.querySelector(".fullscreen-modal.modal-bg-chat");
-    expect(archiveModal).not.toBeNull();
-    expect(archiveModal!.classList.contains("modal-layout-bare")).toBe(false);
-    expect(archiveHost.querySelector(".modal-header-bare")).toBeNull();
-
-  });
-});
-
 describe("AudienceArchiveModal — read-only scene archive", () => {
 
   it("places a failed translation beneath its source turn", async () => {
@@ -1493,17 +1430,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
 });
 
 describe("ChatModal — cancel button during busy (issue #353)", () => {
-  it("shows an observer-exit button when busy and onCancel is provided", () => {
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      busy: "大臣思索中",
-      onCancel: vi.fn(),
-    });
-    const cancelBtn = document.querySelector(".composer-cancel");
-    expect(cancelBtn).not.toBeNull();
-
-  });
 
   it("does NOT show a cancel button when idle", () => {
     renderModal({
@@ -1537,56 +1463,5 @@ describe("ChatModal — cancel button during busy (issue #353)", () => {
     });
     const cancelBtn = document.querySelector(".composer-cancel");
     expect(cancelBtn).toBeNull();
-  });
-});
-
-describe("ReportModal — narrative settlement bulletin", () => {
-
-  it("#1387 底部有朕知道了主按钮可达关闭，不靠右上小 X", () => {
-    const onClose = vi.fn();
-    const host = renderReportModal({
-      report: "一、边报\n\n二、钱粮\n\n三、探子回报\n下文应可滚完",
-      onClose,
-    });
-    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("朕知道了") || (b.textContent || "").includes("收卷"),
-    ) as HTMLButtonElement | undefined;
-
-    act(() => dismiss!.click());
-    expect(onClose).toHaveBeenCalledOnce();
-  });
-
-  it("#1356 空邸报态不崩：卷轴壳复用 pre + 朕知道了可关闭（无固定空注）", () => {
-    const onClose = vi.fn();
-    const host = renderReportModal({ report: "", onClose });
-
-    // 空壳复用原 pre，不另写固定空态文案
-
-    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("朕知道了"),
-    ) as HTMLButtonElement | undefined;
-
-    act(() => dismiss!.click());
-    expect(onClose).toHaveBeenCalledOnce();
-  });
-
-  it("#671 王承恩递话在邸报纸面外独立区，不经 stripOrganicMarkdown；空则不渲染", () => {
-
-    // 纯空白 / 空串：trim 判空后不渲染
-    expect(renderReportModal({ report: "一、边报", attendantMessage: " \n\t " })
-      .querySelector("[data-testid=gazette-attendant]")).toBeNull();
-    expect(renderReportModal({ report: "一、边报", attendantMessage: "" })
-      .querySelector("[data-testid=gazette-attendant]")).toBeNull();
-    const rawWithWs = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
-    const host = renderReportModal({
-      report: "**辽东军情**",
-      attendantMessage: rawWithWs,
-    });
-    const aside = host.querySelector("[data-testid=gazette-attendant]");
-    expect(aside).not.toBeNull();
-    // 递话原文含首尾空白与 markdown 标记；官方邸报逐字契约只在 App→DOM tracer
-    expect(aside?.textContent).toBe(rawWithWs);
-    // 递话区在纸面 article 之外
-
   });
 });

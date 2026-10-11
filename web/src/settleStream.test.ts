@@ -22,11 +22,13 @@ const silent = {};
 
 describe("consumeSettleStream residual flush", () => {
   it("parses a terminal done left in buffer without trailing blank line", async () => {
-    const outcome = await consumeSettleStream(
-      streamResponse(['event: done\ndata: {"ok":true}']),
-      silent,
-    );
-    expect(outcome).toEqual({ kind: "done", data: { ok: true } });
+    for (const suffix of ["", "\n\n"]) {
+      const outcome = await consumeSettleStream(
+        streamResponse(['event: done\ndata: {"ok":true}' + suffix]),
+        silent,
+      );
+      expect(outcome).toEqual({ kind: "done", data: { ok: true } });
+    }
   });
 
   it("parses a terminal decisions left in buffer without trailing blank line", async () => {
@@ -48,13 +50,6 @@ describe("consumeSettleStream residual flush", () => {
     expect(outcome.data).not.toBe("");
   });
 
-  it("keeps normal \\n\\n terminated done path", async () => {
-    const outcome = await consumeSettleStream(
-      streamResponse(['event: done\ndata: {"ok":true}\n\n']),
-      silent,
-    );
-    expect(outcome).toEqual({ kind: "done", data: { ok: true } });
-  });
 });
 
 describe("consumeSettleStream HTTP errors", () => {

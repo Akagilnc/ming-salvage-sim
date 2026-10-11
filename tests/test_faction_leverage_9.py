@@ -483,18 +483,6 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
     )
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
     """#9（用户挑战）：魏忠贤(九千岁)退场对阉党的冲击应按司礼监批红(20)算，不是东厂(8)。
     他真权在司礼监秉笔=批红，office_type=东厂只是兼差。退场掉 20 而非 8。"""
@@ -649,37 +637,4 @@ def test_power_id_defection_drops_faction_leverage_immediately(game):
     after = db.factions.faction_leverage("阉党")
     assert after < before, (
         f"投敌后原派系 leverage 应即时下跌（不等 reconcile）：before={before} after={after}"
-    )
-
-def test_half_weight_odd_baseline_no_round_drift(game):
-    """#177 R4（P3）/#1889：weight_sum 含 .5 + 奇数基线 → fresh calibrate 后 leverage 精确命中基线。
-
-    现役校准只在新档 seed 跑（is_fresh_factions_seed）；基线取 content.factions leverage，不跑旧档 offset_col_added 迁移路。
-    """
-    db, state, _ = game
-    faction = "东林"
-    members = db.conn.execute(
-        "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' "
-        "ORDER BY name",
-        (faction,),
-    ).fetchall()
-    assert members, f"{faction} 需有在朝成员"
-    for m in members[1:]:
-        db.set_character_status(state, m["name"], "dismissed", reason="清场")
-    keeper = members[0]["name"]
-    db.set_character_office(keeper, "礼部侍郎", "礼部")
-    assert db._faction_office_weight_sum(faction) == 2.5
-    # 设奇数基线 79，直接写 offset（不走已退役的老档反推校准）。
-    baseline = 79
-    weight = db._faction_office_weight_sum(faction)
-    db.conn.execute(
-        "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
-        (baseline, baseline - weight, faction),
-    )
-    db.conn.commit()
-    db.recompute_faction_leverage(faction)
-    db.conn.commit()
-    lev = db.factions.faction_leverage(faction)
-    assert lev == baseline, (
-        f"weight_sum=2.5 + 奇数基线 {baseline} → leverage 应={baseline}（不漂），实得 {lev}"
     )

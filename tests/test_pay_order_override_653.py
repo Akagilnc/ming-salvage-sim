@@ -8,12 +8,11 @@
 from __future__ import annotations
 
 import copy
-import math
 
 import pytest
 
 from ming_sim.fiscal_tick import settle_tick
-from ming_sim.pay_order import PayOrderKeyError, restore_pay_order_override, materialize_pay_order_decree, parse_override_key, resolve_haircut_bp, resolve_pay_order_overrides
+from ming_sim.pay_order import PayOrderKeyError, restore_pay_order_override, materialize_pay_order_decree, resolve_haircut_bp, resolve_pay_order_overrides
 
 def _override_dossier(db, state, entries, *, text="偿还序/折发旨") -> int:
     """成案一道 pay_order_override 案卷（F1.2：旨意不是面板、每道旨一张案卷）。"""
@@ -53,39 +52,12 @@ def _board(gross: float = 0.0):
     "due_haircut_bp_军饷@shaanxi#central",
     "due_haircut_bp_宗禄@shaanxi",
 ])
-def test_override_key_legal_shapes(key):
-    assert parse_override_key(key).subject
-
-@pytest.mark.parametrize("key", [
-    # priority 族带 # 饷源后缀＝非法（r3：序无饷源维度）
-    "due_priority_军饷#province",
-    "arrears_priority_军饷欠#central",
-    # 非军饷折发带 # 后缀＝非法
-    "due_haircut_bp_官俸#province",
-    "due_haircut_bp_赈济@shaanxi#central",
-    # 未知科目 / 未知键族 / 悬空词位
-    "due_priority_官军饷",
-    "due_haircut_bp_盐课",
-    "pay_order_军饷",
-    "due_priority_@shaanxi",
-    "due_haircut_bp_军饷@shaanxi#",
-])
-def test_override_key_illegal_shapes_fail_loud(key):
-    with pytest.raises(ValueError):
-        parse_override_key(key)
-
-@pytest.mark.parametrize("value", [0, -1, 10001, "5000", True, 5000.0, None])
-def test_haircut_value_domain_fail_loud(value):
-    from ming_sim.pay_order import validate_override_value
-    with pytest.raises(ValueError):
-        validate_override_value("due_haircut_bp_宗禄", value)
-
-def test_priority_value_domain_rejects_non_int():
-    from ming_sim.pay_order import validate_override_value
-    with pytest.raises(ValueError):
-        validate_override_value("due_priority_军饷", "10")
-    with pytest.raises(ValueError):
-        validate_override_value("due_priority_军饷", 1.5)
+def test_override_key_legal_shapes(game, key):
+    db, state, _ = game
+    value = 5000 if key.startswith("due_haircut_bp_") else 10
+    did = _override_dossier(db, state, [{"key": key, "value": value}])
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    assert db.fiscal_config.values()[key] == value
 
 
 def test_origin_ref_must_be_dossier_provenance(game):
@@ -137,7 +109,6 @@ def test_priority_tie_breaks_on_default_baseline_stable():
     assert order == ("军饷", "宗禄", "官俸", "赈济")
 
 
-
 # ═══════════════ F1.6 验收表 golden ①–⑦ ═══════════════
 
 def test_golden1_pay_order_reversal_breakdown_tsv():
@@ -162,10 +133,6 @@ def test_golden1_pay_order_reversal_breakdown_tsv():
 def test_golden2_haircut_half_is_exemption_not_debt():
     """②「宗禄折半」：floor(Due×bp/10000)；折掉部分不入宗禄欠；NewDebt 只含折后未付。
     r2 golden：Due=101、bp=5000 → 应得 50、免除 51。"""
-    from ming_sim.pay_order import haircut_due
-    eff, exempt = haircut_due(101, 5000)
-    assert eff == 50.0 and exempt == 51.0
-
     st, p = _board(gross=50.0)  # 省内可支＝10+50=60
     p["Due"] = {"军饷": 18.0, "官俸": 3.0, "宗禄": 101.0, "赈济": 1.0}
     p["due_haircut_bp"] = {"宗禄": 5000}
@@ -193,12 +160,6 @@ def test_golden3_arrears_waterfall_reversal():
 
 # ═══════════════ 桥集成：结算按新序/系数付账 ═══════════════
 
-
-def _opening_settle(db, region_id):
-    import json
-
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id=?", (region_id,)).fetchone()
-    return json.loads(row["fiscal"])["settle"]
 
 # ═══════════════ settle_tick 序参/折发参验形 fail-loud ═══════════════
 
@@ -233,7 +194,6 @@ def test_haircut_param_bad_values_raise():
 # ═══════════════ F2 六源纯投影 ═══════════════
 
 
-
 # ═══════════════ F3 LLM 综合归因边界 ═══════════════
 
 def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
@@ -254,27 +214,30 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
 # ═══════════════ F1 颁布生命周期 E2E（ADR 0055 判后物化缝）═══════════════
 
 
-
-
-
 def test_staging_rejects_illegal_entries_fail_loud(game):
     """成案点先验：非法键形/幻影 region 收夜即响亮拒，不入案卷。"""
     db, state, _content = game
-    with pytest.raises(ValueError):
-        _override_dossier(db, state, [{"key": "due_priority_盐课", "value": 10}])
-    with pytest.raises(ValueError):
-        _override_dossier(db, state, [
-            {"key": "due_haircut_bp_军饷@SX#province", "value": 5000},
-        ])
-    with pytest.raises(ValueError):
-        _override_dossier(db, state, [{"key": "due_haircut_bp_宗禄", "value": 20000}])
-    with pytest.raises(ValueError):
-        _override_dossier(db, state, [])
-    with pytest.raises(ValueError):
-        _override_dossier(db, state, [
-            {"key": "due_haircut_bp_军饷@shaanxi#province", "value": 8000},
-            {"key": "due_haircut_bp_军饷@SX#province", "value": 9000},
-        ])
+    bad_entries = [
+        [{"key": key, "value": 10}] for key in [
+            "due_priority_军饷#province", "arrears_priority_军饷欠#central",
+            "due_haircut_bp_官俸#province", "due_haircut_bp_赈济@shaanxi#central",
+            "due_priority_官军饷", "due_haircut_bp_盐课", "pay_order_军饷",
+            "due_priority_@shaanxi", "due_haircut_bp_军饷@shaanxi#",
+            "due_priority_盐课", "due_haircut_bp_军饷@SX#province",
+        ]
+    ] + [
+        [{"key": "due_haircut_bp_宗禄", "value": value}]
+        for value in [0, -1, 10001, 20000, "5000", True, 5000.0, None]
+    ] + [
+        [{"key": "due_priority_军饷", "value": value}] for value in ["10", 1.5]
+    ] + [[], [
+        {"key": "due_haircut_bp_军饷@shaanxi#province", "value": 8000},
+        {"key": "due_haircut_bp_军饷@SX#province", "value": 9000},
+    ]]
+    for entries in bad_entries:
+        with pytest.raises(ValueError):
+            _override_dossier(db, state, entries)
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
     assert 'due_haircut_bp_军饷@shaanxi#province' not in db.fiscal_config.values()
     assert db.conn.execute('SELECT COUNT(*) FROM fiscal_config_changes').fetchone()[0] == 0
 
@@ -298,46 +261,36 @@ def test_materialize_requires_real_promulgated_dossier(game):
 
 # ═══════════════ 中央侧折发消费者（flows 读端）═══════════════
 
-def test_central_due_haircut_consumer(game):
-    """中央份额 Due 折发读端：floor 折算、余数免除、地域/饷源精确、无折恒等。"""
-    from ming_sim.army_pay import army_needed
-    from ming_sim.flows import (
-        _central_dues_with_haircut,
-    )
+@pytest.mark.parametrize("entries, expected", [
+    ([], (2.1, 9.0)),
+    ([{"key": "due_haircut_bp_军饷@shaanxi#central", "value": 5000},
+      {"key": "due_haircut_bp_军饷#central", "value": 6000}], (1.0, 5.0)),
+    ([{"key": "due_haircut_bp_军饷#province", "value": 5000}], (2.1, 9.0)),
+])
+def test_central_due_haircut_consumer(game, entries, expected):
+    """成案/颁布至实际财政落账：折后未付才成为中央新欠，省饷配置不影响中央。"""
+    from ming_sim.flows import apply_fixed_period_flows
 
     db, state, _content = game
-    rows = db.conn.execute(
-        "SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, "
-        "central_pay_share FROM armies WHERE central_pay_share > 0 ORDER BY rowid"
-    ).fetchall()
-    base_dues, base_exempt = _central_dues_with_haircut(db, state, rows)
-    assert base_exempt == {}
-    shaanxi_raw = army_needed(
-        next(r for r in rows if r["id"] == "shaanxi_army"),
-    ) * 0.35
-    assert base_dues["shaanxi_army"] == pytest.approx(shaanxi_raw)
+    before = dict(db.conn.execute(
+        "SELECT id, central_pay_arrears FROM armies WHERE id IN ('shaanxi_army', 'jingying')"
+    ).fetchall())
+    if entries:
+        did = _override_dossier(db, state, entries)
+        db.apply_dossier_promulgation(state, did, "promulgated")
+    state.metrics["国库"] = 0
+    db.reign.save_game_state(state)
+    apply_fixed_period_flows(db, state)
+    after = dict(db.conn.execute(
+        "SELECT id, central_pay_arrears FROM armies WHERE id IN ('shaanxi_army', 'jingying')"
+    ).fetchall())
+    for army_id, due in zip(("shaanxi_army", "jingying"), expected):
+        assert after[army_id] - before[army_id] == pytest.approx(due)
 
-    did = _override_dossier(db, state, [
-        {"key": "due_haircut_bp_军饷@shaanxi#central", "value": 5000},
-        {"key": "due_haircut_bp_军饷#central", "value": 6000},
-    ])
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    dues, exempt = _central_dues_with_haircut(db, state, rows)
-    # 陕西中央侧取 @shaanxi#central=5000：floor(2.1×0.5)=1.0，免除 1.1
-    assert dues["shaanxi_army"] == pytest.approx(float(math.floor(shaanxi_raw * 0.5)))
-    assert exempt["shaanxi_army"] == pytest.approx(shaanxi_raw - math.floor(shaanxi_raw * 0.5))
-    # 他省中央侧取 #central=6000（京营 beizhili：need=ceil(85000*1/10000)=9，raw=9.0）
-    jy_raw = army_needed(next(r for r in rows if r["id"] == "jingying")) * 1.0
-    assert dues["jingying"] == pytest.approx(math.floor(jy_raw * 0.6))
-    # 免除不入欠：欠发只按折后应得计（shortfall 上界即折后 due）
 
 def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
-    from ming_sim.flows import (
-        _central_dues_with_haircut,
-        apply_fixed_period_flows,
-        army_needed,
-    )
+    from ming_sim.flows import apply_fixed_period_flows
 
     db, state, _content = game
 
@@ -363,11 +316,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     )
     db.apply_dossier_promulgation(state, did, "promulgated")
 
-    dues, _exempt = _central_dues_with_haircut(db, state, [army])
-    raw_due = army_needed(army) * float(army["central_pay_share"] or 0)
-    assert raw_due > 0
-    assert dues["jingying"] == pytest.approx(0.0)
-
     apply_fixed_period_flows(db, state)
 
     after = db.conn.execute(
@@ -384,30 +332,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
 
 # ═══════════════ 拟旨 capture→成案（财政物化与下一次省 tick 分别由上方领域用例覆盖）═══
 
-def _pin_shortfall_board(db, region_id):
-    """省内池不足盘面钉死（拨付gross=0 → hub 京运补 due=0，p 原样进 tick）：
-    付款序决定新债落点，确定性可断言。"""
-    import json as _json
-
-    st = {
-        "省库库银": 0.0, "C_地方截留": 0.0, "C_中饱": 0.0, "C_漂没": 0.0,
-        "C_eff损耗": 0.0, "民欠旧赋": 0.0, "军饷欠": 20.0, "官俸欠": 0.0,
-        "宗禄欠": 0.0, "官民田": 100.0, "隐田": 50.0,
-    }
-    p = {
-        "正赋应征": 8.0, "三饷应征": 2.0, "火耗率": 0.1, "逋赋率": 0.0,
-        "起运定额": 0.0, "漂没率": 0.0, "中饱率": 0.0, "拨付gross": 0.0,
-        "Due": {"军饷": 18.0, "官俸": 3.0, "宗禄": 4.07, "赈济": 1.0},
-    }
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id=?", (region_id,)).fetchone()
-    fiscal = _json.loads(row["fiscal"])
-    fiscal["settle"]["st"] = st
-    fiscal["settle"]["p"] = p
-    db.conn.execute(
-        "UPDATE regions SET fiscal=? WHERE id=?",
-        (_json.dumps(fiscal, ensure_ascii=False), region_id),
-    )
-    db.conn.commit()
 
 def _capture_override_decree(game, monkeypatch, text, entries):
     """真实手工拟诏 capture seam（mock LLM 抽取）→ 草案落库 → 结束边界成案 staging。
