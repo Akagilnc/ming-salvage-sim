@@ -257,28 +257,32 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
     events: List[Dict[str, Any]] = []
     done_seen = False
     hl_before_done = False
-    for item in stream:
-        events.append(item)
-        if item.get("type") == "highlights" and not done_seen:
-            hl_before_done = True
-        if item.get("type") == "done":
-            done_seen = True
-            release.set()
+    try:
+        for item in stream:
+            events.append(item)
+            if item.get("type") == "highlights" and not done_seen:
+                hl_before_done = True
+            if item.get("type") == "done":
+                done_seen = True
+                release.set()
 
-    types = [e.get("type") for e in events]
-    assert types.index("done") < types.index("highlights")
-    assert types.index("highlights") < types.index("end")
-    assert not hl_before_done
-    hl = next(e for e in events if e["type"] == "highlights")
-    assert hl["highlights"] == ["军务"]
-    assert len(seen_reply) == 1
-    mid = int(hl.get("message_id") or 0)
-    assert mid > 0
-    assert _highlights(db, mid) == ["军务"]
-    # 投影读端
-    proj = db.build_chat_projection("殿上")
-    assert any(m.get("highlights") == ["军务"] for m in proj if m["role"] == "minister")  # night 下 殿上轮
-    _drain(web_game)
+        types = [e.get("type") for e in events]
+        assert types.index("done") < types.index("highlights")
+        assert types.index("highlights") < types.index("end")
+        assert not hl_before_done
+        hl = next(e for e in events if e["type"] == "highlights")
+        assert hl["highlights"] == ["军务"]
+        assert len(seen_reply) == 1
+        mid = int(hl.get("message_id") or 0)
+        assert mid > 0
+        assert _highlights(db, mid) == ["军务"]
+        # 投影读端
+        proj = db.build_chat_projection("殿上")
+        assert any(m.get("highlights") == ["军务"] for m in proj if m["role"] == "minister")  # night 下 殿上轮
+    finally:
+        release.set()
+        stream.close()
+        _drain(web_game)
 
 
 def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):

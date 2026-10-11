@@ -4,7 +4,6 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
-from tests.conftest import covering_monthly_extract
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 
 def _active_people(db, count):
@@ -948,7 +947,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
     else:
         assert "authorization_id" not in json.loads(dossier["payload_json"])
 
-@pytest.mark.parametrize("tier", [None, "", "旁听"])
+@pytest.mark.parametrize("tier", [None, "", "旁听", "string_item", "missing_character", "object_instead_list"])
 def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_writes(
     game, monkeypatch, tier,
 ):
@@ -967,6 +966,12 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
         "事务类别": "钱粮", "施行范围": "无",
         "参与人": [roster_item],
     }
+    if tier == "string_item":
+        response["参与人"] = [participant]
+    elif tier == "missing_character":
+        response["参与人"] = [{"tier": "主办"}]
+    elif tier == "object_instead_list":
+        response["参与人"] = {"character_id": participant, "tier": "主办"}
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),

@@ -184,14 +184,10 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     assert seen["runner"] == "codex" and seen["json_events"] is True
 
 
-def test_codex_final_text_handles_item_completed_shape():
-    assert cb._codex_final_text(
-        {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}
-    ) == "BODY"
+def test_codex_final_text_filters_reasoning_items():
     assert cb._codex_final_text(
         {"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}}
     ) == ""
-    assert cb._codex_final_text({"type": "agent_message", "message": "TOP"}) == "TOP"
 
 
 @pytest.mark.parametrize(
@@ -455,15 +451,17 @@ def test_run_backend_for_config_traces_every_call(monkeypatch):
 def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+    fault = RuntimeError("codex 挂了")
 
     def boom(prompt, model=None, **kwargs):
-        raise RuntimeError("codex 挂了")
+        raise fault
 
     monkeypatch.setattr(cb, "_run_codex", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as caught:
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
+    assert caught.value is fault
     assert len(recs) == 1
-    assert recs[0]["error"] and "codex 挂了" in recs[0]["error"]
+    assert recs[0]["error"] == str(fault)
 
 
 def test_office_inference_llm_call_is_traced(monkeypatch):

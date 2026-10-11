@@ -2077,40 +2077,17 @@ def _dispatch_endorsements(
             action_id = strict_sqlite_id(item.get("action_id"))
         except (TypeError, ValueError):
             action_id = 0
-        form = str(item.get("form") or "").strip()
-        endorser_id = str(item.get("endorser_id") or "").strip()
-        if action_id <= 0 or form not in {"会签", "当面站台", "御笔手敕"}:
+        if action_id <= 0:
             _reject(
                 rejected, item,
-                "背书须含正 action_id 与 会签|当面站台|御笔手敕",
+                "背书须含正 action_id",
                 "invalid_shape", source,
             )
             continue
-        imperial = form == "御笔手敕"
-        if imperial:
-            endorser_id = ""
-        elif not endorser_id:
-            _reject(
-                rejected, item, "会签/当面站台必须具名背书人",
-                "invalid_shape", source,
-            )
-            continue
-        elif db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=?", (endorser_id,),
-        ).fetchone() is None:
-            _reject(
-                rejected, item, "背书人物不存在",
-                "hallucinated_id", source,
-            )
-            continue
-        if ctid > 0 and db.conn.execute(
-            "SELECT 1 FROM chat_turns WHERE id=?", (ctid,),
-        ).fetchone() is None:
-            _reject(
-                rejected, item, "背书来源对话轮不存在",
-                "missing_ref", source,
-            )
-            continue
+        form = item.get("form")
+        endorser_id = item.get("endorser_id", "")
+        # The declaration has a form, not a separate imperial flag.
+        imperial = isinstance(form, str) and form.strip() == "御笔手敕"
         row = db.conn.execute(
             "SELECT id, night_id, status, payload_json FROM pending_actions "
             "WHERE id=? AND turn=?",
@@ -2130,8 +2107,8 @@ def _dispatch_endorsements(
         }
         status = str(row["status"] or "")
         if status == "pending":
-            # LLM item shape already checked above. Durable payload decode and
-            # residual validation faults must raise (F39), not become invalid_item.
+            # The write boundary owns field/reference validation. Durable payload
+            # faults still raise rather than becoming model rejections.
             try:
                 db.attach_pending_action_endorsement(
                     action_id, entry, commit=False,

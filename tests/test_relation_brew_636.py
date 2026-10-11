@@ -1,20 +1,9 @@
-"""#636 关系摘要层 S5：两段式存储＋月末增量重酿腿。
-
-验收锚（冻结票面＋庭裁 r1-r4）：
-- TD-2 奠基段永存：连续多轮重酿奠基段字节不丢不改。
-- TD-3／庭裁 r3③ 无事不变：既无新事件又无 pending 的月份字节不变、零重酿调用。
-- TD-4 翻转可回溯：重酿输入必含新边事件。
-- TD-5／庭裁 r1 F1 失败月进持久 pending-backlog，下月补酿。
-- 庭裁 r3 F1 三条故障注入机械验收（①②③）。
-- 庭裁 r3/r4 F2 超长 fixture（B×436＝32,700 字节，sha256 冻结）经真实酿制
-  持久化链路写入→读回字节原样。
-"""
+"""#636：真实关系重酿入口的备料、保真和失败边界。"""
 
 from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 
 import pytest
 
@@ -23,7 +12,8 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
-    MonthEndRelationBrewLeg,)
+    MonthEndRelationBrewLeg,
+)
 from ming_sim.relations import EMPEROR_NODE
 
 
@@ -79,18 +69,6 @@ def _script(foundings=None, recent="近况重酿。"):
     return {FOUNDINGS_KEY: list(foundings or []), RECENT_KEY: recent}
 
 
-# ---------------------------------------------------------------- TD-2 奠基段永存
-
-
-# ------------------------------------------------- TD-3／庭裁 r3③ 无事不变
-
-
-# ------------------------------------------------------- TD-4 翻转可回溯
-
-
-# --------------------------------- TD-5／庭裁 r1 F1 失败月 pending-backlog
-
-
 def test_prepare_attaches_prior_events_only_via_history_seam(game):
     """生产装配：prepare→build_brew_input 历史 prior 与本批 new 互斥。
 
@@ -111,9 +89,11 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game):
     _add_edge(db, state, source=source, target=target, kind="知遇",
               context="首月知遇。", origin="audience:month-1")
     brew_fn = _brew_fn_factory([])
-    brew_fn.outputs = [_script(recent="首月近况。")]
+    founding = "  越次一召原句。\n"
+    brew_fn.outputs = [_script(foundings=[founding], recent="首月近况。")]
     run_month_end_relation_brew(db, state, brew_fn)
-    assert db.get_relation_summary(source, target) is not None
+    first = db.get_relation_summary(source, target)
+    assert first["founding_segment"] == founding
 
     # 次月新事件：prior 与 new 互斥、已消化旧事只在 prior。
     state.turn += 1
@@ -140,22 +120,92 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game):
     assert new_origin not in prior_origins
     assert new_origins.isdisjoint(prior_origins)
 
-# --------------------------- 庭裁 r3/r4 F2 超长 fixture：32,700 字节零删改
+    after = db.get_relation_summary(source, target)
+    assert after["founding_segment"] == first["founding_segment"]
+    assert after["recent_segment"] == "次月近况。"
+    state.turn += 1
+    state.period += 1
+    calls.clear()
+    report = run_month_end_relation_brew(db, state, brew_fn)
+    assert report["selected"] == 0
+    assert calls == []
+    assert db.get_relation_summary(source, target) == after
 
 
-# --------------------------------------------- P5：批内条目并行不串行
+@pytest.mark.parametrize("seam,llm_failure", [
+    ("claim_relation_brew_targets", False),
+    ("apply_relation_brew_result", False),
+    ("mark_relation_brew_pending", True),
+])
+def test_brew_persistence_faults_propagate_original_error(game, monkeypatch, seam, llm_failure):
+    db, state, _ = game
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
+              context="召见。", origin="audience:db-failure")
+    fault = sqlite3.OperationalError("injected persistence failure")
+
+    def boom(*args, **kwargs):
+        raise fault
+
+    monkeypatch.setattr(db, seam, boom)
+    brew = _brew_fn_factory([])
+    if llm_failure:
+        def brew(_payload):
+            raise LLMUnavailable("injected provider failure")
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        run_month_end_relation_brew(db, state, brew)
+    assert caught.value is fault
 
 
-# ------------------------------------------------- 「本月新增」总判据（历史水位不选旧事）
+@pytest.mark.parametrize("error_type", [KeyError, ValueError])
+def test_brew_program_error_propagates_loudly_not_degraded(game, error_type):
+    db, state, _ = game
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
+              context="召见。", origin="audience:program-failure")
+    fault = error_type("injected brew program error")
+
+    def brew(_payload):
+        raise fault
+
+    with pytest.raises(error_type) as caught:
+        run_month_end_relation_brew(db, state, brew)
+    assert caught.value is fault
+    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+        (EMPEROR_NODE, "杨嗣昌")
+    ]
+    state.turn += 1
+    state.period += 1
+    calls = []
+    run_month_end_relation_brew(db, state, _brew_fn_factory(calls))
+    assert db.get_relation_brew_pending() == []
+    assert db.get_relation_summary(EMPEROR_NODE, "杨嗣昌") is not None
+    assert next(item for item in calls if "source" in item)["has_pending_failure"] is True
 
 
-# ------- 判词类③ fail-loud 异常边界：DB/schema/程序错误响亮，仅 LLM 单条降级
-
-
-
-# -------------------------------- 庭裁 Z1：畸形酿制产出严格拒收（不修补不改写）
-
-
-
-
-# -------------------------------- 庭裁 Z2：删固定 max_workers=4，按批定容
+@pytest.mark.parametrize("malformed", [
+    json.dumps({FOUNDINGS_KEY: []}),
+    json.dumps(_script(recent="first")) + json.dumps(_script(recent="second")),
+    '{"' + FOUNDINGS_KEY + '": [], "' + RECENT_KEY + '": "甲\x01乙"}',
+])
+def test_parse_seam_value_error_degrades_single_item(game, malformed):
+    db, state, _ = game
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
+              context="召见。", origin="audience:before-bad-output")
+    brew = _brew_fn_factory([])
+    brew.outputs = [_script(foundings=["  奠基原句\n"], recent="  近况原句\n")]
+    run_month_end_relation_brew(db, state, brew)
+    before = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
+    state.turn += 1
+    state.period += 1
+    event_id = _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="辜负",
+                         context="新事。", origin="audience:bad-output")
+    report = run_month_end_relation_brew(db, state, lambda _payload: malformed)
+    assert report["selected"] == 2
+    assert report["brewed"] == []
+    assert len(report["degraded"]) == report["selected"]
+    assert db.get_relation_summary(EMPEROR_NODE, "杨嗣昌") == before
+    assert event_id in {
+        row["id"] for row in db.get_relation_edge_events(source=EMPEROR_NODE, target="杨嗣昌")
+    }
+    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+        (EMPEROR_NODE, "杨嗣昌")
+    ]

@@ -47,11 +47,15 @@ afterEach(() => {
 });
 
 describe("commitment progress display", () => {
-  it("shows commitment progress in the situation detail", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
-    );
-    expect(document.body.textContent).toContain(commitmentText);
+  it.each([
+    { text: commitmentText, progress: undefined, expected: commitmentText },
+    { text: undefined, progress: { months_elapsed: 1 }, expected: "未知进度" },
+    { text: undefined, progress: undefined, expected: null },
+  ])("detail keeps supplied progress or the applicable fallback ($expected)", ({ text, progress, expected }) => {
+    const issue: Issue = { ...makeIssue(), commitment_progress_text: text, commitment_progress: progress };
+    const cleanup = render(<SituationDetailModal issue={issue} onClose={() => undefined} />);
+    const node = document.querySelector(".situation-detail .issue-commitment-progress");
+    expect(node?.textContent ?? null).toBe(expected);
     cleanup();
   });
 
@@ -82,12 +86,14 @@ describe("commitment progress display", () => {
 });
 
 describe("empty bar label presentation (#626)", () => {
-  it("detail modal renders supplied bar meanings", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
-    );
-    expect(document.body.textContent).toContain(makeIssue().bar_good_meaning);
-    expect(document.body.textContent).toContain(makeIssue().bar_bad_meaning);
+  it.each([
+    { good: "欠饷清偿", bad: "军心溃散", heads: ["达成（欠饷清偿）", "失败（军心溃散）"] },
+    { good: "", bad: "", heads: ["达成", "失败"] },
+  ])("detail preserves supplied or empty meanings ($good/$bad)", ({ good, bad, heads }) => {
+    const issue = { ...makeIssue(), bar_good_meaning: good, bar_bad_meaning: bad };
+    const cleanup = render(<SituationDetailModal issue={issue} onClose={() => undefined} />);
+    const nodes = document.querySelectorAll(".situation-detail .situation-tip-outcome-head");
+    expect(Array.from(nodes, node => node.textContent)).toEqual(heads);
     cleanup();
   });
 });

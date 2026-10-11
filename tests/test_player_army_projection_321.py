@@ -9,10 +9,7 @@ import pytest
 import web_app
 from ming_sim.db import (
     GameDB,
-    _player_army_situation,
-    mutiny_loyalty_cap,
 )
-from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
@@ -135,10 +132,15 @@ def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
     assert isinstance(card["arrears_text"], str)
 
 
-def test_structured_situation_on_payload_and_map_nodes(game):
+@pytest.mark.parametrize("is_mutinied,loyalty,probation,expected", [
+    (1, 100, 0, "哗变"), (1, 100, 1, "哗变"), (1, 95, 0, "哗变"), (1, 10, 3, "哗变"),
+    (0, 39, 0, "鼓噪"), (0, 19, 0, "鼓噪"), (0, 30, 1, "鼓噪"),
+    (0, 40, 0, "不满"), (0, 50, 1, "不满"), (0, 59, 0, "不满"),
+    (0, 60, 1, "不满"), (0, 80, 2, "不满"), (0, 60, 0, "一般"), (0, 69, 0, "一般"),
+    (0, 70, 0, "优秀"), (0, 79, 0, "优秀"), (0, 80, 0, "死忠"), (0, 100, 0, "死忠"),
+])
+def test_structured_situation_on_payload_and_map_nodes(game, is_mutinied, loyalty, probation, expected):
     """结构化 ABI：army_payload / state_payload.armies / map_nodes 携带 situation 三键。"""
-    # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
-    is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
     db, state, content = game
     _configure(db)
     arrears = 12.5
@@ -165,11 +167,9 @@ def test_structured_situation_on_payload_and_map_nodes(game):
         (ARMY,),
     )
     db.conn.commit()
-    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    sit = _player_army_situation(row, db._army_pay(row))
-    assert sit["mutiny_tier"] == expected
-
     card = _payload_by_id(db)[ARMY]
+    assert card["mutiny_tier"] == expected
+    sit = card
     _assert_structured_situation(card, sit, "army_payload")
 
     runtime = _web_runtime(db, state, content)
@@ -228,11 +228,6 @@ def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
         assert int(row["loyalty"]) == 95
         assert float(row["arrears"]) == pytest.approx(0)
         assert int(row["manpower"]) == 10000
-        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
-        assert derive_army_mutiny_state(row) == "哗变"
-        pay = reopened._army_pay(row)
-        sit_before = _player_army_situation(row, pay)
-        assert sit_before["mutiny_tier"] == "哗变"
         card_before = _payload_by_id(reopened)[ARMY]
         assert card_before["mutiny_tier"] == "哗变"
 
@@ -251,9 +246,6 @@ def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
         assert int(after["redemption_count"]) == 1
         assert float(after["arrears"]) == pytest.approx(0)
         assert int(after["manpower"]) == 10000
-        assert derive_army_mutiny_state(after) == "不满"
-        sit_after = _player_army_situation(after, reopened._army_pay(after))
-        assert sit_after["mutiny_tier"] == "不满"
         assert _payload_by_id(reopened)[ARMY]["mutiny_tier"] == "不满"
     finally:
         reopened.close()

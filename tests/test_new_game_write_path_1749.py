@@ -509,6 +509,33 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
 
 
 
+def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
+    client = tracer_client
+    _install_canned_minister_factory(monkeypatch)
+    assert client.post("/api/menu/new_game").status_code == 200
+    game = web_app.web_game
+    path = game.db_path
+    game.save_to("snap1749")
+    real_close = game.session.close
+    fault = RuntimeError("load close failure")
+
+    def fail_close():
+        raise fault
+
+    game.session.close = fail_close
+    try:
+        assert client.post("/api/menu/load_save/snap1749").status_code == 409
+        assert web_app.web_game is game
+        assert os.path.isfile(path)
+        assert _drained(Path(web_app.user_data_path())) == []
+        edited = _rewrite_draft_via_http(
+            client, "着户部清核辽饷。", marker="着户部清核辽饷，具报。",
+        )
+        assert edited in _db_snapshot(path)["directive_texts"]
+    finally:
+        game.session.close = real_close
+
+
 def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypatch):
     """真实 exit→new_game：detach close 失败 → 旧主库不被归档（外部文件/campaign 终态）。"""
     client = tracer_client

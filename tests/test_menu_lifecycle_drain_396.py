@@ -44,12 +44,15 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
         target=lambda: (web_app._drain_and_close_session(game), done.set()),
         daemon=True,
     )
-    thread.start()
-    # While the live queue gate is held, drain must not close the session.
-    assert not done.is_set()
-    assert closed == []
+    try:
+        thread.start()
+        # While the live queue gate is held, drain must not close the session.
+        assert not done.is_set()
+        assert closed == []
 
-    gate.release()
+    finally:
+        gate.release()
+        thread.join()
 
     done.wait()
     assert closed == [1]
@@ -377,12 +380,15 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
         done.set()
 
     thread = threading.Thread(target=lambda: asyncio.run(run_shutdown()), daemon=True)
-    thread.start()
-    assert not done.is_set()
-    assert closed == []
-    assert killed == []
+    try:
+        thread.start()
+        assert not done.is_set()
+        assert closed == []
+        assert killed == []
 
-    gate.release()
+    finally:
+        gate.release()
+        thread.join()
 
     done.wait()
     assert closed == [1]
@@ -421,22 +427,25 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
         target=lambda: (web_app._drain_and_close_session(runtime), done.set()),
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
 
-    # seal 后 claim 返回 None；探测时若尚未 seal 则 complete 掉误领票据，不为测试补 is_sealed API。
-    def _queue_rejects_new_claims() -> bool:
-        ticket = runtime._write_queue.claim(("__seal_probe__",))
-        if ticket is None:
-            return True
-        runtime._write_queue.complete(ticket)
-        return False
+        # seal 后 claim 返回 None；探测时若尚未 seal 则 complete 掉误领票据，不为测试补 is_sealed API。
+        def _queue_rejects_new_claims() -> bool:
+            ticket = runtime._write_queue.claim(("__seal_probe__",))
+            if ticket is None:
+                return True
+            runtime._write_queue.complete(ticket)
+            return False
 
-    wait_until(_queue_rejects_new_claims)
-    assert runtime._mark_pending_write() is None
-    # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
-    assert runtime._runtime_write_queue().inflight_count() <= 1
+        wait_until(_queue_rejects_new_claims)
+        assert runtime._mark_pending_write() is None
+        # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
+        assert runtime._runtime_write_queue().inflight_count() <= 1
 
-    runtime._write_gate.release()
+    finally:
+        runtime._write_gate.release()
+        thread.join()
 
     done.wait()
     assert closed == [1]

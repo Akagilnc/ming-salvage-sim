@@ -2,9 +2,9 @@
 
 真实入口：
 1. CliChat.invoke — runner 自身失败 → typed LLMUnavailable（非 RuntimeError 原文上抛）
-2. extract_agent_text — ERROR 状态转成 typed failure，正常原文保真
+2. extract_agent_text — ERROR 状态转成 typed failure
 
-负向：正常回话 content 照常提取。
+原文运输由 CliChat.invoke 的既有成功案承接。
 """
 
 from __future__ import annotations
@@ -51,23 +51,16 @@ def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
 
 
 def test_clichat_normal_reply_still_returns(monkeypatch):
-    """夹具 CLI 回包经 _fake_completion 原样透传（非生成散文锁）。"""
+    """夹具 CLI 回包贯穿 invoke 原样透传（非生成散文锁）。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
-    monkeypatch.setattr(cc, "_call_cli", lambda p: ("臣遵旨，边事容臣细奏。", 1))
+    original = "  臣遵旨，边事容臣细奏。\n"
+    monkeypatch.setattr(cc, "_call_cli", lambda p: (original, 1))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    captured = {}
-    real_fake = cb._fake_completion
-
-    def spy(text, model_id, *a, **k):
-        captured["text"] = text
-        return real_fake(text, model_id, *a, **k)
-
-    monkeypatch.setattr(cb, "_fake_completion", spy)
-    cc.invoke(
+    result = cc.invoke(
         [SimpleNamespace(role="user", content="边事如何")],
         Message(role="assistant"),
     )
-    assert captured["text"] == "臣遵旨，边事容臣细奏。"
+    assert result.content == original
 
 
 # ── seam 2: extract_agent_text ──
@@ -93,24 +86,3 @@ def test_extract_agent_text_error_enum_status_raises():
     run_output = SimpleNamespace(content=_RUNNER_BANNER, status=status)
     with pytest.raises(LLMUnavailable):
         extract_agent_text(run_output)
-
-
-def test_extract_agent_text_normal_reply_passes():
-    """负向：正常 content 原样返回。"""
-    run_output = SimpleNamespace(content="臣请据实回奏边饷事。", status="COMPLETED")
-    assert extract_agent_text(run_output) == "臣请据实回奏边饷事。"
-
-
-def test_extract_agent_text_preserves_leading_trailing_whitespace():
-    """#671：真实 agent.run 提取不得 strip；空白只在判空临时副本用。"""
-    raw = "\n  奴婢禀报：洪承畴抵京候旨。  \n"
-    run_output = SimpleNamespace(content=raw, status="COMPLETED")
-    assert extract_agent_text(run_output) == raw
-    # 纯空白仍原样返回（空判定由调用方临时 strip）
-    blank = "   \n\t  "
-    assert extract_agent_text(SimpleNamespace(content=blank, status="COMPLETED")) == blank
-
-
-def test_extract_agent_text_plain_string_still_works():
-    """无 status 的纯文本/旧路径仍可提取。"""
-    assert extract_agent_text("臣领旨。") == "臣领旨。"
