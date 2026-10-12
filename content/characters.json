@@ -344,7 +344,8 @@
       "debut_year": 1631,
       "debut_month": 0,
       "power_id": "ming",
-      "historical_office": "清涧知县"
+      "office_region": "shaanxi",
+      "debut_office": "清涧知县"
     },
     {
       "name": "杨嗣昌",
@@ -722,7 +723,7 @@
       "debut_month": 0,
       "location": "beizhili",
       "power_id": "ming",
-      "historical_office": "历局修历起复"
+      "debut_office": "南京太仆寺少卿"
     },
     {
       "name": "徐应秋",
@@ -791,7 +792,7 @@
       "debut_month": 0,
       "location": "beizhili",
       "power_id": "ming",
-      "historical_office": "钦天监历局修历"
+      "debut_office": "历局修历"
     },
     {
       "name": "袁可立",
@@ -2200,7 +2201,8 @@
         "crime": "无(引清入关是十余年后事,坚决不预判)",
         "severity": "无"
       },
-      "historical_office": "辽东总兵吴襄子，武生"
+      "office_region": "liaodong",
+      "debut_office": "都督指挥"
     },
     {
       "name": "左良玉",
@@ -2236,7 +2238,8 @@
         "crime": "无(后期拥兵自重、剽掠地方军阀化是后事,存疑不预坐)",
         "severity": "无"
       },
-      "historical_office": "辽东军中下级武弁"
+      "office_region": "liaodong",
+      "debut_office": "辽东车右营都司"
     },
     {
       "name": "高迎祥",
@@ -2427,12 +2430,12 @@
         "crime": "无(后任兵书因泄议和事被诛是后事)",
         "severity": "无"
       },
-      "historical_office": "兵部郎中（候用）"
+      "debut_office": "兵部尚书"
     },
     {
       "name": "傅宗龙",
       "office": "",
-      "office_type": "边镇",
+      "office_type": "地方",
       "faction": "军队",
       "aliases": [
         "傅宗龙",
@@ -2463,7 +2466,8 @@
         "crime": "无",
         "severity": "无"
       },
-      "historical_office": "兵部边务（候用）"
+      "office_region": "sichuan",
+      "debut_office": "四川巡抚"
     },
     {
       "name": "丁启睿",
@@ -3622,7 +3626,7 @@
       "power_id": "ming",
       "location": "beizhili",
       "intrigue": 24,
-      "historical_office": "户科给事中"
+      "debut_office": "户科给事中"
     },
     {
       "name": "朱术桂",

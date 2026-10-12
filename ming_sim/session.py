@@ -561,6 +561,9 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
                 raise ValueError(
                     f"characters.seed_guilt[{guilt_key!r}] 须为字符串，得 {type(guilt_value).__name__}"
                 )
+        existing_ch = content.characters.get(name)
+        # 静态史实元数据不入现任备档；沿既有重建路径保留，不反写 DB。
+        debut_office = getattr(existing_ch, "debut_office", "")
         characters[name] = Character(
             name=name,
             office=row["office"],
@@ -592,9 +595,14 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             identity=int(row["identity"]),
             intrigue=int(row["intrigue"]),
             seed_guilt=dict(seed_guilt),
-            # 任所 thrives only on character_offices; restore into Character for
-            # runtime projection (materials scope / travel gate / seat identity).
-            office_region=str(row["office_region"] or "").strip(),
+            historical_office=getattr(existing_ch, "historical_office", ""),
+            debut_office=debut_office,
+            # 未登场的 typed 任所尚无备档；在事/离任者只读 DB，不回灌静态旧任所。
+            office_region=str(
+                getattr(existing_ch, "office_region", "")
+                if row["status"] == "offstage" and row["debut_year"]
+                else row["office_region"] or ""
+            ).strip(),
         )
     content.characters = characters
 

@@ -674,17 +674,13 @@ def infer_office_type_from_office(
     （cmr R2 codex）。动态生造官名（任免/issues）仍走默认 use_llm=True（保留 LLM 兜底 +
     朝堂类无确证则落待铨的谨慎语义）。"""
     kind = (current_type or "").strip()
-    if kind == "后宫":
+    if kind == "后宫" or (not use_llm and kind):
+        # Seed/sync declarations are authoritative even before debut (empty
+        # office), and must not be overwritten by compound-title table matches.
         return kind
     text = normalize_office(office)
     if not text:
         return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
-    if not use_llm and kind:
-        # Seed/sync callers carry a declared, durable office type.  A compound
-        # title such as “司礼监秉笔太监、东厂提督” can match more than one
-        # table keyword; letting the first match overwrite the declaration
-        # silently projects the person through the wrong knowledge domain.
-        return kind
     t = _office_type_from_table(text)
     if t:
         return t
@@ -2945,7 +2941,7 @@ class GameDB:
             )
             died.append({
                 "name": name,
-                "office": r["office"] or "重臣",
+                "office": r["office"] or "",
                 "faction": r["faction"] or "",
             })
         return died
@@ -2983,24 +2979,28 @@ class GameDB:
                 derived_from="登场", source="system_simulation",
             )
             # Offstage keeps office empty (ADR 0009 ①). Debut title comes from
-            # explicit content.historical_office — never status_reason, never「重臣」.
+            # explicit content.debut_office — never status_reason, never「重臣」.
             office = str(r["office"] or "").strip()
             if not office:
                 ch = (
                     self.content.characters.get(name)
                     if self.content is not None else None
                 )
-                office = str(getattr(ch, "historical_office", "") or "").strip()
+                office = str(getattr(ch, "debut_office", "") or "").strip()
                 if office:
                     # Structured content.office_type + use_llm=False：与 opening_seed
-                    # 静态接档同契约，不让表查/LLM 改写既有元数据（如「兵部边务」误盖「边镇」）。
+                    # 静态接档同契约，不让表查/LLM 改写既有元数据。
                     office_type = str(getattr(ch, "office_type", "") or "").strip()
+                    region_id = str(
+                        getattr(ch, "office_region", "") or ""
+                    ).strip()
                     self.set_character_office(
                         name, office, office_type,
+                        region_id=region_id,
                         source="历史登场", commit=True, use_llm=False,
                     )
             # Debut fact reads the persisted office (normalize_office may differ
-            # from content.historical_office, e.g. fullwidth comma → ASCII).
+            # from content.debut_office, e.g. fullwidth comma → ASCII).
             office_row = self.characters.field_row("office", name)
             office = str(
                 (office_row["office"] if office_row is not None else "") or ""

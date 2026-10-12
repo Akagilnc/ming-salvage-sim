@@ -152,6 +152,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             status_reason=str(item.get("status_reason") or ""),
             reason_code=str(item.get("reason_code") or "").strip(),
             historical_office=str(item.get("historical_office") or "").strip(),
+            debut_office=str(item.get("debut_office") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
