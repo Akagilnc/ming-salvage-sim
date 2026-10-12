@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
@@ -79,17 +80,21 @@ def generate_ending_summary_for_tail(
     save_fn: Any = None,
     gate_run: Any = None,
 ) -> str:
-    """结局总评：只读一遍已装载的历月邸报；缺配置如实失败，不静默降级。
+    """结局总评按需取阅邸报目录；已落总评在重试／重开时不再生成。
 
     SQLite 读与落库走 gate_run（会话既有写闸）。模型调用留在闸外。
     """
     from ming_sim.agents import create_ending_summary_agent, run_agent_text
     from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.materials import prepare_ending_materials, release_material_tree
     import json
 
+    under = gate_run if gate_run is not None else (lambda fn: fn())
+    existing = under(db.reign.get_ending_summary)
+    if existing is not None and int(existing["turn"]) == int(closed_state.turn):
+        return str(existing["summary"])
     if llm_config is None:
         raise LLMUnavailable("结局总评缺少模型配置", stage="ending_summary")
-    under = gate_run if gate_run is not None else (lambda fn: fn())
 
     def _load_gazettes():
         loaded = []
@@ -101,23 +106,21 @@ def generate_ending_summary_for_tail(
             body = str(row.get("report") or row.get("body") or "")
             if not body.strip():
                 continue
-            # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
             loaded.append({
                 "turn": turn,
                 "year": int(row.get("year") or 0),
                 "period": int(row.get("period") or 0),
                 "body": body,
+                "title": str(row.get("title") or ""),
             })
         return loaded
 
     reports = under(_load_gazettes)
-    ending_agent = create_ending_summary_agent(llm_config)
     payload = {
         "ending": {
             "status": outcome.get("status"),
             "summary": outcome.get("summary"),
         },
-        "gazettes": reports,
         "final_state": {
             "year": closed_state.year,
             "period": closed_state.period,
@@ -125,11 +128,16 @@ def generate_ending_summary_for_tail(
             "metrics": dict(getattr(closed_state, "metrics", {}) or {}),
         },
     }
-    summary_text = run_agent_text(
-        ending_agent,
-        json.dumps(payload, ensure_ascii=False, sort_keys=False),
-        tag="ending-summary",
-    )
+    prepared = prepare_ending_materials(db, closed_state, reports)
+    try:
+        ending_agent = create_ending_summary_agent(llm_config, prepared)
+        summary_text = run_agent_text(
+            ending_agent,
+            json.dumps(payload, ensure_ascii=False, sort_keys=False),
+            tag="ending-summary",
+        )
+    finally:
+        release_material_tree(prepared.root)
     if not summary_text:
         return ""
     # 终章 UI 历程从同一份已加载邸报投影 gazette，不另读、不把第二份正文送进模型。
@@ -238,11 +246,18 @@ def _run_tail_body(
         metrics=dict(getattr(state, "metrics", {}) or {}),
         ended=bool(getattr(state, "ended", False)),
     )
-    _run_relation_brew(
-        session, closed_turn=closed_turn, settled_year=settled_year,
-        settled_period=settled_period, queue=queue, ticket=ticket,
-    )
-    if ending_outcome is not None and ending_outcome.get("status"):
+
+    def brew() -> None:
+        _run_relation_brew(
+            session, closed_turn=closed_turn, settled_year=settled_year,
+            settled_period=settled_period, queue=queue, ticket=ticket,
+        )
+
+    if ending_outcome is None or not ending_outcome.get("status"):
+        brew()
+        return _TAIL_STATUS_DONE
+
+    def ending() -> None:
         summary = generate_ending_summary_for_tail(
             db, closed_state, ending_outcome,
             llm_config=getattr(session, "llm_config", None),
@@ -250,6 +265,17 @@ def _run_tail_body(
         )
         if not summary:
             raise RuntimeError("结局总评无正文")
+
+    # Independent LLM legs; SQLite still uses the session's single write gate.
+    # Observe both terminal results before releasing the parent ticket, even
+    # when one fails. Successful DB results are the recovery checkpoints.
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="mechanical-tail") as pool:
+        futures = [pool.submit(brew), pool.submit(ending)]
+        errors = [error for future in futures if (error := future.exception()) is not None]
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise BaseExceptionGroup("；".join(str(error) for error in errors), errors)
     return _TAIL_STATUS_DONE
 
 

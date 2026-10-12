@@ -985,6 +985,26 @@ def _write_gazette_index(
     return index
 
 
+def prepare_ending_materials(
+    db: Any, state: Any, reports: Sequence[dict[str, object]],
+) -> PreparedMaterials:
+    """国史编纂官只取阅已关闭月份的公开邸报，不带世界段实况／密令。"""
+    def write_tree(tmp: Path) -> list[str]:
+        index = _write_gazette_index(tmp, reports, prefix=_WORLD_GAZETTE_DIR)
+        _write_text(tmp / _INDEX_NAME, "\n".join(index))
+        return index
+
+    root, index = _publish_material_tree(
+        None, _materials_campaign_dir(db) / f"turn-{int(state.turn)}" / "结局总评",
+        write_tree,
+    )
+    return PreparedMaterials(
+        root=root,
+        opening="历月邸报在当前材料目录，根目录 INDEX.txt 含年月与标题索引，按需取阅全文。",
+        index_lines=tuple(index),
+    )
+
+
 # ── 过月推演者材料目录（#1834 / ADR 0153 / 0155 / 0157）──
 #
 # 推演者三层全看（实况 + 人物经历 + 公开说法），另有盘面（0155 读取形态段）。

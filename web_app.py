@@ -1367,6 +1367,8 @@ class WebGame:
             return None
         from ming_sim.context import ENDING_LABELS
         from ming_sim.mechanical_tail import ending_summary_pending
+        # The tail saves the summary before marking done: sample pending first.
+        summary_pending = ending_summary_pending(self.db, self.state)
         row = self.db.reign.get_ending_summary() or {}
         summary = row.get("summary", "") or ""
         return {
@@ -1374,7 +1376,7 @@ class WebGame:
             "label": ENDING_LABELS.get(self.state.ending_status, "结局"),
             "summary": summary,
             "timeline": row.get("timeline", []),
-            "summary_pending": ending_summary_pending(self.db, self.state) if not summary else False,
+            "summary_pending": summary_pending if not summary else False,
         }
 
     def state_payload(self) -> Dict[str, Any]:
@@ -1486,9 +1488,11 @@ class WebGame:
             "power_warning": self.db.power_report(exclude_self=True),
             "powers": self.db.power_payload(),
             "victory_status": self.session.victory(),
+            # Sample pending before results, and failure after ending: the modal
+            # needs summary_pending or a visible failure, not just global pending.
+            "mechanical_tail_pending": self.mechanical_tail_pending(),
             "ending": self.ending_payload(),
             "mechanical_tail_failure": self.mechanical_tail_failure(),
-            "mechanical_tail_pending": self.mechanical_tail_pending(),
             "events": [],
             "regions": self.db.region_payload(),
             "armies": self.db.army_payload(),
