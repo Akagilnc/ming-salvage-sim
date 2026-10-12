@@ -2276,8 +2276,6 @@ class WebGame:
                     # 高亮实际异常交还本 worker 统一失败出口（error→end），不洗成成功。
                     if highlight_thread is not None:
                         highlight_thread.join()
-                        if highlight_errors:
-                            raise highlight_errors[0]
                     if highlight_box:
                         ev_queue.put({
                             "type": "highlights",
@@ -2298,6 +2296,11 @@ class WebGame:
                         write_gate=bare_write_gate,
                         barrier_ticket=handed_barrier,
                     )
+                    # Once close succeeds, only the presentation tail remains.
+                    # Its failure must not defer or repeat the committed close.
+                    court_action = ""
+                    if highlight_errors:
+                        raise highlight_errors[0]
 
                     ev_queue.put({"type": "end"})
                 except Exception as error:  # noqa: BLE001
