@@ -6,7 +6,6 @@ import sqlite3
 import threading
 import pytest
 import web_app
-from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from ming_sim.models import LLMConfig
 
@@ -587,3 +586,272 @@ def test_1271_menu_status_grok_reasoning_supported_and_capability_list(monkeypat
     assert "grok" in status["llm"]["cli_reasoning_runners"]
     assert set(status["llm"]["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
     assert set(status["llm"]["cli_reasoning_floor_runners"]) == {"codex", "claude", "grok"}
+
+# ── #1902 F28：局中 /api/llm/config、/api/saves 真 HTTP 入口（共享 web_game）──
+
+def _bind_real_runtime_llm(monkeypatch, tmp_path):
+    """撤销 webgame stub，把 runtime 落盘接到临时路径（真 load/save）。"""
+    import ming_sim.llm_config as llm_config
+
+    path = tmp_path / "runtime_llm.json"
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+    monkeypatch.setattr(web_app, "load_runtime_llm", llm_config.load_runtime_llm)
+    monkeypatch.setattr(web_app, "save_runtime_llm", llm_config.save_runtime_llm)
+    return path
+
+
+def test_game_llm_config_http_get_exposes_persisted_slots_and_f41_fields(
+    web_game, tmp_path, monkeypatch,
+):
+    """GET /api/llm/config：真入口读 session + 真 runtime；露出 F41 字段与双槽强度。"""
+    import ming_sim.llm_config as llm_config
+    from ming_sim.cli_backend import CLI_REASONING_FLOOR_RUNNERS, CLI_REASONING_STRENGTH_RUNNERS
+
+    _bind_real_runtime_llm(monkeypatch, tmp_path)
+    llm_config.save_runtime_llm(
+        "", "", "",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+        reasoning_strength="high",
+    )
+    llm_config.save_runtime_llm(
+        "https://api.example.com/v1",
+        "gpt-5",
+        "sk-test",
+        channel="api",
+        reasoning_strength="low",
+        advanced_base_url="https://api.example.com/v1",
+        advanced_model="gpt-5",
+        default_headers={"X-Session": "read-me", "User-Agent": "ming-qa/1.0"},
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+    # 会话侧对齐 advanced，使 reasoning_supported 走 advanced 模型判定。
+    web_game.session.llm_config = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-chat",
+        channel="api",
+        advanced_base_url="https://api.example.com/v1",
+        advanced_model="gpt-5",
+        default_headers={"X-Session": "read-me", "User-Agent": "ming-qa/1.0"},
+    )
+
+    result = TestClient(web_app.app).get("/api/llm/config")
+    assert result.status_code == 200
+    body = result.json()
+    assert body["channel"] == "api"
+    assert body["reasoning_supported"] is True
+    assert body["default_headers"] == {"X-Session": "read-me", "User-Agent": "ming-qa/1.0"}
+    assert body["persisted"]["api_reasoning_strength"] == "low"
+    assert body["persisted"]["cli_reasoning_strength"] == "high"
+    assert body["persisted"]["default_headers"] == {
+        "X-Session": "read-me", "User-Agent": "ming-qa/1.0",
+    }
+    assert body["persisted"]["cli_timeout_seconds"] == 240
+    assert body["effective_reasoning_strengths"] == {"api": "low", "cli": "high"}
+    assert set(body["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
+    assert set(body["cli_reasoning_floor_runners"]) == set(CLI_REASONING_FLOOR_RUNNERS)
+
+
+def test_game_llm_config_http_post_cli_persist_and_api_headers(
+    web_game, tmp_path, monkeypatch,
+):
+    """POST /api/llm/config：真 build/commit/persist；只 mock verify。"""
+    import ming_sim.llm_config as llm_config
+    from ming_sim.cli_backend import CLI_REASONING_FLOOR_RUNNERS
+
+    _bind_real_runtime_llm(monkeypatch, tmp_path)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+    # 先落一份 API 槽，切 CLI 后须保留 inactive headers/key。
+    llm_config.save_runtime_llm(
+        "https://api.example.com/v1",
+        "api-fallback",
+        "sk-real-key",
+        channel="api",
+        reasoning_strength="low",
+        default_headers={"X-Keep": "api"},
+    )
+    client = TestClient(web_app.app)
+
+    cli = client.post("/api/llm/config", json={
+        "channel": "cli",
+        "cli_runner": "grok",
+        "cli_model": "",
+        "cli_timeout_seconds": 240,
+        "reasoning_strength": "high",
+        "api_key": "cli-backend",
+    })
+    assert cli.status_code == 200
+    cli_body = cli.json()
+    assert cli_body["channel"] == "cli"
+    assert cli_body["cli_runner"] == "grok"
+    assert cli_body["cli_model"] == ""
+    assert cli_body["has_api_key"] is False
+    assert cli_body["reasoning_supported"] is True
+    assert cli_body["reasoning_strength"] == "high"
+    assert set(cli_body["cli_reasoning_floor_runners"]) == set(CLI_REASONING_FLOOR_RUNNERS)
+    assert cli_body["effective_reasoning_strengths"]["cli"] == "high"
+    saved = llm_config.load_runtime_llm()
+    assert saved["channel"] == "cli"
+    assert saved["cli"]["runner"] == "grok"
+    assert saved["cli"]["model"] == ""
+    assert saved["api"]["api_key"] == "sk-real-key"
+    assert saved["api"]["default_headers"] == {"X-Keep": "api"}
+
+    got = client.get("/api/llm/config")
+    assert got.status_code == 200
+    assert got.json()["channel"] == "cli"
+    assert got.json()["has_api_key"] is False
+    assert got.json()["persisted"]["has_api_key"] is True
+    assert got.json()["persisted"]["default_headers"] == {"X-Keep": "api"}
+
+    api = client.post("/api/llm/config", json={
+        "channel": "api",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "api_key": "sk-test",
+        "reasoning_strength": "medium",
+        "default_headers": {"X-From-UI": "ok"},
+        "cli_runner": "__keep__",
+        "cli_model": "__keep__",
+    })
+    assert api.status_code == 200
+    api_body = api.json()
+    assert api_body["channel"] == "api"
+    assert api_body["reasoning_supported"] is False
+    assert api_body["default_headers"] == {"X-From-UI": "ok"}
+    assert api_body["cli_runner"] == "grok"
+    assert api_body["cli_timeout_seconds"] == 240
+    assert api_body["effective_reasoning_strengths"]["api"] == "medium"
+    assert api_body["effective_reasoning_strengths"]["cli"] == "high"
+
+
+def test_game_llm_config_http_verify_failure_skips_persist(
+    web_game, tmp_path, monkeypatch,
+):
+    """verify 失败经 HTTP 400 透传，且不 commit/落盘。"""
+    import ming_sim.llm_config as llm_config
+
+    _bind_real_runtime_llm(monkeypatch, tmp_path)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+    client = TestClient(web_app.app)
+    seed = client.post("/api/llm/config", json={
+        "channel": "cli",
+        "cli_runner": "agy",
+        "cli_model": "",
+        "cli_timeout_seconds": 240,
+        "reasoning_strength": "off",
+    })
+    assert seed.status_code == 200
+    before = llm_config.load_runtime_llm()
+
+    sentinel = {"code": "llm_unavailable", "message": "主模型连通性检查失败：runner missing"}
+
+    def boom(_cfg):
+        raise web_app.HTTPException(status_code=400, detail=sentinel)
+
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", boom)
+    failed = client.post("/api/llm/config", json={
+        "channel": "cli",
+        "cli_runner": "codex",
+        "cli_model": "gpt-5.5",
+        "reasoning_strength": "high",
+    })
+    assert failed.status_code == 400
+    assert failed.json()["detail"] == sentinel
+    assert llm_config.load_runtime_llm() == before
+    assert client.get("/api/llm/config").json()["cli_runner"] == "agy"
+
+
+def test_saves_http_lifecycle_hot_replace_and_delete(web_game, tmp_path, monkeypatch):
+    """POST /api/saves → load 热替换 → DELETE；成功路径复用共享 web_game。"""
+    from tests.conftest import stub_audience_translate
+
+    stub_audience_translate(monkeypatch)
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    client = TestClient(web_app.app)
+    saved_marker, live_marker, write_minister = list(web_game.content.characters)[:3]
+    web_game.favorites = {saved_marker}
+    web_game.db.reign.kv_set(
+        "favorites", json.dumps(sorted(web_game.favorites), ensure_ascii=False),
+    )
+    created = client.post("/api/saves", json={"name": "before"})
+    assert created.status_code == 200
+    assert created.json()["save"]["name"] == "before"
+
+    web_game.favorites = {live_marker}
+    web_game.db.reign.kv_set(
+        "favorites", json.dumps(sorted(web_game.favorites), ensure_ascii=False),
+    )
+    loaded = client.post("/api/saves/before/load")
+    assert loaded.status_code == 200
+    state = client.get("/api/game/state")
+    assert state.status_code == 200
+    assert "turn" in state.json()
+    write = client.post(f"/api/favorites/{write_minister}")
+    assert write.status_code == 200
+    favorites = write.json()["favorites"]
+    assert write_minister in favorites
+    assert saved_marker in favorites
+    assert live_marker not in favorites
+
+    deleted = client.delete("/api/saves/before")
+    assert deleted.status_code == 200
+    assert all(s.get("name") != "before" for s in deleted.json()["saves"])
+
+
+@pytest.mark.parametrize("failure", ["candidate", "backup"])
+def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
+    web_game, tmp_path, monkeypatch, failure,
+):
+    """热替换失败：旧局可继续写；存档经 POST /api/saves 制备。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    client = TestClient(web_app.app)
+    saved_marker, live_marker, write_minister = list(web_game.content.characters)[:3]
+    web_game.favorites = {saved_marker}
+    web_game.db.reign.kv_set(
+        "favorites", json.dumps(sorted(web_game.favorites), ensure_ascii=False),
+    )
+    created = client.post("/api/saves", json={"name": "before"})
+    assert created.status_code == 200
+    web_game.favorites = {live_marker}
+    web_game.db.reign.kv_set(
+        "favorites", json.dumps(sorted(web_game.favorites), ensure_ascii=False),
+    )
+    old_turn = web_game.state.turn
+
+    if failure == "candidate":
+        import ming_sim.session as session_mod
+
+        real_session = session_mod.GameSession
+        attempts = 0
+
+        def fail_first_candidate(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("candidate sentinel")
+            return real_session(*args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "GameSession", fail_first_candidate)
+    else:
+        monkeypatch.setattr(
+            web_game.db, "backup_to",
+            lambda _path: (_ for _ in ()).throw(RuntimeError("backup sentinel")),
+        )
+
+    response = client.post("/api/saves/before/load")
+    assert response.status_code == 500
+    state = client.get("/api/game/state")
+    assert state.status_code == 200
+    assert state.json()["turn"]["turn"] == old_turn
+    write = client.post(f"/api/favorites/{write_minister}")
+    assert write.status_code == 200
+    favorites = write.json()["favorites"]
+    assert live_marker in favorites
+    assert saved_marker not in favorites
+    assert write_minister in favorites
