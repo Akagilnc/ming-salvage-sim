@@ -1,4 +1,5 @@
 import json
+from ming_sim.assets import load_json_asset
 from ming_sim.models import Character
 
 
@@ -98,11 +99,6 @@ def test_same_rank_demotion_and_two_band_promotion_follow_upward_formula(game):
 def test_restoration_and_displaced_third_state_use_latest_historical_office(game):
     """History basis uses closed status/reason enums — not free-text office markers (#1847)."""
     db, state, _content = game
-    # #1843：离事且无现职不建空备档；无 archive 时按初仕高阶识别（不锁 status_reason 反推职衔）。
-    _yuan_id, yuan = _appointment_dossier(db, state, "袁可立", "陕西巡抚")
-    assert yuan["break_rank"]["basis"] == "first_appointment_high_office"
-    assert yuan["break_rank"]["is_break_rank"] is True
-
     _add(db, state, "起复甲", "礼部右侍郎", "礼部")
     db.set_character_status(state, "起复甲", "retired", "致仕")
     _same_id, same = _appointment_dossier(db, state, "起复甲", "户部左侍郎")
@@ -183,15 +179,24 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
 
 
 def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
-    """#1843：离事且无现职不建空备档；起复按初仕高阶，不从 status_reason 反推职衔。"""
-    db, _state, _content = game
+    """Explicit historical offices survive loading and seed into restoration facts."""
+    db, state, content = game
+    raw_by_name = {
+        item["name"]: item for item in load_json_asset("characters.json")["characters"]
+    }
     for name in ("袁可立", "胡廷宴"):
+        expected = raw_by_name[name].get("historical_office", "")
+        assert content.characters[name].historical_office == expected
+        assert content.characters[name].office == ""
         row = db.conn.execute(
             "SELECT office_title FROM character_offices WHERE character_name=?",
             (name,),
         ).fetchone()
-        assert row is None
+        if expected:
+            assert row["office_title"] == expected
+        else:
+            assert row is None
 
-    _dossier_id, payload = _appointment_dossier(db, _state, "袁可立", "陕西巡抚")
-    assert payload["break_rank"]["basis"] == "first_appointment_high_office"
-    assert payload["break_rank"]["is_break_rank"] is True
+    _dossier_id, payload = _appointment_dossier(db, state, "袁可立", "陕西巡抚")
+    assert payload["break_rank"]["basis"] == "historical_office"
+    assert payload["break_rank"]["is_break_rank"] is False

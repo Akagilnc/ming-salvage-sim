@@ -121,10 +121,10 @@ def decode_durable_participant_roster(
 
 
 def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
-    """案卷归属人：首名 canonical 主办，缺档时才读 legacy executor。
+    """案卷归属人：首名 canonical 主办，名册是唯一真源。
 
     #613 任别读端与 #625 监督事实底共调此单源；roster 解析禁止第三份遍历。
-    缺档（无主办且无 executor）返回空串，由调用方按真除或缺席降级。
+    无主办返回空串，由调用方按真除或缺席降级。
     """
     roster = decode_durable_participant_roster(
         dossier.get("participant_roster"),
@@ -135,10 +135,6 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
         name = entry["character_id"]
         if name:
             return name
-    executor_id = str(dossier.get("executor_id") or "").strip()
-    executor_kind = str(dossier.get("executor_kind") or "").strip()
-    if executor_id and executor_kind in {"", "character"}:
-        return executor_id
     return ""
 
 

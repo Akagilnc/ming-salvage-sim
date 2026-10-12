@@ -151,6 +151,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             # Free prose status_reason: preserve raw (#1834 F16).
             status_reason=str(item.get("status_reason") or ""),
             reason_code=str(item.get("reason_code") or "").strip(),
+            historical_office=str(item.get("historical_office") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,

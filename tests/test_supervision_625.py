@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
@@ -182,6 +183,19 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
         restored.dossiers.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         restored.conn.commit()
         assert len(restored.dossiers.presence_rows(subject_id)) == 1
+        # No lead means no auditor, even when executor metadata names a person.
+        roster = restored.dossiers.get(audit_id)["participant_roster"]
+        no_lead_rosters = [[]] + [
+            [{**entry, "tier": tier} for entry in roster]
+            for tier in ("协办", "知情")
+        ]
+        for next_turn, no_lead in enumerate(no_lead_rosters, start=turn + 1):
+            restored.conn.execute(
+                "UPDATE decree_dossiers SET participant_roster=? WHERE id=?",
+                (json.dumps(no_lead, ensure_ascii=False), audit_id),
+            )
+            restored.dossiers.record_monthly_supervision_presence(next_turn, commit=True)
+            assert restored.dossiers.presence_rows(subject_id) == presence
     finally:
         restored.conn.close()
 
