@@ -59,43 +59,71 @@ def test_r4_hu_tingyan_loader_and_db_preserve_non_holder_seed(read_game):
     assert __import__("json").loads(row["seed_guilt"]) == _by_name()["胡廷宴"].seed_guilt
 
 
-def test_r4_named_characters_debut_in_historical_order(game):
+def test_r4_named_characters_debut_in_historical_order(tmp_path, content):
     """offstage 登场预备：职名分空 office（ADR 0009 / #1843 名分）；office_type/debut 元数据保留。
-    apply_historical_debuts 读 characters.office，空则回退「重臣」标签喂上下文。"""
-    db, state, content = game
+    登场名分来自显式 content.debut_office，经过 GameSession sync 写入库并出现在登场事实里。"""
+    from ming_sim.models import LLMConfig
+    from ming_sim.content import GameContent
+    from ming_sim.session import GameSession
 
-    assert state.year == 1627
-    expected = {
-        "张缙彦": ("地方", 1631, "", "皇党"),
-        "汤若望": ("礼部", 1630, "beizhili", "西学"),
-        "李之藻": ("礼部", 1629, "beizhili", "西学"),
-    }
-    for name, (office_type, debut_year, location, _faction) in expected.items():
-        character = content.characters[name]
-        assert character.office == ""
-        assert character.office_type == office_type
-        assert character.status == "offstage"
-        assert character.debut_year == debut_year
-        assert character.location == location
-        assert db.characters.get_character_status(name)[0] == "offstage"
-    assert content.characters["汤若望"].debut_month == 0
+    db_path = str(tmp_path / "game_r4.db")
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+    session = GameSession(db_path=db_path, llm_config=cfg, content=content, start_ym="1627.01")
+    try:
+        db = session.db
+        state = session.state
 
-    assert db.apply_historical_debuts(state) == []
+        assert state.year == 1627
+        expected = {
+            "张缙彦": ("地方", 1631, "", "皇党"),
+            "汤若望": ("礼部", 1630, "beizhili", "西学"),
+            "李之藻": ("礼部", 1629, "beizhili", "西学"),
+        }
+        for name, (office_type, debut_year, location, _faction) in expected.items():
+            character = session.content.characters[name]
+            assert character.office == ""
+            assert character.office_type == office_type
+            assert character.status == "offstage"
+            assert character.debut_year == debut_year
+            assert character.location == location
+            assert db.characters.get_character_status(name)[0] == "offstage"
+        assert session.content.characters["汤若望"].debut_month == 0
 
-    state.year, state.period = 1629, 1
-    debuted = db.apply_historical_debuts(state)
-    assert {"name": "李之藻", "office": "历局修历起复", "faction": "西学"} in debuted
-    assert db.characters.get_character_status("李之藻")[0] == "active"
+        assert db.apply_historical_debuts(state) == []
+        arrivals = {
+            (1628, 1): [("韩一良", "户科给事中", "中立")],
+            (1629, 1): [("李之藻", "南京太仆寺少卿", "西学")],
+            (1630, 4): [("汤若望", "历局修历", "西学"),
+                        ("左良玉", "辽东车右营都司", "军队")],
+            (1631, 1): [("张缙彦", "清涧知县", "皇党"),
+                        ("吴三桂", "都督指挥", "军队")],
+            (1639, 1): [("傅宗龙", "四川巡抚", "军队")],
+            (1640, 1): [("陈新甲", "兵部尚书", "军队")],
+        }
+        names = [name for batch in arrivals.values() for name, _, _ in batch]
+        archives = db.conn.execute(
+            "SELECT character_name FROM character_offices"
+        ).fetchall()
+        assert not set(names).intersection(row["character_name"] for row in archives)
 
-    state.year, state.period = 1630, 4
-    debuted = db.apply_historical_debuts(state)
-    assert {"name": "汤若望", "office": "钦天监历局修历", "faction": "西学"} in debuted
-    assert db.characters.get_character_status("汤若望")[0] == "active"
-
-    state.year, state.period = 1631, 1
-    debuted = db.apply_historical_debuts(state)
-    assert {"name": "张缙彦", "office": "清涧知县", "faction": "皇党"} in debuted
-    assert db.characters.get_character_status("张缙彦")[0] == "active"
+        # 经过真实关库/恢复入口，避免仅以未同步的 content 夹具证明登场。
+        session.close()
+        session = GameSession(db_path=db_path, llm_config=cfg, content=GameContent.load())
+        db, state = session.db, session.state
+        for (year, month), batch in arrivals.items():
+            state.year, state.period = year, month
+            db.reign.save_game_state(state)
+            session.begin_turn()
+            debuted = session.debuts_this_turn
+            state = session.state
+            for name, office, faction in batch:
+                assert office == session.content.characters[name].debut_office
+                assert {"name": name, "office": office, "faction": faction} in debuted
+                row = db.characters.field_row("office", name)
+                assert row["office"] == office
+                assert db.characters.get_character_status(name)[0] == "active"
+    finally:
+        session.close()
 
 
 def test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status():
