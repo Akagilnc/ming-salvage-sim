@@ -141,16 +141,15 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
     """每个 CLI runner 的策展模型档——前端「CLI Model」下拉的单一真源。
 
     每档 {value, label}：value="" = runner 默认档（提交空串走后端默认）；首档恒为默认档。
-    默认档 label 用 cli_model_from_env(runner, "") 算「真实 resolved 默认」——它先认
+    默认档 label 用 cli_model_from_env(runner) 算「真实 resolved 默认」——它先认
     MING_SIM_{CODEX,CLAUDE}_MODEL env 覆盖、再回落 *_DEFAULT_MODEL 常量，与
     api_menu_status 的 resolved cli_model 同源，故 env 覆盖下 label 不与实际相左（CMR R2）。
     清单来源 = docs/LLM_BACKEND_BENCH.md「可用主力」。下拉只挡常见拼写/大小写错；某档实际
     可用性仍取决于账号类型(ChatGPT vs API key)与 CLI 版本，连通性检查仍是兜底。
     每次返回独立副本，调用方改动不污染下次调用。"""
-    # 懒导入避免与 llm_config 的环依赖（llm_config 已懒导入本模块的默认常量）。
     from ming_sim.llm_config import cli_model_from_env
-    codex_default = cli_model_from_env("codex", CODEX_DEFAULT_MODEL)
-    claude_default = cli_model_from_env("claude", CLAUDE_DEFAULT_MODEL)
+    codex_default = cli_model_from_env("codex")
+    claude_default = cli_model_from_env("claude")
     return {
         # agy：模型档由 CLI 自身选择，只提供默认逃生档。
         "agy": [{"value": "", "label": "默认 · gemini"}],

@@ -435,8 +435,7 @@ export function LLMConfigTab() {
             ?? ""
         );
         setChannel(data.channel === "cli" ? "cli" : "api");
-        // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被
-        // cli_model_from_env 兜底成 API model 名,直接回填会把它当用户选项 post 回去(CMR R3 codex)。
+        // 优先读已存 CLI 槽，避免把 resolved 默认模型当作用户显式选择回填。
         // (存盘响应无 persisted 字段 → 回落 active,channel=cli 时即刚提交值,正确。)
         setCliRunner(data.persisted?.cli_runner || data.cli_runner || "");
         setCliModel(data.persisted?.cli_model ?? (data.channel === "cli" ? data.cli_model || "" : ""));

@@ -258,13 +258,13 @@ def legacy_reasoning_strength(data: Dict[str, object]) -> str:
     return ""
 
 
-def cli_model_from_env(runner: str, fallback: str = "") -> str:
+def cli_model_from_env(runner: str) -> str:
     # 默认模型复用 models 的单一真源常量(#60：原懒-import cli_backend 已消，改 top-level import models)。
     if runner == "codex":
         return (os.environ.get("MING_SIM_CODEX_MODEL") or CODEX_DEFAULT_MODEL).strip()
     if runner == "claude":
         return (os.environ.get("MING_SIM_CLAUDE_MODEL") or CLAUDE_DEFAULT_MODEL).strip()
-    return fallback
+    return ""
 
 
 def _api_runtime_value(runtime: Dict[str, object], key: str, fallback: str) -> str:
@@ -348,7 +348,7 @@ def llm_config_from_runtime(
     api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or CLI_DEFAULT_RUNNER).strip().lower()
-    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
+    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner)).strip()
     base_url = _api_runtime_value(runtime, "base_url", base_url)
     model = _api_runtime_value(runtime, "model", model)
     api_key = _api_runtime_value(runtime, "api_key", api_key)
@@ -470,7 +470,6 @@ def load_llm_config(
         reasoning_strength=reasoning_strength,
         channel="api",
         cli_runner="",
-        cli_model=cli_model_from_env("", model),
         # 静默判死阈值用 CLI 槽默认，不沿用 API 的 timeout_seconds（codex R1 #2）。
         cli_timeout_seconds=CLI_DEFAULT_TIMEOUT_SECONDS,
     )
