@@ -580,10 +580,6 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     return [item[2] for item in events]
 
 
-def _allocate_seq(db: Any, night_id: int) -> int:
-    return db.reign.allocate_night_seq(int(night_id))
-
-
 def _character_status(db: Any, name: str) -> str:
     status, _reason = db.characters.get_character_status(name)
     return str(status or "")
@@ -701,7 +697,7 @@ def append_ledger_entry(
         and any(exact_mingfa_publication_directive_id(t) for t in tag_list)
     ):
         raise AudienceNightError("封夜后仅可补记引擎明发账", code="night_closed")
-    seq = _allocate_seq(db, night_id)
+    seq = db.reign.allocate_night_seq(int(night_id))
     origin = str(origin_ref or "").strip()
     entry_id = db.reign.insert_story_ledger_entry_row(
         night_id=int(night_id),
@@ -838,10 +834,6 @@ def summon_enter(
     )
 
 
-def list_in_flight_chat_turns(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    return db.reign.list_in_flight_chat_turns(night_id=int(night_id))
-
-
 def wait_in_flight_clear(
     db: Any,
     night_id: int,
@@ -860,7 +852,7 @@ def wait_in_flight_clear(
     gate = _gate_cm(write_gate)
     while True:
         with gate:
-            inflight = list_in_flight_chat_turns(db, night_id)
+            inflight = db.reign.list_in_flight_chat_turns(night_id=int(night_id))
         if not inflight:
             return
         time.sleep(max(0.0, float(poll_s)))
@@ -1306,10 +1298,6 @@ def settle_applied_arrived_summons(
         if settle_summon_origin(db, origin):
             settled.append(origin)
     return settled
-
-
-def ledger_tags(db: Any, entry_id: int) -> Any:
-    return db.reign.ledger_tags(int(entry_id))
 
 
 def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) -> None:

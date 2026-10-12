@@ -708,11 +708,6 @@ class DossierStore:
             for r in rows
         ]
 
-    def audience_todo(self, todo_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT id, status, payload_json FROM next_audience_todos WHERE id=?", (todo_id,),
-        ).fetchone()
-
     def mark_next_audience_todo_status(
         self,
         todo_id: int,
@@ -739,7 +734,10 @@ class DossierStore:
                     f"{type(payload_patch).__name__}"
                 )
             patch = dict(payload_patch)
-        row = self.audience_todo(int(todo_id))
+        row = self._conn.execute(
+            "SELECT id, status, payload_json FROM next_audience_todos WHERE id=?",
+            (int(todo_id),),
+        ).fetchone()
         if row is None:
             return False
         current = str(row["status"] or "")
@@ -988,16 +986,6 @@ class DossierStore:
 
     # ── write port ───────────────────────────────────────────────
 
-    def set_stigma(
-        self, dossier_id: int, stigma: list[dict[str, object]], *, commit: bool = True,
-    ) -> None:
-        owns = connection_owns_transaction(self._conn)
-        self._conn.execute(
-            "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (json.dumps(stigma, ensure_ascii=False), int(dossier_id)),
-        )
-        self._commit(commit, owns)
-
     def append_midzhi_stigma(
         self, dossier_id: int, *, decision: str, turn: int, commit: bool = True,
     ) -> None:
@@ -1025,7 +1013,10 @@ class DossierStore:
             for item in stigma if isinstance(item, dict)
         ):
             stigma.append(marker)
-            self.set_stigma(int(dossier_id), stigma, commit=False)
+            self._conn.execute(
+                "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (json.dumps(stigma, ensure_ascii=False), int(dossier_id)),
+            )
         self._commit(commit, owns)
 
     # ── endorsements ──────────────────────────────────────────────
@@ -1138,7 +1129,10 @@ class DossierStore:
         """#1842：把本轮背书挂进暂存载荷 endorsements 列表（不造待背书表）。"""
         owns = connection_owns_transaction(self._conn)
         aid = int(action_id)
-        row = self.pending_action_payload_status(aid)
+        row = self._conn.execute(
+            "SELECT payload_json, status FROM pending_actions WHERE id=?",
+            (aid,),
+        ).fetchone()
         if row is None:
             raise KeyError(f"暂存动作不存在：{aid}")
         if str(row["status"] or "") != "pending":
@@ -1190,29 +1184,6 @@ class DossierStore:
             aid, json.dumps(payload, ensure_ascii=False),
         )
         self._commit(commit, owns)
-
-    def set_promulgation(
-        self, dossier_id: int, *, status: str, promulgation: str,
-        rescript_pending: int, blocked_layer: str, reason: str,
-        legal_reason_code: str, held_turn: int, turn: int,
-    ) -> None:
-        """Write the promulgation/批红 combination state onto the row."""
-        self._conn.execute(
-            """
-            UPDATE decree_dossiers SET
-                status=?,promulgation_decision=?,rescript_pending=?,
-                promulgation_blocked_layer=?,promulgation_reason=?,
-                legal_reason_code=?,held_turn=?,updated_at=CURRENT_TIMESTAMP,
-                closed_turn=CASE WHEN ?=\'closed\' THEN ? ELSE closed_turn END,
-                closed_at=CASE WHEN ?=\'closed\' THEN CURRENT_TIMESTAMP ELSE closed_at END
-            WHERE id=?
-            """,
-            (
-                status, promulgation, rescript_pending, blocked_layer, reason,
-                legal_reason_code, held_turn,
-                status, turn, status, int(dossier_id),
-            ),
-        )
 
     def insert_decision(
         self, dossier_id: int, turn: int, *, decision: str, blocked_layer: str = "",
@@ -1292,11 +1263,21 @@ class DossierStore:
             current_turn
             if decision == "hold" else int(row.get("held_turn") or 0)
         )
-        self.set_promulgation(
-            int(dossier_id), status=status, promulgation=promulgation,
-            rescript_pending=pending, blocked_layer=blocked_layer,
-            reason=slot_reason, legal_reason_code=slot_legal_reason,
-            held_turn=held_turn, turn=current_turn,
+        self._conn.execute(
+            """
+            UPDATE decree_dossiers SET
+                status=?,promulgation_decision=?,rescript_pending=?,
+                promulgation_blocked_layer=?,promulgation_reason=?,
+                legal_reason_code=?,held_turn=?,updated_at=CURRENT_TIMESTAMP,
+                closed_turn=CASE WHEN ?=\'closed\' THEN ? ELSE closed_turn END,
+                closed_at=CASE WHEN ?=\'closed\' THEN CURRENT_TIMESTAMP ELSE closed_at END
+            WHERE id=?
+            """,
+            (
+                status, promulgation, pending, blocked_layer, slot_reason,
+                slot_legal_reason, held_turn,
+                status, current_turn, status, int(dossier_id),
+            ),
         )
         self.insert_decision(
             int(dossier_id),
@@ -1313,20 +1294,6 @@ class DossierStore:
             criteria_snapshot_json=safe_json_dumps(criteria_snapshot or {}),
         )
         self._commit(commit, owns)
-
-    def set_execution(
-        self, dossier_id: int, *, outcome: str, note: str, turn: int,
-    ) -> None:
-        self._conn.execute(
-            """
-            UPDATE decree_dossiers
-            SET execution_outcome=?, execution_note=?, closed_turn=?,
-                updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            """,
-            (outcome, str(note or ""), 0 if outcome == "executing" else int(turn),
-             int(dossier_id)),
-        )
 
     def record_execution(
         self, dossier_id: int, outcome: str, note: str, turn: int, *,
@@ -1351,8 +1318,15 @@ class DossierStore:
         )
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
-        self.set_execution(
-            int(dossier_id), outcome=outcome, note=str(note or ""), turn=int(turn),
+        self._conn.execute(
+            """
+            UPDATE decree_dossiers
+            SET execution_outcome=?, execution_note=?, closed_turn=?,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (outcome, str(note or ""), 0 if outcome == "executing" else int(turn),
+             int(dossier_id)),
         )
         if close:
             self.close(
@@ -1386,7 +1360,18 @@ class DossierStore:
         owns = connection_owns_transaction(self._conn)
         turn_i = int(turn)
         presence_written = 0
-        link_rows = self.audit_link_rows(SUPERVISION_RELATION)
+        link_rows = self._conn.execute(
+            """
+            SELECT l.source_dossier_id, l.target_dossier_id, l.relation_type,
+                   s.status AS source_status, t.status AS target_status
+            FROM decree_dossier_links l
+            JOIN decree_dossiers s ON s.id = l.source_dossier_id
+            JOIN decree_dossiers t ON t.id = l.target_dossier_id
+            WHERE l.relation_type = ?
+            ORDER BY l.id
+            """,
+            (SUPERVISION_RELATION,),
+        ).fetchall()
         for link in link_rows:
             source_status = str(link["source_status"] or "")
             target_status = str(link["target_status"] or "")
@@ -1400,10 +1385,21 @@ class DossierStore:
             auditor = resolve_dossier_owner_name(audit_dossier)
             if not auditor:
                 continue
-            self.upsert_presence(
-                int(link["target_dossier_id"]), turn_i, auditor_name=auditor,
-                audit_dossier_id=int(link["source_dossier_id"]),
-                relation_type=SUPERVISION_RELATION,
+            self._conn.execute(
+                """
+                INSERT INTO dossier_supervision_presence
+                    (dossier_id, turn, auditor_name, audit_dossier_id,
+                     relation_type, present)
+                VALUES (?,?,?,?,?,1)
+                ON CONFLICT(dossier_id, turn, auditor_name) DO UPDATE SET
+                    audit_dossier_id=excluded.audit_dossier_id,
+                    relation_type=excluded.relation_type,
+                    present=1
+                """,
+                (
+                    int(link["target_dossier_id"]), turn_i, auditor,
+                    int(link["source_dossier_id"]), SUPERVISION_RELATION,
+                ),
             )
             presence_written += 1
         self._commit(commit, owns)
@@ -1416,7 +1412,16 @@ class DossierStore:
         owns = connection_owns_transaction(self._conn)
         turn_i = int(turn)
         exposure_written = 0
-        recon_rows = self.reconciliation_loss_rows(turn_i)
+        recon_rows = self._conn.execute(
+            """
+            SELECT r.dossier_id, r.loss_amount, d.action_type
+            FROM decree_dossier_reconciliations r
+            JOIN decree_dossiers d ON d.id = r.dossier_id
+            WHERE r.turn = ? AND r.loss_amount > 0
+            ORDER BY r.id
+            """,
+            (turn_i,),
+        ).fetchall()
         for row in recon_rows:
             did = int(row["dossier_id"])
             if not self.has_supervision_presence(did, turn_i):
@@ -1441,25 +1446,16 @@ class DossierStore:
         ctid = int(chat_turn_id or 0)
         if aid <= 0 or ctid <= 0:
             return False
-        row = self.pending_source_status(aid)
+        row = self._conn.execute(
+            "SELECT source_chat_turn_id, status FROM pending_actions WHERE id=?",
+            (aid,),
+        ).fetchone()
         if row is None:
             return False
         return (
             int(row["source_chat_turn_id"] or 0) == ctid
             and str(row["status"] or "") == "pending"
         )
-
-    def reconciliation_loss_rows(self, turn: int) -> list[Any]:
-        return self._conn.execute(
-            """
-            SELECT r.dossier_id, r.loss_amount, d.action_type
-            FROM decree_dossier_reconciliations r
-            JOIN decree_dossiers d ON d.id = r.dossier_id
-            WHERE r.turn = ? AND r.loss_amount > 0
-            ORDER BY r.id
-            """,
-            (int(turn),),
-        ).fetchall()
 
     # ── satellite fact tables ─────────────────────────────────────
 
@@ -1503,19 +1499,6 @@ class DossierStore:
         return row is not None
 
     # ── satellite read seams ─────────────────────────────────────
-
-    def reported_progress_rows(
-        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
-    ) -> list[Any]:
-        sql = (
-            "SELECT id, dossier_id, turn, progress_band, memorial_text, "
-            "is_terminal, origin FROM dossier_reported_progress WHERE dossier_id=?"
-        )
-        params: tuple = (int(dossier_id),)
-        if as_of_turn is not None:
-            sql += " AND turn<=?"
-            params = (int(dossier_id), int(as_of_turn))
-        return self._conn.execute(sql + " ORDER BY turn, id", params).fetchall()
 
     def presence_rows(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
@@ -1567,28 +1550,6 @@ class DossierStore:
             for r in rows
         ]
 
-    def upsert_presence(
-        self, dossier_id: int, turn: int, *, auditor_name: str,
-        audit_dossier_id: int, relation_type: str,
-    ) -> None:
-        """Idempotent per (dossier, turn, auditor); never double-counts a month."""
-        self._conn.execute(
-            """
-            INSERT INTO dossier_supervision_presence
-                (dossier_id, turn, auditor_name, audit_dossier_id,
-                 relation_type, present)
-            VALUES (?,?,?,?,?,1)
-            ON CONFLICT(dossier_id, turn, auditor_name) DO UPDATE SET
-                audit_dossier_id=excluded.audit_dossier_id,
-                relation_type=excluded.relation_type,
-                present=1
-            """,
-            (
-                int(dossier_id), int(turn), auditor_name,
-                int(audit_dossier_id), relation_type,
-            ),
-        )
-
     def record_loophole_exposure(
         self,
         dossier_id: int,
@@ -1625,42 +1586,6 @@ class DossierStore:
         wrote = int(cur.rowcount or 0) > 0
         self._commit(commit, owns)
         return wrote
-
-    def upsert_reported_progress(
-        self, dossier_id: int, turn: int, *, band: str, text: str, origin: str,
-        is_terminal: bool,
-    ) -> int:
-        """General reported-progress rail. Non-terminal rows upsert per turn."""
-        existing = None
-        if not is_terminal:
-            existing = self._conn.execute(
-                """
-                SELECT id FROM dossier_reported_progress
-                WHERE dossier_id=? AND turn=? AND is_terminal=0
-                ORDER BY id DESC LIMIT 1
-                """,
-                (int(dossier_id), int(turn)),
-            ).fetchone()
-        if existing is not None:
-            report_id = int(existing["id"])
-            self._conn.execute(
-                """
-                UPDATE dossier_reported_progress
-                SET progress_band=?, memorial_text=?, origin=?
-                WHERE id=?
-                """,
-                (band, text, origin, report_id),
-            )
-            return report_id
-        cur = self._conn.execute(
-            """
-            INSERT INTO dossier_reported_progress
-                (dossier_id, turn, progress_band, memorial_text, is_terminal, origin)
-            VALUES (?,?,?,?,?,?)
-            """,
-            (int(dossier_id), int(turn), band, text, 1 if is_terminal else 0, origin),
-        )
-        return int(cur.lastrowid)
 
     @staticmethod
     def normalize_report_origin(origin: object, *, is_terminal: bool = False) -> str:
@@ -1758,10 +1683,36 @@ class DossierStore:
         # get() already hydrated payload; do not re-parse or silent-fallback empty.
         if not has_execution_surface(dossier.get("action_type"), dossier["payload"]):
             raise ValueError("非执行面案卷不可挂奏报")
-        report_id = self.upsert_reported_progress(
-            int(dossier_id), int(turn), band=band, text=text, origin=origin_norm,
-            is_terminal=bool(is_terminal),
-        )
+        existing = None
+        if not is_terminal:
+            existing = self._conn.execute(
+                """
+                SELECT id FROM dossier_reported_progress
+                WHERE dossier_id=? AND turn=? AND is_terminal=0
+                ORDER BY id DESC LIMIT 1
+                """,
+                (int(dossier_id), int(turn)),
+            ).fetchone()
+        if existing is not None:
+            report_id = int(existing["id"])
+            self._conn.execute(
+                """
+                UPDATE dossier_reported_progress
+                SET progress_band=?, memorial_text=?, origin=?
+                WHERE id=?
+                """,
+                (band, text, origin_norm, report_id),
+            )
+        else:
+            cur = self._conn.execute(
+                """
+                INSERT INTO dossier_reported_progress
+                    (dossier_id, turn, progress_band, memorial_text, is_terminal, origin)
+                VALUES (?,?,?,?,?,?)
+                """,
+                (int(dossier_id), int(turn), band, text, 1 if is_terminal else 0, origin_norm),
+            )
+            report_id = int(cur.lastrowid)
         self._commit(commit, owns)
         return report_id
 
@@ -1779,9 +1730,15 @@ class DossierStore:
                     int(dossier["secret_order_id"]),
                 )
             ]
+        rows = self._conn.execute(
+            "SELECT id, dossier_id, turn, progress_band, memorial_text, "
+            "is_terminal, origin FROM dossier_reported_progress WHERE dossier_id=? "
+            "ORDER BY turn, id",
+            (int(dossier_id),),
+        ).fetchall()
         return [
             self.coerce_progress_row(dict(row), dossier_id=int(dossier_id))
-            for row in self.reported_progress_rows(int(dossier_id))
+            for row in rows
         ]
 
     def record_cost_event(
@@ -1833,23 +1790,6 @@ class DossierStore:
                  AND pa.status = 'committed'
                GROUP BY td.id, td.actor, td.text ORDER BY td.id""",
             (int(night_id),),
-        ).fetchall()
-
-    # ── 稽核链连接读（links × 两端案卷状态） ─────────────────────
-
-    def audit_link_rows(self, relation_type: str) -> list[Any]:
-        """稽核/护卫链两端案卷的状态，供在场扫描判定双方仍在执行面。"""
-        return self._conn.execute(
-            """
-            SELECT l.source_dossier_id, l.target_dossier_id, l.relation_type,
-                   s.status AS source_status, t.status AS target_status
-            FROM decree_dossier_links l
-            JOIN decree_dossiers s ON s.id = l.source_dossier_id
-            JOIN decree_dossiers t ON t.id = l.target_dossier_id
-            WHERE l.relation_type = ?
-            ORDER BY l.id
-            """,
-            (str(relation_type),),
         ).fetchall()
 
     # ── 派系检举（ADR 0077 ID-12：独立载体，真伪在 origin mark） ────
@@ -1977,12 +1917,6 @@ class DossierStore:
         )
 
     # ── pending_actions persistence primitives (fact owner) ─────────
-
-    def pending_action_payload_status(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT payload_json, status FROM pending_actions WHERE id=?",
-            (int(action_id),),
-        ).fetchone()
 
     def pending_version_row(self, action_id: int) -> Any:
         return self._conn.execute(
@@ -2134,12 +2068,6 @@ class DossierStore:
             (int(dossier_id),),
         ).fetchone()
         return float(row["total"] if row is not None else 0.0)
-
-    def pending_source_status(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT source_chat_turn_id, status FROM pending_actions WHERE id=?",
-            (int(action_id),),
-        ).fetchone()
 
     def recent_reported_progress(self) -> list[Any]:
         return self._conn.execute(

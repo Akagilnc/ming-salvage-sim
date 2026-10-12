@@ -409,14 +409,41 @@ class ReignStateStore:
         minister_name: Optional[str] = None,
         turn: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        return [dict(r) for r in self.list_in_flight_chat_turn_rows(
-            night_id=night_id, minister_name=minister_name, turn=turn,
-        )]
+        clauses = [
+            "("
+            "status = 'generating' OR "
+            "(status = 'active' AND (minister_message_id IS NULL OR minister_message_id = 0))"
+            ")"
+        ]
+        params: List[Any] = []
+        if night_id is not None and int(night_id) > 0:
+            clauses.append("night_id = ?")
+            params.append(int(night_id))
+        if minister_name is not None:
+            clauses.append("minister_name = ?")
+            params.append(str(minister_name))
+        if turn is not None:
+            clauses.append("turn = ?")
+            params.append(int(turn))
+        where = " AND ".join(clauses)
+        rows = self._conn.execute(
+            f"SELECT * FROM chat_turns WHERE {where} ORDER BY id ASC",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_last_active_chat_turn(
         self, minister_name: str, turn: int,
     ) -> Optional[Dict[str, Any]]:
-        row = self.last_active_chat_turn_row(minister_name, int(turn))
+        row = self._conn.execute(
+            """
+            SELECT * FROM chat_turns
+            WHERE minister_name = ? AND turn = ? AND status = 'active'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (minister_name, int(turn)),
+        ).fetchone()
         return dict(row) if row is not None else None
 
     def get_interrupted_reply_retries(
@@ -425,9 +452,20 @@ class ReignStateStore:
         """中断回话轮 DTO：轮行 + 问话原文；缺消息行跳过。"""
         from ming_sim.entities.record_store import ChatMessageStore
 
+        clauses = ["status = 'interrupted'", "user_message_id IS NOT NULL"]
+        params: List[Any] = []
+        if minister_name is not None:
+            clauses.append("minister_name = ?")
+            params.append(str(minister_name))
+        where = " AND ".join(clauses)
+        rows = self._conn.execute(
+            f"SELECT id, minister_name, turn, error_pack_path, user_message_id "
+            f"FROM chat_turns WHERE {where} ORDER BY id ASC",
+            params,
+        ).fetchall()
         messages = ChatMessageStore(self._conn)
         out: List[Dict[str, Any]] = []
-        for row in self.list_interrupted_chat_turn_rows(minister_name):
+        for row in rows:
             question = messages.content_of(int(row["user_message_id"]))
             if question is None:
                 continue
@@ -444,9 +482,18 @@ class ReignStateStore:
         """已落回话尾随失败 DTO：轮行 + 问/答原文；缺消息行跳过。"""
         from ming_sim.entities.record_store import ChatMessageStore
 
+        rows = self._conn.execute(
+            """SELECT id, minister_name, turn, post_reply_recovery,
+                      post_reply_error_pack_path, user_message_id, minister_message_id
+               FROM chat_turns
+               WHERE minister_name = ? AND status = 'active'
+                 AND post_reply_recovery != ''
+                 AND post_reply_recovery NOT LIKE 'recovering:%' ORDER BY id ASC""",
+            (minister_name,),
+        ).fetchall()
         messages = ChatMessageStore(self._conn)
         out: List[Dict[str, Any]] = []
-        for row in self.list_post_reply_retry_rows(minister_name):
+        for row in rows:
             question = messages.content_of(int(row["user_message_id"]))
             answer = messages.content_of(int(row["minister_message_id"]))
             if question is None or answer is None:
@@ -469,83 +516,6 @@ class ReignStateStore:
         """完整回话未抽取轮 DTO：轮行 + 回话原文；缺消息行跳过。"""
         from ming_sim.entities.record_store import ChatMessageStore
 
-        messages = ChatMessageStore(self._conn)
-        out: List[Dict[str, Any]] = []
-        for row in self.list_unextracted_chat_turn_rows(night_id):
-            reply = messages.content_of(int(row["minister_message_id"]))
-            if reply is None:
-                continue
-            item = dict(row)
-            item.pop("minister_message_id", None)
-            item["reply"] = reply
-            out.append(item)
-        return out
-
-    def list_in_flight_chat_turn_rows(
-        self,
-        *,
-        night_id: Optional[int] = None,
-        minister_name: Optional[str] = None,
-        turn: Optional[int] = None,
-    ) -> Any:
-        clauses = [
-            "("
-            "status = 'generating' OR "
-            "(status = 'active' AND (minister_message_id IS NULL OR minister_message_id = 0))"
-            ")"
-        ]
-        params: List[Any] = []
-        if night_id is not None and int(night_id) > 0:
-            clauses.append("night_id = ?")
-            params.append(int(night_id))
-        if minister_name is not None:
-            clauses.append("minister_name = ?")
-            params.append(str(minister_name))
-        if turn is not None:
-            clauses.append("turn = ?")
-            params.append(int(turn))
-        where = " AND ".join(clauses)
-        return self._conn.execute(
-            f"SELECT * FROM chat_turns WHERE {where} ORDER BY id ASC",
-            params,
-        ).fetchall()
-
-    def list_interrupted_chat_turn_rows(self, minister_name: Optional[str] = None) -> Any:
-        clauses = ["status = 'interrupted'", "user_message_id IS NOT NULL"]
-        params: List[Any] = []
-        if minister_name is not None:
-            clauses.append("minister_name = ?")
-            params.append(str(minister_name))
-        where = " AND ".join(clauses)
-        return self._conn.execute(
-            f"SELECT id, minister_name, turn, error_pack_path, user_message_id "
-            f"FROM chat_turns WHERE {where} ORDER BY id ASC",
-            params,
-        ).fetchall()
-
-    def list_post_reply_retry_rows(self, minister_name: str) -> Any:
-        return self._conn.execute(
-            """SELECT id, minister_name, turn, post_reply_recovery,
-                      post_reply_error_pack_path, user_message_id, minister_message_id
-               FROM chat_turns
-               WHERE minister_name = ? AND status = 'active'
-                 AND post_reply_recovery != ''
-                 AND post_reply_recovery NOT LIKE 'recovering:%' ORDER BY id ASC""",
-            (minister_name,),
-        ).fetchall()
-
-    def last_active_chat_turn_row(self, minister_name: str, turn: int) -> Any:
-        return self._conn.execute(
-            """
-            SELECT * FROM chat_turns
-            WHERE minister_name = ? AND turn = ? AND status = 'active'
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (minister_name, int(turn)),
-        ).fetchone()
-
-    def list_unextracted_chat_turn_rows(self, night_id: Optional[int] = None) -> Any:
         clauses = [
             "night_id > 0",
             "status = 'active'",
@@ -558,7 +528,7 @@ class ReignStateStore:
             clauses.append("night_id = ?")
             params.append(int(night_id))
         where = " AND ".join(clauses)
-        return self._conn.execute(
+        rows = self._conn.execute(
             f"""
             SELECT id AS chat_turn_id, minister_name, night_id, night_seq,
                    extract_status, error_pack_path, minister_message_id
@@ -568,6 +538,17 @@ class ReignStateStore:
             """,
             params,
         ).fetchall()
+        messages = ChatMessageStore(self._conn)
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            reply = messages.content_of(int(row["minister_message_id"]))
+            if reply is None:
+                continue
+            item = dict(row)
+            item.pop("minister_message_id", None)
+            item["reply"] = reply
+            out.append(item)
+        return out
 
     def list_alive_night_chat_turns(self, night_id: int) -> Any:
         return self._conn.execute(

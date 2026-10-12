@@ -114,19 +114,6 @@ _SNAPSHOT_COLUMNS = {
 class CharacterKnowledgeStore:
     """Single write port for both knowledge ledgers; reads return plain dicts."""
 
-    def secret_order_rows(self, status: str | None = None, minister_name: str | None = None) -> Any:
-        clauses, params = [], []
-        if status:
-            clauses.append("status = ?")
-            params.append(status)
-        if minister_name:
-            clauses.append("minister_name = ?")
-            params.append(minister_name)
-        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        return self._conn.execute(
-            f"SELECT * FROM secret_orders {where} ORDER BY id DESC", params,
-        ).fetchall()
-
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
@@ -218,7 +205,17 @@ class CharacterKnowledgeStore:
         from ming_sim.applier import durable_int, load_stored_list
         from ming_sim.entities.dossier.store import DossierStore
 
-        rows = self.secret_order_rows(status, minister_name)
+        clauses, params = [], []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if minister_name:
+            clauses.append("minister_name = ?")
+            params.append(minister_name)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._conn.execute(
+            f"SELECT * FROM secret_orders {where} ORDER BY id DESC", params,
+        ).fetchall()
         dossiers = DossierStore(self._conn)
         out: list[dict[str, object]] = []
         for r in rows:

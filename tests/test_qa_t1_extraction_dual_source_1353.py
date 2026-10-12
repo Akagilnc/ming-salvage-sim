@@ -201,14 +201,14 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     # （禁 sleep 毫秒窗；禁把 SUT 包进 waiter 线程 try/finally 吞异常假绿）
     waiter_polling = threading.Event()
     worker_published = threading.Event()
-    real_list = an.list_in_flight_chat_turns
+    real_list = db.reign.list_in_flight_chat_turns
 
-    def _list_tracking(db_arg, night_id_arg):
-        rows = real_list(db_arg, night_id_arg)
+    def _list_tracking(*args, **kwargs):
+        rows = real_list(*args, **kwargs)
         waiter_polling.set()
         return rows
 
-    monkeypatch.setattr(an, "list_in_flight_chat_turns", _list_tracking)
+    monkeypatch.setattr(db.reign, "list_in_flight_chat_turns", _list_tracking)
 
     def _worker_terminal() -> None:
         waiter_polling.wait()
@@ -229,7 +229,7 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
         worker_published.wait()
         wt.join()
         assert not wt.is_alive()
-        assert an.list_in_flight_chat_turns(db, nid) == []
+        assert db.reign.list_in_flight_chat_turns(night_id=nid) == []
     finally:
         waiter_polling.set()
         wt.join()

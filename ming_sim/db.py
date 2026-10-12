@@ -2761,16 +2761,7 @@ class GameDB:
             offset = baseline - weight_sum
             self.conn.execute('UPDATE factions SET leverage_offset=? WHERE name=?', (offset, faction))
             self.recompute_faction_leverage(faction)
-        self._set_meta_flag("__leverage_offsets_calibrated")
-
-
-    def _set_meta_flag(self, key: str) -> None:
-        """置 metrics 表里某持久标记=1（幂等 upsert）。不在此 commit——由调用方统一提交，
-        与同事务的其它写一并落库或一并回滚。"""
-        self.reign.upsert_metric(
-            key,
-            1,
-        )
+        self.reign.upsert_metric("__leverage_offsets_calibrated", 1)
 
     def record_person_log(
         self,

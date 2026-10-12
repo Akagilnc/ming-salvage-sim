@@ -118,12 +118,6 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     return remittance_total
 
 
-def _fiscal_container_values_when_complete(
-    db: GameDB, keys: Tuple[str, ...]
-) -> Optional[Dict[str, float]]:
-    return db.fiscal_containers.values_when_complete(keys)
-
-
 def _fiscal_config_rate(db: GameDB, key: str) -> float:
     cfg = db.fiscal_config.values()
     minimum = db.fiscal_config_minimum_value(key)
@@ -173,8 +167,8 @@ def _substrate_hub_budget_income_lines(
     db: GameDB, state: GameState, *, project_missing: bool = True
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     """Read persisted hub income, or project first-tick budget before containers exist."""
-    persisted = _fiscal_container_values_when_complete(
-        db, ("hub_省级起运到京", "hub_盐税解京", "hub_商税解京", "hub_太仓亏空")
+    persisted = db.fiscal_containers.values_when_complete(
+        ("hub_省级起运到京", "hub_盐税解京", "hub_商税解京", "hub_太仓亏空")
     )
     if persisted is not None:
         remittance = _round_nonnegative_amount(persisted["hub_省级起运到京"])

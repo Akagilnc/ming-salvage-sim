@@ -171,11 +171,6 @@ class IssueStore:
             row["dossier_payload_json"], directive_id=int(row["id"]),
         )
 
-    def count_pending_directives(self, turn: int) -> Any:
-        return self._conn.execute(
-            "SELECT COUNT(*) AS n FROM turn_directives WHERE turn=? AND status='pending'", (turn,),
-        ).fetchone()
-
     def record_event_terminal(
         self, event_id: str, *, turn: int, year: int, period: int,
         source: str, terminal_state: str, terminal_reason: str,
@@ -257,7 +252,10 @@ class IssueStore:
             "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
             (turn,),
         ).fetchall()
-        self._delete_pending_decision_rows(turn)
+        self._conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (int(turn),),
+        )
         for idx, d in enumerate(decisions):
             self.insert_pending_decision(
                 (
@@ -321,13 +319,6 @@ class IssueStore:
             "answer_order": int(r["answer_order"] or 0),
             })
         return out
-
-    def _delete_pending_decision_rows(self, turn: int) -> None:
-        """Single delete rule for kind='decision' rows (no commit)."""
-        self._conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
-            (int(turn),),
-        )
 
     def list_rescript_drafts(self, *, status: str | None = None) -> List[Dict[str, object]]:
         rows = self._conn.execute(
@@ -477,7 +468,10 @@ class IssueStore:
         ).fetchall()
 
     def count_pending_directives_for_turn(self, turn: int) -> int:
-        row = self.count_pending_directives(int(turn))
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM turn_directives WHERE turn=? AND status='pending'",
+            (int(turn),),
+        ).fetchone()
         return int(row["n"]) if row else 0
 
     def event_terminal_state(self, event_id: str) -> str | None:

@@ -40,11 +40,6 @@ class FiscalContainerStore:
             (key, float(delta), note),
         )
 
-    def values_for(self, keys: tuple[str, ...]) -> Any:
-        return self._conn.execute(
-            f"SELECT key,value FROM fiscal_containers WHERE key IN ({','.join('?' for _ in keys)})", keys,
-        ).fetchall()
-
     def value(self, key: str) -> float:
         """Scalar container read: missing row → 0.0."""
         row = self._conn.execute(
@@ -54,7 +49,9 @@ class FiscalContainerStore:
 
     def values_when_complete(self, keys: tuple[str, ...]) -> dict[str, float] | None:
         """All-or-nothing multi-key scalar map; incomplete key set → None."""
-        rows = self.values_for(keys)
+        rows = self._conn.execute(
+            f"SELECT key,value FROM fiscal_containers WHERE key IN ({','.join('?' for _ in keys)})", keys,
+        ).fetchall()
         if len(rows) != len(keys):
             return None
         values = {key: 0.0 for key in keys}
