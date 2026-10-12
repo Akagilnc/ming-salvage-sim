@@ -106,6 +106,57 @@ class MonthTranslationInput:
 MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
 
 
+def describe_month_effect_fields() -> str:
+    """Input guidance for the observed missing accounts; not a second validator.
+
+    Field/action sets project the existing contracts. Settlement and affair
+    identity remain authoritative; this description changes no write behavior.
+    """
+    from ming_sim.constants import (
+        ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS, BANDIT_ABSORPTION_FIELDS,
+    )
+    from ming_sim.person_archive_contract import format_person_actions
+
+    scores = "、".join(
+        field for field in ARMY_SCORE_FIELDS if field not in {"arrears", "cannon_equipment"}
+    )
+    return (
+        "【过月效果字段说明】\n"
+        "- army_delta 是 {军队id: {origin_ref: 来源, 字段: 变动}}，每支军队的值是对象。"
+        "manpower 是兵员整数增减，单位人；"
+        f"{scores} 是 0–100 量表的整数增减，不是新值；"
+        "arrears 只收外生新增欠饷的正数万两，减欠通过 economy_moves 补饷记账。"
+        "cannon_equipment（随军大炮）是整数门数增减，上限 12 门。"
+        f"{'、'.join(ARMY_TEXT_FIELDS)} 是文字新值；"
+        "调防给 station 细地点和 station_region 在册地区id。来源 origin_ref 按本旨事实"
+        "或已授权回指填；非旨意自然变化填盘面自发。只把有数值依据的变化记成数值，"
+        "点兵情况、尚未出畿等叙述在 textual_facts 按 subject_kind、subject_id、body 留原文。\n"
+        "- 成对调拨只声明来源一项：缴获随军炮在败军 army_delta 值里写负数"
+        "cannon_equipment 和 cannon_transfer_to=胜军id，胜军正数由引擎按共同实转门数记账；"
+        "独立造炮或损耗只写自身炮增减。钱库互拨在 economy_moves 写 account=来源库、"
+        "负数 delta（整数万两）、transfer_to=另一库（国库或内库），目标正数由引擎"
+        "按来源实扣数记账；独立收入只写收入项。库间互拨与 purpose=补饷 是两种事项。\n"
+        f"- bandit_absorptions 是对象数组，每项字段仅 {'、'.join(sorted(BANDIT_ABSORPTION_FIELDS))}。"
+        "region_id 是流民来源明控省id；power_id 是已入库流寇股id（bandits 或 bandit_*）；"
+        "requested_count 是拟吸纳的正整数人数；origin_ref 是真实来源。引擎按省内流民"
+        "实有量扣池并增加该股实力；这份吸纳只写此请求，不另写 power_updates 正实力。\n"
+        f"- 人物变更 是对象数组，每项给名册 name 和 动作（{format_person_actions()}）。"
+        "行止另给非空 transit_to=目的地地区id，可给 行程语气=常行/加急/星夜兼程；"
+        "任免与启程是两条不同动作。已在路上只记本段新发生的启程，不伪报抵达或重开行程。\n"
+        "- issue_advances 是对象数组：issue_id 用既有事项编号，delta_bar 给本月整数"
+        "进度增减，narrative 留本月实况；阶段变化另给 stage_text 新阶段文字。"
+        "只记说明而未给进度不会推进进度条；确实没推进时才写 delta_bar=0。\n"
+        "- affair_declaration 声明所属事务，与 event_id 的战果归属、origin_ref 的来源分开。"
+        "已有事务用 {attach: existing, affair_id: 本段可见事务id}；新事务用"
+        " {attach: new, identity: 同批事项标识, name: 事项名, origin: 起因}。"
+        "同批 economy_moves、new_issues、人物变更 的新事务声明中，非空 identity"
+        "去首尾空白后相同即共享一个事务身份，name 和 origin 须逐字一致，否则该项拒收；"
+        "未给 identity 则每项各开一个身份，即使 name、origin 相同也不自动合并。"
+        "同一件事沿用同一 identity、name、origin，不同事项各用不同 identity；"
+        "独立赈银与战略事件军需等不同起因，即使同地同月也分别声明。birth_key 由引擎生成。\n"
+    )
+
+
 def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
     """一段一份 C0 声明；不套召对轮次语义，也不按 section 拆多次调用。"""
     grounding = str(request.target_grounding or "")
@@ -116,6 +167,7 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         "契约承接的交代、实况、事务与文字记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
         f"形状：\n{build_c0_declaration_shape()}"
         "规则：\n"
+        f"{describe_month_effect_fields()}"
         "- 只声明本段已发生或明确交代的内容，按原有先后顺序；不得补造事实或目标 id。\n"
         "- 【本旨事实】给出本旨的 id 与 origin_ref。本旨引起的效果在来源槽原样使用 "
         "origin_ref；dossier_id、target_dossier_id 槽原样使用 id。未成案时这两个值是"
@@ -132,7 +184,10 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         "独立效果，即使 reason 提及事件亦不改变归属。不同归属拆成不同 effects 项。"
         "同类效果若已由结构化载荷表示，不得再重复声明。预推时载荷尚未物化，"
         "不能把它理解成已经落账。\n"
-        "- 过月没有召对夜上下文，promises、presence、scene_facts 均留空；没有对应事实的其它 section 也留空（protagonist 无则省略或 null）。\n"
+        "- 过月只记已经发生之事：回奏、批红后的续推里对执行、点兵、核账的叙述，"
+        "归入 effects 或 textual_facts 原文记录，不重抄原旨、不拆成新旨意。"
+        "commissions 留空；过月没有召对夜上下文，promises、presence、scene_facts 均留空；"
+        "没有对应事实的其它 section 也留空（protagonist 无则省略或 null）。\n"
         # #1893：候选事实随本请求送到（世界段材料目录已释放），硬门已判过；挑不挑、
         # 发不发难由模型自己定，落账仍走既有 new_issues 写口，代码不代选、不代发难。
         f"{_candidate_contract_block(candidates)}"
@@ -160,7 +215,7 @@ def _candidate_contract_block(candidates: Mapping[str, object]) -> str:
         "战事，其世界状态主账效果逐项在同一 effects 项里声明，并在该项顶层 event_id "
         "写同一事件 id；该候选的 outcome_labels 非空时，在 事件结局 里按事件 id 给出"
         "其中一个标签，为空则不写 事件结局。其余候选事件的效果不写 event_id，"
-        "按各自独立效果声明。\n"
+        "按各自独立效果声明。已经由引擎触发的大事不在 new_issues 再新立。\n"
         "- 【本月候选】里的弹劾潮候选，由发难派系的立场自行决定发不发难："
         '发难时在 effects.new_issues 声明 {"origin_kind": "impeachment_surge", '
         '"candidate_id": 候选 id, "faction_hint": 该候选派系, '
