@@ -1156,7 +1156,8 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const source = host.querySelector('[data-audience-turn-id="8"]');
     expect(source?.querySelector('[data-testid="archive-translation-retry-8"]')).not.toBeNull();
   });
-  it("keeps the selected night when an earlier night's translation retry finishes late", async () => {
+  it.each(["translation", "reply"])("keeps the selected night when an earlier night's %s retry finishes late", async (kind) => {
+    const endpoint = kind === "reply" ? "/api/audience/chat/retry" : "/api/audience/translation/retry";
     let releaseOldRetry: (() => void) | undefined;
     let releaseNewRetry: (() => void) | undefined;
     const oldRetryGate = new Promise<void>((resolve) => { releaseOldRetry = resolve; });
@@ -1166,41 +1167,49 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
         { kind: "night", night_id: 32, title: "乙夜", involved_people: [] },
         { kind: "night", night_id: 31, title: "甲夜", involved_people: [] },
       ] }) });
-      if (url === "/api/audience/translation/retry" && options?.method === "POST") return (JSON.parse(String(options.body)).chat_turn_id === 31 ? oldRetryGate : newRetryGate).then(() => ({ ok: true, json: async () => ({}) }));
+      if (url === endpoint && options?.method === "POST") return (JSON.parse(String(options.body)).chat_turn_id === 31 ? oldRetryGate : newRetryGate).then(() => ({ ok: true, json: async () => ({}) }));
       const nightId = url.endsWith("31") ? 31 : 32;
       return Promise.resolve({ ok: true, json: async () => ({
         messages: [{ role: "user", content: nightId === 31 ? "甲夜奏对" : "乙夜奏对", chat_turn_id: nightId }],
-        translation_retries: [{ chat_turn_id: nightId, night_id: nightId, minister_name: "洪承畴", kind: "translation_pending", retryable: true }],
+        reply_retries: kind === "reply" ? [{ chat_turn_id: nightId, recovery_phase: "after_reply" }] : [],
+        translation_retries: kind === "translation" ? [{ chat_turn_id: nightId, night_id: nightId, minister_name: "洪承畴", kind: "translation_pending", retryable: true }] : [],
       }) });
     });
     vi.stubGlobal("fetch", fetchMock);
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-31"] button')?.click(); });
-    expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 31 }) }));
+    await act(async () => { host.querySelector<HTMLButtonElement>(`[data-testid="archive-${kind}-retry-31"] button`)?.click(); });
+    expect(fetchMock).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 31 }) }));
     await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item:not(.active)")?.click(); await Promise.resolve(); await Promise.resolve(); });
-    const newRetry = host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-32"] button');
+    const newRetry = host.querySelector<HTMLButtonElement>(`[data-testid="archive-${kind}-retry-32"] button`);
     expect(newRetry?.disabled).toBe(false);
     await act(async () => { newRetry?.click(); });
-    expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 32 }) }));
+    expect(fetchMock).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 32 }) }));
     await act(async () => { releaseOldRetry?.(); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).toContain("乙夜奏对");
     expect(host.textContent).not.toContain("甲夜奏对");
-    expect(host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-32"] button')?.disabled).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>(`[data-testid="archive-${kind}-retry-32"] button`)?.disabled).toBe(true);
     await act(async () => { releaseNewRetry?.(); await Promise.resolve(); await Promise.resolve(); });
   });
-  it("retries a pending translation on its original closed night", async () => {
+  it.each(["translation", "reply"])("retries a pending %s on its original closed night", async (kind) => {
     let pending = true;
+    let posts = 0;
+    const endpoint = kind === "reply" ? "/api/audience/chat/retry" : "/api/audience/translation/retry";
+    const notice = `[data-testid="archive-${kind}-retry-8"]`;
     const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
         { kind: "night", night_id: 31, title: "旧夜", involved_people: [] },
       ] }) });
-      if (url === "/api/audience/translation/retry" && options?.method === "POST") {
+      if (url === endpoint && options?.method === "POST") {
+        posts++;
+        if (kind === "reply" && posts === 1) return Promise.resolve({ ok: false, status: 503 });
         pending = false;
         return Promise.resolve({ ok: true, json: async () => ({ chat_turn_id: 8 }) });
       }
-      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "minister", content: "旧夜奏对", chat_turn_id: 8 }], translation_retries: pending ? [
+      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "minister", content: "旧夜奏对", chat_turn_id: 8 }], reply_retries: pending && kind === "reply" ? [
+        { chat_turn_id: 8, minister_name: "殿上", turn: 1, question: "退朝", recovery_phase: "after_reply", error_pack_path: "/tmp/highlight-error" },
+      ] : [], translation_retries: pending && kind === "translation" ? [
         { chat_turn_id: 8, night_id: 31, minister_name: "洪承畴", kind: "translation_pending", retryable: true },
       ] : [] }) });
     });
@@ -1208,13 +1217,18 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    const retry = host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button');
-    expect(retry).not.toBeNull();
+    const source = host.querySelector('[data-audience-turn-id="8"]');
+    const retry = source?.querySelector<HTMLButtonElement>(`${notice} button`);
+    expect(retry).toBeInstanceOf(HTMLButtonElement);
     await act(async () => { retry?.click(); await Promise.resolve(); await Promise.resolve(); });
-    expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 8 }) }));
-    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 8 }) }));
+    if (kind === "reply") {
+      expect(source?.querySelector(notice)).not.toBeNull();
+      await act(async () => { source?.querySelector<HTMLButtonElement>(`${notice} button`)?.click(); await Promise.resolve(); });
+    }
+    expect(host.querySelector(notice)).toBeNull();
   });
-  it("recovers a completed translation by rereading the scroll after its first read fails", async () => {
+  it.each(["translation", "reply"])("recovers a completed %s by rereading the scroll after its first read fails", async (kind) => {
     let reads = 0;
     let posts = 0;
     const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
@@ -1222,17 +1236,18 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
       if (options?.method === "POST") { posts++; return Promise.resolve({ ok: true, json: async () => ({}) }); }
       reads++;
       if (reads === 2) return Promise.resolve({ ok: false, status: 503 });
-      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "minister", content: "旧夜奏对", chat_turn_id: 8 }], translation_retries: reads === 1 ? [{ chat_turn_id: 8, night_id: 31, retryable: true }] : [] }) });
+      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "minister", content: "旧夜奏对", chat_turn_id: 8 }], reply_retries: reads === 1 && kind === "reply" ? [{ chat_turn_id: 8, recovery_phase: "after_reply" }] : [], translation_retries: reads === 1 && kind === "translation" ? [{ chat_turn_id: 8, night_id: 31, retryable: true }] : [] }) });
     });
     vi.stubGlobal("fetch", fetchMock);
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); await Promise.resolve(); });
-    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).not.toBeNull();
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); await Promise.resolve(); });
+    const notice = `[data-testid="archive-${kind}-retry-8"]`;
+    await act(async () => { host.querySelector<HTMLButtonElement>(`${notice} button`)?.click(); await Promise.resolve(); });
+    expect(host.querySelector(notice)).not.toBeNull();
+    await act(async () => { host.querySelector<HTMLButtonElement>(`${notice} button`)?.click(); await Promise.resolve(); });
     expect(posts).toBe(1);
-    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
+    expect(host.querySelector(notice)).toBeNull();
   });
   it("selects closed scenes through the shared scroll endpoint without a composer", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {

@@ -2201,6 +2201,7 @@ class WebGame:
             nonlocal pending_ticket
             payload: Optional[Dict[str, Any]] = None
             court_action = ""
+            post_reply_phase = ""
             # #1727：court_break 预领屏障；异常出口也须 complete，禁 has_open_barrier 永真。
             close_barrier_ticket: Optional[WriteTicket] = None
             # #1353 r12：payload 已成 ⇒ done 必先于 error（后处理失败回话已可见）。
@@ -2250,12 +2251,17 @@ class WebGame:
                                 except BaseException as exc:
                                     highlight_errors.append(exc)
 
-                            highlight_thread = self._spawn_pending_write_thread(
-                                _highlight_worker,
-                                (answer, message_id, chat_turn_id),
-                                "audience-p5-highlight",
-                                ticket_key=turn_key,
-                            )
+                            try:
+                                highlight_thread = self._spawn_pending_write_thread(
+                                    _highlight_worker,
+                                    (answer, message_id, chat_turn_id),
+                                    "audience-p5-highlight",
+                                    ticket_key=turn_key,
+                                )
+                            except Exception as error:
+                                # Startup failure is the same pending highlight tail;
+                                # it must not bypass the independently required close.
+                                highlight_errors.append(error)
                         # 整轮票在尾随已领票后放行——屏障盯尾随票。
                         self._complete_pending_write(pending_ticket)
                         pending_ticket = None
@@ -2291,11 +2297,20 @@ class WebGame:
                     # #1902 N4：GameSession 恒有 close_night_after_chat_if_needed；删 getattr 降级。
                     handed_barrier = close_barrier_ticket
                     close_barrier_ticket = None
-                    self.session.close_night_after_chat_if_needed(
-                        court_action,
-                        write_gate=bare_write_gate,
-                        barrier_ticket=handed_barrier,
-                    )
+                    try:
+                        self.session.close_night_after_chat_if_needed(
+                            court_action,
+                            write_gate=bare_write_gate,
+                            barrier_ticket=handed_barrier,
+                            night_id=identity["night_id"],
+                        )
+                    except Exception as error:
+                        if court_action == "court_break" and highlight_errors:
+                            post_reply_phase = "court_break_after_reply"
+                            # Standard exception chaining preserves both true causes
+                            # in the existing diagnostic pack, without a second record.
+                            raise error from highlight_errors[0]
+                        raise
                     # Once close succeeds, only the presentation tail remains.
                     # Its failure must not defer or repeat the committed close.
                     court_action = ""
@@ -2331,6 +2346,7 @@ class WebGame:
                                     error=error,
                                     translation_dispatched=payload is not None,
                                     court_action=court_action,
+                                    post_reply_phase=post_reply_phase,
                                 )
                     except Exception as _caught_failure:
                         logger.exception(

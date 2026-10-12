@@ -308,6 +308,8 @@ def test_ticketed_write_gate_rejects_none(web_game):
 
 @pytest.mark.parametrize("failure,question", [
     ("close", "退朝"), ("call", "退朝"), ("call", "问边饷"),
+    ("stale_close", "退朝"), ("both", "退朝"), ("both_closed", "退朝"),
+    ("spawn", "退朝"),
     ("bad_format", "退朝"), ("timeout", "退朝"),
 ])
 def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
@@ -354,7 +356,7 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
 
     def judge_run(*_a, **_kw):
         judge_calls.append(1)
-        if broken and failure == "call":
+        if broken and failure in {"call", "both", "both_closed"}:
             raise RuntimeError("highlight call failed")
         if broken and failure == "bad_format":
             return SimpleNamespace(content="{broken")
@@ -367,6 +369,14 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **kw: run_highlight_judge(
         **{**kw, "timeout_s": 0.001 if failure == "timeout" else 1},
     ))
+    real_start = threading.Thread.start
+
+    def start(thread):
+        if broken and failure == "spawn" and thread.name == "audience-p5-highlight":
+            raise RuntimeError("highlight start failed")
+        return real_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
     close_calls = []
     real_close = game.session.close_night_after_chat_if_needed
 
@@ -379,7 +389,7 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     real_close_night = an.close_night
 
     def close_night(*a, **kw):
-        if broken and failure == "close":
+        if broken and failure in {"close", "stale_close", "both", "both_closed"}:
             raise RuntimeError("close failed")
         return real_close_night(*a, **kw)
 
@@ -405,16 +415,23 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
 
     kinds = [ev["type"] for ev in events]
     assert kinds.index("done") < kinds.index("error") < kinds.index("end")
-    if failure == "call" and question == "退朝":
+    if failure in {"call", "spawn"} and question == "退朝":
         assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSED
-    phase = "court_break" if failure == "close" else "after_reply"
+    phase = ("court_break_after_reply" if failure in {"both", "both_closed"}
+             else "court_break" if failure in {"close", "stale_close"} else "after_reply")
     assert [(r["chat_turn_id"], r["recovery_phase"]) for r in retries] == [(chat_turn_id, phase)]
     assert retries[0]["error_pack_path"]
     assert any(m.get("chat_turn_id") == chat_turn_id and m["content"] == reply
                for m in scroll["messages"])
-    if failure == "call":
+    new_night_id = None
+    if failure in {"stale_close", "both_closed"}:
+        broken = False
+        real_close("court_break", write_gate=game._runtime_write_gate())
+        broken = True
+        new_night_id = int(an.open_night(game.db, game.state)["id"])
+    if failure in {"call", "spawn"}:
         if question == "退朝":
-            an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+            new_night_id = int(an.open_night(game.db, game.state)["id"])
         else:
             broken = False
             followup = list(game.chat_stream("殿上", "再问边饷"))
@@ -422,16 +439,29 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
             broken = True
             assert "done" in [ev["type"] for ev in followup]
             assert "error" not in [ev["type"] for ev in followup]
+        if failure == "call":
+            with pytest.raises(RuntimeError, match="highlight call failed"):
+                game.retry_interrupted_reply("殿上", chat_turn_id)
+            assert game.reply_retries("殿上")[0]["recovery_phase"] == "after_reply"
+    if failure in {"both", "both_closed"}:
+        # Close can heal while the highlight call still fails. The next retry
+        # must retain only the presentation tail, not close a newer night.
+        monkeypatch.setattr(an, "close_night", real_close_night)
         with pytest.raises(RuntimeError, match="highlight call failed"):
             game.retry_interrupted_reply("殿上", chat_turn_id)
         assert game.reply_retries("殿上")[0]["recovery_phase"] == "after_reply"
+        assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSED
+        if new_night_id is None:
+            new_night_id = int(an.open_night(game.db, game.state)["id"])
     broken = False
     counts = (len(scene_calls), len(judge_calls), len(close_calls))
     recovered = game.retry_interrupted_reply("殿上", chat_turn_id)
     assert recovered["answer"] == reply
     assert len(scene_calls) == counts[0]
-    assert len(judge_calls) == counts[1] + (failure == "call")
-    assert len(close_calls) == counts[2] + (failure == "close")
+    if new_night_id is not None:
+        assert an.get_night(game.db, new_night_id)["status"] == an.NIGHT_STATUS_OPEN
+    assert len(judge_calls) == counts[1] + (failure in {"call", "spawn", "both", "both_closed"})
+    assert len(close_calls) == counts[2] + (failure in {"close", "stale_close"})
     assert game.reply_retries("殿上") == []
     scroll = web_app.api_audience_scroll(night_id)
     assert scroll["reply_retries"] == []
