@@ -825,9 +825,9 @@ def _consume_call_failure_for_retry(
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
 
-def _settlement_abort_already_accounted(db: Any, turn: int, exc: Any) -> bool:
+def _settlement_abort_already_accounted(db: Any, turn: int, exc: "SettlementAbort") -> bool:
     """Single authority: accounted SettlementAbort must not be re-tagged or re-packed."""
-    return bool(getattr(exc, "error_pack_path", None) or _load_chain(db, turn).get("call_failure"))
+    return bool(exc.error_pack_path or _load_chain(db, turn).get("call_failure"))
 
 
 def _abort_month_call(
@@ -1813,7 +1813,7 @@ def _world_question_ids(chain, turn):
 def _eligible_rescript_answers(
     session: Any, chain: Dict[str, Any], *, decided: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
-    """This-turn decided answers still waiting for a model-leg commit (durable)."""
+    """This-turn decided answers still waiting for model-leg commit or sync legal effect."""
     db, state = session.db, session.state
     turn = int(state.turn)
     if decided is None:
@@ -1832,37 +1832,29 @@ def _eligible_rescript_answers(
             ref = event[len(_DECREE_QUESTION_PREFIX):].rpartition(":")[0]
             if any(q["event_id"] == event for q in db.staged_declarations.questions_for(ref)):
                 eligible.append(row)
-    return eligible
-
-
-def apply_decided_sync_dispositions(
-    db: Any, state: Any, *, content: Any = None, decided: Optional[List[Dict[str, object]]] = None,
-) -> None:
-    """Idempotent sync legal effects for this-turn decided triad / deliberation rows.
-
-    Call under the same write_gate that persisted the answers so siblings cannot
-    claim the month-tail while these are decided-but-unapplied (#1847 K2).
-    """
-    turn = int(state.turn)
-    if decided is None:
-        rows = db.issues.list_pending_decisions(turn) + db.issues.list_rescript_drafts()
-        decided = [r for r in rows if r["status"] == "decided" and r["answered_turn"] == turn]
-    for row in decided:
-        event_id = str(row.get("event_id") or "")
-        if event_id.startswith("deliberation:"):
-            from ming_sim.rescript_actions import apply_imperial_deliberation_push
-            original = db.dossiers.get(int(event_id.partition(":")[2]))
-            if original is None:
+        elif event.startswith("dossier:"):
+            # Decided triad still pending sync apply blocks month-tail (#1847 K2).
+            raw_id = event.split(":", 1)[1]
+            if not raw_id.isdigit():
                 continue
-            if (row["choice"] or {}).get("action") == "imperial_push" and (original["payload"] or {}).get("deliberation_state") == "stalled":
-                with atomic(db):
-                    apply_imperial_deliberation_push(
-                        db, state, target_dossier_id=int(original["id"]),
-                        decision_key=row["decision_key"],
-                        decree_text=(row.get("choice") or {}).get("note", ""),
-                    )
-        elif event_id.startswith("dossier:"):
-            _apply_decided_triad(db, state, row, row["choice"] or {}, content=content)
+            dossier = db.dossiers.get(int(raw_id))
+            if dossier is None or not dossier.get("rescript_pending"):
+                continue
+            decision = str(
+                (row.get("choice") or {}).get("dossier_decision")
+                or (row.get("choice") or {}).get("action")
+                or ""
+            ).strip()
+            if decision in {"force_promulgated", "withdrawn", "hold"}:
+                eligible.append(row)
+        elif event.startswith("deliberation:"):
+            # Decided imperial push still stalled (or missing dossier) blocks month-tail.
+            if (row.get("choice") or {}).get("action") != "imperial_push":
+                continue
+            original = db.dossiers.get(int(event.partition(":")[2]))
+            if original is None or (original["payload"] or {}).get("deliberation_state") == "stalled":
+                eligible.append(row)
+    return eligible
 
 
 def _consume_rescript_answers(
@@ -1873,7 +1865,7 @@ def _consume_rescript_answers(
     Each successful leg materializes new desk questions immediately. Failure is
     recorded through the original month-call boundary; siblings still get their
     own commit chance. This request's original accounted abort is re-raised
-    (cause chain intact); a sibling only reports durable failure without retagging.
+    (cause chain intact); a sibling without one reports durable failure only.
     """
     from concurrent.futures import as_completed
     from ming_sim.decree_forecast import _owner_for
@@ -1895,11 +1887,27 @@ def _consume_rescript_answers(
             return
         chain.clear()
         chain.update(_load_chain(db, turn))
-        apply_decided_sync_dispositions(
-            db, state, content=session.content, decided=decided,
-        )
+        for row in decided:
+            event_id = str(row.get("event_id") or "")
+            if event_id.startswith("deliberation:"):
+                from ming_sim.rescript_actions import apply_imperial_deliberation_push
+                original = db.dossiers.get(int(event_id.partition(":")[2]))
+                if (row["choice"] or {}).get("action") == "imperial_push" and (original["payload"] or {}).get("deliberation_state") == "stalled":
+                    with atomic(db):
+                        apply_imperial_deliberation_push(
+                            db, state, target_dossier_id=int(original["id"]),
+                            decision_key=row["decision_key"],
+                            decree_text=(row.get("choice") or {}).get("note", ""),
+                        )
+            elif event_id.startswith("dossier:"):
+                _apply_decided_triad(db, state, row, row["choice"] or {}, content=session.content)
         eligible = _eligible_rescript_answers(session, chain, decided=decided)
-        jobs, launches = prepare_answers(session, chain, eligible, source=source)
+        # Same eligibility blocks month-tail; only model members enter prepare_answers.
+        model_rows = [
+            row for row in eligible
+            if not str(row.get("event_id") or "").startswith(("dossier:", "deliberation:"))
+        ]
+        jobs, launches = prepare_answers(session, chain, model_rows, source=source)
     for launch in launches:
         launch()
     for future in as_completed(jobs):
@@ -1942,9 +1950,10 @@ def _consume_rescript_answers(
                     accounted_abort = exc
             finally:
                 del owner._rescript_jobs[(turn, row["decision_key"])]
-    # Hand back this request's original accounted abort when durable failure remains.
-    # Sibling recovery may clear call_failure in the gate gap; abort_from then keys
-    # on error_pack_path so it must not rebuild or retag (#1847 K1/K3).
+    # Re-raise this request's original accounted abort (cause chain intact).
+    # Sibling recovery may clear call_failure in the gate gap; abort_from keys on
+    # error_pack_path so it must not rebuild or retag (#1847 K1/K3). Without an
+    # original, only a still-present durable failure is reported to siblings.
     with owner._write_gate:
         chain.clear()
         chain.update(_load_chain(db, turn))

@@ -2,8 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
-import { pendingDecisionsFrom } from "../decisionRouting";
-import type { DecisionChoice, GameState, PendingDecision } from "../types";
+import type { GameState, PendingDecision } from "../types";
 import { useSettlementFlow } from "../useSettlementFlow";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -133,112 +132,67 @@ describe("DecisionModal", () => {
     cleanup();
   });
 
-  it("sends each confirmed row immediately and admits a follow-up while its sibling waits", async () => {
-    const desk = decisions.map((d, i) => ({ ...d, decision_key: `decision:1:${i}` }));
-    const followup = { ...desk[1], decision_key: "decision:1:2", idx: 2 };
-    let serverState = {
-      turn: { turn: 1, phase: "awaiting_decision" }, pending_decisions: desk,
-    } as unknown as GameState;
-    const requests: { url: string; method: string; body: unknown }[] = [];
-    const replies: ((response: Response) => void)[] = [];
-    vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
-      requests.push({ url, method: init.method!, body: JSON.parse(String(init.body)) });
-      return new Promise<Response>((resolve) => replies.push(resolve));
-    });
-    function Harness() {
-      const [state, setState] = React.useState(serverState);
-      const [busy, setBusy] = React.useState("");
-      const loadState = React.useCallback(async () => { setState(serverState); return serverState; }, []);
-      const flow = useSettlementFlow({ state, setBusy, setError: () => {}, cheatDirective: "",
-        setCheatDirective: () => {}, loadState });
-      return <DecisionModal decisions={flow.pendingDecisions} busy={busy} onResolve={flow.submitDecisions} />;
-    }
-    const cleanup = render(<Harness />);
-    const confirmCurrent = () => {
-      const option = document.querySelector<HTMLButtonElement>(".decision-option")!;
-      expect(option.disabled).toBe(false);
-      act(() => option.click());
-      act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
-    };
-    const done = () => new Response(`event: done\ndata: ${JSON.stringify({ advanced: false })}\n\n`);
-    try {
-      confirmCurrent();
-      expect(requests).toEqual([{ url: "/api/decree/resolve_decisions/stream", method: "POST",
-        body: { choices: [{ ...desk[0].options[0], decision_key: desk[0].decision_key }] } }]);
-      expect(document.activeElement).toBe(document.querySelector(".decision-option"));
-      confirmCurrent();
-      expect(requests[1].body).toEqual({ choices: [{ ...desk[1].options[0], decision_key: desk[1].decision_key }] });
-      // First row still sending locally; current (second) left the desk; follow-up arrives.
-      // Must land on the actionable follow-up, not fall back onto the locked sender (#1847 F2).
-      serverState = {
-        ...serverState,
-        settlement_entry_inflight: true,
-        pending_decisions: [{ ...desk[0] }, followup],
+  it.each([
+    // Complete the second reply first → desk keeps the first sending row + follow-up (#1847 F2).
+    { completeFirst: 1 as const, remainingSender: 0 as const },
+    // Complete the first reply first → desk keeps the last sending row + follow-up (#1847 K4).
+    { completeFirst: 0 as const, remainingSender: 1 as const },
+  ])(
+    "sends each confirmed row immediately and admits a follow-up while sender[$remainingSender] still waits",
+    async ({ completeFirst, remainingSender }) => {
+      const desk = decisions.map((d, i) => ({ ...d, decision_key: `decision:1:${i}` }));
+      const followup = { ...desk[1], decision_key: "decision:1:2", idx: 2 };
+      let serverState = {
+        turn: { turn: 1, phase: "awaiting_decision" }, pending_decisions: desk,
+      } as unknown as GameState;
+      const requests: { url: string; method: string; body: unknown }[] = [];
+      const replies: ((response: Response) => void)[] = [];
+      vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+        requests.push({ url, method: init.method!, body: JSON.parse(String(init.body)) });
+        return new Promise<Response>((resolve) => replies.push(resolve));
+      });
+      function Harness() {
+        const [state, setState] = React.useState(serverState);
+        const [busy, setBusy] = React.useState("");
+        const loadState = React.useCallback(async () => { setState(serverState); return serverState; }, []);
+        const flow = useSettlementFlow({ state, setBusy, setError: () => {}, cheatDirective: "",
+          setCheatDirective: () => {}, loadState });
+        return <DecisionModal decisions={flow.pendingDecisions} busy={busy} onResolve={flow.submitDecisions} />;
+      }
+      const cleanup = render(<Harness />);
+      const confirmCurrent = () => {
+        const option = document.querySelector<HTMLButtonElement>(".decision-option")!;
+        expect(option.disabled).toBe(false);
+        act(() => option.click());
+        act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
       };
-      await act(async () => replies[1](done()));
-      // Actionable follow-up (not locked sender): option enabled + real choices POST.
-      expect(document.querySelector<HTMLButtonElement>(".decision-option")!.disabled).toBe(false);
-      confirmCurrent();
-      expect(requests[2].body).toEqual({ choices: [{ ...followup.options[0], decision_key: followup.decision_key }] });
-      await act(async () => { replies[0](done()); replies[2](done()); });
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("skips a still-present sending row so a follow-up can POST (#1847 K4)", async () => {
-    // DecisionModal contract: sole row stays on desk while its real POST is in flight;
-    // follow-up must become actionable and issue its own POST (#1847 K4).
-    const sender = { ...decisions[0], decision_key: "decision:1:0" };
-    const followup = { ...decisions[1], decision_key: "decision:1:2", idx: 2, title: "关宁追问" };
-    const requests: { url: string; method: string; body: unknown }[] = [];
-    const replies: ((response: Response) => void)[] = [];
-    vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
-      requests.push({ url, method: init.method!, body: JSON.parse(String(init.body)) });
-      return new Promise<Response>((resolve) => replies.push(resolve));
-    });
-    let setDesk!: (next: PendingDecision[]) => void;
-    function Harness() {
-      const [desk, set] = React.useState<PendingDecision[]>([sender]);
-      setDesk = set;
-      return (
-        <DecisionModal
-          decisions={desk}
-          onResolve={async (choices: DecisionChoice[]) => {
-            await fetch("/api/decree/resolve_decisions/stream", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ choices }),
-            });
-          }}
-        />
-      );
-    }
-    const cleanup = render(<Harness />);
-    const confirmCurrent = () => {
-      const option = document.querySelector<HTMLButtonElement>(".decision-option")!;
-      expect(option.disabled).toBe(false);
-      act(() => option.click());
-      act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
-    };
-    const done = () => new Response(`event: done\ndata: ${JSON.stringify({ advanced: false })}\n\n`);
-    try {
-      confirmCurrent();
-      expect(requests).toEqual([{ url: "/api/decree/resolve_decisions/stream", method: "POST",
-        body: { choices: [{ ...sender.options[0], decision_key: sender.decision_key }] } }]);
-      expect(document.querySelector<HTMLButtonElement>(".decision-option")!.disabled).toBe(true);
-      await act(async () => { setDesk([sender, followup]); });
-      expect(document.querySelector("#decision-document-title")?.textContent).toBe("关宁追问");
-      expect(document.querySelector(".decision-kicker")?.textContent).toContain("第 2 / 2 疏");
-      expect(document.querySelector<HTMLButtonElement>(".decision-option")!.disabled).toBe(false);
-      confirmCurrent();
-      expect(requests[1]).toEqual({ url: "/api/decree/resolve_decisions/stream", method: "POST",
-        body: { choices: [{ ...followup.options[0], decision_key: followup.decision_key }] } });
-      await act(async () => { replies[0](done()); replies[1](done()); });
-    } finally {
-      cleanup();
-    }
-  });
+      const done = () => new Response(`event: done\ndata: ${JSON.stringify({ advanced: false })}\n\n`);
+      try {
+        confirmCurrent();
+        expect(requests).toEqual([{ url: "/api/decree/resolve_decisions/stream", method: "POST",
+          body: { choices: [{ ...desk[0].options[0], decision_key: desk[0].decision_key }] } }]);
+        expect(document.activeElement).toBe(document.querySelector(".decision-option"));
+        confirmCurrent();
+        expect(requests[1].body).toEqual({ choices: [{ ...desk[1].options[0], decision_key: desk[1].decision_key }] });
+        // Both rows stay sending; complete one reply, refresh with the other sending row + follow-up.
+        serverState = {
+          ...serverState,
+          settlement_entry_inflight: true,
+          pending_decisions: [{ ...desk[remainingSender] }, followup],
+        };
+        await act(async () => replies[completeFirst](done()));
+        expect(document.querySelector<HTMLButtonElement>(".decision-option")!.disabled).toBe(false);
+        confirmCurrent();
+        expect(requests[2].body).toEqual({ choices: [{ ...followup.options[0], decision_key: followup.decision_key }] });
+        await act(async () => {
+          replies[remainingSender](done());
+          replies[2](done());
+        });
+      } finally {
+        cleanup();
+      }
+    },
+  );
 
   it("renders no page for a month with no decisions", () => {
     const cleanup = render(<DecisionModal decisions={[]} onResolve={vi.fn()} />);

@@ -2463,10 +2463,6 @@ class GameSession:
             self._assert_awaiting_decision_submit()
             before_turn = int(self.state.turn)
             persist_answers(self.db, self.state, choices, content=self.content)
-            # Sync legal effects under the same short hold so a sibling model leg
-            # cannot claim the month-tail while triad/deliberation are decided-but-unapplied (#1847 K2).
-            from ming_sim.month_chain import apply_decided_sync_dispositions
-            apply_decided_sync_dispositions(self.db, self.state, content=self.content)
         try:
             result = resolve_decisions_phase2(
                 self.state, self.db, self.agno_db, self.llm_config,
