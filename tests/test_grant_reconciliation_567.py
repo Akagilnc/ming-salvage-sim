@@ -7,13 +7,11 @@ from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
 from tests.readback_helpers import active_character_name as _actor
-import ming_sim.settlement.run as issue_engine
 """#567 S12 按月对账与押解折损（#461 兑现；#1900 退役提案/clamp 口）。
 
 Seams:
 - list_monthly_grant_reconciliation_targets / record_monthly_grant_reconciliations
-- grant_arrival_bounds 中位（护行界严于无护行）
-- list_dossier_reconciliations（被护案卷×回合键控，restore 无损）
+- DossierStore.reconciliations（拨银案卷×回合键控，restore 无损）
 - 玩家月链对账与案卷月度写口
 - 对账不增补 dossier_executions 的执行原文
 - 不改 economy_moves / 国库二次扣
@@ -127,8 +125,8 @@ def test_per_route_storage_and_secret_progress_restore(game):
     reopened.close()
 
 
-def test_close_merges_recon_note_without_second_treasury_debit(game):
-    """S10 结案同源读对账；不二次扣库、不改原流水；执行说明原文原样。"""
+def test_close_preserves_execution_note_without_second_treasury_debit(game):
+    """Closing preserves the execution note, treasury balance and original movements."""
 
     db, state, content = game
     before_inner = int(state.metrics["内库"])
@@ -163,7 +161,7 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
 
 
 def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
-    """成案当回合不足额 failed+close 者不进月度对账扫描面。"""
+    """A failed, closed grant with zero disbursement is absent from supply targets."""
     db, state, _content = game
     state.metrics["内库"] = 0
     db.conn.execute("UPDATE metrics SET value=0 WHERE key='内库'")

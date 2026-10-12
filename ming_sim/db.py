@@ -716,8 +716,7 @@ def resolve_office_type_preserving_title(
         return declared
     return infer_office_type_from_office(office, declared or fallback, llm_config, use_llm=use_llm)
 
-# #567 / ADR 0054：押解实抵 clamp 界（北极星 30 两面值 → 无护 15-18 / 有护 22-25）。
-# Engine-owned arrival bounds, scaled from 30; escorted minimum exceeds bare maximum.
+# Engine-owned arrival bounds (#567 / #1900), scaled from 30; escorted minimum exceeds bare maximum.
 _GRANT_ARRIVAL_SCALE = 30
 _GRANT_ARRIVAL_BARE = (15, 18)
 _GRANT_ARRIVAL_ESCORT = (22, 25)
@@ -6425,7 +6424,7 @@ class GameDB:
     def record_monthly_grant_reconciliations(
         self, turn: int,
     ) -> List[Dict[str, object]]:
-        """月度节拍：逐路由引擎按既有押解折损范围定实抵与损耗 → 落被护侧对账记录。
+        """Monthly tick: derive grant arrivals/losses from engine bounds and persist reconciliation.
 
         #1900：沿途损耗归引擎（#1820 后出，取代 0054 的「LLM 软判实抵＋clamp」）。
         本方法不再接任何提案——实抵取该路护行口径区间的中位。
