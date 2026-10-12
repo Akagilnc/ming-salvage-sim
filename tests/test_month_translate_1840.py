@@ -265,14 +265,14 @@ def _region_id(db) -> str:
 
 
 
-def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_order(game):
-    from ming_sim.month_translate import dispatch_month_segment
+def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_order(game, monkeypatch):
+    from ming_sim import month_translate
 
     db, state, _ = game
     person, army = _character_name(db), _army_id(db)
     declaration = {
         "textual_facts": [
-            {"subject_kind": "character", "subject_id": person, "body": "人物先记一事"},
+            {"subject_kind": "character", "subject_id": person, "body": "  人物先记一事\n据奏尚在京畿。  "},
             {"subject_kind": "character", "subject_id": person, "body": "人物再记一事"},
             {"subject_kind": "army", "subject_id": army, "body": "军队先记一事"},
             {"subject_kind": "army", "subject_id": army, "body": "军队再记一事"},
@@ -280,26 +280,35 @@ def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_or
     }
     calls = []
 
-    def translate(prompt, llm_config):
-        calls.append((prompt, llm_config))
+    def translate(prompt, llm_config, **kwargs):
+        calls.append((prompt, llm_config, kwargs))
         return declaration
 
-    dispatch_month_segment(
+    monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", translate)
+    month_translate.dispatch_month_segment(
         db,
         state,
         segment="完整世界段",
-        translate_fn=translate,
     )
 
     assert len(calls) == 1
+    prompt, _, options = calls[0]
+    # Compare the delivered input to its live source, not to frozen wording.
+    guidance = month_translate.describe_month_effect_fields()
+    assert guidance and guidance in prompt
+    assert options["tag"] == "month_segment_translate"
     person_facts = db.textual_facts.readable_materials(
         subject_kind="character", subject_id=person,
     )
     army_facts = db.textual_facts.readable_materials(
         subject_kind="army", subject_id=army,
     )
-    assert [fact.body for fact in person_facts] == ["人物先记一事", "人物再记一事"]
-    assert [fact.body for fact in army_facts] == ["军队先记一事", "军队再记一事"]
+    assert [fact.body for fact in person_facts] == [
+        fact["body"] for fact in declaration["textual_facts"] if fact["subject_kind"] == "character"
+    ]
+    assert [fact.body for fact in army_facts] == [
+        fact["body"] for fact in declaration["textual_facts"] if fact["subject_kind"] == "army"
+    ]
 
 
 def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game):
