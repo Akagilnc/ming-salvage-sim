@@ -9259,17 +9259,8 @@ class GameDB:
             raw_stage = payload.get("stage_idx")
             # 已持久 stage_idx：缺省／类型腐坏一律裸 ValueError，不发明身份 0（#1897 G）。
             # 准入侧坏值仍走声明路径 DecreeMaterializationValidationError。
-            from ming_sim.strict_types import strict_int
-            if raw_stage is None or raw_stage == "":
-                raise ValueError(
-                    "持久字段 stage_idx must be a whole integer index",
-                )
-            try:
-                stage_idx = strict_int(raw_stage, accept_numeric_strings=False)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "持久字段 stage_idx must be a whole integer index",
-                ) from exc
+            # 拒收形状复用 strict_int（含 None／空串），不另造前置或重包文案。
+            stage_idx = strict_int(raw_stage, accept_numeric_strings=False)
             deadline = _coerce_deadline_months(
                 payload.get("deadline_months", 1), default=1, durable=True,
             )

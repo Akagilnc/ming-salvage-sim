@@ -95,8 +95,9 @@ def _prepare_stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]
             if raw_idx in (None, ""):
                 draft["stage_idx"] = raw_idx
             else:
+                # 数字串→整数仅用 strict_int；SQLite 范围只在成员门 strict_sqlite_id。
                 try:
-                    draft["stage_idx"] = strict_sqlite_id(
+                    draft["stage_idx"] = strict_int(
                         raw_idx, accept_numeric_strings=True,
                     )
                 except (TypeError, ValueError) as exc:
