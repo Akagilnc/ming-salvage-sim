@@ -83,7 +83,7 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch, tmp_path):
     abort = SettlementAbort("fixture abort", turn=runtime.state.turn,
                             stage="extract", error_pack_path="/tmp/x")
 
-    def _abort(cheat_directive="", write_gate_already_held=False):
+    def _abort(cheat_directive="", write_gate_already_held=False, on_gazette=None):
         assert write_gate_already_held is True
         raise abort
 

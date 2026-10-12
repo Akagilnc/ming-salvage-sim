@@ -26,7 +26,7 @@ import ming_sim.agents as agents_mod
 - 完成回话 SSE 入档→颁诏 SSE：真实结算核收夜、推进 turn、持久化（AC8/AC10 happy）；
 - 挂起在飞（真实并发 /chat/stream ASGI 请求）→ 真实 /decree/issue/stream in-flight fail-closed
   SSE、夜开、turn 不变、chat 轮仍 generating；放行后 chat SSE 收到 done（AC10）；
-- 同步退朝端点 offload：阻塞在飞等待期间 async ticker 持续前进（真实 ASGI）；
+- 退朝 SSE worker：在飞等待期间 async ticker 持续前进（真实 ASGI）；
 - 等 gate 期间相位翻到亲裁（TOCTOU）→ 持锁内权威复查经真实 /chat/stream SSE 拒、零新夜/新 chat 轮；
 - 已成案旨无公开拟诏、改稿、删除工作面。
 """
@@ -530,7 +530,7 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
             state = (await client.get("/api/game/state")).json()
             confirm = await client.post(f"/api/directives/{directive_id}/confirm")
             reject = await client.post(f"/api/directives/{directive_id}/reject")
-            advance = await client.post("/api/decree/advance_without_edict")
+            advance = await client.post("/api/decree/advance_without_edict/stream")
             return state, confirm, reject, advance
 
     state_payload, confirm, reject, response = asyncio.run(scenario())
@@ -540,6 +540,7 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
     # #1855：夜未收时真 HTTP 状态口投影 audience（非手造轻壳）
     assert state_payload["reopen_landing"] == "audience"
     assert response.status_code == 200
+    assert _parse_sse(response.text)[-1]["event"] == "done"
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
     dossier = game.db.dossiers.get_for_directive(directive_id)
     assert dossier is not None
@@ -550,7 +551,7 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
 
 
 
-def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
+def test_stream_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
@@ -574,7 +575,7 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
             try:
                 t = asyncio.create_task(ticker())
                 adv_task = asyncio.create_task(
-                    adv_client.post("/api/decree/advance_without_edict")
+                    adv_client.post("/api/decree/advance_without_edict/stream")
                 )
                 # 等待期间 event loop 须继续跑 ticker（端点已 offload）
                 while ticks < 5:
@@ -583,7 +584,7 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
                 allow.set()
                 await chat_task
                 resp = await adv_task
-                return mid_ticks, ticks, resp.status_code
+                return mid_ticks, ticks, resp
             finally:
                 # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
                 allow.set()
@@ -591,11 +592,12 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
                     t.cancel()
                 await _drain_tasks(chat_task, adv_task, t)
 
-    mid_ticks, ticks, status = asyncio.run(scenario())
-    assert mid_ticks >= 5, f"event loop 被同步端点冻结（mid_ticks={mid_ticks}）"
+    mid_ticks, ticks, resp = asyncio.run(scenario())
+    assert mid_ticks >= 5, f"event loop 被退朝入口冻结（mid_ticks={mid_ticks}）"
     assert ticks >= mid_ticks
     # #1353 K10a：工人终态后继续，不按在飞 elapsed 造 409
-    assert status == 200, f"advance after chat terminal expected 200, got {status}"
+    assert resp.status_code == 200, resp.text
+    assert _parse_sse(resp.text)[-1]["event"] == "done"
 
 
 def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):

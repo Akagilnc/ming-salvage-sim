@@ -346,7 +346,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
-      if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2, [], roster) });
+      if (u.pathname.endsWith("/api/decree/advance_without_edict/stream")) return sseResp("done", { advanced: true });
       if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, court_action: "court_break" });
       if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77 });
       return jsonResp({});
@@ -382,7 +382,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       await vi.waitFor(() => expect(paths.filter((path) => path.endsWith("/chat/stream")).length).toBeGreaterThanOrEqual(2));
     });
 
-    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
+    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict/stream")).toBe(false);
   });
 
   it("#1716 chat done 即时落 pending_directive_count，拟诏台不待 vacuum refresh", async () => {
@@ -1089,7 +1089,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const reopened = await mountApp();
     await click(reopened.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement);
     expect(paths).toContain("POST /api/decree/issue/stream");
-    expect(paths).not.toContain("POST /api/decree/advance_without_edict");
+    expect(paths).not.toContain("POST /api/decree/advance_without_edict/stream");
     await act(async () => {
       await vi.waitFor(() => undefined);
     });
@@ -1099,7 +1099,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
 
   });
 
-  it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
+  it.each([true, false])("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹（流式=%s）", async (streaming) => {
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();
     let liveState: Record<string, unknown> = {
@@ -1151,6 +1151,24 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(streamController).toBeTruthy());
     });
+
+    if (streaming) {
+      await act(async () => {
+        streamController.enqueue(encoder.encode(
+          `event: gazette\ndata: ${JSON.stringify({ report: "十月" })}\n\n`,
+        ));
+      });
+      // The author is still writing: the live document is on the main face,
+      // but neither the month nor the reading-dismiss action has advanced.
+      expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
+      expect(host.querySelector<HTMLButtonElement>(".gazette-dismiss-btn")?.disabled).toBe(true);
+      await act(async () => {
+        streamController.enqueue(encoder.encode('event: gazette\ndata: {"report":""}\n\n'));
+      });
+    }
+    // An attempt reset drops the draft; a non-streaming backend has no draft.
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 
     liveState = advancedState;
     await act(async () => {
@@ -1977,8 +1995,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
   });
 
   it("#1620 落印后 deferred resolve 在飞期间禁二提交", async () => {
-    // 只证：真 App 入口点落印，resolve 挂起期间再点 → POST 仍为 1；busy 下控件 disabled。
-    // 不夹 SSE picks 恢复、不夹 all-decided 清窗。
+    // Submission stays locked; the retained rescript yields to the gazette,
+    // then returns with the original pick if writing fails.
     const d = {
       idx: 0, title: "疏", context: "c",
       options: [{ label: "甲策", hint: "h" }],
@@ -2034,11 +2052,25 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await click(confirm());
     await click(confirm());
     expect(resolveCount).toBe(1);
-    // 放行挂起的 resolve，避免泄漏（收尾不纳入本契约）
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
     await act(async () => {
-      releaseResolve!(sseResp("error", { message: "done-for-test" }));
-      await Promise.resolve();
+      releaseResolve!(new Response(new ReadableStream<Uint8Array>({
+        start(c) { controller = c; },
+      })));
     });
+    await act(async () => {
+      controller.enqueue(encoder.encode('event: gazette\ndata: {"report":"稿"}\n\n'));
+    });
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
+    expect(host.querySelector<HTMLElement>(".decision-page")!.hidden).toBe(true);
+    await act(async () => {
+      controller.enqueue(encoder.encode('event: error\ndata: {"message":"done-for-test"}\n\n'));
+      controller.close();
+    });
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+    expect(host.querySelector<HTMLElement>(".decision-page")!.hidden).toBe(false);
+    expect(optionButtons()[0].classList.contains("is-picked")).toBe(true);
     expect(resolveCount).toBe(1);
   });
 
@@ -3177,7 +3209,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true));
     });
-    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
+    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict/stream")).toBe(false);
   });
 
 

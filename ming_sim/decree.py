@@ -573,6 +573,7 @@ def resolve_directives(
     content=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
+    on_gazette=None,
 ) -> ResolveResult:
     """玩家过月入口：前括号之后走 ADR 0157 主链，不再用 extractor 落账。
 
@@ -604,6 +605,7 @@ def resolve_directives(
         content=content,
         source=source,
         cheat_directive=cheat_directive,
+        on_gazette=on_gazette,
     )
 
 
@@ -923,6 +925,7 @@ def resolve_decisions_phase2(
     llm_config: LLMConfig,
     content=None,
     cheat_directive: str = "",
+    on_gazette=None,
 ) -> str:
     """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
     要求本回合处于 awaiting_decision（已有 resolve_context）。返回完整结算报告。"""
@@ -936,6 +939,7 @@ def resolve_decisions_phase2(
         content=content,
         source=_provenance_from_stored(ctx.get("source")),
         cheat_directive=cheat_directive,
+        on_gazette=on_gazette,
     )
     state.turn_phase = (
         TurnPhase.AWAITING_DECISION.value if result.awaiting

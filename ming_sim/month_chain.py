@@ -377,7 +377,7 @@ def prepare_gazette_author_materials(db: Any, state: Any):
 
 
 def run_gazette_text(
-    db: Any, state: Any, llm_config: Any,
+    db: Any, state: Any, llm_config: Any, *, on_gazette: Any = None,
 ) -> tuple[str, str]:
     """批红与全部效果落定后的一次邸报写作。返回作者自写的 (title, report)。"""
     import json
@@ -386,6 +386,25 @@ def run_gazette_text(
     from ming_sim.exceptions import LLMContractError, LLMUnavailable
     from ming_sim.llm_transport import audience_transport_policy
     from ming_sim.materials import release_material_tree
+    from pydantic_core import from_json
+
+    raw_prefix = ""
+
+    def _on_text(piece: str, replace: bool) -> None:
+        nonlocal raw_prefix
+        raw_prefix = piece if replace else raw_prefix + piece
+        if on_gazette is None:
+            return
+        if replace:
+            on_gazette({"report": ""})
+        try:
+            data = from_json(raw_prefix, allow_partial="trailing-strings")
+        except ValueError:
+            # Incomplete JSON is expected here; only the strict terminal decoder
+            # decides whether the completed model response satisfies the contract.
+            return
+        if isinstance(data, dict) and isinstance(data.get("report"), str):
+            on_gazette({"report": data["report"]})
 
     if llm_config is None:
         raise LLMUnavailable("邸报缺少模型配置", stage="gazette")
@@ -396,6 +415,7 @@ def run_gazette_text(
         raw = run_agent_text(
             agent, message, tag="gazette",
             transport_policy=audience_transport_policy(),
+            on_text=_on_text if on_gazette is not None else None,
         )
     finally:
         release_material_tree(prepared.root)
@@ -406,6 +426,8 @@ def run_gazette_text(
         raise LLMContractError("邸报缺少作者标题", raw_value=data)
     if not isinstance(report, str) or not report.strip():
         raise LLMContractError("邸报缺少正文", raw_value=data)
+    if on_gazette is not None:
+        on_gazette({"report": report})
     return title, report
 
 
@@ -608,6 +630,7 @@ def run_player_month_chain(
     content: Any = None,
     source: Provenance = Provenance.system_simulation,
     cheat_directive: str = "",
+    on_gazette: Any = None,
 ) -> Any:
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
@@ -652,7 +675,7 @@ def run_player_month_chain(
         return _run_loaded_month_chain(
             state, db, agno_db, llm_config, chain,
             decree_text=decree_text, content=content,
-            source=source,
+            source=source, on_gazette=on_gazette,
         )
     except Exception as exc:
         abort_from(exc)
@@ -669,6 +692,7 @@ def _run_loaded_month_chain(
     decree_text: str,
     content: Any,
     source: Provenance,
+    on_gazette: Any = None,
 ) -> Any:
     """已装入的月链。代码异常由入口收成同一条 call_failure，不在这里另做恢复。"""
     from ming_sim.decree import ResolveResult
@@ -717,7 +741,7 @@ def _run_loaded_month_chain(
             return _pause(db, turn, chain, decree_text, source, "gazette")
 
         def _write_gazette() -> tuple[str, str]:
-            title, report = run_gazette_text(db, state, llm_config)
+            title, report = run_gazette_text(db, state, llm_config, on_gazette=on_gazette)
             db.save_turn_report(state, report, title=title, public_body=report)
             return title, report
 

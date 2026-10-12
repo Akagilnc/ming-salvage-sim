@@ -7,6 +7,7 @@ import ming_sim.cli_backend as cb
 import ming_sim.draft_intent as di
 import ming_sim.session as session_mod
 import web_app
+from tests.sse_helpers import parse_sse_event_pairs
 from ming_sim.error_pack import latest_error_pack_for_turn
 from tests.army_pay_helpers import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import (
@@ -220,12 +221,12 @@ def test_advance_without_edict_vacuum_no_decree_issued(
     assert not (game.session.last_decree or "").strip()
     client = TestClient(web_app.app)
     resp = client.post(
-        "/api/decree/advance_without_edict",
+        "/api/decree/advance_without_edict/stream",
         json={"expected_turn": turn},
     )
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body.get("awaiting_decision") is False
+    kind, body = parse_sse_event_pairs(resp.text)[-1]
+    assert kind == "done"
     assert _turn_of(_get_state(client)) == turn + 1
 
     assert body.get("advanced") is True

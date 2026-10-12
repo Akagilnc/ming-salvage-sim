@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-import contextlib
 import time
 from tests.wait_utils import wait_until
 import web_app
@@ -14,6 +13,7 @@ from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
+from tests.sse_helpers import parse_sse_event_pairs
 """#1235 T2 — 点即入 + 未了续跑 + 真失败另形（ADR 0149）。
 
 接缝（票庭 r1 / 票面三义）：
@@ -156,12 +156,13 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
 
     async def go():
         async with _client() as client:
-            return await client.post("/api/decree/advance_without_edict")
+            return await client.post("/api/decree/advance_without_edict/stream")
 
     resp = asyncio.run(go())
-    # #1842：转译单轮失败标 pending；过月耗尽 → SettlementAbort（HTTP 409 + typed stage）。
-    assert resp.status_code == 409, resp.text
-    detail = resp.json()["detail"]
+    # #1842：转译单轮失败标 pending；过月耗尽 → SSE error（typed stage）。
+    assert resp.status_code == 200, resp.text
+    kind, detail = parse_sse_event_pairs(resp.text)[-1]
+    assert kind == "error"
     assert detail.get("stage") == "audience_translation_exhausted", detail
     pack = detail.get("error_pack_path")
     assert pack, detail
@@ -182,34 +183,43 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
 
 
 def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
-    """#1235 r1 D：退朝 accept 后 _serialized_web_write 抢锁 409 → 出展示态。
+    """#1235 r1 D：退朝 accept 后非阻塞抢锁 409 → 出展示态。
 
     HTTPException 非 ValueError 子类；须经 settled_ok 失败臂收口，禁孤儿快照。
     """
-    from fastapi import HTTPException
-
     game = web_game
+    from tests.month_chain_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch)
     before = _click_before(game.state)
     turn = int(game.state.turn)
     saw = {}
 
-    @contextlib.contextmanager
-    def _gate_busy(g):
-        # accept 已落：此处快照必在且 = 点击前四键
-        saw["snap"] = g.db.month_open_snapshots.get(int(g.state.turn))
-        raise HTTPException(
-            status_code=409,
-            detail="月末结算或上一步写入进行中，请稍候再操作。",
-        )
-        yield  # pragma: no cover — raise 后不可达；保 CM 形
+    gate = game._runtime_write_gate()
+    acquire = type(gate).acquire
 
-    monkeypatch.setattr(web_app, "_serialized_web_write", _gate_busy)
+    def _busy_once(lock, blocking=True, timeout=-1):
+        if lock is gate and not saw:
+            # 仅在锁资源边界制造一次占用；受理、拒收、失败清快照仍走真实入口。
+            saw["snap"] = game.db.month_open_snapshots.get(turn)
+            assert blocking is False
+            assert acquire(lock, blocking=False)
+            try:
+                return acquire(lock, blocking=blocking, timeout=timeout)
+            finally:
+                lock.release()
+        return acquire(lock, blocking=blocking, timeout=timeout)
+
+    monkeypatch.setattr(type(gate), "acquire", _busy_once)
+
     async def go():
         async with _client() as client:
-            return await client.post("/api/decree/advance_without_edict")
+            return await client.post("/api/decree/advance_without_edict/stream")
 
     resp = asyncio.run(go())
-    assert resp.status_code == 409, resp.text
+    assert resp.status_code == 200, resp.text
+    kind, detail = parse_sse_event_pairs(resp.text)[-1]
+    assert kind == "error"
+    assert detail["status_code"] == 409
     # 点即入曾发生
     assert saw.get("snap") == before
     # 拒收后不得留孤儿核账展示态

@@ -5,7 +5,7 @@ import json
 import pytest
 import ming_sim.month_chain as month_chain
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
-from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.materials import list_materials, prepare_world_materials, read_material, release_material_tree
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
@@ -82,8 +82,15 @@ def test_author_waits_until_rescript_is_done(game, monkeypatch):
 
 
 
-def test_gazette_failure_retries_report_only(game, monkeypatch):
-    db, state, content = game
+def test_gazette_failure_retries_report_only(web_game, monkeypatch):
+    import asyncio
+    import httpx
+    import web_app
+    from tests.month_chain_helpers import canned_full_settlement
+    from tests.sse_helpers import parse_sse_event_pairs
+
+    db, state, content = web_game.db, web_game.state, web_game.content
+    canned_full_settlement(monkeypatch)
     minister = next(iter(content.characters.values())).name
     affair = db.affairs.open(
         name="重试可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
@@ -105,9 +112,27 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", gazette)
-    session = _session(db, state, content, monkeypatch)
-    with pytest.raises(SettlementAbort):
-        session.resolve_turn(allow_empty_decree=True)
+
+    async def retreat():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=web_app.app), base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/decree/advance_without_edict/stream", json={"expected_turn": turn},
+            )
+        assert response.status_code == 200
+        return parse_sse_event_pairs(response.text)
+
+    first = asyncio.run(retreat())
+    assert first[-1][0] == "error", first
+    detail = first[-1][1]
+    assert detail["stage"] == "gazette"
+    assert detail["code"] == "llm_unavailable"
+    assert detail["status_code"] is None
+    assert detail["turn"] == turn
+    assert detail["error_pack_path"]
+    assert int(state.turn) == turn
+    assert web_game.state_payload()["turn"]["phase"] == "settling"
     charged = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0]
@@ -117,8 +142,12 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     failure = month_chain.month_chain_call_failure(db, turn)
     assert failure["step"] == "gazette"
 
-    result = session.resolve_turn(allow_empty_decree=True)
-    assert result.advanced is True
+    retried = asyncio.run(retreat())
+    kind, result = retried[-1]
+    assert kind == "done", retried
+    assert result["advanced"] is True
+    assert int(state.turn) == turn + 1
+    assert month_chain.month_chain_call_failure(db, turn) is None
     assert gazette_calls["n"] == 2
     assert world_calls == [1]
     assert db.conn.execute(
@@ -130,12 +159,14 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert archive["report"] == _REPORT
 
 
-def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch):
+@pytest.mark.parametrize("streaming", [True, False])
+def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch, streaming):
     import ming_sim.agents as agents
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
     from tests.dossier_test_helpers import create_test_secret_order
     from ming_sim.declaration_dispatch import stage_declaration
     from ming_sim.materials import list_materials, read_material
+    from agno.run.agent import RunContentEvent, RunOutput
 
     db, state, content = game
     name = next(iter(content.characters))
@@ -159,18 +190,39 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch)
         db.insert_issue(state, kind="initiative", title="到期复核", origin_kind="decree", origin_ref=origin, commitment_kind="once", end_turn=state.turn)
     db.conn.commit()
     seen = {}
+    previews = []
+    product = {"title": "标题输入", "report": '\n  字"\\\n正文  '}
+
+    class AuthorModel:
+        supports_stream = streaming
+
+        def run(self, message, **kwargs):
+            seen["feed"] = json.loads(message)
+            raw = json.dumps(product, ensure_ascii=False)
+            if not streaming:
+                assert not kwargs
+                return RunOutput(content=raw)
+            assert kwargs == {"stream": True, "stream_events": True, "yield_run_output": True}
+
+            def events():
+                for piece in raw:
+                    yield RunContentEvent(content=piece)
+                # The callback has already received structured report content,
+                # before the SDK terminal and before any report can be archived.
+                assert previews[-1] == {"report": product["report"]}
+                yield RunOutput(content=raw)
+            return events()
+
     def author(_config, prepared):
         seen["paths"] = list_materials(prepared.root)
         seen["materials"] = prepared.opening + "\n" + "\n".join(
             read_material(prepared.root, path) for path in seen["paths"]
         )
-        return object()
-    def model(_agent, message, **_kw):
-        seen["feed"] = json.loads(message)
-        return json.dumps({"title": "标题输入", "report": "正文输入"})
+        return AuthorModel()
     monkeypatch.setattr(agents, "create_gazette_author_agent", author)
-    monkeypatch.setattr(agents, "run_agent_text", model)
-    month_chain.run_gazette_text(db, state, _llm())
+    title, report = month_chain.run_gazette_text(db, state, _llm(), on_gazette=previews.append)
+    assert (title, report) == (product["title"], product["report"])
+    assert previews[-1] == {"report": report}
     assert not any(p.startswith("密令/") for p in seen["paths"])
     feed = seen["feed"]
     # Landed facts and ledger history now come from the public material tree;

@@ -974,7 +974,7 @@ class WebGame:
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
-        # #1343 孤儿快照清一处：受理样板成功支（_settlement_period_entry 持 write_cm）。
+        # #1343 孤儿快照清一处：受理样板成功支（_settlement_period_entry 持 write_gate）。
         # 生产四调用点皆在 entry 体内（inflight>0），此处再清恒不触发；禁第二清理点。
 
     # ── 序列化 ────────────────────────────────────────────────────────────
@@ -2611,7 +2611,7 @@ class _NonBlockingWebWriteGate:
 
     advance 路径注入 auto_close/get_open_night 真实 with 接缝：占用即 409，
     禁阻塞等闸（#1842：转译短持与 ``_try_acquire`` 同缝等待后重试）。
-    issue/stream 仍传裸 Lock（阻塞 acquire）。
+    颁诏仍传裸 Lock（阻塞 acquire）。
     """
 
     __slots__ = ("_lock",)
@@ -2668,19 +2668,18 @@ def _serialized_web_write(game):
 def _settlement_period_entry(
     game,
     *,
-    write_cm: Callable[[Any], Any],
+    blocking: bool = True,
     hold_write_for_body: bool = True,
 ):
     """#1241 S1：颁布/退朝/stream 三入口受理样板（begin→accept→await→close→gate）。
 
-    行为零变化硬约束：write_cm **必须**参数化锁获取语义分叉——
-      · advance → `_serialized_web_write`（非阻塞抢锁，撞锁/相位拒 409）
-      · issue / stream → `_game_write_gate`（阻塞 acquire）
+    锁获取语义分叉：退朝非阻塞抢锁（撞锁 409），颁诏阻塞 acquire。
+    结算恢复由会话月链裁定，不经直写端点的 settling/awaiting 相位拒收。
     统一获取语义即破 T2 行为零变化（r2-r7 不变式）。
 
     #657 resolve/stream：hold_write_for_body=False——展示态仍走本样板，但 body 内
-    submit_hitl_choices 自管 ①/③ 短持同一 write_cm（② 无锁 join）；禁整段 gate 盖 join。
-    hold_write_for_body=True（默认）= issue/advance 旧形：body 全程持 write_cm。
+    submit_hitl_choices 自管 ①/③ 短持同一 write_gate（② 无锁 join）；禁整段 gate 盖 join。
+    hold_write_for_body=True（默认）= issue/advance 旧形：body 全程持 write_gate。
 
     #1353 fold-in r5：收夜欠账补跑内部静默；过月 SSE 只由 resolve 本体推正常进度。
 
@@ -2698,12 +2697,9 @@ def _settlement_period_entry(
         created_display = _accept_settlement_period(game)
         # #1353 r12：advance 非阻塞下沉到 auto_close 真实短持接缝（占用即 409）；
         # 删预探即释——探后至 get_open_night 短持之间 TOCTOU 可再阻塞。
-        # 相位拒仍在进 barrier 前（避免 settling 窗误收夜）；issue/stream 阻塞等闸。
-        if write_cm is _serialized_web_write:
-            _refuse_settling_or_busy_write_phase(game)
-            close_gate: Any = _NonBlockingWebWriteGate(_game_write_gate(game))
-        else:
-            close_gate = _game_write_gate(game)
+        write_gate: Any = _game_write_gate(game)
+        if not blocking:
+            write_gate = _NonBlockingWebWriteGate(write_gate)
 
         # #1353：过月=屏障票据（队列内任务）。整轮 chat 票 + 尾随 turn 票清零后
         # 才 gate-free 收夜；屏障只等工人终态/空放行（K10a：无 elapsed 熔断）。
@@ -2715,14 +2711,14 @@ def _settlement_period_entry(
 
         def _close_open_night() -> None:
             _auto_close_open_night_gate_free(
-                game, write_gate=close_gate,
+                game, write_gate=write_gate,
             )
 
         sess.await_translations_before_month(after_drain=_close_open_night)
 
         def _clear_orphan_success() -> None:
             # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。
-            # 持 write_cm 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接。
+            # 持 write_gate 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接。
             db = getattr(game, "db", None)
             state = getattr(game, "state", None)
             if db is not None and state is not None:
@@ -2730,15 +2726,15 @@ def _settlement_period_entry(
                 clear_orphan_month_open_snapshot(db, state)
 
         if hold_write_for_body:
-            with write_cm(game):
+            with write_gate:
                 yield
                 _clear_orphan_success()
                 # with 体无异常结束且 clear 已完成（或无需 clear）→ 成功。
                 settled_ok = True
         else:
-            # #657：body 自管 write_cm 分段；成功后短持 clear。
+            # #657：body 自管 write_gate 分段；成功后短持 clear。
             yield
-            with write_cm(game):
+            with write_gate:
                 _clear_orphan_success()
             settled_ok = True
     finally:
@@ -2747,11 +2743,9 @@ def _settlement_period_entry(
             if entered and not settled_ok:
                 # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
                 # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
-                # advance 走 _serialized_web_write（非阻塞 409 契约）：失败清快照也不得
+                # advance 非阻塞 409 契约：失败清快照也不得
                 # 阻塞等闸——否则「他方持闸 → 本路 409 → exit blocking 等同一闸」自锁死。
-                exit_blocking = bool(
-                    created_display and write_cm is not _serialized_web_write
-                )
+                exit_blocking = bool(created_display and blocking)
                 _exit_settlement_display_on_failure(game, blocking=exit_blocking)
         finally:
             if entered:
@@ -4746,55 +4740,6 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail=_exception_detail(e)) from e
 
 
-@app.post("/api/decree/advance_without_edict")
-def api_advance_without_edict(
-    body: AdvanceWithoutEdictRequest = AdvanceWithoutEdictRequest(),
-) -> Dict[str, Any]:
-    # #498 AC10 / #1353：内部屏障票据同步等在飞尾随终态。
-    game = get_game()
-    from ming_sim.audience_night import AudienceNightError
-    try:
-        with _settlement_period_entry(game, write_cm=_serialized_web_write):
-            _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
-            settlement_result = game.session.advance_without_decree(
-                write_gate_already_held=True,
-            )
-            awaiting = bool(
-                settlement_result is not None and settlement_result.awaiting
-            )
-            advanced = bool(
-                settlement_result is not None
-                and not awaiting
-                and settlement_result.advanced
-            )
-            if advanced:
-                game.session.end_turn()
-                game.refresh_turn()
-            return {
-                "state": game.state_payload(),
-                "awaiting_decision": awaiting,
-                "advanced": advanced,
-                "decisions": (
-                    settlement_result.decisions
-                    if settlement_result is not None and settlement_result.awaiting
-                    else []
-                ),
-            }
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=_exception_detail(e)) from e
-    except SettlementAbort as e:
-        raise HTTPException(
-            status_code=409,
-            detail=_exception_detail(e),
-        ) from e
-    except (AudienceNightError, ExceptionGroup) as e:
-        raise _retryable_audience_close_http(e) from e
-    except LLMUnavailable as e:
-        raise HTTPException(status_code=412, detail=_exception_detail(e)) from e
-
-
 # #1341/#1338：PATCH /api/decree 已删（web/src 零真实调用方；裸设总诏绕过 directives
 # 结构化违 P1）。OpenAPI 随路由消失。改稿只走 PATCH /api/directives/{id}。
 
@@ -4829,27 +4774,43 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
 
 # #1902：非流式 POST /api/decree/issue 退役——颁布只有流式一条入口
 # （/api/decree/issue/stream），两条同源入口把同一编排复制一份。此路由曾独有
-# 的 typed 失败面已补进 SSE 终态：SettlementAbort 带 status_code=409 + stage +
-# error_pack_path 与真实 LLM 原因统一经 _exception_detail。
+# 的 typed 失败面已补进 SSE 终态：SettlementAbort 的 stage、error_pack_path
+# 与真实 LLM 原因统一经 _exception_detail。
 
 @app.post("/api/decree/issue/stream")
 async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
-    """流式颁诏：终态（done / decisions / error）经 SSE 推给前端。
+    return _month_entry_stream_response(body)
 
-    #1852：worker 只投终态。#1853 J5：不附 failed 密令专属载荷。
-    """
+
+@app.post("/api/decree/advance_without_edict/stream")
+async def api_advance_without_edict_stream(
+    body: AdvanceWithoutEdictRequest = AdvanceWithoutEdictRequest(),
+) -> StreamingResponse:
+    return _month_entry_stream_response(
+        IssueDecreeRequest(expected_turn=body.expected_turn), retreat=True,
+    )
+
+
+def _month_entry_stream_response(body: IssueDecreeRequest, *, retreat: bool = False) -> StreamingResponse:
+    """Same month-entry worker for issuing and retreating; only the gazette streams."""
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def worker() -> None:
         try:
             game = get_game()
             terminal: Optional[tuple[str, Any]] = None
-            with _settlement_period_entry(game, write_cm=_game_write_gate):
-                _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
-                result = game.session.resolve_turn(
-                    cheat_directive=body.cheat,
-                    write_gate_already_held=True,
-                )
+            with _settlement_period_entry(game, blocking=not retreat):
+                _reject_stale_month_token(game, body.expected_turn, token_label="退朝" if retreat else "颁诏")
+                on_gazette = lambda data: ev_queue.put(("gazette", data))
+                if retreat:
+                    result = game.session.advance_without_decree(
+                        write_gate_already_held=True, on_gazette=on_gazette,
+                    )
+                else:
+                    result = game.session.resolve_turn(
+                        cheat_directive=body.cheat,
+                        write_gate_already_held=True, on_gazette=on_gazette,
+                    )
                 decree = game.session.last_decree
                 if result.awaiting:
                     terminal = ("__decisions__", _settlement_player_payload(
@@ -4869,9 +4830,6 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     ))
             if terminal is not None:
                 ev_queue.put(terminal)
-        except ValueError as e:
-            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
-            ev_queue.put(("__error__", _exception_detail(e)))
         except HTTPException as e:
             detail = e.detail
             if isinstance(detail, dict):
@@ -4895,6 +4853,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         loop = asyncio.get_running_loop()
         while True:
             kind, data = await loop.run_in_executor(None, ev_queue.get)
+            if kind == "gazette":
+                yield sse_event(kind, data)
+                continue
             if kind == "__done__":
                 yield sse_event("done", data)
                 break
@@ -4929,12 +4890,13 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(
-                game, write_cm=_game_write_gate, hold_write_for_body=False,
+                game, hold_write_for_body=False,
             ):
                 report = game.session.submit_hitl_choices(
                     body.choices,
                     write_gate=_game_write_gate(game),
                     cheat_directive=body.cheat,
+                    on_gazette=lambda data: ev_queue.put(("gazette", data)),
                 )
                 decree = game.session.last_decree
                 with _game_write_gate(game):
@@ -4964,6 +4926,9 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         loop = asyncio.get_running_loop()
         while True:
             kind, data = await loop.run_in_executor(None, ev_queue.get)
+            if kind == "gazette":
+                yield sse_event(kind, data)
+                continue
             if kind == "__done__":
                 yield sse_event("done", data)
                 break

@@ -55,17 +55,18 @@ describe("consumeSettleStream HTTP errors", () => {
   });
 
   it("includes server JSON detail on non-OK responses", async () => {
+    const message = "无上次进度可继续，请先新游戏或加载存档。";
     const response = {
       ok: false,
       status: 404,
       body: null,
       async json() {
-        return { detail: "无上次进度可继续，请先新游戏或加载存档。" };
+        return { detail: message };
       },
     } as unknown as Response;
     await expect(
       consumeSettleStream(response, silent, { httpErrorLabel: "继续失败" }),
-    ).rejects.toThrow("无上次进度可继续，请先新游戏或加载存档。");
+    ).rejects.toHaveProperty("detail", { message });
   });
 
 });

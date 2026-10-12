@@ -1,5 +1,5 @@
 // 颁诏/续裁/菜单继续共用：消费 SSE 推演流。
-// #1852：结算流只认终态 done/decisions/error；菜单继续仍可走 stage 更新 busy 标签。
+// Only gazette snapshots are player narrative; simulation text/thinking stays hidden.
 import { ApiRequestError, normalizeApiError } from "./api";
 export type SettleStreamOutcome = { kind: "done" | "decisions" | "error"; data: any };
 
@@ -10,6 +10,7 @@ export type SettlementStageUpdate = {
 
 type SettleStreamCallbacks = {
   onStage?: (update: SettlementStageUpdate) => void;
+  onGazette?: (report: string) => void;
 };
 
 function consumeSettleBlocks(
@@ -30,6 +31,8 @@ function consumeSettleBlocks(
       callbacks.onStage?.({
         content: typeof data.content === "string" ? data.content : "",
       });
+    } else if (evName === "gazette" && typeof data.report === "string") {
+      callbacks.onGazette?.(data.report);
     } else if (evName === "error") return { kind: "error", data };
     else if (evName === "decisions") return { kind: "decisions", data };
     else if (evName === "done") return { kind: "done", data };
@@ -54,7 +57,8 @@ export async function consumeSettleStream(
       body = null;
     }
     const fallback = `${httpErrorLabel}：HTTP ${response.status}`;
-    throw new ApiRequestError(normalizeApiError(body, fallback), fallback);
+    const detail = normalizeApiError(body, fallback);
+    throw new ApiRequestError(detail, fallback);
   }
   if (!response.body) {
     throw new Error(`${httpErrorLabel}：HTTP ${response.status}`);
