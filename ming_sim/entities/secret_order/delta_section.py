@@ -29,9 +29,12 @@ def apply(run):
         raw_note = item.get("sim_note")
         if raw_note is None:
             raw_note = item.get("result")
-        sim_note = raw_note if isinstance(raw_note, str) else str(raw_note or "")
+        sim_note = raw_note
+        if sim_note is not None and not isinstance(sim_note, str):
+            rejections.append(RejectedItem(item=item, reason="sim_note 须为字符串", category="invalid_shape", source=run.ctx.source))
+            continue
         disclosed = item.get("disclosed") is True
-        if raw_id is None or not sim_note.strip():
+        if raw_id is None or sim_note is None or not sim_note.strip():
             rejections.append(RejectedItem(item=item, reason="order_id 或 sim_note 缺失", category="invalid_enum", source=run.ctx.source))
             continue
         try:

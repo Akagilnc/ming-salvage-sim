@@ -34,14 +34,14 @@ TODO_STATUS_CONSUMED = "consumed"
 def _stage_text_fields(item: Dict[str, object]) -> tuple[str, str] | None:
     """共同分段正文转换（criterion/origin 别名与回填）——读/写只此一处（#1897 K2）。
 
-    返回 (criterion_text, origin_context)；缺 criterion 时返回 None 由调用方决定
-    跳过（读）或拒收（写）。
+    返回 (criterion_text, origin_context)；缺正文返回 None，坏类型拒收。
     """
     # #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化。
-    criterion = str(item.get("criterion_text") or item.get("criterion") or "")
-    origin_context = str(
-        item.get("origin_context") or item.get("origin") or criterion or ""
-    )
+    for field in ("criterion_text", "criterion", "origin_context", "origin"):
+        if field in item and not isinstance(item[field], str):
+            raise TypeError(f"stages.{field} 须为字符串")
+    criterion = item.get("criterion_text") or item.get("criterion") or ""
+    origin_context = item.get("origin_context") or item.get("origin") or criterion
     if not criterion and origin_context:
         criterion = origin_context
     if not criterion:
@@ -246,8 +246,8 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
                     "commitment_ref": int(row["id"]),
                     "stage_idx": int(stage["stage_idx"]),
                     "due_turn": int(stage["due_turn"]),
-                    "criterion_text": str(stage["criterion_text"]),
-                    "origin_context": str(stage["origin_context"]),
+                    "criterion_text": stage["criterion_text"],
+                    "origin_context": stage["origin_context"],
                     "title": str(row["title"] or ""),
                     "origin_ref": str(row["origin_ref"] or ""),
                 })
@@ -316,8 +316,8 @@ def write_due_staged_commitment_todos(db: Any, state: Any) -> int:
             commitment_ref=int(item["commitment_ref"]),
             stage_idx=int(item["stage_idx"]),
             due_turn=int(item["due_turn"]),
-            criterion_text=str(item["criterion_text"]),
-            origin_context=str(item["origin_context"]),
+            criterion_text=item["criterion_text"],
+            origin_context=item["origin_context"],
             status=TODO_STATUS_PENDING,
             entry_kind=ENTRY_KIND_STAGED,
             created_turn=turn,

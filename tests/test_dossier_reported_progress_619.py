@@ -113,7 +113,8 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
     assert leaked == 0
 
 
-def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
+@pytest.mark.parametrize("bad_text", [{"bad": "text"}, ["bad"], False, 0])
+def test_secret_monthly_bad_prose_aborts_and_valid_report_stays_private(game, bad_text):
     db, state, content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
@@ -122,21 +123,38 @@ def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
         db, state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4,
     )
     dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
-
-    db.record_monthly_dossier_progress(state.turn, [{
+    bad_order_id = create_test_secret_order(
+        db, state, actor, "护行宁饷", "逐月办理", ["护行"], deadline_months=4,
+    )
+    bad_dossier_id = int(db.dossiers.get_for_secret_order(bad_order_id)["id"])
+    bad_item = {
+        "dossier_id": bad_dossier_id,
+        "progress_band": "在途",
+        "memorial_text": bad_text,
+    }
+    note = "首批已出关619"
+    from tests.section_rejection_helpers import run_declaration
+    good_item = {
         "dossier_id": dossier_id,
         "progress_band": "在途",
-        "memorial_text": "首批已出关619",
-    }])
+        "memorial_text": note,
+    }
+    with pytest.raises(AttributeError):
+        run_declaration(db, state, content, {"dossier_progress_reports": [good_item, bad_item]})
+    assert db.dossiers.list_dossier_progress(dossier_id) == []
+    assert db.dossiers.list_dossier_progress(bad_dossier_id) == []
+    run_declaration(db, state, content, {"dossier_progress_reports": [
+        good_item, {**bad_item, "memorial_text": note},
+    ]})
     rows = db.dossiers.list_dossier_progress(dossier_id)
     assert len(rows) == 1
-    assert rows[0]["memorial_text"] == "首批已出关619"
+    assert rows[0]["memorial_text"] == note
     assert rows[0]["origin"] == DOSSIER_REPORT_MONTHLY
 
     stored = db.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
-    assert json.loads(stored["dossier_progress_json"])[0]["memorial_text"] == "首批已出关619"
+    assert json.loads(stored["dossier_progress_json"])[0]["memorial_text"] == note
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM dossier_reported_progress WHERE dossier_id=?",
         (dossier_id,),

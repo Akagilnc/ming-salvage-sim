@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from ming_sim.settlement.dossier import apply_dossier_verdicts
 import json
+import pytest
 
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -602,13 +603,21 @@ def test_assignment_prose_year_promise_lands_no_staged_commitment(game):
         (int(issue["id"]),),
     ).fetchone()["c"] == 0
 
-def test_assignment_stages_prose_string_never_reaches_promulgation(game):
-    """``assignment.stages`` 给非 JSON 散文串：分派即 durable 坏形拒收。
+_BAD_STAGE_TEXTS = [
+    ("criterion_text", {"bad": "x"}), ("origin_context", ["n"]),
+    ("criterion", False), ("origin", 0),
+]
 
-    另一条路是字段本身就是 LLM 自由文本（「三年修渠五年通航」）。这里不盯拒收
-    措辞，只钉结构化契约面：该项落 ``invalid_shape`` 拒收、零暂存、零案卷——
-    散文段表没有任何路径能走到顺颁物化。
-    """
+
+@pytest.mark.parametrize("stages", [
+    "三年修渠五年通航",
+    *[
+        [{"due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事", field: value}]
+        for field, value in _BAD_STAGE_TEXTS
+    ],
+])
+def test_assignment_bad_stages_never_reach_promulgation(game, stages):
+    """坏 stages 在分派处拒收原值，不进入暂存或顺颁。"""
     db, state, content = game
     minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
@@ -620,7 +629,7 @@ def test_assignment_stages_prose_string_never_reaches_promulgation(game):
             "assignment": {
                 "title": "修渠", "target_id": "修渠",
                 "assignee": minister,
-                "stages": "三年修渠五年通航",
+                "stages": stages,
             },
         }]},
         minister=minister, night_id=night_id, ctid=ctid,
@@ -628,6 +637,7 @@ def test_assignment_stages_prose_string_never_reaches_promulgation(game):
 
     assert result.commissions.applied == []
     assert [r.category for r in result.commissions.rejected] == ["invalid_shape"]
+    assert result.commissions.rejected[0].item["assignment"]["stages"] == stages
     # 库层零暂存、零案卷：拒收发生在成案之前，散文无处可生段表。
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM pending_actions WHERE kind='directive'",
@@ -687,29 +697,32 @@ def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
         "SELECT COUNT(*) c FROM issues WHERE origin_ref=?", (origin_ref,),
     ).fetchone()["c"] == 0
 
-def test_new_issues_structured_stages_still_land(game):
-    """同一入口下显式结构化 ``stages`` 照常落段——删的是散文入口，不是能力。"""
+@pytest.mark.parametrize("field,bad_text", _BAD_STAGE_TEXTS)
+def test_new_issues_structured_stages_reject_bad_peer_and_land(game, field, bad_text):
+    """坏分段正文拒整项，合法同批承诺照常落段。"""
     db, state, content = game
     origin_ref = _promulgated_policy_origin(db, state, token="structured-1890")
 
+    good_item = {
+        "origin_kind": "decree", "origin_ref": origin_ref, "kind": "initiative",
+        "title": "徐光启分段之诺", "stage_text": "在办", "commitment_kind": "until_stop",
+        "ongoing_effects": {"民心": 1},
+        "stages": [
+            {"stage_idx": 0, "due_turn": 46, "criterion_text": "火器见眉目"},
+            {"stage_idx": 1, "due_turn": 70, "criterion_text": "新历成"},
+        ],
+    }
+    bad_item = {**good_item, "stages": [{**good_item["stages"][0], field: bad_text}]}
     out = settle_delta(
         state, db,
-        {"new_issues": [{
-            "origin_kind": "decree",
-            "origin_ref": origin_ref,
-            "kind": "initiative",
-            "title": "徐光启分段之诺",
-            "stage_text": "在办",
-            "commitment_kind": "until_stop",
-            "ongoing_effects": {"民心": 1},
-            "stages": [
-                {"stage_idx": 0, "due_turn": 46, "criterion_text": "火器见眉目"},
-                {"stage_idx": 1, "due_turn": 70, "criterion_text": "新历成"},
-            ],
-        }]},
+        {"new_issues": [bad_item, good_item]},
         SettlementContext(content=content),
     )
 
+    rejected = section(out, "issue_summary").rejected
+    assert [item.category for item in rejected] == ["invalid_shape"]
+    assert rejected[0].item == bad_item
+    assert len(out.issue.new_issues) == 1
     created = out.issue.new_issues[0]
     stages = normalize_commitment_stages(db.conn.execute(
         "SELECT stages_json FROM issues WHERE id=?", (int(created["issue_id"]),),

@@ -1736,6 +1736,8 @@ def _declared_intensity(raw: object) -> Optional[float]:
 
 def _investigation_declaration(
     sel: Mapping[str, object] | None,
+    rejections: List[RejectedItem],
+    source: Provenance,
 ) -> Dict[str, object]:
     """#1896 4a 对查案密令的声明读口：查法/投入强度/所查事实/传话/知情反应。
 
@@ -1767,15 +1769,16 @@ def _investigation_declaration(
     if fact:
         out["fact_key"] = fact
     raw_method = item["method"] if "method" in item else item.get("查法")
-    if raw_method is not None and not isinstance(raw_method, (Mapping, list)):
-        method = str(raw_method)
-        if method != "":
-            out["method"] = method
+    if raw_method is not None:
+        if not isinstance(raw_method, str):
+            rejections.append(RejectedItem(item=dict(item), reason="method 须为字符串", category="invalid_shape", source=source))
+        elif raw_method != "":
+            out["method"] = raw_method
     tip = item.get("tip_off", item.get("通风报信"))
     if isinstance(tip, Mapping):
-        source = str(tip.get("source", tip.get("递话人")) or "").strip()
-        if source:
-            out["tip_off"] = {"source": source}
+        tip_source = str(tip.get("source", tip.get("递话人")) or "").strip()
+        if tip_source:
+            out["tip_off"] = {"source": tip_source}
     spoil = item.get("spoliation", item.get("毁证"))
     if isinstance(spoil, Mapping):
         effect = str(spoil.get("effect") or "harder").strip()
@@ -1790,10 +1793,11 @@ def _investigation_declaration(
     suppress = item.get("suppression", item.get("压案"))
     if isinstance(suppress, Mapping):
         raw_form = suppress["form"] if "form" in suppress else suppress.get("方式")
-        if raw_form is not None and not isinstance(raw_form, (Mapping, list)):
-            form = str(raw_form)
-            if form != "":
-                out["suppression"] = {"form": form}
+        if raw_form is not None:
+            if not isinstance(raw_form, str):
+                rejections.append(RejectedItem(item=dict(item), reason="suppression.form 须为字符串", category="invalid_shape", source=source))
+            elif raw_form != "":
+                out["suppression"] = {"form": raw_form}
     return out
 
 
@@ -1843,12 +1847,24 @@ def apply_monthly_covert_actual_progress(
         did = int(dossier["id"])
         contract = require_covert_task_contract(dossier)
         sel = by_sel.get(oid) or {}
+        raw_note = sel.get("note", sel.get("备注"))
+        note: Optional[str] = None
+        if raw_note is not None:
+            if isinstance(raw_note, str):
+                note = raw_note
+            else:
+                rejections.append(RejectedItem(
+                    item={"order_id": oid, "note": raw_note},
+                    reason="密令 note 须为字符串",
+                    category="invalid_shape",
+                    source=source,
+                ))
         inv_target = _investigation_target_of(contract)
         if inv_target:
             result, item_rejections = _apply_investigation_selection(
                 db, order=order, dossier=dossier, sel=sel,
                 target=inv_target, investigator=minister, turn=turn,
-                source=source,
+                note=note, source=source,
             )
             # #1835 S1：查案拒收（整项或反应项）只走 canonical RejectedItem。
             rejections.extend(item_rejections)
@@ -1864,16 +1880,6 @@ def apply_monthly_covert_actual_progress(
         units = monthly_actual_units(
             fidelity=fidelity, originated_quantity=originated,
         )
-        note_raw = sel.get("note")
-        if note_raw is None or not str(note_raw).strip():
-            note_raw = sel.get("备注")
-        if note_raw is None or not str(note_raw).strip():
-            note = (
-                f"月度实进度：执行态{fidelity}（{units:g}）"
-                f"；origin_effects={originated}"
-            )
-        else:
-            note = str(note_raw)
         row = db.dossiers.record_actual_progress(
             did,
             turn,
@@ -1907,6 +1913,7 @@ def _apply_investigation_selection(
     target: str,
     investigator: str,
     turn: int,
+    note: Optional[str],
     source: Provenance = Provenance.system_simulation,
 ) -> Tuple[Optional[Dict[str, object]], List[RejectedItem]]:
     """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。
@@ -1929,7 +1936,7 @@ def _apply_investigation_selection(
     existing = db.dossiers.read_apply_investigation_selection(
         (did, int(turn))
     )
-    declaration = _investigation_declaration(sel)
+    declaration = _investigation_declaration(sel, reaction_rejections, source)
     invalid = str(declaration.get("invalid") or "")
     if invalid.strip():
         return None, [RejectedItem(
@@ -1949,7 +1956,7 @@ def _apply_investigation_selection(
             "mastered_facts": [],
             "originated_quantity": 0.0,
             "already_applied": True,
-        }, []
+        }, reaction_rejections
     # 真实传话声明先落账：知情判定的唯一来源就是它（关系边存在不算）。
     tip = declaration.get("tip_off")
     tip_source = str(tip.get("source") or "").strip() if isinstance(tip, Mapping) else ""
@@ -1987,7 +1994,7 @@ def _apply_investigation_selection(
                 item={
                     "order_id": oid,
                     "reaction": "suppression",
-                    "form": str(suppression.get("form") or ""),
+                    "form": suppression["form"],
                 },
                 reason="无真实关系网知情来源，不承接压案声明",
                 category="missing_ref",
@@ -2017,34 +2024,15 @@ def _apply_investigation_selection(
                 origin_ref=f"dossier:{did}", turn=turn,
             )
     units = float(result.get("units") or 0.0)
-    sel_map = sel if isinstance(sel, Mapping) else {}
-    if "note" in sel_map:
-        raw_note = sel_map.get("note")
-    elif "备注" in sel_map:
-        raw_note = sel_map.get("备注")
-    else:
-        raw_note = None
     # 查案 note = 密奏正文（可谎）：入奏报轨，不入实况轨（DELTA_SCHEMA / #1897 R1）。
     # 复用 update_secret_order_progress 既有奏报写口（自带进展档），不另造 band 前置。
-    # 坏正文项级拒收留原值；不洗白，也不撤销合法投入和同批其他密令。
-    memorial_note: Optional[str] = None
-    if raw_note is not None:
-        if isinstance(raw_note, str):
-            memorial_note = raw_note
-        else:
-            reaction_rejections.append(RejectedItem(
-                item={"order_id": oid, "note": raw_note},
-                reason="密奏 note 须为字符串",
-                category="invalid_shape",
-                source=source,
-            ))
     row = db.dossiers.record_actual_progress(
         did, turn, units=units, fidelity_state="", floor_state="",
         note=None, commit=False,
     )
-    if memorial_note is not None:
+    if note is not None:
         # 既有写口自带进展档；空/空白正文按其合同不落条，仍须标在办。
-        db.update_secret_order_progress(oid, memorial_note, commit=False)
+        db.update_secret_order_progress(oid, note, commit=False)
     db.dossiers.mark_secret_order_in_progress(oid, commit=False)
     applied: Dict[str, object] = {
         "order_id": oid,

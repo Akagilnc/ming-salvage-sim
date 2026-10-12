@@ -664,8 +664,8 @@ class DossierStore:
                 int(commitment_ref),
                 int(stage_idx),
                 int(due_turn),
-                str(criterion_text or ""),
-                str(origin_context or ""),
+                criterion_text,
+                origin_context,
                 str(status or "pending") or "pending",
                 str(entry_kind or "staged_commitment") or "staged_commitment",
                 int(created_turn or 0),
@@ -1750,7 +1750,7 @@ class DossierStore:
         owns = self._owns()
         dossier = self.get(int(dossier_id))
         band = str(progress_band or "")
-        text = str(memorial_text or "")
+        text = memorial_text
         if dossier is None:
             raise ValueError("案卷不存在")
         # 终值旁路行只载定性 band，引擎不自造密奏（decree_vocabulary.terminal_report_facade）。
@@ -1962,7 +1962,7 @@ class DossierStore:
                 float(units),
                 str(fidelity_state),
                 str(floor_state),
-                str(note or ""),
+                note if note is not None else "",
                 origin,
                 note,
             ),
@@ -1978,7 +1978,7 @@ class DossierStore:
             "units": float(units),
             "fidelity_state": str(fidelity_state),
             "floor_state": str(floor_state),
-            "note": str(note or ""),
+            "note": note if note is not None else "",
             "origin_ref": origin,
         }
 
