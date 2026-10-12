@@ -35,7 +35,7 @@ _ISSUE_ENTITY_FIELDS = {
 }
 
 
-def admit_fresh_mapping_sections(
+def admit_issue_effect_sections(
     effect: Dict[str, object],
     *,
     source: Provenance = Provenance.system_simulation,
@@ -43,11 +43,11 @@ def admit_fresh_mapping_sections(
 ) -> tuple[Dict[str, object], List[RejectedItem]]:
     """Reject malformed top-level effect containers using ``_ISSUE_ENTITY_FIELDS``.
 
-    Fresh new/close/cancel entry: ``container=None`` — check every
-    registered section type, strip bad keys (including ``None``) so same-named
-    presets survive a shallow merge; durable loaders stay loud.
-    List fields inside ``_apply_issue_entities`` use the same rejection and key
-    removal; mapping fields there remain subject to their durable loaders.
+    Sole admission for registered issue terminal-effect sections (mapping and
+    list). ``container=None`` checks every registered type and strips bad keys
+    (including ``None``) so same-named presets survive a shallow merge.
+    ``_apply_issue_entities`` reuses this for list fields; mapping fields there
+    remain subject to their durable loaders.
     """
     cleaned = dict(effect)
     rejected: List[RejectedItem] = []
@@ -78,14 +78,6 @@ def _apply_issue_buildings(
     applied: List[Dict[str, object]] = []
     rejected: List[RejectedItem] = []
     if ops is None:
-        return applied, rejected
-    if not isinstance(ops, list):
-        rejected.append(RejectedItem(
-            item={"raw_value": ops},
-            reason="局势建筑效果须为数组",
-            category="invalid_shape",
-            source=source,
-        ))
         return applied, rejected
     for op in ops:
         if not isinstance(op, dict):
@@ -216,7 +208,7 @@ def _apply_issue_entities(
         tolerated.append(RejectedItem(item={"field": key, "raw_value": effect[key]}, reason="局势效果字段不可执行", category="invalid_shape", source=source))
     # Strip rejected list sections once so downstream handlers cannot reject them again.
     # Mapping sections retain their durable-loading contract.
-    effect, list_rejections = admit_fresh_mapping_sections(
+    effect, list_rejections = admit_issue_effect_sections(
         effect, source=source, container=list,
     )
     tolerated.extend(list_rejections)

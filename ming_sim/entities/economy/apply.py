@@ -41,9 +41,7 @@ def _apply_economy_list(
     from ming_sim.assets import format_wanliang_amount
     from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
     applied: List[Dict[str, object]] = []
-    # isinstance 守卫：issue-effect 的 economy（来自 enrich，未经 schema 清洗）可能被 LLM 给成真值
-    # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117
-    # 同 bug 类，与 _apply_issue_buildings 的 list 守卫一致）。此处是 economy 应用 choke，护全部调用点。
+    # Guard non-list input for all callers, including economy delta and dossier (#117).
     if not isinstance(economy, list):
         return [], [RejectedItem(item={"raw_value": economy}, reason="经济效果须为数组", category="invalid_shape", source=source)]
     for move in economy:
