@@ -786,9 +786,14 @@ def apply_issue_tracker_output(
 
     # 4) cancels
     for cn in tracker_output.get("cancels", []) or []:
-        issue_id = int(cn.get("issue_id"))
+        try:
+            issue_id = strict_types._parse_sqlite_id(cn.get("issue_id"))
+        except (TypeError, ValueError) as exc:
+            entity_rejections.append(RejectedItem(item=cn, reason=str(exc), category="invalid_enum", source=source))
+            continue
         row = db.issues.row(issue_id)
         if row is None or row["status"] != "active":
+            entity_rejections.append(RejectedItem(item=cn, reason=f"cancels 引用未找到或已非 active 的 issue {issue_id}", category="missing_ref", source=source))
             continue
         if row["cancellable"] != "decree":
             # 不可撤：当作 advance 处理（皇威 -2）

@@ -15,6 +15,7 @@ import pytest
 
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.public_sayings import list_public_sayings
+from ming_sim.relations import EMPEROR_NODE
 from tests.readback_helpers import active_character_name as _minister
 
 
@@ -545,13 +546,24 @@ def test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_d
     declaration = {
         "edge_events": [
             {"source": a, "target": b, "event_kind": "撑腰", "context": "当殿举荐"},
+            {"source": a, "target": EMPEROR_NODE, "event_kind": "结怨", "context": "因贬斥生怨"},
+            {"source": EMPEROR_NODE, "target": a, "event_kind": "知遇", "context": "御前拔擢"},
             {"source": a, "target": b, "event_kind": "不存在的类目", "context": "…"},
             {"source": a, "target": "子虚乌有之人", "event_kind": "撑腰", "context": "…"},
             {"source": a, "target": b, "event_kind": "撑腰", "context": ""},
         ],
     }
     result = dispatch_declaration(db, state, declaration)
-    assert len(result.edge_events.applied) == 1
+    rows = {
+        tuple(db.conn.execute(
+            "SELECT source, target, event_kind FROM relation_edge_events WHERE id=?",
+            (item["id"],),
+        ).fetchone())
+        for item in result.edge_events.applied
+    }
+    assert rows == {
+        (a, b, "撑腰"), (a, EMPEROR_NODE, "结怨"), (EMPEROR_NODE, a, "知遇"),
+    }
     by_category = {r.category for r in result.edge_events.rejected}
     assert by_category == {"invalid_enum", "hallucinated_id", "invalid_shape"}
 

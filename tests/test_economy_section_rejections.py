@@ -11,6 +11,7 @@ from __future__ import annotations
 
 
 from functools import partial
+import json
 
 import pytest
 
@@ -116,8 +117,7 @@ def test_noop_bad_account_skipped_not_rejected(game):
 
 
 def test_issue_effect_cancel_economy_reaches_reports(game):
-    """撤局势 applied_cost 的 economy 账户非法 → 拒收经 issue_summary.rejected 达 rejection_reports
-    （issue-effect 第二条路 cancel，sourcery r1 覆盖；与 close 路同 sink）。"""
+    """Cancel refusals retain each bad reference/cost without losing valid siblings."""
     db, state, content = game
     turn = state.turn
     issue_id = db.insert_issue(
@@ -127,14 +127,40 @@ def test_issue_effect_cancel_economy_reaches_reports(game):
         tags=[], ongoing_effects={}, effect_on_resolve={}, effect_on_fail={},
         resolve_condition="", fail_condition="", cancellable="decree",
     )
+    inactive_ids = {}
+    for status in ("resolved", "failed", "dropped"):
+        inactive_id = db.insert_issue(state, kind="initiative", title=status,
+                                      cancellable="decree")
+        db.issues.update(inactive_id, {"status": status})
+        inactive_ids[inactive_id] = status
     db.conn.commit()
 
-    run_settle(db, state, content, {
-        "cancels": [{"issue_id": issue_id,
+    invalid_refs = [{"issue_id": value} for value in
+                    ("oops", None, True, False, 1.5, float(issue_id), 10**100, -(10**100))]
+    invalid_refs.append({})
+    missing_refs = [{"issue_id": -1}, *({"issue_id": i} for i in inactive_ids)]
+    result = run_settle(db, state, content, {
+        "metric_delta": {"皇威": 1},
+        "cancels": [*invalid_refs, *missing_refs,
+                    {"issue_id": str(issue_id),
                      "applied_cost": {"economy": [{"account": "金库", "delta": -4, "reason": "非法"}]},
                      "narrative": "撤"}],
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn, "issue_summary")
-            if r[2] == "invalid_enum"]
-    assert len(rows) == 1, rows
+    outcome = result.effects.applied[0]
+    assert outcome.metric.applied == [("皇威", 1)]
+    assert [item["issue_id"] for item in outcome.issue.cancels] == [issue_id]
+    assert db.issues.row(issue_id)["status"] == "dropped"
+    assert {i: db.issues.row(i)["status"] for i in inactive_ids} == inactive_ids
+
+    rows = rejection_rows(db, turn, "issue_summary",
+                          columns="item_json, reason, category, source")
+    assert len(rows) == len(invalid_refs) + len(missing_refs) + 1
+    expected_refs = [(item, "invalid_enum") for item in invalid_refs]
+    expected_refs += [(item, "missing_ref") for item in missing_refs]
+    for row, (item, category) in zip(rows, expected_refs):
+        assert json.loads(row["item_json"]) == item
+        assert row["category"] == category
+    assert rows[-1]["category"] == "invalid_enum"  # The existing bad-cost refusal.
+    assert all(row["reason"] and row["source"] == "player_decree" for row in rows)
+    assert len(outcome.issue.rejected) == len(rows)

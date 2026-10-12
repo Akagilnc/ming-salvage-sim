@@ -199,6 +199,9 @@ def test_month_end_extractor_appends_self_dispatched_participant(game):
     {"character_id": "worker", "tier": "", "delegator_id": "lead"},
     {"character_id": "worker", "tier": "旁听", "delegator_id": "lead"},
     {"character_id": "worker", "tier": "协办", "delegator_id": ""},
+    {"character_id": "missing-participant", "tier": "协办", "delegator_id": "lead"},
+    {"character_id": "worker", "tier": "协办", "delegator_id": "missing-delegator"},
+    {"character_id": "worker", "tier": "协办", "delegator_id": "worker"},
 ])
 def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch):
     db, state, _content = game
