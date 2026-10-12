@@ -655,11 +655,12 @@ def dispatch_declaration(
 
 
 def stage_declaration(
-    db: Any, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
+    db: Any, *, decree_ref: str, declaration: Optional[Mapping[str, object]], turn: int,
     verdict: Optional[Mapping[str, object]] = None,
     questions: Optional[list] = None,
     forecast_text: Optional[str] = None,
     visible_refs: Optional[Mapping[str, object]] = None,
+    staged_id: Optional[int] = None,
 ) -> int:
     """旨意夜里预推：把一份声明暂存，不落账、不进材料目录、不上界面（ADR 0157
     步骤 1）。``decree_ref`` 是该旨自己的标识，落账顺序（下旨先后）与幂等判据
@@ -674,6 +675,7 @@ def stage_declaration(
         decree_ref=decree_ref, declaration=declaration, turn=turn,
         verdict=verdict, questions=questions, forecast_text=forecast_text,
         visible_refs=visible_refs or {},
+        staged_id=staged_id,
     )
 
 
@@ -734,7 +736,7 @@ def settle_staged_declarations_in_decree_order(
         with atomic_and_reload(db, state, content=db.content):
             if not db.staged_declarations.is_settled(decree_ref):
                 staged = db.staged_declarations.staged_for(decree_ref)
-                if staged:
+                if staged and all(item.declaration is not None for item in staged):
                     merged = _empty_dispatch_result()
                     for item in staged:
                         merged = merged.merge(_dispatch_declaration_sections(
