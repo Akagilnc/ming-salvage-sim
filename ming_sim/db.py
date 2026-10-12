@@ -716,8 +716,7 @@ def resolve_office_type_preserving_title(
         return declared
     return infer_office_type_from_office(office, declared or fallback, llm_config, use_llm=use_llm)
 
-# #567 / ADR 0054：押解实抵 clamp 界（北极星 30 两面值 → 无护 15-18 / 有护 22-25）。
-# 代码只 clamp；软判提案落在界内原样收。比例相对 30 锚定，保证有护下界 > 无护上界。
+# Engine-owned arrival bounds (#567 / #1900), scaled from 30; escorted minimum exceeds bare maximum.
 _GRANT_ARRIVAL_SCALE = 30
 _GRANT_ARRIVAL_BARE = (15, 18)
 _GRANT_ARRIVAL_ESCORT = (22, 25)
@@ -6362,10 +6361,6 @@ class GameDB:
         payload = parse_engine_payload_json(row["payload_json"])
         return payload_declares_escort(payload)
 
-    # #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。
-    # 普通押解仍走 grant.escort→participant_roster；关联槽仍走 decree_dossier_links。
-    # 功能接续留家族收尾，缺口记 #1873。
-
     def list_monthly_grant_reconciliation_targets(
         self, turn: Optional[int] = None,
     ) -> List[Dict[str, object]]:
@@ -6378,7 +6373,7 @@ class GameDB:
         实付，未付面额不算损耗。真正零出库的 failed 不进扫描面。不带 ``turn``
         （供料读侧）只看在途，不翻历史结案。
 
-        专用逐路实况账本已退役；``escorted`` 字段保留形状但本切片恒为无护。
+        押解认定复用同一道拨银交办的声明；不另立护送账本。
         """
         if turn is None:
             rows = self.dossiers.read_list_monthly_grant_reconciliation_targets()
@@ -6413,11 +6408,10 @@ class GameDB:
                 if paid <= 0:
                     continue
                 basis = paid
-            # 专用逐路实况账本已退役（#1900 J18）；核账按无护口径，缺口记 #1873。
             targets.append({
                 "dossier_id": dossier_id,
                 "ordered_amount": basis,
-                "escorted": False,
+                "escorted": payload_declares_escort(payload),
                 "escort_source_dossier_id": None,
                 "relation_type": "",
                 "escort_note": "",
@@ -6430,11 +6424,10 @@ class GameDB:
     def record_monthly_grant_reconciliations(
         self, turn: int,
     ) -> List[Dict[str, object]]:
-        """月度节拍：逐路由引擎按既有押解折损范围定实抵与损耗 → 落被护侧对账记录。
+        """Monthly tick: derive grant arrivals/losses from engine bounds and persist reconciliation.
 
         #1900：沿途损耗归引擎（#1820 后出，取代 0054 的「LLM 软判实抵＋clamp」）。
-        本方法不再接任何提案——实抵取该路护行口径区间的中位；专用逐路实况账本
-        已退役，本切片核账按无护口径（缺口记 #1873）。
+        本方法不再接任何提案——实抵取该路护行口径区间的中位。
         不写 0058 进展、不二次扣库、不改原 economy_move。
 
         分段过月会多次调本写入：已有本回合行的路不再覆盖（不拿后段中位盖前段实抵）。

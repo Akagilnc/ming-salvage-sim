@@ -928,6 +928,7 @@ def _commission_grant_payload(
         payload["grant_action"] = "协饷"
         payload["dossier_action_type"] = "grant_allocation"
         payload["execution_surface"] = "immediate"
+        _attach_commission_escort(db, grant, payload)
         return payload
 
     shaped = require_grant_allocation_shape(
@@ -1344,8 +1345,6 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
             actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
-            # 另行暗护沿既有密令声明入口；专用暂存资格校验与双载体承接已退役。
-            # 已记录拨银可由密令载荷 dossier_links 走既有关联槽（功能接续 #1873）。
             # 差务契约在此一次冻结并校验：落不成案的原因此刻即知，写一条
             # durable 拒收让下一句戏文里的大臣自己复述/请示（ADR 0155 场中
             # 承接），不留一条注定落不了库的暂存。
@@ -1353,9 +1352,6 @@ def _dispatch_commissions(
                 CovertContractError, build_covert_task_contract,
             )
             try:
-                # 差务契约在此一次冻结并校验：落不成案的原因此刻即知，写一条
-                # durable 拒收让下一句戏文里的大臣自己复述/请示（ADR 0155 场中
-                # 承接），不留一条注定落不了库的暂存。
                 frozen_task = build_covert_task_contract(covert_task=secret.get("covert_task"))
             except (CovertContractError, TypeError, ValueError, OverflowError) as exc:
                 _reject(rejected, item, f"密令差务契约不成立：{exc}", "invalid_shape", source)
@@ -1387,9 +1383,7 @@ def _dispatch_commissions(
                 continue
             # ADR 0005 决定 2：可选集合字段坏类型只拒本项，不带走同批合法交办。
             tags = _declared_str_list(secret.get("tags"))
-            # dossier_links 不是字符串数组：现役消费者 db.dossiers.add_links 收的是
-            # 关联对象 {target_dossier_id, relation_type, note}（ADR 0054:5 案卷
-            # 关联契约）。按既有字段契约校验形状，坏类型同样只拒本项。
+            # dossier_links uses the object-array contract in _declared_dossier_links.
             links = _declared_dossier_links(secret.get("dossier_links"))
             if tags is None:
                 _reject(
@@ -1904,14 +1898,11 @@ def _declared_str_list(raw: object) -> Optional[List[str]]:
 
 
 def _declared_dossier_links(raw: object) -> Optional[List[Dict[str, object]]]:
-    """密令的案卷关联声明：现役消费者 ``GameDB.add_dossier_links`` 收的是关联
-    对象 ``{target_dossier_id, relation_type, note}``（ADR 0054:5），不是字符串
-    数组——按既有字段契约校验，不得把合法关联当脏数据拒掉。整体非序列 / 元素非
-    对象返回 None，由调用方逐项 durable 拒收（ADR 0005 决定 2 只拒本项）。
+    """Read an object array for ``DossierStore.add_links`` (ADR 0054).
 
-    元素内部不预判：目标案卷是否存在、类型是否在闭集、说明是否为空，都由
-    ``add_dossier_links`` 在成案那一刻按它自己的契约逐条判并留痕，此处不抢
-    它的判、也不替 LLM 猜。
+    Non-sequences or non-object entries return None for per-item rejection.
+    Target existence, relation types and note validation belong to that store
+    method at dossier creation, not to this shape reader.
     """
     if raw is None:
         return []

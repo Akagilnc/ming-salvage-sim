@@ -44,7 +44,6 @@
   "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
   "secret_dossier_participants": [], // #1252 密令案卷参与人追加（密令私字段，与公共参与人分立）
   "authority_changes": [], // 授予/收回持有型特权（ADR 0071 / #611）
-  // #1900：dossier_reconciliations 已退役（沿途损耗归引擎），不再列入本形状。
   "faction_denunciations": [], // 政敌检举条目（#627 / ADR 0077 ID-12）
 
   // ── 密令私密声明字段（旧五模块 personnel_secret extractor 已退役；字段名仍标 provenance）──
@@ -377,19 +376,11 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 ### ~~`dossier_reconciliations`~~ — 已退役（#1900）
 
-**#1900：沿途损耗归引擎**（#1820 后出，取代 0054 的「LLM 软判实抵＋代码只 clamp」）。
-本 section 已从 `EMPTY_EXTRACTION` 与分派器消费口一并删除，不再有任何产出方或消费方；
-连同 `clamp_grant_arrival_amount` 及其坏提案拒收一族一并退役。
-
-现行口径：月度对账口 `record_monthly_grant_reconciliations(turn)` **不接提案**——实抵与损耗由
-引擎给出：`arrived = (grant_arrival_bounds(ordered, escorted=…) 的中位)`，
-`loss = ordered - arrived`。#1900 已撤销的专用逐路实况账本 / 双载体承接 / 聚合读口 /
-`escort_results`·`escort_links` 分节与入口专用资格校验已退役；本切片核账按无护口径，
-功能接续留家族收尾，缺口记 #1873。仍**不二次扣库**、不改原 `economy_move`、不写 0058 进展。
-扫描面带 `turn` 时含**本回合结案**的在途拨帑（`status='closed' AND closed_turn=turn`）：
-正常结案与办理失败都不免除该次核账。核账基数是已经离开账本的实银（`dossier_paid_amount`）：
-足额时等于面额；不足额但已有出库时按实付，再沿既有折损范围定实抵和损耗，
-未付面额不计损耗。真正零出库的 failed 不进扫描面。不带 `turn` 的供料读侧只看在途，不翻历史结案。
+该字段已从声明契约和分派消费口删除。沿途损耗由引擎核账，不接 LLM 实抵提案。
+现役核账与扫描范围见 [`GameDB.record_monthly_grant_reconciliations` / `list_monthly_grant_reconciliation_targets`](../ming_sim/db.py)；
+核账记录读口为 [`DossierStore.reconciliations`](../ming_sim/entities/dossier/store.py)。
+普通押解载荷见下节 `commissions[].grant.escort`；已撤销的专用机制见下方退役节。
+暗护接续按 [#1900 2026-10-12（续）授权退路](https://github.com/Akagilnc/ming-salvage-sim/issues/1900) 延后。
 
 ### `commissions[].grant.escort` — 押解随拨银旨（#1900）
 
@@ -402,9 +393,8 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 ### ~~`commissions[].secret_order.escort_pending_targets` / `escort_sources` / `escort_links` / `escort_results` / `dossier_escort_outcomes`~~ — 已退役（#1900 J18）
 
 旧处方新造的暗护双载体承接、专用实况账本、配对聚合读口、入口专用资格校验及分节声明已随
-ADR 0054／0058 已署修订与 #1812 删简验收一并退役；不另造替代机制。另行暗护玩法本身未宣布取消，
-功能如何接续留家族收尾，缺口记 #1873。既有 `decree_dossier_links` 关联槽与密令 `dossier_links`
-载荷仍属 0054 通用关联，不在本条「已退役专用机制」之列。
+ADR 0054／0058 已署修订与 #1812 删简验收一并退役。既有 `decree_dossier_links` 关联槽与密令
+`dossier_links` 载荷仍属 0054 通用关联，不在本条「已退役专用机制」之列。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 主生产路径＝月链 4a 供料（`run_secret_orders_supply`）产物，由 `_step_4a_secret_order_supply` **直接** `db.record_monthly_dossier_progress` 消费，**不经** `declaration_dispatch`/`settle_delta`。声明 effects 亦可带本段（专属写入口；`defer_monthly_secret_supply` 时延后到独立供料，不与 4a 拼成一条通用 settle 链）。旧五模块 extractor 包装已退役。

@@ -1,9 +1,16 @@
 from __future__ import annotations
 """#1900 ordinary grant.escort living contracts (revoked specialized escort paths retired)."""
 
+from contextlib import closing
+
+import pytest
 
 from ming_sim.applier import Provenance
+from ming_sim.db import GameDB
 from ming_sim.declaration_dispatch import dispatch_declaration
+from tests.test_audience_translate_1837_reopen import (
+    _close_offline, _player_month, _scene_declaration,
+)
 from tests.test_grant_reconciliation_567 import ORDERED, _actor
 
 def _declare(db, state, declaration, *, night_id=0, chat_turn_id=0):
@@ -17,10 +24,15 @@ def _escort_entry(db, name, *, tier="协办", role="押解护送"):
     """ADR 0053 押解参与人条目（代码不猜机械档，条目自带）。"""
     return {"character_id": name, "tier": tier, "role": role, "delegator_id": None}
 
-def _dossier_for_pending(db, state, pending_action_id):
-    """把一条已应允的 directive 暂存走收夜成案核，返回成案案卷 id。"""
-    db.mark_pending_night_approved([int(pending_action_id)])
-    db.commit_pending_actions(state, action_ids=[int(pending_action_id)])
+def _dossier_for_pending(db, state, content, monkeypatch, pending_action_id):
+    """Player approval and closing the night materialize the staged grant."""
+    from ming_sim.audience_night import get_open_night
+
+    approved = _scene_declaration(db, state, content, monkeypatch, "准。", {
+        "promises": [{"action_id": int(pending_action_id), "decision": "应允"}],
+    })
+    assert approved.promises.rejected == []
+    _close_offline(db, state, content, int(get_open_night(db)["id"]))
     db.ensure_dossiers_for_draft_directives(state)
     row = db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=? ORDER BY id LIMIT 1",
@@ -31,16 +43,20 @@ def _dossier_for_pending(db, state, pending_action_id):
 
 
 
-def test_commission_declares_escort_inside_same_grant_decree(game):
+@pytest.mark.parametrize("grant_action", ["赈灾", "协饷"])
+def test_commission_declares_escort_inside_same_grant_decree(game, monkeypatch, grant_action):
     """真实入口：同一道拨银交办里写押解人 → 暂存载荷带上它，且人进本案参与人名册。"""
-    db, state, _content = game
+    db, state, content = game
     actor = _actor(db)
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), ORDERED * 3 + 50)
-    result = _declare(db, state, {"commissions": [{
+    result = _scene_declaration(db, state, content, monkeypatch, "拨银，着人押解。", {"commissions": [{
         "text": f"拨银三十万两往陕西，着{actor}押解护送，沿途照关防。",
         "grant": {
-            "grant_action": "赈灾", "amount": ORDERED, "account": "内库",
-            "target_kind": "region", "target_id": "shaanxi",
+            "grant_action": grant_action, "amount": ORDERED, "account": "内库",
+            "cadence": "一次性",
+            **({"purpose": "补饷"} if grant_action == "协饷" else {}),
+            "target_kind": "army" if grant_action == "协饷" else "region",
+            "target_id": "guanning" if grant_action == "协饷" else "shaanxi",
             "escort": {
                 "escortees": [_escort_entry(db, actor, tier="主办", role="押解护送")],
                 "note": "沿途照关防",
@@ -55,11 +71,27 @@ def test_commission_declares_escort_inside_same_grant_decree(game):
     assert staged["participant_roster"] == [{
         "character_id": actor, "tier": "主办", "role": "押解护送", "delegator_id": None,
     }]
-    dossier_id = _dossier_for_pending(db, state, int(result.commissions.applied[0]["id"]))
+    dossier_id = _dossier_for_pending(db, state, content, monkeypatch, int(result.commissions.applied[0]["id"]))
     roster = db.dossiers.get(dossier_id)["participant_roster"]
     assert {
         "character_id": actor, "tier": "主办", "role": "押解护送", "delegator_id": None,
     } in roster
+    assert db.dossier_declares_escort(dossier_id) is True
+    db.reign.save_game_state(state)
+    _player_month(db, state, content, monkeypatch, dossier_id)
+    rows = db.dossiers.reconciliations(dossier_id)
+    if grant_action == "赈灾":
+        assert rows[0]["escorted"] is True
+        assert 22 <= rows[0]["arrived_amount"] <= 25
+        assert rows[0]["loss_amount"] == ORDERED - rows[0]["arrived_amount"]
+    else:
+        # Existing xiexang is immediate, not an in-transit grant.
+        assert rows == []
+    with closing(GameDB(db.path, content=content)) as reopened:
+        assert reopened.dossier_declares_escort(dossier_id) is True
+        assert reopened.dossiers.get(dossier_id)["participant_roster"] == roster
+        assert reopened.dossiers.reconciliations(dossier_id) == rows
+        assert reopened.list_monthly_grant_reconciliation_targets() == db.list_monthly_grant_reconciliation_targets()
 
     other = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND name!=? ORDER BY name LIMIT 1",
@@ -85,13 +117,17 @@ def test_commission_declares_escort_inside_same_grant_decree(game):
     assert names == {actor, other}
 
 
-def test_commission_malformed_escort_is_rejected_not_dropped(game):
+@pytest.mark.parametrize("grant_action", ["赈灾", "协饷"])
+def test_commission_malformed_escort_is_rejected_not_dropped(game, grant_action):
     """已声明却不是 ADR 0053 条目形状的押解安排 → 逐项拒收，不静默消失。"""
     db, state, _content = game
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), ORDERED * 3 + 50)
     base = {
-        "grant_action": "赈灾", "amount": ORDERED, "account": "内库",
-        "target_kind": "region", "target_id": "shaanxi",
+        "grant_action": grant_action, "amount": ORDERED, "account": "内库",
+        "cadence": "一次性",
+        **({"purpose": "补饷"} if grant_action == "协饷" else {}),
+        "target_kind": "army" if grant_action == "协饷" else "region",
+        "target_id": "guanning" if grant_action == "协饷" else "shaanxi",
     }
     for escort in (
         "押解",                                   # 声明了却不是对象
@@ -182,11 +218,11 @@ def test_commission_escort_names_must_exist(game):
     assert [r.category for r in result.commissions.rejected] == ["hallucinated_id"]
 
 
-def test_commission_without_escort_declares_none(game):
+def test_commission_without_escort_declares_none(game, monkeypatch):
     """没写押解的拨银交办不夹带押解（代码不猜）。"""
-    db, state, _content = game
+    db, state, content = game
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), ORDERED * 3 + 50)
-    result = _declare(db, state, {"commissions": [{
+    result = _scene_declaration(db, state, content, monkeypatch, "拨银往陕西赈灾。", {"commissions": [{
         "text": "拨银三十万两往陕西赈灾。",
         "grant": {
             "grant_action": "赈灾", "amount": ORDERED, "account": "内库",
@@ -195,3 +231,15 @@ def test_commission_without_escort_declares_none(game):
     }]})
     assert result.commissions.rejected == []
     assert "escort" not in result.commissions.applied[0]["payload"]
+    dossier_id = _dossier_for_pending(db, state, content, monkeypatch, int(result.commissions.applied[0]["id"]))
+    assert db.dossier_declares_escort(dossier_id) is False
+    db.reign.save_game_state(state)
+    _player_month(db, state, content, monkeypatch, dossier_id)
+    rows = db.dossiers.reconciliations(dossier_id)
+    assert rows[0]["escorted"] is False
+    assert 15 <= rows[0]["arrived_amount"] <= 18
+    assert rows[0]["loss_amount"] == ORDERED - rows[0]["arrived_amount"]
+    with closing(GameDB(db.path, content=content)) as reopened:
+        assert reopened.dossier_declares_escort(dossier_id) is False
+        assert reopened.dossiers.reconciliations(dossier_id) == rows
+        assert reopened.list_monthly_grant_reconciliation_targets() == db.list_monthly_grant_reconciliation_targets()
