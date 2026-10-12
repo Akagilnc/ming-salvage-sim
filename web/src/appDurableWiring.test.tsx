@@ -1099,7 +1099,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
 
   });
 
-  it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
+  it.each([true, false])("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹（流式=%s）", async (streaming) => {
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();
     let liveState: Record<string, unknown> = {
@@ -1151,6 +1151,24 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(streamController).toBeTruthy());
     });
+
+    if (streaming) {
+      await act(async () => {
+        streamController.enqueue(encoder.encode(
+          `event: gazette\ndata: ${JSON.stringify({ report: "十月" })}\n\n`,
+        ));
+      });
+      // The author is still writing: the live document is on the main face,
+      // but neither the month nor the reading-dismiss action has advanced.
+      expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
+      expect(host.querySelector<HTMLButtonElement>(".gazette-dismiss-btn")?.disabled).toBe(true);
+      await act(async () => {
+        streamController.enqueue(encoder.encode('event: gazette\ndata: {"report":""}\n\n'));
+      });
+    }
+    // An attempt reset drops the draft; a non-streaming backend has no draft.
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 
     liveState = advancedState;
     await act(async () => {
@@ -1977,8 +1995,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
   });
 
   it("#1620 落印后 deferred resolve 在飞期间禁二提交", async () => {
-    // 只证：真 App 入口点落印，resolve 挂起期间再点 → POST 仍为 1；busy 下控件 disabled。
-    // 不夹 SSE picks 恢复、不夹 all-decided 清窗。
+    // Submission stays locked; the retained rescript yields to the gazette,
+    // then returns with the original pick if writing fails.
     const d = {
       idx: 0, title: "疏", context: "c",
       options: [{ label: "甲策", hint: "h" }],
@@ -2034,11 +2052,25 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await click(confirm());
     await click(confirm());
     expect(resolveCount).toBe(1);
-    // 放行挂起的 resolve，避免泄漏（收尾不纳入本契约）
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
     await act(async () => {
-      releaseResolve!(sseResp("error", { message: "done-for-test" }));
-      await Promise.resolve();
+      releaseResolve!(new Response(new ReadableStream<Uint8Array>({
+        start(c) { controller = c; },
+      })));
     });
+    await act(async () => {
+      controller.enqueue(encoder.encode('event: gazette\ndata: {"report":"稿"}\n\n'));
+    });
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
+    expect(host.querySelector<HTMLElement>(".decision-page")!.hidden).toBe(true);
+    await act(async () => {
+      controller.enqueue(encoder.encode('event: error\ndata: {"message":"done-for-test"}\n\n'));
+      controller.close();
+    });
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+    expect(host.querySelector<HTMLElement>(".decision-page")!.hidden).toBe(false);
+    expect(optionButtons()[0].classList.contains("is-picked")).toBe(true);
     expect(resolveCount).toBe(1);
   });
 

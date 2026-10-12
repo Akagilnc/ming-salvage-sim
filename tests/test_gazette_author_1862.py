@@ -130,12 +130,14 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert archive["report"] == _REPORT
 
 
-def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch):
+@pytest.mark.parametrize("streaming", [True, False])
+def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch, streaming):
     import ming_sim.agents as agents
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
     from tests.dossier_test_helpers import create_test_secret_order
     from ming_sim.declaration_dispatch import stage_declaration
     from ming_sim.materials import list_materials, read_material
+    from agno.run.agent import RunContentEvent, RunOutput
 
     db, state, content = game
     name = next(iter(content.characters))
@@ -159,18 +161,39 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch)
         db.insert_issue(state, kind="initiative", title="到期复核", origin_kind="decree", origin_ref=origin, commitment_kind="once", end_turn=state.turn)
     db.conn.commit()
     seen = {}
+    previews = []
+    product = {"title": "标题输入", "report": '\n  字"\\\n正文  '}
+
+    class AuthorModel:
+        supports_stream = streaming
+
+        def run(self, message, **kwargs):
+            seen["feed"] = json.loads(message)
+            raw = json.dumps(product, ensure_ascii=False)
+            if not streaming:
+                assert not kwargs
+                return RunOutput(content=raw)
+            assert kwargs == {"stream": True, "stream_events": True, "yield_run_output": True}
+
+            def events():
+                for piece in raw:
+                    yield RunContentEvent(content=piece)
+                # The callback has already received structured report content,
+                # before the SDK terminal and before any report can be archived.
+                assert previews[-1] == {"report": product["report"]}
+                yield RunOutput(content=raw)
+            return events()
+
     def author(_config, prepared):
         seen["paths"] = list_materials(prepared.root)
         seen["materials"] = prepared.opening + "\n" + "\n".join(
             read_material(prepared.root, path) for path in seen["paths"]
         )
-        return object()
-    def model(_agent, message, **_kw):
-        seen["feed"] = json.loads(message)
-        return json.dumps({"title": "标题输入", "report": "正文输入"})
+        return AuthorModel()
     monkeypatch.setattr(agents, "create_gazette_author_agent", author)
-    monkeypatch.setattr(agents, "run_agent_text", model)
-    month_chain.run_gazette_text(db, state, _llm())
+    title, report = month_chain.run_gazette_text(db, state, _llm(), on_gazette=previews.append)
+    assert (title, report) == (product["title"], product["report"])
+    assert previews[-1] == {"report": report}
     assert not any(p.startswith("密令/") for p in seen["paths"])
     feed = seen["feed"]
     # Landed facts and ledger history now come from the public material tree;

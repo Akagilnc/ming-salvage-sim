@@ -148,11 +148,14 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
             yield RunOutput(good)
 
     agent = _HistoryBackedEmptyThenGood()
+    observed = []
     text = agents_mod.run_agent_text(
         agent, "payload", tag="promulgation-judge", game_db=game_db,
+        on_text=lambda content, replace: observed.append((content, replace)),
     )
     assert text == good
     assert agent.calls >= 2
+    assert observed == [("", True), ("…", False), ("", True), ("…", False)]
     # 终态：prior + 成功 = 2；空 completed 不得残留
     assert game_db.reign.agno_runs_length(session_id) == 2
     rows = game_db.conn.execute(

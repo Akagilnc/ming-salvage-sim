@@ -1,5 +1,5 @@
 import React from "react";
-import { ApiRequestError, api, normalizeApiError } from "./api";
+import { ApiRequestError, normalizeApiError } from "./api";
 import { consumeSettleStream } from "./settleStream";
 import {
   needsPhase2Resume,
@@ -12,9 +12,10 @@ import type {
   DecisionChoice, GameState, PendingDecision,
 } from "./types";
 
-/** #1852：当次核账完成后的本面邸报阅读态（刷新不恢复；朕知道了只关此态）。 */
+/** 本面邸报写作／阅读态（刷新不恢复；朕知道了只关已写成的阅读态）。 */
 export type SettlementGazetteReading = {
   report: string;
+  writing?: boolean;
   attendantMessage?: string;
   periodLabel?: string;
 };
@@ -152,8 +153,15 @@ export function useSettlementFlow({
     };
   }, [state?.mechanical_tail_pending, state?.ending?.summary_pending, loadState]);
 
-  // #1852：结算流只认终态；不再挂空 stage/thinking/text 回调。
-  const consumeSettle = (response: Response) => consumeSettleStream(response);
+  const consumeSettle = async (response: Response, receipt: SettlementReceipt) => {
+    const outcome = await consumeSettleStream(response, {
+      onGazette: (report) => receipt.setGazetteReading(report ? { report, writing: true } : null),
+    });
+    if (outcome.kind !== "done" || outcome.data?.advanced === false) {
+      receipt.setGazetteReading(null);
+    }
+    return outcome;
+  };
 
   // #1796：盖玺/退朝共用开场——busy 挂同会话切面；清 HUD 失败位。
   // 真源仍是 settlement_display；submitDecisions 另有 HITL 续推文案，不经此路。
@@ -162,6 +170,7 @@ export function useSettlementFlow({
     setFailedEntryWasRetreat(retreat);
     setBusy("月末结算");
     setSettlementHudError("");
+    setSettlementGazetteReading(null);
   };
 
   // #1808 C：退局/再入局清 HUD 残留——接缝归既有 exitToMenu / enterGameAfterMenu。
@@ -337,7 +346,7 @@ export function useSettlementFlow({
       if (cheatPayload.trim()) {
         receipt.setCheatDirective("");
       }
-      const outcome = await consumeSettle(response);
+      const outcome = await consumeSettle(response, receipt);
       if (outcome.kind === "error") {
         const errData = typeof outcome.data === "string" ? { message: outcome.data } : (outcome.data || {});
         const serverTurn = Number(errData?.turn);
@@ -387,6 +396,7 @@ export function useSettlementFlow({
       receipt.setBusy("");
       return;
     } catch (err) {
+      receipt.setGazetteReading(null);
       // #1808 B 同类：先响亮；#1700 loadState 刷新权威相位为 best-effort。
       receipt.surfaceFailure(err instanceof Error ? err.message : String(err));
       await refreshBestEffort(receipt);
@@ -404,13 +414,14 @@ export function useSettlementFlow({
     setBusy("月末结算");
     receipt.setError("");
     receipt.setPausedDecisionError("");
+    receipt.setGazetteReading(null);
     try {
       const response = await fetch("/api/decree/resolve_decisions/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ choices }),
       });
-      const outcome = await consumeSettle(response);
+      const outcome = await consumeSettle(response, receipt);
       if (outcome.kind === "error") {
         // #1418 r2：同会话 phase2 失败后 loadState，使 settle-resume 续跑面可挂上。
         // #1620：loadState 刷新合法 pending 时 route 不碰 stream error；pending 保留 → picks 仍在。
@@ -438,6 +449,7 @@ export function useSettlementFlow({
       receipt.setBusy("");
       return;
     } catch (err) {
+      receipt.setGazetteReading(null);
       // #1888：同 #1808 B——响亮呈现与收尾先落地，次级刷新不得截断（此前刷新一 reject
       // 就整条出口抛出：告警不落、busy 不清）。
       const msg = err instanceof Error ? err.message : String(err);
@@ -451,7 +463,7 @@ export function useSettlementFlow({
   /** #1418 r2：all-decided 续跑——重发 resolve_decisions/stream（空载荷；服务端用已存 choice）。 */
   const resumePhase2 = async () => submitDecisions([]);
 
-  // 退朝重试／无旨推进：复用既有 /api/decree/advance_without_edict 接缝（非 failed-only 呈现）。
+  // 退朝重试／无旨推进：与颁诏共用 SSE 月链 worker（非 failed-only 呈现）。
   // 真空仍禁用；draft/pending 走 issueDecree，不经此路。
   // #1796：与盖玺同 busy 标——同会话立即收拟诏台 + 切核账期面。
   const advanceWithoutEdict = async () => {
@@ -462,25 +474,23 @@ export function useSettlementFlow({
     // #1351 A1：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
     const expectedTurn = state?.turn?.turn;
     try {
-      const data = await api<{
-        state: GameState;
-        awaiting_decision?: boolean;
-        advanced?: boolean;
-        decisions?: PendingDecision[];
-      }>(
-        "/api/decree/advance_without_edict",
-        {
-          method: "POST",
-          body: JSON.stringify(
-            expectedTurn != null && Number.isFinite(expectedTurn)
-              ? { expected_turn: expectedTurn }
-              : {},
-          ),
-        },
-      );
+      const response = await fetch("/api/decree/advance_without_edict/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          expectedTurn != null && Number.isFinite(expectedTurn)
+            ? { expected_turn: expectedTurn }
+            : {},
+        ),
+      });
+      const outcome = await consumeSettle(response, receipt);
+      if (outcome.kind === "error") {
+        throw new ApiRequestError(normalizeApiError(outcome.data, "退朝失败。"), "退朝失败。");
+      }
+      const data = outcome.data || {};
       // #1433 / #1337 hop 族：退朝若停在批红，消费 awaiting_decision/decisions（同 issueDecree），
       // 不盲 reload——批红面经 loadState 状态口投影；仅 409 且服务端已推进时整页刷新。
-      if (data.awaiting_decision) {
+      if (outcome.kind === "decisions") {
         const route = routeIssueDecisions(data.decisions || []);
         if (route.pendingDecisions !== null) receipt.setPendingDecisions(route.pendingDecisions);
         if (route.error !== null) receipt.setPausedDecisionError(route.error);
@@ -495,11 +505,9 @@ export function useSettlementFlow({
         return;
       }
       // #1852：退朝写成即推进——本面阅读态，不 reload。
-      await openGazetteAfterAdvance(receipt, {
-        ...data,
-        report: data.state?.previous_summary,
-      });
+      await openGazetteAfterAdvance(receipt, data);
     } catch (err: any) {
+      receipt.setGazetteReading(null);
       const detail = err instanceof ApiRequestError
         ? err.detail
         : (err?.detail && typeof err.detail === "object" ? err.detail : err);

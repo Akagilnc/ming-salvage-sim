@@ -84,4 +84,5 @@ def test_resolve_stream_clear_throw_emits_error_not_done(web_game, monkeypatch):
     serialized = asyncio.run(_drain_resolve_sse([{"decision_key": waiting.decisions[0]["decision_key"], "label": "发"}]))
     events = _parse_sse(serialized)
     assert events, serialized
-    assert [name for name, _ in events] == ["error"], events
+    assert events[-1][0] == "error", events
+    assert {name for name, _ in events} <= {"gazette", "error"}, events

@@ -2263,7 +2263,8 @@ class GameSession:
 
     def resolve_turn(self, decree: str = "", cheat_directive: str = "",
                      *, allow_empty_decree: bool = False,
-                     write_gate_already_held: bool = False) -> ResolveResult:
+                     write_gate_already_held: bool = False,
+                     on_gazette=None) -> ResolveResult:
         """颁诏并推演本回合（phase1）。
 
         cheat_directive: 作弊控制台强制结算项，一次性透传给 resolve_directives。
@@ -2410,6 +2411,7 @@ class GameSession:
             self.state, self.db, self.agno_db, self.llm_config, decree_text,
             content=self.content,
             cheat_directive=cheat_directive,
+            on_gazette=on_gazette,
             **resolve_kwargs,
         )
         if result.advanced and not result.awaiting:
@@ -2444,6 +2446,7 @@ class GameSession:
     def submit_hitl_choices(
         self, choices: List[Dict[str, object]], *, write_gate: Any,
         cheat_directive: str = "",
+        on_gazette=None,
     ) -> str:
         """Record raw answers in a short transaction, then resume the same month run."""
         from ming_sim.rescript_actions import persist_answers
@@ -2457,6 +2460,7 @@ class GameSession:
             report = resolve_decisions_phase2(
                 self.state, self.db, self.agno_db, self.llm_config,
                 content=self.content, cheat_directive=cheat_directive,
+                on_gazette=on_gazette,
             )
         except Exception:
             from ming_sim.month_chain import month_chain_call_failure
@@ -2478,7 +2482,7 @@ class GameSession:
         return report
 
     def advance_without_decree(
-        self, *, write_gate_already_held: bool = False,
+        self, *, write_gate_already_held: bool = False, on_gazette=None,
     ):
         """CLI/web 退朝；无旨月亦走完整结算链（#1274 / owner B-2）。
 
@@ -2489,10 +2493,12 @@ class GameSession:
         if self.db.issues.list_directives(self.state.turn, statuses=("pending", "draft")):
             return self.resolve_turn(
                 write_gate_already_held=write_gate_already_held,
+                on_gazette=on_gazette,
             )
         return self.resolve_turn(
             allow_empty_decree=True,
             write_gate_already_held=write_gate_already_held,
+            on_gazette=on_gazette,
         )
 
     def victory(self) -> Dict[str, object]:

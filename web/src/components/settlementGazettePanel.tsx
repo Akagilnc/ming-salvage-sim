@@ -9,11 +9,13 @@ export function SettlementGazettePanel({
   attendantMessage,
   periodLabel,
   onDismiss,
+  writing = false,
 }: {
   report: string;
   attendantMessage?: string;
   periodLabel?: string;
   onDismiss: () => void;
+  writing?: boolean;
 }) {
   const rawAttendant = (attendantMessage || "");
   const masthead = periodLabel || "邸报";
@@ -28,6 +30,7 @@ export function SettlementGazettePanel({
       className="settlement-gazette-panel"
       role="region"
       aria-label="本月邸报"
+      aria-busy={writing}
       data-testid="settlement-gazette-panel"
     >
       <div className="gazette-shell settlement-gazette-shell">
@@ -44,7 +47,7 @@ export function SettlementGazettePanel({
           </aside>
         ) : null}
         <div className="gazette-dismiss">
-          <button type="button" className="gazette-dismiss-btn" onClick={onDismiss}>
+          <button type="button" className="gazette-dismiss-btn" disabled={writing} onClick={onDismiss}>
             朕知道了
           </button>
         </div>

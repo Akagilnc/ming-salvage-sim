@@ -17,11 +17,14 @@ export function DecisionModal({
   decisions,
   onResolve,
   busy = "",
+  suspended = false,
 }: {
   decisions: PendingDecision[];
   onResolve: (choices: DecisionChoice[]) => void;
   /** truthy 时禁用票拟/亲批/翻页与落印，handler 入口短路——禁二提交。 */
   busy?: string;
+  /** Keep picks mounted while the live gazette occupies the main face. */
+  suspended?: boolean;
 }) {
   const [cursor, setCursor] = React.useState(0);
   const [picks, setPicks] = React.useState<DecisionChoice[]>(() =>
@@ -60,6 +63,7 @@ export function DecisionModal({
   };
 
   React.useEffect(() => {
+    if (suspended) return;
     const page = pageRef.current;
     if (!page) return;
 
@@ -118,9 +122,10 @@ export function DecisionModal({
       document.removeEventListener("focusin", keepFocusInPageOnFocus, true);
       if (previousFocus?.isConnected) previousFocus.focus();
     };
-  }, [decisions.length]);
+  }, [decisions.length, suspended]);
 
   React.useEffect(() => {
+    if (suspended) return;
     const page = pageRef.current;
     if (!page) return;
     const firstFocusable = page.querySelector<HTMLElement>(
@@ -128,7 +133,7 @@ export function DecisionModal({
     );
     if (isCheatConsoleTarget(document.activeElement)) return;
     (firstFocusable || page).focus();
-  }, [cursor, decisions.length]);
+  }, [cursor, decisions.length, suspended]);
 
   if (decisions.length === 0) return null;
   if (!cur) return null;
@@ -139,6 +144,8 @@ export function DecisionModal({
     <section
       ref={pageRef}
       className="decision-page"
+      hidden={suspended}
+      style={{ display: suspended ? "none" : undefined }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="decision-page-title"

@@ -49,9 +49,19 @@ def test_no_edict_advance_runs_full_settlement_chain(web_game, monkeypatch):
         simulator_calls=sim_calls,
     )
 
-    result = web_app.api_advance_without_edict()
+    import asyncio
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
 
-    assert result["awaiting_decision"] is False
+    async def consume():
+        response = await web_app.api_advance_without_edict_stream()
+        chunks = [chunk async for chunk in response.body_iterator]
+        return _parse_sse("".join(chunks))
+
+    events = asyncio.run(consume())
+    kind, result = events[-1]
+
+    assert kind == "done"
+    assert any(kind == "gazette" and isinstance(data.get("report"), str) for kind, data in events)
     assert result["advanced"] is True
     assert int(state.turn) == closed_turn + 1
     # 世界段必经（负向：快路已死，也不再走 extractor）

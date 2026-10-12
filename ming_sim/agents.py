@@ -12,7 +12,7 @@ import json
 import os
 import time
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -219,6 +219,7 @@ def run_agent_text(
     prior_messages: Optional[Sequence[Any]] = None,
     game_db: Any = None,
     transport_policy: Any = None,
+    on_text: Optional[Callable[[str, bool], None]] = None,
 ) -> str:
     """跑 agent，返回 SDK 终包完整 content（严格 JSON 真源；非 chunk 拼接）。
 
@@ -240,8 +241,8 @@ def run_agent_text(
     票拟缺字段补交链用它在同一次 generate 调用内续接真实对话上下文；
     不写库、不启其它角色 history（#1746 局部装配）。
 
-    半流：本入口无玩家 delta 呈现（extractor/sanitizer 等）；召对 _chat_stream_payload
-    半流呈现属切片④，本函数不改其呈现。
+    on_text：可选正文片段观察口；每 attempt 开始以 ("", True) 重置，片段为
+    (content, False)。不含推敲；终文仍只取 SDK 终包，观察口不改变其契约。
 
     game_db：可选 GameDB，仅 history-backed 调用方（颁布判官）交来。
     history-backed（db+cache_session+add_history_to_context）：空终包 completed run 经
@@ -266,11 +267,17 @@ def run_agent_text(
                 agent, game_db, session_id, keep_count,
             )
         attempt_n["n"] += 1
+        if on_text is not None:
+            on_text("", True)
 
     if _agent_run_accepts_stream(agent):
         terminal_box: List[Any] = []
 
         def _on_event(event: Any) -> None:
+            if getattr(event, "event", None) == "RunContent" and on_text is not None:
+                piece = getattr(event, "content", None)
+                if isinstance(piece, str) and piece:
+                    on_text(piece, False)
             # chunk 不拼终文；仅收终包
             if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
                 terminal_box.clear()

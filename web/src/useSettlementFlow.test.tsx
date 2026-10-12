@@ -315,13 +315,9 @@ describe("#1845 background tail failure observation", () => {
 
 describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等", () => {
   it("POST 携 state.turn 为 expected_turn", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        state: advancedMonthState,
-        advanced: true,
-      }),
-    }));
+    const fetchMock = vi.fn(async () => new Response(
+      `event: done\ndata: ${JSON.stringify({ advanced: true, report: advancedMonthState.previous_summary })}\n\n`,
+    ));
     vi.stubGlobal("fetch", fetchMock);
     const reload = vi.fn();
     Object.defineProperty(window, "location", {
@@ -453,14 +449,7 @@ describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload 
       "fetch",
       vi.fn(async (url: string) => {
         if (url.includes("/api/decree/advance_without_edict")) {
-          return {
-            ok: true,
-            json: async () => ({
-              state: awaitingState,
-              awaiting_decision: true,
-              decisions: [validDecision],
-            }),
-          };
+          return sseDecisionsResponse();
         }
         throw new Error(`unexpected fetch: ${url}`);
       }),
@@ -601,7 +590,7 @@ describe("#1843 未推进的过月终包", () => {
   it.each([
     ["issueDecree", "/api/decree/issue/stream"],
     ["submitDecisions", "/api/decree/resolve_decisions/stream"],
-    ["advanceWithoutEdict", "/api/decree/advance_without_edict"],
+    ["advanceWithoutEdict", "/api/decree/advance_without_edict/stream"],
   ] as const)("%s 留在账本核账态而非按完成 reload", async (action, path) => {
     const reload = vi.fn();
     Object.defineProperty(window, "location", {
@@ -611,9 +600,7 @@ describe("#1843 未推进的过月终包", () => {
     const loadState = vi.fn(async () => settlingState);
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (url !== path) throw new Error(`unexpected fetch: ${url}`);
-      return action === "advanceWithoutEdict"
-        ? new Response(JSON.stringify({ advanced: false, state: settlingState }))
-        : sseUnadvancedResponse();
+      return sseUnadvancedResponse();
     }));
     const { host, hookRef, cleanup } = mountHarness({
       loadState,

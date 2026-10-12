@@ -4830,10 +4830,20 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
 
 @app.post("/api/decree/issue/stream")
 async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
-    """流式颁诏：终态（done / decisions / error）经 SSE 推给前端。
+    return _month_entry_stream_response(body)
 
-    #1852：worker 只投终态。#1853 J5：不附 failed 密令专属载荷。
-    """
+
+@app.post("/api/decree/advance_without_edict/stream")
+async def api_advance_without_edict_stream(
+    body: AdvanceWithoutEdictRequest = AdvanceWithoutEdictRequest(),
+) -> StreamingResponse:
+    return _month_entry_stream_response(
+        IssueDecreeRequest(expected_turn=body.expected_turn), retreat=True,
+    )
+
+
+def _month_entry_stream_response(body: IssueDecreeRequest, *, retreat: bool = False) -> StreamingResponse:
+    """Same month-entry worker for issuing and retreating; only the gazette streams."""
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def worker() -> None:
@@ -4841,11 +4851,17 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             game = get_game()
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(game, write_cm=_game_write_gate):
-                _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
-                result = game.session.resolve_turn(
-                    cheat_directive=body.cheat,
-                    write_gate_already_held=True,
-                )
+                _reject_stale_month_token(game, body.expected_turn, token_label="退朝" if retreat else "颁诏")
+                on_gazette = lambda data: ev_queue.put(("gazette", data))
+                if retreat:
+                    result = game.session.advance_without_decree(
+                        write_gate_already_held=True, on_gazette=on_gazette,
+                    )
+                else:
+                    result = game.session.resolve_turn(
+                        cheat_directive=body.cheat,
+                        write_gate_already_held=True, on_gazette=on_gazette,
+                    )
                 decree = game.session.last_decree
                 if result.awaiting:
                     terminal = ("__decisions__", _settlement_player_payload(
@@ -4891,6 +4907,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         loop = asyncio.get_running_loop()
         while True:
             kind, data = await loop.run_in_executor(None, ev_queue.get)
+            if kind == "gazette":
+                yield sse_event(kind, data)
+                continue
             if kind == "__done__":
                 yield sse_event("done", data)
                 break
@@ -4931,6 +4950,7 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     body.choices,
                     write_gate=_game_write_gate(game),
                     cheat_directive=body.cheat,
+                    on_gazette=lambda data: ev_queue.put(("gazette", data)),
                 )
                 decree = game.session.last_decree
                 with _game_write_gate(game):
@@ -4960,6 +4980,9 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         loop = asyncio.get_running_loop()
         while True:
             kind, data = await loop.run_in_executor(None, ev_queue.get)
+            if kind == "gazette":
+                yield sse_event(kind, data)
+                continue
             if kind == "__done__":
                 yield sse_event("done", data)
                 break
