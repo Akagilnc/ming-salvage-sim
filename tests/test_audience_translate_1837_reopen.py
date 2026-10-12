@@ -350,8 +350,14 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
         "VALUES ('差务', '分段试办', 'active', ?, ?)",
         (
             json.dumps([
-                {"stage_idx": 0, "due_turn": int(state.turn) + 2, "criterion_text": "首段"},
-                {"stage_idx": 1, "due_turn": int(state.turn) + 3, "criterion_text": "次段"},
+                {
+                    "stage_idx": 0, "due_turn": int(state.turn) + 2,
+                    "criterion_text": "首段", "origin_context": "首段",
+                },
+                {
+                    "stage_idx": 1, "due_turn": int(state.turn) + 3,
+                    "criterion_text": "次段", "origin_context": "次段",
+                },
             ], ensure_ascii=False),
             int(state.turn),
         ),

@@ -607,3 +607,54 @@ def test_commitment_rush_via_pending_actions_gate(game):
         (issue_id,),
     ).fetchone()["c"]
     assert int(n_committed) == 1
+
+
+def test_commitment_rush_pending_missing_stage_idx_fails_loud(game):
+    """持久催办 payload 缺 stage_idx 不得缺省为 0（#1897 G / J35）。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐", token="urge-missing-idx")
+    stages = _seed_stages(state)
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+        title="缺号催办之诺",
+    )
+    pid = db.stage_pending_action(
+        state.turn, kind="commitment", action="催办",
+        minister_name="倪元璐", target_id=issue_id,
+        payload={"deadline_months": 1, "reason": "缺号催"},
+    )
+    assert pid > 0
+    with pytest.raises(ValueError):
+        db.commit_pending_actions(state, content=content)
+
+
+def test_commitment_rush_refuses_to_wash_durable_corruption(game):
+    """催办不得把缺 stage_idx 的持久腐坏回写成规范身份（#1897 G / J34）。"""
+    from ming_sim.applier import StoredDocumentError
+    import json
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐", token="urge-wash")
+    stages = _seed_stages(state)
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+        title="腐坏催办之诺",
+    )
+    corrupt = [{"due_turn": int(state.turn) + 5, "criterion_text": "x"}]
+    db.conn.execute(
+        "UPDATE issues SET stages_json=? WHERE id=?",
+        (json.dumps(corrupt, ensure_ascii=False), int(issue_id)),
+    )
+    db.conn.commit()
+    with pytest.raises(StoredDocumentError):
+        rush_staged_commitment_stage(
+            db, state, commitment_ref=int(issue_id), stage_idx=0,
+            deadline_months=0, reason="洗白",
+        )
+    stored = json.loads(db.conn.execute(
+        "SELECT stages_json FROM issues WHERE id=?", (int(issue_id),),
+    ).fetchone()["stages_json"])
+    assert stored == corrupt

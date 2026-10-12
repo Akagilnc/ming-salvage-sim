@@ -26,6 +26,7 @@ from ming_sim.staged_commitment import (
     load_commitment_stages,
     stages_to_json,
 )
+from ming_sim.strict_types import strict_int
 
 # pending_actions 史源 kind（committed 行；DELETE 仅清 pending）
 URGE_PENDING_KIND_COMMITMENT = "commitment"
@@ -87,6 +88,10 @@ def collect_urge_history(
     )
     for row in rows:
         payload = _parse_payload(row["payload_json"])
+        # 已持久催办史 stage_idx：拒收复用 strict_int，不发明身份、不重包文案（#1897 G）。
+        hist_stage_idx = strict_int(
+            payload.get("stage_idx"), accept_numeric_strings=False,
+        )
         out.append({
             "id": int(row["id"]),
             "turn": int(row["turn"] or 0),
@@ -96,7 +101,7 @@ def collect_urge_history(
             "new_due": _payload_int(payload, "new_due"),
             "deadline_months": _payload_int(payload, "deadline_months"),
             "tightness": _payload_int(payload, "tightness"),
-            "stage_idx": _payload_int(payload, "stage_idx"),
+            "stage_idx": hist_stage_idx,
             "reason": str(payload.get("reason") or ""),
             "source": "commitment",
         })
@@ -345,7 +350,8 @@ def project_urge_audience_scene(todo: Dict[str, object]) -> Dict[str, object]:
         "entry_kind": kind,
         "todo_id": int(todo.get("id") or 0),
         "commitment_ref": int(todo.get("commitment_ref") or 0),
-        "stage_idx": int(todo.get("stage_idx") or 0),
+        # store 读口已 durable_int 段身份；透传，不再 int() 重复强转（#1897 G）。
+        "stage_idx": todo["stage_idx"],
         "due_turn": int(todo.get("due_turn") or 0),
         "origin_context": origin,
         "criterion_text": criterion,

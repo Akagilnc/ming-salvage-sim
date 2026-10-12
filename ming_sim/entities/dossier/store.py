@@ -655,7 +655,8 @@ class DossierStore:
             "status, entry_kind, created_turn, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 int(commitment_ref),
-                int(stage_idx),
+                # 段身份：拒 float 截断／数字串；SQL affinity 合法整数即为 int（#1897 G）。
+                strict_int(stage_idx, accept_numeric_strings=False),
                 int(due_turn),
                 criterion_text,
                 origin_context,
@@ -696,7 +697,13 @@ class DossierStore:
             {
                 "id": int(r["id"]),
                 "commitment_ref": int(r["commitment_ref"]),
-                "stage_idx": int(r["stage_idx"]),
+                # 持久段身份：只认真整数；拒 REAL/TEXT/BLOB 洗成合法号（#1897 G/G1）。
+                "stage_idx": durable_int(
+                    r["stage_idx"],
+                    label="next_audience_todos.stage_idx",
+                    blank=None,
+                    accept_numeric_strings=False,
+                ),
                 "due_turn": int(r["due_turn"]),
                 "criterion_text": str(r["criterion_text"] or ""),
                 "origin_context": str(r["origin_context"] or ""),
