@@ -38,6 +38,7 @@ for stream in (sys.stdout, sys.stderr):
 from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -45,6 +46,7 @@ from ming_sim.db import _load_durable_str_list
 from ming_sim.applier import atomic, parse_engine_payload_json
 from ming_sim.paths import (
     UnsafeSaveNameError,
+    bundled_path,
     user_data_path,
     user_data_dir,
 )
@@ -109,6 +111,8 @@ from ming_sim.models import (
     reign_period_label,
 )
 logger = logging.getLogger(__name__)
+
+WEB_DIST = bundled_path("web", "dist")
 
 _DEFAULT_FAVORITES = frozenset({"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"})
 
@@ -1099,16 +1103,20 @@ class WebGame:
                 # 切换 API 时仍投影 CLI timeout/model/strength（及 runner）。
                 "cli": cli_slot,
             }
+        # #1902 F28-R2：投影未激活 API 槽时回落当前生效配置（档优先、档无用 cur），
+        # 勿传空串把仅存于 session/env 的 API 地址与模型冲成 /v1+空模型。
         return _llm_config_from_runtime(
             runtime,
-            base_url="",
-            model="",
-            api_key="",
-            timeout_seconds=float(new_timeout or API_DEFAULT_TIMEOUT_SECONDS),
-            thinking_level="",
-            advanced_model="",
-            advanced_base_url="",
-            advanced_api_key="",
+            base_url=str(cur.base_url or ""),
+            model=str(cur.model or ""),
+            api_key=real_api_key_or_empty(cur.api_key),
+            timeout_seconds=float(
+                cur.timeout_seconds or new_timeout or API_DEFAULT_TIMEOUT_SECONDS
+            ),
+            thinking_level=str(cur.thinking_level or ""),
+            advanced_model=str(cur.advanced_model or ""),
+            advanced_base_url=str(cur.advanced_base_url or ""),
+            advanced_api_key=real_api_key_or_empty(cur.advanced_api_key),
             advanced_thinking_level="",
         )
 
@@ -5436,3 +5444,9 @@ async def api_get_portrait(name: str):
     if path is None:
         raise HTTPException(status_code=404, detail="无自定义立绘")
     return FileResponse(path)
+
+
+# 前端构建产物（index.html / assets / portraits / steam_assets）。须在全部 API
+# 路由之后挂载；/admin 调试台前端不调用，不恢复。
+if os.path.isdir(WEB_DIST):
+    app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

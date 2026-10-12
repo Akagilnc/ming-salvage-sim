@@ -660,21 +660,27 @@ def test_game_llm_config_http_get_exposes_persisted_slots_and_f41_fields(
 def test_game_llm_config_http_post_cli_persist_and_api_headers(
     web_game, tmp_path, monkeypatch,
 ):
-    """POST /api/llm/config：真 build/commit/persist；只 mock verify。"""
+    """POST /api/llm/config：无 API 槽、会话 API 来自 env 时，API→CLI→API 往返不丢地址/模型。
+
+    #1902 F28-R2：真 HTTP 入口 + 真 build/commit/persist；只 mock verify。
+    """
     import ming_sim.llm_config as llm_config
     from ming_sim.cli_backend import CLI_REASONING_FLOOR_RUNNERS
+    from ming_sim.models import API_DEFAULT_BASE_URL, API_DEFAULT_MODEL
 
     _bind_real_runtime_llm(monkeypatch, tmp_path)
     monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
-    # 先落一份 API 槽，切 CLI 后须保留 inactive headers/key。
-    llm_config.save_runtime_llm(
-        "https://api.example.com/v1",
-        "api-fallback",
-        "sk-real-key",
-        channel="api",
-        reasoning_strength="low",
-        default_headers={"X-Keep": "api"},
-    )
+    # 起始：盘上无 API 槽；会话侧已由 webgame_env 的 OPENAI_* 建出 API 配置。
+    disk0 = llm_config.load_runtime_llm()
+    api0 = disk0.get("api") if isinstance(disk0.get("api"), dict) else {}
+    assert not str(api0.get("base_url") or "").strip()
+    assert not str(api0.get("model") or "").strip()
+    seed_base = web_game.session.llm_config.base_url
+    seed_model = web_game.session.llm_config.model
+    seed_key = web_game.session.llm_config.api_key
+    assert seed_base == API_DEFAULT_BASE_URL
+    assert seed_model == API_DEFAULT_MODEL
+    assert seed_key == "sk-test"
     client = TestClient(web_app.app)
 
     cli = client.post("/api/llm/config", json={
@@ -690,6 +696,8 @@ def test_game_llm_config_http_post_cli_persist_and_api_headers(
     assert cli_body["channel"] == "cli"
     assert cli_body["cli_runner"] == "grok"
     assert cli_body["cli_model"] == ""
+    assert cli_body["base_url"] == seed_base
+    assert cli_body["model"] == seed_model
     assert cli_body["has_api_key"] is False
     assert cli_body["reasoning_supported"] is True
     assert cli_body["reasoning_strength"] == "high"
@@ -699,35 +707,38 @@ def test_game_llm_config_http_post_cli_persist_and_api_headers(
     assert saved["channel"] == "cli"
     assert saved["cli"]["runner"] == "grok"
     assert saved["cli"]["model"] == ""
-    assert saved["api"]["api_key"] == "sk-real-key"
-    assert saved["api"]["default_headers"] == {"X-Keep": "api"}
+    assert saved["api"]["base_url"] == seed_base
+    assert saved["api"]["model"] == seed_model
+    assert saved["api"]["api_key"] == seed_key
 
     got = client.get("/api/llm/config")
     assert got.status_code == 200
     assert got.json()["channel"] == "cli"
+    assert got.json()["base_url"] == seed_base
+    assert got.json()["model"] == seed_model
     assert got.json()["has_api_key"] is False
     assert got.json()["persisted"]["has_api_key"] is True
-    assert got.json()["persisted"]["default_headers"] == {"X-Keep": "api"}
 
+    # 不经 UI 回填地址/模型：只切回 API，须沿用 session/盘上未丢失的槽。
     api = client.post("/api/llm/config", json={
         "channel": "api",
-        "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
-        "api_key": "sk-test",
-        "reasoning_strength": "medium",
-        "default_headers": {"X-From-UI": "ok"},
         "cli_runner": "__keep__",
         "cli_model": "__keep__",
     })
     assert api.status_code == 200
     api_body = api.json()
     assert api_body["channel"] == "api"
-    assert api_body["reasoning_supported"] is False
-    assert api_body["default_headers"] == {"X-From-UI": "ok"}
+    assert api_body["base_url"] == seed_base
+    assert api_body["model"] == seed_model
+    assert api_body["has_api_key"] is True
     assert api_body["cli_runner"] == "grok"
     assert api_body["cli_timeout_seconds"] == 240
-    assert api_body["effective_reasoning_strengths"]["api"] == "medium"
     assert api_body["effective_reasoning_strengths"]["cli"] == "high"
+    saved_api = llm_config.load_runtime_llm()
+    assert saved_api["channel"] == "api"
+    assert saved_api["api"]["base_url"] == seed_base
+    assert saved_api["api"]["model"] == seed_model
+    assert saved_api["api"]["api_key"] == seed_key
 
 
 def test_game_llm_config_http_verify_failure_skips_persist(
