@@ -1157,17 +1157,21 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(source?.querySelector('[data-testid="archive-translation-retry-8"]')).not.toBeNull();
   });
   it.each(["translation", "reply"])("keeps the selected night when an earlier night's %s retry finishes late", async (kind) => {
-    const endpoint = kind === "reply" ? "/api/audience/chat/retry" : "/api/audience/translation/retry";
+    const endpoint = kind === "reply" ? "/api/audience/reply/retry" : "/api/audience/translation/retry";
     let releaseOldRetry: (() => void) | undefined;
     let releaseNewRetry: (() => void) | undefined;
     const oldRetryGate = new Promise<void>((resolve) => { releaseOldRetry = resolve; });
     const newRetryGate = new Promise<void>((resolve) => { releaseNewRetry = resolve; });
     const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (options?.method === "POST") {
+        if (url !== endpoint) return Promise.resolve(new Response(null, { status: 404 }));
+        return (JSON.parse(String(options.body)).chat_turn_id === 31 ? oldRetryGate : newRetryGate).then(() => ({ ok: true, json: async () => ({}) }));
+      }
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
         { kind: "night", night_id: 32, title: "乙夜", involved_people: [] },
         { kind: "night", night_id: 31, title: "甲夜", involved_people: [] },
       ] }) });
-      if (url === endpoint && options?.method === "POST") return (JSON.parse(String(options.body)).chat_turn_id === 31 ? oldRetryGate : newRetryGate).then(() => ({ ok: true, json: async () => ({}) }));
+      if (url !== "/api/audience/scroll?night_id=31" && url !== "/api/audience/scroll?night_id=32") return Promise.resolve(new Response(null, { status: 404 }));
       const nightId = url.endsWith("31") ? 31 : 32;
       return Promise.resolve({ ok: true, json: async () => ({
         messages: [{ role: "user", content: nightId === 31 ? "甲夜奏对" : "乙夜奏对", chat_turn_id: nightId }],
@@ -1195,18 +1199,20 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
   it.each(["translation", "reply"])("retries a pending %s on its original closed night", async (kind) => {
     let pending = true;
     let posts = 0;
-    const endpoint = kind === "reply" ? "/api/audience/chat/retry" : "/api/audience/translation/retry";
+    const endpoint = kind === "reply" ? "/api/audience/reply/retry" : "/api/audience/translation/retry";
     const notice = `[data-testid="archive-${kind}-retry-8"]`;
     const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
-      if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
-        { kind: "night", night_id: 31, title: "旧夜", involved_people: [] },
-      ] }) });
-      if (url === endpoint && options?.method === "POST") {
+      if (options?.method === "POST") {
+        if (url !== endpoint) return Promise.resolve(new Response(null, { status: 404 }));
         posts++;
-        if (kind === "reply" && posts === 1) return Promise.resolve({ ok: false, status: 503 });
+        if (kind === "reply" && posts === 1) return Promise.resolve(new Response(null, { status: 503 }));
         pending = false;
         return Promise.resolve({ ok: true, json: async () => ({ chat_turn_id: 8 }) });
       }
+      if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
+        { kind: "night", night_id: 31, title: "旧夜", involved_people: [] },
+      ] }) });
+      if (url !== "/api/audience/scroll?night_id=31") return Promise.resolve(new Response(null, { status: 404 }));
       return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "minister", content: "旧夜奏对", chat_turn_id: 8 }], reply_retries: pending && kind === "reply" ? [
         { chat_turn_id: 8, minister_name: "殿上", turn: 1, question: "退朝", recovery_phase: "after_reply", error_pack_path: "/tmp/highlight-error" },
       ] : [], translation_retries: pending && kind === "translation" ? [
@@ -1231,11 +1237,17 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
   it.each(["translation", "reply"])("recovers a completed %s by rereading the scroll after its first read fails", async (kind) => {
     let reads = 0;
     let posts = 0;
+    const endpoint = kind === "reply" ? "/api/audience/reply/retry" : "/api/audience/translation/retry";
     const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (options?.method === "POST") {
+        if (url !== endpoint) return Promise.resolve(new Response(null, { status: 404 }));
+        posts++;
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [{ kind: "night", night_id: 31, title: "旧夜", involved_people: [] }] }) });
-      if (options?.method === "POST") { posts++; return Promise.resolve({ ok: true, json: async () => ({}) }); }
+      if (url !== "/api/audience/scroll?night_id=31") return Promise.resolve(new Response(null, { status: 404 }));
       reads++;
-      if (reads === 2) return Promise.resolve({ ok: false, status: 503 });
+      if (reads === 2) return Promise.resolve(new Response(null, { status: 503 }));
       return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "minister", content: "旧夜奏对", chat_turn_id: 8 }], reply_retries: reads === 1 && kind === "reply" ? [{ chat_turn_id: 8, recovery_phase: "after_reply" }] : [], translation_retries: reads === 1 && kind === "translation" ? [{ chat_turn_id: 8, night_id: 31, retryable: true }] : [] }) });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -1244,6 +1256,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     const notice = `[data-testid="archive-${kind}-retry-8"]`;
     await act(async () => { host.querySelector<HTMLButtonElement>(`${notice} button`)?.click(); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 8 }) }));
     expect(host.querySelector(notice)).not.toBeNull();
     await act(async () => { host.querySelector<HTMLButtonElement>(`${notice} button`)?.click(); await Promise.resolve(); });
     expect(posts).toBe(1);

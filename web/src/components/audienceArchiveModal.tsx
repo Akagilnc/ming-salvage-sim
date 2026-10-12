@@ -3,7 +3,7 @@ import { FullscreenModal } from "./hud";
 import { ScrollMessages } from "./scrollMessages";
 import type { AudienceScrollMessage, HistoryTurnItem, Minister } from "../types";
 import { filterScrollForSelectedMinister } from "../ministerScrollLens";
-import { AUDIENCE_SCENE_SPEAKER } from "../audienceScene";
+import { AUDIENCE_SCENE_SPEAKER, audienceRetryPath } from "../audienceScene";
 import { api } from "../api";
 import type { ReplyRetry, TranslationRetry } from "../types";
 
@@ -63,7 +63,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
     setRetryError(null);
     try {
       if (!completedRetries.current.has(key)) {
-        await api(kind === "reply" ? "/api/audience/chat/retry" : "/api/audience/translation/retry", { method: "POST", body: JSON.stringify({ chat_turn_id: chatTurnId }) });
+        await api(kind === "reply" ? audienceRetryPath() : "/api/audience/translation/retry", { method: "POST", body: JSON.stringify({ chat_turn_id: chatTurnId }) });
         if (selectedNightId.current !== nightId) return;
         completedRetries.current.add(key);
       }
