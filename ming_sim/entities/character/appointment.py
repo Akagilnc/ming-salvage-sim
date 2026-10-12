@@ -115,7 +115,10 @@ def _displace_duplicate_offices(
     new_seat = str(region_id or "").strip()
     displaced: List[str] = []
     displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
-    rows = db.characters.read_displace_duplicate_offices((new_holder,))
+    rows = db.conn.execute(
+        "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
+        (new_holder,),
+    ).fetchall()
     for row in rows:
         holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
         # Seat-aware exclusive collision: resolved local seat only bumps the

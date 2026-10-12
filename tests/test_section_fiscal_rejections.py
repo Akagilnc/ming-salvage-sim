@@ -434,7 +434,7 @@ def test_fiscal_change_reopens_with_value_origin_history_and_scaled_rows(game):
         }
         assert any(fiscal_after[rid] != value for rid, value in fiscal_before.items() if value > 0)
     finally:
-        reopened.close()
+        reopened.conn.close()
 
 @pytest.mark.parametrize("section,bad_fields,category", [
     ("fiscal_removes", {"key": "查无此税项"}, "missing_ref"),

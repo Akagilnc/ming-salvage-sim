@@ -51,7 +51,7 @@ def test_bandit_power_split_survives_reopen(game):
         "SELECT power_id FROM characters WHERE name='张献忠'"
     ).fetchone()["power_id"] == "ming", "易主入口未落库"
     path = db.path
-    db.close()
+    db.conn.close()
 
     reopened = GameDB(path, content)
     try:
@@ -71,4 +71,4 @@ def test_bandit_power_split_survives_reopen(game):
             "bandit_zhang_xianzhong": "张献忠",
         }, "流寇股 leader 仍是 content 钦定单一人名"
     finally:
-        reopened.close()
+        reopened.conn.close()

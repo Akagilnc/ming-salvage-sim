@@ -357,7 +357,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     expected = db.dossiers.denunciations()
     backup = tmp_path / "restore-627.db"
     db.backup_to(str(backup))
-    db.close()
+    db.conn.close()
 
     restored = GameDB(str(backup), content=content)
     try:
@@ -374,7 +374,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         assert again == []
         assert restored.dossiers.denunciations() == expected
     finally:
-        restored.close()
+        restored.conn.close()
 
 # ── AC5 零模板 + 暴露载体 ────────────────────────────────────────
 

@@ -103,9 +103,10 @@ def _apply_existing_appointment_hit(
             if pending_id:
                 resolved = int(pending_id)
         if recommendation_fields:
-            current = session.db.dossiers.read_apply_existing_appointment_hit(
-                (resolved,)
-            )
+            current = session.db.conn.execute(
+                'SELECT payload_json FROM pending_actions WHERE id=?',
+                (resolved,),
+            ).fetchone()
             stored = parse_engine_payload_json(
                 current["payload_json"],
             )
@@ -258,7 +259,10 @@ def stage_punishment_candidate(
                 failed_fields=("issue_id",),
                 category="invalid_shape",
             )
-        issue = db.issues.read_stage_punishment_candidate((linked_issue_id,))
+        issue = db.conn.execute(
+            'SELECT origin_kind,status,target_roster FROM issues WHERE id=?',
+            (linked_issue_id,),
+        ).fetchone()
         if issue is None or issue["status"] != "active" or issue["origin_kind"] != "impeachment_surge":
             return 0
         if disposition not in issue_dispositions_allowed():
@@ -709,7 +713,7 @@ def character_person_names(db: Any) -> set[str]:
         return set()
     return {
         str(row["name"]).strip()
-        for row in db.characters.read_names(())
+        for row in db.characters.names(())
         if str(row["name"] or "").strip()
     }
 
@@ -871,7 +875,7 @@ def _chat_turn_night_seq(db: Any, chat_turn_id: int) -> Optional[float]:
     """源轮在本夜事件序上的位置。补账用它落回原位，不另排到后写的轮次。"""
     if int(chat_turn_id or 0) <= 0:
         return None
-    row = db.reign.read_chat_turn_night_seq((int(chat_turn_id),))
+    row = db.reign.chat_turn_sequence_row((int(chat_turn_id),))
     if row is None:
         return None
     return float(int(row["night_seq"] or 0))

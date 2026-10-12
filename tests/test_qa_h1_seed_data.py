@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ming_sim.opening_seed import seed_opening_world
 from ming_sim.content import load_character_content, load_event_content
 from ming_sim.db import GameDB
 from ming_sim.models import GameState
@@ -121,7 +122,7 @@ def test_fresh_seed_army_equipment_and_commanders_wire_through(content, tmp_path
     db = None
     try:
         db = GameDB(path, content)
-        db.seed_static_data()
+        seed_opening_world(db)
         rows = {
             r["id"]: dict(r)
             for r in db.conn.execute(
@@ -163,7 +164,7 @@ def test_fresh_seed_army_equipment_and_commanders_wire_through(content, tmp_path
         assert any(int(r["cannon_equipment"]) > 0 for r in rows.values())
     finally:
         if db is not None:
-            db.close()
+            db.conn.close()
 
 
 def test_deficit_stage_text_aligns_with_opening_treasury_and_hubu():

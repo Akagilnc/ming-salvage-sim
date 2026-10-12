@@ -18,7 +18,7 @@ import re
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
-from ming_sim.applier import Provenance, atomic
+from ming_sim.applier import Provenance, atomic, connection_owns_transaction
 from ming_sim.models import _load_durable_json_list
 
 _CHAIN_KEY = "month_chain"
@@ -249,7 +249,11 @@ def _month_fact_materials(
     turn = int(state.turn)
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
-    rows = db.staged_declarations.read_month_fact_materials((turn,))
+    rows = db.conn.execute(
+        'SELECT decree_ref, declaration_json, forecast_text FROM staged_declarations '
+        "WHERE created_turn=? AND status='settled' ORDER BY id",
+        (turn,),
+    ).fetchall()
     for row in rows:
         decree_ref = str(row["decree_ref"] or "")
         # 已结算声明是内部机械事实；与 parse_engine_payload_json 同权威，
@@ -265,7 +269,11 @@ def _month_fact_materials(
         if isinstance(forecast, str) and forecast.strip():
             forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
-    for row in db.reign.read_month_ledger((turn,)):
+    for row in db.conn.execute(
+        'SELECT account, delta, category, reason, origin_ref FROM economy_ledger '
+        'WHERE turn=? ORDER BY id',
+        (turn,),
+    ):
         origin = str(row["origin_ref"] or "")
         landed.append({
             "account": row["account"],
@@ -833,7 +841,7 @@ def _abort_month_call(
     turn = int(state.turn)
     # 事务已回滚时，失败记录只叠在已提交链上。调用方链在 alongside 里改过的
     # 内存相位（world_committed 等）不随失败写回。
-    if kind == "code_exception" and db.owns_transaction():
+    if kind == "code_exception" and connection_owns_transaction(db.conn):
         from ming_sim.decree import reload_state_from_db
         reload_state_from_db(db, state, content=db.content)
     committed = _load_chain(db, turn)
@@ -1470,7 +1478,7 @@ def _step_4a_secret_order_supply(
     reports = product.get("dossier_progress_reports") or []
     if chain.get("secret_orders_reports_done"):
         try:
-            db.validate_monthly_dossier_progress(reports)
+            db.monthly_dossier_report_supply(reports)
         except ValueError as exc:
             chain["secret_orders_supply_invalid"] = True
             _save_chain(db, turn, chain, decree_text=decree_text, source=source)

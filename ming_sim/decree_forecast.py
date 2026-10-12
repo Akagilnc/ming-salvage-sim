@@ -71,7 +71,10 @@ def _current_forecast_ref(session: Any, key: tuple) -> Optional[str]:
     """Resolve the queue's existing identity against the saved directive."""
     if key[0] == "decree_forecast":
         _, action_id, version, night_id = key
-        row = session.db.dossiers.read_current_forecast_ref((action_id,))
+        row = session.db.conn.execute(
+            'SELECT status,kind,action,night_approved,night_id,version FROM pending_actions WHERE id=?',
+            (action_id,),
+        ).fetchone()
         if row is not None and (
             row["status"] == "pending" and row["kind"] == "directive"
             and row["action"] == "拟旨" and int(row["night_approved"] or 0) == 1
@@ -195,7 +198,10 @@ def forecast_snapshot(
 
 def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Optional[Dict[str, Any]]:
     db, state = session.db, session.state
-    row = db.dossiers.read_pending_snapshot((int(pending_action_id),))
+    row = db.conn.execute(
+        'SELECT * FROM pending_actions WHERE id=?',
+        (int(pending_action_id),),
+    ).fetchone()
     if row is None:
         return None
     pending = dict(row)
@@ -213,7 +219,10 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
     payload = dict(prepared_directive["payload"])
     action_type = db._directive_dossier_action_type(payload)
     executor_kind, executor_id = db._directive_executor(action_type, payload)
-    next_id = int(db.dossiers.read_pending_snapshot_decree_dossiers()[0])
+    next_id = int(db.conn.execute(
+        'SELECT COALESCE(MAX(id),0)+1 FROM decree_dossiers',
+        (),
+    ).fetchone()[0])
     candidate: Dict[str, object] = {
         "id": next_id,
         "pending_action_id": int(pending_action_id),
@@ -279,7 +288,11 @@ def _uncased_grant_catalog_token(
         return None
     if pending_id <= 0:
         return None
-    existing = db.dossiers.read_uncased_grant_catalog_token((pending_id,))
+    existing = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE action_type='grant_allocation' AND "
+        'pending_action_id=? LIMIT 1',
+        (pending_id,),
+    ).fetchone()
     if existing is not None:
         return None
     return token

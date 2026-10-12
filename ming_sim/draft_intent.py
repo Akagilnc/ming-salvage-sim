@@ -542,7 +542,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
     if db is not None:
         # 整段 game_state 时点读为持久缝：fetch/解码任一失败→代码故障（F39）。
         try:
-            state = db.reign.read_record_claim_flow_logs(())
+            state = db.reign.calendar_row(())
             if state is not None:
                 timing = (
                     f"当前结算时点：turn={int(state['turn'])}，"
@@ -575,7 +575,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
 def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dict[str, Any]:
     """在既有抽取适配缝把结构化相对月数落成 active-through 绝对 turn。"""
     try:
-        row = db.reign.read_current_settle_turn(())
+        row = db.reign.turn_row(())
         if row is None:
             return result
         current_turn = int(row["turn"])
@@ -909,9 +909,10 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
             continue
         did = int(row["id"])
         try:
-            issue = db.issues.read_stalled_deliberation_push_facts(
-                (f"dossier:{did}",)
-            )
+            issue = db.conn.execute(
+                "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
+                (f'dossier:{did}',),
+            ).fetchone()
             if issue is None:
                 continue
             # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；

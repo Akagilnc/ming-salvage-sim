@@ -1,5 +1,6 @@
 from __future__ import annotations
 from ming_sim.applier import Provenance
+from ming_sim.opening_seed import seed_opening_world
 """火器装备 / 大炮装备 两条军备轴（数据字段，供 simulator 软判，代码不硬算）。
 
 火器装备：鸟铳/三眼铳——野战齐射 + 守城皆宜（0-100 状态轴）。
@@ -83,7 +84,7 @@ def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
     os.close(fd)
     try:
         db = GameDB(p, content)
-        db.seed_static_data()
+        seed_opening_world(db)
         rows = db.conn.execute("SELECT firearm_equipment FROM armies").fetchall()
         assert rows
         assert any(int(r["firearm_equipment"]) > 0 for r in rows)

@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import pytest
 from tests.conftest import wait_for_background_jobs
+from ming_sim.knowledge import build_character_knowledge
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from tests.test_month_chain_1843 import _prepare_player_month
@@ -82,7 +83,7 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game, monkeypatc
     assert source_count == 0
     assert not any(
         str(item.get("source_id") or "").startswith("secret_order:")
-        for item in db.get_character_knowledge(state, other.name)["events"]
+        for item in build_character_knowledge(db, state, other.name)["events"]
     )
 
 
@@ -390,7 +391,7 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     ).fetchone()[0] == 1, "未撤销密令的 brief 不应受级联影响"
     assert msg_u == 0 and msg_m == 0
     assert msg_b == 1, "early B public message wrongly deleted"
-    assert db.character_knowledge.get_active_secret_orders_for_minister(a.name) == []
+    assert db.character_knowledge.list_secret_orders(status="active", minister_name=a.name) == []
 
 
 @pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])
@@ -477,7 +478,7 @@ def test_976_save_restore_preserves_oral_provenance(game, tmp_path):
     # 备份落本用例私有目录：db.path 在系统共享 temp，同级写文件不留用例隔离（#1901 J6）。
     backup_path = str(tmp_path / "backup976.db")
     db.backup_to(backup_path)
-    db.close()
+    db.conn.close()
 
     db2 = __import__("ming_sim.db", fromlist=["GameDB"]).GameDB(backup_path, content)
     try:
@@ -498,6 +499,6 @@ def test_976_save_restore_preserves_oral_provenance(game, tmp_path):
 
         assert state2.turn == state.turn
     finally:
-        db2.close()
+        db2.conn.close()
         if os.path.exists(backup_path):
             os.remove(backup_path)

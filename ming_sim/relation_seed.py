@@ -163,7 +163,7 @@ def import_relationship_seed(
         doc, opening_year=opening_year, opening_period=opening_period
     )
     count_before = int(
-        db.person_logs.read_import_relationship_seed()["c"]
+        db.person_logs.relation_count_row()["c"]
     )
     for event in validated["events"]:
         db.record_relation_edge_event(
@@ -178,7 +178,7 @@ def import_relationship_seed(
             period=event["period"],
         )
     count_after = int(
-        db.person_logs.read_import_relationship_seed()["c"]
+        db.person_logs.relation_count_row()["c"]
     )
     summaries_written = 0
     for summary in validated["summaries"]:

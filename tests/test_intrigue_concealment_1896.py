@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ming_sim.opening_seed import seed_opening_world
 """#1896：目标遮掩因子（ADR 0108 阴谋能力）交付与消费。
 
 陛下 2026-10-01 选了问卷第二项「这次就补上」（第一项是「先不做，票面写明
@@ -45,14 +46,14 @@ def test_current_format_reopen_keeps_seeded_and_played_intrigue(tmp_path, conten
 
     path = tmp_path / "current.db"
     first = GameDB(str(path), content)
-    first.seed_static_data()
+    seed_opening_world(first)
     seeded = content.characters["魏忠贤"].intrigue
     assert first.conn.execute(
         "SELECT intrigue FROM characters WHERE name=?", ("魏忠贤",),
     ).fetchone()["intrigue"] == seeded
     first.conn.execute("UPDATE characters SET intrigue=17 WHERE name=?", ("黄道周",))
     first.conn.commit()
-    first.close()
+    first.conn.close()
 
     restored = GameDB(str(path), content)
     assert restored.conn.execute(
@@ -61,7 +62,7 @@ def test_current_format_reopen_keeps_seeded_and_played_intrigue(tmp_path, conten
     assert restored.conn.execute(
         "SELECT intrigue FROM characters WHERE name=?", ("黄道周",),
     ).fetchone()["intrigue"] == 17
-    restored.close()
+    restored.conn.close()
 
 
 def test_new_character_enters_roster_with_intrigue(game):

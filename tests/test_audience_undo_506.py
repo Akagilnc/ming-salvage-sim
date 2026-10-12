@@ -93,7 +93,7 @@ def _minister_declaration(minister: str, presence_body: str) -> dict[str, object
 def _reopen(db: GameDB, content) -> GameDB:
     """kill+重开：关旧句柄、按同 path 重开（撤销日志持久化真源，AC6/AC7）。"""
     path = db.path
-    db.close()
+    db.conn.close()
     return GameDB(path, content)
 
 
@@ -163,7 +163,7 @@ def test_undo_pending_translation_leaves_no_orphan_retry(game):
         assert len(db2.reign.list_unextracted_replies(night_id=night_id)) == 0
 
     finally:
-        db2.close()
+        db2.conn.close()
 
 
 # ── AC9：撤回整套逆转事务原子——中途崩溃则原样未撤（无半撤回脏档）──────────────

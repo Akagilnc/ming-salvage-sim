@@ -37,8 +37,6 @@ ISSUE_COLUMNS = frozenset({
     "resolution_summary", "last_advance_turn", "closed_turn", "affair_id",
 })
 
-def _checked(values: Mapping[str, object]) -> list[str]:
-    return checked_columns(values, ISSUE_COLUMNS, what="issues")
 
 
 TURN_DIRECTIVE_COLUMNS = frozenset(
@@ -67,14 +65,13 @@ class IssueStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
-
     def row(self, issue_id: int):
         return self._conn.execute(
             "SELECT * FROM issues WHERE id=?", (int(issue_id),),
         ).fetchone()
 
     def update(self, issue_id: int, values: Mapping[str, object]) -> int:
-        columns = _checked(values)
+        columns = checked_columns(values, ISSUE_COLUMNS, what="issues")
         if not columns:
             raise ValueError("issues update needs fields")
         assignments = ", ".join(f"{column}=?" for column in columns)
@@ -103,45 +100,14 @@ class IssueStore:
     def set_affair_id_if_unbound(self, issue_id: int, affair_id: int) -> int:
         return bind_affair_once(self._conn, "issues", int(issue_id), affair_id)
 
-    def read_event_issue_refs(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT origin_ref FROM issues WHERE origin_kind='event_pool'", params).fetchall()
-
-    def read_list_closed_issues_at(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT * FROM issues WHERE closed_turn = ? AND status IN ('resolved','failed','dropped') ORDER BY id", params).fetchall()
-
-    def read_find_active_issue_by_origin(self, params: Any = ()) -> Any:
+    def active_by_origin(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM issues WHERE origin_kind=? AND origin_ref=? AND status='active' LIMIT 1", params).fetchone()
 
-    def read_find_any_issue_by_origin(self, params: Any = ()) -> Any:
+    def by_origin(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM issues WHERE origin_kind=? AND origin_ref=? LIMIT 1', params).fetchone()
 
-    def read_list_due_stages_for_scan(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n        SELECT id, title, stages_json, origin_ref, origin_turn, stage_text\n        FROM issues\n        WHERE status='active'\n          AND commitment_kind != ''\n          AND stages_json IS NOT NULL\n          AND stages_json != ''\n          AND stages_json != '[]'\n        ORDER BY id\n        ", params).fetchall()
-
-    def read_list_active_commitments(self, params: Any = ()) -> Any:
+    def active_commitments(self, params: Any = ()) -> Any:
         return self._conn.execute("\n        SELECT * FROM issues\n        WHERE status='active'\n          AND kind='initiative'\n          AND commitment_kind != ''\n        ORDER BY id\n        ", params).fetchall()
-
-    def read_issue_exists(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id FROM issues WHERE id=?', params).fetchone()
-
-    def read_issue_for_dossier(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id FROM issues WHERE origin_ref=? ORDER BY id LIMIT 1', params).fetchone()
-
-    def read_issue_meta(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, title, origin_ref, stages_json, stage_text FROM issues WHERE id=?', params).fetchone()
-
-    def read_commitment_ids_for_dossier(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id FROM issues WHERE origin_ref=?', params).fetchall()
-
-    def read_event_terminal_states(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT event_id, terminal_state FROM event_triggers', params).fetchall()
-
-
-    def read_issue_audience_names(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT audiences FROM events WHERE id=?', params).fetchone()
-
-    def read_eval_gate_key_str_owned(self, params: Any, fragment_1: str) -> Any:
-        return self._conn.execute(f'SELECT {fragment_1} FROM event_triggers WHERE event_id=?', params)
 
     def insert_directive(self, params: Any) -> Any:
         return self._conn.execute(
@@ -199,26 +165,26 @@ class IssueStore:
         label = f"旨稿#{directive_id}" if directive_id is not None else "既有旨稿"
         return load_stored_object(raw, label=f"{label} 结构化载荷")
 
-    def read_directive_dossier_payload(self, row: object) -> Dict[str, object]:
+    def directive_dossier_payload(self, row: object) -> Dict[str, object]:
         """Strictly decode a durable turn_directives payload at the issue read seam."""
         return self.decode_directive_dossier_payload(
             row["dossier_payload_json"], directive_id=int(row["id"]),
         )
 
-    def count_pending_directives(self, turn: int) -> Any:
-        return self._conn.execute(
-            "SELECT COUNT(*) AS n FROM turn_directives WHERE turn=? AND status='pending'", (turn,),
-        ).fetchone()
-
-    def update_directive_text(self, params: Any) -> Any:
-        return self._conn.execute(
-            "UPDATE turn_directives SET text=?, dossier_payload_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            params,
+    def record_event_terminal(
+        self, event_id: str, *, turn: int, year: int, period: int,
+        source: str, terminal_state: str, terminal_reason: str,
+    ) -> None:
+        self._conn.execute(
+            f"""
+            INSERT INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                {self._event_terminal_upgrade_assignments(fill_triggered_reason=terminal_state == 'triggered')}
+            """,
+            (event_id, turn, year, period, source, terminal_state, terminal_reason),
         )
-
-
-    def read_list_directives_owned(self, params: Any, fragment_1: str) -> Any:
-        return self._conn.execute(f"\n            SELECT d.*, e.title AS event_title\n            FROM turn_directives d\n            LEFT JOIN events e ON e.id = d.event_id\n            WHERE (d.turn = ? OR (d.turn < ? AND d.status = 'draft'))\n              AND d.status IN ({fragment_1})\n            ORDER BY d.id\n            ", params)
 
     def _event_terminal_upgrade_assignments(self, *, fill_triggered_reason: bool = False) -> str:
         reason_fill = ""
@@ -286,7 +252,10 @@ class IssueStore:
             "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
             (turn,),
         ).fetchall()
-        self._delete_pending_decision_rows(turn)
+        self._conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (int(turn),),
+        )
         for idx, d in enumerate(decisions):
             self.insert_pending_decision(
                 (
@@ -350,13 +319,6 @@ class IssueStore:
             "answer_order": int(r["answer_order"] or 0),
             })
         return out
-
-    def _delete_pending_decision_rows(self, turn: int) -> None:
-        """Single delete rule for kind='decision' rows (no commit)."""
-        self._conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
-            (int(turn),),
-        )
 
     def list_rescript_drafts(self, *, status: str | None = None) -> List[Dict[str, object]]:
         rows = self._conn.execute(
@@ -500,16 +462,17 @@ class IssueStore:
         self, turn: int, statuses: tuple[str, ...] = ("draft",),
     ) -> list:
         placeholders = ",".join("?" for _ in statuses)
-        return self.read_list_directives_owned(
-            (int(turn), int(turn), *statuses), placeholders,
+        return self._conn.execute(
+            f"\n            SELECT d.*, e.title AS event_title\n            FROM turn_directives d\n            LEFT JOIN events e ON e.id = d.event_id\n            WHERE (d.turn = ? OR (d.turn < ? AND d.status = 'draft'))\n              AND d.status IN ({placeholders})\n            ORDER BY d.id\n            ",
+            (int(turn), int(turn), *statuses),
         ).fetchall()
 
     def count_pending_directives_for_turn(self, turn: int) -> int:
-        row = self.count_pending_directives(int(turn))
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM turn_directives WHERE turn=? AND status='pending'",
+            (int(turn),),
+        ).fetchone()
         return int(row["n"]) if row else 0
-
-    def has_event_triggered(self, event_id: str) -> bool:
-        return self.has_event_terminal_state(event_id, "triggered")
 
     def event_terminal_state(self, event_id: str) -> str | None:
         row = self._conn.execute(
@@ -574,217 +537,11 @@ class IssueStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def read_stage_punishment_candidate(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT origin_kind,status,target_roster FROM issues WHERE id=?", params
-        ).fetchone()
-
-    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, title, stages_json FROM issues WHERE status='active' ORDER BY id",
-            params,
-        ).fetchall()
-
-    def read_rush_staged_commitment_stage_origin_ref(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT origin_ref FROM issues WHERE id=?", params
-        ).fetchone()
-
-    def write_ensure_event_parent(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "\n            INSERT OR IGNORE INTO events\n            (id, title, kind, summary, urgency, severity, credibility, interests, audiences)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
-            params,
-        )
-
-    def write_mark_event_triggered_owned(self, params: Any) -> Any:
-        return self._conn.execute(
-            f"\n            INSERT INTO event_triggers\n                (event_id, turn, year, period, source, terminal_state, terminal_reason)\n            VALUES (?, ?, ?, ?, ?, 'triggered', ?)\n            ON CONFLICT(event_id) DO UPDATE SET\n                {self._event_terminal_upgrade_assignments(fill_triggered_reason=True)}\n            ",
-            params,
-        )
-
-    def write_mark_event_avoided_owned(self, params: Any) -> Any:
-        return self._conn.execute(
-            f"\n            INSERT INTO event_triggers\n                (event_id, turn, year, period, source, terminal_state, terminal_reason)\n            VALUES (?, ?, ?, ?, ?, 'avoided', ?)\n            ON CONFLICT(event_id) DO UPDATE SET\n                {self._event_terminal_upgrade_assignments()}\n            ",
-            params,
-        )
-
-    def write_mark_event_obsolete_owned(self, params: Any) -> Any:
-        return self._conn.execute(
-            f"\n            INSERT INTO event_triggers\n                (event_id, turn, year, period, source, terminal_state, terminal_reason)\n            VALUES (?, ?, ?, ?, ?, 'obsolete', ?)\n            ON CONFLICT(event_id) DO UPDATE SET\n                {self._event_terminal_upgrade_assignments()}\n            ",
-            params,
-        )
-
-    def write_mark_event_expired_owned(self, params: Any) -> Any:
-        return self._conn.execute(
-            f"\n            INSERT INTO event_triggers\n                (event_id, turn, year, period, source, terminal_state, terminal_reason)\n            VALUES (?, ?, ?, ?, 'window_expired', 'expired', '过最晚触发时点仍未达成触发门')\n            ON CONFLICT(event_id) DO UPDATE SET\n                {self._event_terminal_upgrade_assignments()}\n            ",
-            params,
-        )
-
-    def read_ensure_event_parent(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT 1 FROM events WHERE id=?", params).fetchone()
-
-    def read_assert_commission_grant_target_exists(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT 1 FROM issues WHERE id=?", params).fetchone()
-
-    def read_dispatch_rushes(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, status, stages_json FROM issues WHERE id=?", params
-        ).fetchone()
-
-    def read_stalled_deliberation_push_facts(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
-            params,
-        ).fetchone()
-
-    def write_canonicalize_existing_fiscal_levy_terminal_reason(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            "UPDATE event_triggers SET terminal_reason=? WHERE event_id=?", params
-        )
-
-    def read_apply_score_extraction_body(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT ongoing_effects FROM issues WHERE id=?", params
-        ).fetchone()
-
-    def read_latest_commitment_paid_total(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC",
-            params,
-        ).fetchall()
-
-    def read_apply_issue_tracker_output(self, params: Any = ()) -> Any:
+    def status_row(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT status FROM issues WHERE id=?", params
         ).fetchone()
 
-    def read_event_terminal_records(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT event_id, terminal_state, terminal_reason FROM event_triggers",
-            params,
-        ).fetchall()
-
-    def read_gather_impeachment_surge_candidates(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM issues WHERE origin_kind='impeachment_surge' AND origin_ref=? AND faction_hint=? LIMIT 1",
-            params,
-        ).fetchone()
-
-    def read_apply_punishment_verdict_effect(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT status,origin_kind,faction_hint,target_roster FROM issues WHERE id=?",
-            params,
-        ).fetchone()
-
-    def read_list_due_commitments(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "\n        SELECT * FROM issues\n        WHERE status='active'\n          AND commitment_kind != ''\n          AND end_turn > 0\n          AND end_turn <= ?\n        ORDER BY id\n        ",
-            params,
-        ).fetchall()
-
-    def read_rush_staged_commitment_stage(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, stages_json, status, commitment_kind FROM issues WHERE id=?",
-            params,
-        ).fetchone()
-
-    def read_resolve_host_character(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT participants, participant_roster FROM issues WHERE id=?", params
-        ).fetchone()
-
-    def read_stop_origin_commitment_ticks(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, cancellable, commitment_kind FROM issues "
-            "WHERE origin_ref=? AND status='active'",
-            params,
-        ).fetchall()
-
-    def read_stop_origin_commitment_ticks_issues(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT status, cancellable, commitment_kind FROM issues WHERE id=?", params
-        ).fetchone()
-
-    def write_delete_directive(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                UPDATE turn_directives
-                SET status = 'deleted', updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-            params,
-        )
-
-    def write_mark_directives_issued(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                UPDATE turn_directives
-                SET status = 'issued', updated_at = CURRENT_TIMESTAMP
-                WHERE turn <= ? AND status = 'draft'
-                  AND EXISTS (
-                      SELECT 1 FROM decree_dossiers d
-                      WHERE d.directive_id=turn_directives.id
-                  )
-                """,
-            params,
-        )
-
-    def write_record_event_petition_answer(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                INSERT INTO event_triggers
-                    (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
-                VALUES (?, ?, ?, ?, 'petition', '', '', ?)
-                ON CONFLICT(event_id) DO UPDATE SET
-                    -- 请旨账只补 choice_json（已呈奏疏 + 原批语）；终态与来源一律沿用既有行，
-                    -- 空终态行也不在此写 terminal_reason：结局标签归语义写口，不归原始选项标签。
-                    choice_json = excluded.choice_json
-                """,
-            params,
-        )
-
-    def write_record_event_decision_choice(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                INSERT INTO event_triggers
-                    (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
-                VALUES (?, ?, ?, ?, ?, '', ?, ?)
-                ON CONFLICT(event_id) DO UPDATE SET
-                    -- 普通事件选择暂存；终态不可逆。三饷亲裁不走本写口。
-                    source = CASE
-                        WHEN COALESCE(event_triggers.terminal_state, '') IN ('', 'triggered')
-                        THEN excluded.source
-                        ELSE event_triggers.source
-                    END,
-                    terminal_state = event_triggers.terminal_state,
-                    terminal_reason = CASE
-                        WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                        THEN excluded.terminal_reason
-                        WHEN COALESCE(event_triggers.terminal_reason, '') = ''
-                        THEN excluded.terminal_reason
-                        ELSE event_triggers.terminal_reason
-                    END,
-                    choice_json = excluded.choice_json
-                """,
-            params,
-        )
-
-    def write_insert_issue(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                INSERT INTO issues (
-                    kind, title, origin_kind, origin_ref, origin_turn,
-                    bar_value, bar_good_meaning, bar_bad_meaning, inertia,
-                    phase, stage_text, status, severity, region_hint, faction_hint,
-                    tags, participants, participant_roster, target_roster, ongoing_effects, cancellable,
-                    effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                    end_turn, stop_condition, commitment_kind, stages_json, last_advance_turn
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-            params,
-        )
     def insert_advance(self, params: Any) -> Any:
         return self._conn.execute(
             "INSERT INTO issue_advances "
@@ -793,7 +550,6 @@ class IssueStore:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params,
         )
-
 
     def insert_pending_decision(self, params: Any) -> Any:
         return self._conn.execute(
@@ -804,49 +560,6 @@ class IssueStore:
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             params,
         )
-
-
-    def write_undo_chat_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "DELETE FROM turn_directives WHERE id=? AND status='draft'", params
-        )
-
-
-    def read_update_directive_text(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT dossier_payload_json FROM turn_directives WHERE id=?", params
-        ).fetchone()
-
-    def read_resolve_revoke_decree_target_ids(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT kind, status, origin_ref FROM issues WHERE id=?", params
-        ).fetchone()
-
-    def read_load_directive_pending_source(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                    SELECT pa.id, pa.source_chat_turn_id
-                    FROM turn_directives td
-                    JOIN pending_actions pa ON pa.id = td.source_pending_action_id
-                    WHERE td.id = ?
-                    ORDER BY pa.id DESC LIMIT 1
-                    """,
-            params,
-        ).fetchone()
-
-
-    def read_fiscal_levy_petitions_awaiting_verdict(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT event_id FROM pending_decisions WHERE kind='decision' AND status='pending'",
-            params,
-        ).fetchall()
-
-    def read_fiscal_levy_answered_rows(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT event_id, choice_json FROM pending_decisions "
-            "WHERE turn = ? AND kind='decision' AND status='decided'",
-            params,
-        ).fetchall()
 
     def record_rescript_answer(
         self, choice_json: str, answered_turn: int, source_turn: int, idx: int, kind: str,
@@ -859,19 +572,6 @@ class IssueStore:
             "WHERE turn=? AND idx=? AND kind=? AND status='pending'",
             (choice_json, answered_turn, answered_turn, source_turn, idx, kind),
         )
-
-    def read_apply_imperial_deliberation_push(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
-            params,
-        ).fetchone()
-
-    def write_consume(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE pending_decisions SET status='revision_pending' WHERE turn=? AND idx=?",
-            params,
-        )
-
 
     def snapshot_directive_rows(self) -> Any:
         return self._conn.execute("SELECT * FROM turn_directives").fetchall()

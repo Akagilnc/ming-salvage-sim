@@ -42,18 +42,12 @@ class ChatMessageStore:
             # Free phrase: empty-check without mutating stored member (P6).
             if item.strip():
                 clean.append(item)
-        self.set_highlights_json(
-            int(message_id),
-            safe_json_dumps(clean, ensure_ascii=False),
-        )
-        self._conn.commit()
-
-    def set_highlights_json(self, message_id: int, payload: str) -> None:
+        message_id = int(message_id)
         self._conn.execute(
             "UPDATE chat_messages SET highlights_json = ? WHERE id = ?",
-            (payload, int(message_id)),
+            (safe_json_dumps(clean, ensure_ascii=False), message_id),
         )
-
+        self._conn.commit()
 
     def delete_ids(self, message_ids: Iterable[int]) -> None:
         ids = [int(message_id) for message_id in message_ids]
@@ -80,13 +74,11 @@ class ChatMessageStore:
                 out.append(item)
         return out
 
-
     def content_of(self, message_id: int) -> Optional[str]:
-        row = self.read_build_night_said_so_far((int(message_id),))
+        row = self.content_row((int(message_id),))
         if row is None:
             return None
         return str(row["content"] or "")
-
 
     def history_by_minister(self) -> Dict[str, List[Dict[str, str]]]:
         rows = self._conn.execute(
@@ -111,21 +103,9 @@ class ChatMessageStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def read_read_night_scroll(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT content,created_at,highlights_json FROM chat_messages WHERE id=?",
-            params,
-        ).fetchone()
-
-    def read_build_night_said_so_far(self, params: Any = ()) -> Any:
+    def content_row(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT content FROM chat_messages WHERE id=?", params
-        ).fetchone()
-
-
-    def read_chat_message_speaker(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT minister_name FROM chat_messages WHERE id = ?", params
         ).fetchone()
 
 
@@ -203,33 +183,6 @@ class TurnReportStore:
         ]
 
 
-    def read_previous_turn_reign_period_label(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT year, period, report FROM turn_reports WHERE turn = ?", params
-        ).fetchone()
-
-    def read_list_monthly_archives(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                SELECT turn, MAX(year) AS year, MAX(period) AS period,
-                       MAX(has_report) AS has_report,
-                       MAX(has_attendant) AS has_attendant,
-                       MAX(has_directive) AS has_directive
-                FROM (
-                    SELECT turn, year, period,
-                           CASE WHEN length(trim(COALESCE(report, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_report,
-                           CASE WHEN length(trim(COALESCE(attendant_message, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_attendant,
-                           0 AS has_directive
-                    FROM turn_reports
-                    UNION ALL
-                    SELECT turn, year, period, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
-                )
-                GROUP BY turn ORDER BY turn
-                """,
-            params,
-        ).fetchall()
-
-
 class ResolveContextStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
@@ -281,7 +234,6 @@ class ResolveContextStore:
                    attendant_message = excluded.attendant_message""",
             (int(turn), decree_text, simulator_payload_json, source, attendant_message),
         )
-
 
     def get(self, turn: int) -> Optional[Dict[str, object]]:
         row = self._conn.execute(

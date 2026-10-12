@@ -8,6 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 import pytest
+from ming_sim.knowledge import build_character_knowledge
 from ming_sim.db import GameDB
 from ming_sim.materials import (
     list_materials, prepare_world_materials, read_material,
@@ -174,7 +175,7 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
     )
     db.conn.commit()
     path = str(db.path)
-    db.close()
+    db.conn.close()
 
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
@@ -186,7 +187,7 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         # restore 后事务载体路径唯一在册；旧正文锁（进度/关闭史）已退役。
         assert len(affair_paths) == 1
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_world_materials_isolate_invocations_and_databases(game, tmp_path):
@@ -275,15 +276,15 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
 @pytest.mark.parametrize("reader", ["dossier", "secret", "audience"])
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path, monkeypatch, reader):
     from ming_sim.materials import prepare_scene_materials, write_identity_materials
-    from ming_sim.entities.issue.store import IssueStore
+    import ming_sim.knowledge as knowledge
     db, state, _ = game
     fault = RuntimeError("material read fault")
     def fail(*_a, **_k):
         raise fault
     owner, method = {
         "dossier": (db, "list_referenceable_dossiers"),
-        "secret": (db.character_knowledge, "get_active_secret_orders_for_minister"),
-        "audience": (IssueStore, "read_issue_audience_names"),
+        "secret": (db.character_knowledge, "list_secret_orders"),
+        "audience": (knowledge, "_issue_audience_names"),
     }[reader]
     if reader == "dossier":
         monkeypatch.setattr(owner, method, fail)
@@ -327,13 +328,13 @@ def test_issue_audience_grant_does_not_authorize_an_outsider(game, tmp_path, par
     db.conn.commit()
     sources = [dict(r) for r in db.conn.execute("SELECT * FROM character_knowledge_sources ORDER BY id")]
     stored = dict(db.conn.execute("SELECT * FROM issues WHERE id=?", (row["id"],)).fetchone())
-    knowledge = db.get_character_knowledge(state, "崔呈秀")
+    knowledge = build_character_knowledge(db, state, '崔呈秀')
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
     write_identity_materials(prepared, db, state, ["郭允厚", "崔呈秀"])
     for name, visible in (("郭允厚", audiences != "[]"), ("崔呈秀", participant == "崔呈秀")):
         root = prepared.root / Path(identity_material_rel(name)).parent
         assert (f'事务/{_safe_segment("issue-" + str(row["id"]))}/当前情况.txt' in list_materials(root)) is visible
-    assert db.get_character_knowledge(state, "崔呈秀") == knowledge
+    assert build_character_knowledge(db, state, '崔呈秀') == knowledge
     assert dict(db.conn.execute("SELECT * FROM issues WHERE id=?", (row["id"],)).fetchone()) == stored
     assert [dict(r) for r in db.conn.execute("SELECT * FROM character_knowledge_sources ORDER BY id")] == sources
     assert db.conn.execute("SELECT audiences FROM events WHERE id=?", (row["origin_ref"],)).fetchone()[0] == audiences

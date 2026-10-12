@@ -6,7 +6,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.entities.issue.store import IssueStore
 from ming_sim.session import AudienceChatTurn
 
 import asyncio
@@ -986,7 +985,7 @@ class WebGame:
         # summary 不含官职（卡片/详情已单独显 office），避免重复
         summary = f"{character.faction}一系，行事{character.style}。"
         power_id = self.db.resolve_power_id(character)  # 权威解析单一真源（#125）
-        loc_row = self.db.characters.read_admit_audience((character.name,))
+        loc_row = self.db.characters.location_row((character.name,))
         location = str(loc_row["location"] or "") if loc_row is not None else ""
         transit_to = str(loc_row["transit_to"] or "") if loc_row is not None else ""
         regions = getattr(self.content, "regions", None) or {}
@@ -1170,7 +1169,11 @@ class WebGame:
         """上回合（resolve 后 state.turn 已 +1）关闭的 issue。"""
         target_turn = max(0, int(self.state.turn) - 1)
         out: List[Dict[str, Any]] = []
-        for row in IssueStore(self.db.conn).read_list_closed_issues_at((target_turn,)):
+        for row in self.db.conn.execute(
+            'SELECT * FROM issues WHERE closed_turn = ? AND status IN '
+            "('resolved','failed','dropped') ORDER BY id",
+            (target_turn,),
+        ).fetchall():
             status = str(row["status"])
             effect_key = "effect_on_resolve" if status == "resolved" else "effect_on_fail"
             effect = loads_effect_dict(row[effect_key])  # 统一守门，绝不向前端吐非 dict（#117 R5）
@@ -1318,7 +1321,11 @@ class WebGame:
             "期初",
         }
         cur_turn = int(self.state.turn)
-        rows = self.db.reign.read_budget_ledger_rows((cur_turn - 1,))
+        rows = self.db.conn.execute(
+            'SELECT id, account, delta, balance_after, category, reason FROM '
+            'economy_ledger WHERE turn = ? ORDER BY id',
+            (cur_turn - 1,),
+        ).fetchall()
         for name, account in budget.items():
             movements = [
                 {

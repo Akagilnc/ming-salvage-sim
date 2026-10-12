@@ -385,11 +385,6 @@ def schedule_mechanical_tail_after_advance(
     )
 
 
-def _resolve_context_turns(db: Any) -> list[int]:
-    """有月链记录的回合（现役 GameDB.conn）。"""
-    return db.resolve_contexts.turns()
-
-
 def _pending_mechanical_tails(
     db: Any,
 ) -> list[tuple[int, Dict[str, Any]]]:
@@ -397,7 +392,7 @@ def _pending_mechanical_tails(
     from ming_sim import month_chain
 
     pending: list[tuple[int, Dict[str, Any]]] = []
-    for turn in _resolve_context_turns(db):
+    for turn in db.resolve_contexts.turns():
         chain = month_chain._load_chain(db, turn)
         tail = chain.get("mechanical_tail")
         if tail is not None and tail.get("status") == _TAIL_STATUS_PENDING:
@@ -409,7 +404,7 @@ def failed_mechanical_tail(db: Any) -> Optional[tuple[int, Dict[str, Any]]]:
     """Persisted failure, visible even when no next month exists."""
     from ming_sim import month_chain
 
-    for turn in _resolve_context_turns(db):
+    for turn in db.resolve_contexts.turns():
         tail = month_chain._load_chain(db, turn).get("mechanical_tail")
         if tail is not None and tail.get("status") == _TAIL_STATUS_FAILED:
             return turn, tail

@@ -1,3 +1,4 @@
+from ming_sim.recommendations import list_recommendation_candidates
 import pytest
 from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
 from ming_sim.recommendations import validate_recommendation_snapshot
@@ -20,7 +21,7 @@ def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge
     db.conn.execute("UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?", (same_faction.name,))
     db.conn.execute("UPDATE characters SET status='active', office='翰林院编修' WHERE name=?", (hidden.name,))
     db.conn.commit()
-    candidates = db.list_recommendation_candidates(state, recommender.name)
+    candidates = list_recommendation_candidates(db, state, recommender.name)
     names = {row["name"] for row in candidates}
     assert same_faction.name in names
     assert hidden.name not in names
@@ -40,7 +41,7 @@ def test_low_identity_recommender_can_see_high_identity_same_faction_candidate(g
     )
     db.conn.commit()
 
-    names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
+    names = {row["name"] for row in list_recommendation_candidates(db, state, recommender.name)}
 
     assert candidate.name in names
 
@@ -77,7 +78,7 @@ def test_private_and_public_structured_hearing_exposes_cross_faction_candidate(g
         source_id="test:public-hearing",
     )
 
-    names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
+    names = {row["name"] for row in list_recommendation_candidates(db, state, recommender.name)}
 
     assert private_candidate.name in names
     assert public_candidate.name in names
@@ -102,7 +103,7 @@ def test_same_faction_future_debut_is_not_recommendable(game):
     )
     db.conn.commit()
 
-    names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
+    names = {row["name"] for row in list_recommendation_candidates(db, state, recommender.name)}
 
     assert future.name not in names
 
@@ -124,13 +125,13 @@ def test_listed_heard_for_selection_candidate_stays_recovery_type_through_contex
     )
     db.conn.commit()
 
-    row = next(row for row in db.list_recommendation_candidates(state, recommender.name)
+    row = next(row for row in list_recommendation_candidates(db, state, recommender.name)
                if row["name"] == candidate.name)
     assert row["candidate_kind"] == "荐起复"
     assert validate_recommendation_snapshot(db, state, recommender.name, row)
 
     restored = db.load_state()
-    restored_row = next(row for row in db.list_recommendation_candidates(restored, recommender.name)
+    restored_row = next(row for row in list_recommendation_candidates(db, restored, recommender.name)
                         if row["name"] == candidate.name)
     assert restored_row["candidate_kind"] == "荐起复"
     assert validate_recommendation_snapshot(db, restored, recommender.name, row)
@@ -150,7 +151,7 @@ def test_hearing_title_without_displacement_reason_is_not_talent_pool_candidate(
     )
     db.conn.commit()
 
-    row = next(row for row in db.list_recommendation_candidates(state, recommender.name)
+    row = next(row for row in list_recommendation_candidates(db, state, recommender.name)
                if row["name"] == candidate.name)
 
     assert row["candidate_kind"] == "荐在职"

@@ -62,7 +62,10 @@ _TERMINAL_OUTCOMES = frozenset({"fulfilled", "degraded", "failed", "transformed"
 
 
 def _issue_meta(db: Any, commitment_ref: int) -> Dict[str, object]:
-    row = db.issues.read_issue_meta((int(commitment_ref),))
+    row = db.conn.execute(
+        'SELECT id, title, origin_ref, stages_json, stage_text FROM issues WHERE id=?',
+        (int(commitment_ref),),
+    ).fetchone()
     if row is None:
         return {
             "id": int(commitment_ref),

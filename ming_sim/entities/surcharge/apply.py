@@ -58,7 +58,7 @@ def _apply_surcharge_decrees(
             continue
         region_id = str(item.get("region_id") or "").strip()
         row = (
-            db.regions.read_apply_surcharge_decrees((region_id,))
+            db.regions.control_fiscal_row((region_id,))
             if region_id
             else None
         )

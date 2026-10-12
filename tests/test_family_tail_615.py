@@ -127,7 +127,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
 
     # TD-4：关闭重开后任别/授权/背书与判官读端一致。
     db_path = db.path
-    db.close()
+    db.conn.close()
     restored = GameDB(db_path, content)
     restored_state = restored.load_state()
     after = decree_mod.build_promulgation_judge_context(
@@ -233,4 +233,4 @@ def test_break_rank_appointment_rescript_td4_tracer(
         assert restored.dossiers.get(dossier_id)["status"] == "proposed"
     if decision == "withdrawn":
         assert row["promulgation_decision"] == "rejected"
-    restored.close()
+    restored.conn.close()

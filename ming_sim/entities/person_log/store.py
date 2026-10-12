@@ -70,10 +70,6 @@ class PersonLogStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
-    @staticmethod
-    def ensure_schema(conn: Any) -> None:
-        ensure_schema(conn)
-
     def append(
         self,
         *,
@@ -124,7 +120,6 @@ class PersonLogStore:
             self._conn.commit()
         return int(cur.lastrowid or 0)
 
-
     def delete_relation_edge_events_for_chat_turn(self, chat_turn_id: int) -> int:
         """撤回联动：删该轮源绑定的边事件行（召对判官 + 转译声明 origin 前缀）。
 
@@ -142,21 +137,14 @@ class PersonLogStore:
             total += int(cur.rowcount)
         return total
 
-    def read_guofu_targets_of_0056(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT DISTINCT target FROM relation_edge_events WHERE source='皇帝' AND event_kind='辜负' AND turn=? AND origin LIKE ?", params).fetchall()
-
-    def read_existing_leg_id(self, params: Any = ()) -> Any:
+    def relation_by_origin(self, params: Any = ()) -> Any:
         return self._conn.execute('\n            SELECT id FROM relation_edge_events\n            WHERE source = ? AND target = ? AND event_kind = ?\n              AND (origin = ? OR origin LIKE ?)\n            ORDER BY id LIMIT 1\n            ', params).fetchone()
 
-    def read_select_faction_brew_targets(self, params: Any = ()) -> Any:
+    def recent_relation_pairs(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT source, target, MAX(id) AS max_id FROM relation_edge_events WHERE year = ? AND period = ? GROUP BY source, target', params).fetchall()
 
-    def read_project_relation_ledger(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT DISTINCT source, target FROM relation_edge_events', params).fetchall()
-
-    def read_import_relationship_seed(self, params: Any = ()) -> Any:
+    def relation_count_row(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT COUNT(*) AS c FROM relation_edge_events', params).fetchone()
-
 
     def apply_seed_founding_segment(
         self,
@@ -364,18 +352,6 @@ class PersonLogStore:
             params[:5],
         ).fetchone()
         return int(row["id"])
-
-    def write_apply_faction_brew_result(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "DELETE FROM relation_brew_pending WHERE item_kind = '派系' AND target = ?",
-            params,
-        )
-
-    def read_originated_quantity_this_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM person_logs WHERE origin_ref=? AND turn=? AND action=?",
-            params,
-        ).fetchall()
 
     def edge_snapshot_rows(self) -> Any:
         return self._conn.execute("SELECT * FROM relation_edge_events").fetchall()

@@ -605,4 +605,4 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         # 清理不追加断言——正文红字才是结论，清理只保证有界返回。
         for sess, *_rest in armed:
             get_session_write_queue(sess).wait_idle(timeout_s=_DRAIN_TIMEOUT_S)
-        other.close()
+        other.conn.close()

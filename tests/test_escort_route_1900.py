@@ -87,7 +87,8 @@ def test_commission_declares_escort_inside_same_grant_decree(game, monkeypatch, 
     else:
         # Existing xiexang is immediate, not an in-transit grant.
         assert rows == []
-    with closing(GameDB(db.path, content=content)) as reopened:
+    reopened = GameDB(db.path, content=content)
+    with closing(reopened.conn):
         assert reopened.dossier_declares_escort(dossier_id) is True
         assert reopened.dossiers.get(dossier_id)["participant_roster"] == roster
         assert reopened.dossiers.reconciliations(dossier_id) == rows
@@ -239,7 +240,8 @@ def test_commission_without_escort_declares_none(game, monkeypatch):
     assert rows[0]["escorted"] is False
     assert 15 <= rows[0]["arrived_amount"] <= 18
     assert rows[0]["loss_amount"] == ORDERED - rows[0]["arrived_amount"]
-    with closing(GameDB(db.path, content=content)) as reopened:
+    reopened = GameDB(db.path, content=content)
+    with closing(reopened.conn):
         assert reopened.dossier_declares_escort(dossier_id) is False
         assert reopened.dossiers.reconciliations(dossier_id) == rows
         assert reopened.list_monthly_grant_reconciliation_targets() == db.list_monthly_grant_reconciliation_targets()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import pytest
+from ming_sim.knowledge import build_character_knowledge
 from ming_sim.covert_progress import (
     FACT_LANES_KEY,
     INVESTIGATION_ACTS_KEY,
@@ -817,7 +818,7 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
         body = bodies[(who, rel)]
         assert body.strip()
         from ming_sim.materials import _safe_segment
-        visible = {int(row["id"]) for row in db.get_character_knowledge(state, who)["issues"]}
+        visible = {int(row["id"]) for row in build_character_knowledge(db, state, who)["issues"]}
         paths = captured["paths"][who]
         assert {path for path in paths if path.startswith("事务/issue-")} == {
             f"事务/{_safe_segment(f'issue-{i}')}/当前情况.txt" for i in visible

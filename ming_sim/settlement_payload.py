@@ -111,7 +111,17 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
 
 def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """到期的 form③ 一次性承诺供邸报作者读取；不自动结案。"""
-    rows = db.issues.read_list_due_commitments((int(state.turn),))
+    rows = db.conn.execute(
+        """
+        SELECT * FROM issues
+        WHERE status='active'
+          AND commitment_kind != ''
+          AND end_turn > 0
+          AND end_turn <= ?
+        ORDER BY id
+        """,
+        (int(state.turn),),
+    ).fetchall()
     due_commitments: List[Dict[str, object]] = []
     from ming_sim.staged_commitment import should_skip_form3_due_for_staged
     for row in rows:

@@ -273,7 +273,7 @@ def prepare_pay_order_entries(
                 raise PayOrderKeyError(f"override 键 {key!r} 期限 until_turn 须为正整数：{until_raw!r}")
             until = until_raw
         if parsed.region:
-            row = db.regions.read_assert_commission_grant_target_exists(
+            row = db.regions.presence(
                 (parsed.region,)
             )
             if row is None:
@@ -329,7 +329,7 @@ def materialize_pay_order_decree(
     current = db.fiscal_config.values()
     for key, value, until in prepared:
         old = int(current.get(key, _default_of(key)))
-        db.fiscal_config.write_materialize_pay_order_decree(
+        db.fiscal_config.upsert_pay_override(
             (key, value, "偿还序override/折发系数（#653 ADR 0090）")
         )
         db.fiscal_config.set_origin(key, origin)
@@ -341,7 +341,7 @@ def materialize_pay_order_decree(
         until_key = f"{key}{_UNTIL_SUFFIX}"
         if until is not None:
             old_until = int(current.get(until_key, 0))
-            db.fiscal_config.write_materialize_pay_order_decree(
+            db.fiscal_config.upsert_pay_override(
                 (until_key, until, "override 期限伴随键（#653 r2/r3）")
             )
             db.fiscal_config.set_origin(until_key, origin)
@@ -408,7 +408,7 @@ def restore_pay_order_override(
     origin = f"dossier:{int(revoke_dossier_id)}"
     written: List[Dict[str, Any]] = []
     for key, _value, _until in prepared:
-        row = db.fiscal_config.read_restore_pay_order_override((key,))
+        row = db.fiscal_config.override_row((key,))
         if row is None:
             continue
         # 同维后旨已覆写 → 当前 provenance 不属于被撤案，不改该键（last-write 保全）
@@ -436,7 +436,7 @@ def restore_pay_order_override(
             reason=reason or "撤销 override 旨，形状退出格律（回落次特定/祖制）",
         )
         until_key = f"{key}{_UNTIL_SUFFIX}"
-        until_row = db.fiscal_config.read_restore_pay_order_override(
+        until_row = db.fiscal_config.override_row(
             (until_key,)
         )
         if until_row is not None and str(until_row["origin_ref"] or "") == target_origin:

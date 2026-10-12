@@ -1,5 +1,6 @@
 from __future__ import annotations
 import shutil
+from ming_sim.knowledge import build_character_knowledge
 from ming_sim.db import GameDB
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 import json
@@ -57,13 +58,13 @@ def test_yuan_public_death_rumor_does_not_change_actual_life(game, tmp_path):
         assert restored_status == status_before
         restored_rows = list_public_sayings(restored)
         assert restored_rows[0]["body"] == "袁崇焕已死于宁远"
-        view = restored.get_character_knowledge(restored_state, _礼部大臣(content).name)
+        view = build_character_knowledge(restored, restored_state, _礼部大臣(content).name)
         assert any(
             item.get("source_id") == restored_rows[0]["source_id"]
             for item in view["public_events"]
         )
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_absent_minister_reads_saying_not_actual_status(game):
@@ -79,7 +80,7 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     saying_id = result.public_sayings.applied[0]["id"]
     source_id = f"public_saying:{saying_id}"
 
-    view = db.get_character_knowledge(state, reader.name)
+    view = build_character_knowledge(db, state, reader.name)
     public = view["public_events"]
     saying = next(
         item for item in public

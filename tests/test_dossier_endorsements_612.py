@@ -99,7 +99,7 @@ def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
         restored_by = {int(d["id"]): d for d in restored_ctx["dossiers"]}
         assert restored_by[cosign_id]["endorsements"] == cosign
     finally:
-        reopened.close()
+        reopened.conn.close()
     # night unused except as source turn host
     assert an.get_night(db, night_id) is not None
 

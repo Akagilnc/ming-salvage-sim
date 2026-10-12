@@ -113,8 +113,9 @@ def _canonicalize_existing_fiscal_levy_terminal_reason(
         state,
     )
     if label != record.get("terminal_reason"):
-        db.issues.write_canonicalize_existing_fiscal_levy_terminal_reason(
-            (label, ev.id)
+        db.conn.execute(
+            'UPDATE event_triggers SET terminal_reason=? WHERE event_id=?',
+            (label, ev.id),
         )
         record["terminal_reason"] = label
 
@@ -289,7 +290,7 @@ def _apply_fiscal_levy_targets(
     tian_abolished = not _fiscal_levy_tian_in_force(db)
     liao_scale = _fiscal_levy_liao_declared_scale(db) if liao_in_force else 0.0
     region_entries: List[Dict[str, object]] = []
-    for row in db.regions.read_apply_fiscal_levy_targets(()):
+    for row in db.conn.execute('SELECT id, fiscal FROM regions ORDER BY id', ()).fetchall():
         region_id = str(row["id"])
         fiscal = _load_durable_json(row["fiscal"])
         settle = fiscal.get("settle")

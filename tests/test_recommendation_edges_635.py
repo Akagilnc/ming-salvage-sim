@@ -1,3 +1,4 @@
+from ming_sim.recommendations import list_recommendation_candidates
 import pytest
 from tests.recommendation_rows import recommendation_events
 from tests.dossier_test_helpers import promulgate_proposed_appointments
@@ -64,7 +65,7 @@ def test_replay_same_event_with_changed_reason_stays_two_rows(game, candidate_ki
 
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = next(r for r in db.list_recommendation_candidates(state, recommender.name)
+    row = next(r for r in list_recommendation_candidates(db, state, recommender.name)
                if r["candidate_kind"] == candidate_kind)
     reason = "  旧任有实绩，罢居后仍可起复。\r\n "
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
@@ -93,7 +94,7 @@ def test_appointment_without_recommendation_writes_no_edges(game):
     """生成侧缺席时接口幂等待命：无 recommendation 载荷不落边、不阻塞其他写端。"""
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    row = list_recommendation_candidates(db, state, recommender.name)[0]
     action_id = db.stage_pending_action(
         state.turn,
         kind="office",
@@ -118,7 +119,7 @@ def test_appointment_without_recommendation_writes_no_edges(game):
 def test_unapproved_appointment_writes_zero_edges(game):
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = next(r for r in db.list_recommendation_candidates(state, recommender.name)
+    row = next(r for r in list_recommendation_candidates(db, state, recommender.name)
                if r["status"] != "dismissed")
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", "边才可用")
     # 快照失效 → 任命未获准。
@@ -136,7 +137,7 @@ def test_empty_reason_fails_loud_and_rolls_back_everything(game):
     """r3：reason 缺失/空 → 任命与双边同事务 fail-loud 回滚，不落任命、不落边。"""
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    row = list_recommendation_candidates(db, state, recommender.name)[0]
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", "   ")
 
     with pytest.raises(ValueError):
@@ -152,7 +153,7 @@ def test_empty_reason_fails_loud_and_rolls_back_everything(game):
 def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    row = list_recommendation_candidates(db, state, recommender.name)[0]
     original = db.record_relation_edge_event
 
     def flaky_second_leg(*, source, target, event_kind, context, origin, **kwargs):

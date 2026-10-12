@@ -146,13 +146,13 @@ def test_costs_are_idempotent_and_survive_restore(game):
         apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
     assert len(_cost_events(db, dossier_id)) == first_count
     path = db.path
-    db.close()
+    db.conn.close()
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
         assert len(_cost_events(restored, dossier_id)) == first_count
     finally:
-        restored.close()
+        restored.conn.close()
 
 def test_force_then_breach_charges_each_real_entry_independently(game):
     db, state, _ = game

@@ -149,7 +149,10 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
                     if name:
                         break
     if not name:
-        row = db.issues.read_resolve_host_character((int(commitment_ref),))
+        row = db.conn.execute(
+            'SELECT participants, participant_roster FROM issues WHERE id=?',
+            (int(commitment_ref),),
+        ).fetchone()
         if row is not None:
             roster = decode_durable_participant_roster(row["participant_roster"])
             for item in roster:
@@ -163,7 +166,10 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
                     name = parts[0].strip()
     integrity, courage = 50, 50
     if name:
-        crow = db.characters.read_resolve_host_character((name,))
+        crow = db.conn.execute(
+            'SELECT integrity, courage FROM characters WHERE name=?',
+            (name,),
+        ).fetchone()
         if crow is not None:
             integrity = int(crow["integrity"])
             courage = int(crow["courage"])
@@ -208,7 +214,10 @@ def _record_commitment_urge(
 
 
 def _issue_exists(db: Any, commitment_ref: int) -> bool:
-    row = db.issues.read_issue_exists((int(commitment_ref),))
+    row = db.conn.execute(
+        'SELECT id FROM issues WHERE id=?',
+        (int(commitment_ref),),
+    ).fetchone()
     return row is not None
 
 
@@ -237,7 +246,10 @@ def rush_staged_commitment_stage(
             item={"commitment_ref": int(commitment_ref)},
         )
 
-    row = db.issues.read_rush_staged_commitment_stage((int(commitment_ref),))
+    row = db.conn.execute(
+        'SELECT id, stages_json, status, commitment_kind FROM issues WHERE id=?',
+        (int(commitment_ref),),
+    ).fetchone()
     if str(row["status"] or "") != "active":
         raise PendingActionRefusal(
             f"承诺 issue#{int(commitment_ref)} 状态 {row['status']}，不能催办",

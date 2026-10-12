@@ -524,7 +524,7 @@ def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monke
     path = str(tmp_path / "reopen.db")
     shutil.copyfile(db.path, path)
     _drain_registered_sessions_before_close(db)
-    db.close()
+    db.conn.close()
 
     reopened = GameDB(path, content)
     try:
@@ -560,7 +560,7 @@ def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monke
         assert int(state2.turn) > closed_turn
     finally:
         _drain_registered_sessions_before_close(reopened)
-        reopened.close()
+        reopened.conn.close()
 
 def test_declined_presentation_keeps_following_world_facts(game, monkeypatch):
     """合法不呈请不是暂停切点：交接块之后的世界事实仍进既有转译并落账。"""

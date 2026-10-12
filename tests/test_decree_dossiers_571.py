@@ -772,7 +772,7 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
     try:
         assert reopened.dossiers.get_for_secret_order(order_id)["status"] == "executing"
     finally:
-        reopened.close()
+        reopened.conn.close()
 
     db.close_secret_order(order_id, "done", "账目核清", state.turn)
     terminal = db.dossiers.get_for_secret_order(order_id)
@@ -941,9 +941,9 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
             assert dossier["target_id"] == "河南"
             assert dossier["directive_id"] == directive_id
         finally:
-            reopened.close()
+            reopened.conn.close()
     finally:
-        session.db.close()
+        session.db.conn.close()
 
 def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game, monkeypatch):
     from ming_sim.decree_forecast import decree_ref_for_dossier
@@ -1170,7 +1170,7 @@ def test_withdrawn_rescript_records_closed_turn(game):
         assert dossier["status"] == "closed"
         assert dossier["closed_turn"] == state.turn
     finally:
-        restored.close()
+        restored.conn.close()
 
 def test_secret_order_target_survives_restore_and_is_queryable(game):
     from ming_sim.db import GameDB
@@ -1186,7 +1186,7 @@ def test_secret_order_target_survives_restore_and_is_queryable(game):
         )
         assert [row["secret_order_id"] for row in matches] == [order_id]
     finally:
-        restored.close()
+        restored.conn.close()
 
 def test_allocation_candidate_edit_preserves_mechanical_payload(game):
     db, state, content = game
@@ -1434,7 +1434,7 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
         assert row["midzhi_unpromulgatable"] is False
         assert restored.dossiers.get(dossier_id)["promulgation_reason"] == verdict["reason"]
     finally:
-        restored.close()
+        restored.conn.close()
 
 def test_rejection_verdict_defaults_omitted_midzhi_marker_to_false(game):
     db, state, _content = game

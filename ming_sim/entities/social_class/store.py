@@ -41,52 +41,20 @@ class ClassStore:
             (name, region_id, population, satisfaction, leverage, agenda),
         )
 
-    def read_surcharge_population_pool_members(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')", params).fetchall()
-
-    def read_class_rows(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name, region_id, population, satisfaction, leverage, agenda FROM classes WHERE region_id = ? ORDER BY name', params).fetchall()
-
-    def read_names(self, params: Any = ()) -> Any:
+    def names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT DISTINCT name FROM classes', params)
 
-    def read_class_report(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "\n            SELECT c.name, c.region_id, c.satisfaction, c.leverage, r.name AS region_name\n            FROM classes c\n            LEFT JOIN regions r ON r.id = c.region_id\n            WHERE c.region_id <> '' AND c.satisfaction <= 30 AND c.leverage >= 60\n            ORDER BY c.satisfaction ASC, c.leverage DESC\n            ",
-            params,
-        ).fetchall()
-
-    def read_adjust_classes(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT satisfaction, leverage FROM classes WHERE name = ? AND region_id = ?",
-            params,
-        ).fetchone()
-
-    def read_ordered_names(self, params: Any = ()) -> Any:
+    def ordered_names(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT DISTINCT name FROM classes ORDER BY name", params
         ).fetchall()
 
-
-    def read_apply_population_transfers(self, params: Any = ()) -> Any:
+    def population_row(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT population FROM classes WHERE name=? AND region_id=?", params
         ).fetchone()
 
-
-    def read_apply_recovery_driven_transfers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM classes WHERE name='农民' AND region_id=?", params
-        ).fetchone()
-
-    def write_adjust_classes(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE classes SET satisfaction = ?, leverage = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE name = ? AND region_id = ?",
-            params,
-        )
-
-    def write_apply_population_transfers(self, params: Any = ()) -> Any:
+    def subtract_population(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
             "WHERE name=? AND region_id=?",
@@ -99,7 +67,7 @@ class ClassStore:
         *, turn: int, source: str, target: str, reason: str, origin_ref: str,
     ) -> None:
         """Write both population stocks and their one transfer in the caller's transaction."""
-        self.write_apply_population_transfers((amount, source_class, source_region))
+        self.subtract_population((amount, source_class, source_region))
         self._conn.execute(
             "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
             "WHERE name=? AND region_id=?",

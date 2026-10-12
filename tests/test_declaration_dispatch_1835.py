@@ -866,7 +866,7 @@ def test_new_secret_order_declaration_lands_through_the_single_write_mouth(game)
 
     committed = db.commit_pending_actions(state, content=db.content, minister_name=minister)
     assert [(c["kind"], c["action"]) for c in committed] == [("secret_order", "新建")]
-    orders = db.character_knowledge.get_active_secret_orders_for_minister(minister)
+    orders = db.character_knowledge.list_secret_orders(status="active", minister_name=minister)
     assert len(orders) == 1
     assert orders[0]["content"] == body
     # 批红后暂存行落定，且真实密令挂上本条暂存（#1376 回传同一 id）。
@@ -936,7 +936,7 @@ def test_secret_order_staging_and_landing_are_visible_only_to_handlers(game):
     )
     assert result.commissions.rejected == []
     db.commit_pending_actions(state, content=db.content, minister_name=minister)
-    order = db.character_knowledge.get_active_secret_orders_for_minister(minister)[0]
+    order = db.character_knowledge.list_secret_orders(status="active", minister_name=minister)[0]
     for origin in (f"secret_order:{order['id']}", f"secret_order_brief:{order['id']}"):
         assert origin_visible_to(db, origin, minister)
         assert not origin_visible_to(db, origin, other)
@@ -976,7 +976,7 @@ def test_secret_order_binds_declared_affair_to_its_dossier(game):
     assert payload["affair_declaration"] == {"attach": "existing", "affair_id": affair.id}
 
     db.commit_pending_actions(state, content=db.content, minister_name=minister)
-    order = db.character_knowledge.get_active_secret_orders_for_minister(minister)[0]
+    order = db.character_knowledge.list_secret_orders(status="active", minister_name=minister)[0]
     dossier = db.conn.execute(
         "SELECT affair_id FROM decree_dossiers WHERE secret_order_id=?",
         (int(order["id"]),),
@@ -1092,7 +1092,7 @@ def test_secret_order_title_lands_verbatim_through_the_real_write_mouth(game):
     )
     assert result.commissions.rejected == []
     db.commit_pending_actions(state, content=db.content, minister_name=minister)
-    order = db.character_knowledge.get_active_secret_orders_for_minister(minister)[0]
+    order = db.character_knowledge.list_secret_orders(status="active", minister_name=minister)[0]
     assert order["title"] == title  # 含首尾空白与换行，未被 strip 篡改
 
 def test_effects_reach_accounting_mouth_without_preseeded_empty_shell(game, monkeypatch):

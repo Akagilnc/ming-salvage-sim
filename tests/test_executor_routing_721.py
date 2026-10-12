@@ -65,14 +65,14 @@ def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(game):
     assert [e["character_id"] for e in row["participant_roster"] if e["tier"] == "主办"] == ["毕自严"]
 
     path = db.path
-    db.close()
+    db.conn.close()
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
         row = restored.dossiers.get(dossier_id)
         assert [e["character_id"] for e in row["participant_roster"] if e["tier"] == "主办"] == ["毕自严"]
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_existing_delegated_lead_is_preserved_not_demoted(game):

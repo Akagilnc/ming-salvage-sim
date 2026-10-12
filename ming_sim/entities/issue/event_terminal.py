@@ -47,7 +47,7 @@ def apply_event_cascading_invalidations(
                 source="event_chain_invalidated",
                 commit=False,
             )
-            row = db.issues.read_find_active_issue_by_origin(('event_pool', ev.id))
+            row = db.issues.active_by_origin(('event_pool', ev.id))
             if row is not None:
                 db.cancel_issue(state, int(row["id"]), narrative=f"事件链作废：{reason}", commit=False)
             item: Dict[str, object] = {"id": ev.id, "title": ev.title, "terminal_state": "obsolete", "reason": reason}

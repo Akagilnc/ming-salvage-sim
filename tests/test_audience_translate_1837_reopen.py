@@ -3,6 +3,7 @@ from tests.material_helpers import prepare_identity_materials
 import json
 from types import SimpleNamespace
 import pytest
+from ming_sim.knowledge import build_character_knowledge
 from ming_sim.audience_night import (
     list_unsettled_summons,
     open_night,
@@ -288,14 +289,14 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
         "WHERE kind='inquiry_assignment'"
     ).fetchall()
     assert sources
-    known = db.get_character_knowledge(state, attendant.name)
+    known = build_character_knowledge(db, state, attendant.name)
     report_events = [event for event in known["events"]
                      if event["source_id"] in {r["source_id"] for r in sources}]
     assert [event["body"] for event in report_events] == [query]
     assert report_events[0]["kind"] == "inquiry_assignment"
     other = next(c.name for c in content.characters.values() if c.name != attendant.name)
     assert not any(e["source_id"] in {r["source_id"] for r in sources}
-                   for e in db.get_character_knowledge(state, other)["events"])
+                   for e in build_character_knowledge(db, state, other)["events"])
     from ming_sim.audience_night import summon_enter
     from ming_sim.materials import prepare_scene_materials, release_material_tree
     # 再开一夜后，委派原文仍从见闻进在场人物的经历，不另造月报文件断言。
@@ -335,7 +336,7 @@ def test_separate_inquiries_same_turn_survive_and_retry_is_idempotent(game, with
         dispatch_declaration(db, state, declaration,
                              night_id=night_id, chat_turn_id=chat_turn_id)  # retry
 
-    assignments = [event for event in db.get_character_knowledge(state, attendant.name)["events"]
+    assignments = [event for event in build_character_knowledge(db, state, attendant.name)["events"]
                    if event["kind"] == "inquiry_assignment"]
     assert len(assignments) == 2
     assert len({event["source_id"] for event in assignments}) == 2

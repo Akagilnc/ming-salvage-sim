@@ -238,7 +238,7 @@ def test_target_roster_survives_generic_issue_restore(game, content):
     source=Provenance.system_simulation).new_issues[0]["issue_id"]
     path = db.conn.execute("PRAGMA database_list").fetchone()[2]
     db.conn.commit()
-    db.close()
+    db.conn.close()
 
     restored = GameDB(path, content)
     try:
@@ -247,7 +247,7 @@ def test_target_roster_survives_generic_issue_restore(game, content):
         assert json.loads(row["participants"]) == []
         assert json.loads(row["participant_roster"]) == []
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_dynamic_apply_rejects_non_text_free_fields_without_coercion(game):

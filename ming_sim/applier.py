@@ -50,36 +50,6 @@ def durable_int(
         raise StoredDocumentError(f"{label} 损坏") from exc
 
 
-def durable_float(
-    raw: object, *, label: str, blank: float | None = 0.0,
-    allow_nonfinite: bool = False,
-) -> float:
-    """Read one float from a durable column.
-
-    ``blank`` is the value for None/empty on *optional* columns.
-    Pass ``blank=None`` for required columns. Bool is always corruption.
-    Non-finite values raise unless ``allow_nonfinite`` (e.g. gone-fact difficulty).
-    """
-    import math
-
-    if raw is None or raw == "":
-        if blank is None:
-            raise StoredDocumentError(f"{label} 损坏")
-        return float(blank)
-    if isinstance(raw, bool):
-        raise StoredDocumentError(f"{label} 损坏")
-    try:
-        value = float(raw)
-    except (TypeError, ValueError) as exc:
-        raise StoredDocumentError(f"{label} 损坏") from exc
-    if math.isfinite(value):
-        return float(value)
-    # 仅合法 +inf（gone 事实难度）；NaN / −inf 仍是损坏。
-    if allow_nonfinite and value == float("inf"):
-        return float(value)
-    raise StoredDocumentError(f"{label} 损坏")
-
-
 def coerce_beyond_intent_flag(value: object) -> int:
     """闭世界肯定识别器：仅契约内肯定表示 →1；缺席/否定/空/畸形一律 →0。
 

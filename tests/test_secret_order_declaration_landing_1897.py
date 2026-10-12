@@ -662,7 +662,7 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
         assert len(landed) == 1
         assert landed[0]["minister_name"] == minister
     finally:
-        reopened.close()
+        reopened.conn.close()
 
 
 def test_approved_rush_reports_success_and_is_not_repeated(game, monkeypatch):
@@ -1022,7 +1022,7 @@ def test_secret_order_progress_is_stored_verbatim(game, monkeypatch):
         assert int(reread[0]["turn"]) == reported_turn
         assert str(reopened.character_knowledge.get_secret_order(order_id)["result"] or "") == ""
     finally:
-        reopened.close()
+        reopened.conn.close()
 
 
 def test_scene_review_claim_lands_on_the_review_rail(game, monkeypatch):

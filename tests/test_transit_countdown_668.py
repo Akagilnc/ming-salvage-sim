@@ -130,12 +130,12 @@ def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game, monke
         pre_settle(state, db, content=content)
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
-        assert db.issues.read_find_any_issue_by_origin(('event_pool', ev.id)) is None
+        assert db.issues.by_origin(('event_pool', ev.id)) is None
         from tests.month_chain_helpers import canned_full_settlement, make_light_session
         canned_full_settlement(monkeypatch)
         session = make_light_session(db, state, content)
         session.resolve_turn(allow_empty_decree=True)
-        issue = db.issues.read_find_any_issue_by_origin(('event_pool', ev.id))
+        issue = db.issues.by_origin(('event_pool', ev.id))
         assert issue is not None, 'seed 门应在 tick 后读新 location 并硬立项'
         assert issue['status'] == 'active'
     finally:
@@ -207,7 +207,7 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
         state_r.turn = t0 + mid_k
         db_r.reign.save_game_state(state_r)
         reopen_path = db_r.path
-        db_r.close()
+        db_r.conn.close()
         db2 = GameDB(reopen_path, content)
         try:
             state2 = db2.load_state()
@@ -224,10 +224,10 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
                 _assert_transit_frame_equal(_transit_frame(db2, name, arrivals), control[k])
             assert tuple(_ledger(db2, name)) == (dest, '', None, None, 0)
         finally:
-            db2.close()
+            db2.conn.close()
     except BaseException:
         try:
-            db_r.close()
+            db_r.conn.close()
         except Exception:
             pass
         raise

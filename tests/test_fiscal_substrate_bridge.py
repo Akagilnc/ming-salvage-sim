@@ -1,3 +1,4 @@
+from ming_sim.opening_seed import seed_opening_world
 from copy import deepcopy
 from ming_sim.applier import Provenance
 import json
@@ -43,7 +44,7 @@ def fresh_db(tmp_path):
     content = GameContent.load()
     bind_content(content)
     db = GameDB(str(tmp_path / "fresh.db"), content)
-    db.seed_static_data()
+    seed_opening_world(db)
     try:
         yield db
     finally:
@@ -458,7 +459,7 @@ def test_self_funded_seed_arrears_log_preserves_fractional_delta(tmp_path):
     )
     bind_content(content)
     db = GameDB(str(tmp_path / "fractional-tusi.db"), content)
-    db.seed_static_data()
+    seed_opening_world(db)
     try:
         log = db.conn.execute(
             """
@@ -490,7 +491,7 @@ def test_fresh_save_pay_source_prefers_content_army_fields(tmp_path):
     )
     db = GameDB(str(tmp_path / "pay-source-content.db"), content)
     try:
-        db.seed_static_data()
+        seed_opening_world(db)
         row = db.conn.execute(
             """
             SELECT pay_source_region, province_pay_share, central_pay_share
@@ -501,7 +502,7 @@ def test_fresh_save_pay_source_prefers_content_army_fields(tmp_path):
         assert row["province_pay_share"] == pytest.approx(0.25)
         assert row["central_pay_share"] == pytest.approx(0.75)
     finally:
-        db.close()
+        db.conn.close()
 
 
 def test_conservation_rejects_excluded_army_with_pay_source_debt(fresh_db):

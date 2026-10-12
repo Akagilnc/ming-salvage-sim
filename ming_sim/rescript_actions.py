@@ -91,7 +91,10 @@ def apply_imperial_deliberation_push(
     if payload.get("deliberation_state") != "stalled":
         raise ValueError("御笔强推只接无人站台原案")
     origin = f"dossier:{did}"
-    issue = db.issues.read_apply_imperial_deliberation_push((origin,))
+    issue = db.conn.execute(
+        "SELECT id FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
+        (origin,),
+    ).fetchone()
     if issue is None:
         raise ValueError("无人站台原案缺局势记录")
     payload["deliberation_state"] = "backed"

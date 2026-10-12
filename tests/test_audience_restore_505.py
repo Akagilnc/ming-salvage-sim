@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
+from ming_sim.opening_seed import seed_opening_world
 import ming_sim.issues as issues_mod
 from ming_sim import audience_night as an
 from tests.conftest import open_hall_turn, stub_scene_agent
@@ -51,7 +52,7 @@ def _active_minister(db, content) -> str:
 def _open_db(path, content, *, first: bool):
     db = GameDB(path, content)
     if first:
-        db.seed_static_data()
+        seed_opening_world(db)
         state = db.load_state()
         sync_opening_legacies(db, state)
     else:
@@ -135,14 +136,14 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
     night = an.open_night(db, state, location="文华殿", time_of_day="午时")
     ct = _start_generating_turn(db, state, minister, "杨卿何以教朕？")
     # kill 前：该轮为在飞、大臣被判「仍在进行」。
-    assert an.list_in_flight_chat_turns(db, night["id"])
-    db.close()
+    assert db.reign.list_in_flight_chat_turns(night_id=night["id"])
+    db.conn.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
         interrupted = db2.reconcile_interrupted_chat_turns()
         # 该轮被标为可重试的 interrupted（不再在飞、不阻塞续问/收夜）。
-        assert an.list_in_flight_chat_turns(db2, night["id"]) == []
+        assert db2.reign.list_in_flight_chat_turns(night_id=night["id"]) == []
         assert any(int(r["chat_turn_id"]) == ct for r in interrupted)
         # 问话原句保留（不删）——恢复路径永不删记录。
         proj = db2.build_chat_projection(an.SCENE_CHAT_SPEAKER)
@@ -151,7 +152,7 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
         retries = db2.reign.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)
         assert [r["question"] for r in retries] == ["杨卿何以教朕？"]
     finally:
-        db2.close()
+        db2.conn.close()
 
 
 def test_reconcile_leaves_completed_turn_untouched(restore_env):
@@ -161,7 +162,7 @@ def test_reconcile_leaves_completed_turn_untouched(restore_env):
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="夜")
     ct = _land_full_turn(db, state, minister, "问", "臣对。")
-    db.close()
+    db.conn.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
@@ -172,7 +173,7 @@ def test_reconcile_leaves_completed_turn_untouched(restore_env):
         ).fetchone()["status"]
         assert status == "active"
     finally:
-        db2.close()
+        db2.conn.close()
 
 
 # ── AC2 纯奏对零账目段寸步不丢 ───────────────────────────────────────
@@ -192,7 +193,7 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE source_chat_turn_id>0"
     ).fetchone()["c"]
     assert extracted == 0
-    db.close()
+    db.conn.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
@@ -201,7 +202,7 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
         assert "四轮问对之一" in [m["content"] for m in proj if m["role"] == "user"]
         assert "臣愚见如此。" in [m["content"] for m in proj if m["role"] == "minister"]
     finally:
-        db2.close()
+        db2.conn.close()
 
 
 # ── AC3 重试重新生成回话、记录无重复句 ───────────────────────────────
@@ -514,19 +515,19 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
     )
     db.conn.commit()  # 写口不提交；已受理的孤儿轮由调用方持久化。
     # 不 append 问话、不 link user_message_id：generating 且无 user_message。
-    db.close()
+    db.conn.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
         interrupted = db2.reconcile_interrupted_chat_turns()
         assert all(int(r["chat_turn_id"]) != ct for r in interrupted)
-        assert an.list_in_flight_chat_turns(db2, night["id"]) == []
+        assert db2.reign.list_in_flight_chat_turns(night_id=night["id"]) == []
         assert db2.conn.execute(
             "SELECT status FROM chat_turns WHERE id=?", (ct,)
         ).fetchone()["status"] == "failed"
         assert db2.reign.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER) == []
     finally:
-        db2.close()
+        db2.conn.close()
 
 
 # ── finding2：load_save / 换档重建走 __init__ 同序重开对账 ───────────────────

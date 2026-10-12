@@ -251,7 +251,6 @@ class AffairStore:
         except KeyError as exc:
             raise DeclarationReferenceError(f"{label}不存在：{row_id}") from exc
 
-
     def assert_origin_matches_declaration(
         self, origin_ref: str, declaration: Mapping[str, object]
     ) -> None:
@@ -285,14 +284,6 @@ class AffairStore:
     def origin_ref(affair_id: int) -> str:
         return f"{_ORIGIN_AFFAIR}:{int(affair_id)}"
 
-    def affair_id_for_issue(self, issue_id: int) -> int:
-        return IssueStore(self._conn).affair_id_of(int(issue_id))
-
-    @staticmethod
-    def current_situation(textual_facts: Any, affair_id: int):
-        return textual_facts.readable_materials(
-            subject_kind="affair", subject_id=str(int(affair_id)),
-        )
 
     def input_brief(self, textual_facts: Any = None) -> list[dict[str, object]]:
         """Default LLM input: identity plus one current-situation line. No full experiences."""
@@ -300,7 +291,7 @@ class AffairStore:
         for affair in self.list_open():
             situation = ""
             if textual_facts is not None:
-                facts = self.current_situation(textual_facts, affair.id)
+                facts = textual_facts.readable_materials(subject_kind="affair", subject_id=str(int(affair.id)))
                 if facts:
                     situation = str(facts[-1].body or "")
             brief.append({

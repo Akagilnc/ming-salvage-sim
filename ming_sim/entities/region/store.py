@@ -25,8 +25,6 @@ _LOG_COLUMNS = (
 )
 
 
-def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
-    return checked_columns(values, allowed, what="regions")
 
 
 class RegionStore:
@@ -42,7 +40,7 @@ class RegionStore:
     def update(
         self, region_id: str, values: Mapping[str, object], *, touch: bool = True,
     ) -> int:
-        columns = _checked(values, allowed=_MUTABLE_COLUMNS)
+        columns = checked_columns(values, _MUTABLE_COLUMNS, what="regions")
         if not columns and not touch:
             raise ValueError("regions update needs fields")
         parts = [f"{column}=?" for column in columns]
@@ -58,7 +56,7 @@ class RegionStore:
     def insert_ignore(self, row: Mapping[str, object]) -> None:
         if "id" not in row:
             raise ValueError("regions insert needs id")
-        columns = _checked(row, allowed=REGION_COLUMNS)
+        columns = checked_columns(row, REGION_COLUMNS, what="regions")
         placeholders = ", ".join("?" for _ in columns)
         self._conn.execute(
             f"INSERT OR IGNORE INTO regions ({', '.join(columns)}) "
@@ -91,78 +89,29 @@ class RegionStore:
             params = (limit,)
         return self._conn.execute(sql, params).fetchall()
 
-
     def row(self, region_id: str) -> Any:
         return self._conn.execute('SELECT * FROM regions WHERE id = ?', (region_id,)).fetchone()
 
-    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, name FROM regions ORDER BY id", params
-        ).fetchall()
-
-
-    def read_originated_quantity_this_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT region_id, field, new_value, delta FROM region_logs WHERE origin_ref=? AND turn=?",
-            params,
-        ).fetchall()
-
-    def read_apply_dynamic_fiscal_scale(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id, fiscal FROM regions", params).fetchall()
-
-    def read_settle_ming_province_substrate_ticks(self, params: Any = ()) -> Any:
+    def ordered_ming_fiscal_rows(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id",
             params,
         ).fetchall()
 
-    def read_apply_region_cannon(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT city_level, cannon FROM regions WHERE id=?", params
-        ).fetchone()
-
-    def read_province_army_pay_container_total(self, params: Any = ()) -> Any:
+    def ming_fiscal_rows(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'", params
         ).fetchall()
 
-    def read_apply_surcharge_decrees(self, params: Any = ()) -> Any:
+    def control_fiscal_row(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT controlled_by, fiscal FROM regions WHERE id=?", params
         ).fetchone()
 
-
-    def read_region_report(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT SUM(tax_per_turn) AS total FROM regions", params
-        ).fetchone()
-
-    def read_assert_commission_grant_target_exists(self, params: Any = ()) -> Any:
+    def presence(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT 1 FROM regions WHERE id=?", params).fetchone()
 
-    def read_apply_levy_driven_transfers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, fiscal, public_support FROM regions WHERE controlled_by='ming' ORDER BY id",
-            params,
-        ).fetchall()
-
-    def read_load_pending_gate_valid_regions(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id FROM regions", params).fetchall()
-
-    def read_apply_fiscal_levy_targets(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, fiscal FROM regions ORDER BY id", params
-        ).fetchall()
-
-
-    def read_resolve_single_region_id(self, params: Any = ()) -> Any:
+    def identity_row(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT id, kind, controlled_by FROM regions WHERE id=?", params
         ).fetchone()
-
-    def read_resolve_single_region_id_id_kind_controlled_by(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            "SELECT id, kind, controlled_by FROM regions WHERE name=?", params
-        ).fetchall()

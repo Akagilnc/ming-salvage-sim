@@ -23,8 +23,6 @@ _LOG_COLUMNS = (
     "delta", "reason", "origin_ref",
 )
 
-def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
-    return checked_columns(values, allowed, what="powers")
 
 
 class PowerStore:
@@ -49,7 +47,7 @@ class PowerStore:
     def insert_ignore(self, row: Mapping[str, object]) -> None:
         if "id" not in row:
             raise ValueError("powers insert needs id")
-        columns = _checked(row, allowed=POWER_COLUMNS)
+        columns = checked_columns(row, POWER_COLUMNS, what="powers")
         placeholders = ", ".join("?" for _ in columns)
         self._conn.execute(
             f"INSERT OR IGNORE INTO powers ({', '.join(columns)}) "
@@ -58,7 +56,7 @@ class PowerStore:
         )
 
     def update(self, power_id: str, values: Mapping[str, object]) -> int:
-        columns = _checked(values, allowed=_MUTABLE_COLUMNS)
+        columns = checked_columns(values, _MUTABLE_COLUMNS, what="powers")
         if not columns:
             raise ValueError("powers update needs fields")
         assignments = ", ".join(f"{column}=?" for column in columns)
@@ -81,30 +79,13 @@ class PowerStore:
         row = self.field_row('name', str(power_id))
         return str(row["name"]) if row else str(power_id)
 
-
-    def read_apply_issue_entities(self, params: Any = ()) -> Any:
+    def presence(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT 1 FROM powers WHERE id=?", params).fetchone()
 
-    def read_apply_power_rename(self, params: Any = ()) -> Any:
+    def row(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT * FROM powers WHERE id = ?", params
         ).fetchone()
 
-    def read_find_pacification_target(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT kind, leader, stance FROM powers WHERE id=?", params
-        ).fetchone()
-
-    def read_apply_character_power_changes(self, params: Any = ()) -> Any:
+    def ids(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT id FROM powers", params).fetchall()
-
-
-    def write_apply_power_rename(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                INSERT INTO power_name_logs
-                (turn, year, period, power_id, old_name, new_name, old_aliases, new_aliases, reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-            params,
-        )

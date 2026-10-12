@@ -304,7 +304,14 @@ def settle_hub_army_loyalty_tick(db: "GameDB", state: "GameState") -> None:
 
     欠饷以两源合计为准（arrears 列滞后时以 province+central 合计纠偏）。
     """
-    loyalty_rows = db.armies.read_apply_fixed_period_flows_id_name_manpower_salary_rate_owner_power_arrears_province_pay_arr()
+    loyalty_rows = db.conn.execute("""
+        SELECT id, name, manpower, salary_rate, owner_power,
+               arrears, province_pay_arrears, central_pay_arrears,
+               loyalty, is_tusi, self_funded_pay, is_mutinied,
+               mutiny_count, mutiny_probation, full_pay_streak, redemption_count
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+    """, ()).fetchall()
     for lr in loyalty_rows:
         full_needed_loyalty = army_needed(lr)
         if full_needed_loyalty <= 0:
@@ -406,7 +413,7 @@ def _auto_pay_arrears_by_priority(
         else None
     )
     # arrears = province + central 生成合计；既有 Store 读口按 arrears>0 取应付池。
-    rows = db.armies.read_auto_pay_arrears_by_priority()
+    rows = db.conn.execute("SELECT * FROM armies WHERE owner_power='ming' AND arrears>0", ()).fetchall()
     if allowed_ids is not None:
         rows = [row for row in rows if str(row["id"]) in allowed_ids]
     army_map = {str(r["id"]): r for r in rows}

@@ -239,7 +239,7 @@ def test_restore_preserves_report_history(game, tmp_path, content):
 
     backup = tmp_path / "restore-619.db"
     db.backup_to(str(backup))
-    db.close()
+    db.conn.close()
 
     restored = GameDB(str(backup), content=content)
     try:
@@ -255,7 +255,7 @@ def test_restore_preserves_report_history(game, tmp_path, content):
             "出京核验", "已至保定", "三县完册",
         ]
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_terminal_surface_dossier_rejects_reported_progress(game):

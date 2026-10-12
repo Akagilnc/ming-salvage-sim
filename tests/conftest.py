@@ -13,6 +13,7 @@ import shutil
 
 import pytest
 
+from ming_sim.opening_seed import seed_opening_world
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content as ctx_bind
 import ming_sim.issues as issues_mod
@@ -60,16 +61,16 @@ def content() -> GameContent:
 
 
 def _seed_opening_db(path: str, content) -> None:
-    """生产开局同核：seed_static_data + load_state + sync_opening_legacies，写入 path。"""
+    """生产开局同核：seed_opening_world + load_state + sync_opening_legacies，写入 path。"""
     db = GameDB(path, content)
     try:
-        db.seed_static_data()
+        seed_opening_world(db)
         state = db.load_state()
         from ming_sim.applier import atomic
         with atomic(db):
             issue_legacy.sync_opening_legacies(db, state)
     finally:
-        db.close()
+        db.conn.close()
 
 
 @contextmanager
@@ -90,7 +91,7 @@ def _opening_game(content, workdir):
         yield db, state, content
     finally:
         if db is not None:
-            db.close()
+            db.conn.close()
 
 
 
@@ -246,7 +247,7 @@ def game(content, _game_template_path, monkeypatch, tmp_path):
     """返回 (db, state, content)：开局同核临时库，用例间隔离。
 
     Setup 形态（#1233 刀1 方案 c）：session 模板 DB 一次 seed，每案 ``shutil.copyfile``
-    后 ``GameDB``+``load_state``。断言语义与逐案 ``seed_static_data`` 相同（同核开局态），
+    后 ``GameDB``+``load_state``。断言语义与逐案 ``seed_opening_world`` 相同（同核开局态），
     只把 setup 从 O(seed) 降到 O(copy)。
 
     不依赖 gitignored data/probe.db（#5）：characters 直接来自 content（101 全）。
@@ -274,7 +275,7 @@ def game(content, _game_template_path, monkeypatch, tmp_path):
         try:
             if db is not None:
                 _drain_registered_sessions_before_close(db)
-                db.close()
+                db.conn.close()
         finally:
             tail_note.undo()
 
@@ -306,10 +307,10 @@ def saved_game(content, tmp_path):
         state = db.load_state()
         yield db, state, content
     finally:
-        # setup（copy/GameDB/load_state）抛错也清 temp（cmr #5 r2 coderabbit）；封装 db.close()（gemini #5）。
+        # setup（copy/GameDB/load_state）抛错也清 temp（cmr #5 r2 coderabbit）；封装 db.conn.close()（gemini #5）。
         # 库文件本身由 pytest 随 tmp_path 回收，无需逐个删。
         if db is not None:
-            db.close()
+            db.conn.close()
 
 
 def active_ming_character(db, content) -> str:

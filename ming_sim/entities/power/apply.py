@@ -85,7 +85,7 @@ def _apply_bandit_absorptions(
         if origin_error:
             rejected.append(RejectedItem(item=item, reason=f"bandit_absorptions {origin_error['reason']}", category=origin_error["category"], source=source))
             continue
-        pool_row = db.classes.read_apply_population_transfers(("流民", region_id))
+        pool_row = db.classes.population_row(("流民", region_id))
         if pool_row is None:
             _reject(
                 "missing_ref",
@@ -101,7 +101,7 @@ def _apply_bandit_absorptions(
             )
             continue
         # 单侧出池（0087 兵源出口无农民对端）+ 实力正增同事务。
-        db.classes.write_apply_population_transfers((actual, "流民", region_id))
+        db.classes.subtract_population((actual, "流民", region_id))
         strength_delta = actual // int(BANDIT_ABSORPTION_PERSONS_PER_STRENGTH)
         applied_item: Dict[str, object] = {
             "region_id": region_id,

@@ -2,6 +2,7 @@ from __future__ import annotations
 from tests.conftest import open_hall_turn
 from pathlib import Path
 import pytest
+from ming_sim.opening_seed import seed_opening_world
 from ming_sim import audience_night as an
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
@@ -264,7 +265,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
     才提交合法已应允任免并封夜。"""
     path = str(tmp_path / "migrate-reopen.db")
     db = GameDB(path, content)
-    db.seed_static_data()
+    seed_opening_world(db)
     state = db.load_state()
     minister = _active_minister(db, content)
     old_office = db.conn.execute(
@@ -280,7 +281,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
     db.mark_pending_night_approved([pa_id], night_id=night["id"])
     # 断电前态：已 durable 写 status=closing、cursor=0，office 尚未提交
     an._set_night_fields(db, night["id"], status=an.NIGHT_STATUS_CLOSING)
-    db.close()
+    db.conn.close()
 
     db2 = GameDB(path, content)
     state2 = db2.load_state()
@@ -310,7 +311,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
     )
     assert db2.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "committed"
-    db2.close()
+    db2.conn.close()
 
 
 # ── AC10 在飞回话 × 真实 web 入口 → tests/test_web_audience_night_498.py ──

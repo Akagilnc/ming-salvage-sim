@@ -299,7 +299,10 @@ def build_transformation_tendency_facts(
 def character_tenure(db: Any, name: str) -> str:
     if not name:
         return "真除"
-    row = db.characters.read_resolve_executor_appointment_tenure((name,))
+    row = db.conn.execute(
+        'SELECT appointment_tenure FROM character_offices WHERE character_name=?',
+        (name,),
+    ).fetchone()
     if row is None:
         return "真除"
     return normalize_appointment_tenure(row["appointment_tenure"])
@@ -308,7 +311,10 @@ def character_tenure(db: Any, name: str) -> str:
 def character_faction_integrity(db: Any, name: str) -> Tuple[str, object]:
     if not name:
         return "", None
-    row = db.characters.read_character_faction_integrity((name,))
+    row = db.conn.execute(
+        'SELECT faction, integrity FROM characters WHERE name=?',
+        (name,),
+    ).fetchone()
     if row is None:
         return "", None
     return str(row["faction"] or ""), row["integrity"]

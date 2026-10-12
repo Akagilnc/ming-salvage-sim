@@ -159,7 +159,10 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
                         decision_key=key, source_chat_turn_id=0, commit=False,
                     )
             if disposition == "revise":
-                db.issues.write_consume((row["turn"], row["idx"]))
+                db.conn.execute(
+                    "UPDATE pending_decisions SET status='revision_pending' WHERE turn=? AND idx=?",
+                    (row['turn'], row['idx']),
+                )
             outcome = _ending_from_dispatch_result(result)
             if outcome is not None:
                 chain["declaration_outcome"] = outcome

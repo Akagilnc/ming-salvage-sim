@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from ming_sim.opening_seed import seed_opening_world
 from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.content import GameContent
@@ -414,7 +415,7 @@ def _appointment_intent_is_current_office_noop(
     if conn is None or not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    row = CharacterStore(conn).read_sponsor_transferred((canonical,))
+    row = CharacterStore(conn).status_office_row((canonical,))
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -521,7 +522,21 @@ def apply_appointment(
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。
     DB 是持久化真相；不要在这里修写 DB。"""
-    rows = db.characters.read_sync_offices_from_db_impl(())
+    rows = db.conn.execute(
+        """
+        SELECT c.name, c.office, c.office_type, c.faction, c.aliases, c.personal_skills,
+               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.intrigue, c.seed_guilt,
+               c.birth_year, c.historical_death_year, c.historical_death_month,
+               c.debut_year, c.debut_month, c.status, c.status_reason, c.reason_code,
+               c.portrait_id, c.power_id, c.location, c.transit_to,
+               c.transit_distance_remaining, c.transit_speed_factor, c.transit_start_turn,
+               c.summary,
+               COALESCE(co.region_id, '') AS office_region
+        FROM characters c
+        LEFT JOIN character_offices co ON co.character_name = c.name
+        """,
+        (),
+    ).fetchall()
     characters: Dict[str, Character] = {}
     for row in rows:
         name = row["name"]
@@ -616,7 +631,7 @@ class GameSession:
             # 自部署者在 server 控制台看得见进度、定位慢阶段。
             from ming_sim.token_stats import tlog
             _t = time.monotonic()
-            self.db.seed_static_data()
+            seed_opening_world(self.db)
             _t, _e = time.monotonic(), time.monotonic() - _t
             tlog(f"[载入] 1/4 静态盘面 seed {_e:.1f}s")
             _sync_offices_from_db_impl(self.content, self.db, llm_config)
@@ -681,10 +696,10 @@ class GameSession:
             db = getattr(self, "db", None)
             if db is not None:
                 try:
-                    db.close()
+                    db.conn.close()
                     self.db = None  # type: ignore[assignment]
                 except Exception:
-                    logger.exception("GameSession init failed; db.close failed")
+                    logger.exception("GameSession init failed; db.conn.close failed")
                     residual = True
             if residual:
                 try:
@@ -813,7 +828,7 @@ class GameSession:
         eligible, reason = self.can_summon(character)
         if not eligible:
             return AudienceAdmissionDecision(None, reason=reason)
-        row = self.db.characters.read_admit_audience((character.name,))
+        row = self.db.characters.location_row((character.name,))
         # #670：无 DB 行不得 blank fail-open 入殿；在册空 location 仍 fail-open 在京。
         if row is None:
             return AudienceAdmissionDecision(
@@ -1383,9 +1398,10 @@ class GameSession:
         """chat_messages 某行的归属大臣名；无此行时返回空串。"""
         if not message_id:
             return ""
-        row = self.db.chat_messages.read_chat_message_speaker(
-            (int(message_id),)
-        )
+        row = self.db.conn.execute(
+            'SELECT minister_name FROM chat_messages WHERE id = ?',
+            (int(message_id),),
+        ).fetchone()
         return str(row["minister_name"] or "") if row else ""
 
     def fail_audience_chat_turn(
@@ -1410,9 +1426,10 @@ class GameSession:
 
         if not turn.chat_turn_id:
             return False
-        row = self.db.reign.read_fail_audience_chat_turn(
-            (turn.chat_turn_id,)
-        )
+        row = self.db.conn.execute(
+            'SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?',
+            (turn.chat_turn_id,),
+        ).fetchone()
         reply_landed = bool(
             row is not None
             and row["status"] == "active"
@@ -1912,9 +1929,10 @@ class GameSession:
         # 说话人是源轮上已落的结构化身份。空串会把查访/进展闸当成殿上整场放行。
         minister_name = ""
         if hasattr(self.db, "conn"):
-            row = self.db.reign.read_apply_scene_turn_translation(
-                (ctid,)
-            )
+            row = self.db.conn.execute(
+                'SELECT minister_name FROM chat_turns WHERE id=?',
+                (ctid,),
+            ).fetchone()
             if row is not None:
                 minister_name = str(row["minister_name"] or "")
         result.pending_audience_translation = {
@@ -2056,7 +2074,7 @@ class GameSession:
             row = self.db.issues.directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
-            bad_payload = self.db.issues.read_directive_dossier_payload(row)
+            bad_payload = self.db.issues.directive_dossier_payload(row)
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:
@@ -2564,7 +2582,7 @@ class GameSession:
         ``drain_and_close_session`` 在 SessionWriteQueue 已 seal、barrier 已排空且
         持 write_gate 时调用。agno 失败则立即上抛、不碰 db
         （两侧仍完整可恢复）。agno 已成功后 ``_close_epoch`` 递增——此后即使
-        db.close 失败/conn 仍可探测，也不得恢复为活局（agno 已失）。
+        db.conn.close 失败/conn 仍可探测，也不得恢复为活局（agno 已失）。
         """
         agno = getattr(self, "agno_db", None)
         if agno is not None:
@@ -2577,9 +2595,9 @@ class GameSession:
                     raise
                 self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
         try:
-            self.db.close()
+            self.db.conn.close()
         except BaseException:
-            logger.exception("GameSession.db.close failed")
+            logger.exception("GameSession.db.conn.close failed")
             raise
         self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
 

@@ -169,7 +169,7 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
 
     backup = tmp_path / "restore-570.db"
     db.backup_to(str(backup))
-    db.close()
+    db.conn.close()
 
     restored = GameDB(str(backup), content=content)
     try:
@@ -183,4 +183,4 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
         cont = restored.dossiers.list_dossier_progress(errand_id)
         assert [row["memorial_text"] for row in cont] == ["已出京赴陕", "已抵西安"]
     finally:
-        restored.close()
+        restored.conn.close()

@@ -78,7 +78,7 @@ def _apply_population_transfers(
             )
             continue
         if (
-            db.regions.read_assert_commission_grant_target_exists(
+            db.regions.presence(
                 (src_region,)
             )
             is None
@@ -129,10 +129,10 @@ def _apply_population_transfers(
         if origin_error:
             rejected.append(RejectedItem(item=item, reason=f"population_transfers {origin_error['reason']}", category=origin_error["category"], source=source))
             continue
-        src_row = db.classes.read_apply_population_transfers(
+        src_row = db.classes.population_row(
             (src_cls, src_region)
         )
-        dst_row = db.classes.read_apply_population_transfers(
+        dst_row = db.classes.population_row(
             (dst_cls, dst_region)
         )
         if src_row is None or dst_row is None:
@@ -152,7 +152,7 @@ def _apply_population_transfers(
             # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
             db.classes.record_population_transfer(
                 src_cls, src_region, dst_cls, dst_region, amount,
-                turn=int(db.reign.read_current_settle_turn(())[0]),
+                turn=int(db.reign.turn_row(())[0]),
                 source=row_source, target=target, reason=raw_reason, origin_ref=origin_ref,
             )
         region_name = str(
