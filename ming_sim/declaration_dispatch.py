@@ -57,7 +57,7 @@ from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
 import hashlib
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.recommendations import list_recommendation_candidates
@@ -146,7 +146,6 @@ class DeclarationDispatchResult:
     rushes: SectionResult
     travel_tones: SectionResult
     rejection_withdrawals: SectionResult = field(default_factory=lambda: SectionResult([], []))
-    rejection_corrections: SectionResult = field(default_factory=lambda: SectionResult([], []))
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
@@ -168,7 +167,6 @@ class DeclarationDispatchResult:
             rushes=self.rushes.merge(other.rushes),
             travel_tones=self.travel_tones.merge(other.travel_tones),
             rejection_withdrawals=self.rejection_withdrawals.merge(other.rejection_withdrawals),
-            rejection_corrections=self.rejection_corrections.merge(other.rejection_corrections),
         )
 
 
@@ -176,7 +174,7 @@ _SECTION_FIELDS: Tuple[str, ...] = (
     "commissions", "promises", "endorsements", "textual_facts", "public_sayings",
     "on_scene_facts", "presence", "scene_facts", "edge_events",
     "protagonist", "registrations", "effects",
-    "inquiries", "rushes", "travel_tones", "rejection_withdrawals", "rejection_corrections",
+    "inquiries", "rushes", "travel_tones", "rejection_withdrawals",
 )
 _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 
@@ -231,6 +229,7 @@ def _dispatch_declaration_sections(
     visible_refs: Optional[Mapping[str, object]] = None,
     defer_disclosure: bool = False,
     decree_ref: Optional[str] = None,
+    correction_refs: Optional[List[str]] = None,
 ) -> DeclarationDispatchResult:
     """真正跑已知 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
     给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
@@ -288,6 +287,8 @@ def _dispatch_declaration_sections(
             collector=collector,
             turn=turn, source=source, visible_refs=visible_refs,
             defer_disclosure=defer_disclosure,
+            decree_ref=decree_ref,
+            correction_refs=correction_refs,
         ),
         promises=promises,
         endorsements=endorsements,
@@ -342,12 +343,6 @@ def _dispatch_declaration_sections(
             source_turn_error=source_turn_err or ("拒收撤回须来自召对轮" if night_id <= 0 else None),
         ),
     )
-    corrections, effects = _dispatch_rejection_corrections(
-        db, state, declaration.get("rejection_corrections"), decree_ref=decree_ref,
-        night_id=night_id, collector=collector, source=source,
-        visible_refs=visible_refs, defer_disclosure=defer_disclosure,
-    )
-    result = replace(result, rejection_corrections=corrections, effects=result.effects.merge(effects))
     _record_unknown_sections(collector, declaration, turn, source)
     _record_section_rejections(collector, result, turn)
     return result
@@ -454,6 +449,105 @@ def _persist_specialized_extraction(
                 collector.record("covert_exec_selections", item, int(turn))
 
 
+def _clean_has_effect_content(clean: Mapping[str, object]) -> bool:
+    """Whether a sanitized effect envelope declares any actual landable content."""
+    for key, value in clean.items():
+        if str(key).startswith("_"):
+            continue
+        if isinstance(value, list) and value:
+            return True
+        if isinstance(value, dict) and value:
+            return True
+        if value not in (None, "", [], {}):
+            return True
+    return False
+
+
+def _step_has_rejections(clean: Mapping[str, object], outcome: Any, envelope_rejected: Sequence[RejectedItem]) -> bool:
+    """Whether any declared item from this envelope was rejected in the shared settle."""
+    declared: List[object] = []
+    for value in clean.values():
+        if isinstance(value, list):
+            declared.extend(value)
+        elif isinstance(value, dict) and value:
+            declared.append(value)
+    if not declared:
+        return False
+    rejected_items = [item.item for item in envelope_rejected]
+    for section in outcome.sections().values():
+        rejected_items.extend(item.item for item in section.rejected)
+    rejected_items.extend(item.item for item in outcome.shape_rejections)
+    for declared_item in declared:
+        for rejected_item in rejected_items:
+            if rejected_item is declared_item or rejected_item == declared_item:
+                return True
+            if isinstance(rejected_item, Mapping) and isinstance(declared_item, Mapping):
+                if all(rejected_item.get(key) == declared_item.get(key) for key in declared_item):
+                    return True
+    return False
+
+
+def _attempted_rejection_ids(raw_ids: object) -> List[int]:
+    if not isinstance(raw_ids, (list, tuple)):
+        return []
+    out: List[int] = []
+    for value in raw_ids:
+        try:
+            out.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _correction_owner_for_ids(
+    db: Any, ids: Sequence[int], *, decree_ref: Optional[str],
+) -> Tuple[Optional[str], Any, int, dict, str]:
+    """Resolve the unique dossier that owns these rejection ids.
+
+    Returns (decree_ref, dossier, pending_id, payload, error_category).
+    error_category is empty on success.
+    """
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+
+    if decree_ref:
+        dossier, pending_id, payload = _correction_context(db, decree_ref)
+        if not dossier:
+            return None, None, 0, {}, "missing_ref"
+        owned = set(payload.get("_resolves_rejection_ids") or [])
+        if not set(ids).issubset(owned):
+            return decree_ref, dossier, pending_id, payload, "hallucinated_id"
+        return decree_ref, dossier, pending_id, payload, ""
+
+    wanted = set(ids)
+    matches: List[Tuple[str, Any, int, dict]] = []
+    for dossier in db.dossiers.list_dossiers():
+        ref = decree_ref_for_dossier(db, dossier)
+        live_dossier, pending_id, payload = _correction_context(db, ref)
+        row = live_dossier or dossier
+        owned = set((payload or {}).get("_resolves_rejection_ids") or [])
+        if not owned & wanted:
+            continue
+        matches.append((ref, row, pending_id, payload))
+    if not matches:
+        return None, None, 0, {}, "missing_ref"
+    if len(matches) > 1:
+        return None, None, 0, {}, "missing_ref"
+    ref, dossier, pending_id, payload = matches[0]
+    if not set(ids).issubset(set(payload.get("_resolves_rejection_ids") or [])):
+        return ref, dossier, pending_id, payload, "hallucinated_id"
+    return ref, dossier, pending_id, payload, ""
+
+
+def _mark_correction_results(
+    db: Any, payload: dict, pending_id: int, ids: Sequence[int], *, succeeded: bool,
+) -> None:
+    results = payload.setdefault("_rejection_correction_results", {})
+    for rid in ids:
+        results[str(rid)] = results.get(str(rid), True) and succeeded
+    if pending_id > 0:
+        db.dossiers.set_pending_payload(pending_id, json.dumps(payload, ensure_ascii=False))
+
+
 def _dispatch_effects(
     db: Any,
     state: Any,
@@ -465,6 +559,8 @@ def _dispatch_effects(
     source: Provenance,
     visible_refs: Optional[Mapping[str, object]] = None,
     defer_disclosure: bool = False,
+    decree_ref: Optional[str] = None,
+    correction_refs: Optional[List[str]] = None,
 ) -> SectionResult:
     """把过月 C0 效果 envelope 交既有月末效果核算口，不复制领域适配器。
 
@@ -474,7 +570,12 @@ def _dispatch_effects(
     #1844：effects 数组按交代先后逐笔落账——后来的效果读到先前实际落账后的
     存量；不按实体段固定类别顺序重排跨类因果。一次 apply 内按旨序交错字段，
     批次性副作用（回流等）仍只核算一次。
+
+    #1843：修正关联在信封层用 resolves_rejection_ids 标注、核算前剥除，与
+    event_id 同形；不另起平行分桶，以免打乱单一有序效果链。
     """
+    from ming_sim.applier import require_player_rejection_ids
+
     if raw is None or raw == {}:
         return SectionResult(applied=[], rejected=[])
     if int(night_id or 0) > 0:
@@ -501,20 +602,65 @@ def _dispatch_effects(
                 category="invalid_shape", source=source,
             ))
             continue
-        has_effect = True
-        # 归属是效果 envelope 的声明，不属于 delta 的字段。
+        # 归属/修正关联是效果 envelope 的声明，不属于 delta 的字段。
         event_id = str(item.get("event_id") or "").strip()
+        raw_ids = item.get("resolves_rejection_ids")
         clean, invalid = sanitize_delta_shape(
-            {k: v for k, v in item.items() if k != "event_id"}, source=source,
+            {k: v for k, v in item.items() if k not in {"event_id", "resolves_rejection_ids"}},
+            source=source,
         )
         shape_rejections.extend(invalid)
-        clean_items.append((item, event_id, clean))
+        annotation = None
+        if raw_ids is not None and raw_ids != []:
+            attempted = _attempted_rejection_ids(raw_ids)
+            try:
+                ids = require_player_rejection_ids(db, raw_ids)
+                if not ids:
+                    raise ValueError("修正效果缺少拒收 id")
+                owner_ref, dossier, pending_id, payload, err = _correction_owner_for_ids(
+                    db, ids, decree_ref=decree_ref,
+                )
+                if err == "missing_ref" or not dossier:
+                    raise KeyError("修正效果须来自过月的关联旨意")
+                if err == "hallucinated_id":
+                    raise KeyError("修正效果未关联本旨")
+                if not _clean_has_effect_content(clean):
+                    raise ValueError("修正效果缺少实际落账内容")
+            except (TypeError, ValueError, KeyError) as exc:
+                owner_ref, _dossier, pending_id, payload, _err = _correction_owner_for_ids(
+                    db, attempted, decree_ref=decree_ref,
+                )
+                if owner_ref and pending_id:
+                    owned_ids = [
+                        rid for rid in attempted
+                        if rid in set(payload.get("_resolves_rejection_ids") or [])
+                    ]
+                    if owned_ids:
+                        _mark_correction_results(
+                            db, payload, pending_id, owned_ids, succeeded=False,
+                        )
+                        if correction_refs is not None:
+                            correction_refs.append(owner_ref)
+                category = "invalid_shape"
+                if isinstance(exc, KeyError):
+                    category = "missing_ref" if "须来自" in str(exc) else "hallucinated_id"
+                rejected.append(RejectedItem(
+                    item=dict(item), reason=str(exc), category=category, source=source,
+                ))
+                continue
+            annotation = {
+                "ids": ids, "decree_ref": owner_ref, "pending_id": pending_id, "payload": payload,
+            }
+            if correction_refs is not None and owner_ref:
+                correction_refs.append(owner_ref)
+        has_effect = True
+        clean_items.append((item, event_id, clean, annotation))
     if not has_effect:
         return SectionResult(applied=[], rejected=rejected)
 
     refs = visible_refs or {}
     rejected_events = preflight_declared_event_effects(
-        db, state, [(event_id, clean) for _, event_id, clean in clean_items],
+        db, state, [(event_id, clean) for _, event_id, clean, _ann in clean_items],
         open_affair_ids=set(refs.get("affairs", ())),
     )
     extraction: dict[str, object] = {}
@@ -526,12 +672,17 @@ def _dispatch_effects(
     from ming_sim.issues import (
         _merge_first_event_outcome,
     )
-    for index, (item, event_id, clean) in enumerate(clean_items):
+    for index, (item, event_id, clean, annotation) in enumerate(clean_items):
         if index in rejected_events:
             rejected.append(RejectedItem(
                 item=dict(item), reason=rejected_events[index],
                 category="event_rejected", source=source,
             ))
+            if annotation is not None:
+                _mark_correction_results(
+                    db, annotation["payload"], annotation["pending_id"],
+                    annotation["ids"], succeeded=False,
+                )
             continue
         accepted_effect = True
         if event_id:
@@ -585,6 +736,23 @@ def _dispatch_effects(
     # 不放进 effects.rejected：那条会再被记成声明段名 effects。
     for section_name, item in zip(outcome.shape_sections, outcome.shape_rejections):
         collector.record(section_name, item, turn)
+    # Record correction success from the shared ordered settle (no parallel bucket).
+    accepted_index = 0
+    for index, (item, event_id, clean, annotation) in enumerate(clean_items):
+        if index in rejected_events:
+            continue
+        step_extraction = effect_sequence[accepted_index][0]
+        accepted_index += 1
+        if annotation is None:
+            continue
+        succeeded = (
+            _clean_has_effect_content(clean)
+            and not _step_has_rejections(step_extraction, outcome, rejected)
+        )
+        _mark_correction_results(
+            db, annotation["payload"], annotation["pending_id"],
+            annotation["ids"], succeeded=succeeded,
+        )
     _persist_specialized_extraction(
         db, state, extraction, collector=collector, turn=turn, source=source,
         defer_monthly_secret_supply=defer_disclosure,
@@ -647,6 +815,7 @@ def dispatch_declaration(
     """
     collector = RejectionCollector()
     origin_ctid = int(chat_turn_id or source_chat_turn_id or 0)
+    correction_refs: List[str] = []
     # 有源轮则入口自记前像：后台/直接调用都不必依赖 caller 窗口快照。
     before = db.capture_chat_rollback_snapshot() if origin_ctid > 0 else None
     # 整事务根：atomic 真回滚后走既有 DB 同源重载（ADR 0008），不靠批中内存快照顶替。
@@ -660,6 +829,7 @@ def dispatch_declaration(
             visible_refs=visible_refs,
             defer_disclosure=defer_disclosure,
             decree_ref=decree_ref,
+            correction_refs=correction_refs,
         )
         collector.flush_to_db(db)
         # 前像与 section/拒收同权威事务提交前写入（0036 R3 / 0038）；
@@ -670,8 +840,11 @@ def dispatch_declaration(
             )
         if alongside is not None:
             alongside(result)
-        if decree_ref is not None:
-            finish_rejection_correction(db, state, decree_ref)
+        finish_refs = list(dict.fromkeys(
+            ([decree_ref] if decree_ref is not None else []) + correction_refs
+        ))
+        for ref in finish_refs:
+            finish_rejection_correction(db, state, ref)
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return result
 
@@ -754,9 +927,8 @@ def bind_decree_effect_sources(
         return value
 
     bound = dict(declaration)
-    for section in ("effects", "rejection_corrections"):
-        if section in bound:
-            bound[section] = bind(bound[section])
+    if "effects" in bound:
+        bound["effects"] = bind(bound["effects"])
     refs = dict(visible_refs)
     refs["dossiers"] = list(dict.fromkeys([*refs.get("dossiers", ()), dossier_id]))
     return bound, refs
@@ -799,6 +971,7 @@ def settle_staged_declarations_in_decree_order(
                 staged = db.staged_declarations.staged_for(decree_ref)
                 if staged and all(item.declaration is not None for item in staged):
                     merged = _empty_dispatch_result()
+                    correction_refs: List[str] = []
                     for item in staged:
                         declaration, refs = bind_decree_effect_sources(
                             db, decree_ref, item.declaration, item.visible_refs,
@@ -810,8 +983,10 @@ def settle_staged_declarations_in_decree_order(
                             visible_refs=refs,
                             defer_disclosure=True,
                             decree_ref=decree_ref,
+                            correction_refs=correction_refs,
                         ))
-                    finish_rejection_correction(db, state, decree_ref)
+                    for ref in dict.fromkeys([decree_ref, *correction_refs]):
+                        finish_rejection_correction(db, state, ref)
                     db.staged_declarations.mark_terminal(decree_ref)
                     collector.flush_to_db(db)
                     if alongside is not None:
@@ -830,57 +1005,6 @@ def _correction_context(db: Any, decree_ref: Optional[str]) -> Tuple[Any, int, d
     pending_id = int((dossier or {}).get("pending_action_id") or 0)
     row = db.conn.execute("SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,)).fetchone()
     return dossier, pending_id, parse_engine_payload_json(row["payload_json"]) if row else {}
-
-
-def _dispatch_rejection_corrections(
-    db: Any, state: Any, raw: object, *, decree_ref: Optional[str], night_id: int,
-    collector: RejectionCollector, source: Provenance,
-    visible_refs: Optional[Mapping[str, object]], defer_disclosure: bool,
-) -> Tuple[SectionResult, SectionResult]:
-    """Each LLM-declared correction part uses the existing effect kernel independently."""
-    from ming_sim.applier import require_player_rejection_ids
-
-    items, rejected = _section_items(raw, label="拒收修正部分", source=source)
-    effects = SectionResult([], [])
-    if not items:
-        return SectionResult([], rejected), effects
-    dossier, pending_id, payload = _correction_context(db, decree_ref)
-    applied = []
-    results = payload.setdefault("_rejection_correction_results", {})
-    for item in items:
-        if not dossier or night_id > 0:
-            _reject(rejected, item, "修正部分须来自过月的关联旨意", "missing_ref", source)
-            continue
-        try:
-            ids = require_player_rejection_ids(db, item.get("resolves_rejection_ids", []))
-            if not ids:
-                raise ValueError("修正部分缺少拒收 id")
-            if not set(ids).issubset(payload.get("_resolves_rejection_ids", [])):
-                raise KeyError("修正部分未关联本旨")
-        except (TypeError, ValueError) as exc:
-            _reject(rejected, item, str(exc), "invalid_shape", source)
-            continue
-        except KeyError as exc:
-            _reject(rejected, item, str(exc), "hallucinated_id", source)
-            continue
-        before = len(collector.pending())
-        if not item.get("effects"):
-            _reject(rejected, item, "修正部分缺少效果", "invalid_shape", source)
-            part = SectionResult([], [])
-        else:
-            part = _dispatch_effects(
-                db, state, item["effects"], night_id=night_id, collector=collector,
-                turn=int(state.turn), source=source, visible_refs=visible_refs,
-                defer_disclosure=defer_disclosure,
-            )
-        succeeded = bool(part.applied) and not part.rejected and len(collector.pending()) == before
-        for rid in ids:
-            results[str(rid)] = results.get(str(rid), True) and succeeded
-        applied.append({"resolves_rejection_ids": ids, "succeeded": succeeded})
-        effects = effects.merge(part)
-    if applied:
-        db.dossiers.set_pending_payload(pending_id, json.dumps(payload, ensure_ascii=False))
-    return SectionResult(applied, rejected), effects
 
 
 def finish_rejection_correction(db: Any, state: Any, decree_ref: str) -> None:

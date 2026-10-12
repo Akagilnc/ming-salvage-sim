@@ -1754,7 +1754,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         dossier_id = int(row["id"])
         # list_decree_dossiers_for_simulation → hydrate_dossier_row 已保证 payload 为对象。
         payload = row["payload"]
-        facts.append({
+        fact: dict[str, object] = {
             "id": dossier_id,
             "status": status,
             "decree_text": str(row.get("decree_text") or ""),
@@ -1763,7 +1763,12 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
             "target_id": str(row.get("target_id") or ""),
             "grant_action": str(payload.get("grant_action") or ""),
             "paid": dossier_paid_amount(db, dossier_id),
-        })
+        }
+        # #1843：未了结修正关联原样进世界段供料，供转译在 effects 信封标注对应拒收。
+        owned = payload.get("_resolves_rejection_ids") or []
+        if owned:
+            fact["_resolves_rejection_ids"] = list(owned)
+        facts.append(fact)
     return facts
 
 
