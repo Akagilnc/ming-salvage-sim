@@ -3,6 +3,8 @@ from tests.test_enter_settlement_period_1235 import _click_before as _click_befo
 from types import SimpleNamespace
 import pytest
 import web_app
+from fastapi.testclient import TestClient
+from tests.sse_helpers import parse_sse_event_pairs
 from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
 from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
 from tests.conftest import MONTH_OPEN_KEYS
@@ -53,7 +55,7 @@ def test_player_month_advance_expires_snapshot(web_game, monkeypatch):
 def test_web_advance_entry_awaiting_keeps_phase_and_decisions(web_game, monkeypatch):
     """真实退朝 API：awaiting 分支不下 end_turn/refresh，留待裁面与 decisions（#1702 C2）。
 
-    外部可见 + durable：响应 awaiting_decision/decisions 原样下发、turn 不推进、
+    外部可见 + durable：decisions 终态原样下发、turn 不推进、
     持久 phase 仍 awaiting。保留真实 end_turn/refresh；误调即改变相位与核账脸。
     """
 
@@ -76,20 +78,23 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(web_game, monkeypa
         "actor_name": officers[-1]["name"], "items": decisions, "revisions": [],
     }))
 
-    result = web_app.api_advance_without_edict()
+    response = TestClient(web_app.app).post("/api/decree/advance_without_edict/stream")
+    assert response.status_code == 200
+    kind, result = parse_sse_event_pairs(response.text)[-1]
+    assert kind == "decisions"
+    payload = TestClient(web_app.app).get("/api/game/state").json()
 
     reloaded = db.load_state()
     assert reloaded.turn == turn_before
     assert reloaded.turn_phase == TurnPhase.AWAITING_DECISION.value
-    assert result["awaiting_decision"] is True
     assert result["decisions"] == runtime.session.pending_decisions()
     assert [(row["title"], row["context"], row["options"]) for row in result["decisions"]] == [(row["title"], row["context"], row["options"]) for row in decisions]
-    assert result["state"]["turn"]["turn"] == turn_before
+    assert payload["turn"]["turn"] == turn_before
     assert state.turn == turn_before
     # durable 红证：误调 end_turn 会把相位打回 summoning 并清核账脸。
     assert state.turn_phase == TurnPhase.AWAITING_DECISION.value
-    assert result["state"]["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
-    assert result["state"]["turn"]["settlement_display"] is True
+    assert payload["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert payload["turn"]["settlement_display"] is True
     assert db.month_open_snapshots.get(turn_before) is not None
 
 

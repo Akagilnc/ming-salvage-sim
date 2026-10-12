@@ -337,7 +337,7 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toContain("/api/decree/advance_without_edict");
+    expect(url).toContain("/api/decree/advance_without_edict/stream");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({ expected_turn: 5 });
     // #1852：写成即推进走 loadState + 本面阅读，不整页 reload
@@ -448,7 +448,7 @@ describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload 
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
-        if (url.includes("/api/decree/advance_without_edict")) {
+        if (url.includes("/api/decree/advance_without_edict/stream")) {
           return sseDecisionsResponse();
         }
         throw new Error(`unexpected fetch: ${url}`);

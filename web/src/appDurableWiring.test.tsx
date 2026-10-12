@@ -346,7 +346,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
-      if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2, [], roster) });
+      if (u.pathname.endsWith("/api/decree/advance_without_edict/stream")) return sseResp("done", { advanced: true });
       if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, court_action: "court_break" });
       if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77 });
       return jsonResp({});
@@ -382,7 +382,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       await vi.waitFor(() => expect(paths.filter((path) => path.endsWith("/chat/stream")).length).toBeGreaterThanOrEqual(2));
     });
 
-    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
+    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict/stream")).toBe(false);
   });
 
   it("#1716 chat done 即时落 pending_directive_count，拟诏台不待 vacuum refresh", async () => {
@@ -1089,7 +1089,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const reopened = await mountApp();
     await click(reopened.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement);
     expect(paths).toContain("POST /api/decree/issue/stream");
-    expect(paths).not.toContain("POST /api/decree/advance_without_edict");
+    expect(paths).not.toContain("POST /api/decree/advance_without_edict/stream");
     await act(async () => {
       await vi.waitFor(() => undefined);
     });
@@ -3209,7 +3209,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true));
     });
-    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
+    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict/stream")).toBe(false);
   });
 
 

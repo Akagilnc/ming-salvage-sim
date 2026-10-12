@@ -7,6 +7,8 @@ from ming_sim.session_write_queue import ClassifiedWriteGate
 import threading
 from types import SimpleNamespace
 import web_app
+from ming_sim.decree import ResolveResult
+from tests.sse_helpers import parse_sse_event_pairs
 """QA 包乙刀② #1343/#1378/#1379/#1388：核账遮罩生命周期（快照清理时点）。
 
 单谓词不动：settlement_display ⇔ 当前回合快照在。
@@ -29,7 +31,7 @@ def _shell(db, state, content):
     """轻壳 WebGame：真 db/state + 真 write_gate。"""
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(
-        advance_without_decree=lambda **_k: None,
+        advance_without_decree=lambda **_k: ResolveResult(awaiting=False, advanced=False),
         db=db,
         state=state,
         content=content,
@@ -77,10 +79,12 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     db.month_open_snapshots.delete = _boom_clear  # type: ignore[method-assign]
 
     response = TestClient(web_app.app, raise_server_exceptions=False).post(
-        "/api/decree/advance_without_edict", json={},
+        "/api/decree/advance_without_edict/stream", json={},
     )
-    assert response.status_code == 500
-    detail = response.json()["detail"]
+    assert response.status_code == 200
+    kind, detail = parse_sse_event_pairs(response.text)[-1]
+    assert kind == "error"
+    assert detail["status_code"] == 500
     assert detail["message"] == "clear boom"
     assert detail["error_type"] == "RuntimeError"
     assert detail["reason"] == "clear boom"
@@ -106,10 +110,12 @@ def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
     runtime.session.advance_without_decree = lambda **_k: (_ for _ in ()).throw(ValueError("body fail"))
 
     response = TestClient(web_app.app, raise_server_exceptions=False).post(
-        "/api/decree/advance_without_edict", json={},
+        "/api/decree/advance_without_edict/stream", json={},
     )
-    assert response.status_code == 500
-    detail = response.json()["detail"]
+    assert response.status_code == 200
+    kind, detail = parse_sse_event_pairs(response.text)[-1]
+    assert kind == "error"
+    assert detail["status_code"] == 500
     assert detail["message"] == "exit boom"
     assert detail["error_type"] == "RuntimeError"
     assert detail["reason"] == "exit boom"
@@ -141,10 +147,12 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
     monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
 
     response = TestClient(web_app.app, raise_server_exceptions=False).post(
-        "/api/decree/advance_without_edict", json={},
+        "/api/decree/advance_without_edict/stream", json={},
     )
-    assert response.status_code == 500
-    detail = response.json()["detail"]
+    assert response.status_code == 200
+    kind, detail = parse_sse_event_pairs(response.text)[-1]
+    assert kind == "error"
+    assert detail["status_code"] == 500
     assert detail["message"] == "orphan clear boom"
     assert detail["error_type"] == "RuntimeError"
     assert detail["reason"] == "orphan clear boom"

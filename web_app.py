@@ -4742,55 +4742,6 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail=_exception_detail(e)) from e
 
 
-@app.post("/api/decree/advance_without_edict")
-def api_advance_without_edict(
-    body: AdvanceWithoutEdictRequest = AdvanceWithoutEdictRequest(),
-) -> Dict[str, Any]:
-    # #498 AC10 / #1353：内部屏障票据同步等在飞尾随终态。
-    game = get_game()
-    from ming_sim.audience_night import AudienceNightError
-    try:
-        with _settlement_period_entry(game, write_cm=_serialized_web_write):
-            _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
-            settlement_result = game.session.advance_without_decree(
-                write_gate_already_held=True,
-            )
-            awaiting = bool(
-                settlement_result is not None and settlement_result.awaiting
-            )
-            advanced = bool(
-                settlement_result is not None
-                and not awaiting
-                and settlement_result.advanced
-            )
-            if advanced:
-                game.session.end_turn()
-                game.refresh_turn()
-            return {
-                "state": game.state_payload(),
-                "awaiting_decision": awaiting,
-                "advanced": advanced,
-                "decisions": (
-                    settlement_result.decisions
-                    if settlement_result is not None and settlement_result.awaiting
-                    else []
-                ),
-            }
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=_exception_detail(e)) from e
-    except SettlementAbort as e:
-        raise HTTPException(
-            status_code=409,
-            detail=_exception_detail(e),
-        ) from e
-    except (AudienceNightError, ExceptionGroup) as e:
-        raise _retryable_audience_close_http(e) from e
-    except LLMUnavailable as e:
-        raise HTTPException(status_code=412, detail=_exception_detail(e)) from e
-
-
 # #1341/#1338：PATCH /api/decree 已删（web/src 零真实调用方；裸设总诏绕过 directives
 # 结构化违 P1）。OpenAPI 随路由消失。改稿只走 PATCH /api/directives/{id}。
 
@@ -4847,10 +4798,13 @@ def _month_entry_stream_response(body: IssueDecreeRequest, *, retreat: bool = Fa
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def worker() -> None:
+        from ming_sim.audience_night import AudienceNightError
+
         try:
             game = get_game()
             terminal: Optional[tuple[str, Any]] = None
-            with _settlement_period_entry(game, write_cm=_game_write_gate):
+            write_cm = _serialized_web_write if retreat else _game_write_gate
+            with _settlement_period_entry(game, write_cm=write_cm):
                 _reject_stale_month_token(game, body.expected_turn, token_label="退朝" if retreat else "颁诏")
                 on_gazette = lambda data: ev_queue.put(("gazette", data))
                 if retreat:
@@ -4883,7 +4837,10 @@ def _month_entry_stream_response(body: IssueDecreeRequest, *, retreat: bool = Fa
                 ev_queue.put(terminal)
         except ValueError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
-            ev_queue.put(("__error__", _exception_detail(e)))
+            payload = _exception_detail(e)
+            if retreat:
+                payload["status_code"] = 400
+            ev_queue.put(("__error__", payload))
         except HTTPException as e:
             detail = e.detail
             if isinstance(detail, dict):
@@ -4899,7 +4856,16 @@ def _month_entry_stream_response(body: IssueDecreeRequest, *, retreat: bool = Fa
             # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
             # #1465 ②：message 标量 + typed 键外层；与 resolve_decisions/stream 同真源。
             # #1853 J5：真异常经本口上抛；不以 failed 行另造 pending_action_failures。
-            ev_queue.put(("__error__", _exception_detail(e)))
+            payload = _exception_detail(e)
+            if retreat and payload.get("status_code") is None:
+                # Preserve the retired HTTP entry's failure codes in the SSE terminal.
+                if isinstance(e, (SettlementAbort, AudienceNightError, ExceptionGroup)):
+                    payload["status_code"] = 409
+                elif isinstance(e, LLMUnavailable):
+                    payload["status_code"] = 412
+                else:
+                    payload["status_code"] = 500
+            ev_queue.put(("__error__", payload))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)

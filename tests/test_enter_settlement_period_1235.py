@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
+from tests.sse_helpers import parse_sse_event_pairs
 """#1235 T2 — 点即入 + 未了续跑 + 真失败另形（ADR 0149）。
 
 接缝（票庭 r1 / 票面三义）：
@@ -156,12 +157,14 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
 
     async def go():
         async with _client() as client:
-            return await client.post("/api/decree/advance_without_edict")
+            return await client.post("/api/decree/advance_without_edict/stream")
 
     resp = asyncio.run(go())
-    # #1842：转译单轮失败标 pending；过月耗尽 → SettlementAbort（HTTP 409 + typed stage）。
-    assert resp.status_code == 409, resp.text
-    detail = resp.json()["detail"]
+    # #1842：转译单轮失败标 pending；过月耗尽 → SSE error（409 + typed stage）。
+    assert resp.status_code == 200, resp.text
+    kind, detail = parse_sse_event_pairs(resp.text)[-1]
+    assert kind == "error"
+    assert detail["status_code"] == 409
     assert detail.get("stage") == "audience_translation_exhausted", detail
     pack = detail.get("error_pack_path")
     assert pack, detail
@@ -189,6 +192,8 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
     from fastapi import HTTPException
 
     game = web_game
+    from tests.month_chain_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch)
     before = _click_before(game.state)
     turn = int(game.state.turn)
     saw = {}
@@ -206,10 +211,13 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
     monkeypatch.setattr(web_app, "_serialized_web_write", _gate_busy)
     async def go():
         async with _client() as client:
-            return await client.post("/api/decree/advance_without_edict")
+            return await client.post("/api/decree/advance_without_edict/stream")
 
     resp = asyncio.run(go())
-    assert resp.status_code == 409, resp.text
+    assert resp.status_code == 200, resp.text
+    kind, detail = parse_sse_event_pairs(resp.text)[-1]
+    assert kind == "error"
+    assert detail["status_code"] == 409
     # 点即入曾发生
     assert saw.get("snap") == before
     # 拒收后不得留孤儿核账展示态

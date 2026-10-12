@@ -228,16 +228,19 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         )
 
         monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        invoke = web_app.api_advance_without_edict
+        def invoke():
+            from tests.sse_helpers import parse_sse_event_pairs
+            response = TestClient(web_app.app).post("/api/decree/advance_without_edict/stream")
+            assert response.status_code == 200
+            return parse_sse_event_pairs(response.text)[-1]
     else:
         invoke = session.advance_without_decree
 
     # W4 统一停住契约：保留原错为 cause，Web 报告同一失败包。
     if entry == "web":
-        with pytest.raises(web_app.HTTPException) as exc_info:
-            invoke()
-        assert exc_info.value.status_code == 409
-        detail = exc_info.value.detail
+        kind, detail = invoke()
+        assert kind == "error"
+        assert detail["status_code"] == 409
         assert isinstance(detail, dict)
         assert detail.get("message") == str(fiscal_fault)
     else:
