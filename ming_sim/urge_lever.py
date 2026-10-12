@@ -338,7 +338,8 @@ def project_urge_audience_scene(todo: Dict[str, object]) -> Dict[str, object]:
         "entry_kind": kind,
         "todo_id": int(todo.get("id") or 0),
         "commitment_ref": int(todo.get("commitment_ref") or 0),
-        "stage_idx": int(todo["stage_idx"]),
+        # store 读口已 durable_int 段身份；透传，不再 int() 重复强转（#1897 G）。
+        "stage_idx": todo["stage_idx"],
         "due_turn": int(todo.get("due_turn") or 0),
         "origin_context": origin,
         "criterion_text": criterion,
