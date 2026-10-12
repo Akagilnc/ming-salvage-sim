@@ -40,25 +40,6 @@ _WORLD_WITH_QUESTION = (
     "余波未尽。"
 )
 
-_WORLD_WITH_TWO_QUESTIONS = (
-    "边警叠至。"
-    "<<DECISION>>"
-    '{"title":"问一","context":"c1","options":['
-    '{"label":"甲","hint":"h甲"},'
-    '{"label":"乙","hint":"h乙"}'
-    "]}"
-    "<<END>>"
-    "中段。"
-    "<<DECISION>>"
-    '{"title":"问二","context":"c2","options":['
-    '{"label":"丙","hint":"h丙"},'
-    '{"label":"丁","hint":"h丁"}'
-    "]}"
-    "<<END>>"
-    "尾声。"
-)
-
-
 def _decision_block(title: str, *labels: str) -> str:
     options = ",".join(
         f'{{"label":"{label}","hint":"h-{label}"}}' for label in labels
@@ -70,48 +51,229 @@ def _decision_block(title: str, *labels: str) -> str:
     )
 
 
-def test_world_question_opens_rescript_desk_and_awaits(game, monkeypatch):
+@pytest.mark.parametrize("kind", ["world", "decree", "memorial"])
+@pytest.mark.parametrize("mode", ["ready", "running", "prefailed", "livefailed"])
+def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, kind, mode):
+    """Presentation → speculative calls → selection/retry → reopened DB, no unselected effects."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from tests.month_chain_helpers import InlineExecutor
+    from ming_sim.error_pack import error_packs_root
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    affair = db.affairs.open(name="候选办理", origin="奏折", year=state.year,
+                            period=state.period, turn=turn)
+    question = {"title": "请旨", "context": "原奏", "options": [
+        {"label": "甲", "hint": "h甲"}, {"label": "乙", "hint": "h乙"}]}
+    world = _decision_block(question["title"], "甲", "乙") if kind == "world" else ""
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: world)
+    if kind == "decree":
+        minister = next(iter(content.characters.values())).name
+        _, ref = _stage_edict(db, state, minister, "原旨", "问前", -1, affair.id)
+        db.conn.execute("UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+                        (json.dumps([question]), ref))
+        db.conn.commit()
+    calls = []
+    started, other_started, release = Event(), Event(), Event()
+
+    def continuation(answers):
+        label = answers[0]["choice"]["label"]
+        calls.append(label)
+        if label == "乙":
+            other_started.set()
+        attempt = calls.count(label)
+        if label == "甲" and attempt == 1:
+            started.set()
+            if mode == "running":
+                assert release.wait(5)
+            if mode in {"prefailed", "livefailed"}:
+                raise LLMUnavailable("injected speculative failure", stage="world-segment-continue")
+        if label == "甲" and attempt == 2 and mode == "livefailed":
+            raise LLMUnavailable("injected live failure", stage="world-segment-continue")
+        return json.dumps({"delta": -3 if label == "甲" else -19})
+
+    def memorial_model(session, *, officers, backlog, answer=None):
+        if answer is None:
+            return json.dumps({"actor_name": officers[0]["name"],
+                               "items": [question] if kind == "memorial" else [], "revisions": []})
+        return json.dumps({"disposition": "settled", "text": continuation([answer]), "decree": None})
+
+    def external_model(agent, message, **kwargs):
+        return continuation(json.loads(message)["answers"])
+
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", memorial_model)
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", external_model)
+
+    translation_origins = []
+
+    def translate(request, _config):
+        try:
+            outcome = json.loads(request.segment)
+        except json.JSONDecodeError:
+            return {"effects": {}}
+        if kind == "decree":
+            assert isinstance(request.this_decree["id"], int)
+            translation_origins.append(request.this_decree["origin_ref"])
+        return {"effects": {"economy_moves": [{
+            "origin_ref": ref if kind == "decree" else f"affair:{affair.id}", "account": "国库",
+            "delta": outcome["delta"], "category": "候选办理", "reason": "实办"}]}}
+
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
+    pool = ThreadPoolExecutor(max_workers=2)
+    monkeypatch.setattr("ming_sim.rescript_forecast._executor", pool if mode == "running" else InlineExecutor())
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    try:
+        result = session.resolve_turn(allow_empty_decree=True)
+        assert result.awaiting and not result.advanced
+        desk = session.pending_decisions()
+        assert len(desk) == 1
+        assert started.wait(5)
+        assert other_started.wait(5)
+        if mode != "running":
+            assert calls == ["甲", "乙"]
+        assert not db.conn.execute("SELECT 1 FROM economy_ledger WHERE category='候选办理'").fetchall()
+        option = desk[0]["options"][0]
+        choice = {**option, "decision_key": desk[0]["decision_key"]}
+
+        def submit():
+            return session.submit_hitl_choices([choice], write_gate=session._write_gate)
+
+        if mode == "running":
+            pending_submit = pool.submit(submit)
+            assert not pending_submit.done()
+            release.set()
+            pending_submit.result(timeout=5)
+        elif mode == "livefailed":
+            with pytest.raises(SettlementAbort):
+                submit()
+            assert month_chain.month_chain_call_failure(db, turn)
+            assert not db.conn.execute("SELECT 1 FROM economy_ledger WHERE category='候选办理'").fetchall()
+            session = make_light_session(db, db.load_state(content), content)
+            session.llm_config = object()
+            session.resolve_turn(allow_empty_decree=True)
+        else:
+            submit()
+        assert calls.count("甲") == (3 if mode == "livefailed" else 2 if mode == "prefailed" else 1)
+        assert calls.count("乙") == 1
+        reopened = GameDB(str(db.path), content=content)
+        try:
+            assert [r[0] for r in reopened.conn.execute(
+                "SELECT delta FROM economy_ledger WHERE category='候选办理'")] == [-3]
+            if kind == "decree":
+                assert [r[0] for r in reopened.conn.execute(
+                    "SELECT origin_ref FROM economy_ledger WHERE category='候选办理'")
+                ] == translation_origins
+        finally:
+            reopened.conn.close()
+        assert not session.pending_decisions()
+        if mode in {"prefailed", "livefailed"}:
+            errors = [json.loads(p.read_text())["exception_message"]
+                      for p in error_packs_root().glob("*/manifest.json")]
+            assert "injected speculative failure" in errors
+            if mode == "livefailed":
+                assert "injected live failure" in errors
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("kind", ["world", "decree"])
+@pytest.mark.parametrize("handwritten_batch", [False, True])
+def test_multiple_questions_continue_independently_through_recovery(game, monkeypatch, kind, handwritten_batch):
+    """Raw one-row inputs, sibling success after failure, durable follow-up/recovery."""
+    from tests.month_chain_helpers import InlineExecutor
+    from ming_sim.db import GameDB
+
     _forbid_extractor(monkeypatch)
     db, state, content = game
-    closed_turn = int(state.turn)
-    monkeypatch.setattr(
-        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
-    )
-    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
+    turn = int(state.turn)
+    affair = db.affairs.open(name="多问办理", origin="奏折", year=state.year,
+                            period=state.period, turn=turn)
+    questions = [json.loads(block.split("<<DECISION>>")[1].split("<<END>>")[0])
+                 for block in [_decision_block("问一", "甲", "乙"), _decision_block("问二", "丙", "丁")]]
+    world = json.dumps({"delta": -1}) + _decision_block("问一", "甲", "乙") + _decision_block("问二", "丙", "丁")
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: world if kind == "world" else "")
+    if kind == "decree":
+        _, ref = _stage_edict(db, state, next(iter(content.characters.values())).name,
+                             "原旨", "问前", -1, affair.id)
+        db.conn.execute("UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+                        (json.dumps(questions), ref))
+        db.conn.commit()
+    calls = []
+
+    def model(agent, message, **kwargs):
+        answers = json.loads(message)["answers"]
+        assert len(answers) == 1  # No answer combinations.
+        label = answers[0]["choice"]["label"]
+        calls.append(label)
+        delta = {"甲": -3, "乙": -19, "丙": -7, "丁": -23, "戊": -11, "己": -29}[label]
+        return json.dumps({"delta": delta}) + (_decision_block("追问", "戊", "己") if label == "丙" else "")
+
+    failed = []
+    def translate(request, config):
+        if not request.segment.strip():
+            return {"effects": {}}
+        delta = json.loads(request.segment)["delta"]
+        if delta == -3 and not failed:
+            failed.append(True)
+            raise LLMUnavailable("injected selected translation failure", stage="world_translate")
+        return {"effects": {"economy_moves": [{"origin_ref": f"affair:{affair.id}",
+                "account": "国库", "delta": delta, "category": "多问办理", "reason": "实办"}]}}
+
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", model)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
+    monkeypatch.setattr("ming_sim.rescript_forecast._executor", InlineExecutor())
     session = make_light_session(db, state, content)
-
-    result = session.resolve_turn(allow_empty_decree=True)
-
-    assert result.awaiting is True
-    assert result.stage == "rescript"
-    assert result.advanced is False
-    assert int(state.turn) == closed_turn
-    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
-    desk = session.pending_decisions()
-    assert len(desk) == 1
-    assert desk[0]["title"] == "是否增援宁远"
-    assert {opt["label"] for opt in desk[0]["options"]} == {"准调关宁", "暂缓"}
-    assert desk[0]["status"] == "pending"
-
-
-def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
-    """同段多问：全部 DECISION 块上案头，不得只收第一问。"""
-    _forbid_extractor(monkeypatch)
-    db, state, content = game
-    monkeypatch.setattr(
-        month_chain, "run_world_segment_text",
-        lambda *a, **k: _WORLD_WITH_TWO_QUESTIONS,
-    )
-    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
-    session = make_light_session(db, state, content)
-
-    result = session.resolve_turn(allow_empty_decree=True)
-
-    assert result.awaiting is True
-    desk = session.pending_decisions()
-    assert {row["title"] for row in desk} == {"问一", "问二"}
-    assert all(row.get("kind") == "decision" for row in desk)
-    assert all(row.get("status") == "pending" for row in desk)
+    session.llm_config = object()
+    def ledger():
+        with sqlite3.connect(db.path) as conn:
+            return [r[0] for r in conn.execute("SELECT delta FROM economy_ledger WHERE category='多问办理' ORDER BY id")]
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+    first, second = session.pending_decisions()
+    assert sorted(calls) == sorted(["甲", "乙", "丙", "丁"])
+    assert ledger() == ([-1] if kind == "world" else [])
+    if handwritten_batch:
+        with pytest.raises(SettlementAbort):
+            session.submit_hitl_choices([
+                {**r["options"][0], "decision_key": r["decision_key"], "note": "  原批\n照办  "}
+                for r in [first, second]], write_gate=session._write_gate)
+    else:
+        # Single-row submission does not consume the unanswered sibling.
+        session.submit_hitl_choices([{**second["options"][0], "decision_key": second["decision_key"]}],
+                                    write_gate=session._write_gate)
+        remaining = session.pending_decisions()
+        assert len(remaining) == 2
+        assert remaining[0]["decision_key"] == first["decision_key"]
+        with pytest.raises(SettlementAbort):
+            session.submit_hitl_choices([{**first["options"][0], "decision_key": first["decision_key"]}],
+                                        write_gate=session._write_gate)
+    assert ledger() == ([-1, -7] if kind == "world" else [-7])
+    assert month_chain.month_chain_call_failure(db, turn)
+    # A reopened session consumes the persisted continuation, not another call.
+    reopened = GameDB(str(db.path), content=content)
+    try:
+        restored = make_light_session(reopened, reopened.load_state(content), content)
+        restored.llm_config = object()
+        assert restored.resolve_turn(allow_empty_decree=True).awaiting
+        assert calls.count("甲") == (2 if handwritten_batch else 1)
+        followup = restored.pending_decisions()[0]
+        restored.submit_hitl_choices([{**followup["options"][0], "decision_key": followup["decision_key"]}],
+                                     write_gate=restored._write_gate)
+        assert not restored.pending_decisions()
+        assert restored.resolve_turn(allow_empty_decree=True).stage == "gazette"
+        assert ledger() == ([-1, -7, -3, -11] if kind == "world" else [-7, -3, -11])
+        assert calls.count("丙") == (2 if handwritten_batch else 1)
+        assert calls.count("丁") == 1
+    finally:
+        reopened.conn.close()
 
 
 def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypatch):
@@ -280,19 +442,18 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch,
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
 
-    assert continuation_calls and continuation_calls[0][0]["label"] == choice["label"]
-    assert continuation_calls[0][0]["note"] == "  照办\n原批  "
+    assert continuation_calls[-1][0]["label"] == choice["label"]
+    assert continuation_calls[-1][0]["note"] == "  照办\n原批  "
     assert db.dossiers.list_dossiers() == []
     assert session.state.turn_phase == TurnPhase.SETTLING.value
     chain = _month_chain_of(db, closed_turn)
     assert chain.get("world_questions") in (None, [], ())
-    assert chain.get("world_continued") is True
 
     again = session.resolve_turn(allow_empty_decree=True)
     assert again.stage == "gazette"
     assert again.awaiting is False
     # 同回合重入不得再烧续推。
-    assert len(continuation_calls) == 1
+    assert len(continuation_calls) == 3  # Two candidates, then the distinct handwritten rescript.
 
 
 def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monkeypatch):
@@ -402,7 +563,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
 
     def flaky_decree_text(_agent, message, **kwargs):
         llm_calls.append(1)
-        if fail_at != "translation" and fail_once["armed"]:
+        if fail_at != "translation" and fail_once["armed"] and json.loads(message)["answers"][0]["note"]:
             fail_once["armed"] = False
             if fail_at == "unexpected":
                 raise RuntimeError("未识别模型接缝异常")
@@ -439,28 +600,36 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         "decision_key": desk_row["decision_key"],
         "label": choice["label"],
         "hint": choice.get("hint") or "",
+        "note": "自批原文",
     }]
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
 
     with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-    assert isinstance(blocked.value.__cause__, RuntimeError if fail_at == "unexpected" else LLMUnavailable)
+    # External projection contract (#1465 / #1847 K3): typed fields via __cause__.
+    import web_app
+    expected_type = "RuntimeError" if fail_at == "unexpected" else "LLMUnavailable"
+    detail = web_app._exception_detail(blocked.value)
+    assert detail["error_type"] == expected_type
     assert blocked.value.error_pack_path
-    assert month_chain.month_chain_call_failure(db, int(state.turn))["kind"] == (
+    assert detail.get("error_pack_path") == blocked.value.error_pack_path
+    failure = month_chain.month_chain_call_failure(db, int(state.turn))
+    assert failure["error_pack_path"] == blocked.value.error_pack_path
+    assert failure["kind"] == (
         "code_exception" if fail_at == "unexpected" else "model_exhausted"
     )
     assert db.load_state(content).turn_phase == TurnPhase.SETTLING.value
     assert db.staged_declarations.questions_for(ref), (
         "续推失败后 questions 已清，恢复将无法再续推"
     )
-    assert len(llm_calls) == 1
+    assert len(llm_calls) == 3
     assert len(dispatch_count) == 0
 
     # 重开从统一核账恢复口续原月链，不重交原批。
     session = make_light_session(db, db.load_state(content), content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
-    assert len(llm_calls) == (1 if fail_at == "translation" else 2)
+    assert len(llm_calls) == (3 if fail_at == "translation" else 4)
     assert len(dispatch_count) == 1, (
         "旨意问后后果永久丢失：重试未再续推（questions 已清，闸跳过）"
     )
@@ -547,6 +716,9 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
 
     with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    import web_app
+    detail = web_app._exception_detail(blocked.value)
+    assert detail["error_type"] == "LLMUnavailable"
     assert isinstance(blocked.value.__cause__, LLMUnavailable)
     assert blocked.value.error_pack_path
     assert db.staged_declarations.questions_for(ref)
@@ -567,8 +739,8 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 
 
-def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
-    """世界段缺模型不得记 world_continued；重试才从问处续推。"""
+def test_missing_model_keeps_world_question_until_retry(game, monkeypatch):
+    """世界段缺模型保留待答问；重试才从问处续推。"""
     _forbid_extractor(monkeypatch)
     db, state, content = game
     closed_turn = int(state.turn)
@@ -584,10 +756,12 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
 
     with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    import web_app
+    detail = web_app._exception_detail(blocked.value)
+    assert detail["error_type"] == "LLMUnavailable"
     assert isinstance(blocked.value.__cause__, LLMUnavailable)
     assert blocked.value.error_pack_path
     chain = _month_chain_of(db, closed_turn)
-    assert chain.get("world_continued") is not True
     assert chain.get("world_questions")
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 
@@ -596,7 +770,6 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
     chain = _month_chain_of(db, closed_turn)
-    assert chain.get("world_continued") is True
     assert chain.get("world_questions") in (None, [], ())
 
 
@@ -853,8 +1026,8 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         }],
         write_gate=session._write_gate,
     )
-    assert answers and answers[0][0]["note"] == "着户部另议"
-    assert answers[0][0]["label"] == ""
+    assert answers[-1][0]["note"] == "着户部另议"
+    assert answers[-1][0]["label"] == ""
     assert not db.staged_declarations.questions_for(ref)
 
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
@@ -2165,12 +2338,12 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
 
     def model(session, *, officers, backlog, answer=None):
         if answer is not None:
-            if len(answers) == 1 and failures["answer"]:
+            if answer["choice"].get("note") == raw_note and failures["answer"]:
                 failures["answer"] = False
                 raise LLMUnavailable("批后模型用尽", stage="rescript-answer")
             answers.append(answer)
             return json.dumps({"disposition": "revise" if answer["choice"].get("note") == raw_note else "settled",
-                               "text": "问后办理" if len(answers) == 1 or answer["choice"].get("note") == raw_note else "", "decree": None})
+                               "text": "问后办理" if answer["memorial"]["idx"] == 5 or answer["choice"].get("note") == raw_note else "", "decree": None})
         if failures["triage"]:
             failures["triage"] = False
             raise LLMUnavailable("票拟模型用尽", stage="rescript-draft")
@@ -2225,19 +2398,20 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
         session.submit_hitl_choices(batch, write_gate=session._write_gate)
     assert stopped.value.stage == "rescript-answer"
     assert not session.pending_decisions()
-    session = make_light_session(db, db.load_state(content), content)
-    session.llm_config = object()
-    state = session.state
-    with pytest.raises(SettlementAbort):
-        session.resolve_turn(allow_empty_decree=True)
+    # Both independent failures are attempted in this submission; neither may
+    # block the other four successful answers (including the empty effects).
+    assert failures["answer"] is False
+    assert translation_failures == [True]
+    assert len(_month_chain_of(db, turn)["rescript_consumed"]) == len(batch) - 2
     session = make_light_session(db, db.load_state(content), content)
     session.llm_config = object()
     state = session.state
     session.resolve_turn(allow_empty_decree=True)
     assert [r[0] for r in db.conn.execute("SELECT delta FROM economy_ledger WHERE category='急务办理'")] == [-2, -2, -2]
-    assert [row["decision_key"] for row in answers] == [item["decision_key"] for item in batch]
-    assert answers[-1]["choice"]["note"] == raw_note
-    assert answers[-1]["memorial"]["context"] == "  原奏\n拟旨  "
+    assert sorted(_month_chain_of(db, turn)["rescript_consumed"]) == sorted(item["decision_key"] for item in batch)
+    raw_answers = [row for row in answers if row["choice"].get("note") == raw_note]
+    assert sorted(row["decision_key"] for row in raw_answers) == sorted(item["decision_key"] for item in batch[-2:])
+    assert all(row["memorial"]["context"] == "  原奏\n拟旨  " for row in raw_answers)
     assert not session.pending_decisions()
     assert session.deferred_rescripts()[0]["decision_key"] == original["decision_key"]
     assert len(calls) == 1

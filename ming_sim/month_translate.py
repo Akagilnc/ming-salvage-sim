@@ -360,24 +360,18 @@ def _translate_month_segment_front(
     return declaration, refs
 
 
-def dispatch_month_segment(
+def prepare_month_segment(
     db: Any,
     state: Any,
     *,
     segment: str,
-    minister_name: str = "",
     decree_payload: Optional[Mapping[str, object]] = None,
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
-    source: Provenance = Provenance.system_simulation,
-    alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     decree_ref: Optional[str] = None,
-) -> DeclarationDispatchResult:
-    """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。
-
-    三饷原批语只由世界答后段传入；旨意续推和问前世界段不是那一次解释。
-    """
+) -> tuple[dict[str, object], dict[str, list[int]]]:
+    """Freeze model inputs and translate without writing the ledger."""
     from ming_sim.materials import candidate_supply, continuing_dossier_facts
     from ming_sim.issues import _segment_levy_verdicts
 
@@ -395,8 +389,6 @@ def dispatch_month_segment(
     # 候选集与同一次世界段材料目录（prepare_world_materials 默认口径）和落库写口
     # （impeachment_surge 走 gather_impeachment_surge_candidates）三者同一：谁在
     # 世界段被供到，转译就能声明，写口也收；否则模型看得到却永远立不下。
-    # A call-local carrier, not a second ledger: translation and preflight read
-    # the same handed-off answers, then discard this scope even on failure.
     token = _segment_levy_verdicts.set(tuple(answered_verdicts))
     try:
         declaration, refs = _translate_month_segment_front(
@@ -409,6 +401,34 @@ def dispatch_month_segment(
         )
         if decree_ref is not None:
             declaration, refs = bind_decree_effect_sources(db, decree_ref, declaration, refs)
+        return declaration, refs
+    finally:
+        _segment_levy_verdicts.reset(token)
+
+
+def dispatch_month_segment(
+    db: Any, state: Any, *, segment: str, minister_name: str = "",
+    decree_payload: Optional[Mapping[str, object]] = None, llm_config: Any = None,
+    translate_fn: Optional[MonthTranslateFn] = None,
+    source: Provenance = Provenance.system_simulation,
+    alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
+    answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+    decree_ref: Optional[str] = None,
+    prepared: Optional[tuple[dict[str, object], dict[str, list[int]]]] = None,
+) -> DeclarationDispatchResult:
+    """Translate once, then commit through the sole atomic C0 dispatch entry.
+
+    Only this answer's levy verdicts authorize its translation and ledger writes.
+    """
+    from ming_sim.issues import _segment_levy_verdicts
+
+    token = _segment_levy_verdicts.set(tuple(answered_verdicts))
+    try:
+        declaration, refs = prepared if prepared is not None else prepare_month_segment(
+            db, state, segment=segment, decree_payload=decree_payload,
+            llm_config=llm_config, translate_fn=translate_fn,
+            answered_verdicts=answered_verdicts, decree_ref=decree_ref,
+        )
         return dispatch_declaration(
             db, state, declaration,
             minister_name=minister_name,

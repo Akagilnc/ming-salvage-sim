@@ -581,6 +581,7 @@ def resolve_directives(
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
     on_gazette=None,
+    write_gate_already_held: bool = False,
 ) -> ResolveResult:
     """玩家过月入口：前括号之后走 ADR 0157 主链，不再用 extractor 落账。
 
@@ -613,6 +614,7 @@ def resolve_directives(
         source=source,
         cheat_directive=cheat_directive,
         on_gazette=on_gazette,
+        write_gate_already_held=write_gate_already_held,
     )
 
 
@@ -939,9 +941,9 @@ def resolve_decisions_phase2(
     content=None,
     cheat_directive: str = "",
     on_gazette=None,
-) -> str:
+) -> ResolveResult:
     """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
-    要求本回合处于 awaiting_decision（已有 resolve_context）。返回完整结算报告。"""
+    要求已有 resolve_context。返回当前续推结果，未推进不冒认他方的推进。"""
     ctx = db.resolve_contexts.get(state.turn)
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
@@ -954,11 +956,6 @@ def resolve_decisions_phase2(
         cheat_directive=cheat_directive,
         on_gazette=on_gazette,
     )
-    state.turn_phase = (
-        TurnPhase.AWAITING_DECISION.value if result.awaiting
-        else TurnPhase.ISSUED.value if result.advanced or state.ended
-        else TurnPhase.SETTLING.value
-    )
-    return result.report
+    return result
 
 from ming_sim.flows import _FixedFiscalAbort

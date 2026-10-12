@@ -371,16 +371,18 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
     desk = session.pending_decisions()
     row = next(item for item in desk if str(item["event_id"]).startswith(_LEVY_PETITION_PREFIX))
     ordinary = next(item for item in desk if str(item["event_id"]).startswith("decree-question:"))
-    declarations = iter([
-        {"effects": {}},
-        {"effects": [{
+    def translate(request, _config):
+        # Independent calls may finish in either order. Only the unrelated
+        # decree tries to borrow the levy verdict; the held petition stays empty.
+        if request.this_decree is None:
+            return {"effects": {}}
+        return {"effects": [{
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "已准"},
-        }]},
-    ])
+        }]}
+
     monkeypatch.setattr(
-        "ming_sim.month_translate.run_declaration_translate_prompt",
-        lambda *args, **kwargs: next(declarations),
+        "ming_sim.month_translate._default_month_translate_runner", translate,
     )
     session.submit_hitl_choices(
         [{"decision_key": row["decision_key"],
@@ -454,7 +456,6 @@ def test_outcome_label_outside_closed_set_is_rejected_not_written(game, monkeypa
     assert int(state.turn) == closed_turn
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_questions")
-    assert not chain.get("world_continued")
 
 def test_no_levy_petition_means_no_extra_ask_and_no_new_run(game, monkeypatch):
     """未到点月份不新增请旨行、不新增模型调用（世界段消息保持原样）。"""

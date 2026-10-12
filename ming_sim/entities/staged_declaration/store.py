@@ -226,7 +226,7 @@ class StagedDeclarationStore:
         ]
         return "\n".join(parts)
 
-    def replace_questions(self, decree_ref: str, questions: list, *, forecast_text: str) -> int:
+    def replace_questions(self, decree_ref: str, questions: list, *, forecast_text: str = "") -> int:
         """续推消费旧问并承接新问；声明及结算标记不动，原文保留供下一次续推。"""
         ref = str(decree_ref or "").strip()
         if not ref:
@@ -242,7 +242,7 @@ class StagedDeclarationStore:
             "WHERE id=(SELECT MAX(id) FROM staged_declarations "
             "WHERE decree_ref=? AND status!='discarded')",
             (json.dumps(questions, ensure_ascii=False) if questions else None,
-             "\n" + forecast_text, ref),
+             "\n" + forecast_text if forecast_text else "", ref),
         )
         if owns:
             self._conn.commit()

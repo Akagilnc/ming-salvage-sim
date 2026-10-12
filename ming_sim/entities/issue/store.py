@@ -231,35 +231,25 @@ class IssueStore:
         """
 
     # --- pending_decisions / rescript desk moved from GameDB (#1889 J1) ---
-    def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
-        """覆写本回合待裁 decision 行（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。
+    def save_pending_decisions(
+        self, turn: int, decisions: List[Dict[str, object]],
+    ) -> None:
+        """Append new decisions without changing existing keys, answers or rescript drafts.
 
-        #656 A6/F2 不变式：只清只写 kind='decision'（与 clear_pending_decisions/
-        save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
-        不被 decision 盘面覆写连带清除。
+        Independent continuations may add questions while siblings remain open.
+        Both kinds share (turn, idx), so allocate after every existing desk row.
         """
         turn = int(turn)
-        # 两种 kind 共用 (turn, idx) 主键。先把保留的 draft 搬到负数暂存区，
-        # 删除旧 decisions 后再按新盘面长度接续重排；draft 的内容与 event_id
-        # 均不改，decision 数量增减也不会与旧 draft idx 相撞。
-        self._conn.execute(
-            "UPDATE pending_decisions SET idx = -idx - 1 "
-            "WHERE turn = ? AND kind = 'rescript_draft'",
-            (turn,),
-        )
-        draft_rows = self._conn.execute(
-            "SELECT idx FROM pending_decisions "
-            "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
-            (turn,),
-        ).fetchall()
-        self._conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
-            (int(turn),),
-        )
-        for idx, d in enumerate(decisions):
+        existing = {r["event_id"] for r in self.list_pending_decisions(turn)}
+        next_idx = self._conn.execute(
+            "SELECT COALESCE(MAX(idx), -1) + 1 FROM pending_decisions WHERE turn=?", (turn,),
+        ).fetchone()[0]
+        for d in decisions:
+            if str(d.get("event_id") or "") in existing:
+                continue
             self.insert_pending_decision(
                 (
-                    turn, idx,
+                    turn, next_idx,
                     str(d.get("event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
@@ -269,11 +259,7 @@ class IssueStore:
                     "", "pending", "decision", "", "", "", 0,
                 ),
             )
-        for offset, row in enumerate(draft_rows):
-            self._conn.execute(
-                "UPDATE pending_decisions SET idx = ? WHERE turn = ? AND idx = ?",
-                (len(decisions) + offset, turn, int(row["idx"])),
-            )
+            next_idx += 1
         self._conn.commit()
 
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:

@@ -149,6 +149,7 @@ def forecast_snapshot(
     *,
     decree_ref: str,
     decree_text: Optional[str] = None,
+    materials_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """预推唯一快照：引用、判官上下文、材料目录、本旨事实与可见效果引用。
 
@@ -173,7 +174,7 @@ def forecast_snapshot(
         db, state, [body], uncased=catalog_token is not None,
     )
     # 与世界段同一读法；独立 dest_root，避免并行预推互踩固定「世界推演」根。
-    dest_parent = Path(world_materials_root(db, state)).parent / "decree-forecast"
+    dest_parent = materials_root if materials_root is not None else Path(world_materials_root(db, state)).parent / "decree-forecast"
     prepared = prepare_world_materials(db, state, dest_root=dest_parent)
     try:
         grounding, refs = _frozen_effect_refs(db, turn)

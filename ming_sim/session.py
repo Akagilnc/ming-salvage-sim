@@ -2446,6 +2446,7 @@ class GameSession:
             content=self.content,
             cheat_directive=cheat_directive,
             on_gazette=on_gazette,
+            write_gate_already_held=write_gate_already_held,
             **resolve_kwargs,
         )
         if result.advanced and not result.awaiting:
@@ -2467,7 +2468,12 @@ class GameSession:
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
-        return self.db.issues.list_rescript_desk(int(self.state.turn))
+        desk = self.db.issues.list_rescript_desk(int(self.state.turn))
+        if desk and self.current_phase() == TurnPhase.AWAITING_DECISION:
+            from ming_sim.month_chain import _load_chain
+            from ming_sim.rescript_forecast import schedule_forecasts
+            schedule_forecasts(self, _load_chain(self.db, int(self.state.turn)), desk)
+        return desk
 
     def deferred_rescripts(self) -> List[Dict[str, object]]:
         """Original returned memorials, including months with vacant offices."""
@@ -2481,39 +2487,41 @@ class GameSession:
         self, choices: List[Dict[str, object]], *, write_gate: Any,
         cheat_directive: str = "",
         on_gazette=None,
-    ) -> str:
+    ) -> ResolveResult:
         """Record raw answers in a short transaction, then resume the same month run."""
         from ming_sim.rescript_actions import persist_answers
+        from ming_sim.month_chain import month_chain_call_failure
         if write_gate is None:
             raise ValueError("submit_hitl_choices 须注入既有 write_gate")
-        self._assert_awaiting_decision_submit()
         with write_gate:
+            self._assert_awaiting_decision_submit()
+            before_turn = int(self.state.turn)
             persist_answers(self.db, self.state, choices, content=self.content)
-        before_turn = int(self.state.turn)
+
+        def _sync_submit_phase(result: Optional[ResolveResult] = None) -> None:
+            with write_gate:
+                if int(self.state.turn) != before_turn or self.state.ended:
+                    return
+                failure = month_chain_call_failure(self.db, before_turn)
+                if result is None and not failure:
+                    return  # Sibling recovery already owns the current phase.
+                self.state.turn_phase = (
+                    TurnPhase.SETTLING.value if failure or not result.awaiting
+                    else TurnPhase.AWAITING_DECISION.value
+                )
+                self.db.reign.save_game_state(self.state)
+
         try:
-            report = resolve_decisions_phase2(
+            result = resolve_decisions_phase2(
                 self.state, self.db, self.agno_db, self.llm_config,
                 content=self.content, cheat_directive=cheat_directive,
                 on_gazette=on_gazette,
             )
         except Exception:
-            from ming_sim.month_chain import month_chain_call_failure
-            self.state.turn_phase = (
-                TurnPhase.SETTLING.value if month_chain_call_failure(self.db, before_turn)
-                else TurnPhase.AWAITING_DECISION.value
-            )
-            with write_gate:
-                self.db.reign.save_game_state(self.state)
+            _sync_submit_phase()
             raise
-        self.state.turn_phase = (
-            TurnPhase.ISSUED.value
-            if int(self.state.turn) != before_turn or self.state.ended
-            else TurnPhase.AWAITING_DECISION.value if self.pending_decisions()
-            else TurnPhase.SETTLING.value
-        )
-        with write_gate:
-            self.db.reign.save_game_state(self.state)
-        return report
+        _sync_submit_phase(result)
+        return result
 
     def advance_without_decree(
         self, *, write_gate_already_held: bool = False, on_gazette=None,
