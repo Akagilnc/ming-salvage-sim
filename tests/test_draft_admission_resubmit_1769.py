@@ -7,7 +7,7 @@ import ming_sim.cli_backend as cb
 import ming_sim.draft_intent as di
 import ming_sim.session as session_mod
 import web_app
-from ming_sim.error_pack import latest_error_pack_for_turn
+from ming_sim.error_pack import error_packs_root
 from tests.army_pay_helpers import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import (
     _get_state,
@@ -146,17 +146,17 @@ _ENSURE_FAULT_MARK = "simulated ensure code fault #1769"
 _RESUBMIT_FAULT_MARK = "simulated resubmit code fault #1769"
 
 
-def _assert_error_pack_from(game, turn: int, marker: str) -> None:
+def _assert_error_pack_from(pack_path: str, marker: str) -> None:
     """错误包须来自被测的真故障本身——不认「有个包就行」。"""
-    pack = latest_error_pack_for_turn(game.db.path, turn)
-    assert pack, "须出错误包"
-    assert Path(pack).is_dir()
+    assert pack_path, "须出错误包"
+    pack = Path(pack_path)
+    assert pack.is_dir()
     manifest = json.loads(
-        (Path(pack) / "manifest.json").read_text(encoding="utf-8"),
+        (pack / "manifest.json").read_text(encoding="utf-8"),
     )
     assert manifest["exception_type"] == "RuntimeError"
     assert manifest["exception_message"] == marker
-    assert (Path(pack) / "traceback.txt").is_file()
+    assert (pack / "traceback.txt").is_file()
 
 
 
@@ -270,7 +270,7 @@ def test_draft_admission_code_fault_aborts_with_error_pack(
     )
     assert body.get("_event") == "error"
     assert int(game.state.turn) == turn
-    _assert_error_pack_from(game, turn, marker)
+    _assert_error_pack_from(body["error_pack_path"], marker)
     if settling:
         recovery = _get_state(client)["settlement_recovery"]
         assert recovery["error_pack_path"] == body["error_pack_path"]
@@ -346,7 +346,7 @@ def test_draft_admission_mixed_good_and_bad_independent(
     assert len(_rejection_rows(game, bad_id)) == 1
     assert not _rejection_rows(game, good_id)
     # 名册产物错未被当成系统故障：无错误包、月已推进（上方断言）
-    assert not latest_error_pack_for_turn(game.db.path, turn)
+    assert not list(error_packs_root().glob(f"turn{turn}_attempt*"))
     # 来源保真：第二次重写的 failure_reason = 第一次 resubmit 自身产物错原文
     assert len(resubmit_calls) == 2
     assert ensure_rounds, "ensure 须至少一轮"

@@ -15,12 +15,11 @@ attempt 计数**从错误目录已有文件推导**（同 turn 既有目录数�
 
 from __future__ import annotations
 
-import json
 import logging
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ming_sim.applier import safe_json_dumps
 from ming_sim.paths import bundled_path, user_data_dir
@@ -78,26 +77,6 @@ def _read_version() -> str:
         return "unknown"
 
 
-_COMPLETE_PACK_FILES = frozenset({
-    "traceback.txt", "resolve_context.json",
-    "save_backup.db", "manifest.json",
-})
-
-
-def _read_complete_pack_manifest(path: Path) -> Optional[Dict[str, object]]:
-    """完整包的 manifest 身份；残缺/坏 JSON/条目 stat OSError → None。complete/latest 共用。"""
-    try:
-        if not path.is_dir() or not all(
-            (path / name).is_file() for name in _COMPLETE_PACK_FILES
-        ):
-            return None
-        manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        logger.exception("error pack manifest read failed path=%s", path)
-        return None
-    return manifest if isinstance(manifest, dict) else None
-
-
 def settlement_abort_message(pack_path: str, *, reason: str) -> str:
     """中止时透传故障原因及错误包路径（决定 7）。"""
     return (
@@ -105,55 +84,6 @@ def settlement_abort_message(pack_path: str, *, reason: str) -> str:
         f"错误包已生成：{pack_path}\n"
         "请把该文件夹发给作者，以便排查。"
     )
-
-
-def latest_error_pack_for_turn(db_path: object, turn: int) -> Optional[str]:
-    """同 DB + turn 最新完整诊断包；无则 None，不作为本次故障的归因来源。
-
-    身份取 manifest.db_path + turn，
-    禁跨存档串包（同 user-data 下另一 DB 的更高 attempt 不得入选）。
-    目录扫描/条目 stat 的 OSError 视为无诊断包。
-    """
-    root = error_packs_root()
-    try:
-        if not root.exists():
-            return None
-        entries = list(root.iterdir())
-    except OSError:
-        logger.exception("error packs root scan failed root=%s", root)
-        return None
-    expected_db_path = str(db_path)
-    prefix = f"turn{int(turn)}_attempt"
-    best: Optional[Path] = None
-    best_n = -1
-    for path in entries:
-        try:
-            if not (path.is_dir() and path.name.startswith(prefix)):
-                continue
-            n = int(path.name[len(prefix):])
-        except ValueError:
-            continue  # 目录名非 attempt 序号：正常非候选
-        except OSError:
-            logger.exception("error pack entry stat failed path=%s", path)
-            continue
-        manifest = _read_complete_pack_manifest(path)
-        if manifest is None:
-            continue
-        if (
-            str(manifest.get("db_path")) != expected_db_path
-            or manifest.get("turn") != int(turn)
-        ):
-            continue
-        if n > best_n:
-            best_n = n
-            best = path
-    if best is None:
-        return None
-    try:
-        return str(best.resolve())
-    except OSError:
-        logger.exception("error pack path resolve failed path=%s", best)
-        return None
 
 
 def write_error_pack(

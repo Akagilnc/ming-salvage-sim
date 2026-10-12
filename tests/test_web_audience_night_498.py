@@ -489,7 +489,7 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
     import ming_sim.decree_forecast as forecast
     import ming_sim.month_translate as translate
     from ming_sim.declaration_dispatch import pending_action_decree_ref
-    from ming_sim.error_pack import latest_error_pack_for_turn
+    from ming_sim.error_pack import error_packs_root
     from ming_sim.month_chain import month_chain_call_failure
     from tests.month_chain_helpers import InlineExecutor
 
@@ -561,9 +561,11 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
     assert game.db.staged_declarations.staged_for(ref) == ()
     assert month_chain_call_failure(game.db, turn_before) is None
     assert game.state_payload()["settlement_recovery"] is None
-    pack = latest_error_pack_for_turn(game.db.path, turn_before)
+    pack = None
     if kind != "429":
-        assert pack
+        packs = list(error_packs_root().glob(f"turn{turn_before}_attempt*"))
+        assert len(packs) == 1
+        pack = packs[0]
         manifest = json.loads((Path(pack) / "manifest.json").read_text())
         assert manifest["exception_message"] == str(error)
     monkeypatch.setattr(audience_translation, "_executor", executor)
