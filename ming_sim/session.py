@@ -2463,6 +2463,18 @@ class GameSession:
             self._assert_awaiting_decision_submit()
             before_turn = int(self.state.turn)
             persist_answers(self.db, self.state, choices, content=self.content)
+
+        def _sync_submit_phase(result: Optional[ResolveResult] = None) -> None:
+            with write_gate:
+                if int(self.state.turn) != before_turn or self.state.ended:
+                    return
+                self.state.turn_phase = (
+                    TurnPhase.SETTLING.value if month_chain_call_failure(self.db, before_turn)
+                    else TurnPhase.AWAITING_DECISION.value if (result is not None and result.awaiting) or result is None
+                    else TurnPhase.SETTLING.value
+                )
+                self.db.reign.save_game_state(self.state)
+
         try:
             result = resolve_decisions_phase2(
                 self.state, self.db, self.agno_db, self.llm_config,
@@ -2470,22 +2482,9 @@ class GameSession:
                 on_gazette=on_gazette,
             )
         except Exception:
-            with write_gate:
-                self.state.turn_phase = (
-                    TurnPhase.SETTLING.value if month_chain_call_failure(self.db, before_turn)
-                    else TurnPhase.AWAITING_DECISION.value
-                )
-                self.db.reign.save_game_state(self.state)
+            _sync_submit_phase()
             raise
-        with write_gate:
-            self.state.turn_phase = (
-                TurnPhase.ISSUED.value
-                if int(self.state.turn) != before_turn or self.state.ended
-                else TurnPhase.SETTLING.value if month_chain_call_failure(self.db, before_turn)
-                else TurnPhase.AWAITING_DECISION.value if result.awaiting
-                else TurnPhase.SETTLING.value
-            )
-            self.db.reign.save_game_state(self.state)
+        _sync_submit_phase(result)
         return result
 
     def advance_without_decree(

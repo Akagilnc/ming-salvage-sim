@@ -613,8 +613,8 @@ def run_player_month_chain(
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise exc
         # Same authority as _guard_month_call: already-accounted aborts pass through
-        # even if a sibling cleared durable call_failure between gate holds (#1847 K1).
-        if isinstance(exc, SettlementAbort) and _settlement_abort_already_accounted(db, turn, exc):
+        # even if a sibling cleared durable call_failure between gate holds (#1847 K1/K5).
+        if isinstance(exc, SettlementAbort) and _settlement_abort_already_accounted(exc):
             raise exc
         _abort_month_call(
             db, state, chain, decree_text=decree_text, source=source,
@@ -660,6 +660,7 @@ def run_player_month_chain(
                             chain["call_failure"]["message"], turn=turn,
                             stage=chain["call_failure"]["step"],
                             error_pack_path=chain["call_failure"].get("error_pack_path"),
+                            accounted=True,
                         )
                     desk = _materialize_rescript_desk(db, state, chain)
                     # Durable decided-but-unconsumed answers block the monthly tail
@@ -825,9 +826,10 @@ def _consume_call_failure_for_retry(
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
 
-def _settlement_abort_already_accounted(db: Any, turn: int, exc: "SettlementAbort") -> bool:
-    """Single authority: accounted SettlementAbort must not be re-tagged or re-packed."""
-    return bool(exc.error_pack_path or _load_chain(db, turn).get("call_failure"))
+def _settlement_abort_already_accounted(exc: Any, *args: Any, **kwargs: Any) -> bool:
+    """Single authority: accounted SettlementAbort must not be re-tagged or re-packed (#1847 K5)."""
+    target = args[-1] if args and not getattr(exc, "accounted", False) else exc
+    return bool(getattr(target, "accounted", False))
 
 
 def _abort_month_call(
@@ -878,13 +880,14 @@ def _abort_month_call(
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
     if pack_exc is not None:
         raise SettlementAbort(
-            original, turn=turn, stage=step, error_pack_path=None,
+            original, turn=turn, stage=step, error_pack_path=None, accounted=True,
         ) from pack_exc
     raise SettlementAbort(
         original,
         turn=turn,
         stage=step,
         error_pack_path=pack_path,
+        accounted=True,
     ) from exc
 
 
@@ -917,7 +920,7 @@ def _guard_month_call(
     except (KeyboardInterrupt, SystemExit):
         raise
     except SettlementAbort as exc:
-        if _settlement_abort_already_accounted(db, int(state.turn), exc):
+        if _settlement_abort_already_accounted(exc):
             raise
         _abort_month_call(
             db, state, chain, decree_text=decree_text, source=source,
@@ -1848,11 +1851,14 @@ def _eligible_rescript_answers(
             if decision in {"force_promulgated", "withdrawn", "hold"}:
                 eligible.append(row)
         elif event.startswith("deliberation:"):
-            # Decided imperial push still stalled (or missing dossier) blocks month-tail.
+            # Decided imperial push still stalled blocks month-tail (#1847 K2/K6).
+            raw_id = event.partition(":")[2]
+            if not raw_id.isdigit():
+                continue
             if (row.get("choice") or {}).get("action") != "imperial_push":
                 continue
-            original = db.dossiers.get(int(event.partition(":")[2]))
-            if original is None or (original["payload"] or {}).get("deliberation_state") == "stalled":
+            original = db.dossiers.get(int(raw_id))
+            if original is not None and (original.get("payload") or {}).get("deliberation_state") == "stalled":
                 eligible.append(row)
     return eligible
 
@@ -1887,21 +1893,28 @@ def _consume_rescript_answers(
             return
         chain.clear()
         chain.update(_load_chain(db, turn))
-        for row in decided:
+        eligible = _eligible_rescript_answers(session, chain, decided=decided)
+        for row in eligible:
             event_id = str(row.get("event_id") or "")
             if event_id.startswith("deliberation:"):
                 from ming_sim.rescript_actions import apply_imperial_deliberation_push
-                original = db.dossiers.get(int(event_id.partition(":")[2]))
-                if (row["choice"] or {}).get("action") == "imperial_push" and (original["payload"] or {}).get("deliberation_state") == "stalled":
-                    with atomic(db):
-                        apply_imperial_deliberation_push(
-                            db, state, target_dossier_id=int(original["id"]),
-                            decision_key=row["decision_key"],
-                            decree_text=(row.get("choice") or {}).get("note", ""),
-                        )
+                original_id = int(event_id.partition(":")[2])
+                with atomic(db):
+                    apply_imperial_deliberation_push(
+                        db, state, target_dossier_id=original_id,
+                        decision_key=row["decision_key"],
+                        decree_text=(row.get("choice") or {}).get("note", ""),
+                    )
             elif event_id.startswith("dossier:"):
-                _apply_decided_triad(db, state, row, row["choice"] or {}, content=session.content)
-        eligible = _eligible_rescript_answers(session, chain, decided=decided)
+                dossier_id = int(event_id.split(":", 1)[1])
+                decision = str(
+                    (row.get("choice") or {}).get("dossier_decision")
+                    or (row.get("choice") or {}).get("action")
+                    or ""
+                ).strip()
+                apply_dossier_promulgation(
+                    db, state, dossier_id, decision, content=session.content,
+                )
         # Same eligibility blocks month-tail; only model members enter prepare_answers.
         model_rows = [
             row for row in eligible
@@ -1950,42 +1963,21 @@ def _consume_rescript_answers(
                     accounted_abort = exc
             finally:
                 del owner._rescript_jobs[(turn, row["decision_key"])]
-    # Re-raise this request's original accounted abort (cause chain intact).
-    # Sibling recovery may clear call_failure in the gate gap; abort_from keys on
-    # error_pack_path so it must not rebuild or retag (#1847 K1/K3). Without an
-    # original, only a still-present durable failure is reported to siblings.
+    # Re-raise this request's original accounted abort (cause chain intact) only if
+    # durable failure is still present (#1847 K5). If sibling recovery already cleared
+    # call_failure, proceed without raising so this request can resume the month tail.
     with owner._write_gate:
         chain.clear()
         chain.update(_load_chain(db, turn))
         failure = chain.get("call_failure")
-        if accounted_abort is not None:
-            raise accounted_abort
         if failure is not None:
+            if accounted_abort is not None:
+                raise accounted_abort
             raise SettlementAbort(
                 failure["message"], turn=turn, stage=failure["step"],
                 error_pack_path=failure.get("error_pack_path"),
+                accounted=True,
             )
-
-
-def _apply_decided_triad(
-    db: Any, state: Any, row: Dict[str, object], choice: Dict[str, object], *, content: Any,
-) -> None:
-    event_id = str(row.get("event_id") or "")
-    raw_id = event_id.split(":", 1)[1] if ":" in event_id else ""
-    if not raw_id.isdigit():
-        return
-    dossier_id = int(raw_id)
-    dossier = db.dossiers.get(dossier_id)
-    if dossier is None or not dossier.get("rescript_pending"):
-        return
-    decision = str(
-        choice.get("dossier_decision") or choice.get("action") or ""
-    ).strip()
-    if decision not in {"force_promulgated", "withdrawn", "hold"}:
-        return
-    apply_dossier_promulgation(db,
-        state, dossier_id, decision, content=content,
-    )
 
 
 def _run_world_continuation_text(

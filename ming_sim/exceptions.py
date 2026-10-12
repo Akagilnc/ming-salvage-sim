@@ -109,9 +109,11 @@ class SettlementAbort(Exception):
         turn: int,
         stage: str = "extract",
         error_pack_path: str | None = None,
+        accounted: bool = False,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.turn = turn
         self.stage = stage
         self.error_pack_path = error_pack_path
+        self.accounted = bool(accounted)
