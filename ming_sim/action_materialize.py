@@ -174,7 +174,10 @@ def stage_pacification_candidate(
         "mode": mode,
     }
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(
+            existing_id, staged, night_id=night_id,
+            source_chat_turn_id=int(source_chat_turn_id or 0),
+        )
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         source_chat_turn_id=int(source_chat_turn_id or 0),
@@ -348,7 +351,10 @@ def stage_punishment_candidate(
     elif n > 0:
         staged["amount"] = n
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(
+            existing_id, staged, night_id=night_id,
+            source_chat_turn_id=int(source_chat_turn_id or 0),
+        )
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         source_chat_turn_id=int(source_chat_turn_id or 0),
@@ -1169,7 +1175,10 @@ def stage_assignment_candidate(
             staged["commitment_kind"] = staged.get("commitment_kind") or "until_stop"
             # 段派生 end_turn（max due）不写入候选/DB（#620 勿驱动 expire）
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
+        return db.update_directive_candidate(
+            existing_id, staged, night_id=night_id,
+            source_chat_turn_id=origin_cid,
+        )
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         source_chat_turn_id=origin_cid,
