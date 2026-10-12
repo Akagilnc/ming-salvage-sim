@@ -681,14 +681,19 @@ def _dispatch_effects(
         step_extraction, step_ordered, step_event_ids, unowned_outcomes = (
             _effect_extraction_from_clean(clean, event_id)
         )
+        step_priors: list[RejectedItem] = []
         for stray in unowned_outcomes:
-            rejected.append(RejectedItem(
+            item = RejectedItem(
                 item={"event_id": event_id, "事件结局": stray},
                 reason="事件结局不属于本效果信封，未写入",
                 category="invalid_state",
                 source=source,
-            ))
-        effect_sequence.append((step_extraction, step_ordered, step_event_ids))
+            )
+            rejected.append(item)
+            step_priors.append(item)
+        effect_sequence.append(
+            (step_extraction, step_ordered, step_event_ids, step_priors)
+        )
         for field, value in step_extraction.items():
             if field == "事件结局" and isinstance(value, dict):
                 current = extraction.setdefault("事件结局", {})

@@ -220,30 +220,57 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     assert [r.category for r in outside.rejection_withdrawals.rejected] == ["missing_ref"]
     assert list_unresolved_player_rejections(db) == original
 
-    def _effects_for(ids, account, unrelated_account="国库", *, empty_correction=False,
-                     ordered_transfer=False, metric_only=False, dual_envelopes=False):
-        if ordered_transfer:
+    def _effects_for(ids, account, unrelated_account="国库", *, kind=None):
+        origin = f"affair:{affair.id}"
+        if kind == "ordered":
             return [
                 {"resolves_rejection_ids": ids,
                  "economy_moves": [{
-                     "origin_ref": f"affair:{affair.id}", "account": "内库", "delta": -10,
+                     "origin_ref": origin, "account": "内库", "delta": -10,
                      "transfer_to": "国库", "category": "修正转拨", "reason": "修正转拨",
                  }]},
                 {"economy_moves": [{
-                     "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -10,
+                     "origin_ref": origin, "account": "国库", "delta": -10,
                      "category": "后支", "reason": "后支",
                  }]},
             ]
-        if metric_only:
+        if kind == "metric":
             return [{"resolves_rejection_ids": ids, "metric_delta": {"不是指标": 1}}]
-        if dual_envelopes:
+        if kind == "dual":
             return [
                 {"resolves_rejection_ids": ids,
                  "economy_moves": [{**bad, "account": account, "category": "好信封"}]},
                 {"resolves_rejection_ids": ids, "economy_moves": []},
             ]
+        if kind == "fiscal_ok":
+            return [{"resolves_rejection_ids": ids, "fiscal_creates": [{
+                "origin_ref": origin, "key": f"修正税{ids[0]}_base", "account": "国库",
+                "direction": "income", "init_value": 1, "reason": "仅财政落账",
+            }]}]
+        if kind == "mixed_reject":
+            return [{"resolves_rejection_ids": ids,
+                     "economy_moves": [{**bad, "account": "国库", "category": "经济成功"}],
+                     "fiscal_removes": [{"key": "查无此税项", "origin_ref": origin,
+                                        "reason": "财政拒收"}]}]
+        if kind == "stamp":
+            return [{"resolves_rejection_ids": ids, "economy_moves": [
+                {**bad, "account": "国库", "category": "先立",
+                 "affair_declaration": {
+                     "attach": "new", "identity": f"修正同印{ids[0]}",
+                     "name": "甲", "origin": "旨意",
+                 }},
+                {**bad, "account": "国库", "category": "冲突",
+                 "affair_declaration": {
+                     "attach": "new", "identity": f"修正同印{ids[0]}",
+                     "name": "乙", "origin": "旨意",
+                 }},
+            ]}]
+        if kind == "unowned":
+            return [{"resolves_rejection_ids": ids,
+                     "economy_moves": [{**bad, "account": "国库", "category": "经济成功"}],
+                     "事件结局": {"无归属事件": "胜"}}]
         correction_move = (
-            {"economy_moves": []} if empty_correction
+            {"economy_moves": []} if kind == "empty"
             else {"economy_moves": [{**bad, "account": account}]}
         )
         return [
@@ -252,8 +279,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
         ]
 
     def correction(ids, account, continuation_account, *, questions=True, grant=None, force=False,
-                   unrelated_account="国库", empty_correction=False, ordered_transfer=False,
-                   continuation_ids=None, metric_only=False, dual_envelopes=False):
+                   unrelated_account="国库", kind=None, continuation_ids=None):
         night = open_night(db, state, location="乾清宫", time_of_day="戌时")
         nid = int(night["id"])
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
@@ -281,11 +307,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             db, decree_ref=ref, turn=state.turn,
             declaration={} if grant else {
                 "effects": _effects_for(
-                    ids, account, unrelated_account,
-                    empty_correction=empty_correction,
-                    ordered_transfer=ordered_transfer,
-                    metric_only=metric_only,
-                    dual_envelopes=dual_envelopes,
+                    ids, account, unrelated_account, kind=kind,
                 ),
             }, verdict=_rejected_verdict(db) if force else {"decision": "promulgated"},
             visible_refs={"affairs": [affair.id]},
@@ -334,35 +356,29 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     assert [r["rejection_id"] for r in list_unresolved_player_rejections(db)] == [withdraw_id]
     reopen_check("force-succeeded.db")
 
-    # K5：空修正信封不得了结。
-    declaration_dispatch.dispatch_declaration(
-        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
-        visible_refs={"affairs": [affair.id]},
-    )
-    empty_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
-    correction([empty_id], "国库", None, questions=False, empty_correction=True)
-    assert empty_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
-    reopen_check("empty-correction.db")
-
-    # K5：字典指标拒收须按结构化落账结果认失败，不得靠声明内容/条目等值猜归属。
-    declaration_dispatch.dispatch_declaration(
-        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
-        visible_refs={"affairs": [affair.id]},
-    )
-    metric_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
-    correction([metric_id], "国库", None, questions=False, metric_only=True)
-    assert metric_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
-    reopen_check("metric-rejected-correction.db")
-
-    # K5：同旨好坏两信封，一拒即失败；好信封不得用旧 payload 副本盖掉失败。
-    declaration_dispatch.dispatch_declaration(
-        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
-        visible_refs={"affairs": [affair.id]},
-    )
-    dual_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
-    correction([dual_id], "国库", None, questions=False, dual_envelopes=True)
-    assert dual_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
-    reopen_check("dual-envelope-one-fail.db")
+    # K5：完整信封步结果（仅 without_questions 扫一遍，避免四路径矩阵重复）。
+    if success_path == "without_questions":
+        for kind, expect_resolved in (
+            ("empty", False),       # 空信封
+            ("metric", False),      # 字典指标拒收
+            ("dual", False),        # 同旨好坏两信封
+            ("fiscal_ok", True),    # 仅财政落账须认成功
+            ("mixed_reject", False),  # 经济成功+财政拒收须认失败
+            ("stamp", False),       # 前置盖章拒收须进步结果
+            ("unowned", False),     # 未归属事件结局须进步结果
+        ):
+            declaration_dispatch.dispatch_declaration(
+                db, state, {"effects": {"economy_moves": [bad]}},
+                source=Provenance.player_decree, visible_refs={"affairs": [affair.id]},
+            )
+            rid = list_unresolved_player_rejections(db)[-1]["rejection_id"]
+            correction([rid], "国库", None, questions=False, kind=kind)
+            unresolved_ids = {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+            if expect_resolved:
+                assert rid not in unresolved_ids, kind
+            else:
+                assert rid in unresolved_ids, kind
+            reopen_check(f"k5-{kind}.db")
 
     # K4：同一段里修正转拨与普通支出按交代先后争库。
     state.metrics["国库"] = 0
@@ -373,7 +389,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
         visible_refs={"affairs": [affair.id]},
     )
     order_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
-    correction([order_id], "国库", None, questions=False, ordered_transfer=True)
+    correction([order_id], "国库", None, questions=False, kind="ordered")
     assert order_id not in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
     ledger = db.conn.execute(
         "SELECT category, delta FROM economy_ledger "
@@ -517,7 +533,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
         if r["rejection_id"] != withdraw_id
     ]
     if leftovers:
-        correction(leftovers, "国库", None, questions=False, unrelated_account="国库")
+        correction(leftovers, "国库", None, questions=False, kind=None, unrelated_account="国库")
     declaration_dispatch.dispatch_declaration(
         db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
         visible_refs={"affairs": [affair.id]},

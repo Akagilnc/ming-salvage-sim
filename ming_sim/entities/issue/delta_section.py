@@ -68,7 +68,8 @@ def apply(run) -> SectionResult:
         if row is None:
             continue
         carriers.extend(_monthly_economy_items(loads_effect_dict(row["ongoing_effects"])))
-    run.commitment_economy_carriers = carriers
+    # 逐笔交错时跨信封累加：后笔财政 creates 仍能见到先笔承诺月支载体。
+    run.commitment_economy_carriers.extend(carriers)
 
     extras = _resolve_strategic_events(run, issue_summary)
     from ming_sim.settlement.run import _store

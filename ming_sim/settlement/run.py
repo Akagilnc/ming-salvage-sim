@@ -32,9 +32,14 @@ from ming_sim.settlement.outcome import (
     SettlementOutcome,
 )
 
-# C0 effects 数组的一笔：(该笔的声明效果 / 该笔的有序字段 / 该笔的效果归属 id)
+# C0 effects 数组的一笔：
+# (声明效果, 有序字段, 效果归属 id) 或附加第 4 元：进入核算前已确定的本笔拒收
+# （如未归属事件结局），合并进 effect_sequence_results。
 EffectStep = Tuple[Dict[str, object], Dict[str, List[Tuple[str, object]]], Dict[str, List[str]]]
 EffectSequence = List[EffectStep]
+
+# 逐笔交错后仍只跑一次的段：无声明字段、只消费同批已落 applied（批次副作用）。
+_BATCH_AFTER_INTERLEAVE = frozenset({"credit_event"})
 
 
 @dataclass
@@ -111,6 +116,10 @@ class SettlementRun:
     outcomes: Dict[str, SectionResult] = field(default_factory=dict)
     # effect_sequence 逐笔：每笔各段 SectionResult 合并后的快照（#1843 修正了结读口）。
     effect_sequence_results: List[SectionResult] = field(default_factory=list)
+    # 与 effect_sequence 等长：进入段跑之前已确定的本笔拒收（盖章 / 未归属结局等）。
+    effect_sequence_priors: List[List[RejectedItem]] = field(default_factory=list)
+    # 与 effect_sequence 等长：本笔规范化后的人物变更（供逐笔 person_pre/post）。
+    effect_sequence_person_changes: List[List[Dict[str, object]]] = field(default_factory=list)
 
     # ── 段间共享工具（迁自旧单体入口的同名内联件） ──────────────────────
     def origin_ref_from_result_item(self, item: Optional[Mapping[str, object]]) -> str:
@@ -253,6 +262,7 @@ def _preflight(
     # 二次盖章会重复拒收并另铸一个 birth_key。
     stamped_by_origin: Dict[int, object] = {}
     rejected_origin_ids: Set[int] = set()
+    rejection_by_origin_id: Dict[int, RejectedItem] = {}
     for field_name in stamp_fields:
         raw_items = clean.get(field_name)
         if isinstance(raw_items, list):
@@ -264,24 +274,31 @@ def _preflight(
                         {k: v for k, v in raw_item.items() if k != "_effect_event_id"}
                         if isinstance(raw_item, dict) else {"raw_value": raw_item}
                     )
-                    validate_rejections.append((
-                        field_name,
-                        RejectedItem(
-                            item=item_payload,
-                            reason=conflict_reason or f"拒收（{field_name} 未注明原因）",
-                            category="invalid_shape",
-                            source=ctx.source,
-                        ),
-                    ))
+                    rejected_item = RejectedItem(
+                        item=item_payload,
+                        reason=conflict_reason or f"拒收（{field_name} 未注明原因）",
+                        category="invalid_shape",
+                        source=ctx.source,
+                    )
+                    validate_rejections.append((field_name, rejected_item))
                     rejected_origin_ids.add(id(raw_item))
+                    rejection_by_origin_id[id(raw_item)] = rejected_item
                     continue
                 stamped_by_origin[id(raw_item)] = stamped
                 kept.append(stamped)
             clean[field_name] = kept
 
+    sequence_priors: List[List[RejectedItem]] = []
     if effect_sequence is not None:
         stamped_sequence: List[Any] = []
-        for step_extracted, step_ordered, step_event_ids in effect_sequence:
+        for step in effect_sequence:
+            step_extracted, step_ordered, step_event_ids = step[0], step[1], step[2]
+            priors: List[RejectedItem] = list(step[3]) if len(step) > 3 else []
+            for field_name in stamp_fields:
+                for raw_item in step_extracted.get(field_name) or []:
+                    stamped_reject = rejection_by_origin_id.get(id(raw_item))
+                    if stamped_reject is not None:
+                        priors.append(stamped_reject)
             stamped_step = dict(step_extracted)
             for field_name in stamp_fields:
                 raw_items = stamped_step.get(field_name)
@@ -292,6 +309,7 @@ def _preflight(
                         if id(raw_item) not in rejected_origin_ids
                     ]
             stamped_sequence.append((stamped_step, step_ordered, step_event_ids))
+            sequence_priors.append(priors)
         effect_sequence = stamped_sequence
 
     run = SettlementRun(
@@ -302,6 +320,7 @@ def _preflight(
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=dict(ordered_effect_event_ids or {}),
         effect_sequence=effect_sequence,
+        effect_sequence_priors=sequence_priors,
         commit_now=connection_owns_transaction(db.conn),
         shape_rejections=validate_rejections,
         runtime_content=ctx.content if ctx.content is not None else content_context(),
@@ -323,6 +342,16 @@ def _preflight(
     }
     for item in person_changes:
         item.pop("_effect_event_id", None)
+
+    # 逐笔人物切片：合并列表＝各 step 人物变更按序拼接（盖章过滤后），按长度切开。
+    if effect_sequence is not None:
+        offset = 0
+        step_people: List[List[Dict[str, object]]] = []
+        for step_extracted, _ordered, _eids in effect_sequence:
+            count = len(step_extracted.get("人物变更") or [])
+            step_people.append(person_changes[offset:offset + count])
+            offset += count
+        run.effect_sequence_person_changes = step_people
 
     run.strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(
         clean, run.runtime_content,
@@ -429,22 +458,55 @@ def _run_registry(run) -> None:
         _capture(run, spec.name, registry.load(spec)(run))
 
 
+def _bind_step_person_changes(run, step_index: int) -> None:
+    """把本笔人物变更切进 person_pre/post；战略从属仍走局势段物化。"""
+    from ming_sim.settlement.preflight import _split_strategic_person_result_changes
+
+    people = []
+    if step_index < len(run.effect_sequence_person_changes):
+        people = list(run.effect_sequence_person_changes[step_index])
+    pre_issue, post_issue = split_pre_issue_person_changes(people)
+    _str_pre, pre_issue = _split_strategic_person_result_changes(
+        pre_issue, run.strategic_event_referenced_ids, run.declared_person_event_by_item,
+    )
+    _str_post, post_issue = _split_strategic_person_result_changes(
+        post_issue, run.strategic_event_referenced_ids, run.declared_person_event_by_item,
+    )
+    run.pre_issue_person_changes = pre_issue
+    run.post_issue_person_changes = post_issue
+
+
+def _capture_into_step(run, step_parts: List[SectionResult], name: str, result) -> None:
+    """段结果写入运行态，并叠进本笔步结果（只取 applied/rejected）。"""
+    _capture(run, name, result)
+    step_parts.append(SectionResult(list(result.applied), list(result.rejected)))
+
+
 def _run_effect_sequence(run) -> None:
-    """C0 effects 数组按交代先后逐笔落账（#1844）。
+    """C0 effects 数组按交代先后逐笔落账（#1844 / #1843）。
 
     后交代的效果读到先交代的实际落账存量——不按实体段固定类别顺序重排跨类因果。
-    同一笔内先实体后钱：同笔的欠饷加额须先于补饷拨款可见。
+    同一笔内先实体后钱（#1844）；其余有主段按登记表序接在其后，步结果合并全部
+    结构化 applied/rejected（含财政/人物/局势与前置拒收）。批次副作用
+    （credit_event）仍只在交错后跑一次。
     """
     from ming_sim.entities.army import delta_section as army_section
     from ming_sim.entities.economy import delta_section as economy_section
     from ming_sim.entities.metric import delta_section as metric_section
     from ming_sim.entities.region import delta_section as region_section
+    from ming_sim.settlement.preflight import _split_strategic_person_result_changes
+
+    # #1844 同笔共享资源序：metric→实体→经济（与登记表全局段序不同，不得改回）。
+    interleaved = {"metric", "new_armies", "region_changes", "army_changes", "economy"}
 
     assert run.effect_sequence is not None
-    for step_extracted, step_ordered, step_event_ids in run.effect_sequence:
+    for step_index, (step_extracted, step_ordered, step_event_ids) in enumerate(
+        run.effect_sequence
+    ):
         run.current_extracted = step_extracted
         run.current_ordered = step_ordered
         run.current_event_ids = step_event_ids
+        _bind_step_person_changes(run, step_index)
         # W4: first accepted petition outcome takes effect before later envelopes.
         from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
         from ming_sim.issues import _is_fiscal_levy_event, _event_outcome_label
@@ -455,23 +517,43 @@ def _run_effect_sequence(run) -> None:
                 if label:
                     apply_petition_event_outcome(run.state, run.db, event_id, label)
         step_parts: List[SectionResult] = []
-
-        def _capture_step(name: str, result: SectionResult) -> None:
-            _capture(run, name, result)
-            step_parts.append(result)
-
-        _capture_step("metric", metric_section.apply(run))
-        _capture_step("new_armies", army_section.apply_new_armies(
+        priors = (
+            run.effect_sequence_priors[step_index]
+            if step_index < len(run.effect_sequence_priors) else []
+        )
+        if priors:
+            step_parts.append(SectionResult(applied=[], rejected=list(priors)))
+        _capture_into_step(run, step_parts, "metric", metric_section.apply(run))
+        _capture_into_step(run, step_parts, "new_armies", army_section.apply_new_armies(
             run, list(step_extracted.get("new_armies") or []),
         ))
-        _capture_step("region_changes", region_section.apply(run))
-        _capture_step("army_changes", army_section.apply_deltas(run))
-        step_moves = list(step_extracted.get("economy_moves") or [])
-        _capture_step("economy", economy_section.apply(run, step_moves))
+        _capture_into_step(run, step_parts, "region_changes", region_section.apply(run))
+        _capture_into_step(run, step_parts, "army_changes", army_section.apply_deltas(run))
+        _capture_into_step(
+            run, step_parts, "economy",
+            economy_section.apply(run, list(step_extracted.get("economy_moves") or [])),
+        )
+        for spec in registry.section_specs():
+            if spec.name in interleaved or spec.name in _BATCH_AFTER_INTERLEAVE:
+                continue
+            _capture_into_step(run, step_parts, spec.name, registry.load(spec)(run))
         step_result = _empty()
         for part in step_parts:
             step_result = step_result.merge(part)
         run.effect_sequence_results.append(step_result)
+    # 恢复整批人物列表（只读/收尾）；逐笔路径已落完，after_interleave 不再跑人物段。
+    pre_issue, post_issue = split_pre_issue_person_changes(
+        [item for group in run.effect_sequence_person_changes for item in group]
+        if run.effect_sequence_person_changes else []
+    )
+    _str_pre, pre_issue = _split_strategic_person_result_changes(
+        pre_issue, run.strategic_event_referenced_ids, run.declared_person_event_by_item,
+    )
+    _str_post, post_issue = _split_strategic_person_result_changes(
+        post_issue, run.strategic_event_referenced_ids, run.declared_person_event_by_item,
+    )
+    run.pre_issue_person_changes = pre_issue
+    run.post_issue_person_changes = post_issue
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids
@@ -621,16 +703,15 @@ def settle_delta(
 
 
 def _run_registry_after_interleave(run) -> None:
-    """逐笔交错跑完后，跑余额外段。
+    """逐笔交错跑完后，只跑批次副作用段。
 
-    指标、经济、实体三段已在逐笔路径里跑过——此处不得重跑，否则同笔效果双落。
+    有主声明段已在逐笔路径按登记表跑过——此处不得重跑，否则同笔效果双落。
     """
-    already_run = {"metric", "economy", "new_armies", "region_changes", "army_changes"}
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids
     for spec in registry.section_specs():
-        if spec.name in already_run:
+        if spec.name not in _BATCH_AFTER_INTERLEAVE:
             continue
         _capture(run, spec.name, registry.load(spec)(run))
 

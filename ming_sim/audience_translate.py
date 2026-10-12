@@ -254,6 +254,7 @@ def build_c0_declaration_shape() -> str:
                 "resolves_rejection_ids": [
                     "本旨明确修正的拒收 id；无则省略；与普通效果同一有序数组"
                 ],
+                "dossier_id": "世界段修正时填可见在途案卷 id；本旨续推可省略",
                 **DECLARATION_EFFECT_FIELDS,
             },
             ensure_ascii=False, indent=2,

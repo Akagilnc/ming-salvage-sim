@@ -922,7 +922,8 @@ def _declared_levy_outcome_attribution_error(item: dict, event_id: str) -> str:
         return ""
     targets = sorted(
         str(key) for key in outcomes
-        if _is_fiscal_levy_petition_event(_fiscal_levy_event_by_id(str(key)) or Event(id="", title=""))
+        if (ev := _fiscal_levy_event_by_id(str(key))) is not None
+        and _is_fiscal_levy_petition_event(ev)
     )
     if not targets:
         return ""
