@@ -1103,34 +1103,21 @@ class WebGame:
                 # 切换 API 时仍投影 CLI timeout/model/strength（及 runner）。
                 "cli": cli_slot,
             }
-        # #1902 F28-R2/R3：唯一投影仍走 _llm_config_from_runtime。
-        # 仅 CLI（投影未激活 API 槽）回落 cur，避免 env-only 地址/模型被空串冲掉；
-        # 激活 API 保存时空串按字面清空，不得回落 cur 旧值。
-        if new_channel == "cli":
-            return _llm_config_from_runtime(
-                runtime,
-                base_url=str(cur.base_url or ""),
-                model=str(cur.model or ""),
-                api_key=real_api_key_or_empty(cur.api_key),
-                timeout_seconds=float(
-                    cur.timeout_seconds or new_timeout or API_DEFAULT_TIMEOUT_SECONDS
-                ),
-                thinking_level=str(cur.thinking_level or ""),
-                advanced_model=str(cur.advanced_model or ""),
-                advanced_base_url=str(cur.advanced_base_url or ""),
-                advanced_api_key=real_api_key_or_empty(cur.advanced_api_key),
-                advanced_thinking_level="",
-            )
+        # 仅未激活 API 槽回落 cur；激活 API 的空串必须按字面清空。
+        inactive_api = new_channel == "cli"
         return _llm_config_from_runtime(
             runtime,
-            base_url="",
-            model="",
-            api_key="",
-            timeout_seconds=float(new_timeout or API_DEFAULT_TIMEOUT_SECONDS),
-            thinking_level="",
-            advanced_model="",
-            advanced_base_url="",
-            advanced_api_key="",
+            base_url=str(cur.base_url or "") if inactive_api else "",
+            model=str(cur.model or "") if inactive_api else "",
+            api_key=real_api_key_or_empty(cur.api_key) if inactive_api else "",
+            timeout_seconds=float(
+                (cur.timeout_seconds if inactive_api else new_timeout)
+                or new_timeout or API_DEFAULT_TIMEOUT_SECONDS
+            ),
+            thinking_level=str(cur.thinking_level or "") if inactive_api else "",
+            advanced_model=str(cur.advanced_model or "") if inactive_api else "",
+            advanced_base_url=str(cur.advanced_base_url or "") if inactive_api else "",
+            advanced_api_key=real_api_key_or_empty(cur.advanced_api_key) if inactive_api else "",
             advanced_thinking_level="",
         )
 
