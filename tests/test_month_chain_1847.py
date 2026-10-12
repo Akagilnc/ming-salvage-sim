@@ -459,7 +459,6 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch,
     assert session.state.turn_phase == TurnPhase.SETTLING.value
     chain = _month_chain_of(db, closed_turn)
     assert chain.get("world_questions") in (None, [], ())
-    assert chain.get("world_continued") is True
 
     again = session.resolve_turn(allow_empty_decree=True)
     assert again.stage == "gazette"
@@ -741,8 +740,8 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 
 
-def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
-    """世界段缺模型不得记 world_continued；重试才从问处续推。"""
+def test_missing_model_keeps_world_question_until_retry(game, monkeypatch):
+    """世界段缺模型保留待答问；重试才从问处续推。"""
     _forbid_extractor(monkeypatch)
     db, state, content = game
     closed_turn = int(state.turn)
@@ -761,7 +760,6 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     assert isinstance(blocked.value.__cause__, LLMUnavailable)
     assert blocked.value.error_pack_path
     chain = _month_chain_of(db, closed_turn)
-    assert chain.get("world_continued") is not True
     assert chain.get("world_questions")
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 
@@ -770,7 +768,6 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
     chain = _month_chain_of(db, closed_turn)
-    assert chain.get("world_continued") is True
     assert chain.get("world_questions") in (None, [], ())
 
 

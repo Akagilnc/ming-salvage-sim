@@ -266,40 +266,18 @@ class IssueStore:
 
     # --- pending_decisions / rescript desk moved from GameDB (#1889 J1) ---
     def save_pending_decisions(
-        self, turn: int, decisions: List[Dict[str, object]], *, preserve_existing: bool = False,
+        self, turn: int, decisions: List[Dict[str, object]],
     ) -> None:
-        """Replace the current decision desk; optionally append without changing existing keys/answers.
+        """Append new decisions without changing existing keys, answers or rescript drafts.
 
-        #656 A6/F2 不变式：只清只写 kind='decision'（与 clear_pending_decisions/
-        save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
-        不被 decision 盘面覆写连带清除。
+        Independent continuations may add questions while siblings remain open.
+        Both kinds share (turn, idx), so allocate after every existing desk row.
         """
         turn = int(turn)
-        existing = set()
-        next_idx = 0
-        draft_rows = []
-        if preserve_existing:
-            # Independent continuations may add questions while siblings remain open.
-            # Keep their decision keys and all already-recorded emperor answers.
-            existing = {r["event_id"] for r in self.list_pending_decisions(turn)}
-            next_idx = self._conn.execute(
-                "SELECT COALESCE(MAX(idx), -1) + 1 FROM pending_decisions WHERE turn=?", (turn,),
-            ).fetchone()[0]
-        # 两种 kind 共用 (turn, idx) 主键。先把保留的 draft 搬到负数暂存区，
-        # 删除旧 decisions 后再按新盘面长度接续重排；draft 的内容与 event_id
-        # 均不改，decision 数量增减也不会与旧 draft idx 相撞。
-        if not preserve_existing:
-            self._conn.execute(
-                "UPDATE pending_decisions SET idx = -idx - 1 "
-                "WHERE turn = ? AND kind = 'rescript_draft'",
-                (turn,),
-            )
-            draft_rows = self._conn.execute(
-                "SELECT idx FROM pending_decisions "
-                "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
-                (turn,),
-            ).fetchall()
-            self._delete_pending_decision_rows(turn)
+        existing = {r["event_id"] for r in self.list_pending_decisions(turn)}
+        next_idx = self._conn.execute(
+            "SELECT COALESCE(MAX(idx), -1) + 1 FROM pending_decisions WHERE turn=?", (turn,),
+        ).fetchone()[0]
         for d in decisions:
             if str(d.get("event_id") or "") in existing:
                 continue
@@ -316,11 +294,6 @@ class IssueStore:
                 ),
             )
             next_idx += 1
-        for offset, row in enumerate(draft_rows):
-            self._conn.execute(
-                "UPDATE pending_decisions SET idx = ? WHERE turn = ? AND idx = ?",
-                (len(decisions) + offset, turn, int(row["idx"])),
-            )
         self._conn.commit()
 
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
@@ -366,13 +339,6 @@ class IssueStore:
             "answer_order": int(r["answer_order"] or 0),
             })
         return out
-
-    def _delete_pending_decision_rows(self, turn: int) -> None:
-        """Single delete rule for kind='decision' rows (no commit)."""
-        self._conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
-            (int(turn),),
-        )
 
     def list_rescript_drafts(self, *, status: str | None = None) -> List[Dict[str, object]]:
         rows = self._conn.execute(

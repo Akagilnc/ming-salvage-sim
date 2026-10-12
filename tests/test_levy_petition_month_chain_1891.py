@@ -413,7 +413,6 @@ def test_outcome_label_outside_closed_set_is_rejected_not_written(game, monkeypa
     assert int(state.turn) == closed_turn
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_questions")
-    assert not chain.get("world_continued")
 
 def test_no_levy_petition_means_no_extra_ask_and_no_new_run(game, monkeypatch):
     """未到点月份不新增请旨行、不新增模型调用（世界段消息保持原样）。"""

@@ -447,7 +447,7 @@ def continue_world_after_answers(
     """Resume one world question; siblings remain open, committed facts stay put.
 
     完整续推文先存当前月链；转译失败恢复不重推。
-    消费当前问、承接新问与落账同事务；全部请旨办结才记 world_continued。
+    消费当前问、承接新问与落账同事务。
     """
     db, state = session.db, session.state
     return _guard_month_call(
@@ -500,7 +500,6 @@ def _continue_world_after_answers(
         chain["world_questions"] = [
             q for q in chain["world_questions"] if q["event_id"] != event_id
         ] + pinned
-        chain["world_continued"] = not chain["world_questions"]
         chain["world_text"] = str(chain.get("world_text") or "") + "\n" + str(text or "")
         products.pop(event_id)
         _save_chain(db, turn, chain, source=source)
@@ -1751,7 +1750,7 @@ def _materialize_rescript_desk(
     chain["world_questions"] = pinned
     decisions.extend(_question_as_decision(q, event_id=q["event_id"]) for q in pinned)
     if decisions:
-        db.issues.save_pending_decisions(turn, decisions, preserve_existing=True)
+        db.issues.save_pending_decisions(turn, decisions)
     desk = db.issues.list_rescript_desk(turn)
     if not desk:
         return None
