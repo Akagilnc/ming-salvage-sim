@@ -1,5 +1,4 @@
 from __future__ import annotations
-import threading
 from concurrent.futures import Future
 import pytest
 from tests.test_month_chain_1843 import _forbid_extractor

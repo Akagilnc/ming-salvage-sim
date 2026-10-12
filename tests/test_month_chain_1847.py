@@ -15,9 +15,6 @@ from ming_sim.supervision import (
     origin_has_mark,
 )
 from tests.dossier_test_helpers import audit_policy_dossier, create_test_secret_order
-from ming_sim.exceptions import LLMUnavailable
-from ming_sim.models import TurnPhase
-from tests.dossier_test_helpers import create_test_secret_order
 """#1847：请旨停在问处 → 批红案头统一收口 → 答复后续推。
 
 沿既有 HITL / pending_decisions / month_chain 接缝，不另造平行机制。
