@@ -765,7 +765,12 @@ describe("ApiSettingsModal reasoning strength", () => {
   });
 
 
-  it("keeps trusting backend reasoning support for whitespace-only API edits", () => {
+  it("keeps the backend verdict for equivalent API settings but allows reasoning on an edited draft", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
     const cleanup = render(
       <MenuPage
         status={{
@@ -824,6 +829,31 @@ describe("ApiSettingsModal reasoning strength", () => {
     });
 
     expect(strength?.disabled).toBe(true);
+    act(() => {
+      changeInput(modelInput!, "gpt-5-mini");
+    });
+    expect(strength?.disabled).toBe(false);
+    act(() => {
+      changeInput(modelInput!, "gpt-5");
+    });
+    expect(strength?.disabled).toBe(true);
+    act(() => {
+      changeInput(modelInput!, "gpt-5-mini");
+    });
+    expect(strength?.disabled).toBe(false);
+    act(() => {
+      strength!.value = "high";
+      strength!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const save = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent === "保存"
+    );
+    await act(async () => {
+      save!.click();
+    });
+    const body = JSON.parse(String(calls.find((call) => call.url === "/api/menu/llm")!.init!.body));
+    expect(body.model).toBe("gpt-5-mini");
+    expect(body.reasoning_strength).toBe("high");
     cleanup();
   });
 });

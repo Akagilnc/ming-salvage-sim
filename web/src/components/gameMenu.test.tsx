@@ -431,7 +431,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
   });
 
 
-  it("keeps trusting backend reasoning support for whitespace-only API edits", async () => {
+  it("keeps the backend verdict for equivalent API settings but allows reasoning on an edited draft", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -452,6 +452,33 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
       changeInput(modelInput!, " gpt-5 ");
     });
 
+    expect(strength?.disabled).toBe(true);
+    act(() => {
+      changeInput(modelInput!, "gpt-5-mini");
+    });
+    expect(strength?.disabled).toBe(false);
+    act(() => {
+      changeInput(modelInput!, "gpt-5");
+    });
+    expect(strength?.disabled).toBe(true);
+    act(() => {
+      changeInput(modelInput!, "gpt-5-mini");
+    });
+    expect(strength?.disabled).toBe(false);
+    act(() => {
+      strength!.value = "high";
+      strength!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const save = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("保存并应用")
+    );
+    await act(async () => {
+      save!.click();
+    });
+    const post = vi.mocked(global.fetch).mock.calls.find(([, init]) => init?.method === "POST");
+    const body = JSON.parse(String(post![1]!.body));
+    expect(body.model).toBe("gpt-5-mini");
+    expect(body.reasoning_strength).toBe("high");
     expect(strength?.disabled).toBe(true);
     cleanup();
   });
@@ -539,7 +566,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
       changeInput(baseUrlInput!, "https://api.deepseek.com/v1");
       changeInput(modelInput!, "deepseek-chat");
     });
-    expect(strength?.disabled).toBe(true);
+    expect(strength?.disabled).toBe(false);
 
     const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
       (b.textContent ?? "").includes("保存并应用")

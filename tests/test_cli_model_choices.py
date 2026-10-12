@@ -8,8 +8,10 @@ config 端点暴露给前端。这里测清单结构 + 默认档语义 + 与默�
 
 
 import asyncio
+import pytest
 
 import ming_sim.cli_backend as cb
+from ming_sim.models import API_DEFAULT_MODEL, CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
 
 
 # ── 端点暴露：两个 config 端点都把清单带给前端 ──
@@ -31,17 +33,21 @@ def test_menu_status_exposes_choices(monkeypatch):
     assert data["llm"]["cli_model_choices"] == cb.cli_model_choices()
     assert data["llm"]["cli_runners"] == cb.cli_runner_choices()
 
-def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch):
+@pytest.mark.parametrize("runner", [item["value"] for item in cb.cli_runner_choices()])
+def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch, runner):
     """空 saved model（=用户选「默认」档）→ menu-status 须暴露 raw cli_model_saved=''，
     前端据此显示「默认」档；不能只给被 cli_model_from_env 兜底成默认名的 resolved 值，
     否则下拉把默认误判成「其他(手填)」、空保存把字面量钉死（CMR R1 Claude+Gemini concur）。"""
     monkeypatch.delenv("MING_SIM_CODEX_MODEL", raising=False)  # hermetic：断言内置默认名
+    monkeypatch.delenv("MING_SIM_CLAUDE_MODEL", raising=False)
+    monkeypatch.setenv("OPENAI_MODEL", API_DEFAULT_MODEL)
     web_app = _patch_status_io(monkeypatch, {
-        "channel": "cli", "api": {}, "cli": {"runner": "codex", "model": "", "timeout_seconds": 300},
+        "channel": "cli", "api": {}, "cli": {"runner": runner, "model": "", "timeout_seconds": 300},
     })
     llm = asyncio.run(web_app.api_menu_status())["llm"]
     assert llm["cli_model_saved"] == ""        # raw 留空 = 默认档（表单用）
-    assert llm["cli_model"] == "gpt-5.5"        # resolved 仍供「当前后端」展示
+    defaults = {"codex": CODEX_DEFAULT_MODEL, "claude": CLAUDE_DEFAULT_MODEL}
+    assert llm["cli_model"] == defaults.get(runner, "")
 
 def test_menu_status_cli_model_saved_passes_explicit(monkeypatch):
     """显式存了某档 → raw 原样回传（表单选中该档）。"""

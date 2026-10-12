@@ -34,9 +34,10 @@ for stream in (sys.stdout, sys.stderr):
     if stream is not None and hasattr(stream, "reconfigure"):
         stream.reconfigure(line_buffering=True)
 
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -44,6 +45,7 @@ from ming_sim.db import _load_durable_str_list
 from ming_sim.applier import atomic, parse_engine_payload_json
 from ming_sim.paths import (
     UnsafeSaveNameError,
+    bundled_path,
     user_data_path,
     user_data_dir,
 )
@@ -69,6 +71,7 @@ from ming_sim.llm_config import (
     effective_reasoning_strengths,
     save_runtime_llm,
     _slot_header_table,
+    _slot_number,
 )
 from ming_sim.llm_model import verify_llm_available
 from ming_sim.entities.issue.commitment_display import (
@@ -108,7 +111,17 @@ from ming_sim.models import (
 )
 logger = logging.getLogger(__name__)
 
+WEB_DIST = bundled_path("web", "dist")
+
 _DEFAULT_FAVORITES = frozenset({"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"})
+
+# frozen 模式落 ~/.ming_sim/uploads/portraits/，源码模式落 <repo>/data/uploads/portraits/。
+UPLOAD_PORTRAIT_DIR = user_data_path("uploads", "portraits")
+# Custom portrait IDs are rendered via /portraits/custom/<name>.
+CUSTOM_PORTRAIT_PREFIX = "custom:"
+# 上传体积上限（字节）。超限拒收，防拖垮进程。
+MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
+
 
 # Formal character-condition value labels (used inside _humanize_condition_value only).
 # Free resolve/fail_condition prose is transported unchanged; no catch-all replace.
@@ -487,8 +500,8 @@ def _exception_detail(exc: BaseException, prefix: str = "") -> Dict[str, Any]:
     return detail
 
 
-# #1902：数值槽宽容取值与「是否真 key」判定都只在 llm_config 一处实现，
-# web 侧这两个名字保留为薄转发（多处读档投影沿用），不再各写一份规则。
+# #1902：数值槽与「是否真 key」判定都只在 llm_config 一处实现；
+# 读档投影直接用 _slot_number / is_real_api_key，不在 web 侧重写规则。
 
 _has_real_api_key = is_real_api_key
 
@@ -788,6 +801,12 @@ class WebGame:
         except UnsafeSaveNameError as err:
             raise HTTPException(status_code=400, detail=str(err))
 
+    def delete_save(self, name: str) -> None:
+        safe = self._safe_save_name(name)
+        target = os.path.join(self.saves_dir(), f"{safe}.db")
+        if not os.path.isfile(target):
+            raise HTTPException(status_code=404, detail="存档不存在。")
+        os.remove(target)
 
     def _dispose_rebuild_residual(self) -> bool:
         """#1749 B：处置上一失败 rebuild 候选。成功关闭返回 True；仍活则 False 且保留引用。"""
@@ -975,6 +994,200 @@ class WebGame:
         self.session.begin_turn()
         # #1343 孤儿快照清一处：受理样板成功支（_settlement_period_entry 持 write_gate）。
         # 生产四调用点皆在 entry 体内（inflight>0），此处再清恒不触发；禁第二清理点。
+
+    def build_llm_config(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str,
+        timeout_seconds: float = 0,
+        thinking_level: Optional[str] = None,
+        reasoning_strength: Optional[str] = None,
+        advanced_model: Optional[str] = None,
+        advanced_base_url: Optional[str] = None,
+        advanced_api_key: Optional[str] = None,
+        advanced_thinking_level: Optional[str] = None,
+        channel: Optional[str] = None,
+        cli_runner: Optional[str] = None,
+        cli_model: Optional[str] = None,
+        cli_timeout_seconds: float = 0,
+        default_headers: Optional[Dict[str, str]] = None,
+    ) -> LLMConfig:
+        """局中设置 keep/clear → runtime 槽，再走共核 llm_config_from_runtime。
+
+        #1902 F28：入口只适配请求语义；归一化/模型默认/推理强度一律归投影
+        （CLI 空模型走 cli_model_from_env，不回落 API 模型名——F40）。
+        """
+        cur = self.session.llm_config
+        saved = load_runtime_llm()
+        saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+        saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
+
+        explicit = (channel or "").strip().lower() if channel is not None else ""
+        if explicit in VALID_CHANNELS:
+            new_channel = explicit
+        elif real_api_key_or_empty(api_key):
+            new_channel = "api"
+        else:
+            new_channel = (cur.channel or "api")
+
+        new_cli_runner = str(
+            (cli_runner if cli_runner is not None else cur.cli_runner) or ""
+        ).strip().lower()
+        new_cli_model = (
+            cli_model.strip() if cli_model is not None else str(cur.cli_model or "").strip()
+        )
+        new_cli_timeout = (
+            cli_timeout_seconds if cli_timeout_seconds and cli_timeout_seconds > 0
+            else cur.cli_timeout_seconds
+        )
+        base = base_url.strip() or cur.base_url
+        new_model = model.strip() or cur.model
+        if new_channel == "cli":
+            new_key = ""
+        else:
+            new_key = real_api_key_or_empty(api_key) or real_api_key_or_empty(cur.api_key)
+            if not new_key:
+                new_key = real_api_key_or_empty(saved_api.get("api_key"))
+        new_timeout = timeout_seconds if timeout_seconds > 0 else cur.timeout_seconds
+        new_thinking = cur.thinking_level if thinking_level is None else thinking_level
+        new_strength = cur.reasoning_strength if reasoning_strength is None else reasoning_strength
+        new_advanced = cur.advanced_model if advanced_model is None else advanced_model.strip()
+        new_adv_base = (
+            cur.advanced_base_url if advanced_base_url is None else advanced_base_url.strip()
+        )
+        new_adv_key = (
+            cur.advanced_api_key if advanced_api_key is None else advanced_api_key.strip()
+        )
+        _ = advanced_thinking_level  # 签名兼容；现役投影固定空 advanced_thinking_level
+        new_headers = (
+            dict(cur.default_headers or {})
+            if default_headers is None
+            else _slot_header_table(default_headers)
+        )
+
+        cli_slot: Dict[str, object] = {
+            "runner": new_cli_runner,
+            "model": new_cli_model,
+            "timeout_seconds": new_cli_timeout,
+        }
+        if new_channel == "cli":
+            cli_slot["reasoning_strength"] = new_strength
+            runtime = {
+                "channel": "cli",
+                "cli": cli_slot,
+                # 非活跃 API 槽原样保留（含 headers/key）；不把 API 模型灌进 CLI。
+                "api": dict(saved_api),
+            }
+        else:
+            if "reasoning_strength" in saved_cli:
+                cli_slot["reasoning_strength"] = saved_cli["reasoning_strength"]
+            elif cur.channel == "cli":
+                cli_slot["reasoning_strength"] = cur.reasoning_strength
+            runtime = {
+                "channel": "api",
+                "api": {
+                    "base_url": base,
+                    "model": new_model,
+                    "api_key": new_key,
+                    "timeout_seconds": new_timeout,
+                    "thinking_level": new_thinking,
+                    "advanced_model": new_advanced,
+                    "advanced_base_url": new_adv_base,
+                    "advanced_api_key": new_adv_key,
+                    "advanced_thinking_level": "",
+                    "reasoning_strength": new_strength,
+                    "default_headers": new_headers,
+                },
+                # 切换 API 时仍投影 CLI timeout/model/strength（及 runner）。
+                "cli": cli_slot,
+            }
+        # 仅未激活 API 槽回落 cur；激活 API 的空串必须按字面清空。
+        inactive_api = new_channel == "cli"
+        return _llm_config_from_runtime(
+            runtime,
+            base_url=str(cur.base_url or "") if inactive_api else "",
+            model=str(cur.model or "") if inactive_api else "",
+            api_key=real_api_key_or_empty(cur.api_key) if inactive_api else "",
+            timeout_seconds=float(
+                (cur.timeout_seconds if inactive_api else new_timeout)
+                or new_timeout or API_DEFAULT_TIMEOUT_SECONDS
+            ),
+            thinking_level=str(cur.thinking_level or "") if inactive_api else "",
+            advanced_model=str(cur.advanced_model or "") if inactive_api else "",
+            advanced_base_url=str(cur.advanced_base_url or "") if inactive_api else "",
+            advanced_api_key=real_api_key_or_empty(cur.advanced_api_key) if inactive_api else "",
+            advanced_thinking_level="",
+        )
+
+    def commit_llm_config(
+        self, new_config: LLMConfig, *, cli_model: Optional[str] = None,
+    ) -> LLMConfig:
+        """落盘 + 切 session + 重建 registry（verify 由调用方先做）。"""
+        if new_config.channel == "cli":
+            saved = load_runtime_llm()
+            saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+            saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
+            # Persist the user's choice, not the model resolved from host defaults.
+            saved_model = cli_model if cli_model is not None else str(saved_cli.get("model") or "")
+            prev = self.session.llm_config
+            if real_api_key_or_empty(saved_api.get("api_key")) or not real_api_key_or_empty(prev.api_key):
+                save_runtime_llm(
+                    "", "", "",
+                    channel="cli",
+                    cli_runner=new_config.cli_runner,
+                    cli_model=saved_model,
+                    cli_timeout_seconds=new_config.cli_timeout_seconds,
+                    reasoning_strength=new_config.reasoning_strength,
+                )
+            else:
+                save_runtime_llm(
+                    prev.base_url,
+                    prev.model,
+                    real_api_key_or_empty(prev.api_key),
+                    prev.timeout_seconds,
+                    prev.thinking_level,
+                    prev.advanced_model,
+                    prev.advanced_base_url,
+                    prev.advanced_api_key,
+                    "",
+                    channel="cli",
+                    cli_runner=new_config.cli_runner,
+                    cli_model=saved_model,
+                    cli_timeout_seconds=new_config.cli_timeout_seconds,
+                    reasoning_strength=new_config.reasoning_strength,
+                    api_reasoning_strength=prev.reasoning_strength,
+                    default_headers=dict(prev.default_headers or {}),
+                )
+        else:
+            save_runtime_llm(
+                new_config.base_url,
+                new_config.model,
+                new_config.api_key,
+                new_config.timeout_seconds,
+                new_config.thinking_level,
+                new_config.advanced_model,
+                new_config.advanced_base_url,
+                new_config.advanced_api_key,
+                "",
+                channel="api",
+                reasoning_strength=new_config.reasoning_strength,
+                default_headers=dict(new_config.default_headers or {}),
+            )
+        self.session.llm_config = new_config
+        self.session.begin_turn()
+        return new_config
+
+    def find_character(self, name: str) -> Optional[Character]:
+        return self.content.characters.get(name)
+
+    def set_custom_portrait(self, name: str, portrait_id: str) -> None:
+        """落库并回写内存：把某人物 portrait_id 指向自定义立绘。"""
+        self.db.characters.update(name, {"portrait_id": portrait_id})
+        self.db.conn.commit()
+        character = self.content.characters.get(name)
+        if character is not None:
+            character.portrait_id = portrait_id
 
     # ── 序列化 ────────────────────────────────────────────────────────────
     def public_character(self, character: Character) -> Dict[str, Any]:
@@ -2627,6 +2840,29 @@ class _NonBlockingWebWriteGate:
     def __exit__(self, *args: object) -> bool:
         self.release()
         return False
+
+
+def _run_hot_replace(game, replace: Callable[[], None], *, failure_label: str) -> None:
+    """局内忙态先回 409；真正排空与独占由 ``_replace_database`` 单点负责。"""
+    try:
+        _refuse_settling_or_busy_write_phase(game)
+        gate_probe = _try_acquire_serialized_web_write_gate(game)
+        gate_probe.release()
+        entry_lock = _settlement_entry_lock(game)
+        with entry_lock:
+            entry_busy = int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 0
+        if entry_busy or get_session_write_queue(game).inflight_count() > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="月末结算或上一步写入进行中，请稍候再操作。",
+            )
+        replace()
+        game._spawn_startup_extraction_catch_up()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("%s", failure_label)
+        raise HTTPException(status_code=500, detail=f"{failure_label}：{exc}") from exc
 
 
 @contextlib.contextmanager
@@ -4932,3 +5168,293 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
 @app.get("/api/saves")
 async def api_list_saves() -> Dict[str, Any]:
     return {"saves": get_game().list_saves()}
+
+
+class SaveCreateRequest(BaseModel):
+    name: str
+
+
+class LLMConfigRequest(BaseModel):
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    timeout_seconds: float = 0
+    thinking_level: str = "__keep__"
+    reasoning_strength: str = "__keep__"
+    # None=不动，""=显式清空，其他=覆写。pydantic v1 默认 None 走不进来；用 sentinel "__keep__"
+    advanced_model: str = "__keep__"
+    advanced_base_url: str = "__keep__"
+    advanced_api_key: str = "__keep__"
+    advanced_thinking_level: str = "__keep__"
+    # 通道感知（#51）：channel/cli_runner/cli_model 用 "__keep__" sentinel 表示「保留当前」;
+    # cli_timeout_seconds（静默判死阈值,秒）是数值,沿用数值 sentinel 0（=不改,build 回落当前值），
+    # 不走 "__keep__"。
+    channel: str = "__keep__"
+    cli_runner: str = "__keep__"
+    cli_model: str = "__keep__"
+    cli_timeout_seconds: float = 0
+    # #1794：附加请求头表；None=保留当前，{}=清空。
+    default_headers: Optional[Dict[str, str]] = None
+
+
+@app.post("/api/saves")
+async def api_create_save(request: SaveCreateRequest) -> Dict[str, Any]:
+    # save_to → db.backup_to（commit + sqlite backup）：结算/后台召对 worker 持锁期间不能并发
+    # 走同一无锁连接（否则撞 _commit_suspended 守卫成 500）。走 _write_gate → 忙时干净 409
+    # （cmr Gate2 r5）。生命周期写也纳入串行门，完整收口（连接级 close 竞态的通用解仍属 #382）。
+    game = get_game()
+    with _serialized_web_write(game):
+        info = game.save_to(request.name)
+        # #1749：list_saves 读 campaign_id（DB）；响应列表在 gate 内快照。
+        saves = game.list_saves()
+    return {"save": info, "saves": saves}
+
+
+@app.delete("/api/saves/{name}")
+async def api_delete_save(name: str) -> Dict[str, Any]:
+    get_game().delete_save(name)
+    return {"saves": get_game().list_saves()}
+
+
+@app.post("/api/saves/{name}/load")
+async def api_load_save(name: str) -> Dict[str, Any]:
+    # load_save 会 session.close() 热替换主 DB——若结算/后台召对 worker / 在飞转译正写旧连接，
+    # 关连接会让 worker 崩在「closed database」。非阻塞抢 _write_gate，并核 queue ticket 与
+    # 转译 ledger：忙时 409，让玩家待落定再载（cmr Gate2 r5；#1842；强制中断在途 worker
+    # 的取消语义属 #382 通用并发模型，本轮不做）。
+    game = get_game()
+    _run_hot_replace(game, lambda: game.load_save(name), failure_label="载入存档失败")
+    return {"state": get_game().state_payload()}
+
+
+@app.get("/api/llm/config")
+async def api_get_llm_config() -> Dict[str, Any]:
+    """读当前生效的 LLM 配置。api_key 不回传明文，只回是否已设置。"""
+    from ming_sim.cli_backend import (
+        CLI_REASONING_FLOOR_RUNNERS,
+        CLI_REASONING_STRENGTH_RUNNERS,
+        cli_model_choices,
+        cli_runner_choices,
+    )
+    cfg = get_game().session.llm_config
+    saved = load_runtime_llm()
+    saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
+    saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+    saved_api_reasoning_strength = normalize_reasoning_strength(saved_api.get("reasoning_strength"))
+    saved_cli_reasoning_strength = normalize_reasoning_strength(saved_cli.get("reasoning_strength"))
+    reasoning_supported = (
+        cli_supports_reasoning_strength(cfg.cli_runner)
+        if cfg.channel == "cli"
+        else _api_reasoning_supported_for_effective_model(
+            cfg.base_url, cfg.model, cfg.advanced_base_url, cfg.advanced_model
+        )
+    )
+    return {
+        "channel": cfg.channel,
+        "base_url": cfg.base_url,
+        "model": cfg.model,
+        "timeout_seconds": cfg.timeout_seconds,
+        "thinking_level": cfg.thinking_level,
+        "reasoning_strength": cfg.reasoning_strength,
+        "reasoning_supported": reasoning_supported,
+        "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
+        # #1271：能力名单自 cli_backend 单源导出。
+        "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
+        "cli_reasoning_floor_runners": sorted(CLI_REASONING_FLOOR_RUNNERS),
+        "effective_reasoning_strengths": effective_reasoning_strengths(saved),
+        "advanced_model": cfg.advanced_model,
+        "advanced_base_url": cfg.advanced_base_url,
+        "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
+        "advanced_thinking_level": "",
+        "has_api_key": _has_real_api_key(cfg.api_key),
+        "cli_runner": cfg.cli_runner,
+        "cli_model": cfg.cli_model,
+        "cli_model_choices": cli_model_choices(),
+        # #1274 W1：CLI Runner 下拉单源（= _CLI_BACKENDS 有序），menuPage/gameMenu 共吃。
+        "cli_runners": cli_runner_choices(),
+        "cli_timeout_seconds": cfg.cli_timeout_seconds,
+        # #1794：设置页读回附加请求头表。
+        "default_headers": dict(cfg.default_headers or {}),
+        "persisted": {
+            "channel": saved.get("channel", ""),
+            "base_url": saved_api.get("base_url", ""),
+            "model": saved_api.get("model", ""),
+            "has_api_key": _has_real_api_key(saved_api.get("api_key", "")),
+            "timeout_seconds": _slot_number(
+                saved_api.get("timeout_seconds"), float, API_DEFAULT_TIMEOUT_SECONDS,
+            ),
+            "thinking_level": saved_api.get("thinking_level", ""),
+            "reasoning_strength": saved_api.get("reasoning_strength", "") or saved_cli.get("reasoning_strength", ""),
+            "api_reasoning_strength": saved_api_reasoning_strength,
+            "cli_reasoning_strength": saved_cli_reasoning_strength,
+            "advanced_model": saved_api.get("advanced_model", ""),
+            "advanced_base_url": saved_api.get("advanced_base_url", ""),
+            "has_advanced_api_key": _has_real_api_key(saved_api.get("advanced_api_key", "")),
+            "advanced_thinking_level": "",
+            "cli_runner": str(saved_cli.get("runner") or ""),
+            "cli_model": str(saved_cli.get("model") or ""),
+            "cli_timeout_seconds": _slot_number(
+                saved_cli.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS,
+            ),
+            # #1794：persisted 头表；load_runtime_llm 已归一到 api 槽。
+            "default_headers": dict(saved_api.get("default_headers") or {}),
+        },
+    }
+
+
+@app.post("/api/llm/config")
+async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
+    thinking_level = None if request.thinking_level == "__keep__" else request.thinking_level
+    reasoning_strength = None if request.reasoning_strength == "__keep__" else request.reasoning_strength
+    advanced = None if request.advanced_model == "__keep__" else request.advanced_model
+    adv_base = None if request.advanced_base_url == "__keep__" else request.advanced_base_url
+    adv_key = None if request.advanced_api_key == "__keep__" else request.advanced_api_key
+    adv_thinking = None if request.advanced_thinking_level == "__keep__" else request.advanced_thinking_level
+    channel = None if request.channel == "__keep__" else request.channel
+    cli_runner = None if request.cli_runner == "__keep__" else request.cli_runner
+    cli_model = None if request.cli_model == "__keep__" else request.cli_model
+    try:
+        # 通道感知 build（#51）。verify(CLI smoke ~12s,只读)offload 出 event loop 不卡 UI;
+        # commit(落盘+begin_turn 改 session 态)**留在 loop 上同步跑**——单人 CLI 串行探针下它原子、
+        # 无并发 race,无需全局锁(CMR R3-R5:把 commit offload 到线程引入 session race / 断连
+        # cancel 下 worker-join 不可靠的一连串并发边缘,对单人场景得不偿失,故回退到 on-loop)。
+        game = get_game()
+        cfg = game.build_llm_config(
+            request.base_url,
+            request.model,
+            request.api_key,
+            request.timeout_seconds,
+            thinking_level=thinking_level,
+            reasoning_strength=reasoning_strength,
+            advanced_model=advanced,
+            advanced_base_url=adv_base,
+            advanced_api_key=adv_key,
+            advanced_thinking_level=adv_thinking,
+            channel=channel,
+            cli_runner=cli_runner,
+            cli_model=cli_model,
+            cli_timeout_seconds=request.cli_timeout_seconds,
+            default_headers=request.default_headers,
+        )
+        await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
+        # commit 仍同步 on-loop（上方注释的刻意决定不变），但须走 _write_gate：commit_llm_config
+        # 末尾 begin_turn 会 save_state/apply_historical_* 直写共享连接，#383 后台召对 worker /
+        # #393 线程化结算引入了真并发——那条「单人无并发 race、无需锁」的前提已被推翻，结算/召对
+        # worker 持锁期间 commit 会撞同一无锁连接（cmr Gate2 r4 Finding1）。非阻塞抢锁、保持 on-loop。
+        with _serialized_web_write(game):
+            game.commit_llm_config(cfg, cli_model=cli_model)
+    except HTTPException:
+        # _verify_llm_configs_or_raise 已把校验失败包成带干净 detail 的 HTTPException;
+        # 经 run_in_executor 透传上来后原样抛,别被下面 except Exception 二次包裹 mangle 掉(Gemini R2)。
+        raise
+    except LLMUnavailable as e:
+        raise HTTPException(status_code=400, detail=_exception_detail(e)) from None
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=_exception_detail(e)) from None
+    from ming_sim.cli_backend import (
+        CLI_REASONING_FLOOR_RUNNERS,
+        CLI_REASONING_STRENGTH_RUNNERS,
+        cli_runner_choices,
+    )
+    reasoning_supported = (
+        cli_supports_reasoning_strength(cfg.cli_runner)
+        if cfg.channel == "cli"
+        else _api_reasoning_supported_for_effective_model(
+            cfg.base_url, cfg.model, cfg.advanced_base_url, cfg.advanced_model
+        )
+    )
+    saved = load_runtime_llm()
+    return {
+        "base_url": cfg.base_url,
+        "model": cfg.model,
+        "timeout_seconds": cfg.timeout_seconds,
+        "thinking_level": cfg.thinking_level,
+        "reasoning_strength": cfg.reasoning_strength,
+        "reasoning_supported": reasoning_supported,
+        "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
+        # #1271：能力名单自 cli_backend 单源导出。
+        "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
+        "cli_reasoning_floor_runners": sorted(CLI_REASONING_FLOOR_RUNNERS),
+        "effective_reasoning_strengths": effective_reasoning_strengths(saved),
+        "advanced_model": cfg.advanced_model,
+        "advanced_base_url": cfg.advanced_base_url,
+        "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
+        "advanced_thinking_level": "",
+        "has_api_key": _has_real_api_key(cfg.api_key),
+        "channel": cfg.channel,
+        "cli_runner": cfg.cli_runner,
+        "cli_model": cfg.cli_model,
+        # #1274 W1：CLI Runner 下拉单源。
+        "cli_runners": cli_runner_choices(),
+        "cli_timeout_seconds": cfg.cli_timeout_seconds,
+        "default_headers": dict(cfg.default_headers or {}),
+    }
+
+
+# ── 自定义立绘上传/读取 ──────────────────────────────────────────────────────
+# content_type → 存盘扩展名。一人一图，上传新图会顶掉旧扩展名的文件。
+_PORTRAIT_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+
+def _find_portrait_file(name: str) -> Optional[str]:
+    """找该人物已存在的自定义立绘文件（任一扩展名），无则 None。"""
+    for ext in _PORTRAIT_EXT.values():
+        path = os.path.join(UPLOAD_PORTRAIT_DIR, f"{name}.{ext}")
+        if os.path.exists(path):
+            return path
+    return None
+
+
+@app.post("/api/consorts/{name}/portrait")
+async def api_upload_portrait(name: str, file: UploadFile = File(...)) -> Dict[str, Any]:
+    # 只接受已存在的人物名 → 集合固定，杜绝路径穿越/任意写。
+    game = get_game()
+    character = game.find_character(name)
+    if character is None:
+        raise HTTPException(status_code=404, detail="未找到该人物")
+    ext = _PORTRAIT_EXT.get(file.content_type or "")
+    if ext is None:
+        raise HTTPException(status_code=400, detail="仅支持 PNG/JPEG/WebP 图片")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="文件为空")
+    if len(data) > MAX_PORTRAIT_BYTES:
+        raise HTTPException(status_code=400, detail="图片过大（上限 8MB）")
+    with _serialized_web_write(game):
+        os.makedirs(UPLOAD_PORTRAIT_DIR, exist_ok=True)
+        # 先清掉该人物的旧图（可能扩展名不同），再写新图。
+        old = _find_portrait_file(name)
+        if old is not None:
+            os.remove(old)
+        with open(os.path.join(UPLOAD_PORTRAIT_DIR, f"{name}.{ext}"), "wb") as fh:
+            fh.write(data)
+        game.set_custom_portrait(name, f"{CUSTOM_PORTRAIT_PREFIX}{name}")
+    return {"name": name, "portrait_id": f"{CUSTOM_PORTRAIT_PREFIX}{name}"}
+
+
+@app.get("/api/court_layout")
+async def api_get_court_layout() -> Dict[str, Any]:
+    val = get_game().db.reign.kv_get("court_layout")
+    return {"layout": val or "{}"}
+
+
+@app.post("/api/court_layout")
+async def api_set_court_layout(body: Dict[str, Any]) -> Dict[str, Any]:
+    game = get_game()
+    with _serialized_web_write(game):
+        game.db.reign.kv_set("court_layout", body.get("layout", "{}"))
+    return {"ok": True}
+
+
+@app.get("/portraits/custom/{name}")
+async def api_get_portrait(name: str):
+    path = _find_portrait_file(name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="无自定义立绘")
+    return FileResponse(path)
+
+
+# 前端构建产物（index.html / assets / portraits / steam_assets）。须在全部 API
+# 路由之后挂载；/admin 调试台前端不调用，不恢复。
+if os.path.isdir(WEB_DIST):
+    app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

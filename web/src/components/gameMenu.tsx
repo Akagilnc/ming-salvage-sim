@@ -2,7 +2,7 @@ import React from "react";
 import { Check, Loader2, LogOut, Power, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import { api } from "../api";
 import { cliRunnerOptions } from "../cliRunners";
-import { resolveReasoningSupported } from "../reasoningSupport";
+import { canConfigureReasoning } from "../reasoningSupport";
 import type { LLMConfigInfo, SaveEntry } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { slotNumber } from "../slotNumber";
@@ -399,7 +399,7 @@ export function LLMConfigTab() {
         normalizedAdvancedBaseUrl === (info?.advanced_base_url || "").trim() &&
         normalizedAdvancedModel === (info?.advanced_model || "").trim()
   );
-  const reasoningSupported = resolveReasoningSupported({
+  const reasoningEditable = canConfigureReasoning({
     backendSupported: info?.reasoning_supported,
     backendCurrent: backendReasoningSupportCurrent,
     currentChannel: channel,
@@ -435,8 +435,7 @@ export function LLMConfigTab() {
             ?? ""
         );
         setChannel(data.channel === "cli" ? "cli" : "api");
-        // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被
-        // cli_model_from_env 兜底成 API model 名,直接回填会把它当用户选项 post 回去(CMR R3 codex)。
+        // 优先读已存 CLI 槽，避免把 resolved 默认模型当作用户显式选择回填。
         // (存盘响应无 persisted 字段 → 回落 active,channel=cli 时即刚提交值,正确。)
         setCliRunner(data.persisted?.cli_runner || data.cli_runner || "");
         setCliModel(data.persisted?.cli_model ?? (data.channel === "cli" ? data.cli_model || "" : ""));
@@ -549,14 +548,14 @@ export function LLMConfigTab() {
               className="menu-input"
               name="reasoning_strength"
               value={reasoningStrength}
-              disabled={!reasoningSupported}
+              disabled={!reasoningEditable}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
               {visibleReasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
-            {!reasoningSupported ? (
+            {!reasoningEditable ? (
               <small className="menu-hint">该后端不支持推理强度设置。</small>
             ) : null}
           </label>
@@ -617,14 +616,14 @@ export function LLMConfigTab() {
               className="menu-input"
               name="reasoning_strength"
               value={reasoningStrength}
-              disabled={!reasoningSupported}
+              disabled={!reasoningEditable}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
               {visibleReasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
-            {!reasoningSupported ? (
+            {!reasoningEditable ? (
               <small className="menu-hint">该后端不支持推理强度设置。</small>
             ) : null}
           </label>
