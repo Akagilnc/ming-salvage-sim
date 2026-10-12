@@ -87,7 +87,7 @@ from ming_sim.audience_night import (
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.entities.dossier import DOSSIER_MODES
 from ming_sim.error_pack import rejections_jsonl_path
-from ming_sim.relations import summon_edge_origin
+from ming_sim.relations import EMPEROR_NODE, summon_edge_origin
 from ming_sim.settlement.run import apply_person_changes_only
 from ming_sim.settlement.preflight import _ORDERED_DELTA_FIELDS
 from ming_sim.public_sayings import record_public_saying
@@ -2997,7 +2997,9 @@ def _dispatch_edge_events(
             _reject(rejected, item, str(exc), "invalid_enum", source)
             continue
         try:
-            _assert_characters_exist(db, [source_name, target_name])
+            _assert_characters_exist(
+                db, [name for name in (source_name, target_name) if name != EMPEROR_NODE],
+            )
         except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue

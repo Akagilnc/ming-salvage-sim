@@ -262,6 +262,7 @@ def _apply_issue_entities(
             person_changes,
             content=effective_content(),
             llm_config=llm_config,
+            derived_from=label,
             source=source,
             origin_ref=origin_ref,
             require_origin=True,
@@ -541,6 +542,7 @@ def _apply_monthly_ongoing_entities(
             person_changes,
             content=effective_content,
             llm_config=llm_config,
+            derived_from=label,
             source=Provenance.system_simulation,
             origin_ref=origin_ref,
         )

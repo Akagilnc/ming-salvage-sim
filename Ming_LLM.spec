@@ -101,12 +101,12 @@ hiddenimports = (
     + _openai_hidden
     + _tiktoken_hidden
     + _webview_hidden
+    + collect_submodules("ming_sim")
     + collect_submodules("uvicorn")
     + collect_submodules("fastapi")
     + collect_submodules("anyio")
     + collect_submodules("starlette")
     + [
-        "ming_sim",
         "uvicorn.logging",
         "uvicorn.loops",
         "uvicorn.loops.auto",

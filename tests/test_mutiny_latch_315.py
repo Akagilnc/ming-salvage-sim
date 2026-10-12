@@ -62,7 +62,7 @@ def _tick(db, state):
     state.metrics["国库"] = 10**9
     apply_fixed_period_flows(db, state)
     row = db.conn.execute(
-        "SELECT loyalty, is_mutinied, arrears FROM armies WHERE id=?", (ARMY,)
+        "SELECT loyalty, is_mutinied, mutiny_probation, arrears FROM armies WHERE id=?", (ARMY,)
     ).fetchone()
     return int(row["loyalty"]), int(row["is_mutinied"]), derive_army_mutiny_state(row)
 

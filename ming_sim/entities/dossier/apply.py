@@ -19,6 +19,7 @@ def apply_dossier_participant_items(
 ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     """追加参与人。权威集合缺省即空闭集，不从活库回推，两路集合不并。"""
     from ming_sim.strict_types import _parse_sqlite_id
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
 
     results: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
@@ -55,12 +56,18 @@ def apply_dossier_participant_items(
                 source=source,
             ))
             continue
-        added = db.append_decree_dossier_participants(dossier_id, [{
-            "character_id": character_id,
-            "tier": tier,
-            "role": role,
-            "delegator_id": delegator_id,
-        }], commit=False)
+        try:
+            added = db.append_decree_dossier_participants(dossier_id, [{
+                "character_id": character_id,
+                "tier": tier,
+                "role": role,
+                "delegator_id": delegator_id,
+            }], commit=False)
+        except DecreeMaterializationValidationError as exc:
+            rejections.append(RejectedItem(
+                item=item, reason=str(exc), category=exc.category, source=source,
+            ))
+            continue
         if not added:
             existing = db.dossiers.get(dossier_id) or {}
             roster = existing.get("participant_roster") or []
