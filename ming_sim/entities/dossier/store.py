@@ -704,11 +704,12 @@ class DossierStore:
             {
                 "id": int(r["id"]),
                 "commitment_ref": int(r["commitment_ref"]),
-                # 持久段身份：拒 REAL/腐坏强转合法号；不发明 0（#1897 G）。
+                # 持久段身份：只认真整数；拒 REAL/TEXT/BLOB 洗成合法号（#1897 G/G1）。
                 "stage_idx": durable_int(
                     r["stage_idx"],
                     label="next_audience_todos.stage_idx",
                     blank=None,
+                    accept_numeric_strings=False,
                 ),
                 "due_turn": int(r["due_turn"]),
                 "criterion_text": str(r["criterion_text"] or ""),

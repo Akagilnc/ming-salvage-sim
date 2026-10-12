@@ -31,12 +31,15 @@ class StoredDocumentError(Exception):
 
 def durable_int(
     raw: object, *, label: str, blank: int | None = 0,
+    accept_numeric_strings: bool = True,
 ) -> int:
     """Read one integer from a durable column.
 
     ``blank`` is the value for None/empty on *optional* columns (e.g. due_turn).
     Pass ``blank=None`` for required columns: None/empty is StoredDocumentError,
     not a silent 0. Present values reuse strict_int (reject bool/float/overflow).
+    ``accept_numeric_strings`` defaults True so other callers keep current behavior;
+    durable segment identities pass False (no TEXT/BLOB wash, #1897 G1).
     """
     if raw is None or raw == "":
         if blank is None:
@@ -45,7 +48,7 @@ def durable_int(
     from ming_sim.strict_types import strict_int
 
     try:
-        return strict_int(raw)
+        return strict_int(raw, accept_numeric_strings=accept_numeric_strings)
     except (TypeError, ValueError, OverflowError) as exc:
         raise StoredDocumentError(f"{label} 损坏") from exc
 

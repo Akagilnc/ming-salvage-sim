@@ -64,32 +64,37 @@ def _stage_record(
     }
 
 
-def _prepare_stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
-    """写口专用前置归一化：别名／正文回填／数字串 → 规范草稿。
+def _prepare_stages_for_write(data: Sequence[object]) -> List[object]:
+    """写口专用前置归一化：别名／正文回填／已出现值的数字串 → 规范草稿。
 
-    不发明 ``stage_idx``（缺省／null／空串原样交给成员准入拒收，#1897 G）。
-    成员规则仍只在 ``_commitment_stages_members``，此处不复制范围／唯一性校验。
+    不发明 ``stage_idx``；缺失／空值／非对象原样交给唯一成员门拒收（#1897 G/G2）。
+    成员规则只在 ``_commitment_stages_members``，此处不复制拒收。
     """
-    prepared: List[Dict[str, object]] = []
+    prepared: List[object] = []
     for idx, item in enumerate(data):
         if not isinstance(item, dict):
-            raise ValueError(f"stages[{idx}] 须为对象")
+            prepared.append(item)
+            continue
+        draft: Dict[str, object] = {}
+        # TypeError（坏类型）仍从写口前置响亮；缺／空白正文不在此拒，交成员门。
         texts = _stage_text_fields(item)
-        if texts is None:
-            raise ValueError(f"stages[{idx}] 缺非空 criterion_text/origin_context")
-        criterion, origin_context = texts
-        raw_due = item.get("due_turn")
-        if raw_due in (None, ""):
-            raise ValueError(f"stages[{idx}] 缺 due_turn")
-        try:
-            due_turn = strict_int(raw_due, accept_numeric_strings=True)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"stages[{idx}].due_turn 须为有限整数") from exc
-        draft: Dict[str, object] = {
-            "due_turn": due_turn,
-            "criterion_text": criterion,
-            "origin_context": origin_context,
-        }
+        if texts is not None:
+            draft["criterion_text"], draft["origin_context"] = texts
+        else:
+            for field in ("criterion_text", "origin_context", "criterion", "origin"):
+                if field in item:
+                    draft[field] = item[field]
+        if "due_turn" in item:
+            raw_due = item["due_turn"]
+            if raw_due in (None, ""):
+                draft["due_turn"] = raw_due
+            else:
+                try:
+                    draft["due_turn"] = strict_int(
+                        raw_due, accept_numeric_strings=True,
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"stages[{idx}].due_turn 须为有限整数") from exc
         if "stage_idx" in item:
             raw_idx = item["stage_idx"]
             if raw_idx in (None, ""):
