@@ -185,6 +185,7 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
 
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},

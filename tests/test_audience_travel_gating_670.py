@@ -2,7 +2,7 @@ from __future__ import annotations
 from ming_sim.settlement.dossier import apply_dossier_verdicts
 import ming_sim.settlement.run as settlement_run
 from ming_sim.applier import Provenance
-from tests.conftest import open_hall_turn
+from tests.conftest import open_hall_turn, wait_for_background_jobs
 import pytest
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, GameSession
@@ -346,8 +346,10 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
             translate=lambda *_a, **_k: {"effects": continuation},
         )
         session.resolve_turn(allow_empty_decree=True)
+        wait_for_background_jobs(db)
         db.save_turn_report(state, "邸报", public_body="邸报")
         session.resolve_turn(allow_empty_decree=True)
+        wait_for_background_jobs(db)
 
     failed_turn = int(state.turn)
     from ming_sim.exceptions import SettlementAbort

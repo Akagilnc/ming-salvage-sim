@@ -7,6 +7,7 @@ import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.models import LLMConfig, TurnPhase
+from tests.conftest import wait_for_background_jobs
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 from ming_sim.supervision import (
@@ -2234,6 +2235,7 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
     session.llm_config = object()
     state = session.state
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert [r[0] for r in db.conn.execute("SELECT delta FROM economy_ledger WHERE category='急务办理'")] == [-2, -2, -2]
     assert [row["decision_key"] for row in answers] == [item["decision_key"] for item in batch]
     assert answers[-1]["choice"]["note"] == raw_note
@@ -2246,20 +2248,24 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
     # Next month is opened only after this month's report, not within submit.
     db.save_turn_report(state, "归档", title="归档", public_body="归档")
     assert session.resolve_turn(allow_empty_decree=True).advanced
+    wait_for_background_jobs(db)
     if vacant:
         officers = drafting.triage_officers(db)
         for row in officers:
             db.conn.execute("UPDATE characters SET office='' WHERE name=?", (row["name"],))
         db.conn.commit()
         assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+        wait_for_background_jobs(db)
         assert not session.pending_decisions()
         assert len(calls) == 1  # No stand-in and no model call with an invented actor.
         assert session.deferred_rescripts()[0]["decision_key"] == original["decision_key"]
         db.save_turn_report(state, "归档", title="归档", public_body="归档")
         assert session.resolve_turn(allow_empty_decree=True).advanced
+        wait_for_background_jobs(db)
         db.conn.execute("UPDATE characters SET office=? WHERE name=?", (officers[-1]["office"], officers[-1]["name"]))
         db.conn.commit()
     assert session.resolve_turn(allow_empty_decree=True).awaiting
+    wait_for_background_jobs(db)
     revised = session.pending_decisions()
     assert [row["decision_key"] for row in revised] == [row["decision_key"] for row in reversed(originals)]
     assert revised[0]["revision_round"] == 1

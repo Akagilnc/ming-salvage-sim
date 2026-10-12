@@ -6,6 +6,7 @@ import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
+from tests.conftest import wait_for_background_jobs
 from tests.month_chain_helpers import make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.session_write_queue import get_session_write_queue
@@ -320,10 +321,12 @@ def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch
     session = make_light_session(db, state, content)
     turn = int(state.turn)
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+    wait_for_background_jobs(db)
     payload = db.resolve_contexts.get(turn)["simulator_payload"]
     assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_suicide"
     db.save_turn_report(state, "邸报已成")
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    wait_for_background_jobs(db)
     assert state.ended is True
     assert state.ending_status == "emperor_suicide"
     assert int(state.turn) == turn + 1
