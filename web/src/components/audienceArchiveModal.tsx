@@ -85,10 +85,10 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
 
   const turnNotices = new Map<number, React.ReactNode>();
   if (messages) for (const kind of ["reply", "translation"] as const) {
-    const retries = kind === "reply" ? replyRetries : translationRetries.filter((retry) => retry.retryable);
+    const retries = kind === "reply" ? replyRetries.filter((retry) => Boolean(retry.recovery_phase)) : translationRetries.filter((retry) => retry.retryable);
     for (const retry of retries) {
       const notice = <div key={kind} className="chat-system-note danger chat-failure-note" role="alert" data-testid={`archive-${kind}-retry-${retry.chat_turn_id}`}>
-        {retryError?.chatTurnId === retry.chat_turn_id && retryError.kind === kind ? `重试失败：${retryError.message}` : kind === "reply" ? ("recovery_phase" in retry && retry.recovery_phase ? "回话已保存，后续处理失败。" : "本轮问话未得回话。") : "本轮记录未能整理。"}{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}
+        {retryError?.chatTurnId === retry.chat_turn_id && retryError.kind === kind ? `重试失败：${retryError.message}` : kind === "reply" ? "回话已保存，后续处理失败。" : "本轮记录未能整理。"}{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}
         <button type="button" disabled={retrying?.nightId === selected?.night_id} onClick={() => void retryRecord(kind, retry.chat_turn_id)}>重试</button>
       </div>;
       turnNotices.set(retry.chat_turn_id, <>{turnNotices.get(retry.chat_turn_id)}{notice}</>);

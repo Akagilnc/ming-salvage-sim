@@ -7,3 +7,5 @@ Status: Accepted（2026-07-03 随 PR #554 合入 90c7a70a；决策核：2026-07-
 后出注记（2026-09-09，决策票 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821) owner 拍）：判官所读「成品全文」= 一条对话轮的整段戏文（可含多人，[0046](0046-message-contract-four-diegetic-roles-thin-system-layer.md) 后出注记）；「只标大臣气泡」由转译的说话人标记落实。其余不变。
 
 失败形态后出裁定：2026-10-12 [#1902](https://github.com/Akagilnc/ming-salvage-sim/issues/1902)；源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，owner uuid `a9188851-7b27-484c-861b-ec25babbbe1c`（召对高亮失败形态）、`6dd660dc-3d90-4d41-9ddf-11b1572483dd`（收夜后仍可重试）。
+
+剥离要求后出取代注记（#1902）：上述显示文本及判官短语的两处 markdown 剥离要求，由 [CLAUDE.md P6「LLM 输出不可篡改」](../../CLAUDE.md)（owner 2026-08-20）取代；显示与匹配均以原文为准。

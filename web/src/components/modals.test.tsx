@@ -1196,7 +1196,8 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.querySelector<HTMLButtonElement>(`[data-testid="archive-${kind}-retry-32"] button`)?.disabled).toBe(true);
     await act(async () => { releaseNewRetry?.(); await Promise.resolve(); await Promise.resolve(); });
   });
-  it.each(["translation", "reply"])("retries a pending %s on its original closed night", async (kind) => {
+  it.each(["translation", "after_reply", "court_break"])("retries a pending %s on its original closed night", async (phase) => {
+    const kind = phase === "translation" ? "translation" : "reply";
     let pending = true;
     let posts = 0;
     const endpoint = kind === "reply" ? "/api/audience/reply/retry" : "/api/audience/translation/retry";
@@ -1213,8 +1214,12 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
         { kind: "night", night_id: 31, title: "旧夜", involved_people: [] },
       ] }) });
       if (url !== "/api/audience/scroll?night_id=31") return Promise.resolve(new Response(null, { status: 404 }));
-      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "minister", content: "旧夜奏对", chat_turn_id: 8 }], reply_retries: pending && kind === "reply" ? [
-        { chat_turn_id: 8, minister_name: "殿上", turn: 1, question: "退朝", recovery_phase: "after_reply", error_pack_path: "/tmp/highlight-error" },
+      return Promise.resolve({ ok: true, json: async () => ({ messages: [
+        { role: phase === "court_break" ? "user" : "minister", content: phase === "court_break" ? "退朝" : "旧夜奏对", chat_turn_id: 8 },
+        { role: "user", content: "问边饷", chat_turn_id: 9 },
+      ], reply_retries: kind === "reply" ? [
+        ...(pending ? [{ chat_turn_id: 8, minister_name: "殿上", turn: 1, question: phase === "court_break" ? "退朝" : "问边饷", recovery_phase: phase, error_pack_path: "/tmp/highlight-error" }] : []),
+        { chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "问边饷" },
       ] : [], translation_retries: pending && kind === "translation" ? [
         { chat_turn_id: 8, night_id: 31, minister_name: "洪承畴", kind: "translation_pending", retryable: true },
       ] : [] }) });
@@ -1226,6 +1231,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const source = host.querySelector('[data-audience-turn-id="8"]');
     const retry = source?.querySelector<HTMLButtonElement>(`${notice} button`);
     expect(retry).toBeInstanceOf(HTMLButtonElement);
+    expect(host.querySelector('[data-testid="archive-reply-retry-9"]')).toBeNull();
     await act(async () => { retry?.click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 8 }) }));
     if (kind === "reply") {
@@ -1233,6 +1239,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
       await act(async () => { source?.querySelector<HTMLButtonElement>(`${notice} button`)?.click(); await Promise.resolve(); });
     }
     expect(host.querySelector(notice)).toBeNull();
+    expect(host.querySelector('[data-testid="archive-reply-retry-9"]')).toBeNull();
   });
   it.each(["translation", "reply"])("recovers a completed %s by rereading the scroll after its first read fails", async (kind) => {
     let reads = 0;

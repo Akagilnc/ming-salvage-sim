@@ -546,7 +546,7 @@ export type ReplyRetry = {
   turn: number;
   question: string;
   error_pack_path?: string;
-  recovery_phase?: "after_reply" | "court_break" | "court_break_after_reply";
+  recovery_phase?: "after_reply" | "court_break";
 };
 
 export type TranslationRetry = {
