@@ -141,6 +141,8 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
 
 def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(game, monkeypatch):
     from ming_sim.exceptions import SettlementAbort
+    from ming_sim.models import LLMConfig
+    from tests.month_chain_helpers import canned_full_settlement
 
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -161,18 +163,12 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     db.reign.save_game_state(state)
     produced = []
 
-    def product(session, snapshot):
-        produced.append(snapshot["decree_ref"])
-        return {
-            "verdict": {"decision": "promulgated"},
-            "declaration": {"effects": {"economy_moves": [{
-                "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -1,
-                "category": "大凌河", "reason": "补跑",
-            }]}},
-            "questions": None,
-            "forecast_text": "补跑不可见",
-            "visible_refs": snapshot.get("visible_refs"),
-        }
+    def translate(request, _config):
+        produced.append(request.decree_payload["text"])
+        return {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -1,
+            "category": "大凌河", "reason": "补跑",
+        }]}}
 
     real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
     armed = {"fail": True}
@@ -183,12 +179,13 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
             raise RuntimeError("过月中断")
         return real_settle(db_, state_, refs, **kwargs)
 
-    _forbid_extractor(monkeypatch)
+    canned_full_settlement(monkeypatch, narrative="补跑不可见")
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr("ming_sim.decree_forecast.produce_forecast_product", product)
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
     monkeypatch.setattr(declaration_dispatch, "settle_staged_declarations_in_decree_order", flaky)
     session = make_light_session(db, state, content)
-    session.llm_config = object()
+    session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid/v1", model="test")
     with pytest.raises(SettlementAbort) as exc_info:
         session.resolve_turn(allow_empty_decree=True)
     assert isinstance(exc_info.value.__cause__, RuntimeError)
@@ -198,7 +195,7 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0]
     session.resolve_turn(allow_empty_decree=True)
-    assert produced == [second_ref]
+    assert produced == ["大凌河"]
     assert db.staged_declarations.is_settled(second_ref)
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",

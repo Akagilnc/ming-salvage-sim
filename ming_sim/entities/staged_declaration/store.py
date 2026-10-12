@@ -22,7 +22,7 @@ _TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS staged_declarations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     decree_ref TEXT NOT NULL,
-    declaration_json TEXT NOT NULL,
+    declaration_json TEXT,
     visible_refs_json TEXT NOT NULL DEFAULT '{}',
     verdict_json TEXT,
     questions_json TEXT,
@@ -57,7 +57,7 @@ class DecreeAlreadySettled(ValueError):
 class StagedDeclaration:
     id: int
     decree_ref: str
-    declaration: dict
+    declaration: dict | None
     status: str
     created_turn: int
     visible_refs: dict
@@ -78,36 +78,46 @@ class StagedDeclarationStore:
         conn.executescript(_SCHEMA_SQL)
 
     def stage(
-        self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
+        self, *, decree_ref: str, declaration: Mapping[str, object] | None, turn: int,
         visible_refs: Mapping[str, object] | None = None,
         verdict: Mapping[str, object] | None = None,
         questions: list | None = None,
         forecast_text: str | None = None,
+        staged_id: int | None = None,
     ) -> int:
         ref = str(decree_ref or "").strip()
         if not ref:
             raise ValueError("decree_ref 不能为空")
-        if not isinstance(declaration, Mapping):
+        if declaration is not None and not isinstance(declaration, Mapping):
             raise ValueError("声明须为对象")
         def write() -> int:
             if self._is_closed(ref):
                 raise DecreeAlreadySettled(
                     f"decree_ref 已作废或已结算，不能再暂存新声明：{ref}（如需再起该旨，请用新的 decree_ref）"
                 )
+            values = (
+                ref,
+                None if declaration is None else json.dumps(declaration, ensure_ascii=False),
+                json.dumps(visible_refs or {}, ensure_ascii=False),
+                int(turn),
+                None if verdict is None else json.dumps(dict(verdict), ensure_ascii=False),
+                None if questions is None else json.dumps(list(questions), ensure_ascii=False),
+                forecast_text,
+            )
+            if staged_id is not None:
+                self._conn.execute(
+                    "UPDATE staged_declarations SET decree_ref=?, declaration_json=?, "
+                    "visible_refs_json=?, created_turn=?, verdict_json=?, questions_json=?, "
+                    "forecast_text=? WHERE id=? AND status='staged'",
+                    (*values, staged_id),
+                )
+                return staged_id
             cur = self._conn.execute(
                 "INSERT INTO staged_declarations "
                 "(decree_ref, declaration_json, visible_refs_json, status, created_turn, "
                 "verdict_json, questions_json, forecast_text) "
                 "VALUES (?, ?, ?, 'staged', ?, ?, ?, ?)",
-                (
-                    ref,
-                    json.dumps(declaration, ensure_ascii=False),
-                    json.dumps(visible_refs or {}, ensure_ascii=False),
-                    int(turn),
-                    None if verdict is None else json.dumps(dict(verdict), ensure_ascii=False),
-                    None if questions is None else json.dumps(list(questions), ensure_ascii=False),
-                    None if forecast_text is None else forecast_text,
-                ),
+                values,
             )
             return int(cur.lastrowid)
         if connection_owns_transaction(self._conn):
@@ -268,7 +278,7 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=decree_ref,
-        declaration=parse_engine_payload_json(row["declaration_json"]),
+        declaration=None if row["declaration_json"] is None else parse_engine_payload_json(row["declaration_json"]),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
         visible_refs=parse_engine_payload_json(row["visible_refs_json"]),
         verdict=verdict,

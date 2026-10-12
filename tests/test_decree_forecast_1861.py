@@ -411,7 +411,7 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     assert len(stored) == 1
     assert stored[0].verdict["decision"] == "rejected"
     assert stored[0].questions is None
-    assert stored[0].forecast_text is None
+    assert stored[0].forecast_text == ""
     assert stored[0].declaration == {}
     assert db.issues.list_pending_decisions(state.turn) == []
     assert db.conn.execute(

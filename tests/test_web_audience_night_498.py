@@ -474,16 +474,17 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
 
 
 
-@pytest.mark.parametrize("stage,kind,entry,retry", [
-    ("judge", "429", "issue", False),
-    ("judge", "model", "advance", True),
-    ("forecast", "model", "issue", False),
-    ("forecast", "code", "advance", True),
-    ("translate", "model", "issue", True),
-    ("translate", "code", "issue", False),
+@pytest.mark.parametrize("stage,kind,entry,retry,night_forecast", [
+    ("judge", "429", "issue", False, True),
+    ("judge", "model", "advance", True, True),
+    ("forecast", "model", "issue", False, True),
+    ("forecast", "code", "advance", True, True),
+    ("translate", "model", "issue", True, True),
+    ("translate", "code", "issue", False, True),
+    ("translate", "model", "advance", True, False),
 ])
 def test_night_approved_directive_closes_into_month_end_without_second_review(
-    web_game, monkeypatch, stage, kind, entry, retry,
+    web_game, monkeypatch, request, stage, kind, entry, retry, night_forecast,
 ):
     from pathlib import Path
     import ming_sim.decree_forecast as forecast
@@ -508,10 +509,13 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
     phase = {"name": "night"}
     calls = []
+    steps = []
     error = (RuntimeError("injected forecast bug") if kind == "code" else
              LLMUnavailable("injected forecast exhaustion", status_code=429 if kind == "429" else 503))
 
     def maybe_fail(at, target):
+        if target == "needs-forecast":
+            steps.append(at)
         if at == stage and target == "needs-forecast":
             calls.append(phase["name"])
             if phase["name"] == "interrupted":
@@ -555,14 +559,27 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
     )
     assert an.mark_actions_night_approved(game.db, [ready_id, directive_id], night_id=int(night["id"])) == 2
     for action_id in (ready_id, directive_id):
+        if action_id == directive_id and not night_forecast:
+            continue
         assert forecast.schedule_pending_decree_forecast(game.session, action_id, night_id=int(night["id"]))
-    assert calls == ["night"]
+    assert calls == (["night"] if night_forecast else [])
     ref = pending_action_decree_ref(directive_id, 1)
-    assert game.db.staged_declarations.staged_for(ref) == ()
+    partial = game.db.staged_declarations.staged_for(ref)
+    if night_forecast and stage != "judge":
+        assert len(partial) == 1
+        assert partial[0].verdict["decision"] == "promulgated"
+        assert partial[0].declaration is None
+        assert (partial[0].forecast_text is not None) == (stage == "translate")
+    else:
+        assert partial == ()
+    assert not game.db.staged_declarations.is_settled(ref)
+    assert not list(game.db.conn.execute(
+        "SELECT delta FROM economy_ledger WHERE category='needs-forecast'",
+    ))
     assert month_chain_call_failure(game.db, turn_before) is None
     assert game.state_payload()["settlement_recovery"] is None
     pack = None
-    if kind != "429":
+    if night_forecast and kind != "429":
         packs = list(error_packs_root().glob(f"turn{turn_before}_attempt*"))
         assert len(packs) == 1
         pack = packs[0]
@@ -572,6 +589,16 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
     phase["name"] = "month"
 
     async def scenario():
+        nonlocal affair
+        if phase["name"] == "retry" or phase["name"] == "month" and not retry:
+            # A later fact is visible to resumed translation, not the earlier staging.
+            affair = game.db.affairs.open(
+                name="追核边饷", origin="旨意", year=game.state.year,
+                period=game.state.period, turn=turn_before,
+            )
+            staged = game.db.staged_declarations.staged_for(ref)
+            if staged:
+                assert affair.id not in staged[0].visible_refs["affairs"]
         async with _client() as client:
             if entry == "issue":
                 response = await client.post("/api/decree/issue/stream", json={})
@@ -615,21 +642,58 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
         assert recovery["error_pack_path"]
         assert recovery["message"] == str(error)
         assert game.db.staged_declarations.is_settled(pending_action_decree_ref(ready_id, 1))
+        saved = game.db.staged_declarations.staged_for(ref)
+        assert not game.db.staged_declarations.is_settled(ref)
+        assert not list(game.db.conn.execute(
+            "SELECT delta FROM economy_ledger WHERE category='needs-forecast'",
+        ))
+        if stage == "translate":
+            assert saved[0].declaration is None
+            assert saved[0].forecast_text is not None
+            if partial:
+                assert saved == partial
+            # Reopen through the same production save loader as a player.
+            game.session.close()
+            game = web_app.WebGame(fresh=False)
+            request.addfinalizer(game.session.close)
+            monkeypatch.setattr(web_app, "web_game", game)
+            assert game.db.staged_declarations.staged_for(ref) == saved
         phase["name"] = "retry"
         event, result = asyncio.run(scenario())
+        if stage == "translate":
+            row = game.db.conn.execute(
+                "SELECT verdict_json,forecast_text FROM staged_declarations WHERE id=?",
+                (saved[0].id,),
+            ).fetchone()
+            assert json.loads(row["verdict_json"]) == saved[0].verdict
+            assert row["forecast_text"] == saved[0].forecast_text
 
     assert event == "done", result
     assert result["advanced"] is True
     assert calls == (
-        ["night"] + (["interrupted"] if interrupted else [])
+        (["night"] if night_forecast else []) + (["interrupted"] if interrupted else [])
         + ["month"] + (["retry"] if retry else [])
     )
+    failed_step = ["judge", "forecast", "translate"].index(stage)
+    expected_steps = (
+        (["judge", "forecast", "translate"][:failed_step + 1] if night_forecast else [])
+        + ([stage] if interrupted else [])
+        + ["judge", "forecast", "translate"][failed_step if night_forecast else 0:failed_step + 1]
+        + ([stage] if retry else [])
+        + ["judge", "forecast", "translate"][failed_step + 1:]
+    )
+    assert steps == expected_steps
     assert game.db.staged_declarations.is_settled(ref)
     assert game.state_payload()["settlement_recovery"] is None
     for target in ("ready", "needs-forecast"):
         assert [row[0] for row in game.db.conn.execute(
             "SELECT delta FROM economy_ledger WHERE category=?", (target,),
         )] == [-1]
+    frozen_refs = json.loads(game.db.conn.execute(
+        "SELECT visible_refs_json FROM staged_declarations WHERE decree_ref=?",
+        (ref,),
+    ).fetchone()["visible_refs_json"])
+    assert affair.id in frozen_refs["affairs"]
     if pack:
         assert (Path(pack) / "manifest.json").is_file()
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"

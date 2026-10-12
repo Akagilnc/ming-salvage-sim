@@ -357,105 +357,114 @@ def dossier_for_decree_ref(db: Any, decree_ref: str) -> Optional[Dict[str, Any]]
     return None
 
 
-def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str, Any]:
-    """判官、逐旨推演、过月段转译三步。只产出暂存物，不落账。"""
+def produce_forecast_product(
+    session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
+) -> Dict[str, Any]:
+    """Persist each successful forecast step; resume the first SQL NULL, never settle."""
+    from ming_sim.applier import atomic
+
+    def store_call(operation: Any) -> Any:
+        # Night model calls remain parallel; only their DB turns use the existing queue.
+        if "ticket" in snapshot:
+            with write_lock if write_lock is not None else nullcontext():
+                return get_session_write_queue(session).run(snapshot["ticket"], operation)
+        return operation()
+
     try:
+        ref, turn = str(snapshot["decree_ref"]), int(snapshot["turn"])
+        staged = store_call(lambda: session.db.staged_declarations.staged_for(ref, turn=turn))
+        saved = staged[0] if staged else None
+        staged_id = saved.id if saved else None
+        product = {
+            "verdict": saved.verdict if saved else None,
+            "declaration": saved.declaration if saved else None,
+            "questions": saved.questions if saved else None,
+            "forecast_text": saved.forecast_text if saved else None,
+        }
+        visible_refs = saved.visible_refs if saved else snapshot.get("visible_refs")
+
+        def persist() -> bool:
+            def write() -> Optional[int]:
+                if "forecast_key" in snapshot and _current_forecast_ref(
+                    session, snapshot["forecast_key"],
+                ) != ref:
+                    return None
+                with atomic(session.db):
+                    return stage_declaration(
+                        session.db, decree_ref=ref, turn=turn,
+                        declaration=product["declaration"], verdict=product["verdict"],
+                        questions=product["questions"], forecast_text=product["forecast_text"],
+                        visible_refs=visible_refs, staged_id=staged_id,
+                    )
+            nonlocal staged_id
+            staged_id = store_call(write)
+            return staged_id is not None
+
         candidate = snapshot["candidate"]
         payload = _payload_dict(candidate)
-        if decree.dossier_action_policy(
-            candidate.get("action_type"), payload,
-        )["external_review"]:
-            raw = decree.llm_promulgation_verdicts(
-                [candidate], session.state, db=session.db,
-                agno_db=getattr(session, "agno_db", None),
-                llm_config=session.llm_config,
-                prepared_context=snapshot["context"],
-                transport_policy=audience_transport_policy(),
-            )
-        else:
-            raw = decree.stub_promulgation_verdicts([candidate])
-        verdicts = decree.validate_promulgation_verdicts(
-            raw, [candidate], session.db, prepared_context=snapshot["context"],
-        )
-        verdict = dict(verdicts[0])
-        declaration: Dict[str, object] = {}
-        questions = None
-        forecast_text = None
-        if str(verdict.get("decision") or "") == "promulgated":
-            agent = agents.create_decree_forecast_agent(
-                session.llm_config, snapshot["prepared"],
-            )
-            narrative = agents.run_agent_text(
-                agent,
-                json.dumps({
-                    "instruction": "推演这一道旨在当前盘面上的可能后果。",
-                    "this_decree": snapshot["this_decree"],
-                }, ensure_ascii=False),
-                tag="decree-forecast",
-                transport_policy=audience_transport_policy(),
-            )
-            from ming_sim.month_chain import _split_at_question
-
-            # 与世界段同一解析：问前段文只转译一次，同段合法请旨全部暂存。
-            prefix, questions = _split_at_question(str(narrative or ""))
-            forecast_text = prefix
-            if prefix.strip():
-                # #1894：在途案卷清单同世界段一份读口（materials.continuing_
-                # dossier_facts）——撤令的办理结果由执行格判官在本段声明
-                # dossier_executions，清单不给它就无从落原案卷的执行格。
-                declaration = translate_month_segment(
-                    segment=prefix,
-                    target_grounding=str(snapshot["target_grounding"]),
-                    decree_payload=payload,
-                    this_decree=snapshot["this_decree"],
+        if product["verdict"] is None:
+            if decree.dossier_action_policy(
+                candidate.get("action_type"), payload,
+            )["external_review"]:
+                raw = decree.llm_promulgation_verdicts(
+                    [candidate], session.state, db=session.db,
+                    agno_db=getattr(session, "agno_db", None),
                     llm_config=session.llm_config,
-                    continuing_dossiers=continuing_dossier_facts(
-                        session.db, int(snapshot["turn"]),
-                    ),
+                    prepared_context=snapshot["context"],
+                    transport_policy=audience_transport_policy(),
                 )
-        return {
-            "verdict": verdict,
-            "declaration": declaration,
-            "questions": questions,
-            "forecast_text": forecast_text,
-        }
+            else:
+                raw = decree.stub_promulgation_verdicts([candidate])
+            verdicts = decree.validate_promulgation_verdicts(
+                raw, [candidate], session.db, prepared_context=snapshot["context"],
+            )
+            product["verdict"] = dict(verdicts[0])
+            if not persist():
+                return product
+        if product["declaration"] is not None:
+            return product
+        if str(product["verdict"].get("decision") or "") == "promulgated":
+            if product["forecast_text"] is None:
+                agent = agents.create_decree_forecast_agent(
+                    session.llm_config, snapshot["prepared"],
+                )
+                narrative = agents.run_agent_text(
+                    agent,
+                    json.dumps({
+                        "instruction": "推演这一道旨在当前盘面上的可能后果。",
+                        "this_decree": snapshot["this_decree"],
+                    }, ensure_ascii=False),
+                    tag="decree-forecast",
+                    transport_policy=audience_transport_policy(),
+                )
+                from ming_sim.month_chain import _split_at_question
+
+                # Keep the question split alongside its text before translation can fail.
+                prefix, questions = _split_at_question(str(narrative or ""))
+                product["forecast_text"], product["questions"] = prefix, questions
+                if not persist():
+                    return product
+            prefix = product["forecast_text"]
+            # Empty text is a completed forecast with no effects, not a missing step.
+            declaration = translate_month_segment(
+                segment=prefix,
+                target_grounding=str(snapshot["target_grounding"]),
+                decree_payload=payload,
+                this_decree=snapshot["this_decree"],
+                llm_config=session.llm_config,
+                continuing_dossiers=continuing_dossier_facts(
+                    session.db, int(snapshot["turn"]),
+                ),
+            ) if prefix.strip() else {}
+        else:
+            # A held/rejected verdict requires neither a model forecast nor translation.
+            product["forecast_text"] = ""
+            declaration = {}
+        product["declaration"] = declaration
+        visible_refs = snapshot.get("visible_refs")
+        persist()
+        return product
     finally:
-        release_forecast_materials(snapshot)
-
-
-def _forecast(
-    session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
-) -> None:
-    # 同一 decree_ref（记录号+版本，或留中案卷 id）当月已有暂存则不再跑模型链。
-    try:
-        if session.db.staged_declarations.staged_for(
-            str(snapshot["decree_ref"]), turn=int(snapshot["turn"]),
-        ):
-            return
-        product = produce_forecast_product(session, snapshot)
-        verdict = product["verdict"]
-        declaration = product["declaration"]
-        questions = product["questions"]
-        forecast_text = product["forecast_text"]
-
-        def stage_if_current() -> None:
-            ref = _current_forecast_ref(session, snapshot["forecast_key"])
-            if ref != snapshot["decree_ref"]:
-                return
-            from ming_sim.applier import atomic
-            with atomic(session.db):
-                if not session.db.staged_declarations.staged_for(ref, turn=int(snapshot["turn"])):
-                    stage_declaration(
-                        session.db, decree_ref=ref, declaration=declaration,
-                        turn=int(snapshot["turn"]), verdict=verdict,
-                        questions=questions, forecast_text=forecast_text,
-                        visible_refs=snapshot.get("visible_refs"),
-                    )
-
-        with write_lock if write_lock is not None else nullcontext():
-            get_session_write_queue(session).run(snapshot["ticket"], stage_if_current)
-    finally:
-        # produce 已释放则 no-op；早退未 produce 时在此释放。
         release_forecast_materials(snapshot)
 
 
@@ -480,12 +489,12 @@ def _submit_snapshot_job(
                     return
                 snapshot["ticket"] = ticket
                 snapshot["forecast_key"] = forecast_key
-                _forecast(session, snapshot, write_lock=write_lock)
+                produce_forecast_product(session, snapshot, write_lock=write_lock)
             except Exception as exc:
                 if isinstance(exc, LLMUnavailable) and _rate_limited(exc):
                     return
 
-                # #1846: a failed night forecast is unstaged, not a failed month.
+                # #1846: an incomplete night forecast is not a failed month.
                 # Keep the original diagnosis; the month entry owns catch-up/retry.
                 from ming_sim.error_pack import write_error_pack
                 with write_lock if write_lock is not None else nullcontext():

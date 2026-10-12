@@ -935,7 +935,6 @@ def _settle_edicts(
         decree_ref_for_dossier,
         produce_forecast_product,
         snapshot_for_existing_dossier,
-        stage_declaration,
     )
 
     db, state = session.db, session.state
@@ -978,7 +977,7 @@ def _settle_edicts(
             and not db.staged_declarations.is_settled(ref)
         ):
             staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
-            verdict = staged[0].verdict if staged else None
+            verdict = staged[0].verdict if staged and staged[0].declaration is not None else None
             if verdict is None and session.llm_config is not None:
                 snapshot = snapshot_for_existing_dossier(session, dossier)
 
@@ -988,15 +987,6 @@ def _settle_edicts(
                 product = _guard_month_call(
                     db, state, chain, decree_text="", source=Provenance.player_decree,
                     step="edict_forecast", operation=_produce, decree_ref=ref,
-                )
-                stage_declaration(
-                    db, decree_ref=ref,
-                    declaration=product["declaration"] or {},
-                    turn=int(state.turn),
-                    verdict=product["verdict"],
-                    questions=product["questions"],
-                    forecast_text=product["forecast_text"],
-                    visible_refs=snapshot.get("visible_refs"),
                 )
                 verdict = product["verdict"]
             if isinstance(verdict, dict) and verdict.get("decision"):
