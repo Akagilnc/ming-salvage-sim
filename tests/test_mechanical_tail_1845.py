@@ -15,7 +15,7 @@ Seams:
 - month_chain / resolve_turn 推进后启动机械尾（关系酿制 + 结局总评）
 - SessionWriteQueue 票键 (\"mechanical-tail\", closed_turn)：不挡新月前台；下次过月 barrier join
 - 未完尾按 month_chain 持久状态重开续接；失败由玩家重试，不静默降级
-- 章节记忆残留删除（event_memories 表／三读者）；结局总评只读一遍邸报
+- 章节记忆残留删除（event_memories 表／三读者）；结局总评按需取阅邸报目录
 - 召对高亮不在本票机械尾（沿 ADR 0045）
 """
 
@@ -274,8 +274,8 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
     assert order == ["barrier"]
 
 
-def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch):
-    """后台程序异常须传播至 Future 观察面并保留 pending，后续入口能重提。"""
+def test_non_exhausted_tail_failure_blocks_next_month_until_retry(game, monkeypatch):
+    """后台程序异常保留 failed；下次过月阻断，只由显式重试续接。"""
     import ming_sim.audience_translation as audience_translation
 
     db, state, content = game
@@ -347,7 +347,8 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
 
 
-def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
+@pytest.mark.parametrize("channel", ["api", "cli"])
+def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch, channel):
     """缺模型配置：机械尾失败，错误落在失败尾上，可点重试。
 
     诊断来源保真：可见 error 须等于真实失败异常的 str(exc)；不锁生产中文固定字句。
@@ -411,13 +412,39 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     assert tail.get("error_pack_path")
 
     monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
-    monkeypatch.setattr(
-        "ming_sim.agents.create_ending_summary_agent", lambda *a, **k: object(),
+    from ming_sim.models import LLMConfig
+    from pathlib import Path
+    import json
+
+    body = "本期公开邸报\r\n"
+    db.save_turn_report(state, body, title="本期标题")
+    from types import SimpleNamespace
+    db.save_turn_report(
+        SimpleNamespace(turn=closed_turn + 1, year=state.year, period=state.period + 1),
+        "后续月份不在本次取阅范围", title="后续标题",
     )
-    monkeypatch.setattr(
-        "ming_sim.agents.run_agent_text", lambda *a, **k: "补配后总评",
+    roots = []
+
+    def summary_model(agent, payload, **_kw):
+        # Assert call inputs, not generated prose. API tools and CLI cwd expose
+        # the same bounded tree; the opening payload must not contain bodies.
+        assert set(json.loads(payload)) == {"ending", "final_state"}
+        tools = {tool.__name__: tool for tool in agent.tools}
+        paths = tools["list_materials"]().splitlines()
+        assert set(paths) == {"INDEX.txt", f"邸报/{state.year}年{state.period}月.txt"}
+        assert tools["read_material"](next(path for path in paths if path != "INDEX.txt")) == body
+        if channel == "cli":
+            root = Path(agent.model.materials_dir)
+            assert root.is_dir()
+            assert {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()} == set(paths)
+            roots.append(root)
+        return "补配后总评"
+
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", summary_model)
+    session.llm_config = LLMConfig(
+        api_key="test", base_url="http://127.0.0.1:9", model="test",
+        channel=channel, cli_runner="codex",
     )
-    session.llm_config = object()
     session.agno_db = object()
     executor2 = _install_deferred(monkeypatch)
     assert retry_failed_mechanical_tail(session) is True
@@ -428,3 +455,5 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     ending = db.reign.get_ending_summary()
     assert ending["ending_status"] == "emperor_abdicate"
     assert int(ending["turn"]) == closed_turn
+    assert [row["turn"] for row in ending["timeline"]] == [closed_turn]
+    assert all(not root.exists() for root in roots)

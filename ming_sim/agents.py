@@ -599,19 +599,22 @@ def create_rescript_draft_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     )
 
 
-def create_ending_summary_agent(llm_config: LLMConfig) -> Agent:
-    """国史编纂官：读所给历月邸报，生成史评式结局总结（纯文本）。一次性，不持久化。"""
+def create_ending_summary_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
+    """国史编纂官：从材料目录按需取阅历月邸报，生成纯文本史评。"""
+    from ming_sim.materials import material_tools
+
     ctx = _ctx()
+    model = create_chat_model(
+        llm_config, temperature=0.6, top_p=0.9, enable_thinking=True,
+    )
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(prepared.root)
     return Agent(
         name="国史编纂官",
         id="ending-summary",
-        model=create_chat_model(
-            llm_config,
-            temperature=0.6,
-            top_p=0.9,
-            enable_thinking=True,
-        ),
-        instructions=[ctx.game_world_prompt, ctx.ending_summary_prompt],
+        model=model,
+        instructions=[ctx.game_world_prompt, ctx.ending_summary_prompt, prepared.opening],
+        tools=material_tools(prepared.root),
         add_history_to_context=False,
         markdown=False,
     )
