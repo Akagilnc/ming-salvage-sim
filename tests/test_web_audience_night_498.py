@@ -572,7 +572,7 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
             if entry == "issue":
                 response = await client.post("/api/decree/issue/stream", json={})
                 events = _parse_sse(response.text)
-                assert not ({"confirm", "reject", "pending_review"} & {name for name, _ in events})
+                assert not ({"confirm", "reject", "pending_review"} & {item["event"] for item in events})
                 event = events[-1]
                 return event["event"], json.loads(event["data"])
             response = await client.post("/api/decree/advance_without_edict")
