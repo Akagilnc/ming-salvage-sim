@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
 import { pendingDecisionsFrom } from "../decisionRouting";
-import type { GameState, PendingDecision } from "../types";
+import type { DecisionChoice, GameState, PendingDecision } from "../types";
 import { useSettlementFlow } from "../useSettlementFlow";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -181,6 +181,60 @@ describe("DecisionModal", () => {
       confirmCurrent();
       expect(requests[2].body).toEqual({ choices: [{ ...followup.options[0], decision_key: followup.decision_key }] });
       await act(async () => { replies[0](done()); replies[2](done()); });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("skips a still-present sending row so a follow-up can POST (#1847 K4)", async () => {
+    // DecisionModal contract: sole row stays on desk while its real POST is in flight;
+    // follow-up must become actionable and issue its own POST (#1847 K4).
+    const sender = { ...decisions[0], decision_key: "decision:1:0" };
+    const followup = { ...decisions[1], decision_key: "decision:1:2", idx: 2, title: "关宁追问" };
+    const requests: { url: string; method: string; body: unknown }[] = [];
+    const replies: ((response: Response) => void)[] = [];
+    vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+      requests.push({ url, method: init.method!, body: JSON.parse(String(init.body)) });
+      return new Promise<Response>((resolve) => replies.push(resolve));
+    });
+    let setDesk!: (next: PendingDecision[]) => void;
+    function Harness() {
+      const [desk, set] = React.useState<PendingDecision[]>([sender]);
+      setDesk = set;
+      return (
+        <DecisionModal
+          decisions={desk}
+          onResolve={async (choices: DecisionChoice[]) => {
+            await fetch("/api/decree/resolve_decisions/stream", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ choices }),
+            });
+          }}
+        />
+      );
+    }
+    const cleanup = render(<Harness />);
+    const confirmCurrent = () => {
+      const option = document.querySelector<HTMLButtonElement>(".decision-option")!;
+      expect(option.disabled).toBe(false);
+      act(() => option.click());
+      act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
+    };
+    const done = () => new Response(`event: done\ndata: ${JSON.stringify({ advanced: false })}\n\n`);
+    try {
+      confirmCurrent();
+      expect(requests).toEqual([{ url: "/api/decree/resolve_decisions/stream", method: "POST",
+        body: { choices: [{ ...sender.options[0], decision_key: sender.decision_key }] } }]);
+      expect(document.querySelector<HTMLButtonElement>(".decision-option")!.disabled).toBe(true);
+      await act(async () => { setDesk([sender, followup]); });
+      expect(document.querySelector("#decision-document-title")?.textContent).toBe("关宁追问");
+      expect(document.querySelector(".decision-kicker")?.textContent).toContain("第 2 / 2 疏");
+      expect(document.querySelector<HTMLButtonElement>(".decision-option")!.disabled).toBe(false);
+      confirmCurrent();
+      expect(requests[1]).toEqual({ url: "/api/decree/resolve_decisions/stream", method: "POST",
+        body: { choices: [{ ...followup.options[0], decision_key: followup.decision_key }] } });
+      await act(async () => { replies[0](done()); replies[1](done()); });
     } finally {
       cleanup();
     }

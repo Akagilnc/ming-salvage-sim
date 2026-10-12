@@ -597,20 +597,13 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
 
     with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-    # 持久 call_failure 重建 SettlementAbort 无内存 __cause__（权威=错误包+链上失败）。
-    assert blocked.value.error_pack_path
-    from pathlib import Path
-    pack = Path(blocked.value.error_pack_path)
-    assert pack.is_dir()
-    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
+    # External projection contract (#1465 / #1847 K3): typed fields via __cause__.
+    import web_app
     expected_type = "RuntimeError" if fail_at == "unexpected" else "LLMUnavailable"
-    expected_message = {
-        "continuation": "模型调用耗尽",
-        "translation": "转译用尽",
-        "unexpected": "未识别模型接缝异常",
-    }[fail_at]
-    assert manifest["exception_type"] == expected_type
-    assert manifest["exception_message"] == expected_message
+    detail = web_app._exception_detail(blocked.value)
+    assert detail["error_type"] == expected_type
+    assert blocked.value.error_pack_path
+    assert detail.get("error_pack_path") == blocked.value.error_pack_path
     failure = month_chain.month_chain_call_failure(db, int(state.turn))
     assert failure["error_pack_path"] == blocked.value.error_pack_path
     assert failure["kind"] == (
@@ -714,6 +707,9 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
 
     with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    import web_app
+    detail = web_app._exception_detail(blocked.value)
+    assert detail["error_type"] == "LLMUnavailable"
     assert isinstance(blocked.value.__cause__, LLMUnavailable)
     assert blocked.value.error_pack_path
     assert db.staged_declarations.questions_for(ref)
@@ -751,6 +747,9 @@ def test_missing_model_keeps_world_question_until_retry(game, monkeypatch):
 
     with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    import web_app
+    detail = web_app._exception_detail(blocked.value)
+    assert detail["error_type"] == "LLMUnavailable"
     assert isinstance(blocked.value.__cause__, LLMUnavailable)
     assert blocked.value.error_pack_path
     chain = _month_chain_of(db, closed_turn)

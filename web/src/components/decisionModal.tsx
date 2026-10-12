@@ -30,9 +30,10 @@ export function DecisionModal({
   const [currentKey, setCurrentKey] = React.useState(() => decisions[0] ? keyOf(decisions[0], 0) : "");
   const [picks, setPicks] = React.useState<Record<string, { choice: DecisionChoice; sending?: boolean }>>({});
   const foundIdx = decisions.findIndex((d, i) => keyOf(d, i) === currentKey);
-  // When the current row leaves the desk, skip still-sending rows so other
-  // pending items (including new follow-ups) stay actionable (#1847 F2).
-  const cursor = foundIdx >= 0
+  // Skip any sending row — whether it left the desk or is still present — so
+  // other pending items (including new follow-ups) stay actionable (#1847 K4/F2).
+  const currentSending = foundIdx >= 0 && !!picks[keyOf(decisions[foundIdx], foundIdx)]?.sending;
+  const cursor = foundIdx >= 0 && !currentSending
     ? foundIdx
     : Math.max(0, decisions.findIndex((d, i) => !picks[keyOf(d, i)]?.sending));
   const pageRef = React.useRef<HTMLElement>(null);
