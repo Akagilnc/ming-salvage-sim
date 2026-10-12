@@ -19,7 +19,7 @@ from ming_sim.applier import (
 )
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.constants import (
-    TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
+    REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, BUILDING_SCORE_FIELDS,
     BUILDING_QUANTITY_FIELDS, POWER_SCORE_FIELDS, POWER_TEXT_FIELDS,
     CHARACTER_TEXT_FIELDS, GATE_TABLES,
@@ -37,8 +37,6 @@ from ming_sim.participant_roster import project_execution_liability_parties
 
 from ming_sim.settlement.preflight import _validate_strategic_foreign_node_outcome_targets
 
-import ming_sim.entities.issue.commitment_display as commitment_display
-import ming_sim.entities.issue.effects as issue_effects
 import ming_sim.entities.issue.records as issue_records
 
 _content: Optional[GameContent] = None
@@ -923,51 +921,6 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
         collector.flush_to_db(db)
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return triggered
-
-
-def _bar_ascii(value: int, width: int = 20) -> str:
-    value = max(0, min(100, int(value)))
-    pos = int(round(value / 100 * (width - 1)))
-    return "●" + ("━" * pos) + "○" + ("━" * (width - 1 - pos))
-
-
-def _format_inertia(inertia: int) -> str:
-    if inertia > 0:
-        return f"自然推进 +{inertia}/{TURN_UNIT}"
-    if inertia < 0:
-        return f"自然恶化 {inertia}/{TURN_UNIT}"
-    return "势均力敌"
-
-
-def show_active_issues(db: GameDB) -> None:
-    issues = db.issues.active_rows()
-    if not issues:
-        return
-    state = db.load_state()
-    initiatives = [i for i in issues if i["kind"] == "initiative"]
-    situations = [i for i in issues if i["kind"] == "situation"][:12]
-    print(f"─── 待办事项 (系统 {len(situations)}/12  玩家 {len(initiatives)}) ───")
-
-    def _print_row(row, label: str) -> None:
-        bar = _bar_ascii(int(row["bar_value"]))
-        print(f"{label} #{row['id']} {row['title']}")
-        print(f"  {row['bar_bad_meaning']:6s} {bar} {row['bar_good_meaning']:6s}  bar={int(row['bar_value']):3d}  {row['stage_text']}")
-        inertia = int(row["inertia"])
-        ongoing_txt = issue_effects.format_issue_ongoing(row["ongoing_effects"] or "{}")
-        line_parts = [_format_inertia(inertia)]
-        progress = commitment_display.commitment_progress_payload(db, state, row)
-        if progress is not None:
-            line_parts.append(commitment_display.commitment_display_text(progress, row))
-        if ongoing_txt:
-            line_parts.append(f"每{TURN_UNIT}固定：{ongoing_txt}")
-        print(f"  {' | '.join(line_parts)}")
-
-    for row in situations:
-        cancel_tag = "不可撤" if row["cancellable"] == "never" else ("唯由进度" if row["cancellable"] == "by_progress" else "可撤旨")
-        _print_row(row, f"[系统/{cancel_tag}]")
-    for row in initiatives:
-        _print_row(row, "[玩家/可撤旨]")
-    print()
 
 
 # 离散时长档：LLM 只能给这几档（防乱填）；映射到月。

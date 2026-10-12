@@ -25,7 +25,6 @@ from tests.conftest import stub_audience_translate
 7. 删除面：无 _healed_drain_retry / 玩家补写 CTA / 旧 drain 机构
 8. fold-in r5：drain/catch_up 不推玩家可见补写 stage；签名无 on_event
 9. 队列屏障：尾随票据未清时 barrier/close 等待；清后一次过
-10. 闭环钉改走 play_turn 真 CLI 面——pending→一次 skip→turn+1 / 耗尽留回合
 11. 撤回钉：cancel_key 空放行（见 test_session_write_queue_1353）
 """
 
