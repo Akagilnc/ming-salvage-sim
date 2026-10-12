@@ -45,12 +45,19 @@ LEVY_HANDOFF_RULE = (
 
 
 def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: Any):
+    """Resolve the forecast owner already bound to this db.
+
+    Production GameSession binds itself before month-chain entry. Tests must
+    bind (via make_light_session / bind_forecast_owner) first — unbound
+    callers must not each install a fresh write queue.
+    """
     from ming_sim.decree_forecast import _owner_for
 
     owner = _owner_for(db)
     if owner is None or getattr(owner, "db", None) is not db:
-        return SimpleNamespace(
-            db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
+        raise RuntimeError(
+            "month_chain requires bind_forecast_owner on this db "
+            "before ensure/schedule mechanical tails"
         )
     owner.state = state
     if llm_config is not None:

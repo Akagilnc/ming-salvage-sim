@@ -22,9 +22,13 @@ class InlineExecutor:
 
 
 def make_light_session(db, state, content):
-    """Minimal GameSession shell for advance_without_decree tracers."""
-    from ming_sim.decree_forecast import bind_forecast_owner
-    from ming_sim.session_write_queue import get_session_write_queue
+    """Minimal GameSession shell for advance_without_decree tracers.
+
+    Same db → one write queue (production invariant). Later light shells
+    reuse the bound owner's queue instead of installing a fresh ledger.
+    """
+    from ming_sim.decree_forecast import bind_forecast_owner, _owner_for
+    from ming_sim.session_write_queue import SessionWriteQueue, get_session_write_queue
 
     session = GameSession.__new__(GameSession)
     session.db = db
@@ -35,8 +39,20 @@ def make_light_session(db, state, content):
     session.deaths_this_turn = []
     session.debuts_this_turn = []
     session.last_decree = ""
-    session._write_gate = get_session_write_queue(session).write_gate
     session.auto_save = lambda *a, **k: None
+
+    existing = _owner_for(db)
+    shared = getattr(existing, "_write_queue", None) if existing is not None else None
+    if (
+        existing is not None
+        and getattr(existing, "db", None) is db
+        and isinstance(shared, SessionWriteQueue)
+    ):
+        session._write_queue = shared
+        session._write_gate = shared.write_gate
+    else:
+        session._write_gate = get_session_write_queue(session).write_gate
+
     bind_forecast_owner(session)
     from tests.conftest import note_queue_until_game_teardown
 

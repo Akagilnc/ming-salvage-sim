@@ -3,6 +3,7 @@ from ming_sim.entities.character.appointment import apply_office_appointment
 from ming_sim.applier import Provenance, RejectedItem
 import pytest
 from ming_sim.opening_seed import seed_opening_world
+from tests.conftest import wait_for_background_jobs
 """#9：派系势力(faction leverage) 随「在朝成员官职权重」全重算联动。
 
 修前 set_character_status 不动 leverage、character_status_changes 与派系势力无联动，
@@ -552,8 +553,10 @@ def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
         }},
     )
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", public_body="邸报")
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     # 结算后 turn 已推进（证明 settle-tail reconcile 在 next_period 之前已跑过整条路）。
     assert state.turn == before_turn + 1, "结算后回合应已推进（整条结算路跑完）"

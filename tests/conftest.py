@@ -131,25 +131,6 @@ def note_queue_until_game_teardown(db, queue) -> None:
     own_session_until_game_teardown(db, SimpleNamespace(_write_queue=queue))
 
 
-def _install_tail_owner_note(mp: pytest.MonkeyPatch) -> None:
-    """机械尾的 owner 可能是未 bind 的临时对象，轻壳登记覆盖不到。
-
-    在既有 ``_submit_tail`` 入口把该写队列送进排空名单。不改生产调度。
-    """
-    import ming_sim.mechanical_tail as tail_mod
-    from ming_sim.session_write_queue import get_session_write_queue
-
-    real_submit = tail_mod._submit_tail
-
-    def _submit_and_note(session, **kwargs):
-        note_queue_until_game_teardown(
-            session.db, get_session_write_queue(session),
-        )
-        return real_submit(session, **kwargs)
-
-    mp.setattr(tail_mod, "_submit_tail", _submit_and_note)
-
-
 def _drain_registered_sessions_before_close(db) -> None:
     """排空已登记队列上未完成的写票，再由夹具自己关库。
 
@@ -263,21 +244,15 @@ def game(content, _game_template_path, monkeypatch, tmp_path):
     workdir.mkdir(parents=True, exist_ok=True)
     path = str(workdir / "game.db")
     db = None
-    # 独立 MonkeyPatch：测试内 monkeypatch.undo() 不撤掉尾票登记。
-    tail_note = pytest.MonkeyPatch()
     try:
         shutil.copyfile(_game_template_path, path)
         db = GameDB(path, content)
         state = db.load_state()
-        _install_tail_owner_note(tail_note)
         yield db, state, content
     finally:
-        try:
-            if db is not None:
-                _drain_registered_sessions_before_close(db)
-                db.conn.close()
-        finally:
-            tail_note.undo()
+        if db is not None:
+            _drain_registered_sessions_before_close(db)
+            db.conn.close()
 
 
 @pytest.fixture

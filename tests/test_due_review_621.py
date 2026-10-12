@@ -88,8 +88,10 @@ def _settle_empty_month(db, state, content, monkeypatch):
     before = state.turn
     session = _prepare_player_month(db, state, content, monkeypatch)
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", public_body="邸报")
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert state.turn == before + 1
     return result
 

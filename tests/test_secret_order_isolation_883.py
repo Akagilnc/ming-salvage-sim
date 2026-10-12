@@ -71,6 +71,7 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game, monkeypatc
     player = _prepare_player_month(db, state, content, monkeypatch)
     player.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
     player.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     brief = db.conn.execute(
         "SELECT body, minister_name FROM secret_order_briefs WHERE order_id=?", (oid,)

@@ -12,6 +12,7 @@ from ming_sim.constants import (
 )
 from ming_sim.db import GameDB
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
+from tests.conftest import wait_for_background_jobs
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.settlement.views import section
@@ -204,6 +205,7 @@ def _advance_canned_month(db, state, content, monkeypatch):
     canned_full_settlement(monkeypatch)
     session = make_light_session(db, state, content)
     waiting = session.advance_without_decree()
+    wait_for_background_jobs(db)
     assert waiting.stage == "gazette"
     turn = state.turn
     db.conn.execute(
@@ -212,6 +214,7 @@ def _advance_canned_month(db, state, content, monkeypatch):
     )
     db.conn.commit()
     assert session.advance_without_decree().advanced is True
+    wait_for_background_jobs(db)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -369,6 +372,7 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
     canned_full_settlement(monkeypatch)
     session = make_light_session(db, state, content)
     waiting = session.advance_without_decree()
+    wait_for_background_jobs(db)
     assert waiting.stage == "gazette"
     assert _pop(db, "流民", "shaanxi") == 100000
     closed_turn = state.turn
@@ -388,6 +392,7 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
     assert _pop(db, "流民", "shaanxi") == 100000
     monkeypatch.setattr(state, "next_period", original_next_period)
     assert session.advance_without_decree().advanced is True
+    wait_for_background_jobs(db)
     assert _pop(db, "流民", "shaanxi") == 0
     assert _pop(db, "农民", "shaanxi") == before_farmers + 100000
     from ming_sim.db import GameDB
@@ -410,6 +415,7 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
     before = _pop(db, "流民", "shaanxi")
     for _ in range(2):
         waiting = session.advance_without_decree()
+        wait_for_background_jobs(db)
         assert waiting.stage == "gazette"
         turn = state.turn
         paid = db.conn.execute(
@@ -424,6 +430,7 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
         )
         db.conn.commit()
         assert session.advance_without_decree().advanced is True
+        wait_for_background_jobs(db)
         after = _pop(db, "流民", "shaanxi")
         assert before - after == paid * RECOVERY_PERSONS_PER_WAN
         before = after
@@ -450,6 +457,7 @@ def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
     )
 
     result = make_light_session(db, state, content).advance_without_decree()
+    wait_for_background_jobs(db)
     assert result is not None and result.awaiting is False
     assert result.advanced is False
     assert db.dossiers.get(dossier_id)["status"] == "executing"
