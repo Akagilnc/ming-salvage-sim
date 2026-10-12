@@ -2,7 +2,7 @@ import React from "react";
 import { Check, Loader2, LogOut, Power, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import { api } from "../api";
 import { cliRunnerOptions } from "../cliRunners";
-import { resolveReasoningSupported } from "../reasoningSupport";
+import { canConfigureReasoning } from "../reasoningSupport";
 import type { LLMConfigInfo, SaveEntry } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { slotNumber } from "../slotNumber";
@@ -399,7 +399,7 @@ export function LLMConfigTab() {
         normalizedAdvancedBaseUrl === (info?.advanced_base_url || "").trim() &&
         normalizedAdvancedModel === (info?.advanced_model || "").trim()
   );
-  const reasoningSupported = resolveReasoningSupported({
+  const reasoningEditable = canConfigureReasoning({
     backendSupported: info?.reasoning_supported,
     backendCurrent: backendReasoningSupportCurrent,
     currentChannel: channel,
@@ -549,14 +549,14 @@ export function LLMConfigTab() {
               className="menu-input"
               name="reasoning_strength"
               value={reasoningStrength}
-              disabled={!reasoningSupported}
+              disabled={!reasoningEditable}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
               {visibleReasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
-            {!reasoningSupported ? (
+            {!reasoningEditable ? (
               <small className="menu-hint">该后端不支持推理强度设置。</small>
             ) : null}
           </label>
@@ -617,14 +617,14 @@ export function LLMConfigTab() {
               className="menu-input"
               name="reasoning_strength"
               value={reasoningStrength}
-              disabled={!reasoningSupported}
+              disabled={!reasoningEditable}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
               {visibleReasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
-            {!reasoningSupported ? (
+            {!reasoningEditable ? (
               <small className="menu-hint">该后端不支持推理强度设置。</small>
             ) : null}
           </label>

@@ -1,6 +1,6 @@
 type LlmChannel = "api" | "cli";
 
-export function resolveReasoningSupported({
+export function canConfigureReasoning({
   backendSupported,
   backendCurrent,
   currentChannel,
@@ -16,5 +16,7 @@ export function resolveReasoningSupported({
   if (backendCurrent && typeof backendSupported === "boolean") {
     return backendSupported;
   }
-  return currentChannel === "cli" && (cliReasoningRunners ?? []).includes(cliRunner);
+  // An edited API draft has no backend verdict yet; keep the setting editable.
+  // Model/provider capability rules remain exclusively on the backend.
+  return currentChannel === "api" || (cliReasoningRunners ?? []).includes(cliRunner);
 }
