@@ -10,7 +10,7 @@ from ming_sim.decree import atomic_and_reload
 def choice_decision(choice: Mapping[str, Any] | None) -> str:
     """Single decision value for triad and imperial-push answers."""
     choice = choice or {}
-    return str(choice.get("dossier_decision") or choice.get("action") or "").strip()
+    return choice.get("dossier_decision") or choice.get("action") or ""
 
 
 def canonical_choice(raw: object) -> dict:
