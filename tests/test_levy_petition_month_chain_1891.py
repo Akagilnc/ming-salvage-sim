@@ -17,6 +17,7 @@ from ming_sim.issues import FISCAL_LEVY_RESCRIPT_SOURCE
 from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
 from ming_sim.models import LLMConfig
 from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import _drain_registered_sessions_before_close
 from tests.month_chain_helpers import make_light_session
 
@@ -285,6 +286,8 @@ def test_approved_rate_updates_next_month_settle_levy_and_transport(game, monkey
         assert remittance(closed_turn) == paid
         assert sum(value[0] for value in remittance(int(state.turn) - 1)) > 0
         # 同标签及相反标签重交都不是新决定；下月不得重放复征。
+        # advanced 后机械尾可能仍占共享连接：先等会话写队列清空再直接写库（#1891 F1）。
+        assert get_session_write_queue(session).wait_idle()
         if target:
             abolish()
         for label in ("已准", "已驳"):
@@ -619,6 +622,8 @@ def test_declined_presentation_keeps_following_world_facts(game, monkeypatch):
     )
     assert _ledger_field(db, "terminal_state") == ""
 
+    # submit_hitl_choices 推进后机械尾可能仍占共享连接：先等写队列清空再布置（#1891 F1）。
+    assert get_session_write_queue(session).wait_idle()
     affair = db.affairs.open(
         name="户部发赈", origin="世界段", year=state.year, period=state.period,
         turn=state.turn,
