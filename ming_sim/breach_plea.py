@@ -23,7 +23,6 @@ from ming_sim.models import (
     require_persistent_string_list,
 )
 from ming_sim.participant_roster import decode_durable_participant_roster
-from ming_sim.models import loads_effect_dict
 from ming_sim.staged_commitment import (
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,

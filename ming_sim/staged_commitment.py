@@ -21,7 +21,6 @@ from ming_sim.applier import (
     StoredDocumentError,
     load_stored_list,
 )
-from ming_sim.strict_types import strict_int
 
 ENTRY_KIND_STAGED = "staged_commitment"
 # #624 / ADR 0078：反催谏 / 求宽限（0075 同款 next_audience_todos 通道；不进 due-review 白名单）

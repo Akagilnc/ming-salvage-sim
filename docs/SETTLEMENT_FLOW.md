@@ -7,7 +7,7 @@ Web 颁诏与退朝共用 `GameSession.resolve_turn → decree.resolve_directive
 3. 拟批红奏疏并汇入同一案头；有未答请旨或打回项则停在批红，不推进月份。同旨／同世界段的答复齐后续推问后部分，已落的问前效果不重落；新请旨仍回同一案头。全部批红和效果落定后，整月密报供料依次办理密奏、披露、执行态和到期结案，再做月末漂移及持久态揭破待办扫描，包括无效果月。
 4. 邸报作者一次产标题与正文并归档，随后才判结局、推进月份。同一推进事务标记 closed turn 的机械尾待办；关系／派系酿制和结局总评经 `SessionWriteQueue` 后台执行，未完态持久化，重开续接、下次过月前等待。无旨月走相同主链。史册诏书读 resolve context。
 
-每段的提交与续跑状态由 `month_chain.py` 管理；事务、拒收见 `ming_sim/applier.py`，错误包见 `ming_sim/error_pack.py`，效果字段见 [DELTA_SCHEMA.md](DELTA_SCHEMA.md)。逐旨预推、世界段及邸报作者按各自可见范围读取 `materials.py` 的目录，API 工具和宿主 CLI 工作目录读同一棵材料树，游戏终端入口不参与月链。
+每段的提交与续跑状态由 `month_chain.py` 管理；事务、拒收见 `ming_sim/applier.py`，错误包见 `ming_sim/error_pack.py`，效果字段见 [DELTA_SCHEMA.md](DELTA_SCHEMA.md)。逐旨预推、世界段及邸报作者按各自可见范围读取 `materials.py` 的目录，API 工具和宿主 CLI 工作目录读同一棵材料树。
 
 请旨机标用于逐旨及世界段的暂停与结构化交接，不从邸报正文抽决策块。核账递话与入口关闭理由（含待批期）是界面固定提示，不是人物对话。
 
