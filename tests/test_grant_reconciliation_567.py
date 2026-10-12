@@ -5,6 +5,7 @@ from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.db import GameDB
 from ming_sim.models import TurnPhase
+from tests.conftest import wait_for_background_jobs
 from tests.dossier_test_helpers import create_test_secret_order
 from tests.readback_helpers import active_character_name as _actor
 """#567 S12 按月对账与押解折损（#461 兑现；#1900 退役提案/clamp 口）。
@@ -204,6 +205,7 @@ def test_full_chain_player_state_no_fake_awaiting(web_game, monkeypatch):
     canned_full_settlement(monkeypatch)
     result = web_game.session.advance_without_decree()
     assert result.advanced is True
+    wait_for_background_jobs(db)
     assert result.awaiting is False
     assert not (result.decisions or [])
     assert int(state.turn) == turn0 + 1

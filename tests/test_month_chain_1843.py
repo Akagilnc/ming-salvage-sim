@@ -279,6 +279,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     advanced = session.resolve_turn(allow_empty_decree=True)
     assert advanced.advanced is True
     assert int(state.turn) == closed_turn + 1
+    wait_for_background_jobs(db)
     from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
     assert _pop(db, "流民", "shaanxi") == pool_before - 10 * RECOVERY_PERSONS_PER_WAN
     assert _pop(db, "农民", "shaanxi") == farmers_before + 10 * RECOVERY_PERSONS_PER_WAN
@@ -732,6 +733,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.advanced is True
+    wait_for_background_jobs(db)
     assert db.turn_reports.report_text(closed_turn) == "本月已归档。"
     assert db.character_knowledge.get_secret_order(order_id)["status"] == "done"
     assert db.conn.execute(

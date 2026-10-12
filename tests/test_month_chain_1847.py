@@ -1103,6 +1103,7 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
     again = session.resolve_turn(allow_empty_decree=True)
 
     assert again.advanced is True
+    wait_for_background_jobs(db)
     assert state.ended is True
     assert state.ending_status == "emperor_abdicate"
     assert _month_chain_of(db, closed_turn)["declaration_outcome"]["status"] == "emperor_abdicate"
