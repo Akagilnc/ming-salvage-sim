@@ -10,7 +10,8 @@ from ming_sim.applier import parse_engine_payload_json
 
 import json
 import re
-from typing import Dict, List, Optional
+from contextvars import ContextVar
+from typing import Dict, List, Mapping, Optional
 
 from ming_sim.applier import (
     RejectionCollector,
@@ -38,6 +39,11 @@ from ming_sim.settlement.preflight import _validate_strategic_foreign_node_outco
 import ming_sim.entities.issue.records as issue_records
 
 _content: Optional[GameContent] = None
+
+# Only the currently translated segment lends its handed-off answers to preflight.
+_segment_levy_verdicts: ContextVar[tuple[Mapping[str, object], ...]] = ContextVar(
+    "segment_levy_verdicts", default=(),
+)
 
 
 # 给建筑/地区落库做 event 关联用的占位事件（issue 结案触发的副作用无真实 event）。
@@ -165,7 +171,7 @@ def _fiscal_levy_petitions_awaiting_verdict(db: GameDB) -> set[str]:
 def _fiscal_levy_answered_petitions(db: GameDB) -> Dict[str, Dict[str, object]]:
     """已呈未裁的旧疏与批语；只供世界材料，不授予当次裁断资格。
 
-    与材料目录共读 record_event_petition_answer 的持久记录；本回合授权另读已答行。
+    与材料目录共读 record_event_petition_answer 的持久记录；裁断资格只认本段交接答复。
     """
     metadata = {"event_id", "turn", "year", "period", "terminal_state", "terminal_reason", "petition"}
     return {
@@ -461,10 +467,10 @@ def gather_fiscal_levy_petitions(state: GameState, db: GameDB) -> List[Event]:
 def petition_outcome_is_admissible(
     state: GameState, db: GameDB, event_id: str, content: Optional[GameContent],
 ) -> bool:
-    """该事件是否可由本回合的亲裁答复置定结局（#1892 亲裁语义落账）。
+    """该事件是否可由本段交接的亲裁答复置定结局（#1892 亲裁语义落账）。
 
-    资格只认本回合绑定原事件的已答请饷行，且终态仍空。
-    历史留中答复是世界材料，不是当次亲裁授权。
+    资格、名单、供料共用本段 answered_verdicts，且终态仍空。
+    拟批与亲笔均原样交转译；是否留中由转译判定，不从 label 形态判语义。
     """
     eid = str(event_id or "").strip()
     if not eid:
@@ -475,7 +481,7 @@ def petition_outcome_is_admissible(
         return False
     if db.issues.event_terminal_state(eid):
         return False
-    return eid in _fiscal_levy_answered_event_ids(db, int(state.turn))
+    return any(row["event_id"] == eid for row in _segment_levy_verdicts.get())
 
 
 def _closed_outcome_labels(content: Optional[GameContent], event_id: str) -> frozenset[str]:
@@ -969,8 +975,8 @@ def _is_fiscal_levy_petition_event(ev: Event) -> bool:
     """#1891：交 #1847 请旨、结局由御批经转译置定的三饷请饷／议停事件。
 
     与战略事件同一结局声明通道（事件结局 + 事件账唯一写口），只是资格门不同：
-    战略事件走 event_pool 候选与 trigger_gate；请饷／议停走本月交接的 petition-due
-    名单，且此刻必须「已呈待裁或已答未裁」——没呈过的没有御批可译。
+    战略事件走 event_pool 候选与 trigger_gate；请饷／议停只认本段交接的已答
+    名单，且此刻终态仍空——没交接的没有本段御批可译。
     """
     return (
         _is_fiscal_levy_event(ev)
@@ -978,10 +984,10 @@ def _is_fiscal_levy_petition_event(ev: Event) -> bool:
     )
 
 def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]:
-    """本段已答的请饷／议停行：真实事件 id 与已落原批语。资格的唯一读口。
+    """本回合已答请饷／议停行：真实事件 id 与原批语，供本段 answers 按身份取用。
 
-    资格＝该回合批红页上已答（decided，含留中）且带请饷前缀的行。呈过而未答、
-    或上一段的旧留中行，不在此列。前缀真源 = month_chain；此处局部导入以免成环。
+    decided 含拟批与亲笔，也含留中；不据批语语义或形态筛行。
+    前缀真源 = month_chain；此处局部导入以免成环。
     """
     from ming_sim.month_chain import _LEVY_PETITION_PREFIX
 
@@ -1002,10 +1008,3 @@ def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]
             "rescript": choice,
         })
     return rows
-
-def _fiscal_levy_answered_event_ids(db: GameDB, turn: int) -> set[str]:
-    """本段已答复的请饷／议停事件真实 id——结局声明的唯一资格门。
-
-    行来自 ``_fiscal_levy_answered_rows``。转译供料名单由同一行派生。
-    """
-    return {str(row["event_id"]) for row in _fiscal_levy_answered_rows(db, turn)}
