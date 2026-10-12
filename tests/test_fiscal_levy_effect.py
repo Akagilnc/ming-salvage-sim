@@ -1098,6 +1098,7 @@ def _present_liao_petition(db, state):
     state.period = 1
     db.reign.save_game_state(state)
     from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+    from ming_sim.month_translate import _answered_levy_verdicts
 
     db.issues.save_pending_decisions(int(state.turn), [{
         "event_id": _LEVY_PETITION_PREFIX + "liao_levy_rise_1631",
@@ -1111,6 +1112,9 @@ def _present_liao_petition(db, state):
         state, "liao_levy_rise_1631", {"label": "驳"},
         {"title": "辽饷", "context": "请旨", "options": ["已准", "已驳"]},
     )
+    return _answered_levy_verdicts(
+        db, int(state.turn), answers=[{"event_id": "liao_levy_rise_1631"}],
+    )
 
 
 def _liao_terminal(db):
@@ -1123,12 +1127,12 @@ def _liao_terminal(db):
 
 @pytest.mark.parametrize('later_outcome', ["已准", "乱写"])
 def test_same_batch_keeps_the_first_event_outcome(game, later_outcome):
-    from ming_sim.declaration_dispatch import dispatch_declaration
+    from ming_sim.month_translate import dispatch_month_segment
 
     db, state, content = game
     issues.bind_content(content)
-    _present_liao_petition(db, state)
-    result = dispatch_declaration(db, state, {"effects": [
+    verdicts = _present_liao_petition(db, state)
+    declaration = {"effects": [
         {
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "已驳"},
@@ -1137,7 +1141,11 @@ def test_same_batch_keeps_the_first_event_outcome(game, later_outcome):
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": later_outcome},
         },
-    ]})
+    ]}
+    result = dispatch_month_segment(
+        db, state, segment=_CONTINUATION_SEGMENT,
+        translate_fn=lambda request, config: declaration, answered_verdicts=verdicts,
+    )
     assert result.effects.rejected == []
     assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
 
@@ -1152,21 +1160,25 @@ def _outcome_rejection_rows(db):
 
 def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
     """归属非法的结局不写入、留下结构化拒收；合法兄弟效果与首次裁定仍在。"""
-    from ming_sim.declaration_dispatch import dispatch_declaration
+    from ming_sim.month_translate import dispatch_month_segment
 
     db, state, content = game
     issues.bind_content(content)
-    _present_liao_petition(db, state)
+    verdicts = _present_liao_petition(db, state)
     db.record_event_petition_answer(
         state, "jiao_levy_start_1637", {},
         {"title": "剿饷", "context": "请旨", "options": ["已准", "已驳"]},
     )
     before = int(state.metrics["民心"])
-    cross = dispatch_declaration(db, state, {"effects": [{
+    cross_declaration = {"effects": [{
         "event_id": "jiao_levy_start_1637",
         "事件结局": {"liao_levy_rise_1631": "已准"},
         "metric_delta": {"民心": 1},
-    }, {"metric_delta": {"民心": 1}}]})
+    }, {"metric_delta": {"民心": 1}}]}
+    cross = dispatch_month_segment(
+        db, state, segment=_CONTINUATION_SEGMENT,
+        translate_fn=lambda request, config: cross_declaration, answered_verdicts=verdicts,
+    )
     assert len(cross.effects.rejected) == 1
     assert cross.effects.rejected[0].category == "event_rejected"
     assert cross.effects.rejected[0].item["事件结局"] == {"liao_levy_rise_1631": "已准"}
@@ -1177,7 +1189,7 @@ def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
         for row in _outcome_rejection_rows(db)
     )
 
-    result = dispatch_declaration(db, state, {"effects": [
+    declaration = {"effects": [
         {
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "已驳"},
@@ -1187,7 +1199,11 @@ def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
             "metric_delta": {"民心": 1},
         },
         {"metric_delta": {"民心": 1}},
-    ]})
+    ]}
+    result = dispatch_month_segment(
+        db, state, segment=_CONTINUATION_SEGMENT,
+        translate_fn=lambda request, config: declaration, answered_verdicts=verdicts,
+    )
     assert len(result.effects.rejected) == 1
     assert result.effects.rejected[0].category == "event_rejected"
     assert not result.effects.rejected[0].item.get("event_id")
