@@ -9,7 +9,6 @@ from ming_sim.declaration_dispatch import pending_action_decree_ref
 from tests.month_chain_helpers import make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.month_chain_helpers import InlineExecutor, make_light_session
 """#1843：玩家过月入口走 ADR 0157 主链，不再走五模块 extractor。"""
 
 

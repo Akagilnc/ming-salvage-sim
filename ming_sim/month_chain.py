@@ -842,7 +842,7 @@ def _consume_call_failure_for_retry(
 
 def _settlement_abort_already_accounted(exc: SettlementAbort) -> bool:
     """Single authority: accounted SettlementAbort must not be re-tagged or re-packed."""
-    return exc.accounted
+    return bool(exc.accounted or exc.error_pack_path)
 
 
 def _abort_month_call(

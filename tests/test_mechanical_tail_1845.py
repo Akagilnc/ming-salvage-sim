@@ -1,12 +1,11 @@
 from __future__ import annotations
-import threading
 from concurrent.futures import Future
 import pytest
 from tests.test_month_chain_1843 import _forbid_extractor
 import ming_sim.month_chain as month_chain
 from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.month_chain_helpers import make_light_session
+from tests.month_chain_helpers import InlineExecutor, make_light_session
 from tests.test_faction_brew_637 import _dual_brew_fn_factory
 import ming_sim.mechanical_tail as tail_mod
 """#1845：机械尾后台化、章节记忆退役、历月邸报索引。
@@ -251,15 +250,6 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
     queue = get_session_write_queue(session)
     order = []
 
-    class InlineExecutor:
-        def submit(self, fn):
-            future = Future()
-            try:
-                future.set_result(fn())
-            except Exception as exc:
-                future.set_exception(exc)
-            return future
-
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
     monkeypatch.setattr(tail_mod, "_brew_fn_for_session", lambda _session: _dual_brew_fn_factory([]))
     original_barrier = queue.barrier
@@ -286,15 +276,6 @@ def test_non_exhausted_tail_failure_blocks_next_month_until_retry(game, monkeypa
     session.agno_db = object()
     calls = []
     original_brew = tail_mod._run_relation_brew
-
-    class InlineExecutor:
-        def submit(self, fn):
-            future = Future()
-            try:
-                future.set_result(fn())
-            except Exception as exc:
-                future.set_exception(exc)
-            return future
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
 

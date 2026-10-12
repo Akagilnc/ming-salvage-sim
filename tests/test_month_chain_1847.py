@@ -15,9 +15,6 @@ from ming_sim.supervision import (
     origin_has_mark,
 )
 from tests.dossier_test_helpers import audit_policy_dossier, create_test_secret_order
-from ming_sim.exceptions import LLMUnavailable
-from ming_sim.models import TurnPhase
-from tests.dossier_test_helpers import create_test_secret_order
 """#1847：请旨停在问处 → 批红案头统一收口 → 答复后续推。
 
 沿既有 HITL / pending_decisions / month_chain 接缝，不另造平行机制。
@@ -57,7 +54,6 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
     """Presentation → speculative calls → selection/retry → reopened DB, no unselected effects."""
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
-    from tests.month_chain_helpers import InlineExecutor
     from ming_sim.error_pack import error_packs_root
     from ming_sim.db import GameDB
 
@@ -124,8 +120,9 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
             "delta": outcome["delta"], "category": "候选办理", "reason": "实办"}]}}
 
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
-    pool = ThreadPoolExecutor(max_workers=2)
-    monkeypatch.setattr("ming_sim.rescript_forecast._executor", pool if mode == "running" else InlineExecutor())
+    pool = ThreadPoolExecutor(max_workers=2) if mode == "running" else None
+    if mode == "running":
+        monkeypatch.setattr("ming_sim.rescript_forecast._executor", pool)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     try:
@@ -180,14 +177,14 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
                 assert "injected live failure" in errors
     finally:
         release.set()
-        pool.shutdown(wait=True)
+        if pool is not None:
+            pool.shutdown(wait=True)
 
 
 @pytest.mark.parametrize("kind", ["world", "decree"])
 @pytest.mark.parametrize("handwritten_batch", [False, True])
 def test_multiple_questions_continue_independently_through_recovery(game, monkeypatch, kind, handwritten_batch):
     """Raw one-row inputs, sibling success after failure, durable follow-up/recovery."""
-    from tests.month_chain_helpers import InlineExecutor
     from ming_sim.db import GameDB
 
     _forbid_extractor(monkeypatch)
@@ -230,7 +227,6 @@ def test_multiple_questions_continue_independently_through_recovery(game, monkey
     monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
     monkeypatch.setattr("ming_sim.agents.run_agent_text", model)
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
-    monkeypatch.setattr("ming_sim.rescript_forecast._executor", InlineExecutor())
     session = make_light_session(db, state, content)
     session.llm_config = object()
     def ledger():
