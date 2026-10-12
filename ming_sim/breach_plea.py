@@ -82,15 +82,6 @@ def parse_dossier_id(origin_ref: object) -> Optional[int]:
     return int(match.group(1))
 
 
-def parse_issue_id(origin_ref: object) -> Optional[int]:
-    """issue:<id> — single strict regex copy; credit/due reuse this function."""
-    text = str(origin_ref or "").strip()
-    match = _ISSUE_REF_RE.match(text)
-    if not match:
-        return None
-    return int(match.group(1))
-
-
 def encode_plea_meta(meta: Dict[str, object]) -> str:
     """origin_context 承载机读元数据。"""
     payload = dict(meta or {})

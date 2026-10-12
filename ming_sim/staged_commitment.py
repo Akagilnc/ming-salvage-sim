@@ -191,13 +191,6 @@ def stages_list_from_source(stages: object) -> List[Dict[str, object]]:
     return json.loads(stages_to_json(stages))
 
 
-def capture_commitment_stages(
-    raw: object = None,
-) -> List[Dict[str, object]]:
-    """Only declared schema creates commitment facts; narrative is not input."""
-    return load_commitment_stages(stages_to_json(raw))
-
-
 def stages_source_from_issue_item(ni: Dict[str, object]) -> object:
     """Single stages key fallback for new_issues items (stages | stages_json).
 
