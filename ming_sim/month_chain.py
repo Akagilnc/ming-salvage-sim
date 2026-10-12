@@ -586,7 +586,7 @@ def _continue_decree_after_answers(
     if not prefix.strip():
         with atomic(db):
             consume()
-            finish_rejection_correction(db, state, decree_ref, rejected=False)
+            finish_rejection_correction(db, state, decree_ref)
         return
     dispatch_month_segment(
         db, state, segment=prefix,
@@ -963,15 +963,17 @@ def _settle_edicts(
         status = str(dossier.get("status") or "")
         held = _is_held_for_rejudgment(dossier, int(state.turn))
         ref = decree_ref_for_dossier(db, dossier)
-        promulgated = str(dossier.get("promulgation_decision") or "") in {
-            "promulgated", "force_promulgated",
-        } or status == "promulgated"
+        promulgated = db.dossiers.authorizes_effects(int(dossier["id"]))
         pending_judgment = status == "proposed" and (not dossier.get("promulgation_decision") or held)
         pending_settle = (
             promulgated and not db.staged_declarations.is_settled(ref)
             and bool(db.staged_declarations.staged_for(ref))
         )
         if not pending_judgment and not pending_settle:
+            if (dossier.get("payload") or {}).get("_resolves_rejection_ids"):
+                from ming_sim.declaration_dispatch import finish_rejection_correction
+                with atomic(db):
+                    finish_rejection_correction(db, state, ref)
             continue
         if (
             status == "proposed"
@@ -1016,7 +1018,7 @@ def _settle_edicts(
                     finally:
                         db.conn._recommendation_snapshots_prevalidated = previous
         current = db.dossiers.get(int(dossier["id"])) or dossier
-        if str(current.get("promulgation_decision") or "") == "promulgated":
+        if db.dossiers.authorizes_effects(int(current["id"])):
             def persist_result(_decree_ref: str, result: Any) -> None:
                 # 披露暂缓与旨意落账同事务：alongside 在 settle 的 atomic 内，
                 # 须把 pending_disclosures 一并写入月链。
@@ -1875,9 +1877,17 @@ def _apply_decided_triad(
     ).strip()
     if decision not in {"force_promulgated", "withdrawn", "hold"}:
         return
-    apply_dossier_promulgation(db,
-        state, dossier_id, decision, content=content,
-    )
+    from ming_sim.declaration_dispatch import finish_rejection_correction
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+
+    with atomic(db):
+        apply_dossier_promulgation(db,
+            state, dossier_id, decision, content=content,
+        )
+        # An unconsumed forecast may still declare which parts correct each rejection.
+        ref = decree_ref_for_dossier(db, dossier)
+        if db.staged_declarations.is_settled(ref) or not db.staged_declarations.staged_for(ref):
+            finish_rejection_correction(db, state, ref)
 
 
 def _run_world_continuation_text(

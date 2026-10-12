@@ -321,6 +321,7 @@ def build_c0_declaration_shape() -> str:
         '"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
         '  "travel_tones": [{"person_name": "人名", "tone": "常行|加急|星夜兼程"}],\n'
         '  "rejection_withdrawals": [{"rejection_id": 正整数（皇帝明确说不做的那条未了结拒收 id）}],\n'
+        '  "rejection_corrections": [{"resolves_rejection_ids": [本旨修正的拒收 id], "effects": 独立修正部分的效果对象或有序数组（只在过月填写）}],\n'
         '  "on_scene_facts": [\n'
         "    {\n"
         '      "name": "人名",\n'

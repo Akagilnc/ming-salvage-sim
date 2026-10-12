@@ -157,7 +157,7 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     )] == [str(row["category"]) for row in ledger]
 
 
-@pytest.mark.parametrize("success_path", ("without_questions", "empty_continuation", "continued"))
+@pytest.mark.parametrize("success_path", ("without_questions", "empty_continuation", "continued", "force_promulgated"))
 def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypatch, tmp_path, success_path):
     from ming_sim.applier import Provenance, list_unresolved_player_rejections
     from ming_sim.audience_night import open_night, close_night
@@ -212,18 +212,25 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     outside = declaration_dispatch.dispatch_declaration(db, state, {
         "commissions": [{"text": "修正", "resolves_rejection_ids": [repair_id]}],
         "rejection_withdrawals": [{"rejection_id": withdraw_id}],
+        "rejection_corrections": [{"resolves_rejection_ids": [repair_id],
+                                   "effects": {"economy_moves": [{**bad, "account": "国库"}]}}],
     })
+    assert [r.category for r in outside.rejection_corrections.rejected] == ["missing_ref"]
     assert [r.category for r in outside.commissions.rejected] == ["missing_ref"]
     assert [r.category for r in outside.rejection_withdrawals.rejected] == ["missing_ref"]
     assert list_unresolved_player_rejections(db) == original
 
-    def correction(ids, account, continuation_account, *, questions=True):
+    def correction(ids, account, continuation_account, *, questions=True, grant=None, force=False,
+                   unrelated_account="国库"):
         night = open_night(db, state, location="乾清宫", time_of_day="戌时")
         nid = int(night["id"])
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
         db.persist_minister_reply(minister, state.turn, "奉旨修正", ctid)
+        commission = {"text": "修正该旨", "resolves_rejection_ids": ids}
+        if grant:
+            commission["grant"] = grant
         result = apply_audience_round_translation(
-            db, state, {"commissions": [{"text": "修正该旨", "resolves_rejection_ids": ids}]},
+            db, state, {"commissions": [commission]},
             night_id=nid, chat_turn_id=ctid, minister_name=minister,
         )
         assert result.commissions.rejected == []
@@ -237,22 +244,34 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
         assert {r["rejection_id"] for r in list_unresolved_player_rejections(db)}.issuperset(ids)
         close_night(db, state, night_id=nid, content=content)
         ref = pending_action_decree_ref(pending_id, 1)
+        from tests.test_month_chain_1847 import _rejected_verdict, _choice
         declaration_dispatch.stage_declaration(
             db, decree_ref=ref, turn=state.turn,
-            declaration={"effects": {"economy_moves": [
-                {**bad, "account": "国库", "category": "成功部分"},
-                {**bad, "account": account},
-            ]}}, verdict={"decision": "promulgated"}, visible_refs={"affairs": [affair.id]},
+            declaration={} if grant else {
+                "effects": {"economy_moves": [{**bad, "account": unrelated_account,
+                                               "category": "无关部分"}]},
+                "rejection_corrections": [{"resolves_rejection_ids": ids,
+                                           "effects": {"economy_moves": [{**bad, "account": account}]}}],
+            }, verdict=_rejected_verdict(db) if force else {"decision": "promulgated"},
+            visible_refs={"affairs": [affair.id]},
             questions=[{"title": "是否续办", "context": "c",
                         "options": [{"label": "继续", "hint": "h"}]}] if questions else [],
         )
+        if force:
+            assert session.resolve_turn(allow_empty_decree=True).stage == "rescript"
+            choice = session.pending_decisions()[0]
+            session.submit_hitl_choices([_choice(choice, decision="force_promulgated")],
+                                        write_gate=session._write_gate)
         if questions:
             assert session.resolve_turn(allow_empty_decree=True).stage == "rescript"
             assert {r["rejection_id"] for r in list_unresolved_player_rejections(db)}.issuperset(ids)
             monkeypatch.setattr(month_chain, "_run_decree_continuation_text",
                                 lambda *a, **k: "" if continuation_account is None else "续办实况")
             monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {
-                "effects": {"economy_moves": [{**bad, "account": continuation_account}]},
+                "rejection_corrections": [{"resolves_rejection_ids": ids,
+                                           "effects": {"economy_moves": [
+                                               {**bad, "account": continuation_account},
+                                           ]}}],
             })
             choice = session.pending_decisions()[0]
             session.submit_hitl_choices([{
@@ -261,10 +280,29 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             assert not db.staged_declarations.questions_for(ref)
             monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {})
         advance_month()
+        from ming_sim.decree_forecast import dossier_for_decree_ref
+        return dossier_for_decree_ref(db, ref)
 
+    grant = {"grant_action": "赏赉", "amount": 10**12, "account": "国库",
+             "target_kind": "character", "target_id": minister, "execution_surface": "immediate"}
+    failed = correction([repair_id], None, None, questions=False, grant=grant)
+    assert failed["execution_outcome"] == "failed"
+    assert {r["rejection_id"] for r in list_unresolved_player_rejections(db)} == {repair_id, withdraw_id}
+    reopen_check("execution-failed.db")
+    forced = correction([repair_id], None, None, questions=False,
+                        grant={**grant, "amount": 1}, force=True)
+    assert forced["promulgation_decision"] == "rejected"
+    assert forced["execution_outcome"] == "fulfilled"
+    assert [r["rejection_id"] for r in list_unresolved_player_rejections(db)] == [withdraw_id]
+    reopen_check("force-succeeded.db")
+    declaration_dispatch.dispatch_declaration(
+        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
+        visible_refs={"affairs": [affair.id]},
+    )
+    repair_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
     correction([repair_id], "不存在", "国库")
     unresolved = list_unresolved_player_rejections(db)
-    assert [r["rejection_id"] for r in unresolved][:2] == [repair_id, withdraw_id]
+    assert {r["rejection_id"] for r in unresolved[:2]} == {repair_id, withdraw_id}
     assert len(unresolved) == 3
     reopen_check("failed-correction.db")
     correction([repair_id, unresolved[-1]["rejection_id"]], "国库", "不存在")
@@ -273,8 +311,13 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     reopen_check("failed-continuation.db")
     correction([r["rejection_id"] for r in unresolved if r["rejection_id"] != withdraw_id],
                "国库", "国库" if success_path == "continued" else None,
-               questions=success_path != "without_questions")
-    assert [r["rejection_id"] for r in list_unresolved_player_rejections(db)] == [withdraw_id]
+               questions=success_path not in {"without_questions", "force_promulgated"},
+               force=success_path == "force_promulgated", unrelated_account="不存在")
+    unresolved = list_unresolved_player_rejections(db)
+    assert repair_id not in {r["rejection_id"] for r in unresolved}
+    assert [r["rejection_id"] for r in unresolved[:1]] == [withdraw_id]
+    assert len(unresolved) == 2  # Only the unrelated rejected part remains alongside the untouched one.
+    unrelated_id = unresolved[-1]["rejection_id"]
 
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")
     nid = int(night["id"])
@@ -295,7 +338,11 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
         "invalid_shape", "hallucinated_id", "hallucinated_id",
     ]
     still_pending = [r["rejection_id"] for r in list_unresolved_player_rejections(db)]
-    assert len(still_pending) == 2 and still_pending[0] == withdraw_id
+    assert len(still_pending) == 3 and still_pending[:2] == [withdraw_id, unrelated_id]
+    db.undo_chat_turn(ctid)
+    assert [r["rejection_id"] for r in list_unresolved_player_rejections(db)] == [withdraw_id, unrelated_id]
+    reopen_check("undone-rejection.db")
+    still_pending = [withdraw_id, unrelated_id]
     for undo in (True, False):
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
         result = apply_audience_round_translation(
