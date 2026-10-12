@@ -928,6 +928,7 @@ def _commission_grant_payload(
         payload["grant_action"] = "协饷"
         payload["dossier_action_type"] = "grant_allocation"
         payload["execution_surface"] = "immediate"
+        _attach_commission_escort(db, grant, payload)
         return payload
 
     shaped = require_grant_allocation_shape(
