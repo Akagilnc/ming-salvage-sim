@@ -2859,6 +2859,7 @@ class GameDB:
         llm_config: Any = None,
         commit: bool = True,
         region_id: str = "",
+        use_llm: bool = True,
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。
@@ -2866,7 +2867,9 @@ class GameDB:
         原样消费；同人同职 identity 续任沿 character_offices.region_id；
         真正新建/改授缺 typed 任所才拒（不读 location/官名推断）。
         #9：授官改了 office_type/品级 → 末尾全重算所属朝堂派系 leverage（升迁也联动；
-        起复路 set_character_status(active)→set_character_office(新职) 双 recompute，新职覆盖中间值）。"""
+        起复路 set_character_status(active)→set_character_office(新职) 双 recompute，新职覆盖中间值）。
+        use_llm：与 :func:`infer_office_type_from_office` 同义；静态名册/历史登场等
+        已有结构化 office_type 的路径传 False，避免表查/LLM 覆盖既有元数据。"""
         office = normalize_office(office)
         current_type = (
             self.conn.execute(
@@ -2881,7 +2884,8 @@ class GameDB:
         # 覆盖它（例 office='诸生'→infer 改写成 '生员'，令名分守卫失效，#1059 codex 同源）；
         # office_type 留空回落 current_type 时仍照常重推（授实职即脱名分，不短路）。
         eff_type = resolve_office_type_preserving_title(
-            office, office_type, current_type, llm_config or self.llm_config
+            office, office_type, current_type, llm_config or self.llm_config,
+            use_llm=use_llm,
         )
         is_person_title = eff_type in PERSON_TITLE_KINDS
         if not is_person_title:
@@ -2988,9 +2992,19 @@ class GameDB:
                 )
                 office = str(getattr(ch, "historical_office", "") or "").strip()
                 if office:
+                    # Structured content.office_type + use_llm=False：与 opening_seed
+                    # 静态接档同契约，不让表查/LLM 改写既有元数据（如「兵部边务」误盖「边镇」）。
+                    office_type = str(getattr(ch, "office_type", "") or "").strip()
                     self.set_character_office(
-                        name, office, source="历史登场", commit=True,
+                        name, office, office_type,
+                        source="历史登场", commit=True, use_llm=False,
                     )
+            # Debut fact reads the persisted office (normalize_office may differ
+            # from content.historical_office, e.g. fullwidth comma → ASCII).
+            office_row = self.characters.field_row("office", name)
+            office = str(
+                (office_row["office"] if office_row is not None else "") or ""
+            ).strip()
             debuted.append({
                 "name": name,
                 "office": office,
