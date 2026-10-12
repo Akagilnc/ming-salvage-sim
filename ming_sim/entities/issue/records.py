@@ -147,7 +147,6 @@ def _commitment_remaining_from_gate(
 
 def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
     rows = db.issues.read_latest_commitment_paid_total((issue_id,))
-    from ming_sim.models import _load_durable_json_object
     for row in rows:
         payload = parse_engine_payload_json(
             row["metric_delta"],
