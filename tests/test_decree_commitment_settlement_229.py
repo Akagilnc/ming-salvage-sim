@@ -1,7 +1,6 @@
 import json
 import pytest
 from tests.test_due_review_621 import _settle_empty_month as _player_month
-from ming_sim.entities.issue.commitment_display import commitment_progress_payload
 from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.settlement import SettlementContext, settle_delta
 
@@ -33,12 +32,6 @@ def _seed_central_army_arrears(db, arrears_by_army_id: dict[str, float]) -> None
             """,
             (arrears, army_id),
         )
-
-
-def _character_loyalty(db, name: str) -> int:
-    row = db.conn.execute("SELECT loyalty FROM characters WHERE name=?", (name,)).fetchone()
-    assert row is not None
-    return int(row["loyalty"])
 
 
 def _faction_satisfaction(db, name: str) -> int:
