@@ -40,17 +40,16 @@ def admit_fresh_mapping_sections(
     *,
     source: Provenance = Provenance.system_simulation,
     container: Optional[type] = None,
-    drop: bool = True,
 ) -> tuple[Dict[str, object], List[RejectedItem]]:
-    """Admit illegal ``_ISSUE_ENTITY_FIELDS`` containers.
+    """Reject malformed top-level effect containers using ``_ISSUE_ENTITY_FIELDS``.
 
-    Fresh new/close/cancel entry: ``container=None, drop=True`` — check every
+    Fresh new/close/cancel entry: ``container=None`` — check every
     registered section type, strip bad keys (including ``None``) so same-named
     presets survive a shallow merge; durable loaders stay loud.
-    List fields inside ``_apply_issue_entities``: ``container=list, drop=False`` —
-    leave one rejection, keep the key for downstream isinstance skips.
+    List fields inside ``_apply_issue_entities`` use the same rejection and key
+    removal; mapping fields there remain subject to their durable loaders.
     """
-    cleaned = dict(effect) if drop else effect
+    cleaned = dict(effect)
     rejected: List[RejectedItem] = []
     for key, expected in _ISSUE_ENTITY_FIELDS.items():
         if container is not None and expected is not container:
@@ -62,8 +61,7 @@ def admit_fresh_mapping_sections(
                 category="invalid_shape",
                 source=source,
             ))
-            if drop:
-                del cleaned[key]
+            del cleaned[key]
     return cleaned, rejected
 
 
@@ -216,45 +214,26 @@ def _apply_issue_entities(
     unknown = effect.keys() - _ISSUE_ENTITY_FIELDS.keys()
     for key in unknown:
         tolerated.append(RejectedItem(item={"field": key, "raw_value": effect[key]}, reason="局势效果字段不可执行", category="invalid_shape", source=source))
-    # list 拒收走同一权威件；dict 段留给持久加载器（新鲜坏映射已在入口剔除）。
-    # 入口已剔键的坏段不会再到此；本处只为未走入口的调用留一次痕。
-    _, list_rejections = admit_fresh_mapping_sections(
-        effect, source=source, container=list, drop=False,
+    # Strip rejected list sections once so downstream handlers cannot reject them again.
+    # Mapping sections retain their durable-loading contract.
+    effect, list_rejections = admit_fresh_mapping_sections(
+        effect, source=source, container=list,
     )
     tolerated.extend(list_rejections)
-    # buildings/economy 已由上面 list 准入留痕；非法容器不再交给 handler 重复记拒。
-    buildings_raw = effect.get("buildings")
-    if buildings_raw is None or isinstance(buildings_raw, list):
-        building_rows, building_rejections = _apply_issue_buildings(
-            db, state, buildings_raw, _ISSUE_PSEUDO_EVENT, label,
-            origin_ref=origin_ref, source=source,
-        )
-        tolerated.extend(building_rejections)
-        if applied_buildings is not None:
-            applied_buildings.extend(building_rows)
-    _, legacy_rejections = _spawn_legacy_from_effect(
-        db, state, effect, issue_id, issue_title or label, source=source,
-    )
+    building_rows, building_rejections = _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, label, origin_ref=origin_ref, source=source)
+    tolerated.extend(building_rejections)
+    if applied_buildings is not None:
+        applied_buildings.extend(building_rows)
+    _, legacy_rejections = _spawn_legacy_from_effect(db, state, effect, issue_id, issue_title or label, source=source)
     tolerated.extend(legacy_rejections)
     metrics = {} if effect.get("metrics") is None else effect["metrics"]
     if isinstance(metrics, dict):
         _, refused = declare_metric_pairs(state, list(metrics.items()), db=db, source=source)
         tolerated.extend(refused)
-    elif "metrics" in effect:
-        # 入口已拒的坏段不会到此；未走入口的调用仍留一痕。
-        tolerated.append(RejectedItem(
-            item={"field": "metrics", "raw_value": metrics},
-            reason="指标效果须为对象", category="invalid_shape", source=source,
-        ))
-    economy_raw = effect.get("economy")
-    if economy_raw is None or isinstance(economy_raw, list):
-        tolerated.extend(_apply_economy_list(
-            db, state, [] if economy_raw is None else economy_raw,
-            origin_ref=origin_ref, source=source,
-        )[1])
-    tolerated.extend(_apply_faction_dict(
-        db, {} if effect.get("factions") is None else effect["factions"], source=source,
-    )[1])
+    else:
+        tolerated.append(RejectedItem(item={"field": "metrics", "raw_value": metrics}, reason="指标效果须为对象", category="invalid_shape", source=source))
+    tolerated.extend(_apply_economy_list(db, state, [] if effect.get("economy") is None else effect["economy"], origin_ref=origin_ref, source=source)[1])
+    tolerated.extend(_apply_faction_dict(db, {} if effect.get("factions") is None else effect["factions"], source=source)[1])
     def effective_content():
         return content if content is not None else _ctx()
 

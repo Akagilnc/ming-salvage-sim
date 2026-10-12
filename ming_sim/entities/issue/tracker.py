@@ -760,7 +760,7 @@ def apply_issue_tracker_output(
             cl_effect = cl.get("effect_on_fail")
         if isinstance(cl_effect, dict):
             # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设。
-            # 新鲜非对象映射段先拒收留痕并剔除，同名预设段得以保留（整段 cl_effect
+            # 新鲜非法容器段（含 null）先拒收留痕并剔除，同名预设段得以保留（整段 cl_effect
             # 非对象时拒收现给、保留预设的同衔先例）。
             cl_effect, section_rejections = issue_effects.admit_fresh_mapping_sections(
                 cl_effect, source=source,
