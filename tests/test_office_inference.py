@@ -7,7 +7,6 @@ from ming_sim.context import bind_content
 from ming_sim.db import GameDB
 from ming_sim.db import infer_office_type_from_office as infer
 from ming_sim.models import LLMConfig
-import pytest
 """官职分类经真实授官和开局入口验证 DB 与运行态，不以推断 helper 自证。"""
 
 

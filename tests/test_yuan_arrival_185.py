@@ -6,7 +6,6 @@ from __future__ import annotations
 """
 
 
-import ming_sim.issues as issues
 from ming_sim.decree import tick_transit_arrivals
 from tests.conftest import active_ming_character
 from ming_sim.settlement import SettlementContext, settle_delta

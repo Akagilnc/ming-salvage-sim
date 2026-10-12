@@ -6492,7 +6492,6 @@ class GameDB:
             faction_relation,
             integrity_band,
         )
-        from ming_sim.participant_roster import resolve_dossier_owner_name
 
         presence = self.dossiers.presence_rows(
             int(dossier_id), as_of_turn=as_of_turn,

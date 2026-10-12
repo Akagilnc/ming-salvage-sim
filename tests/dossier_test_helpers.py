@@ -1,4 +1,3 @@
-from ming_sim.settlement.dossier import apply_dossier_verdicts
 # #1504 typed covert-task contract fixtures (applier-native 万亩 / 实务事功).
 
 TYPED_COVERT_TASK = {

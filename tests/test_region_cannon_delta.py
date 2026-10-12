@@ -8,7 +8,6 @@ city_level×8 clamp，但零调用方；region_delta 带「城防炮」会被当
 
 
 from tests.section_rejection_helpers import run_declaration as run_settle
-from ming_sim.constants import REGION_FIELD_LABELS
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section
 

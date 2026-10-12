@@ -6,7 +6,6 @@ from tests.section_rejection_helpers import game, rejection_rows
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
-from ming_sim import issues
 """secret_order 段拒收补精确 category（ADR 0008 决定 1 逐项拒收契约统一，#14 C2）。
 
 updates 数据校验类拒收带精确 category（未知 order_id → missing_ref，坏值/非 active → invalid_enum）。
