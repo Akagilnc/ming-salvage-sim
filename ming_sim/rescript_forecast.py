@@ -18,6 +18,20 @@ from ming_sim.rescript_actions import persist_answers
 _executor = audience_translation._executor
 
 
+def _snapshot_session(session):
+    """Reuse SQLite backup for isolated model reads, never concurrent live-DB access."""
+    tmp = TemporaryDirectory(prefix="ming-rescript-forecast-")
+    try:
+        path = str(Path(tmp.name) / "snapshot.db")
+        session.db.backup_to(path)
+        db = GameDB(path, content=copy.deepcopy(session.content), llm_config=session.llm_config)
+        return tmp, SimpleNamespace(db=db, state=copy.deepcopy(session.state),
+                                    llm_config=session.llm_config, content=db.content)
+    except BaseException:
+        tmp.cleanup()
+        raise
+
+
 def _identity(kind, ref, rows):
     # Compare the supplied choice, not its prose or just its label.
     choices = []
@@ -51,13 +65,19 @@ def take_forecast(session, kind, ref, rows, *, selected=None):
 
 
 def _run_candidate(session, chain, kind, ref, rows):
+    if kind != "memorial" and session.llm_config is None:
+        from ming_sim.exceptions import LLMUnavailable
+        raise LLMUnavailable(
+            "续推缺少模型配置",
+            stage="world-segment-continue" if kind == "world" else "decree-forecast-continue",
+        )
     if kind == "memorial":
         row = rows[0]
         data = rescript_draft.parse_agent_json(rescript_draft.run_rescript_text(
             session, officers=rescript_draft.triage_officers(session.db), backlog=[],
             answer={"memorial": row, "decision_key": ref, "choice": row["choice"]},
         ), "rescript-answer")
-        rescript_draft.validate_answer_product(data)
+        rescript_draft.prepare_memorial_answer(session, row, data)
         return data
     answers = [month_chain._answer_from_row(row) for row in rows]
     if kind == "world":
@@ -95,13 +115,15 @@ def schedule_forecasts(session, chain, desk, *, selected=False):
                 groups[("decree", event)] = [row]
         elif event in world_ids:
             groups[("world", event)] = [row]
-        elif not selected and row["kind"] == "rescript_draft":
+        elif row["kind"] == "rescript_draft" and row["decision_key"] not in chain.get("rescript_consumed", []):
             groups[("memorial", row["decision_key"])] = [row]
     materials_tmp = None
     shared_world = None
     for (kind, ref), rows in groups.items():
         if selected and ref in chain.get("rescript_continuation_texts", {}):
             continue  # Translation recovery already has the complete model product.
+        if selected and ref in chain.get("rescript_answer_products", {}):
+            continue
         row = rows[0]
         # Shared read-only materials are frozen once per source. The standard
         # TemporaryDirectory lifetime follows the closures that hold it.
@@ -117,16 +139,13 @@ def schedule_forecasts(session, chain, desk, *, selected=False):
                 if not future.done() or future.exception() is None:
                     results[ref] = (future, True)
                     continue
-            tmp = TemporaryDirectory(prefix="ming-rescript-forecast-")
+            tmp = None
             frozen_db = None
             try:
                 # Reuse SQLite's existing backup seam rather than inventing a parallel
                 # material reader. Each call has its own DB, state and temp resources.
-                path = str(Path(tmp.name) / "snapshot.db")
-                session.db.backup_to(path)
-                frozen_db = GameDB(path, content=copy.deepcopy(session.content), llm_config=session.llm_config)
-                frozen = SimpleNamespace(db=frozen_db, state=copy.deepcopy(session.state),
-                                         llm_config=session.llm_config, content=frozen_db.content)
+                tmp, frozen = _snapshot_session(session)
+                frozen_db = frozen.db
                 if not materials:
                     from ming_sim.materials import prepare_world_materials
                     from ming_sim.decree_forecast import forecast_snapshot
@@ -170,7 +189,8 @@ def schedule_forecasts(session, chain, desk, *, selected=False):
                 write_error_pack(session.db, session.state, exc=exc)
                 if frozen_db is not None:
                     frozen_db.close()
-                tmp.cleanup()
+                if tmp is not None:
+                    tmp.cleanup()
                 future = Future()
                 future.set_exception(exc)
             if selected:
@@ -179,3 +199,103 @@ def schedule_forecasts(session, chain, desk, *, selected=False):
             future.add_done_callback(lambda done: audience_translation._observe_finished_future(
                 done, where="rescript forecast"))
     return results
+
+
+def _prepare_answer_translation(session, row, kind, ref, product):
+    from ming_sim.month_translate import prepare_month_segment, _answered_levy_verdicts
+
+    payload, verdicts = {}, []
+    if kind == "memorial":
+        _, text = rescript_draft.validate_answer_product(product)
+        if (row["choice"] or {}).get("action") == "midzhi":
+            return None  # The original midzhi admission owns this non-effect product.
+    else:
+        text, _ = month_chain._split_at_question(product)
+        if kind == "decree":
+            decree_ref = ref[len(month_chain._DECREE_QUESTION_PREFIX):].rpartition(":")[0]
+            payload = month_chain._dossier_for_decree_ref(session.db, decree_ref)["payload"]
+        else:
+            verdicts = _answered_levy_verdicts(
+                session.db, int(session.state.turn), answers=[month_chain._answer_from_row(row)],
+            )
+    if not text.strip() and not verdicts:
+        return None
+    return prepare_month_segment(
+        session.db, session.state, segment=text, decree_payload=payload,
+        llm_config=session.llm_config, answered_verdicts=verdicts,
+    )
+
+
+def prepare_answers(session, chain, rows, *, source):
+    """Claim each answer once; model legs run on the existing pool, commits stay short.
+
+    A selected candidate launches translation only after completion: no pool worker
+    waits for another worker in the same bounded pool. Other requests can claim new
+    answers while these are in flight. Durable raw products remain the retry source.
+    Caller holds the existing write gate during admission.
+    """
+    owner = _owner_for(session.db)
+    active = getattr(owner, "_rescript_jobs", None)
+    if active is None:
+        active = owner._rescript_jobs = {}
+    turn = int(session.state.turn)
+    rows = [row for row in rows if (turn, row["decision_key"]) not in active]
+    forecasts = schedule_forecasts(session, chain, rows, selected=True)
+    jobs, launches = {}, []
+    for row in rows:
+        event = str(row.get("event_id") or "")
+        kind = "memorial" if row["kind"] == "rescript_draft" else (
+            "decree" if event.startswith(month_chain._DECREE_QUESTION_PREFIX) else "world"
+        )
+        ref = row["decision_key"] if kind == "memorial" else event
+        product_key = "rescript_answer_products" if kind == "memorial" else "rescript_continuation_texts"
+        product = chain.get(product_key, {}).get(ref)
+        result = Future()
+        active[(turn, row["decision_key"])] = result
+        jobs[result] = (row, kind, ref)
+        try:
+            tmp, frozen = _snapshot_session(session)
+        except Exception as exc:
+            result.set_exception(exc)
+            continue
+        frozen_chain = copy.deepcopy(chain)
+        forecast = forecasts.get(ref)
+
+        def work(row=row, kind=kind, ref=ref, product_key=product_key, product=product,
+                 forecast=forecast, frozen=frozen, frozen_chain=frozen_chain, tmp=tmp):
+            try:
+                if product is None:
+                    with owner._write_gate:
+                        product = take_forecast(session, kind, ref, [row], selected=forecast)
+                    if product is None:
+                        product = _run_candidate(frozen, frozen_chain, kind, ref, [row])
+                    with owner._write_gate:
+                        live = month_chain._load_chain(session.db, turn)
+                        live.setdefault(product_key, {})[ref] = product
+                        month_chain._save_chain(session.db, turn, live, source=source)
+                return _prepare_answer_translation(frozen, row, kind, ref, product)
+            finally:
+                frozen.db.close()
+                tmp.cleanup()
+
+        def launch(_done=None, work=work, result=result, frozen=frozen, tmp=tmp):
+            try:
+                worker = _executor.submit(work)
+            except Exception as exc:
+                frozen.db.close()
+                tmp.cleanup()
+                result.set_exception(exc)
+                return
+
+            def complete(done):
+                try:
+                    result.set_result(done.result())
+                except BaseException as exc:
+                    result.set_exception(exc)
+            worker.add_done_callback(complete)
+
+        if forecast is not None and not forecast[0].done():
+            launches.append(lambda forecast=forecast, launch=launch: forecast[0].add_done_callback(launch))
+        else:
+            launches.append(launch)
+    return jobs, launches

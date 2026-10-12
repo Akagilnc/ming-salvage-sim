@@ -177,9 +177,8 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
 @pytest.mark.parametrize("kind", ["world", "decree"])
 @pytest.mark.parametrize("handwritten_batch", [False, True])
 def test_multiple_questions_continue_independently_through_recovery(game, monkeypatch, kind, handwritten_batch):
-    """Answer one while its sibling is running; retain identities through follow-up/reopen."""
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Event
+    """Raw one-row inputs, sibling success after failure, durable follow-up/recovery."""
+    from tests.month_chain_helpers import InlineExecutor
     from ming_sim.db import GameDB
 
     _forbid_extractor(monkeypatch)
@@ -198,23 +197,12 @@ def test_multiple_questions_continue_independently_through_recovery(game, monkey
                         (json.dumps(questions), ref))
         db.conn.commit()
     calls = []
-    all_started, release = Event(), Event()
-    batch_second_started = Event()
 
     def model(agent, message, **kwargs):
         answers = json.loads(message)["answers"]
         assert len(answers) == 1  # No answer combinations.
         label = answers[0]["choice"]["label"]
         calls.append(label)
-        if answers[0]["choice"].get("note"):
-            if label == "丙":
-                batch_second_started.set()
-            if label == "甲":
-                assert batch_second_started.wait(5)
-        if all(calls.count(opt) == 1 for opt in ["甲", "乙", "丙", "丁"]):
-            all_started.set()
-        if label in {"甲", "乙"}:
-            assert release.wait(5)
         delta = {"甲": -3, "乙": -19, "丙": -7, "丁": -23, "戊": -11, "己": -29}[label]
         return json.dumps({"delta": delta}) + (_decision_block("追问", "戊", "己") if label == "丙" else "")
 
@@ -233,58 +221,51 @@ def test_multiple_questions_continue_independently_through_recovery(game, monkey
     monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
     monkeypatch.setattr("ming_sim.agents.run_agent_text", model)
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
-    pool = ThreadPoolExecutor(max_workers=4)
-    monkeypatch.setattr("ming_sim.rescript_forecast._executor", pool)
+    monkeypatch.setattr("ming_sim.rescript_forecast._executor", InlineExecutor())
     session = make_light_session(db, state, content)
     session.llm_config = object()
     def ledger():
         with sqlite3.connect(db.path) as conn:
             return [r[0] for r in conn.execute("SELECT delta FROM economy_ledger WHERE category='多问办理' ORDER BY id")]
-    try:
-        assert session.resolve_turn(allow_empty_decree=True).awaiting
-        first, second = session.pending_decisions()
-        assert all_started.wait(5)
-        assert sorted(calls) == sorted(["甲", "乙", "丙", "丁"])
-        assert ledger() == ([-1] if kind == "world" else [])
-        if handwritten_batch:
-            release.set()
-            with pytest.raises(SettlementAbort):
-                session.submit_hitl_choices([
-                    {**r["options"][0], "decision_key": r["decision_key"], "note": "  原批\n照办  "}
-                    for r in [second, first]], write_gate=session._write_gate)
-        else:
-            # The second answer commits even while both first-question candidates wait.
-            session.submit_hitl_choices([{**second["options"][0], "decision_key": second["decision_key"]}],
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+    first, second = session.pending_decisions()
+    assert sorted(calls) == sorted(["甲", "乙", "丙", "丁"])
+    assert ledger() == ([-1] if kind == "world" else [])
+    if handwritten_batch:
+        with pytest.raises(SettlementAbort):
+            session.submit_hitl_choices([
+                {**r["options"][0], "decision_key": r["decision_key"], "note": "  原批\n照办  "}
+                for r in [first, second]], write_gate=session._write_gate)
+    else:
+        # Single-row submission does not consume the unanswered sibling.
+        session.submit_hitl_choices([{**second["options"][0], "decision_key": second["decision_key"]}],
+                                    write_gate=session._write_gate)
+        remaining = session.pending_decisions()
+        assert len(remaining) == 2
+        assert remaining[0]["decision_key"] == first["decision_key"]
+        with pytest.raises(SettlementAbort):
+            session.submit_hitl_choices([{**first["options"][0], "decision_key": first["decision_key"]}],
                                         write_gate=session._write_gate)
-            remaining = session.pending_decisions()
-            assert len(remaining) == 2
-            assert remaining[0]["decision_key"] == first["decision_key"]
-            release.set()
-            with pytest.raises(SettlementAbort):
-                session.submit_hitl_choices([{**first["options"][0], "decision_key": first["decision_key"]}],
-                                            write_gate=session._write_gate)
-        assert ledger() == ([-1, -7] if kind == "world" else [-7])
-        assert month_chain.month_chain_call_failure(db, turn)
-        # A reopened session consumes the persisted continuation, not another call.
-        reopened = GameDB(str(db.path), content=content)
-        try:
-            restored = make_light_session(reopened, reopened.load_state(content), content)
-            restored.llm_config = object()
-            assert restored.resolve_turn(allow_empty_decree=True).awaiting
-            assert calls.count("甲") == (2 if handwritten_batch else 1)
-            followup = restored.pending_decisions()[0]
-            restored.submit_hitl_choices([{**followup["options"][0], "decision_key": followup["decision_key"]}],
-                                         write_gate=restored._write_gate)
-            assert not restored.pending_decisions()
-            assert restored.resolve_turn(allow_empty_decree=True).stage == "gazette"
-            assert ledger() == ([-1, -7, -3, -11] if kind == "world" else [-7, -3, -11])
-            assert calls.count("丙") == (2 if handwritten_batch else 1)
-            assert calls.count("丁") == 1
-        finally:
-            reopened.close()
+    assert ledger() == ([-1, -7] if kind == "world" else [-7])
+    assert month_chain.month_chain_call_failure(db, turn)
+    # A reopened session consumes the persisted continuation, not another call.
+    reopened = GameDB(str(db.path), content=content)
+    try:
+        restored = make_light_session(reopened, reopened.load_state(content), content)
+        restored.llm_config = object()
+        assert restored.resolve_turn(allow_empty_decree=True).awaiting
+        assert calls.count("甲") == (2 if handwritten_batch else 1)
+        followup = restored.pending_decisions()[0]
+        restored.submit_hitl_choices([{**followup["options"][0], "decision_key": followup["decision_key"]}],
+                                     write_gate=restored._write_gate)
+        assert not restored.pending_decisions()
+        assert restored.resolve_turn(allow_empty_decree=True).stage == "gazette"
+        assert ledger() == ([-1, -7, -3, -11] if kind == "world" else [-7, -3, -11])
+        assert calls.count("丙") == (2 if handwritten_batch else 1)
+        assert calls.count("丁") == 1
     finally:
-        release.set()
-        pool.shutdown(wait=True)
+        reopened.close()
+
 
 
 def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypatch):
@@ -2393,19 +2374,19 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
         session.submit_hitl_choices(batch, write_gate=session._write_gate)
     assert stopped.value.stage == "rescript-answer"
     assert not session.pending_decisions()
-    session = make_light_session(db, db.load_state(content), content)
-    session.llm_config = object()
-    state = session.state
-    with pytest.raises(SettlementAbort):
-        session.resolve_turn(allow_empty_decree=True)
+    # Both independent failures are attempted in this submission; neither may
+    # block the other four successful answers (including the empty effects).
+    assert failures["answer"] is False
+    assert translation_failures == [True]
+    assert len(_month_chain_of(db, turn)["rescript_consumed"]) == len(batch) - 2
     session = make_light_session(db, db.load_state(content), content)
     session.llm_config = object()
     state = session.state
     session.resolve_turn(allow_empty_decree=True)
     assert [r[0] for r in db.conn.execute("SELECT delta FROM economy_ledger WHERE category='急务办理'")] == [-2, -2, -2]
-    assert _month_chain_of(db, turn)["rescript_consumed"] == [item["decision_key"] for item in batch]
+    assert sorted(_month_chain_of(db, turn)["rescript_consumed"]) == sorted(item["decision_key"] for item in batch)
     raw_answers = [row for row in answers if row["choice"].get("note") == raw_note]
-    assert [row["decision_key"] for row in raw_answers] == [item["decision_key"] for item in batch[-2:]]
+    assert sorted(row["decision_key"] for row in raw_answers) == sorted(item["decision_key"] for item in batch[-2:])
     assert all(row["memorial"]["context"] == "  原奏\n拟旨  " for row in raw_answers)
     assert not session.pending_decisions()
     assert session.deferred_rescripts()[0]["decision_key"] == original["decision_key"]

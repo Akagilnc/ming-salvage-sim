@@ -20,24 +20,21 @@ export function DecisionModal({
   suspended = false,
 }: {
   decisions: PendingDecision[];
-  onResolve: (choices: DecisionChoice[]) => void;
+  onResolve: (choices: DecisionChoice[]) => void | Promise<void>;
   /** truthy 时禁用票拟/亲批/翻页与落印，handler 入口短路——禁二提交。 */
   busy?: string;
   /** Keep picks mounted while the live gazette occupies the main face. */
   suspended?: boolean;
 }) {
-  const [cursor, setCursor] = React.useState(0);
-  const [picks, setPicks] = React.useState<DecisionChoice[]>(() =>
-    decisions.map((d, i) => {
-      const key = decisionKeyOf(d, i);
-      return key ? { decision_key: key } : {};
-    }),
-  );
+  const keyOf = (d: PendingDecision, i: number) => decisionKeyOf(d, i) ?? String(d.idx ?? i);
+  const [currentKey, setCurrentKey] = React.useState(() => decisions[0] ? keyOf(decisions[0], 0) : "");
+  const cursor = Math.max(0, decisions.findIndex((d, i) => keyOf(d, i) === currentKey));
+  const [picks, setPicks] = React.useState<Record<string, { choice: DecisionChoice; sending?: boolean }>>({});
   const pageRef = React.useRef<HTMLElement>(null);
-  const locked = !!busy;
-
   const cur = decisions[cursor];
-  const pick = picks[cursor] || {};
+  const key = cur ? keyOf(cur, cursor) : "";
+  const pick = picks[key]?.choice || {};
+  const locked = !!busy || !!picks[key]?.sending;
   const requiresListedChoice = (cur?.event_id || "").startsWith("dossier:");
   const decided = requiresListedChoice
     ? !!pick.label
@@ -45,21 +42,20 @@ export function DecisionModal({
   const last = cursor >= decisions.length - 1;
   const setPick = (choice: DecisionChoice) => {
     if (locked) return;
-    setPicks((all) =>
-      all.map((item, i) => {
-        if (i !== cursor) return item;
-        const key = item.decision_key || decisionKeyOf(cur, cursor);
-        return key
-          ? { ...item, ...choice, decision_key: key }
-          : { ...item, ...choice };
-      }),
-    );
+    const decisionKey = decisionKeyOf(cur, cursor);
+    setPicks((all) => ({ ...all, [key]: { choice: {
+      ...pick, ...choice, ...(decisionKey ? { decision_key: decisionKey } : {}),
+    } } }));
   };
 
   const next = () => {
     if (locked || !decided) return;
-    if (last) onResolve(picks);
-    else setCursor((value) => value + 1);
+    setPicks((all) => ({ ...all, [key]: { choice: pick, sending: true } }));
+    // Keep the current raw pick for retry; only this row is locked while sending.
+    void Promise.resolve(onResolve([pick])).finally(() => {
+      setPicks((all) => ({ ...all, [key]: { choice: pick, sending: false } }));
+    });
+    if (!last) setCurrentKey(keyOf(decisions[cursor + 1], cursor + 1));
   };
 
   React.useEffect(() => {

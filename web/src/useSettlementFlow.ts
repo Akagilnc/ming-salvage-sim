@@ -95,6 +95,12 @@ export function useSettlementFlow({
     // (still summoning/reviewing under settlement_display), so phase conjunction
     // would stall the observation page on the locked pre-settle face.
     if (state.settlement_entry_inflight) {
+      // In-flight continuation does not block the remaining desk (including a
+      // follow-up produced by another completed row). Keep the existing poll.
+      if (state.turn.phase === "awaiting_decision") {
+        const decisions = routeRefreshDecisions(state.turn.phase, state.pending_decisions || []);
+        if (decisions.pendingDecisions !== null) setPendingDecisions(decisions.pendingDecisions);
+      }
       let cancelled = false;
       let refreshTimer: number;
       const refresh = () => {
@@ -404,14 +410,14 @@ export function useSettlementFlow({
     }
   };
 
-  // 皇帝亲裁完所有决策点 / phase2 续跑：走 resolve_decisions/stream。
-  // choices 按决策点 idx 顺序；all-decided 续跑可传 []——服务端幂等保留已存 choice。
+  // Each confirmed row uses the existing stream; other rows stay answerable.
+  // all-decided 续跑可传 []——服务端幂等保留已存 choice。
   // dossier 批红 choice 须带回 dossier_id / dossier_decision（#1490）；勿收窄剥字段。
   // #1620：成功前不清 pendingDecisions——失败时 DecisionModal 不卸载，已选批语自然保留。
   const submitDecisions = async (choices: DecisionChoice[]) => {
     // #1888：发起即封存会话代次，回执据此判归属。
     const receipt = claimReceipt();
-    setBusy("月末结算");
+    if (choices.length === 0) setBusy("月末结算");
     receipt.setError("");
     receipt.setPausedDecisionError("");
     receipt.setGazetteReading(null);
@@ -434,17 +440,16 @@ export function useSettlementFlow({
         await refreshBestEffort(receipt);
         return;
       }
-      // 成功：清空案头态；写成即推进则本面开邸报。
-      receipt.setPendingDecisions([]);
       receipt.setPausedDecisionError("");
       if (outcome.data?.advanced === false) {
-        // #1888 J5：清案头后未推进，失败尚未呈出——该状态读取是玩家下一面的唯一来源，
+        // #1888 J5：未推进的状态读取是剩余案头与新追问的唯一来源，
         // 读取失败须落进本函数既有 catch（可见告警 + 清 busy + 既有重试入口），
         // 不得降级为可吞的旁路刷新：否则玩家既无告警也无恢复入口。
         await receipt.loadState();
         receipt.setBusy("");
         return;
       }
+      receipt.setPendingDecisions([]);
       await openGazetteAfterAdvance(receipt, outcome.data || {});
       receipt.setBusy("");
       return;

@@ -1741,11 +1741,11 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
   it("#1620 落印 SSE error 同页保留 picks + 单一 recovery alert + 可再落印", async () => {
     // 多疏 fixture：只经结构化控件操作，不锁 option/error 自由文案。
     const d1 = {
-      idx: 0, title: "疏一", context: "c1",
+      idx: 0, decision_key: "decision:5:0", title: "疏一", context: "c1",
       options: [{ label: "甲策", hint: "h1" }, { label: "乙策", hint: "h2" }],
     };
     const d2 = {
-      idx: 1, title: "疏二", context: "c2",
+      idx: 1, decision_key: "decision:5:1", title: "疏二", context: "c2",
       options: [{ label: "丙策", hint: "h3" }],
     };
     const state = settlementBaseState("awaiting_decision", {
@@ -1799,7 +1799,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => {
         expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull();
-        expect(resolveBodies.length).toBe(1);
+        expect(resolveBodies.length).toBe(2);
       });
     });
     // 单一 role=alert：只经 decision-recovery，不与 modal 双播
@@ -1817,13 +1817,12 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
 
     await click(confirm());
     await act(async () => {
-      await vi.waitFor(() => expect(resolveBodies.length).toBe(2));
+      await vi.waitFor(() => expect(resolveBodies.length).toBe(3));
     });
-    // 两次 resolve 结构化 choices 相同（picks 保留的行为证据）
-    expect(resolveBodies[0]).toEqual(resolveBodies[1]);
-    const body0 = resolveBodies[0] as { choices?: unknown[] };
-    expect(Array.isArray(body0.choices)).toBe(true);
-    expect(body0.choices!.length).toBe(2);
+    // 两道各自送出；失败后只重交当前道，原 pick 不丢也不整批重发。
+    expect(resolveBodies[0]).toEqual({ choices: [{ ...d1.options[0], decision_key: d1.decision_key }] });
+    expect(resolveBodies[1]).toEqual({ choices: [{ ...d2.options[0], decision_key: d2.decision_key }] });
+    expect(resolveBodies[2]).toEqual(resolveBodies[1]);
 
     // refresh 后 recovery 仍在且仍单一 alert（error 不被空串冲掉）
     expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull();

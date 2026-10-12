@@ -15,6 +15,7 @@ from ming_sim.applier import list_rejection_reports_for_turn
 
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdict_metadata
 import re
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -442,26 +443,7 @@ def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
 
 def continue_world_after_answers(
     session: Any, chain: Dict[str, Any], *, answers: List[Dict[str, object]], source: Provenance,
-    forecast=None,
-) -> Optional[Dict[str, object]]:
-    """Resume one world question; siblings remain open, committed facts stay put.
-
-    完整续推文先存当前月链；转译失败恢复不重推。
-    消费当前问、承接新问与落账同事务。
-    """
-    db, state = session.db, session.state
-    return _guard_month_call(
-        db, state, chain, decree_text="", source=source,
-        step="world_continue",
-        operation=lambda: _continue_world_after_answers(
-            session, chain, answers=answers, source=source, forecast=forecast,
-        ),
-    )
-
-
-def _continue_world_after_answers(
-    session: Any, chain: Dict[str, Any], *, answers: List[Dict[str, object]], source: Provenance,
-    forecast=None,
+    prepared=None,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.month_translate import _answered_levy_verdicts, dispatch_month_segment
 
@@ -476,13 +458,6 @@ def _continue_world_after_answers(
         from ming_sim.exceptions import LLMUnavailable
         raise LLMUnavailable("世界段续推缺少模型配置", stage="world-segment-continue")
     products = chain.setdefault("rescript_continuation_texts", {})
-    if event_id not in products:
-        from ming_sim.rescript_forecast import take_forecast
-        text = take_forecast(session, "world", event_id, answers, selected=forecast)
-        products[event_id] = (
-            text if text is not None else _run_world_continuation_text(session, chain, answers)
-        )
-        _save_chain(db, turn, chain, source=source)
     text = products[event_id]
     prefix, extra = _split_at_question(str(text or ""))
     outcome = None
@@ -508,7 +483,7 @@ def _continue_world_after_answers(
     if prefix.strip() or verdicts:
         result = dispatch_month_segment(
             db, state, segment=prefix, llm_config=session.llm_config, source=source,
-            alongside=mark_continued, answered_verdicts=verdicts,
+            alongside=mark_continued, answered_verdicts=verdicts, prepared=prepared,
         )
         return _ending_from_dispatch_result(result) or outcome
     # 空续推：无落账后果，仍须原子记下已续，避免重入再烧。
@@ -521,32 +496,7 @@ def continue_decree_after_answers(
     session: Any, *, decree_ref: str, answers: List[Dict[str, object]],
     chain: Optional[Dict[str, Any]] = None,
     source: Provenance = Provenance.player_decree,
-    forecast=None,
-) -> None:
-    """Resume one decree question; siblings remain open, committed declarations stay put.
-
-    同一 decree_ref 问前声明可能已 settled，续推声明直接分派，不另造平行暂存身份。
-    幂等：只消费当前问题身份；已答旧问不驱动下一轮续推。
-    完整续推文先存当前月链；转译失败恢复不重推。
-    消费旧问、承接新问随既有段分派 alongside 与落账同事务（ADR 0157）。
-    """
-    db, state = session.db, session.state
-    failure_chain = chain if chain is not None else _load_chain(db, int(state.turn))
-    _guard_month_call(
-        db, state, failure_chain, decree_text="", source=source,
-        step="decree_continue", decree_ref=decree_ref,
-        operation=lambda: _continue_decree_after_answers(
-            session, decree_ref=decree_ref, answers=answers, chain=chain, source=source,
-            forecast=forecast,
-        ),
-    )
-
-
-def _continue_decree_after_answers(
-    session: Any, *, decree_ref: str, answers: List[Dict[str, object]],
-    chain: Optional[Dict[str, Any]] = None,
-    source: Provenance = Provenance.player_decree,
-    forecast=None,
+    prepared=None,
 ) -> None:
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.month_translate import dispatch_month_segment
@@ -564,13 +514,6 @@ def _continue_decree_after_answers(
     if dossier is None:
         return
     products = chain.setdefault("rescript_continuation_texts", {})
-    if event_id not in products:
-        from ming_sim.rescript_forecast import take_forecast
-        text = take_forecast(session, "decree", event_id, answers, selected=forecast)
-        products[event_id] = (
-            text if text is not None else _run_decree_continuation_text(session, dossier, answers)
-        )
-        _save_chain(db, int(state.turn), chain, source=source)
     text = products[event_id]
     prefix, extra = _split_at_question(str(text or ""))
     payload = dossier["payload"]
@@ -599,7 +542,7 @@ def _continue_decree_after_answers(
         decree_payload=payload,
         llm_config=session.llm_config,
         source=source,
-        alongside=consume,
+        alongside=consume, prepared=prepared,
     )
 
 
@@ -653,13 +596,18 @@ def run_player_month_chain(
     source: Provenance = Provenance.system_simulation,
     cheat_directive: str = "",
     on_gazette: Any = None,
+    write_gate_already_held: bool = False,
 ) -> Any:
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
     from ming_sim.mechanical_tail import ensure_mechanical_tails
 
+    from ming_sim.decree_forecast import _owner_for
+    owner = _owner_for(db)
+    gate = owner._write_gate if owner is not None and not write_gate_already_held else nullcontext()
     turn = int(state.turn)
-    chain = _load_chain(db, turn)
+    with gate:
+        chain = _load_chain(db, turn)
 
     def abort_from(exc: BaseException) -> None:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
@@ -674,33 +622,65 @@ def run_player_month_chain(
         )
 
     try:
-        cheat = str(cheat_directive or "")
-        if cheat.strip() and not chain.get("cheat_directive"):
-            chain["cheat_directive"] = cheat
-            _save_chain(db, turn, chain, decree_text=decree_text, source=source)
-        _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
+        with gate:
+            cheat = str(cheat_directive or "")
+            if cheat.strip() and not chain.get("cheat_directive"):
+                chain["cheat_directive"] = cheat
+                _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+            _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     except Exception as exc:
-        abort_from(exc)
+        with gate:
+            abort_from(exc)
     # #1845：下次过月前 join／重开续接上月机械尾。尾异常不改写成月链 call_failure。
     ensure_mechanical_tails(_session_owner(db, state, llm_config, agno_db, content))
     try:
-        _guard_month_call(
-            db, state, chain, decree_text=decree_text, source=source,
-            step="rescript-answer",
-            operation=lambda: _consume_rescript_answers(
-                SimpleNamespace(
-                    db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
-                ),
+        # Phase-1 Web recovery already holds this non-reentrant gate. Release
+        # only the answer legs; their admission/commits take short holds themselves.
+        if write_gate_already_held:
+            owner._write_gate.release()
+        try:
+            _consume_rescript_answers(
+                SimpleNamespace(db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content),
                 chain, source=source,
-            ),
-        )
-        return _run_loaded_month_chain(
-            state, db, agno_db, llm_config, chain,
-            decree_text=decree_text, content=content,
-            source=source, on_gazette=on_gazette,
-        )
+            )
+            # Concurrent submissions share answer claims, not a lock across model calls.
+            # Only the last consumer may resume the monthly tail; an in-flight sibling
+            # must not cause already-answered questions to be resubmitted or re-applied.
+            from ming_sim.decree import ResolveResult
+            from ming_sim.rescript_forecast import schedule_forecasts
+            jobs = getattr(owner, "_rescript_jobs", None)
+            if jobs is not None:
+                with owner._write_gate:
+                    chain.clear()
+                    chain.update(_load_chain(db, turn))
+                    if chain.get("call_failure"):
+                        raise SettlementAbort(
+                            chain["call_failure"]["message"], turn=turn,
+                            stage=chain["call_failure"]["step"],
+                            error_pack_path=chain["call_failure"].get("error_pack_path"),
+                        )
+                    desk = _materialize_rescript_desk(db, state, chain)
+                    if desk or jobs:
+                        if desk:
+                            schedule_forecasts(session=owner, chain=chain, desk=desk)
+                        return ResolveResult(awaiting=True, decisions=desk or [], advanced=False, stage="rescript")
+                    jobs[None] = None  # Exclusive tail claim, held without the write gate.
+        finally:
+            if write_gate_already_held:
+                owner._write_gate.acquire()
+        try:
+            return _run_loaded_month_chain(
+                state, db, agno_db, llm_config, chain,
+                decree_text=decree_text, content=content,
+                source=source, on_gazette=on_gazette,
+            )
+        finally:
+            if jobs is not None:
+                with gate:
+                    jobs.pop(None)
     except Exception as exc:
-        abort_from(exc)
+        with gate:
+            abort_from(exc)
     raise AssertionError("month chain abort must raise")
 
 
@@ -1821,55 +1801,94 @@ def _world_question_ids(chain, turn):
 def _consume_rescript_answers(
     session: Any, chain: Dict[str, Any], *, source: Provenance,
 ) -> None:
-    """把已裁批红接回案卷 / 请旨续推；幂等，已落不动。
+    """Independent answer model legs; completion-order, short atomic live commits.
 
-    每道请旨各自续推；同段其它未答项保留原身份。
+    Failure is recorded immediately through the original month-call boundary, but
+    only re-raised after sibling jobs have had their own chance to commit.
     """
+    from concurrent.futures import as_completed
+    from ming_sim.decree_forecast import _owner_for
+    from ming_sim.rescript_draft import consume_memorial_answer
+    from ming_sim.rescript_forecast import prepare_answers
+
     db, state = session.db, session.state
     turn = int(state.turn)
-    from ming_sim.rescript_draft import consume_memorial_answers
-    consume_memorial_answers(session, chain, source=source)
-    rows = db.issues.list_pending_decisions(turn)
-    decided = [r for r in rows if str(r.get("status") or "") == "decided"]
-    if not decided:
-        return
+    owner = _owner_for(db)
+    with owner._write_gate if owner is not None else nullcontext():
+        rows = db.issues.list_pending_decisions(turn) + db.issues.list_rescript_drafts()
+        decided = [r for r in rows if r["status"] == "decided" and r["answered_turn"] == turn]
+        # Retain the existing durable recovery fields even before any answer.
+        chain.setdefault("rescript_consumed", [])
+        chain.setdefault("rescript_answer_products", {})
+        if not decided:
+            return
+        chain.clear()
+        chain.update(_load_chain(db, turn))
+        for row in decided:
+            event_id = str(row.get("event_id") or "")
+            if event_id.startswith("deliberation:"):
+                from ming_sim.rescript_actions import apply_imperial_deliberation_push
+                original = db.dossiers.get(int(event_id.partition(":")[2]))
+                if (row["choice"] or {}).get("action") == "imperial_push" and (original["payload"] or {}).get("deliberation_state") == "stalled":
+                    with atomic(db):
+                        apply_imperial_deliberation_push(
+                            db, state, target_dossier_id=int(original["id"]),
+                            decision_key=row["decision_key"],
+                            decree_text=(row.get("choice") or {}).get("note", ""),
+                        )
+            elif event_id.startswith("dossier:"):
+                _apply_decided_triad(db, state, row, row["choice"] or {}, content=session.content)
+        world_ids = _world_question_ids(chain, turn)
+        eligible = []
+        for row in decided:
+            event = str(row.get("event_id") or "")
+            if row["kind"] == "rescript_draft":
+                if row["decision_key"] not in chain.get("rescript_consumed", []):
+                    eligible.append(row)
+            elif event in world_ids:
+                eligible.append(row)
+            elif event.startswith(_DECREE_QUESTION_PREFIX):
+                ref = event[len(_DECREE_QUESTION_PREFIX):].rpartition(":")[0]
+                if any(q["event_id"] == event for q in db.staged_declarations.questions_for(ref)):
+                    eligible.append(row)
+        jobs, launches = prepare_answers(session, chain, eligible, source=source)
+    for launch in launches:
+        launch()
+    failure = None
+    for future in as_completed(jobs):
+        row, kind, ref = jobs[future]
+        with owner._write_gate:
+            chain.clear()
+            chain.update(_load_chain(db, turn))
 
-    for row in decided:
-        event_id = str(row.get("event_id") or "")
-        if event_id.startswith("deliberation:"):
-            from ming_sim.rescript_actions import apply_imperial_deliberation_push
-            original = db.dossiers.get(int(event_id.partition(":")[2]))
-            if (row["choice"] or {}).get("action") == "imperial_push" and (original["payload"] or {}).get("deliberation_state") == "stalled":
-                with atomic(db):
-                    apply_imperial_deliberation_push(
-                        db, state, target_dossier_id=int(original["id"]),
-                        decision_key=row["decision_key"],
-                        decree_text=(row.get("choice") or {}).get("note", ""),
+            def consume():
+                prepared = future.result()
+                if kind == "memorial":
+                    consume_memorial_answer(session, chain, row, source=source, prepared=prepared)
+                elif kind == "world":
+                    continue_world_after_answers(
+                        session, chain, answers=[_answer_from_row(row)], source=source, prepared=prepared,
                     )
-            continue
-        if not event_id.startswith("dossier:"):
-            continue
-        choice = row["choice"] or {}
-        _apply_decided_triad(db, state, row, choice, content=session.content)
-
-    world_ids = _world_question_ids(chain, turn)
-    from ming_sim.rescript_forecast import schedule_forecasts
-    # Start all independent unforecasted answers before waiting for any model leg.
-    forecasts = schedule_forecasts(session, chain, decided, selected=True)
-    for row in sorted(decided, key=lambda r: r["answer_order"]):
-        event_id = str(row.get("event_id") or "")
-        if event_id in world_ids:
-            continue_world_after_answers(
-                session, chain, answers=[_answer_from_row(row)], source=source,
-                forecast=forecasts.get(event_id),
-            )
-        elif event_id.startswith(_DECREE_QUESTION_PREFIX):
-            ref, _, _ = event_id[len(_DECREE_QUESTION_PREFIX):].rpartition(":")
-            continue_decree_after_answers(
-                session, decree_ref=ref, chain=chain,
-                answers=[_answer_from_row(row)], source=source,
-                forecast=forecasts.get(event_id),
-            )
+                else:
+                    decree_ref = ref[len(_DECREE_QUESTION_PREFIX):].rpartition(":")[0]
+                    continue_decree_after_answers(
+                        session, decree_ref=decree_ref, chain=chain,
+                        answers=[_answer_from_row(row)], source=source, prepared=prepared,
+                    )
+            try:
+                _guard_month_call(
+                    db, state, chain, decree_text="", source=source,
+                    step="rescript-answer" if kind == "memorial" else f"{kind}_continue", operation=consume,
+                )
+            except Exception as exc:
+                failure = failure or exc
+            finally:
+                del owner._rescript_jobs[(turn, row["decision_key"])]
+    with owner._write_gate:
+        chain.clear()
+        chain.update(_load_chain(db, turn))
+    if failure is not None:
+        raise failure
 
 
 def _apply_decided_triad(

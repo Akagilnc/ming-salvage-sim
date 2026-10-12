@@ -297,23 +297,17 @@ def _translate_month_segment_front(
     return declaration, refs
 
 
-def dispatch_month_segment(
+def prepare_month_segment(
     db: Any,
     state: Any,
     *,
     segment: str,
-    minister_name: str = "",
     decree_payload: Optional[Mapping[str, object]] = None,
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
-    source: Provenance = Provenance.system_simulation,
-    alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
-) -> DeclarationDispatchResult:
-    """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。
-
-    三饷原批语只由世界答后段传入；旨意续推和问前世界段不是那一次解释。
-    """
+) -> tuple[dict[str, object], dict[str, list[int]]]:
+    """Freeze model inputs and translate without writing the ledger."""
     from ming_sim.materials import candidate_supply, continuing_dossier_facts
 
     payload = decree_payload or {}
@@ -323,12 +317,28 @@ def dispatch_month_segment(
     # 候选集与同一次世界段材料目录（prepare_world_materials 默认口径）和落库写口
     # （impeachment_surge 走 gather_impeachment_surge_candidates）三者同一：谁在
     # 世界段被供到，转译就能声明，写口也收；否则模型看得到却永远立不下。
-    declaration, refs = _translate_month_segment_front(
+    return _translate_month_segment_front(
         db, segment=segment, turn=turn, state=state, decree_payload=payload,
         llm_config=llm_config, translate_fn=translate_fn,
         continuing_dossiers=continuing_dossier_facts(db, turn),
         candidates=candidate_supply(db, state),
         answered_verdicts=answered_verdicts,
+    )
+
+
+def dispatch_month_segment(
+    db: Any, state: Any, *, segment: str, minister_name: str = "",
+    decree_payload: Optional[Mapping[str, object]] = None, llm_config: Any = None,
+    translate_fn: Optional[MonthTranslateFn] = None,
+    source: Provenance = Provenance.system_simulation,
+    alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
+    answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+    prepared: Optional[tuple[dict[str, object], dict[str, list[int]]]] = None,
+) -> DeclarationDispatchResult:
+    """Translate once, then commit through the sole atomic C0 dispatch entry."""
+    declaration, refs = prepared if prepared is not None else prepare_month_segment(
+        db, state, segment=segment, decree_payload=decree_payload,
+        llm_config=llm_config, translate_fn=translate_fn, answered_verdicts=answered_verdicts,
     )
     return dispatch_declaration(
         db, state, declaration,

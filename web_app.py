@@ -4885,14 +4885,13 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
     def worker() -> None:
         try:
             game = get_game()
-            turn_before = int(game.state.turn)
             if game.session.current_phase() != TurnPhase.AWAITING_DECISION:
                 raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(
                 game, hold_write_for_body=False,
             ):
-                report = game.session.submit_hitl_choices(
+                result = game.session.submit_hitl_choices(
                     body.choices,
                     write_gate=_game_write_gate(game),
                     cheat_directive=body.cheat,
@@ -4900,13 +4899,13 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 )
                 decree = game.session.last_decree
                 with _game_write_gate(game):
-                    advanced = int(game.state.turn) != turn_before
+                    advanced = result.advanced
                     if advanced:
                         game.session.end_turn()
                         game.refresh_turn()
                 terminal = ("__done__", _settlement_player_payload(
                     decree=decree,
-                    report=report,
+                    report=result.report,
                     advanced=advanced,
                 ))
             if terminal is not None:

@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
 import { pendingDecisionsFrom } from "../decisionRouting";
-import type { PendingDecision } from "../types";
+import type { GameState, PendingDecision } from "../types";
+import { useSettlementFlow } from "../useSettlementFlow";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,6 +35,7 @@ function render(element: React.ReactNode) {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   document.body.innerHTML = "";
 });
 
@@ -131,17 +133,49 @@ describe("DecisionModal", () => {
     cleanup();
   });
 
-  it("moves focus to the next memorial when continuing to the next decision", () => {
-    const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
-    const options = document.querySelectorAll<HTMLButtonElement>(".decision-option");
-    const confirm = document.querySelector<HTMLButtonElement>(".decision-confirm");
-
-    act(() => options[0].click());
-    act(() => confirm!.click());
-
-    expect(document.activeElement).toBe(document.querySelector<HTMLButtonElement>(".decision-option"));
-    expect(document.querySelector(".decision-document-section h3")?.textContent).toBe("河工修治");
-    cleanup();
+  it("sends each confirmed row immediately and admits a follow-up while its sibling waits", async () => {
+    const desk = decisions.map((d, i) => ({ ...d, decision_key: `decision:1:${i}` }));
+    const followup = { ...desk[1], decision_key: "decision:1:2", idx: 2 };
+    let serverState = {
+      turn: { turn: 1, phase: "awaiting_decision" }, pending_decisions: desk,
+    } as unknown as GameState;
+    const requests: { url: string; method: string; body: unknown }[] = [];
+    const replies: ((response: Response) => void)[] = [];
+    vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+      requests.push({ url, method: init.method!, body: JSON.parse(String(init.body)) });
+      return new Promise<Response>((resolve) => replies.push(resolve));
+    });
+    function Harness() {
+      const [state, setState] = React.useState(serverState);
+      const [busy, setBusy] = React.useState("");
+      const loadState = React.useCallback(async () => { setState(serverState); return serverState; }, []);
+      const flow = useSettlementFlow({ state, setBusy, setError: () => {}, cheatDirective: "",
+        setCheatDirective: () => {}, loadState });
+      return <DecisionModal decisions={flow.pendingDecisions} busy={busy} onResolve={flow.submitDecisions} />;
+    }
+    const cleanup = render(<Harness />);
+    const confirmCurrent = () => {
+      const option = document.querySelector<HTMLButtonElement>(".decision-option")!;
+      expect(option.disabled).toBe(false);
+      act(() => option.click());
+      act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
+    };
+    const done = () => new Response(`event: done\ndata: ${JSON.stringify({ advanced: false })}\n\n`);
+    try {
+      confirmCurrent();
+      expect(requests).toEqual([{ url: "/api/decree/resolve_decisions/stream", method: "POST",
+        body: { choices: [{ ...desk[0].options[0], decision_key: desk[0].decision_key }] } }]);
+      expect(document.activeElement).toBe(document.querySelector(".decision-option"));
+      confirmCurrent();
+      expect(requests[1].body).toEqual({ choices: [{ ...desk[1].options[0], decision_key: desk[1].decision_key }] });
+      serverState = { ...serverState, settlement_entry_inflight: true, pending_decisions: [followup] };
+      await act(async () => replies[1](done()));
+      confirmCurrent();
+      expect(requests[2].body).toEqual({ choices: [{ ...followup.options[0], decision_key: followup.decision_key }] });
+      await act(async () => { replies[0](done()); replies[2](done()); });
+    } finally {
+      cleanup();
+    }
   });
 
   it("renders no page for a month with no decisions", () => {
