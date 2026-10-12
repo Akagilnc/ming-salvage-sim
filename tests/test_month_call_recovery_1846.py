@@ -616,9 +616,9 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
         session.resolve_turn(allow_empty_decree=True)
 
     assert caught.value.error_pack_path is None
-    # 原结算诊断保真：注入异常对象／str 作期望；写包次生挂 cause，不得顶替。
+    # 原结算诊断保真：注入异常对象／str 作期望；显式原因是注入的原业务异常。
     assert caught.value.args[:1] == settle_error.args[:1]
-    assert caught.value.__cause__ is pack_error
+    assert caught.value.__cause__ is settle_error
     assert not db.staged_declarations.is_settled(ref)
     assert _ningyuan_ledger_rows(db) == []
     failure = _month_chain_of(db, turn).get("call_failure") or {}

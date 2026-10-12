@@ -178,7 +178,6 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
 @pytest.mark.parametrize("handwritten_batch", [False, True])
 def test_multiple_questions_continue_independently_through_recovery(game, monkeypatch, kind, handwritten_batch):
     """Raw one-row inputs, sibling success after failure, durable follow-up/recovery."""
-    from tests.month_chain_helpers import InlineExecutor
     from ming_sim.db import GameDB
 
     _forbid_extractor(monkeypatch)
@@ -221,7 +220,6 @@ def test_multiple_questions_continue_independently_through_recovery(game, monkey
     monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
     monkeypatch.setattr("ming_sim.agents.run_agent_text", model)
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
-    monkeypatch.setattr("ming_sim.rescript_forecast._executor", InlineExecutor())
     session = make_light_session(db, state, content)
     session.llm_config = object()
     def ledger():

@@ -242,9 +242,15 @@ def _transport_retry_interval_instant():
 
 
 @pytest.fixture(autouse=True)
-def _deterministic_rescript_forecasts(monkeypatch):
+def _deterministic_rescript_forecasts():
     from tests.month_chain_helpers import InlineExecutor
-    monkeypatch.setattr("ming_sim.rescript_forecast._executor", InlineExecutor())
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr("ming_sim.rescript_forecast._executor", InlineExecutor())
+    try:
+        yield
+    finally:
+        mp.undo()
 
 
 @pytest.fixture
