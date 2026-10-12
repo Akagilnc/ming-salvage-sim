@@ -79,7 +79,14 @@ def apply_army_delta_with_cannon_transfer(
     if "cannon_transfer_to" in payload:
         target_id = payload.pop("cannon_transfer_to")
         cannon_keys = [k for k in payload if ARMY_FIELD_ALIASES.get(k, k) == "cannon_equipment"]
-        requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0
+        try:
+            requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0
+        except ValueError as exc:
+            rejections.append(RejectedItem(
+                item={"army_id": army_id, "changes": raw_changes},
+                reason=str(exc), category="invalid_enum", source=source,
+            ))
+            return army_changes, rejections
         source_row = db.armies.read_apply_extracted_army_delta((army_id,))
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:

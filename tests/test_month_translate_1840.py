@@ -99,6 +99,48 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     assert all(row["origin_ref"] == origin for row in logs)
 
 
+@pytest.mark.parametrize("bad_amount", [None, True, -1.5, "bad"])
+def test_world_segment_nested_cannon_transfer_rejects_bad_amount(game, bad_amount):
+    from ming_sim.month_translate import dispatch_month_segment
+    import json
+
+    db, state, _ = game
+    loser, winner = [row[0] for row in db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 2")]
+    db.conn.execute("UPDATE armies SET cannon_equipment=1, is_mutinied=0 WHERE id=?", (loser,))
+    db.conn.execute("UPDATE armies SET cannon_equipment=0, is_mutinied=0 WHERE id=?", (winner,))
+    cannon_before = [tuple(row) for row in db.conn.execute(
+        "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?) ORDER BY id", (loser, winner),
+    )]
+    logs_before = db.conn.execute("SELECT COUNT(*) FROM army_logs WHERE field='cannon_equipment'").fetchone()[0]
+    manpower_before = db.armies.row(winner)["manpower"]
+    issue_id = db.insert_issue(state, kind="situation", title="调炮")
+    bad_changes = {"随军大炮": bad_amount, "cannon_transfer_to": winner}
+    result = dispatch_month_segment(
+        db, state, segment="调炮", translate_fn=lambda request, config: {"effects": {
+            "close_issues": [{
+                "issue_id": issue_id, "reason": "resolved",
+                "effect_on_resolve": {"army_delta": {
+                    loser: bad_changes, winner: {"manpower": 1},
+                }},
+            }],
+        }},
+    )
+    rejected = section(result.effects.applied[0], "issue_summary").rejected
+    assert [(item.category, item.item, item.source.value) for item in rejected] == [
+        ("invalid_enum", {"army_id": loser, "changes": bad_changes}, "system_simulation"),
+    ]
+    reports = db.conn.execute("SELECT category, item_json, source FROM rejection_reports").fetchall()
+    assert [(row["category"], json.loads(row["item_json"]), row["source"]) for row in reports] == [
+        ("invalid_enum", {"army_id": loser, "changes": bad_changes}, "system_simulation"),
+    ]
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?) ORDER BY id", (loser, winner),
+    )] == cannon_before
+    assert db.conn.execute("SELECT COUNT(*) FROM army_logs WHERE field='cannon_equipment'").fetchone()[0] == logs_before
+    assert db.armies.row(winner)["manpower"] == manpower_before + 1
+    assert db.issues.row(issue_id)["status"] == "resolved"
+
+
 def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     from ming_sim.month_translate import dispatch_month_segment
 
