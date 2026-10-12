@@ -5,7 +5,7 @@ import json
 import pytest
 import ming_sim.month_chain as month_chain
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
-from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.materials import list_materials, prepare_world_materials, read_material, release_material_tree
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
@@ -82,8 +82,15 @@ def test_author_waits_until_rescript_is_done(game, monkeypatch):
 
 
 
-def test_gazette_failure_retries_report_only(game, monkeypatch):
-    db, state, content = game
+def test_gazette_failure_retries_report_only(web_game, monkeypatch):
+    import asyncio
+    import httpx
+    import web_app
+    from tests.month_chain_helpers import canned_full_settlement
+    from tests.sse_helpers import parse_sse_event_pairs
+
+    db, state, content = web_game.db, web_game.state, web_game.content
+    canned_full_settlement(monkeypatch)
     minister = next(iter(content.characters.values())).name
     affair = db.affairs.open(
         name="重试可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
@@ -105,9 +112,22 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", gazette)
-    session = _session(db, state, content, monkeypatch)
-    with pytest.raises(SettlementAbort):
-        session.resolve_turn(allow_empty_decree=True)
+
+    async def retreat():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=web_app.app), base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/decree/advance_without_edict/stream", json={"expected_turn": turn},
+            )
+        assert response.status_code == 200
+        return parse_sse_event_pairs(response.text)
+
+    first = asyncio.run(retreat())
+    assert first[-1][0] == "error", first
+    assert first[-1][1]["status_code"] == 409
+    assert int(state.turn) == turn
+    assert web_game.state_payload()["turn"]["phase"] == "settling"
     charged = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0]
@@ -117,8 +137,12 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     failure = month_chain.month_chain_call_failure(db, turn)
     assert failure["step"] == "gazette"
 
-    result = session.resolve_turn(allow_empty_decree=True)
-    assert result.advanced is True
+    retried = asyncio.run(retreat())
+    kind, result = retried[-1]
+    assert kind == "done", retried
+    assert result["advanced"] is True
+    assert int(state.turn) == turn + 1
+    assert month_chain.month_chain_call_failure(db, turn) is None
     assert gazette_calls["n"] == 2
     assert world_calls == [1]
     assert db.conn.execute(
