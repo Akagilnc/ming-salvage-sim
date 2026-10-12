@@ -13,6 +13,7 @@ from ming_sim.applier import Provenance, RejectedItem, SectionResult
 from ming_sim.db import GameDB
 from ming_sim.constants import REGION_SCORE_FIELDS, FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, ARMY_SCORE_FIELDS, ARMY_FIELD_ALIASES
 from ming_sim.models import Event, GameState
+from ming_sim.entities.army.delta_section import apply_army_delta_with_cannon_transfer
 
 _ISSUE_PSEUDO_EVENT = Event(
     id="issue_resolution", title="局势结案", kind="月末", summary="",
@@ -22,6 +23,37 @@ _ISSUE_ENTITY_FIELDS = {
     "region_delta": dict, "army_delta": dict, "new_armies": list,
     "power_renames": list, "人物变更": list,
 }
+
+
+def admit_fresh_mapping_sections(
+    effect: Dict[str, object],
+    *,
+    source: Provenance = Provenance.system_simulation,
+    container: type = dict,
+    drop: bool = True,
+) -> tuple[Dict[str, object], List[RejectedItem]]:
+    """Admit illegal ``_ISSUE_ENTITY_FIELDS`` containers of one expected type.
+
+    Fresh close/cancel mapping: ``container=dict, drop=True`` — strip bad keys so
+    same-named presets survive a shallow merge; durable loaders stay loud.
+    List fields inside ``_apply_issue_entities``: ``container=list, drop=False`` —
+    leave one rejection, keep the key for downstream isinstance skips.
+    """
+    cleaned = dict(effect) if drop else effect
+    rejected: List[RejectedItem] = []
+    for key, expected in _ISSUE_ENTITY_FIELDS.items():
+        if expected is not container:
+            continue
+        if key in cleaned and cleaned[key] is not None and not isinstance(cleaned[key], expected):
+            rejected.append(RejectedItem(
+                item={"field": key, "raw_value": cleaned[key]},
+                reason=f"局势效果 {key} 容器类型非法",
+                category="invalid_shape",
+                source=source,
+            ))
+            if drop:
+                del cleaned[key]
+    return cleaned, rejected
 
 
 def _apply_issue_buildings(
@@ -187,12 +219,11 @@ def _apply_issue_entities(
         tolerated.append(RejectedItem(item={"field": "metrics", "raw_value": metrics}, reason="指标效果须为对象", category="invalid_shape", source=source))
     tolerated.extend(_apply_economy_list(db, state, [] if effect.get("economy") is None else effect["economy"], origin_ref=origin_ref, source=source)[1])
     tolerated.extend(_apply_faction_dict(db, {} if effect.get("factions") is None else effect["factions"], source=source)[1])
-    for key, container in _ISSUE_ENTITY_FIELDS.items():
-        if key in effect and effect[key] is not None and not isinstance(effect[key], container):
-            tolerated.append(RejectedItem(
-                item={"field": key, "raw_value": effect[key]},
-                reason=f"局势效果 {key} 容器类型非法", category="invalid_shape", source=source,
-            ))
+    # list 拒收走同一权威件；dict 段留给持久加载器（新鲜坏映射已在入口剔除）。
+    _, list_rejections = admit_fresh_mapping_sections(
+        effect, source=source, container=list, drop=False,
+    )
+    tolerated.extend(list_rejections)
     def effective_content():
         return content if content is not None else _ctx()
 
@@ -202,6 +233,10 @@ def _apply_issue_entities(
 
 
     region_delta = _load_durable_json_object(effect.get("region_delta"), surface="issue_effect.region_delta")
+    region_delta, region_shape_rejections = _monthly_mapping_effect(
+        {"region_delta": region_delta}, "region_delta", source=source,
+    )
+    tolerated.extend(region_shape_rejections)
     if region_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _collect_result(
@@ -215,12 +250,17 @@ def _apply_issue_entities(
                                               origin_ref=origin_ref, require_origin=True, source=source)
         )
     army_delta = _load_durable_json_object(effect.get("army_delta"), surface="issue_effect.army_delta")
+    army_delta, army_shape_rejections = _monthly_mapping_effect(
+        {"army_delta": army_delta}, "army_delta", source=source,
+    )
+    tolerated.extend(army_shape_rejections)
     if army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
-        _collect_result(
-            db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=False,
-                                 origin_ref=origin_ref, require_origin=True, source=source)
-        )
+        for army_id, raw_changes in army_delta.items():
+            _collect_result(apply_army_delta_with_cannon_transfer(
+                db, state, pseudo, army_id, raw_changes,
+                origin_ref=origin_ref, actor=label, source=source,
+            ))
     power_renames = effect.get("power_renames")
     if isinstance(power_renames, list):
         for item in power_renames:
@@ -503,14 +543,16 @@ def _apply_monthly_ongoing_entities(
         rejections.extend(region_changes_rejections)
 
     if army_delta:
-        army_changes, army_changes_rejections = db.apply_army_deltas(
-            state, _ISSUE_PSEUDO_EVENT, None, label, army_delta,
-            origin_ref=origin_ref, source=source, commit=False,
-        )
-        applied_army = army_changes
+        applied_army = []
+        for army_id, raw_changes in army_delta.items():
+            army_changes, army_changes_rejections = apply_army_delta_with_cannon_transfer(
+                db, state, _ISSUE_PSEUDO_EVENT, army_id, raw_changes,
+                origin_ref=origin_ref, actor=label, source=source,
+            )
+            applied_army.extend(army_changes)
+            rejections.extend(army_changes_rejections)
         if applied_army:
             applied.append({"army_delta": applied_army})
-        rejections.extend(army_changes_rejections)
 
     if power_updates:
         power_changes, power_changes_rejections = db.apply_power_deltas(state, power_updates, origin_ref=origin_ref, source=source, commit=False)

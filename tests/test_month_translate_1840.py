@@ -11,12 +11,13 @@ from tests.test_declaration_dispatch_1835 import _minister as _character_name
 
 
 
+@pytest.mark.parametrize("route", ["direct", "resolved", "failed", "ongoing"])
 @pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
     (1, 0, 10, 1, 0, 0), (5, 11, 10, 1, 0, 0), (0, 0, 0, 0, 0, 0),
     (5, 0, 10, 0, 1, 0), (5, 0, 10, 0, 0, 1),
 ])
 def test_world_segment_explicit_stock_transfers_share_actual_amount(
-    game, source_cannon, target_cannon, treasury, actual_cannon, source_latched, target_latched,
+    game, source_cannon, target_cannon, treasury, actual_cannon, source_latched, target_latched, route,
 ):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -39,9 +40,35 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
             "cannon_transfer_to": winner, "reason": "缴获",
         }},
     }}
+    origin = "盘面自发"
+    if route != "direct":
+        dossier_id = db.create_decree_dossier(
+            state, action_type="policy", decree_text="调炮", target_kind="issue", target_id="test",
+        )
+        db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+        origin = f"dossier:{dossier_id}"
+        army_effect = {"army_delta": declaration["effects"].pop("army_delta")}
+        # Nested consequences inherit the authorized parent, not a child claim.
+        army_effect["army_delta"][loser]["origin_ref"] = "fabricated:9"
+        issue_id = db.insert_issue(
+            state, kind="situation", title="调炮", origin_ref=origin,
+            ongoing_effects=army_effect if route == "ongoing" else {},
+            effect_on_fail=army_effect if route == "failed" else {},
+        )
+        if route != "ongoing":
+            declaration["effects"]["close_issues"] = [{
+                "issue_id": issue_id, "reason": route,
+                f"effect_on_{'resolve' if route == 'resolved' else 'fail'}": army_effect,
+            }]
     result = dispatch_month_segment(
         db, state, segment="调拨和缴获", translate_fn=lambda request, config: declaration,
     )
+    if route == "ongoing":
+        from ming_sim.situation_drift import apply_situation_monthly_drift
+        assert apply_situation_monthly_drift(db, state) == []
+    elif route != "direct":
+        assert db.issues.row(issue_id)["status"] == route
+    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 0
     effects = result.effects.applied[0]
     assert [move["delta"] for move in view(effects, "economy_moves")] == [-treasury, treasury]
     assert (state.metrics["国库"], state.metrics["内库"]) == (0, treasury)
@@ -57,17 +84,141 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     assert {row["id"]: row["cannon_equipment"] for row in cannon} == {
         loser: source_cannon - actual_cannon, winner: target_cannon + actual_cannon,
     }
-    assert sorted(change["delta"] for change in view(effects, "army_changes")
-                  if change.get("field") == "cannon_equipment") == [
-                      -actual_cannon, actual_cannon,
-                  ]
+    if route == "direct":
+        assert sorted(change["delta"] for change in view(effects, "army_changes")
+                      if change.get("field") == "cannon_equipment") == [
+                          -actual_cannon, actual_cannon,
+                      ]
     logs = db.conn.execute(
-        "SELECT army_id, delta FROM army_logs WHERE field='cannon_equipment' AND army_id IN (?, ?)",
+        "SELECT army_id, delta, origin_ref FROM army_logs WHERE field='cannon_equipment' AND army_id IN (?, ?)",
         (loser, winner),
     ).fetchall()
     assert sorted(row["delta"] for row in logs) == (
         [-actual_cannon, actual_cannon] if actual_cannon else []
     )
+    assert all(row["origin_ref"] == origin for row in logs)
+
+
+@pytest.mark.parametrize("route,field,bad_value,level", [
+    (route, "cannon_transfer", value, "item") for route in ("resolved", "failed", "cancels")
+    for value in (None, True, -1.5, "bad")
+] + [
+    (route, field, value, "item") for route in ("resolved", "failed", "cancels")
+    for field in ("army_delta", "region_delta")
+    for value in (None, [], 5, 1.5, "bad", True)
+] + [
+    (route, field, value, "section")
+    for route in ("resolved", "failed", "cancels", "new_resolved", "new_failed")
+    for field in ("army_delta", "region_delta")
+    for value in ([], 5, 1.5, "bad", True)
+])
+def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field, bad_value, level):
+    from ming_sim.month_translate import dispatch_month_segment
+    import json
+
+    db, state, _ = game
+    loser, winner = [row[0] for row in db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 2")]
+    db.conn.execute("UPDATE armies SET cannon_equipment=1, is_mutinied=0 WHERE id=?", (loser,))
+    db.conn.execute("UPDATE armies SET cannon_equipment=0, is_mutinied=0 WHERE id=?", (winner,))
+    cannon_before = [tuple(row) for row in db.conn.execute(
+        "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?) ORDER BY id", (loser, winner),
+    )]
+    logs_before = db.conn.execute("SELECT COUNT(*) FROM army_logs WHERE field='cannon_equipment'").fetchone()[0]
+    manpower_before = db.armies.row(winner)["manpower"]
+    bad_region, good_region = [row[0] for row in db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 2")]
+    db.conn.execute("UPDATE regions SET unrest=10 WHERE id=?", (good_region,))
+    bad_region_before = dict(db.regions.row(bad_region))
+    legal = {"army_delta": {winner: {"manpower": 1}}, "region_delta": {good_region: {"unrest": 1}}}
+    effect = dict(legal)
+    if field == "cannon_transfer":
+        bad_changes = {"随军大炮": bad_value, "cannon_transfer_to": winner}
+        effect["army_delta"] = {**effect["army_delta"], loser: bad_changes}
+        expected_rejections = [("invalid_enum", {"army_id": loser, "changes": bad_changes}, "system_simulation")]
+    elif level == "section":
+        effect[field] = bad_value
+        expected_rejections = [
+            ("invalid_shape", {"field": field, "raw_value": bad_value}, "system_simulation")
+        ]
+    else:
+        bad_id = loser if field == "army_delta" else bad_region
+        bad_items = {bad_id: bad_value, "unregistered_entity": bad_value}
+        effect[field] = {**bad_items, **effect[field]}
+        expected_rejections = [
+            ("invalid_shape", {"field": field, "id": entity_id, "value": value}, "system_simulation")
+            for entity_id, value in bad_items.items()
+        ]
+    fresh_issue = route in ("new_resolved", "new_failed")
+    terminal_route = route.removeprefix("new_")
+    effect_field = f"effect_on_{'resolve' if terminal_route == 'resolved' else 'fail'}"
+    creation_rejected = []
+    if fresh_issue:
+        dossier_id = db.create_decree_dossier(
+            state, action_type="policy", decree_text="调炮", target_kind="issue", target_id="test",
+        )
+        db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+        created = dispatch_month_segment(
+            db, state, segment="立项", translate_fn=lambda request, config: {"effects": {
+                "new_issues": [{
+                    "origin_kind": "decree", "origin_ref": f"dossier:{dossier_id}",
+                    "kind": "situation", "title": "调炮", effect_field: effect,
+                }],
+            }},
+        )
+        creation = section(created.effects.applied[0], "issue_summary")
+        issue_id = creation.new_issues[0]["issue_id"]
+        creation_rejected = creation.rejected
+    # Close + section: seed same-named preset so rejected fresh section keeps preset work.
+    elif route == "cancels":
+        issue_kwargs = {"cancellable": "decree"}
+    elif level == "section":
+        issue_kwargs = {
+            "effect_on_resolve": legal if route == "resolved" else {},
+            "effect_on_fail": legal if route == "failed" else {},
+        }
+    else:
+        issue_kwargs = {"effect_on_fail": effect if route == "failed" else {}}
+    if not fresh_issue:
+        issue_id = db.insert_issue(state, kind="situation", title="调炮", **issue_kwargs)
+    if route == "cancels":
+        declaration = {"effects": {
+            "cancels": [{"issue_id": issue_id, "narrative": "撤回", "applied_cost": effect}],
+        }}
+        expected_status = "dropped"
+    else:
+        declaration = {"effects": {
+            "close_issues": [{
+                "issue_id": issue_id, "reason": terminal_route,
+                **({} if fresh_issue else {effect_field: effect}),
+            }],
+        }}
+        expected_status = terminal_route
+    if fresh_issue:
+        declaration["effects"]["army_delta"] = {winner: {"origin_ref": "盘面自发", "manpower": 2}}
+    result = dispatch_month_segment(
+        db, state, segment="调炮", translate_fn=lambda request, config: declaration,
+    )
+    rejected = section(result.effects.applied[0], "issue_summary").rejected
+    if fresh_issue:
+        assert rejected == []
+        rejected = creation_rejected
+        assert json.loads(db.issues.row(issue_id)[effect_field]) == {
+            key: value for key, value in legal.items() if key != field
+        }
+    assert [(item.category, item.item, item.source.value) for item in rejected] == expected_rejections
+    reports = db.conn.execute("SELECT category, item_json, source FROM rejection_reports").fetchall()
+    assert [(row["category"], json.loads(row["item_json"]), row["source"]) for row in reports] == expected_rejections
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?) ORDER BY id", (loser, winner),
+    )] == cannon_before
+    assert db.conn.execute("SELECT COUNT(*) FROM army_logs WHERE field='cannon_equipment'").fetchone()[0] == logs_before
+    expect_manpower = manpower_before + (2 if fresh_issue else 0) + (
+        0 if level == "section" and field == "army_delta" and (route == "cancels" or fresh_issue) else 1
+    )
+    expect_unrest = 10 if level == "section" and field == "region_delta" and (route == "cancels" or fresh_issue) else 11
+    assert db.armies.row(winner)["manpower"] == expect_manpower
+    assert dict(db.regions.row(bad_region)) == bad_region_before
+    assert db.regions.row(good_region)["unrest"] == expect_unrest
+    assert db.issues.row(issue_id)["status"] == expected_status
 
 
 def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
