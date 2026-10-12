@@ -597,9 +597,23 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
 
     with pytest.raises(SettlementAbort) as blocked:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-    assert isinstance(blocked.value.__cause__, RuntimeError if fail_at == "unexpected" else LLMUnavailable)
+    # 持久 call_failure 重建 SettlementAbort 无内存 __cause__（权威=错误包+链上失败）。
     assert blocked.value.error_pack_path
-    assert month_chain.month_chain_call_failure(db, int(state.turn))["kind"] == (
+    from pathlib import Path
+    pack = Path(blocked.value.error_pack_path)
+    assert pack.is_dir()
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
+    expected_type = "RuntimeError" if fail_at == "unexpected" else "LLMUnavailable"
+    expected_message = {
+        "continuation": "模型调用耗尽",
+        "translation": "转译用尽",
+        "unexpected": "未识别模型接缝异常",
+    }[fail_at]
+    assert manifest["exception_type"] == expected_type
+    assert manifest["exception_message"] == expected_message
+    failure = month_chain.month_chain_call_failure(db, int(state.turn))
+    assert failure["error_pack_path"] == blocked.value.error_pack_path
+    assert failure["kind"] == (
         "code_exception" if fail_at == "unexpected" else "model_exhausted"
     )
     assert db.load_state(content).turn_phase == TurnPhase.SETTLING.value
