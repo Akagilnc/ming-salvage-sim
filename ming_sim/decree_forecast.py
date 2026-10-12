@@ -446,6 +446,7 @@ def produce_forecast_product(
             product["forecast_text"] = ""
             declaration = {}
         product["declaration"] = declaration
+        visible_refs = snapshot.get("visible_refs")
         persist()
         return product
     finally:

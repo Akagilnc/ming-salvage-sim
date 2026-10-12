@@ -589,6 +589,16 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
     phase["name"] = "month"
 
     async def scenario():
+        nonlocal affair
+        if phase["name"] == "retry" or phase["name"] == "month" and not retry:
+            # A later fact is visible to resumed translation, not the earlier staging.
+            affair = game.db.affairs.open(
+                name="追核边饷", origin="旨意", year=game.state.year,
+                period=game.state.period, turn=turn_before,
+            )
+            staged = game.db.staged_declarations.staged_for(ref)
+            if staged:
+                assert affair.id not in staged[0].visible_refs["affairs"]
         async with _client() as client:
             if entry == "issue":
                 response = await client.post("/api/decree/issue/stream", json={})
@@ -679,6 +689,11 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
         assert [row[0] for row in game.db.conn.execute(
             "SELECT delta FROM economy_ledger WHERE category=?", (target,),
         )] == [-1]
+    frozen_refs = json.loads(game.db.conn.execute(
+        "SELECT visible_refs_json FROM staged_declarations WHERE decree_ref=?",
+        (ref,),
+    ).fetchone()["visible_refs_json"])
+    assert affair.id in frozen_refs["affairs"]
     if pack:
         assert (Path(pack) / "manifest.json").is_file()
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
