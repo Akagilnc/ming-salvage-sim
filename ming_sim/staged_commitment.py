@@ -300,7 +300,7 @@ def list_due_grant_report_dossiers_for_scan(
         due_turn = int(row["due_turn"] or 0)
         # #1897：due 扫描写入待办的自由字段原样透传，禁 strip。
         title = str(payload.get("title") or payload.get("purpose") or "")
-        criterion = str(payload.get("ongoing_effects") or "") or title or "依限奏报"
+        criterion = str(payload.get("ongoing_effects") or "") or title
         origin = str(dossier.get("decree_text") or payload.get("text") or criterion)
         due.append({
             "commitment_ref": 0,
