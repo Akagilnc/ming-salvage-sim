@@ -5065,7 +5065,6 @@ class GameDB:
             if message_id is not None
         ]
         if message_ids:
-            placeholders = ",".join("?" for _ in message_ids)
             msgs = self.chat_messages.rows_by_ids(message_ids)
         else:
             msgs = []
@@ -5290,7 +5289,6 @@ class GameDB:
             )
             restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(items, message_ids)
             if message_ids:
-                placeholders = ",".join("?" for _ in message_ids)
                 self.chat_messages.delete_ids(message_ids)
             self.reign.write_chat_turn_status(("failed", int(chat_turn_id)))
             self.reign._truncate_agno_runs_in_tx(
@@ -5513,7 +5511,6 @@ class GameDB:
                     ids.append(pid)
             if not ids:
                 return
-            placeholders = ",".join("?" for _ in ids)
             draft_ids_to_delete.extend(
                 self.issues.directive_ids_for_pending_actions(ids)
             )
@@ -5574,7 +5571,6 @@ class GameDB:
             for draft_id in dict.fromkeys(draft_ids_to_delete):
                 self.issues.write_undo_chat_turn((int(draft_id),))
             if message_ids:
-                placeholders = ",".join("?" for _ in message_ids)
                 self.chat_messages.delete_ids(message_ids)
             self.reign.write_undo_chat_turn((int(chat_turn_id),))
             # #1838 / ADR 0155：夜当前主角是投影，不是独立真源。撤本轮后按该夜
@@ -5653,7 +5649,6 @@ class GameDB:
         from ming_sim.audience_night import night_archive_metadata
 
         night_ids = [int(row["id"]) for row in rows]
-        placeholders = ",".join("?" for _ in night_ids)
         ledger_rows = self.reign.ledger_archive_rows_for_nights(night_ids)
         turn_rows = self.reign.chat_turn_archive_rows_for_nights(night_ids)
         ledgers_by_night: Dict[int, List[Dict[str, Any]]] = {night_id: [] for night_id in night_ids}
@@ -6497,7 +6492,6 @@ class GameDB:
             faction_relation,
             integrity_band,
         )
-        from ming_sim.participant_roster import resolve_dossier_owner_name
 
         presence = self.dossiers.presence_rows(
             int(dossier_id), as_of_turn=as_of_turn,
@@ -7484,15 +7478,14 @@ class GameDB:
                 raise DeclarationDataError(f"案卷 region_id 非法：{rid!r}")
         region_id = rid
 
-        existing = self.dossiers.find_existing_for_source(
+        dossier_id = self.dossiers.find_existing_for_source(
             secret_order_id=secret_order_id,
             directive_id=int(directive_id or 0),
             pending_action_id=int(pending_action_id or 0),
             action=action,
             region_id=region_id,
         )
-        if existing is not None:
-            dossier_id = int(existing["id"])
+        if dossier_id is not None:
             self._attach_affair_from_payload(state, canonical_payload, dossier_id)
             return dossier_id
         source_turn_id = int(source_chat_turn_id or 0)
@@ -10732,7 +10725,6 @@ class GameDB:
         }
         if not referenced:
             return
-        placeholders = ",".join("?" for _ in referenced)
         known = {
             str(row["name"]) for row in self.characters.named_status_rows(referenced)
         }
@@ -10892,7 +10884,6 @@ class GameDB:
             if mid is not None and (not character_name or character_name != row["minister_name"]):
                 out.add(mid)
         if out:
-            placeholders = ",".join("?" for _ in out)
             turns = self.reign.chat_turns_for_messages(sorted(out))
             for turn in turns:
                 for raw in (turn["user_message_id"], turn["minister_message_id"]):
@@ -11103,7 +11094,6 @@ class GameDB:
         due_turn = int(state.turn) + deadline if deadline else 0
         source_chat_turn_id = 0
         if provenance_message_ids:
-            placeholders = ",".join("?" for _ in provenance_message_ids)
             source_row = next(
                 iter(self.reign.chat_turns_for_messages(provenance_message_ids)), None
             )

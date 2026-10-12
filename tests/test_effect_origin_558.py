@@ -1,4 +1,3 @@
-from ming_sim import issues as issue_engine
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
 import pytest

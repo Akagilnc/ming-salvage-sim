@@ -55,8 +55,6 @@ from __future__ import annotations
 from ming_sim.db import GameDB
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
-from ming_sim.applier import Provenance
-
 import contextlib
 import hashlib
 import json

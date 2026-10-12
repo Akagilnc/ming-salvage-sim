@@ -7,7 +7,6 @@ normalization, reason-override priority).
 """
 
 
-from ming_sim import issues
 from tests.conftest import active_ming_character
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
