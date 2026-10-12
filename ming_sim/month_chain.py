@@ -838,12 +838,12 @@ def _abort_month_call(
         reload_state_from_db(db, state, content=db.content)
     committed = _load_chain(db, turn)
     original = str(getattr(exc, "message", None) or exc)
-    pack_path = ""
+    # A packaged abort identifies this failure's pack, not a same-turn guess.
+    pack_path = exc.error_pack_path if isinstance(exc, SettlementAbort) else ""
     pack_exc: Optional[BaseException] = None
     try:
-        pack_path = write_error_pack(
-            db, state, exc=exc,
-        )
+        if not pack_path:
+            pack_path = write_error_pack(db, state, exc=exc)
     except Exception as caught_pack:
         # 写包失败不得顶替原故障，也不得挡住已提交相位上的失败标记。
         pack_exc = caught_pack

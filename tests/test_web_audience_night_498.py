@@ -474,30 +474,164 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
 
 
 
-def test_night_approved_directive_closes_into_month_end_without_second_review(web_game, monkeypatch):
+@pytest.mark.parametrize("stage,kind,entry,retry", [
+    ("judge", "429", "issue", False),
+    ("judge", "model", "advance", True),
+    ("forecast", "model", "issue", False),
+    ("forecast", "code", "advance", True),
+    ("translate", "model", "issue", True),
+    ("translate", "code", "issue", False),
+])
+def test_night_approved_directive_closes_into_month_end_without_second_review(
+    web_game, monkeypatch, stage, kind, entry, retry,
+):
+    from pathlib import Path
+    import ming_sim.decree_forecast as forecast
+    import ming_sim.month_translate as translate
+    from ming_sim.declaration_dispatch import pending_action_decree_ref
+    from ming_sim.error_pack import error_packs_root
+    from ming_sim.month_chain import month_chain_call_failure
+    from tests.month_chain_helpers import InlineExecutor
+
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
     turn_before = int(game.state.turn)
     text = "着户部核边饷，限三月完报"
+    affair = game.db.affairs.open(
+        name="核边饷", origin="旨意", year=game.state.year,
+        period=game.state.period, turn=turn_before,
+    )
+    # Deterministic model jobs, not a concurrency test.
+    from ming_sim import audience_translation
+    executor = audience_translation._executor
+    monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
+    phase = {"name": "night"}
+    calls = []
+    error = (RuntimeError("injected forecast bug") if kind == "code" else
+             LLMUnavailable("injected forecast exhaustion", status_code=429 if kind == "429" else 503))
+
+    def maybe_fail(at, target):
+        if at == stage and target == "needs-forecast":
+            calls.append(phase["name"])
+            if phase["name"] == "interrupted":
+                raise SystemExit()
+            if phase["name"] == "night" or phase["name"] == "month" and retry:
+                raise error
+
+    def judge(dossiers, *_a, **_k):
+        for row in dossiers:
+            maybe_fail("judge", row["target_id"])
+        return [{"dossier_id": row["id"], "decision": "promulgated"} for row in dossiers]
+
+    prior_run = agents_mod.run_agent_text
+
+    def simulate(agent, prompt, **kwargs):
+        if kwargs.get("tag") == "decree-forecast":
+            maybe_fail("forecast", json.loads(prompt)["this_decree"]["payload"]["target_id"])
+        return prior_run(agent, prompt, **kwargs)
+
+    def declaration(request, _config):
+        target = request.decree_payload.get("target_id")
+        maybe_fail("translate", target)
+        return {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -1,
+            "category": target, "reason": "核饷",
+        }]}} if target in {"ready", "needs-forecast"} else {"effects": {}}
+
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", judge)
+    monkeypatch.setattr(agents_mod, "run_agent_text", simulate)
+    monkeypatch.setattr(translate, "_default_month_translate_runner", declaration)
 
     # #502 的真实「对话内已应允」持久态：候选仍 pending，但归属本夜且 night_approved=1；
     # 本 tracer 从该依赖交付态起，经玩家真实收夜/月末入口验证后半链，不直接 commit。
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    ready_id = game.db.stage_directive_candidate(
+        turn_before, minister, payload={**_POLICY_FIELDS, "target_id": "ready", "text": "先核饷", "actor": minister},
+    )
     directive_id = game.db.stage_directive_candidate(
         game.state.turn, minister,
-        payload={**_POLICY_FIELDS, "text": text, "actor": minister},
+        payload={**_POLICY_FIELDS, "target_id": "needs-forecast", "text": text, "actor": minister},
     )
-    assert an.mark_actions_night_approved(game.db, [directive_id], night_id=int(night["id"])) == 1
+    assert an.mark_actions_night_approved(game.db, [ready_id, directive_id], night_id=int(night["id"])) == 2
+    for action_id in (ready_id, directive_id):
+        assert forecast.schedule_pending_decree_forecast(game.session, action_id, night_id=int(night["id"]))
+    assert calls == ["night"]
+    ref = pending_action_decree_ref(directive_id, 1)
+    assert game.db.staged_declarations.staged_for(ref) == ()
+    assert month_chain_call_failure(game.db, turn_before) is None
+    assert game.state_payload()["settlement_recovery"] is None
+    pack = None
+    if kind != "429":
+        packs = list(error_packs_root().glob(f"turn{turn_before}_attempt*"))
+        assert len(packs) == 1
+        pack = packs[0]
+        manifest = json.loads((Path(pack) / "manifest.json").read_text())
+        assert manifest["exception_message"] == str(error)
+    monkeypatch.setattr(audience_translation, "_executor", executor)
+    phase["name"] = "month"
 
     async def scenario():
         async with _client() as client:
-            return _parse_sse((await client.post("/api/decree/issue/stream", json={})).text)
+            if entry == "issue":
+                response = await client.post("/api/decree/issue/stream", json={})
+                events = _parse_sse(response.text)
+                assert not ({"confirm", "reject", "pending_review"} & {item["event"] for item in events})
+                event = events[-1]
+                return event["event"], json.loads(event["data"])
+            response = await client.post("/api/decree/advance_without_edict/stream")
+            event = _parse_sse(response.text)[-1]
+            return event["event"], json.loads(event["data"])
 
-    events = asyncio.run(scenario())
+    interrupted = stage == "forecast" and kind == "code"
+    if interrupted:
+        # The front half really commits before an unrecorded process interruption.
+        # A process exit has no SSE terminal event. Run the real retreat body
+        # synchronously for this interruption; recover through the stream below.
+        phase["name"] = "interrupted"
+        with pytest.raises(SystemExit):
+            with web_app._settlement_period_entry(game, blocking=False):
+                game.session.advance_without_decree(write_gate_already_held=True)
+        assert game.state.turn_phase == TurnPhase.SETTLING.value
+        assert month_chain_call_failure(game.db, turn_before) is None
 
-    assert events[-1]["event"] == "done"
-    assert not ({"confirm", "reject", "pending_review"} & {name for name, _ in events})
+        async def recovered_state():
+            async with _client() as client:
+                return (await client.get("/api/game/state")).json()
+
+        recovery = asyncio.run(recovered_state())["settlement_recovery"]
+        assert recovery["retryable"] is True
+        assert recovery["error_pack_path"] == ""
+        assert str(error) not in recovery["message"]
+        phase["name"] = "month"
+
+    event, result = asyncio.run(scenario())
+    if retry:
+        assert event == "error"
+        assert int(game.state.turn) == turn_before
+        recovery = game.state_payload()["settlement_recovery"]
+        assert recovery["retryable"] is True
+        assert recovery["stage"] == "edict_forecast"
+        assert recovery["error_pack_path"]
+        assert recovery["message"] == str(error)
+        assert game.db.staged_declarations.is_settled(pending_action_decree_ref(ready_id, 1))
+        phase["name"] = "retry"
+        event, result = asyncio.run(scenario())
+
+    assert event == "done", result
+    assert result["advanced"] is True
+    assert calls == (
+        ["night"] + (["interrupted"] if interrupted else [])
+        + ["month"] + (["retry"] if retry else [])
+    )
+    assert game.db.staged_declarations.is_settled(ref)
+    assert game.state_payload()["settlement_recovery"] is None
+    for target in ("ready", "needs-forecast"):
+        assert [row[0] for row in game.db.conn.execute(
+            "SELECT delta FROM economy_ledger WHERE category=?", (target,),
+        )] == [-1]
+    if pack:
+        assert (Path(pack) / "manifest.json").is_file()
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
     assert int(game.state.turn) == turn_before + 1
     assert not game.db.dossiers.list_night_approved_pending(int(night["id"]), kind="directive")

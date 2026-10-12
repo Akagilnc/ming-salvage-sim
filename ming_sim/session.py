@@ -2192,14 +2192,6 @@ class GameSession:
         # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
         write_queue = get_session_write_queue(self)
         def _drain_catch_up_and_continue() -> None:
-            from ming_sim.decree_forecast import failed_decree_forecast
-            forecast_failure = failed_decree_forecast(self)
-            if forecast_failure is not None:
-                raise SettlementAbort(
-                    str(forecast_failure["message"]), turn=int(self.state.turn),
-                    stage=str(forecast_failure["step"]),
-                    error_pack_path=forecast_failure.get("error_pack_path"),
-                )
             # 票的完成只表示本次 worker 已终止，不代表机械尾已终结。
             # 屏障等完票后复查持久状态；非耗尽异常留下 pending 时不能过月。
             from ming_sim.mechanical_tail import _pending_mechanical_tails
@@ -2347,19 +2339,33 @@ class GameSession:
         # （替代 #1591「产物错即整月不推进 + 引擎串透传」；真故障仍 SettlementAbort）。
         # 成案补交边界 = 原抽 + 重写 DRAFT_ADMISSION_RESUBMIT_REWRITES 次（总计 3）；
         # 与组合/名册 heal_retries 独立。首轮/中间 ensure 只探测，拒只在末轮耗尽落痕。
-        dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
-            self.state, record_rejections=False,
-        )
-        resubmit_carry: Dict[int, Dict[str, object]] = {}
-        for rewrite_i in range(DRAFT_ADMISSION_RESUBMIT_REWRITES):
-            if not dossier_rejections:
-                break
-            resubmit_carry = self._resubmit_draft_admission_failures(
-                dossier_rejections, resubmit_carry,
-            )
-            is_last = rewrite_i == DRAFT_ADMISSION_RESUBMIT_REWRITES - 1
+        from ming_sim.exceptions import SettlementAbort
+        try:
             dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
-                self.state, record_rejections=is_last,
+                self.state, record_rejections=False,
+            )
+            resubmit_carry: Dict[int, Dict[str, object]] = {}
+            for rewrite_i in range(DRAFT_ADMISSION_RESUBMIT_REWRITES):
+                if not dossier_rejections:
+                    break
+                resubmit_carry = self._resubmit_draft_admission_failures(
+                    dossier_rejections, resubmit_carry,
+                )
+                is_last = rewrite_i == DRAFT_ADMISSION_RESUBMIT_REWRITES - 1
+                dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
+                    self.state, record_rejections=is_last,
+                )
+        except SettlementAbort as exc:
+            if self.state.turn_phase != TurnPhase.SETTLING.value:
+                raise
+            # Admission can run again in settling with a retained draft. Its
+            # own pack must enter the same recovery record as month-chain work.
+            from ming_sim.month_chain import _abort_month_call, _load_chain
+            _abort_month_call(
+                self.db, self.state, _load_chain(self.db, int(self.state.turn)),
+                decree_text=decree, source=recovered_source or Provenance.player_decree,
+                step=exc.stage, exc=exc,
+                kind="model_exhausted" if isinstance(exc.__cause__, LLMUnavailable) else "code_exception",
             )
         dossiered_directives = self.db.issues.list_dossiered_draft_directives(self.state.turn)
         # DB owner supplies the canonical read-only default-approval projection.

@@ -183,7 +183,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
 
 
 def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
-    """#1235 r1 D：退朝 accept 后非阻塞抢锁 409 → 出展示态。
+    """#1235 r1 D：退朝 accept 后非阻塞会话闸拒收 → 出展示态。
 
     HTTPException 非 ValueError 子类；须经 settled_ok 失败臂收口，禁孤儿快照。
     """

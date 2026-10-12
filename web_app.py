@@ -1410,19 +1410,11 @@ class WebGame:
                 and self.db.resolve_contexts.get(self.state.turn) is not None
                 and not pending_decisions
             )
-            # One failure projection for night forecasts, settlement and rescript continuation.
+            # One failure projection for settlement and rescript continuation.
             settlement_recovery = None
             from ming_sim.month_chain import month_chain_call_failure
             month_failure = month_chain_call_failure(self.db, int(self.state.turn))
-            if month_failure is not None and month_failure.get("step") == "edict_forecast":
-                from ming_sim.decree_forecast import failed_decree_forecast
-                month_failure = failed_decree_forecast(self.session)
             if turn_phase == TurnPhase.SETTLING.value or month_failure is not None:
-                from ming_sim.error_pack import (
-                    latest_error_pack_for_turn,
-                    _read_complete_pack_manifest,
-                    settlement_abort_message,
-                )
                 if month_failure is not None:
                     # 本次失败记录是诊断包真源；没有本次包就空着，不借同月旧包。
                     settlement_recovery = {
@@ -1432,22 +1424,12 @@ class WebGame:
                         "stage": str(month_failure.get("step") or ""),
                     }
                 else:
-                    pack_path = latest_error_pack_for_turn(
-                        self.db.path, int(self.state.turn),
-                    )
-                    manifest = (
-                        _read_complete_pack_manifest(Path(pack_path)) if pack_path else None
-                    )
+                    # An interrupted process has no diagnosed cause. Same-turn
+                    # packs can belong to night forecasts or unrelated work.
                     settlement_recovery = {
                         "retryable": True,
-                        "error_pack_path": pack_path or "",
-                        "message": (
-                            settlement_abort_message(
-                                pack_path, reason=str(manifest["exception_message"]),
-                            )
-                            if manifest is not None
-                            else "上月结算未完成（进度已保存）。"
-                        ),
+                        "error_pack_path": "",
+                        "message": "上月结算未完成（进度已保存）。",
                     }
         # #1726：奏疏收件箱与未读数同份 list，禁每请求双跑 list_player_memorials。
         memorials = self.memorial_payloads()
@@ -2609,7 +2591,7 @@ def _try_acquire_serialized_web_write_gate(game):
 class _NonBlockingWebWriteGate:
     """#1353 r12：同一把 runtime write_gate 的非阻塞短持适配（不是平行闸）。
 
-    advance 路径注入 auto_close/get_open_night 真实 with 接缝：占用即 409，
+    advance 路径的收夜与结算主体共用此适配：占用即 409，
     禁阻塞等闸（#1842：转译短持与 ``_try_acquire`` 同缝等待后重试）。
     颁诏仍传裸 Lock（阻塞 acquire）。
     """
@@ -2655,7 +2637,7 @@ def _serialized_web_write(game):
          窗口）→ 立即 409，不在事件循环上阻塞等结算（F1 同因）；抢到则持锁到写完再释放。
     直写 game.db 的端点、以及绕过 _write_gate 的会话写端点（诏稿/拟旨/撤回召对——它们各自的
     session._refuse_if_settling/相位门只查相位、守不住 pre_settle 窗口）都经本 CM 串行；结算入口
-    （resolve_turn/submit_decisions）走阻塞版 _game_write_gate（在自己的 worker 线程里持锁）。"""
+    走 `_settlement_period_entry` 指定的同闸适配，由会话处理恢复相位。"""
     _refuse_settling_or_busy_write_phase(game)
     gate = _try_acquire_serialized_web_write_gate(game)
     try:

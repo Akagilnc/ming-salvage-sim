@@ -8,7 +8,7 @@ import ming_sim.draft_intent as di
 import ming_sim.session as session_mod
 import web_app
 from tests.sse_helpers import parse_sse_event_pairs
-from ming_sim.error_pack import latest_error_pack_for_turn
+from ming_sim.error_pack import error_packs_root
 from tests.army_pay_helpers import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import (
     _get_state,
@@ -147,17 +147,17 @@ _ENSURE_FAULT_MARK = "simulated ensure code fault #1769"
 _RESUBMIT_FAULT_MARK = "simulated resubmit code fault #1769"
 
 
-def _assert_error_pack_from(game, turn: int, marker: str) -> None:
+def _assert_error_pack_from(pack_path: str, marker: str) -> None:
     """错误包须来自被测的真故障本身——不认「有个包就行」。"""
-    pack = latest_error_pack_for_turn(game.db.path, turn)
-    assert pack, "须出错误包"
-    assert Path(pack).is_dir()
+    assert pack_path, "须出错误包"
+    pack = Path(pack_path)
+    assert pack.is_dir()
     manifest = json.loads(
-        (Path(pack) / "manifest.json").read_text(encoding="utf-8"),
+        (pack / "manifest.json").read_text(encoding="utf-8"),
     )
     assert manifest["exception_type"] == "RuntimeError"
     assert manifest["exception_message"] == marker
-    assert (Path(pack) / "traceback.txt").is_file()
+    assert (pack / "traceback.txt").is_file()
 
 
 
@@ -233,8 +233,13 @@ def test_advance_without_edict_vacuum_no_decree_issued(
     assert not (game.session.last_decree or "").strip()
 
 
-def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monkeypatch):
-    """真代码故障（ensure）：SSE error + 错误包记真故障 + 月份不推进。
+@pytest.mark.parametrize("fault,settling", [
+    ("ensure", False), ("ensure", True), ("resubmit", True),
+])
+def test_draft_admission_code_fault_aborts_with_error_pack(
+    admission_game, monkeypatch, fault, settling,
+):
+    """成案／补交故障：SSE 与恢复记录指向同一次错误包，月份不推进。
 
     模型供料不断（枯竭不抛），故中止只能来自 boom；ensure 宽吞变异下本案必红。
     """
@@ -243,19 +248,38 @@ def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monke
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    _post_directive(game, "准从国库见银拨关宁军饷十五万两即发。", _STORED_GOOD_XIEANG)
+    _post_directive(
+        game, "准从国库见银拨关宁军饷十五万两即发。",
+        _STORED_BAD_PAY_ORDER if fault == "resubmit" else _STORED_GOOD_XIEANG,
+    )
     wait_pending_writes(game)
+    if settling:
+        from ming_sim.decree import prepare_resolve_front_half
+        prepare_resolve_front_half(game.state, game.db, content=game.content)
+
+    marker = _RESUBMIT_FAULT_MARK if fault == "resubmit" else _ENSURE_FAULT_MARK
 
     def boom(*_a, **_k):
-        raise RuntimeError(_ENSURE_FAULT_MARK)
+        raise RuntimeError(marker)
 
-    monkeypatch.setattr(game.db, "_ensure_directive_dossier", boom)
+    if fault == "resubmit":
+        monkeypatch.setattr(cb, "_run_backend_for_config", boom)
+    else:
+        monkeypatch.setattr(game.db, "_ensure_directive_dossier", boom)
     body = _post_issue_stream(
         client, expected_turn=turn, step="1769 code-fault", allow_error=True,
     )
     assert body.get("_event") == "error"
     assert int(game.state.turn) == turn
-    _assert_error_pack_from(game, turn, _ENSURE_FAULT_MARK)
+    _assert_error_pack_from(body["error_pack_path"], marker)
+    if settling:
+        recovery = _get_state(client)["settlement_recovery"]
+        assert recovery["error_pack_path"] == body["error_pack_path"]
+        assert recovery["stage"] == body["stage"]
+        from ming_sim.month_chain import month_chain_call_failure
+        failure = month_chain_call_failure(game.db, turn)
+        assert failure["error_pack_path"] == body["error_pack_path"]
+        assert failure["kind"] == "code_exception"
 
 
 @pytest.mark.parametrize("bad_rewrite,expected_error_type", [
@@ -323,7 +347,7 @@ def test_draft_admission_mixed_good_and_bad_independent(
     assert len(_rejection_rows(game, bad_id)) == 1
     assert not _rejection_rows(game, good_id)
     # 名册产物错未被当成系统故障：无错误包、月已推进（上方断言）
-    assert not latest_error_pack_for_turn(game.db.path, turn)
+    assert not list(error_packs_root().glob(f"turn{turn}_attempt*"))
     # 来源保真：第二次重写的 failure_reason = 第一次 resubmit 自身产物错原文
     assert len(resubmit_calls) == 2
     assert ensure_rounds, "ensure 须至少一轮"

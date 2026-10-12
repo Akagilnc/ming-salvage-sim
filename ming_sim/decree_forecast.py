@@ -427,8 +427,7 @@ def _forecast(
             ref = _current_forecast_ref(session, snapshot["forecast_key"])
             if ref != snapshot["decree_ref"]:
                 return
-            from ming_sim.applier import Provenance, atomic
-            from ming_sim.month_chain import _load_chain, _consume_call_failure_for_retry
+            from ming_sim.applier import atomic
             with atomic(session.db):
                 if not session.db.staged_declarations.staged_for(ref, turn=int(snapshot["turn"])):
                     stage_declaration(
@@ -436,12 +435,6 @@ def _forecast(
                         turn=int(snapshot["turn"]), verdict=verdict,
                         questions=questions, forecast_text=forecast_text,
                         visible_refs=snapshot.get("visible_refs"),
-                    )
-                chain = _load_chain(session.db, int(snapshot["turn"]))
-                failure = chain.get("call_failure")
-                if failure and failure.get("step") == "edict_forecast" and failure.get("decree_ref") == ref:
-                    _consume_call_failure_for_retry(
-                        session.db, chain, int(snapshot["turn"]), "", Provenance.system_simulation,
                     )
 
         with write_lock if write_lock is not None else nullcontext():
@@ -477,21 +470,11 @@ def _submit_snapshot_job(
                 if isinstance(exc, LLMUnavailable) and _rate_limited(exc):
                     return
 
-                def stop_if_current(failure=exc) -> None:
-                    from ming_sim.applier import Provenance
-                    from ming_sim.month_chain import _abort_month_call, _load_chain
-                    ref = _current_forecast_ref(session, forecast_key)
-                    if ref is None:
-                        return
-                    _abort_month_call(
-                        session.db, session.state, _load_chain(session.db, int(session.state.turn)),
-                        decree_text="", source=Provenance.system_simulation,
-                        step="edict_forecast", exc=failure, decree_ref=ref,
-                        kind="model_exhausted" if isinstance(failure, LLMUnavailable) else "code_exception",
-                    )
-
+                # #1846: a failed night forecast is unstaged, not a failed month.
+                # Keep the original diagnosis; the month entry owns catch-up/retry.
+                from ming_sim.error_pack import write_error_pack
                 with write_lock if write_lock is not None else nullcontext():
-                    queue.run(ticket, stop_if_current)
+                    queue.run(ticket, lambda: write_error_pack(session.db, session.state, exc=exc))
                 raise
         finally:
             release_forecast_materials(snapshot)
@@ -559,49 +542,6 @@ def schedule_restored_decree_forecasts(owner_or_db: Any, pending_action_ids: lis
             schedule_pending_decree_forecast(
                 session, int(action_id), night_id=int(row["night_id"]),
             )
-
-
-def _failed_forecast_key(session: Any, failure: Dict[str, Any]) -> Optional[tuple]:
-    if failure.get("step") != "edict_forecast":
-        return None
-    ref = failure.get("decree_ref")
-    for row in session.db.dossiers.read_failed_forecast_key(
-        (int(session.state.turn),)
-    ):
-        key = ("decree_forecast", int(row["id"]), int(row["version"] or 1), int(row["night_id"] or 0))
-        if pending_action_decree_ref(key[1], key[2]) == ref and _current_forecast_ref(session, key) == ref:
-            return key
-    for row in session.db.dossiers.list_for_simulation(int(session.state.turn)):
-        key = ("held_decree_forecast", 0, int(row["id"]))
-        if held_dossier_decree_ref(key[2]) == ref and _current_forecast_ref(session, key) == ref:
-            return key
-    return None
-
-
-def failed_decree_forecast(session: Any) -> Optional[Dict[str, Any]]:
-    """The existing failure row, only while its saved directive is still current."""
-    from ming_sim.month_chain import month_chain_call_failure
-    failure = month_chain_call_failure(session.db, int(session.state.turn))
-    return failure if failure and _failed_forecast_key(session, failure) is not None else None
-
-
-def retry_failed_decree_forecast(session: Any) -> bool:
-    """Retry the saved night directive, without submitting a player utterance."""
-    from ming_sim.month_chain import month_chain_call_failure
-    failure = month_chain_call_failure(session.db, int(session.state.turn))
-    key = _failed_forecast_key(session, failure) if failure else None
-    if key is None:
-        return False
-    if key[0] == "decree_forecast":
-        return schedule_pending_decree_forecast(session, key[1], night_id=key[3])
-    queue = get_session_write_queue(session)
-    ticket = queue.claim_if_absent([key])[0]
-    if ticket is None:
-        return False
-    return _submit_snapshot_job(
-        session, snapshot_fn=lambda: _held_snapshot(session, key[2]),
-        ticket=ticket, forecast_key=key,
-    )
 
 
 def schedule_approved_from_dispatch(db: Any, result: Any, night_id: int) -> None:
