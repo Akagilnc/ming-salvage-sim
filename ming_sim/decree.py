@@ -143,8 +143,9 @@ def build_promulgation_judge_context(
     db: GameDB,
     state: GameState,
     dossiers: Sequence[Dict[str, object]],
+    *, uncased: bool = False,
 ) -> Dict[str, object]:
-    """Build the deterministic snapshot from persisted dossier evidence only."""
+    """Read durable evidence from dossiers, or uncased pending-action payloads."""
     faction_rows = db.conn.execute('SELECT name,leverage,agenda FROM factions ORDER BY name', ()).fetchall()
     class_rows = db.classes.ordered_names(())
     issue_rows = db.issues.active_rows()
@@ -156,9 +157,14 @@ def build_promulgation_judge_context(
         payload = _dossier_payload_dict(row)
         target_id = row.get("target_id")
         appointment_tenure = str(payload.get("任别") or "")
-        # #612: endorsements are DB-backed spoken facts, not payload-only ids.
-        endorsements = db.dossiers.endorsements(int(row["id"]))
-        endorsement_ids = [int(item["id"]) for item in endorsements]
+        # Uncased candidates have no dossier/endorsement row ids yet. Their
+        # durable spoken facts live in the pending-action payload (#1842).
+        if uncased:
+            endorsements = list(payload.get("endorsements") or [])
+            endorsement_ids = []
+        else:
+            endorsements = db.dossiers.endorsements(int(row["id"]))
+            endorsement_ids = [int(item["id"]) for item in endorsements]
         # #611: authorization_ids come only from the unique applicability projection.
         # Never read payload authorization_id(s) as a parallel authority identity source.
         held_authorities = db.project_applicable_authorities(state.turn, row)

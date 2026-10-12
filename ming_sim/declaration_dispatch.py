@@ -701,6 +701,44 @@ def discard_staged_declaration(db: Any, decree_ref: str) -> int:
     return db.staged_declarations.discard(decree_ref)
 
 
+def bind_decree_effect_sources(
+    db: Any, decree_ref: str, declaration: Mapping[str, object], visible_refs: Mapping[str, object],
+) -> Tuple[Mapping[str, object], Mapping[str, object]]:
+    """Bind only this draft's structured effect identity; retain all prose and gates."""
+    from ming_sim.decree_forecast import dossier_for_decree_ref
+    from ming_sim.simulation import ITEM_FIELD_ALIASES
+
+    if not decree_ref.startswith("pending-action:"):
+        return declaration, visible_refs
+    dossier = dossier_for_decree_ref(db, decree_ref)
+    if dossier is None:
+        return declaration, visible_refs
+    dossier_id = int(dossier["id"])
+
+    def bind(value: object) -> object:
+        if isinstance(value, Mapping):
+            result = {}
+            for key, item in value.items():
+                field = ITEM_FIELD_ALIASES.get(key, key)
+                if field == "origin_ref" and item == decree_ref:
+                    result[key] = held_dossier_decree_ref(dossier_id)
+                elif field in {"dossier_id", "target_dossier_id"} and item == decree_ref:
+                    result[key] = dossier_id
+                else:
+                    result[key] = bind(item)
+            return result
+        if isinstance(value, list):
+            return [bind(item) for item in value]
+        return value
+
+    bound = dict(declaration)
+    if "effects" in bound:
+        bound["effects"] = bind(bound["effects"])
+    refs = dict(visible_refs)
+    refs["dossiers"] = list(dict.fromkeys([*refs.get("dossiers", ()), dossier_id]))
+    return bound, refs
+
+
 def settle_staged_declarations_in_decree_order(
     db: Any,
     state: Any,
@@ -739,11 +777,14 @@ def settle_staged_declarations_in_decree_order(
                 if staged:
                     merged = _empty_dispatch_result()
                     for item in staged:
+                        declaration, refs = bind_decree_effect_sources(
+                            db, decree_ref, item.declaration, item.visible_refs,
+                        )
                         merged = merged.merge(_dispatch_declaration_sections(
-                            db, state, item.declaration,
+                            db, state, declaration,
                             minister_name=minister_name, night_id=night_id, source=source,
                             collector=collector,
-                            visible_refs=item.visible_refs,
+                            visible_refs=refs,
                             defer_disclosure=True,
                         ))
                     db.staged_declarations.mark_terminal(decree_ref)
