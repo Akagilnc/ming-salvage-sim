@@ -40,25 +40,6 @@ _WORLD_WITH_QUESTION = (
     "余波未尽。"
 )
 
-_WORLD_WITH_TWO_QUESTIONS = (
-    "边警叠至。"
-    "<<DECISION>>"
-    '{"title":"问一","context":"c1","options":['
-    '{"label":"甲","hint":"h甲"},'
-    '{"label":"乙","hint":"h乙"}'
-    "]}"
-    "<<END>>"
-    "中段。"
-    "<<DECISION>>"
-    '{"title":"问二","context":"c2","options":['
-    '{"label":"丙","hint":"h丙"},'
-    '{"label":"丁","hint":"h丁"}'
-    "]}"
-    "<<END>>"
-    "尾声。"
-)
-
-
 def _decision_block(title: str, *labels: str) -> str:
     options = ",".join(
         f'{{"label":"{label}","hint":"h-{label}"}}' for label in labels
@@ -193,24 +174,117 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
         pool.shutdown(wait=True)
 
 
-def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
-    """同段多问：全部 DECISION 块上案头，不得只收第一问。"""
+@pytest.mark.parametrize("kind", ["world", "decree"])
+@pytest.mark.parametrize("handwritten_batch", [False, True])
+def test_multiple_questions_continue_independently_through_recovery(game, monkeypatch, kind, handwritten_batch):
+    """Answer one while its sibling is running; retain identities through follow-up/reopen."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from ming_sim.db import GameDB
+
     _forbid_extractor(monkeypatch)
     db, state, content = game
-    monkeypatch.setattr(
-        month_chain, "run_world_segment_text",
-        lambda *a, **k: _WORLD_WITH_TWO_QUESTIONS,
-    )
-    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
+    turn = int(state.turn)
+    affair = db.affairs.open(name="多问办理", origin="奏折", year=state.year,
+                            period=state.period, turn=turn)
+    questions = [json.loads(block.split("<<DECISION>>")[1].split("<<END>>")[0])
+                 for block in [_decision_block("问一", "甲", "乙"), _decision_block("问二", "丙", "丁")]]
+    world = json.dumps({"delta": -1}) + _decision_block("问一", "甲", "乙") + _decision_block("问二", "丙", "丁")
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: world if kind == "world" else "")
+    if kind == "decree":
+        _, ref = _stage_edict(db, state, next(iter(content.characters.values())).name,
+                             "原旨", "问前", -1, affair.id)
+        db.conn.execute("UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+                        (json.dumps(questions), ref))
+        db.conn.commit()
+    calls = []
+    all_started, release = Event(), Event()
+    batch_second_started = Event()
+
+    def model(agent, message, **kwargs):
+        answers = json.loads(message)["answers"]
+        assert len(answers) == 1  # No answer combinations.
+        label = answers[0]["choice"]["label"]
+        calls.append(label)
+        if answers[0]["choice"].get("note"):
+            if label == "丙":
+                batch_second_started.set()
+            if label == "甲":
+                assert batch_second_started.wait(5)
+        if all(calls.count(opt) == 1 for opt in ["甲", "乙", "丙", "丁"]):
+            all_started.set()
+        if label in {"甲", "乙"}:
+            assert release.wait(5)
+        delta = {"甲": -3, "乙": -19, "丙": -7, "丁": -23, "戊": -11, "己": -29}[label]
+        return json.dumps({"delta": delta}) + (_decision_block("追问", "戊", "己") if label == "丙" else "")
+
+    failed = []
+    def translate(request, config):
+        if not request.segment.strip():
+            return {"effects": {}}
+        delta = json.loads(request.segment)["delta"]
+        if delta == -3 and not failed:
+            failed.append(True)
+            raise LLMUnavailable("injected selected translation failure", stage="world_translate")
+        return {"effects": {"economy_moves": [{"origin_ref": f"affair:{affair.id}",
+                "account": "国库", "delta": delta, "category": "多问办理", "reason": "实办"}]}}
+
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", model)
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
+    pool = ThreadPoolExecutor(max_workers=4)
+    monkeypatch.setattr("ming_sim.rescript_forecast._executor", pool)
     session = make_light_session(db, state, content)
-
-    result = session.resolve_turn(allow_empty_decree=True)
-
-    assert result.awaiting is True
-    desk = session.pending_decisions()
-    assert {row["title"] for row in desk} == {"问一", "问二"}
-    assert all(row.get("kind") == "decision" for row in desk)
-    assert all(row.get("status") == "pending" for row in desk)
+    session.llm_config = object()
+    def ledger():
+        with sqlite3.connect(db.path) as conn:
+            return [r[0] for r in conn.execute("SELECT delta FROM economy_ledger WHERE category='多问办理' ORDER BY id")]
+    try:
+        assert session.resolve_turn(allow_empty_decree=True).awaiting
+        first, second = session.pending_decisions()
+        assert all_started.wait(5)
+        assert sorted(calls) == sorted(["甲", "乙", "丙", "丁"])
+        assert ledger() == ([-1] if kind == "world" else [])
+        if handwritten_batch:
+            release.set()
+            with pytest.raises(SettlementAbort):
+                session.submit_hitl_choices([
+                    {**r["options"][0], "decision_key": r["decision_key"], "note": "  原批\n照办  "}
+                    for r in [second, first]], write_gate=session._write_gate)
+        else:
+            # The second answer commits even while both first-question candidates wait.
+            session.submit_hitl_choices([{**second["options"][0], "decision_key": second["decision_key"]}],
+                                        write_gate=session._write_gate)
+            remaining = session.pending_decisions()
+            assert len(remaining) == 2
+            assert remaining[0]["decision_key"] == first["decision_key"]
+            release.set()
+            with pytest.raises(SettlementAbort):
+                session.submit_hitl_choices([{**first["options"][0], "decision_key": first["decision_key"]}],
+                                            write_gate=session._write_gate)
+        assert ledger() == ([-1, -7] if kind == "world" else [-7])
+        assert month_chain.month_chain_call_failure(db, turn)
+        # A reopened session consumes the persisted continuation, not another call.
+        reopened = GameDB(str(db.path), content=content)
+        try:
+            restored = make_light_session(reopened, reopened.load_state(content), content)
+            restored.llm_config = object()
+            assert restored.resolve_turn(allow_empty_decree=True).awaiting
+            assert calls.count("甲") == (2 if handwritten_batch else 1)
+            followup = restored.pending_decisions()[0]
+            restored.submit_hitl_choices([{**followup["options"][0], "decision_key": followup["decision_key"]}],
+                                         write_gate=restored._write_gate)
+            assert not restored.pending_decisions()
+            assert restored.resolve_turn(allow_empty_decree=True).stage == "gazette"
+            assert ledger() == ([-1, -7, -3, -11] if kind == "world" else [-7, -3, -11])
+            assert calls.count("丙") == (2 if handwritten_batch else 1)
+            assert calls.count("丁") == 1
+        finally:
+            reopened.close()
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
 
 
 def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypatch):

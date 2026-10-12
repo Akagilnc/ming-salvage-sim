@@ -28,16 +28,18 @@ def _identity(kind, ref, rows):
     return kind, ref, json.dumps(choices, ensure_ascii=False, sort_keys=True)
 
 
-def take_forecast(session, kind, ref, rows):
+def take_forecast(session, kind, ref, rows, *, selected=None):
     """Wait for the selected candidate; a failed candidate is simply unforecasted."""
     owner = _owner_for(session.db)
     cache = getattr(owner, "_rescript_forecasts", {})
     key = (int(session.state.turn), *_identity(kind, ref, rows))
-    future = cache.get(key)
+    future, speculative = selected if selected is not None else (cache.get(key), True)
     try:
         if future is not None:
             return future.result()  # No timeout, cancellation, or second live call.
     except Exception:
+        if not speculative:
+            raise  # A live continuation is governed by the month-call recovery boundary.
         # The speculative leg already wrote the original exception to an error pack.
         # The selected live call belongs to the existing month-call recovery boundary.
         pass
@@ -62,17 +64,19 @@ def _run_candidate(session, chain, kind, ref, rows):
         text = month_chain._run_world_continuation_text(session, chain, answers)
     else:
         text = month_chain._run_decree_continuation_text(
-            session, month_chain._dossier_for_decree_ref(session.db, ref), answers,
+            session, month_chain._dossier_for_decree_ref(
+                session.db, ref[len(month_chain._DECREE_QUESTION_PREFIX):].rpartition(":")[0],
+            ), answers,
         )
     month_chain._split_at_question(text)
     return text
 
 
-def schedule_forecasts(session, chain, desk):
+def schedule_forecasts(session, chain, desk, *, selected=False):
     """Freeze inputs at presentation; each task owns resources beyond session close."""
     owner = _owner_for(session.db)
     if owner is None or session.llm_config is None:
-        return
+        return {}
     cache = getattr(owner, "_rescript_forecasts", None)
     if cache is None:
         cache = owner._rescript_forecasts = {}
@@ -81,40 +85,38 @@ def schedule_forecasts(session, chain, desk):
         if stale[0] != turn:
             del cache[stale]
     groups = {}
-    for row in session.db.issues.list_pending_decisions(turn):
+    results = {}
+    world_ids = month_chain._world_question_ids(chain, turn)
+    for row in desk:
         event = str(row.get("event_id") or "")
         if event.startswith(month_chain._DECREE_QUESTION_PREFIX):
-            ref, _, idx = event[len(month_chain._DECREE_QUESTION_PREFIX):].rpartition(":")
-            if int(idx) >= int((chain.get("decree_question_offsets") or {}).get(ref, 0)):
-                groups.setdefault(("decree", ref), []).append(row)
-        elif event.startswith((month_chain._WORLD_QUESTION_PREFIX, month_chain._LEVY_PETITION_PREFIX)):
-            world_ids = month_chain._world_question_ids(chain, turn)
-            if event in world_ids:
-                groups.setdefault(("world", ""), []).append(row)
-    for row in desk:
-        if row["kind"] == "rescript_draft":
+            ref = event[len(month_chain._DECREE_QUESTION_PREFIX):].rpartition(":")[0]
+            if any(q.get("event_id") == event for q in session.db.staged_declarations.questions_for(ref)):
+                groups[("decree", event)] = [row]
+        elif event in world_ids:
+            groups[("world", event)] = [row]
+        elif not selected and row["kind"] == "rescript_draft":
             groups[("memorial", row["decision_key"])] = [row]
     materials_tmp = None
     shared_world = None
     for (kind, ref), rows in groups.items():
-        pending = [row for row in rows if row["status"] == "pending"]
-        # A continuation still needs all answers, in their existing submission order.
-        if len(pending) != 1:
-            continue
-        row = pending[0]
+        if selected and ref in chain.get("rescript_continuation_texts", {}):
+            continue  # Translation recovery already has the complete model product.
+        row = rows[0]
         # Shared read-only materials are frozen once per source. The standard
         # TemporaryDirectory lifetime follows the closures that hold it.
         materials = {}
-        for option in row["options"]:
+        for option in ([row["choice"]] if selected else row["options"]):
             choice = {**option, "decision_key": row["decision_key"]}
-            candidates = sorted(
-                [r for r in rows if r["status"] == "decided"]
-                + [{**row, "choice": choice, "answer_order": float("inf")}],
-                key=lambda r: r["answer_order"],
-            )
+            candidates = [{**row, "choice": choice}]
             key = (turn, *_identity(kind, ref, candidates))
             if key in cache:
-                continue
+                future = cache[key]
+                if not selected:
+                    continue
+                if not future.done() or future.exception() is None:
+                    results[ref] = (future, True)
+                    continue
             tmp = TemporaryDirectory(prefix="ming-rescript-forecast-")
             frozen_db = None
             try:
@@ -131,8 +133,9 @@ def schedule_forecasts(session, chain, desk):
                     if materials_tmp is None:
                         materials_tmp = TemporaryDirectory(prefix="ming-rescript-materials-")
                     if kind == "decree":
+                        decree_ref = ref[len(month_chain._DECREE_QUESTION_PREFIX):].rpartition(":")[0]
                         materials["_rescript_decree_snapshot"] = forecast_snapshot(
-                            frozen, month_chain._dossier_for_decree_ref(frozen_db, ref), decree_ref=ref,
+                            frozen, month_chain._dossier_for_decree_ref(frozen_db, decree_ref), decree_ref=decree_ref,
                             materials_root=Path(materials_tmp.name) / "world",
                         )
                     else:
@@ -170,6 +173,9 @@ def schedule_forecasts(session, chain, desk):
                 tmp.cleanup()
                 future = Future()
                 future.set_exception(exc)
-            cache[key] = future
+            if selected:
+                results[ref] = (future, False)
+            cache[key] = future  # Retain independent finished legs if a sibling pauses recovery.
             future.add_done_callback(lambda done: audience_translation._observe_finished_future(
                 done, where="rescript forecast"))
+    return results
