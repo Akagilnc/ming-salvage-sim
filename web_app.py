@@ -2662,7 +2662,24 @@ def _accept_settlement_period(
     if blocking:
         gate.acquire()
     else:
-        _acquire_web_write_gate_or_409(gate)
+        # Serialize admission with begin/end: a peer cannot start a long
+        # settlement between checking inflight and taking the snapshot gate.
+        with _settlement_entry_lock(game):
+            if int(getattr(game, "_settlement_entry_inflight", 0) or 0) <= 1:
+                # Normal trailing legs wait only at their write turns, not LLM.
+                # Finish this ticket before claiming the month-close barrier.
+                queue = get_session_write_queue(game)
+                ticket = queue.claim(key=("month_open_snapshot",))
+                if ticket is None:
+                    raise RuntimeError("settlement snapshot queue is sealed")
+                try:
+                    return queue.run(
+                        ticket, lambda: accept_settlement_period(db, state),
+                    )
+                finally:
+                    queue.complete(ticket)
+            # A concurrent month entry retains #1353 r12's non-blocking admit.
+            _acquire_web_write_gate_or_409(gate)
     try:
         return accept_settlement_period(db, state)
     finally:
@@ -2913,7 +2930,8 @@ def _settlement_period_entry(
 ):
     """#1241 S1：颁布/退朝/stream 三入口受理样板（begin→accept→await→close→gate）。
 
-    锁获取语义分叉：退朝非阻塞抢锁（撞锁 409），颁诏阻塞 acquire。
+    退朝受理经票据写缝等后台短写；并发结算与下游短持仍非阻塞（撞锁 409）。
+    颁诏阻塞 acquire。
     结算恢复由会话月链裁定，不经直写端点的 settling/awaiting 相位拒收。
     统一获取语义即破 T2 行为零变化（r2-r7 不变式）。
 
