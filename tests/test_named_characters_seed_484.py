@@ -61,7 +61,7 @@ def test_r4_hu_tingyan_loader_and_db_preserve_non_holder_seed(read_game):
 
 def test_r4_named_characters_debut_in_historical_order(game):
     """offstage 登场预备：职名分空 office（ADR 0009 / #1843 名分）；office_type/debut 元数据保留。
-    apply_historical_debuts 读 characters.office，空则回退「重臣」标签喂上下文。"""
+    登场名分来自显式 content.historical_office，写入库并出现在登场事实里。"""
     db, state, content = game
 
     assert state.year == 1627

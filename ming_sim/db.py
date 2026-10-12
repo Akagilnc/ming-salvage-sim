@@ -2978,9 +2978,22 @@ class GameDB:
                 payload_summary=f"历史登场 {year}年{month or '?'}月",
                 derived_from="登场", source="system_simulation",
             )
+            # Offstage keeps office empty (ADR 0009 ①). Debut title comes from
+            # explicit content.historical_office — never status_reason, never「重臣」.
+            office = str(r["office"] or "").strip()
+            if not office:
+                ch = (
+                    self.content.characters.get(name)
+                    if self.content is not None else None
+                )
+                office = str(getattr(ch, "historical_office", "") or "").strip()
+                if office:
+                    self.set_character_office(
+                        name, office, source="历史登场", commit=True,
+                    )
             debuted.append({
                 "name": name,
-                "office": r["office"] or "重臣",
+                "office": office,
                 "faction": r["faction"] or "",
             })
         return debuted
