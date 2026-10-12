@@ -39,8 +39,6 @@ from ming_sim.applier import (
     Provenance,
     atomic,
     connection_owns_transaction,
-    load_stored_list,
-    load_stored_object,
     register_runtime_outcome_callbacks,
 )
 from ming_sim.decree import (
@@ -1664,7 +1662,6 @@ class GameSession:
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
         from ming_sim.audience_night import (
-            CMD_NONE,
             SCENE_CHAT_SPEAKER,
             ensure_summon_enter,
             get_open_night,

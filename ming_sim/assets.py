@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
 from typing import Dict, List
 
 from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT

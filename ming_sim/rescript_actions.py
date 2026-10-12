@@ -1,6 +1,5 @@
 """Persist emperor answers; effects belong to the month-chain continuation."""
 from __future__ import annotations
-from ming_sim.applier import StoredDocumentError, load_stored_object
 
 import json
 from typing import Any

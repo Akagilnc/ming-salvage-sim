@@ -130,12 +130,10 @@ def apply_person_changes(
     import ming_sim.entities.character.appointment as office_appointment
     from ming_sim.appointment_tenure import appointment_tenure_from
     from ming_sim.person_archive_contract import (
-        PERSON_ALLEGIANCE_CHANGE_WAYS,
         PERSON_IDENTITY_TITLES,
         normalize_reason_code,
         resolve_person_transition,
     )
-    from ming_sim.strict_types import _parse_sqlite_id
     from ming_sim.entities.character.appointment import _payload_owned_person_duplicate
     from ming_sim.entities.character.transit import admit_transit_departure, load_valid_regions
 

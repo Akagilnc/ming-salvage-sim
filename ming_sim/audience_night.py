@@ -26,7 +26,6 @@ from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from ming_sim.applier import load_stored_list
 from ming_sim.applier import connection_owns_transaction
 from ming_sim.db import normalize_office
 from ming_sim.settlement.views import view

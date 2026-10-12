@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Tuple
 if TYPE_CHECKING:
     from ming_sim.db import GameDB
     from ming_sim.models import GameState
-    from ming_sim.content import GameContent
 
 from ming_sim.applier import (
     ItemAtomicReject,

@@ -19,7 +19,6 @@ import json
 import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.applier import StoredDocumentError, durable_float, durable_int, load_stored_object, load_stored_object_list
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 
@@ -817,8 +816,6 @@ def _is_seed_guilt_fact_key(target: str, fact_key: str) -> bool:
 
 
 def _seed_guilt_severity(db: Any, target: str) -> str:
-    from ming_sim.db import _load_durable_json
-
     row = db.characters.field_row('seed_guilt', str(target))
     if row is None:
         return ""

@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
 from ming_sim.applier import Provenance, atomic
-from ming_sim.models import _load_durable_json_list, _load_durable_json_object
+from ming_sim.models import _load_durable_json_list
 
 _CHAIN_KEY = "month_chain"
 _WORLD_QUESTION_PREFIX = "world-question:"
