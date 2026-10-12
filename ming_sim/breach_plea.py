@@ -10,7 +10,7 @@ kind 分派矩阵（法）：
 
 from __future__ import annotations
 from ming_sim.applier import parse_engine_payload_json
-from ming_sim.staged_commitment import normalize_commitment_stages
+from ming_sim.staged_commitment import load_commitment_stages
 
 
 import json
@@ -97,7 +97,7 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
 
 def commitment_natural_due_turn(row: Any) -> int:
     """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
-    stages = normalize_commitment_stages(row["stages_json"])
+    stages = load_commitment_stages(row["stages_json"])
     if stages:
         return max(int(s["due_turn"]) for s in stages)
     end_turn = int(row["end_turn"] or 0)

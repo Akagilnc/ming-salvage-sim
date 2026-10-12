@@ -1537,8 +1537,6 @@ def test_deep_dig_lands_through_month_chain_entry(game):
     )
     _run_supply_4a(db, state, [{"order_id": oid, "fact_key": topic, "effort": 0.2}])
     assert _lanes(db, oid)[topic]["effort"] == pytest.approx(0.2)
-    from ming_sim.db import GameDB
-    from contextlib import closing
     with closing(GameDB(db.path, content)) as restored:
         restored_state = restored.load_state()
         _run_supply_4a(restored, restored_state, [{"order_id": oid, "fact_key": topic, "effort": 0.2}])

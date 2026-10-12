@@ -32,11 +32,11 @@ TODO_STATUS_CONSUMED = "consumed"
 
 
 def _stage_text_fields(item: Dict[str, object]) -> tuple[str, str] | None:
-    """共同分段正文转换（criterion/origin 别名与回填）——读/写只此一处（#1897 K2）。
+    """共同分段正文转换（criterion/origin 别名与回填）——成员准入唯一正文面。
 
-    返回 (criterion_text, origin_context)；缺正文返回 None，坏类型拒收。
+    返回 (criterion_text, origin_context)；缺正文或纯空白返回 None，坏类型拒收。
+    #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化；``strip`` 只用于空判。
     """
-    # #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化。
     for field in ("criterion_text", "criterion", "origin_context", "origin"):
         if field in item and not isinstance(item[field], str):
             raise TypeError(f"stages.{field} 须为字符串")
@@ -44,9 +44,11 @@ def _stage_text_fields(item: Dict[str, object]) -> tuple[str, str] | None:
     origin_context = item.get("origin_context") or item.get("origin") or criterion
     if not criterion and origin_context:
         criterion = origin_context
-    if not criterion:
+    if not isinstance(criterion, str) or not criterion.strip():
         return None
-    return criterion, origin_context or criterion
+    if not isinstance(origin_context, str) or not origin_context.strip():
+        return None
+    return criterion, origin_context
 
 
 def _stage_record(
@@ -61,14 +63,14 @@ def _stage_record(
     }
 
 
-def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
-    """Stage admission: every item must be a valid stage dict.
+def _commitment_stages_members(data: Sequence[object]) -> List[Dict[str, object]]:
+    """分段成员准入唯一权威：写口与全部持久读口共用此面。
 
-    读/写共用此严格面（#1897 E1/K2）：缺省空与显式坏值分开；已持久腐坏
-    不得跳段洗成合法身份。整数字段复用 ``strict_int``；正文转换复用
-    ``_stage_text_fields``（#1897 K2），不复制别名/回填规则。
+    缺省空与显式坏值分开；已持久腐坏不得跳段洗成合法身份。
+    整数字段复用 ``strict_int``；正文转换复用 ``_stage_text_fields``。
+    Raises ValueError/TypeError on bad members. Write seam keeps those;
+    durable load wraps as StoredDocumentError.
     """
-
     out: List[Dict[str, object]] = []
     for idx, item in enumerate(data):
         if not isinstance(item, dict):
@@ -89,9 +91,11 @@ def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
             stage_idx = strict_int(raw_idx, accept_numeric_strings=True)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"stages[{idx}].stage_idx 须为有限整数") from exc
+        if stage_idx < 0:
+            raise ValueError(f"stages[{idx}].stage_idx 须为非负整数")
         texts = _stage_text_fields(item)
         if texts is None:
-            raise ValueError(f"stages[{idx}] 缺 criterion_text")
+            raise ValueError(f"stages[{idx}] 缺非空 criterion_text/origin_context")
         criterion, origin_context = texts
         out.append(_stage_record(
             stage_idx=stage_idx, due_turn=due_turn,
@@ -102,10 +106,10 @@ def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
 
 
 def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
-    """Normalize structured stages payload → durable list.
+    """Normalize structured stages payload → durable list（写口／声明入口）。
 
-    缺省（None/""/[]/"[]"）→ 空列表；已持久 JSON/schema 腐坏或非数组 → 上抛。
-    与写口共用 ``_stages_for_write``，无平行宽容跳段/回填（#1897 E1/K2；ADR0005）。
+    缺省（None/""/[]/"[]"）→ 空列表；顶层 JSON/schema 坏形 → ValueError。
+    成员形状唯一权威 = ``_commitment_stages_members``（#1897 D；ADR0005）。
 
     分段承诺是机械事实（到期判账），只认显式结构化字段。引擎不得从 LLM 自由
     散文正则反推语义（ADR 0142 / #1897 / #1890）。原 ``parse_staged_year_promise``
@@ -128,53 +132,27 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
         raise ValueError(f"stages_json 须为 JSON 数组，得 {type(data).__name__}")
     if len(data) == 0:
         return []
-    return _stages_for_write(data)
-
-
-def _commitment_stages_members(data: List[object]) -> List[Dict[str, object]]:
-    """Single member-shape authority for stages lists.
-
-    Raises ValueError on bad members/fields. Callers choose the seam:
-    durable load wraps as StoredDocumentError; product write keeps ValueError.
-    """
-    for item in data:
-        if not isinstance(item, dict):
-            raise ValueError("stages_json 成员必须为对象")
-        try:
-            due_turn = strict_int(item.get("due_turn"))
-            stage_idx = strict_int(item.get("stage_idx"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("stages_json due_turn/stage_idx 必须为整数") from exc
-        if due_turn <= 0:
-            raise ValueError("stages_json due_turn 必须为正整数")
-        if stage_idx < 0:
-            raise ValueError("stages_json stage_idx 必须为非负整数")
-        for field in ("criterion_text", "origin_context"):
-            if not isinstance(item.get(field), str) or not item[field].strip():
-                raise ValueError(f"stages_json {field} 必须为非空文字")
-    return sorted(
-        data,  # type: ignore[arg-type]
-        key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])),
-    )
+    return _commitment_stages_members(data)
 
 
 def load_commitment_stages(raw: object) -> List[Dict[str, object]]:
-    """Durable stages never discard a corrupt member as absent.
+    """持久 stages_json 唯一真实加载口。
 
-    Top-level and member/shape faults are StoredDocumentError (read seam).
+    顶层与成员形状故障一律 StoredDocumentError；成员准入与写口共用
+    ``_commitment_stages_members``（#1897 D）。
     """
     data = load_stored_list(raw, label="stages_json")
     try:
         return _commitment_stages_members(data)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise StoredDocumentError(str(exc)) from exc
 
 
 def stages_to_json(stages: object) -> str:
     """Serialize stages for durable DB write.
 
-    顶层缺省／JSON 解码／数组准入唯一权威 = ``normalize_commitment_stages``；
-    本口只序列化其结果（#1897 K2）。``None`` / empty / ``[]`` → ``"[]"``。
+    顶层缺省／JSON 解码／数组准入 = ``normalize_commitment_stages``（成员面同上）；
+    本口只序列化其结果。``None`` / empty / ``[]`` → ``"[]"``。
     """
     normalized = normalize_commitment_stages(stages)
     if not normalized:

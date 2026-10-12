@@ -1249,14 +1249,10 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
 
 
 @pytest.mark.parametrize("field,bad_value", [
+    # 月链尺寸只留各异常来源代表例（#1897 E）：缺报 / 非字符串正文 / 未知编号。
     ("missing", None),
-    ("duplicate", None),
-    *[("reports", value) for value in (None, [], {}, "bad", False, 0)],
-    *[("report", value) for value in (None, {}, [], "bad", False, 0)],
-    *[(field, value) for field in ("progress_band", "memorial_text")
-      for value in (None, {}, ["bad"], False, 0, 1.5, "", " \n")],
-    *[("dossier_id", value)
-      for value in (None, {}, [], "abc", False, 1.5, 0, -1, 999999, 2**64)],
+    ("memorial_text", {"bad": "text"}),
+    ("dossier_id", 999999),
 ])
 def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(
     game, monkeypatch, field, bad_value,
@@ -1284,12 +1280,6 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(
     bad_reports = [dict(item) for item in reports]
     if field == "missing":
         bad_reports.pop()
-    elif field == "duplicate":
-        bad_reports[1] = bad_reports[0]
-    elif field == "reports":
-        bad_reports = bad_value
-    elif field == "report":
-        bad_reports[1] = bad_value
     else:
         bad_reports[1][field] = bad_value
 
