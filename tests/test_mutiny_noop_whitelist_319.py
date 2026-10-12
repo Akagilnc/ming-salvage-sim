@@ -6,7 +6,6 @@ from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.entities.economy.apply import _apply_economy_list
 from ming_sim import issues as issue_engine
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.flows import apply_fixed_period_flows
 """#319 — latched 军字段-效果 deny-by-default 白名单（ADR 0025 D4①）。
 
 seam = apply_army_deltas 内字段效果门（与 #318 owner adapter 同缝）；
