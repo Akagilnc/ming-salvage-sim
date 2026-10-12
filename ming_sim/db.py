@@ -9654,9 +9654,8 @@ class GameDB:
                 row["participant_roster"] = decode_durable_participant_roster(
                     row["participant_roster"], require_tier=False,
                 )
-                row["stages_json"] = _load_durable_json(row["stages_json"], default='[]')
-                if not isinstance(row["stages_json"], list):
-                    raise TypeError(f"issues#{row['id']}.stages_json must be a list, got {row['stages_json']!r}")
+                from ming_sim.staged_commitment import load_commitment_stages
+                row["stages_json"] = load_commitment_stages(row["stages_json"])
                 for field in (
                     "ongoing_effects", "effect_on_resolve", "effect_on_fail",
                 ):

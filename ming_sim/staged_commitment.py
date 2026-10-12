@@ -184,7 +184,7 @@ def is_stage_derived_end_turn(
     end_turn: int,
 ) -> bool:
     """True when end_turn is purely max(stages.due_turn) display-compat (no independent due)."""
-    norm = normalize_commitment_stages(stages)
+    norm = load_commitment_stages(stages)
     if not norm:
         return False
     et = int(end_turn or 0)
@@ -198,7 +198,7 @@ def should_skip_form3_due_for_staged(
     end_turn: int,
 ) -> bool:
     """form③ due_commitments 跳过面：仅段派生 end_turn 改道；独立 end_turn 待裁不吞。"""
-    norm = normalize_commitment_stages(stages_raw)
+    norm = load_commitment_stages(stages_raw)
     if not norm:
         return False
     et = int(end_turn or 0)
