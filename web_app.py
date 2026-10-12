@@ -1488,11 +1488,11 @@ class WebGame:
             "power_warning": self.db.power_report(exclude_self=True),
             "powers": self.db.power_payload(),
             "victory_status": self.session.victory(),
-            # Sample pending before terminal projections so a tail finishing
-            # between reads still leaves either its result or a refresh signal.
+            # Sample pending before results, and failure after ending: the modal
+            # needs summary_pending or a visible failure, not just global pending.
             "mechanical_tail_pending": self.mechanical_tail_pending(),
-            "mechanical_tail_failure": self.mechanical_tail_failure(),
             "ending": self.ending_payload(),
+            "mechanical_tail_failure": self.mechanical_tail_failure(),
             "events": [],
             "regions": self.db.region_payload(),
             "armies": self.db.army_payload(),
