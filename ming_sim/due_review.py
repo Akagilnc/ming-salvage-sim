@@ -269,8 +269,10 @@ def project_due_review_scene(
         "fork": _payload_container(payload, "fork", dict),
         "army_pay_fact": inp.get("army_pay_fact"),
         "decision": str(payload.get("decision") or ""),
-        "shortfall_reopened": reopened,
-        "available_dispositions": [] if reopened else ["禁摊派", "默许", "查办"],
+        "shortfall_reopened": False,
+        "available_dispositions": (
+            ["禁摊派", "默许", "查办"] if scene_kind == "covert_levy_exposure" else []
+        ),
     }
 
 
