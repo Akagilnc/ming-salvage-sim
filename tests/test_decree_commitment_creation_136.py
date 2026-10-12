@@ -3,7 +3,6 @@ from ming_sim.applier import Provenance
 import json
 import pytest
 import ming_sim.issues as I
-from pathlib import Path
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
 
