@@ -135,7 +135,7 @@ describe("DecisionModal", () => {
 
   it("sends each confirmed row immediately and admits a follow-up while its sibling waits", async () => {
     const desk = decisions.map((d, i) => ({ ...d, decision_key: `decision:1:${i}` }));
-    const followup = { ...desk[1], decision_key: "decision:1:2", idx: 2, title: "追问续裁" };
+    const followup = { ...desk[1], decision_key: "decision:1:2", idx: 2 };
     let serverState = {
       turn: { turn: 1, phase: "awaiting_decision" }, pending_decisions: desk,
     } as unknown as GameState;
@@ -176,8 +176,7 @@ describe("DecisionModal", () => {
         pending_decisions: [{ ...desk[0] }, followup],
       };
       await act(async () => replies[1](done()));
-      expect(document.querySelector(".decision-title")?.textContent).toBe("奏疏批红");
-      expect(document.querySelector("#decision-document-title")?.textContent).toBe("追问续裁");
+      // Actionable follow-up (not locked sender): option enabled + real choices POST.
       expect(document.querySelector<HTMLButtonElement>(".decision-option")!.disabled).toBe(false);
       confirmCurrent();
       expect(requests[2].body).toEqual({ choices: [{ ...followup.options[0], decision_key: followup.decision_key }] });

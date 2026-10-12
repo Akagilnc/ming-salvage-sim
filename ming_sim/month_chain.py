@@ -1895,27 +1895,35 @@ def _consume_rescript_answers(
                         answers=[_answer_from_row(row)], source=source, prepared=prepared,
                     )
             try:
+                # Consume + desk materialize share one guarded operation so a
+                # materialize fault is recorded as call_failure (not swallowed).
+                def commit_answer():
+                    consume()
+                    # Per-answer finality: new questions join the desk without
+                    # waiting for sibling model legs (#1847 / 各道各自终局).
+                    _materialize_rescript_desk(db, state, chain)
+
                 _guard_month_call(
                     db, state, chain, decree_text="", source=source,
-                    step="rescript-answer" if kind == "memorial" else f"{kind}_continue", operation=consume,
+                    step="rescript-answer" if kind == "memorial" else f"{kind}_continue",
+                    operation=commit_answer,
                 )
-                # Per-answer finality: new questions join the desk without waiting
-                # for sibling model legs (ticket #1847 / 2026-10-12 各道各自终局).
-                _materialize_rescript_desk(db, state, chain)
-            except Exception:
-                # Sibling legs still run; durable call_failure is what we re-raise.
+            except SettlementAbort:
+                # Already accounted (call_failure / error pack); siblings continue.
                 pass
             finally:
                 del owner._rescript_jobs[(turn, row["decision_key"])]
+    # Re-read and raise under one short hold so a concurrent recovery cannot
+    # clear call_failure between the snapshot and the abort.
     with owner._write_gate:
         chain.clear()
         chain.update(_load_chain(db, turn))
         failure = chain.get("call_failure")
-    if failure is not None:
-        raise SettlementAbort(
-            failure["message"], turn=turn, stage=failure["step"],
-            error_pack_path=failure.get("error_pack_path"),
-        )
+        if failure is not None:
+            raise SettlementAbort(
+                failure["message"], turn=turn, stage=failure["step"],
+                error_pack_path=failure.get("error_pack_path"),
+            )
 
 
 def _apply_decided_triad(
