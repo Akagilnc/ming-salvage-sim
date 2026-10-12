@@ -75,38 +75,22 @@ def _prepare_stages_for_write(data: Sequence[object]) -> List[object]:
         if not isinstance(item, dict):
             prepared.append(item)
             continue
-        draft: Dict[str, object] = {}
+        draft = dict(item)
         # TypeError（坏类型）仍从写口前置响亮；缺／空白正文不在此拒，交成员门。
         texts = _stage_text_fields(item)
         if texts is not None:
             draft["criterion_text"], draft["origin_context"] = texts
-        else:
-            for field in ("criterion_text", "origin_context", "criterion", "origin"):
-                if field in item:
-                    draft[field] = item[field]
-        if "due_turn" in item:
-            raw_due = item["due_turn"]
-            if raw_due in (None, ""):
-                draft["due_turn"] = raw_due
-            else:
-                try:
-                    draft["due_turn"] = strict_int(
-                        raw_due, accept_numeric_strings=True,
-                    )
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"stages[{idx}].due_turn 须为有限整数") from exc
-        if "stage_idx" in item:
-            raw_idx = item["stage_idx"]
-            if raw_idx in (None, ""):
-                draft["stage_idx"] = raw_idx
-            else:
-                # 数字串→整数仅用 strict_int；SQLite 范围只在成员门 strict_sqlite_id。
-                try:
-                    draft["stage_idx"] = strict_int(
-                        raw_idx, accept_numeric_strings=True,
-                    )
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"stages[{idx}].stage_idx 须为有限整数") from exc
+        # due_turn／stage_idx 同形：仅对已出现非空值做数字串→int；空缺原样交成员门。
+        # 复用同一 strict_int 调用，不另抽 helper（SQLite 范围仍只在成员门）。
+        for field in ("due_turn", "stage_idx"):
+            if field not in draft or draft[field] in (None, ""):
+                continue
+            try:
+                draft[field] = strict_int(
+                    draft[field], accept_numeric_strings=True,
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"stages[{idx}].{field} 须为有限整数") from exc
         prepared.append(draft)
     return prepared
 
