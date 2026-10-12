@@ -99,8 +99,14 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     assert all(row["origin_ref"] == origin for row in logs)
 
 
-@pytest.mark.parametrize("bad_amount", [None, True, -1.5, "bad"])
-def test_world_segment_nested_cannon_transfer_rejects_bad_amount(game, bad_amount):
+@pytest.mark.parametrize("route", ["resolved", "failed"])
+@pytest.mark.parametrize("field,bad_value", [
+    ("cannon_transfer", value) for value in (None, True, -1.5, "bad")
+] + [
+    (field, value) for field in ("army_delta", "region_delta")
+    for value in (None, [], 5, 1.5, "bad", True)
+])
+def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field, bad_value):
     from ming_sim.month_translate import dispatch_month_segment
     import json
 
@@ -113,32 +119,45 @@ def test_world_segment_nested_cannon_transfer_rejects_bad_amount(game, bad_amoun
     )]
     logs_before = db.conn.execute("SELECT COUNT(*) FROM army_logs WHERE field='cannon_equipment'").fetchone()[0]
     manpower_before = db.armies.row(winner)["manpower"]
-    issue_id = db.insert_issue(state, kind="situation", title="调炮")
-    bad_changes = {"随军大炮": bad_amount, "cannon_transfer_to": winner}
+    bad_region, good_region = [row[0] for row in db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 2")]
+    db.conn.execute("UPDATE regions SET unrest=10 WHERE id=?", (good_region,))
+    bad_region_before = dict(db.regions.row(bad_region))
+    effect = {"army_delta": {winner: {"manpower": 1}}, "region_delta": {good_region: {"unrest": 1}}}
+    if field == "cannon_transfer":
+        bad_changes = {"随军大炮": bad_value, "cannon_transfer_to": winner}
+        effect["army_delta"][loser] = bad_changes
+        expected_rejections = [("invalid_enum", {"army_id": loser, "changes": bad_changes}, "system_simulation")]
+    else:
+        bad_id = loser if field == "army_delta" else bad_region
+        bad_items = {bad_id: bad_value, "unregistered_entity": bad_value}
+        effect[field] = {**bad_items, **effect[field]}
+        expected_rejections = [
+            ("invalid_shape", {"field": field, "id": entity_id, "value": value}, "system_simulation")
+            for entity_id, value in bad_items.items()
+        ]
+    issue_id = db.insert_issue(
+        state, kind="situation", title="调炮", effect_on_fail=effect if route == "failed" else {},
+    )
     result = dispatch_month_segment(
         db, state, segment="调炮", translate_fn=lambda request, config: {"effects": {
             "close_issues": [{
-                "issue_id": issue_id, "reason": "resolved",
-                "effect_on_resolve": {"army_delta": {
-                    loser: bad_changes, winner: {"manpower": 1},
-                }},
+                "issue_id": issue_id, "reason": route,
+                f"effect_on_{'resolve' if route == 'resolved' else 'fail'}": effect,
             }],
         }},
     )
     rejected = section(result.effects.applied[0], "issue_summary").rejected
-    assert [(item.category, item.item, item.source.value) for item in rejected] == [
-        ("invalid_enum", {"army_id": loser, "changes": bad_changes}, "system_simulation"),
-    ]
+    assert [(item.category, item.item, item.source.value) for item in rejected] == expected_rejections
     reports = db.conn.execute("SELECT category, item_json, source FROM rejection_reports").fetchall()
-    assert [(row["category"], json.loads(row["item_json"]), row["source"]) for row in reports] == [
-        ("invalid_enum", {"army_id": loser, "changes": bad_changes}, "system_simulation"),
-    ]
+    assert [(row["category"], json.loads(row["item_json"]), row["source"]) for row in reports] == expected_rejections
     assert [tuple(row) for row in db.conn.execute(
         "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?) ORDER BY id", (loser, winner),
     )] == cannon_before
     assert db.conn.execute("SELECT COUNT(*) FROM army_logs WHERE field='cannon_equipment'").fetchone()[0] == logs_before
     assert db.armies.row(winner)["manpower"] == manpower_before + 1
-    assert db.issues.row(issue_id)["status"] == "resolved"
+    assert dict(db.regions.row(bad_region)) == bad_region_before
+    assert db.regions.row(good_region)["unrest"] == 11
+    assert db.issues.row(issue_id)["status"] == route
 
 
 def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):

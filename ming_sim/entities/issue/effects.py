@@ -203,6 +203,10 @@ def _apply_issue_entities(
 
 
     region_delta = _load_durable_json_object(effect.get("region_delta"), surface="issue_effect.region_delta")
+    region_delta, region_shape_rejections = _monthly_mapping_effect(
+        {"region_delta": region_delta}, "region_delta", source=source,
+    )
+    tolerated.extend(region_shape_rejections)
     if region_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _collect_result(
@@ -216,6 +220,10 @@ def _apply_issue_entities(
                                               origin_ref=origin_ref, require_origin=True, source=source)
         )
     army_delta = _load_durable_json_object(effect.get("army_delta"), surface="issue_effect.army_delta")
+    army_delta, army_shape_rejections = _monthly_mapping_effect(
+        {"army_delta": army_delta}, "army_delta", source=source,
+    )
+    tolerated.extend(army_shape_rejections)
     if army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         for army_id, raw_changes in army_delta.items():
