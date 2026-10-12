@@ -660,9 +660,9 @@ def test_game_llm_config_http_get_exposes_persisted_slots_and_f41_fields(
 def test_game_llm_config_http_post_cli_persist_and_api_headers(
     web_game, tmp_path, monkeypatch,
 ):
-    """POST /api/llm/config：无 API 槽、会话 API 来自 env 时，API→CLI→API 往返不丢地址/模型。
+    """POST /api/llm/config：env-only 往返 + 局中 headers + advanced 显式清空。
 
-    #1902 F28-R2：真 HTTP 入口 + 真 build/commit/persist；只 mock verify。
+    #1902 F28-R2/R3/R4：真 HTTP 入口 + 真 build/commit/persist；只 mock verify。
     """
     import ming_sim.llm_config as llm_config
     from ming_sim.cli_backend import CLI_REASONING_FLOOR_RUNNERS
@@ -739,6 +739,65 @@ def test_game_llm_config_http_post_cli_persist_and_api_headers(
     assert saved_api["api"]["base_url"] == seed_base
     assert saved_api["api"]["model"] == seed_model
     assert saved_api["api"]["api_key"] == seed_key
+
+    # #1794 / F28-R4：API 保存时界面传来的 default_headers 回显并落盘；
+    # 同时写入 advanced_*，供后续显式清空（F28-R3）。
+    api_headers = client.post("/api/llm/config", json={
+        "channel": "api",
+        "advanced_model": "gpt-5",
+        "advanced_base_url": "https://adv.example/v1",
+        "advanced_api_key": "sk-adv-real",
+        "default_headers": {"X-From-UI": "ok"},
+        "cli_runner": "__keep__",
+        "cli_model": "__keep__",
+    })
+    assert api_headers.status_code == 200
+    headers_body = api_headers.json()
+    assert headers_body["default_headers"] == {"X-From-UI": "ok"}
+    assert headers_body["advanced_model"] == "gpt-5"
+    assert headers_body["advanced_base_url"] == "https://adv.example/v1"
+    assert headers_body["has_advanced_api_key"] is True
+    disk_headers = llm_config.load_runtime_llm()
+    assert disk_headers["api"]["default_headers"] == {"X-From-UI": "ok"}
+    assert disk_headers["api"]["advanced_model"] == "gpt-5"
+    assert disk_headers["api"]["advanced_base_url"] == "https://adv.example/v1"
+    assert disk_headers["api"]["advanced_api_key"] == "sk-adv-real"
+
+    # #1794 / F28-R4：切到 CLI 后，未激活 API 槽的 default_headers 仍落盘。
+    cli_keep = client.post("/api/llm/config", json={
+        "channel": "cli",
+        "cli_runner": "grok",
+        "cli_model": "",
+        "cli_timeout_seconds": 240,
+        "reasoning_strength": "high",
+        "api_key": "cli-backend",
+    })
+    assert cli_keep.status_code == 200
+    saved_cli = llm_config.load_runtime_llm()
+    assert saved_cli["channel"] == "cli"
+    assert saved_cli["api"]["default_headers"] == {"X-From-UI": "ok"}
+    assert client.get("/api/llm/config").json()["persisted"]["default_headers"] == {
+        "X-From-UI": "ok",
+    }
+
+    # F28-R3：激活 API 时 advanced_* 空串＝显式清空（响应 + 落盘）。
+    cleared = client.post("/api/llm/config", json={
+        "channel": "api",
+        "advanced_model": "",
+        "advanced_base_url": "",
+        "advanced_api_key": "",
+        "cli_runner": "__keep__",
+        "cli_model": "__keep__",
+    })
+    assert cleared.status_code == 200
+    clear_body = cleared.json()
+    assert clear_body["advanced_model"] == ""
+    assert clear_body["advanced_base_url"] == ""
+    assert clear_body["has_advanced_api_key"] is False
+    disk_clear = llm_config.load_runtime_llm()
+    assert disk_clear["api"]["advanced_model"] == ""
+    assert disk_clear["api"]["advanced_base_url"] == ""
+    assert disk_clear["api"]["advanced_api_key"] == ""
 
 
 def test_game_llm_config_http_verify_failure_skips_persist(
