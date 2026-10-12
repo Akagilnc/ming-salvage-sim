@@ -615,6 +615,16 @@ _BAD_STAGE_VALUES = [
     ("stage_idx", -1), ("stage_idx", 2**63),
     ("criterion_text", "   "), ("origin_context", "   "),
 ]
+# 同族参数表：整表坏形（缺号 / null / 空串 / 重号），与字段级坏值并列。
+_BAD_STAGE_LISTS = [
+    [{"due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"}],
+    [{"stage_idx": None, "due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"}],
+    [{"stage_idx": "", "due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"}],
+    [
+        {"stage_idx": 0, "due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"},
+        {"stage_idx": 0, "due_turn": 70, "criterion_text": "通航", "origin_context": "通航之事"},
+    ],
+]
 
 
 @pytest.mark.parametrize("stages", [
@@ -623,6 +633,7 @@ _BAD_STAGE_VALUES = [
         [{"due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事", field: value}]
         for field, value in _BAD_STAGE_TEXTS + _BAD_STAGE_VALUES
     ],
+    *_BAD_STAGE_LISTS,
 ])
 def test_assignment_bad_stages_never_reach_promulgation(game, stages):
     """坏 stages 在分派处拒收原值，不进入暂存或顺颁。"""
@@ -674,15 +685,41 @@ def test_assignment_structured_stages_land_through_full_chain(game):
     stages = load_commitment_stages(issue["stages_json"])
     assert [s["due_turn"] for s in stages] == [46, 70]
     write_due_staged_commitment_todos(_db, _state)
-    # Persistent corruption must fail loudly, even when the segment is not due yet.
-    stages[0]["stage_idx"] = -1
+
+
+@pytest.mark.parametrize("corrupt", [
+    [{"due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"}],
+    [{"stage_idx": None, "due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"}],
+    [{"stage_idx": "", "due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"}],
+    [{"stage_idx": "0", "due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"}],
+    [{"stage_idx": 0, "due_turn": 46, "criterion": "修渠"}],
+    [{"stage_idx": 0, "due_turn": 46, "criterion_text": "修渠"}],
+    [{"stage_idx": -1, "due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"}],
+    [
+        {"stage_idx": 0, "due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事"},
+        {"stage_idx": 0, "due_turn": 70, "criterion_text": "通航", "origin_context": "通航之事"},
+    ],
+])
+def test_assignment_structured_stages_durable_corruption_stays_loud(game, corrupt):
+    """持久腐坏不得被写口缺省/别名/强转洗成合法身份（#1897 G）。"""
+    _db, _state, _content = game
+    dossier_id, issue, staged = _promulgate_assignment(
+        game, "修渠", text="修渠之事",
+        stages=[
+            {"stage_idx": 0, "due_turn": 46, "criterion_text": "修渠"},
+            {"stage_idx": 1, "due_turn": 70, "criterion_text": "通航"},
+        ],
+    )
+    assert dossier_id is not None, staged.commissions.rejected
+    assert issue is not None
     _db.conn.execute(
         "UPDATE issues SET stages_json=? WHERE id=?",
-        (json.dumps(stages, ensure_ascii=False), int(issue["id"])),
+        (json.dumps(corrupt, ensure_ascii=False), int(issue["id"])),
     )
     _db.conn.commit()
     with pytest.raises(StoredDocumentError):
         write_due_staged_commitment_todos(_db, _state)
+
 
 def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
     """邸报 / ``new_issues`` 接缝同样不从散文反推年诺（ADR 0142 全仓口径）。
@@ -716,11 +753,26 @@ def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
         "SELECT COUNT(*) c FROM issues WHERE origin_ref=?", (origin_ref,),
     ).fetchone()["c"] == 0
 
-@pytest.mark.parametrize("field,bad_text,category", [
-    *[(field, value, "invalid_shape") for field, value in _BAD_STAGE_TEXTS],
-    *[(field, value, "invalid_enum") for field, value in _BAD_STAGE_VALUES],
+@pytest.mark.parametrize("bad_stages,category", [
+    *[
+        ([{
+            "stage_idx": 0, "due_turn": 46,
+            "criterion_text": "火器见眉目", "origin_context": "火器见眉目",
+            field: value,
+        }], "invalid_shape")
+        for field, value in _BAD_STAGE_TEXTS
+    ],
+    *[
+        ([{
+            "stage_idx": 0, "due_turn": 46,
+            "criterion_text": "火器见眉目", "origin_context": "火器见眉目",
+            field: value,
+        }], "invalid_enum")
+        for field, value in _BAD_STAGE_VALUES
+    ],
+    *[(stages, "invalid_enum") for stages in _BAD_STAGE_LISTS],
 ])
-def test_new_issues_structured_stages_reject_bad_peer_and_land(game, field, bad_text, category):
+def test_new_issues_structured_stages_reject_bad_peer_and_land(game, bad_stages, category):
     """坏分段正文拒整项，合法同批承诺照常落段。"""
     db, state, content = game
     origin_ref = _promulgated_policy_origin(db, state, token="structured-1890")
@@ -734,7 +786,7 @@ def test_new_issues_structured_stages_reject_bad_peer_and_land(game, field, bad_
             {"stage_idx": 1, "due_turn": 70, "criterion_text": "新历成"},
         ],
     }
-    bad_item = {**good_item, "stages": [{**good_item["stages"][0], field: bad_text}]}
+    bad_item = {**good_item, "stages": bad_stages}
     out = settle_delta(
         state, db,
         {"new_issues": [bad_item, good_item]},

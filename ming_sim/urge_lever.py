@@ -85,8 +85,20 @@ def collect_urge_history(
     rows = db.dossiers.urge_history(
         URGE_PENDING_ACTION, URGE_PENDING_KIND_COMMITMENT, int(commitment_ref)
     )
+    from ming_sim.strict_types import strict_int
     for row in rows:
         payload = _parse_payload(row["payload_json"])
+        raw_stage = payload.get("stage_idx")
+        if raw_stage is None or raw_stage == "":
+            raise ValueError(
+                "持久催办史 stage_idx must be a whole integer index",
+            )
+        try:
+            hist_stage_idx = strict_int(raw_stage, accept_numeric_strings=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "持久催办史 stage_idx must be a whole integer index",
+            ) from exc
         out.append({
             "id": int(row["id"]),
             "turn": int(row["turn"] or 0),
@@ -96,7 +108,7 @@ def collect_urge_history(
             "new_due": _payload_int(payload, "new_due"),
             "deadline_months": _payload_int(payload, "deadline_months"),
             "tightness": _payload_int(payload, "tightness"),
-            "stage_idx": _payload_int(payload, "stage_idx"),
+            "stage_idx": hist_stage_idx,
             "reason": str(payload.get("reason") or ""),
             "source": "commitment",
         })
@@ -333,8 +345,8 @@ def project_urge_audience_scene(todo: Dict[str, object]) -> Dict[str, object]:
         "entry_kind": kind,
         "todo_id": int(todo.get("id") or 0),
         "commitment_ref": int(todo.get("commitment_ref") or 0),
-        "stage_idx": int(todo.get("stage_idx") or 0),
-        "due_turn": int(todo.get("due_turn") or 0),
+        "stage_idx": int(todo["stage_idx"]),
+        "due_turn": int(todo["due_turn"]),
         "origin_context": origin,
         "criterion_text": criterion,
         # 故意不暴露 payload_json / truth / grace_fake

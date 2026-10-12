@@ -32,10 +32,11 @@ TODO_STATUS_CONSUMED = "consumed"
 
 
 def _stage_text_fields(item: Dict[str, object]) -> tuple[str, str] | None:
-    """共同分段正文转换（criterion/origin 别名与回填）——成员准入唯一正文面。
+    """写口前置正文归一化（criterion/origin 别名与回填）——只在写口调用。
 
     返回 (criterion_text, origin_context)；缺正文或纯空白返回 None，坏类型拒收。
     #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化；``strip`` 只用于空判。
+    持久读口不走此面，只认 ``stages_to_json`` 写出的规范四字段（#1897 G）。
     """
     for field in ("criterion_text", "criterion", "origin_context", "origin"):
         if field in item and not isinstance(item[field], str):
@@ -63,19 +64,20 @@ def _stage_record(
     }
 
 
-def _commitment_stages_members(data: Sequence[object]) -> List[Dict[str, object]]:
-    """分段成员准入唯一权威：写口与全部持久读口共用此面。
+def _prepare_stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
+    """写口专用前置归一化：别名／正文回填／数字串 → 规范草稿。
 
-    缺省空与显式坏值分开；已持久腐坏不得跳段洗成合法身份。
-    ``due_turn`` 复用 ``strict_int``；``stage_idx`` 复用 ``strict_sqlite_id``
-    （SQLite UNIQUE 绑定键，#1897 D′）；正文转换复用 ``_stage_text_fields``。
-    Raises ValueError/TypeError on bad members. Write seam keeps those;
-    durable load wraps as StoredDocumentError.
+    不发明 ``stage_idx``（缺省／null／空串原样交给成员准入拒收，#1897 G）。
+    成员规则仍只在 ``_commitment_stages_members``，此处不复制范围／唯一性校验。
     """
-    out: List[Dict[str, object]] = []
+    prepared: List[Dict[str, object]] = []
     for idx, item in enumerate(data):
         if not isinstance(item, dict):
             raise ValueError(f"stages[{idx}] 须为对象")
+        texts = _stage_text_fields(item)
+        if texts is None:
+            raise ValueError(f"stages[{idx}] 缺非空 criterion_text/origin_context")
+        criterion, origin_context = texts
         raw_due = item.get("due_turn")
         if raw_due in (None, ""):
             raise ValueError(f"stages[{idx}] 缺 due_turn")
@@ -83,24 +85,75 @@ def _commitment_stages_members(data: Sequence[object]) -> List[Dict[str, object]
             due_turn = strict_int(raw_due, accept_numeric_strings=True)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"stages[{idx}].due_turn 须为有限整数") from exc
-        if due_turn <= 0:
-            raise ValueError(f"stages[{idx}].due_turn 须为正")
-        raw_idx = item.get("stage_idx", idx)
-        if raw_idx in (None, ""):
-            raw_idx = idx
+        draft: Dict[str, object] = {
+            "due_turn": due_turn,
+            "criterion_text": criterion,
+            "origin_context": origin_context,
+        }
+        if "stage_idx" in item:
+            raw_idx = item["stage_idx"]
+            if raw_idx in (None, ""):
+                draft["stage_idx"] = raw_idx
+            else:
+                try:
+                    draft["stage_idx"] = strict_sqlite_id(
+                        raw_idx, accept_numeric_strings=True,
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"stages[{idx}].stage_idx 须为有限整数") from exc
+        prepared.append(draft)
+    return prepared
+
+
+def _commitment_stages_members(data: Sequence[object]) -> List[Dict[str, object]]:
+    """分段成员准入唯一权威：写口（前置归一化后）与全部持久读口共用此面。
+
+    只认规范形：四字段齐全，``stage_idx``／``due_turn`` 为真整数（拒数字串），
+    正文非空字符串，同一承诺内 ``stage_idx`` 不重复。不设缺省、别名、回填。
+    已持久腐坏不得洗成合法身份（#1897 G；函数自身 docstring 旧约同向）。
+    ``due_turn`` 复用 ``strict_int``；``stage_idx`` 复用 ``strict_sqlite_id``
+    （SQLite UNIQUE 绑定键，#1897 D′）。
+    Raises ValueError/TypeError on bad members. Write seam keeps those;
+    durable load wraps as StoredDocumentError.
+    """
+    out: List[Dict[str, object]] = []
+    seen: set[int] = set()
+    for idx, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"stages[{idx}] 须为对象")
+        if "stage_idx" not in item or item["stage_idx"] in (None, ""):
+            raise ValueError(f"stages[{idx}] 缺 stage_idx")
+        if "due_turn" not in item or item["due_turn"] in (None, ""):
+            raise ValueError(f"stages[{idx}] 缺 due_turn")
         try:
-            stage_idx = strict_sqlite_id(raw_idx, accept_numeric_strings=True)
+            stage_idx = strict_sqlite_id(
+                item["stage_idx"], accept_numeric_strings=False,
+            )
         except (TypeError, ValueError) as exc:
             raise ValueError(f"stages[{idx}].stage_idx 须为有限整数") from exc
         if stage_idx < 0:
             raise ValueError(f"stages[{idx}].stage_idx 须为非负整数")
-        texts = _stage_text_fields(item)
-        if texts is None:
-            raise ValueError(f"stages[{idx}] 缺非空 criterion_text/origin_context")
-        criterion, origin_context = texts
+        if stage_idx in seen:
+            raise ValueError(f"stages[{idx}].stage_idx 重复")
+        seen.add(stage_idx)
+        try:
+            due_turn = strict_int(item["due_turn"], accept_numeric_strings=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"stages[{idx}].due_turn 须为有限整数") from exc
+        if due_turn <= 0:
+            raise ValueError(f"stages[{idx}].due_turn 须为正")
+        for field in ("criterion_text", "origin_context"):
+            if field not in item:
+                raise ValueError(f"stages[{idx}] 缺非空 {field}")
+            val = item[field]
+            if not isinstance(val, str):
+                raise TypeError(f"stages.{field} 须为字符串")
+            if not val.strip():
+                raise ValueError(f"stages[{idx}] 缺非空 {field}")
         out.append(_stage_record(
             stage_idx=stage_idx, due_turn=due_turn,
-            criterion_text=criterion, origin_context=origin_context,
+            criterion_text=item["criterion_text"],  # type: ignore[arg-type]
+            origin_context=item["origin_context"],  # type: ignore[arg-type]
         ))
     out.sort(key=lambda s: (s["stage_idx"], s["due_turn"]))
     return out
@@ -110,7 +163,8 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     """Normalize structured stages payload → durable list（写口／声明入口）。
 
     缺省（None/""/[]/"[]"）→ 空列表；顶层 JSON/schema 坏形 → ValueError。
-    成员形状唯一权威 = ``_commitment_stages_members``（#1897 D；ADR0005）。
+    写口可做别名／正文回填／数字串前置归一化，再交唯一成员准入
+    ``_commitment_stages_members``（#1897 D／G；ADR0005）。不发明 ``stage_idx``。
 
     分段承诺是机械事实（到期判账），只认显式结构化字段。引擎不得从 LLM 自由
     散文正则反推语义（ADR 0142 / #1897 / #1890）。原 ``parse_staged_year_promise``
@@ -133,14 +187,14 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
         raise ValueError(f"stages_json 须为 JSON 数组，得 {type(data).__name__}")
     if len(data) == 0:
         return []
-    return _commitment_stages_members(data)
+    return _commitment_stages_members(_prepare_stages_for_write(data))
 
 
 def load_commitment_stages(raw: object) -> List[Dict[str, object]]:
     """持久 stages_json 唯一真实加载口。
 
     顶层与成员形状故障一律 StoredDocumentError；成员准入与写口共用
-    ``_commitment_stages_members``（#1897 D）。
+    ``_commitment_stages_members``，但不跑写口前置归一化（#1897 G）。
     """
     data = load_stored_list(raw, label="stages_json")
     try:

@@ -9257,18 +9257,19 @@ class GameDB:
             if target_id is None:
                 return False
             raw_stage = payload.get("stage_idx")
-            if raw_stage is None:
-                stage_idx = 0
-            else:
-                # 已持久 stage_idx：类型腐坏裸 ValueError，不伪装领域 failed（#1897 E1）。
-                # 准入侧坏值仍走声明路径 DecreeMaterializationValidationError。
-                from ming_sim.strict_types import strict_int
-                try:
-                    stage_idx = strict_int(raw_stage, accept_numeric_strings=False)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(
-                        "持久字段 stage_idx must be a whole integer index",
-                    ) from exc
+            # 已持久 stage_idx：缺省／类型腐坏一律裸 ValueError，不发明身份 0（#1897 G）。
+            # 准入侧坏值仍走声明路径 DecreeMaterializationValidationError。
+            from ming_sim.strict_types import strict_int
+            if raw_stage is None or raw_stage == "":
+                raise ValueError(
+                    "持久字段 stage_idx must be a whole integer index",
+                )
+            try:
+                stage_idx = strict_int(raw_stage, accept_numeric_strings=False)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "持久字段 stage_idx must be a whole integer index",
+                ) from exc
             deadline = _coerce_deadline_months(
                 payload.get("deadline_months", 1), default=1, durable=True,
             )
