@@ -473,7 +473,11 @@ def _continue_world_after_answers(
         from ming_sim.exceptions import LLMUnavailable
         raise LLMUnavailable("世界段续推缺少模型配置", stage="world-segment-continue")
     if "world_continuation_text" not in chain:
-        chain["world_continuation_text"] = _run_world_continuation_text(session, chain, answers)
+        from ming_sim.rescript_forecast import take_forecast
+        text = take_forecast(session, "world", "", answers)
+        chain["world_continuation_text"] = (
+            text if text is not None else _run_world_continuation_text(session, chain, answers)
+        )
         _save_chain(db, turn, chain, source=source)
     text = chain["world_continuation_text"]
     prefix, extra = _split_at_question(str(text or ""))
@@ -554,7 +558,11 @@ def _continue_decree_after_answers(
         chain = _load_chain(db, int(state.turn))
     products = chain.setdefault("decree_continuation_texts", {})
     if decree_ref not in products:
-        products[decree_ref] = _run_decree_continuation_text(session, dossier, answers)
+        from ming_sim.rescript_forecast import take_forecast
+        text = take_forecast(session, "decree", decree_ref, answers)
+        products[decree_ref] = (
+            text if text is not None else _run_decree_continuation_text(session, dossier, answers)
+        )
         _save_chain(db, int(state.turn), chain, source=source)
     text = products[decree_ref]
     prefix, extra = _split_at_question(str(text or ""))
@@ -601,7 +609,10 @@ def _run_decree_continuation_text(
 
     db = session.db
     decree_ref = decree_ref_for_dossier(db, dossier)
-    snapshot = forecast_snapshot(session, dict(dossier), decree_ref=decree_ref)
+    snapshot = getattr(session, "_rescript_decree_snapshot", None)
+    owns_snapshot = snapshot is None
+    if owns_snapshot:
+        snapshot = forecast_snapshot(session, dict(dossier), decree_ref=decree_ref)
     try:
         agent = create_decree_forecast_agent(session.llm_config, snapshot["prepared"])
         return run_agent_text(
@@ -617,7 +628,8 @@ def _run_decree_continuation_text(
             transport_policy=audience_transport_policy(),
         )
     finally:
-        release_forecast_materials(snapshot)
+        if owns_snapshot:
+            release_forecast_materials(snapshot)
 
 
 def run_player_month_chain(
@@ -722,6 +734,8 @@ def _run_loaded_month_chain(
     )
     desk = _materialize_rescript_desk(db, state, chain)
     if desk is not None:
+        from ming_sim.rescript_forecast import schedule_forecasts
+        schedule_forecasts(session, chain, desk)
         return ResolveResult(
             awaiting=True, decisions=desk, advanced=False, stage="rescript",
         )
@@ -1758,6 +1772,33 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
     return decision
 
 
+def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
+    choice = row["choice"] or {}
+    event_id = str(row.get("event_id") or "")
+    # #1891：请饷／议停请旨交续推的是真实事件身份——案头前缀只是批红页身份，
+    # 不该让推演方看到（ADR 0115）。御批原话（label/hint/note）原样带出。
+    if event_id.startswith(_LEVY_PETITION_PREFIX):
+        event_id = event_id[len(_LEVY_PETITION_PREFIX):]
+    return {
+        **row, "choice": dict(choice),
+        "label": str(choice.get("label") or ""),
+        "hint": str(choice.get("hint") or ""),
+        "note": str(choice.get("note") or ""),
+        "context": str(row.get("context") or ""),
+        "event_id": event_id,
+        "title": str(row.get("title") or ""),
+    }
+
+
+def _world_question_ids(chain, turn):
+    return {
+        str(q["event_id"])
+        if str(q.get("event_id") or "").startswith(_LEVY_PETITION_PREFIX)
+        else f"{_WORLD_QUESTION_PREFIX}{turn}:{int(chain.get('world_question_offset', 0)) + idx}"
+        for idx, q in enumerate(_load_durable_json_list(chain.get("world_questions"), surface="month_chain.world_questions"))
+    }
+
+
 def _consume_rescript_answers(
     session: Any, chain: Dict[str, Any], *, source: Provenance,
 ) -> None:
@@ -1773,23 +1814,6 @@ def _consume_rescript_answers(
     decided = [r for r in rows if str(r.get("status") or "") == "decided"]
     if not decided:
         return
-
-    def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
-        choice = row["choice"] or {}
-        event_id = str(row.get("event_id") or "")
-        # #1891：请饷／议停请旨交续推的是真实事件身份——案头前缀只是批红页身份，
-        # 不该让推演方看到（ADR 0115）。御批原话（label/hint/note）原样带出。
-        if event_id.startswith(_LEVY_PETITION_PREFIX):
-            event_id = event_id[len(_LEVY_PETITION_PREFIX):]
-        return {
-            **row, "choice": dict(choice),
-            "label": str(choice.get("label") or ""),
-            "hint": str(choice.get("hint") or ""),
-            "note": str(choice.get("note") or ""),
-            "context": str(row.get("context") or ""),
-            "event_id": event_id,
-            "title": str(row.get("title") or ""),
-        }
 
     for row in decided:
         event_id = str(row.get("event_id") or "")
@@ -1811,12 +1835,7 @@ def _consume_rescript_answers(
 
     # #1891：请饷／议停请旨与世界段请旨同源（都由世界段 run 发出），答复后走同一次
     # 问后续推——不单开一条续推路径，也不因它是事件身份就漏掉续推。
-    world_ids = {
-        str(q["event_id"])
-        if str(q.get("event_id") or "").startswith(_LEVY_PETITION_PREFIX)
-        else f"{_WORLD_QUESTION_PREFIX}{turn}:{int(chain.get('world_question_offset', 0)) + idx}"
-        for idx, q in enumerate(_load_durable_json_list(chain.get("world_questions"), surface="month_chain.world_questions"))
-    }
+    world_ids = _world_question_ids(chain, turn)
     world_rows = [r for r in rows if r.get("event_id") in world_ids]
     if (
         world_rows
@@ -1889,7 +1908,10 @@ def _run_world_continuation_text(
     from ming_sim.materials import prepare_world_materials, release_material_tree
     import json
 
-    prepared = prepare_world_materials(session.db, session.state)
+    prepared = getattr(session, "_rescript_world_materials", None)
+    owns_materials = prepared is None
+    if owns_materials:
+        prepared = prepare_world_materials(session.db, session.state)
     try:
         agent = create_world_segment_agent(session.llm_config, prepared)
         payload = {
@@ -1902,7 +1924,8 @@ def _run_world_continuation_text(
             transport_policy=audience_transport_policy(),
         )
     finally:
-        release_material_tree(prepared.root)
+        if owns_materials:
+            release_material_tree(prepared.root)
 
 
 def _dossier_for_decree_ref(db: Any, decree_ref: str) -> Optional[Dict[str, Any]]:

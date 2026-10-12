@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -32,7 +33,10 @@ def run_rescript_text(session, *, officers: list, backlog: list, answer: dict | 
 
     if session.llm_config is None:
         raise LLMUnavailable("票拟缺少模型配置", stage="rescript-draft")
-    with TemporaryDirectory(prefix="ming-rescript-") as tmp:
+    with ExitStack() as resources:
+        tmp = getattr(session, "_rescript_materials_root", None)
+        if tmp is None:
+            tmp = resources.enter_context(TemporaryDirectory(prefix="ming-rescript-"))
         perspectives = []
         prepared = SimpleNamespace(root=Path(tmp), index_lines=())
         if answer is None:
@@ -44,8 +48,10 @@ def run_rescript_text(session, *, officers: list, backlog: list, answer: dict | 
             perspectives.append(officer)
         world = None
         if answer is not None:
-            prepared = prepare_world_materials(session.db, session.state, dest_root=Path(tmp) / "world")
-            world = {"materials": "world", "opening": prepared.opening}
+            prepared = getattr(session, "_rescript_world_materials", None)
+            if prepared is None:
+                prepared = prepare_world_materials(session.db, session.state, dest_root=Path(tmp) / "world")
+            world = {"materials": str(prepared.root.relative_to(Path(tmp))), "opening": prepared.opening}
         agent = create_rescript_draft_agent(session.llm_config, SimpleNamespace(root=Path(tmp)))
         return run_agent_text(
             agent, json.dumps({
@@ -101,6 +107,13 @@ def produce_memorials(session, chain: dict, *, source) -> None:
         _save_chain(db, int(state.turn), chain, source=source)
 
 
+def validate_answer_product(data):
+    disposition, text = data.get("disposition"), data.get("text")
+    if disposition not in {"settled", "revise"} or not isinstance(text, str):
+        raise LLMContractError("批语续推须交 disposition 与原文 text")
+    return disposition, text
+
+
 def consume_memorial_answers(session, chain: dict, *, source) -> None:
     from ming_sim.month_chain import _save_chain, _ending_from_dispatch_result, _collect_disclosures_from_result
     from ming_sim.month_translate import dispatch_month_segment
@@ -118,11 +131,11 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
         # A returned original remains answerable even if both offices became vacant.
         data = products.get(key)
         if data is None:
+            from ming_sim.rescript_forecast import take_forecast
+            data = take_forecast(session, "memorial", key, [row])
+        if data is None:
             data = parse_agent_json(run_rescript_text(session, officers=officers, backlog=[], answer=answer), "rescript-answer")
-        disposition = data.get("disposition")
-        text = data.get("text")
-        if disposition not in {"settled", "revise"} or not isinstance(text, str):
-            raise LLMContractError("批语续推须交 disposition 与原文 text")
+        disposition, text = validate_answer_product(data)
         midzhi = (row["choice"] or {}).get("action") == "midzhi"
         decree = data.get("decree")
         if midzhi and (disposition != "settled" or not isinstance(decree, dict)

@@ -241,6 +241,12 @@ def _transport_retry_interval_instant():
         mp.undo()
 
 
+@pytest.fixture(autouse=True)
+def _deterministic_rescript_forecasts(monkeypatch):
+    from tests.month_chain_helpers import InlineExecutor
+    monkeypatch.setattr("ming_sim.rescript_forecast._executor", InlineExecutor())
+
+
 @pytest.fixture
 def game(content, _game_template_path, monkeypatch, tmp_path):
     """返回 (db, state, content)：开局同核临时库，用例间隔离。

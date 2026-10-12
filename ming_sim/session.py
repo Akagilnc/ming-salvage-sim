@@ -2433,7 +2433,12 @@ class GameSession:
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
-        return self.db.issues.list_rescript_desk(int(self.state.turn))
+        desk = self.db.issues.list_rescript_desk(int(self.state.turn))
+        if desk and self.current_phase() == TurnPhase.AWAITING_DECISION:
+            from ming_sim.month_chain import _load_chain
+            from ming_sim.rescript_forecast import schedule_forecasts
+            schedule_forecasts(self, _load_chain(self.db, int(self.state.turn)), desk)
+        return desk
 
     def deferred_rescripts(self) -> List[Dict[str, object]]:
         """Original returned memorials, including months with vacant offices."""

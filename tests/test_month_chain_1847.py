@@ -70,28 +70,127 @@ def _decision_block(title: str, *labels: str) -> str:
     )
 
 
-def test_world_question_opens_rescript_desk_and_awaits(game, monkeypatch):
-    _forbid_extractor(monkeypatch)
+@pytest.mark.parametrize("kind", ["world", "decree", "memorial"])
+@pytest.mark.parametrize("mode", ["ready", "running", "prefailed", "livefailed"])
+def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, kind, mode):
+    """Presentation → speculative calls → selection/retry → reopened DB, no unselected effects."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from tests.month_chain_helpers import InlineExecutor
+    from ming_sim.error_pack import error_packs_root
+    from ming_sim.db import GameDB
+
     db, state, content = game
-    closed_turn = int(state.turn)
-    monkeypatch.setattr(
-        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
-    )
-    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": {}})
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    affair = db.affairs.open(name="候选办理", origin="奏折", year=state.year,
+                            period=state.period, turn=turn)
+    question = {"title": "请旨", "context": "原奏", "options": [
+        {"label": "甲", "hint": "h甲"}, {"label": "乙", "hint": "h乙"}]}
+    world = _decision_block(question["title"], "甲", "乙") if kind == "world" else ""
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: world)
+    if kind == "decree":
+        minister = next(iter(content.characters.values())).name
+        _, ref = _stage_edict(db, state, minister, "原旨", "问前", -1, affair.id)
+        db.conn.execute("UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+                        (json.dumps([question]), ref))
+        db.conn.commit()
+    calls = []
+    started, other_started, release = Event(), Event(), Event()
+
+    def continuation(answers):
+        label = answers[0]["choice"]["label"]
+        calls.append(label)
+        if label == "乙":
+            other_started.set()
+        attempt = calls.count(label)
+        if label == "甲" and attempt == 1:
+            started.set()
+            if mode == "running":
+                assert release.wait(5)
+            if mode in {"prefailed", "livefailed"}:
+                raise LLMUnavailable("injected speculative failure", stage="world-segment-continue")
+        if label == "甲" and attempt == 2 and mode == "livefailed":
+            raise LLMUnavailable("injected live failure", stage="world-segment-continue")
+        return json.dumps({"delta": -3 if label == "甲" else -19})
+
+    def memorial_model(session, *, officers, backlog, answer=None):
+        if answer is None:
+            return json.dumps({"actor_name": officers[0]["name"],
+                               "items": [question] if kind == "memorial" else [], "revisions": []})
+        return json.dumps({"disposition": "settled", "text": continuation([answer]), "decree": None})
+
+    def external_model(agent, message, **kwargs):
+        return continuation(json.loads(message)["answers"])
+
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", memorial_model)
+    monkeypatch.setattr("ming_sim.agents.create_world_segment_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", external_model)
+
+    def translate(request, _config):
+        try:
+            outcome = json.loads(request.segment)
+        except json.JSONDecodeError:
+            return {"effects": {}}
+        return {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库",
+            "delta": outcome["delta"], "category": "候选办理", "reason": "实办"}]}}
+
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
+    pool = ThreadPoolExecutor(max_workers=2)
+    monkeypatch.setattr("ming_sim.rescript_forecast._executor", pool if mode == "running" else InlineExecutor())
     session = make_light_session(db, state, content)
+    session.llm_config = object()
+    try:
+        result = session.resolve_turn(allow_empty_decree=True)
+        assert result.awaiting and not result.advanced
+        desk = session.pending_decisions()
+        assert len(desk) == 1
+        assert started.wait(5)
+        assert other_started.wait(5)
+        if mode != "running":
+            assert calls == ["甲", "乙"]
+        assert not db.conn.execute("SELECT 1 FROM economy_ledger WHERE category='候选办理'").fetchall()
+        option = desk[0]["options"][0]
+        choice = {**option, "decision_key": desk[0]["decision_key"]}
 
-    result = session.resolve_turn(allow_empty_decree=True)
+        def submit():
+            return session.submit_hitl_choices([choice], write_gate=session._write_gate)
 
-    assert result.awaiting is True
-    assert result.stage == "rescript"
-    assert result.advanced is False
-    assert int(state.turn) == closed_turn
-    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
-    desk = session.pending_decisions()
-    assert len(desk) == 1
-    assert desk[0]["title"] == "是否增援宁远"
-    assert {opt["label"] for opt in desk[0]["options"]} == {"准调关宁", "暂缓"}
-    assert desk[0]["status"] == "pending"
+        if mode == "running":
+            pending_submit = pool.submit(submit)
+            assert not pending_submit.done()
+            release.set()
+            pending_submit.result(timeout=5)
+        elif mode == "livefailed":
+            with pytest.raises(SettlementAbort):
+                submit()
+            assert month_chain.month_chain_call_failure(db, turn)
+            assert not db.conn.execute("SELECT 1 FROM economy_ledger WHERE category='候选办理'").fetchall()
+            session = make_light_session(db, db.load_state(content), content)
+            session.llm_config = object()
+            session.resolve_turn(allow_empty_decree=True)
+        else:
+            submit()
+        assert calls.count("甲") == (3 if mode == "livefailed" else 2 if mode == "prefailed" else 1)
+        assert calls.count("乙") == 1
+        reopened = GameDB(str(db.path), content=content)
+        try:
+            assert [r[0] for r in reopened.conn.execute(
+                "SELECT delta FROM economy_ledger WHERE category='候选办理'")] == [-3]
+        finally:
+            reopened.close()
+        assert not session.pending_decisions()
+        if mode in {"prefailed", "livefailed"}:
+            errors = [json.loads(p.read_text())["exception_message"]
+                      for p in error_packs_root().glob("*/manifest.json")]
+            assert "injected speculative failure" in errors
+            if mode == "livefailed":
+                assert "injected live failure" in errors
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
 
 
 def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
@@ -280,8 +379,8 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch,
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
 
-    assert continuation_calls and continuation_calls[0][0]["label"] == choice["label"]
-    assert continuation_calls[0][0]["note"] == "  照办\n原批  "
+    assert continuation_calls[-1][0]["label"] == choice["label"]
+    assert continuation_calls[-1][0]["note"] == "  照办\n原批  "
     assert db.dossiers.list_dossiers() == []
     assert session.state.turn_phase == TurnPhase.SETTLING.value
     chain = _month_chain_of(db, closed_turn)
@@ -292,7 +391,7 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch,
     assert again.stage == "gazette"
     assert again.awaiting is False
     # 同回合重入不得再烧续推。
-    assert len(continuation_calls) == 1
+    assert len(continuation_calls) == 3  # Two candidates, then the distinct handwritten rescript.
 
 
 def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monkeypatch):
@@ -402,7 +501,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
 
     def flaky_decree_text(_agent, message, **kwargs):
         llm_calls.append(1)
-        if fail_at != "translation" and fail_once["armed"]:
+        if fail_at != "translation" and fail_once["armed"] and json.loads(message)["answers"][0]["note"]:
             fail_once["armed"] = False
             if fail_at == "unexpected":
                 raise RuntimeError("未识别模型接缝异常")
@@ -439,6 +538,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         "decision_key": desk_row["decision_key"],
         "label": choice["label"],
         "hint": choice.get("hint") or "",
+        "note": "自批原文",
     }]
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
 
@@ -453,14 +553,14 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
     assert db.staged_declarations.questions_for(ref), (
         "续推失败后 questions 已清，恢复将无法再续推"
     )
-    assert len(llm_calls) == 1
+    assert len(llm_calls) == 3
     assert len(dispatch_count) == 0
 
     # 重开从统一核账恢复口续原月链，不重交原批。
     session = make_light_session(db, db.load_state(content), content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
-    assert len(llm_calls) == (1 if fail_at == "translation" else 2)
+    assert len(llm_calls) == (3 if fail_at == "translation" else 4)
     assert len(dispatch_count) == 1, (
         "旨意问后后果永久丢失：重试未再续推（questions 已清，闸跳过）"
     )
@@ -853,8 +953,8 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         }],
         write_gate=session._write_gate,
     )
-    assert answers and answers[0][0]["note"] == "着户部另议"
-    assert answers[0][0]["label"] == ""
+    assert answers[-1][0]["note"] == "着户部另议"
+    assert answers[-1][0]["label"] == ""
     assert not db.staged_declarations.questions_for(ref)
 
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
@@ -2162,12 +2262,12 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
 
     def model(session, *, officers, backlog, answer=None):
         if answer is not None:
-            if len(answers) == 1 and failures["answer"]:
+            if answer["choice"].get("note") == raw_note and failures["answer"]:
                 failures["answer"] = False
                 raise LLMUnavailable("批后模型用尽", stage="rescript-answer")
             answers.append(answer)
             return json.dumps({"disposition": "revise" if answer["choice"].get("note") == raw_note else "settled",
-                               "text": "问后办理" if len(answers) == 1 or answer["choice"].get("note") == raw_note else "", "decree": None})
+                               "text": "问后办理" if answer["memorial"]["idx"] == 5 or answer["choice"].get("note") == raw_note else "", "decree": None})
         if failures["triage"]:
             failures["triage"] = False
             raise LLMUnavailable("票拟模型用尽", stage="rescript-draft")
@@ -2232,9 +2332,10 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
     state = session.state
     session.resolve_turn(allow_empty_decree=True)
     assert [r[0] for r in db.conn.execute("SELECT delta FROM economy_ledger WHERE category='急务办理'")] == [-2, -2, -2]
-    assert [row["decision_key"] for row in answers] == [item["decision_key"] for item in batch]
-    assert answers[-1]["choice"]["note"] == raw_note
-    assert answers[-1]["memorial"]["context"] == "  原奏\n拟旨  "
+    assert _month_chain_of(db, turn)["rescript_consumed"] == [item["decision_key"] for item in batch]
+    raw_answers = [row for row in answers if row["choice"].get("note") == raw_note]
+    assert [row["decision_key"] for row in raw_answers] == [item["decision_key"] for item in batch[-2:]]
+    assert all(row["memorial"]["context"] == "  原奏\n拟旨  " for row in raw_answers)
     assert not session.pending_decisions()
     assert session.deferred_rescripts()[0]["decision_key"] == original["decision_key"]
     assert len(calls) == 1
