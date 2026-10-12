@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Sequence
 
-from ming_sim.strict_types import strict_int
+from ming_sim.strict_types import strict_int, strict_sqlite_id
 
 from ming_sim.applier import (
     StoredDocumentError,
@@ -67,7 +67,8 @@ def _commitment_stages_members(data: Sequence[object]) -> List[Dict[str, object]
     """分段成员准入唯一权威：写口与全部持久读口共用此面。
 
     缺省空与显式坏值分开；已持久腐坏不得跳段洗成合法身份。
-    整数字段复用 ``strict_int``；正文转换复用 ``_stage_text_fields``。
+    ``due_turn`` 复用 ``strict_int``；``stage_idx`` 复用 ``strict_sqlite_id``
+    （SQLite UNIQUE 绑定键，#1897 D′）；正文转换复用 ``_stage_text_fields``。
     Raises ValueError/TypeError on bad members. Write seam keeps those;
     durable load wraps as StoredDocumentError.
     """
@@ -88,7 +89,7 @@ def _commitment_stages_members(data: Sequence[object]) -> List[Dict[str, object]
         if raw_idx in (None, ""):
             raw_idx = idx
         try:
-            stage_idx = strict_int(raw_idx, accept_numeric_strings=True)
+            stage_idx = strict_sqlite_id(raw_idx, accept_numeric_strings=True)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"stages[{idx}].stage_idx 须为有限整数") from exc
         if stage_idx < 0:

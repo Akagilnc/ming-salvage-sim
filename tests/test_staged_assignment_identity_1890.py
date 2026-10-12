@@ -612,7 +612,8 @@ _BAD_STAGE_TEXTS = [
     ("criterion", False), ("origin", 0),
 ]
 _BAD_STAGE_VALUES = [
-    ("stage_idx", -1), ("criterion_text", "   "), ("origin_context", "   "),
+    ("stage_idx", -1), ("stage_idx", 2**63),
+    ("criterion_text", "   "), ("origin_context", "   "),
 ]
 
 
